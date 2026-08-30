@@ -1,12 +1,6 @@
-use nu_plugin::EngineInterface;
-use nu_protocol::Span;
 use serde_json::Value as JsonValue;
 
 use crate::protocol::event::ToolDisplayStats;
-use crate::tools::authz::{
-    AskApprovalHook, PermissionEventSink, PermissionsConfig, SessionGrantCache,
-};
-use crate::tools::{closure::ClosureRegistry, executor::ToolExecutor};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolSource {
@@ -299,21 +293,4 @@ impl McpToolRegistry {
             .map(|servers| servers.contains(server_name))
             .unwrap_or(false)
     }
-}
-
-pub struct ToolAuthorizationContext<'a, H: AskApprovalHook, S: PermissionEventSink> {
-    pub permissions: &'a PermissionsConfig,
-    pub grant_cache: &'a mut SessionGrantCache,
-    pub ask_hook: &'a mut H,
-    pub event_sink: &'a mut S,
-}
-
-pub struct ToolHandlerContext<'a, H: AskApprovalHook, S: PermissionEventSink> {
-    pub closure_registry: &'a ClosureRegistry,
-    pub mcp_registry: &'a McpToolRegistry,
-    pub mcp_tool_server: Option<&'a rig::tool::server::ToolServerHandle>,
-    pub tool_executor: &'a ToolExecutor,
-    pub engine: &'a EngineInterface,
-    pub authorization: ToolAuthorizationContext<'a, H, S>,
-    pub span: Span,
 }

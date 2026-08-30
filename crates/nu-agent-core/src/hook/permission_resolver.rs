@@ -1,8 +1,8 @@
 //! Async permission resolution trait and its two implementations.
 //!
 //! - [`PolicyPermissionResolver`]: TTY/non-interactive mode — pure policy evaluation, returns immediately.
-//! - [`InteractivePermissionResolver`]: TUI mode — sends a `PermissionRequested` event to the UI
-//!   and awaits the user's decision via a oneshot channel.
+//! - [`InteractivePermissionResolver`]: TUI mode — publishes a `PermissionEvent::Requested` on
+//!   `bus.permission()` and awaits the user's decision via a oneshot channel.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,15 +10,15 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use async_trait::async_trait;
 use serde_json::Value as JsonValue;
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
+
+use crate::bus::OneshotTx;
 
 use crate::protocol::event::{
-    PermissionDecision as ProtocolPermissionDecision, PermissionRequestContext, UiEvent,
+    PermissionDecision as ProtocolPermissionDecision, PermissionRequestContext,
 };
 use crate::tools::authz::{
-    AskApprovalHook, AskChoice, AskContext, PermissionEventSink, PermissionsConfig,
-    SessionGrantCache, apply_ask_choice, display_tool_name,
+    AskApprovalHook, AskChoice, AskContext, PermissionsConfig, SessionGrantCache, apply_ask_choice,
+    display_tool_name,
 };
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::{
@@ -67,27 +67,19 @@ fn next_request_id() -> String {
 // NoOp helpers for policy-only path
 // ---------------------------------------------------------------------------
 
-/// A no-op event sink that discards all events.
-struct NoOpSink;
-
-impl PermissionEventSink for NoOpSink {
-    fn emit(&mut self, _event: UiEvent) {}
-}
-
 /// An ask hook that always denies without user interaction.
 /// Used by [`PolicyPermissionResolver`] to make the "Ask" case return Deny.
 struct NoOpAskHook;
 
 #[async_trait]
 impl AskApprovalHook for NoOpAskHook {
-    async fn choose<S: PermissionEventSink + Send>(
+    async fn choose(
         &mut self,
         _decision: &crate::tools::authz::PermissionDecision,
         _tool_name: &str,
         _source: &str,
         _args: &JsonValue,
         _ask_context: &AskContext,
-        _sink: Option<&mut S>,
     ) -> AskChoice {
         AskChoice::Deny
     }
@@ -116,20 +108,16 @@ fn summarize_ask_payload(args: &JsonValue) -> String {
 
 /// Resolves tool call permission decisions asynchronously.
 ///
-/// - TUI mode: sends a `PermissionRequested` event and awaits user input.
+/// - TUI mode: sends a `PermissionEvent::Requested` on `bus.permission()` and
+///   awaits the user's decision via a oneshot channel.
 /// - TTY mode: evaluates policy inline and returns immediately.
-///
-/// The `ui_tx` parameter is an optional sender for UI events. In interactive (TUI) mode,
-/// the caller (AgentHook) passes its own sender so the resolver can emit
-/// `PermissionRequested` events without owning a long-lived sender that would
-/// prevent the drain loop's channel from closing.
 pub trait AsyncPermissionResolver: Clone + Send + Sync + 'static {
     fn resolve(
         &self,
         tool_name: &str,
         arguments: &str,
         tool_call_id: Option<String>,
-        ui_tx: Option<mpsc::UnboundedSender<UiEvent>>,
+        bus: &crate::bus::Bus,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send;
 }
 
@@ -155,7 +143,7 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
         tool_name: &str,
         arguments: &str,
         tool_call_id: Option<String>,
-        _ui_tx: Option<mpsc::UnboundedSender<UiEvent>>,
+        _bus: &crate::bus::Bus,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let tool_name = tool_name.to_string();
         let arguments = arguments.to_string();
@@ -185,7 +173,6 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
                 session_grants,
                 &flow_context,
                 &mut NoOpAskHook,
-                &mut NoOpSink,
             )
             .await;
 
@@ -215,14 +202,13 @@ struct AskContextCapture {
 
 #[async_trait]
 impl AskApprovalHook for AskContextCapture {
-    async fn choose<S: PermissionEventSink + Send>(
+    async fn choose(
         &mut self,
         decision: &crate::tools::authz::PermissionDecision,
         tool_name: &str,
         source: &str,
         args: &JsonValue,
         ask_context: &AskContext,
-        sink: Option<&mut S>,
     ) -> AskChoice {
         self.was_called = true;
         self.captured_context = Some(PermissionRequestContext {
@@ -240,32 +226,32 @@ impl AskApprovalHook for AskContextCapture {
             pre_authorize_display: ask_context.pre_authorize_display.clone(),
         });
         self.captured_auth_decision = Some(decision.clone());
-        // Sink is ignored — AskContextCapture captures context for the TUI oneshot flow.
-        // The actual UI event is emitted separately via ui_tx in resolve().
-        let _ = sink;
+        // AskContextCapture only captures context for the TUI oneshot flow.
+        // The actual UI event is published on bus.permission() in resolve().
         AskChoice::Deny
     }
 }
 
 /// Interactive permission resolver for TUI mode.
 ///
-/// When the policy requires user confirmation ("Ask"), sends a
-/// `UiEvent::PermissionRequested` and awaits the user's decision.
-/// The TUI event loop must call [`InteractivePermissionResolver::submit_decision`]
+/// When the policy requires user confirmation ("Ask"), publishes a
+/// `PermissionEvent::Requested` on `bus.permission()` and awaits the user's
+/// decision. The TUI event loop must call [`InteractivePermissionResolver::submit_decision`]
 /// to unblock the waiting `resolve()` future.
 ///
-/// **Design note (deadlock prevention):** This struct intentionally does NOT own a
-/// `mpsc::UnboundedSender<UiEvent>`. The sender is passed as a parameter to `resolve()`
-/// by the `AgentHook` that calls it. This ensures the executor's stack frame (which holds
-/// the resolver across the retry loop) never keeps a sender alive that would prevent the
-/// drain loop's channel from closing — eliminating the sender-lifetime deadlock.
+/// **Design note (deadlock prevention):** This struct does NOT own a
+/// `mpsc::UnboundedSender<UiEvent>`. It owns a `Bus` clone and publishes
+/// permission events on `bus.permission()` directly, so the executor's stack
+/// frame (which holds the resolver across the retry loop) never keeps a sender
+/// alive that would prevent the drain loop's channel from closing.
 #[derive(Clone)]
 pub struct InteractivePermissionResolver {
-    pub pending: Arc<StdMutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>,
+    pub pending: Arc<StdMutex<HashMap<String, OneshotTx<ProtocolPermissionDecision>>>>,
     pub permissions: Arc<PermissionsConfig>,
     pub session_grants: Arc<StdMutex<SessionGrantCache>>,
     pub closure_registry: Arc<ClosureRegistry>,
     pub mcp_registry: Arc<McpToolRegistry>,
+    bus: crate::bus::Bus,
 }
 
 impl InteractivePermissionResolver {
@@ -279,15 +265,15 @@ impl InteractivePermissionResolver {
     /// - `session_grants`: shared session grant cache for AllowAlways persistence.
     /// - `closure_registry`: registry of closure-based tools.
     /// - `mcp_registry`: registry of MCP tools.
-    ///
-    /// Note: `ui_tx` is NOT stored here. It is passed per-call via `resolve()`'s
-    /// `ui_tx` parameter by the `AgentHook` that invokes the resolver.
+    /// - `bus`: the shared signal bus; permission events are published on
+    ///   `bus.permission()`.
     pub fn new(
-        pending: Arc<StdMutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>,
+        pending: Arc<StdMutex<HashMap<String, OneshotTx<ProtocolPermissionDecision>>>>,
         permissions: Arc<PermissionsConfig>,
         session_grants: Arc<StdMutex<SessionGrantCache>>,
         closure_registry: Arc<ClosureRegistry>,
         mcp_registry: Arc<McpToolRegistry>,
+        bus: crate::bus::Bus,
     ) -> Self {
         Self {
             pending,
@@ -295,6 +281,7 @@ impl InteractivePermissionResolver {
             session_grants,
             closure_registry,
             mcp_registry,
+            bus,
         }
     }
 
@@ -312,7 +299,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
         tool_name: &str,
         arguments: &str,
         tool_call_id: Option<String>,
-        ui_tx: Option<mpsc::UnboundedSender<UiEvent>>,
+        _bus: &crate::bus::Bus,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let tool_name = tool_name.to_string();
         let arguments = arguments.to_string();
@@ -321,6 +308,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
         let closure_registry = Arc::clone(&self.closure_registry);
         let mcp_registry = Arc::clone(&self.mcp_registry);
         let pending = Arc::clone(&self.pending);
+        let bus = self.bus.clone();
 
         async move {
             let args_json: JsonValue = serde_json::from_str(&arguments)
@@ -350,7 +338,6 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                     Arc::clone(&session_grants),
                     &flow_context,
                     &mut capture_hook,
-                    &mut NoOpSink,
                 )
                 .await
             };
@@ -363,17 +350,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                     PermissionDecision::Allow
                 }
             } else {
-                // Policy said Ask — send event to TUI and await user decision.
-                let Some(ui_tx) = ui_tx else {
-                    // No UI sender available (should not happen in TUI mode).
-                    // Fall back to Deny to be safe.
-                    log::warn!(
-                        "InteractivePermissionResolver: Ask triggered but no ui_tx provided; denying"
-                    );
-                    return PermissionDecision::Deny;
-                };
-
-                let request_id = next_request_id();
+                // Policy said Ask — publish event on the bus and await user decision.
                 let context =
                     capture_hook
                         .captured_context
@@ -389,13 +366,13 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                             pre_authorize_display: None,
                         });
 
-                let (tx, rx) = oneshot::channel::<ProtocolPermissionDecision>();
+                let (tx, rx) = OneshotTx::<ProtocolPermissionDecision>::channel("permission");
+                let request_id = bus
+                    .permission()
+                    .request_permission(context)
+                    .await
+                    .unwrap_or_else(|_| next_request_id());
                 pending.lock().unwrap().insert(request_id.clone(), tx);
-
-                let _ = ui_tx.send(UiEvent::PermissionRequested {
-                    request_id,
-                    context,
-                });
 
                 // Await the TUI's decision. Deny if the channel is dropped.
                 let protocol_decision = rx.await.unwrap_or(ProtocolPermissionDecision::Deny);

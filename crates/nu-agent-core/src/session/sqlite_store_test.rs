@@ -3,12 +3,14 @@ use crate::session::store::{CompactionMarker, SessionStore, StoreEntry};
 use crate::types::Message;
 use chrono::Utc;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // ================================================================
 // Basic CRUD
 // ================================================================
 
 #[tokio::test]
-async fn create_and_load_round_trip() {
+async fn create_and_load_round_trip() -> Result<()> {
     let store = SqliteSessionStore::new(":memory:")
         .await
         .expect("create store");
@@ -17,9 +19,11 @@ async fn create_and_load_round_trip() {
 
     store.create(session_id, &messages).await.expect("create");
 
-    let result = store.load(session_id).await.expect("load");
-    assert!(result.is_some(), "session should exist after create");
-    let (metadata, entries) = result.unwrap();
+    let (metadata, entries) = store
+        .load(session_id)
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(metadata.session_id, session_id);
     assert_eq!(entries.len(), 2);
 
@@ -40,10 +44,11 @@ async fn create_and_load_round_trip() {
         }
         _ => panic!("Expected Message entry at index 1"),
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn create_and_load_with_markers() {
+async fn create_and_load_with_markers() -> Result<()> {
     let store = SqliteSessionStore::new(":memory:")
         .await
         .expect("create store");
@@ -74,9 +79,11 @@ async fn create_and_load_with_markers() {
         .expect("append post-marker message");
 
     // Load and verify all entries preserved
-    let result = store.load(session_id).await.expect("load");
-    assert!(result.is_some());
-    let (_metadata, entries) = result.unwrap();
+    let (_metadata, entries) = store
+        .load(session_id)
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 3, "should have 1 msg + 1 marker + 1 msg");
 
     assert!(
@@ -91,6 +98,7 @@ async fn create_and_load_with_markers() {
         matches!(&entries[2], StoreEntry::Message(_)),
         "entry 2 should be a message"
     );
+    Ok(())
 }
 
 #[tokio::test]
@@ -129,7 +137,7 @@ async fn load_empty_session_returns_none() {
 // ================================================================
 
 #[tokio::test]
-async fn append_extends_session() {
+async fn append_extends_session() -> Result<()> {
     let store = SqliteSessionStore::new(":memory:")
         .await
         .expect("create store");
@@ -151,9 +159,11 @@ async fn append_extends_session() {
         .expect("append");
 
     // Load and verify all entries present
-    let result = store.load(session_id).await.expect("load");
-    assert!(result.is_some());
-    let (_metadata, entries) = result.unwrap();
+    let (_metadata, entries) = store
+        .load(session_id)
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 2, "should have 2 entries after append");
 
     // Verify order
@@ -171,10 +181,11 @@ async fn append_extends_session() {
         }
         _ => panic!("Expected Message entry at index 1"),
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn append_position_order_preserved() {
+async fn append_position_order_preserved() -> Result<()> {
     let store = SqliteSessionStore::new(":memory:")
         .await
         .expect("create store");
@@ -205,9 +216,11 @@ async fn append_position_order_preserved() {
         .expect("append 2");
 
     // Load and verify sequential order
-    let result = store.load(session_id).await.expect("load");
-    assert!(result.is_some());
-    let (_metadata, entries) = result.unwrap();
+    let (_metadata, entries) = store
+        .load(session_id)
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 5, "should have 5 entries total");
 
     // Verify each entry's text content via JSON
@@ -225,10 +238,11 @@ async fn append_position_order_preserved() {
             _ => panic!("Expected Message entry at index {i}"),
         }
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn append_to_nonexistent_session() {
+async fn append_to_nonexistent_session() -> Result<()> {
     let store = SqliteSessionStore::new(":memory:")
         .await
         .expect("create store");
@@ -245,12 +259,11 @@ async fn append_to_nonexistent_session() {
         .expect("append to non-existent session");
 
     // Load and verify
-    let result = store.load("brand-new-session").await.expect("load");
-    assert!(
-        result.is_some(),
-        "session should exist after append to non-existent"
-    );
-    let (_metadata, entries) = result.unwrap();
+    let (_metadata, entries) = store
+        .load("brand-new-session")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 1);
     match &entries[0] {
         StoreEntry::Message(m) => {
@@ -259,6 +272,7 @@ async fn append_to_nonexistent_session() {
         }
         _ => panic!("Expected Message entry"),
     }
+    Ok(())
 }
 
 // ================================================================
@@ -266,7 +280,7 @@ async fn append_to_nonexistent_session() {
 // ================================================================
 
 #[tokio::test]
-async fn replace_entries_cleans_and_rewrites() {
+async fn replace_entries_cleans_and_rewrites() -> Result<()> {
     let store = SqliteSessionStore::new(":memory:")
         .await
         .expect("create store");
@@ -295,9 +309,11 @@ async fn replace_entries_cleans_and_rewrites() {
         .expect("replace entries");
 
     // Load and verify only 3 remain
-    let result = store.load(session_id).await.expect("load");
-    assert!(result.is_some());
-    let (_metadata, entries) = result.unwrap();
+    let (_metadata, entries) = store
+        .load(session_id)
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(
         entries.len(),
         3,
@@ -318,10 +334,11 @@ async fn replace_entries_cleans_and_rewrites() {
         }
         _ => panic!("Expected Marker entry at index 2"),
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn replace_entries_preserves_order() {
+async fn replace_entries_preserves_order() -> Result<()> {
     let store = SqliteSessionStore::new(":memory:")
         .await
         .expect("create store");
@@ -344,9 +361,11 @@ async fn replace_entries_preserves_order() {
         .expect("replace entries");
 
     // Load and verify order
-    let result = store.load(session_id).await.expect("load");
-    assert!(result.is_some());
-    let (_metadata, entries) = result.unwrap();
+    let (_metadata, entries) = store
+        .load(session_id)
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 3);
 
     assert!(
@@ -361,6 +380,7 @@ async fn replace_entries_preserves_order() {
         matches!(&entries[2], StoreEntry::Message(_)),
         "entry 2 should be a message"
     );
+    Ok(())
 }
 
 // ================================================================
@@ -508,7 +528,7 @@ async fn in_memory_sqlite_works() {
 }
 
 #[tokio::test]
-async fn corrupt_row_skipped_not_fatal() {
+async fn corrupt_row_skipped_not_fatal() -> Result<()> {
     let store = SqliteSessionStore::new(":memory:")
         .await
         .expect("create store");
@@ -542,9 +562,11 @@ async fn corrupt_row_skipped_not_fatal() {
         .expect("insert valid row after corrupt");
 
     // Load should skip the corrupt row and return valid entries
-    let result = store.load(session_id).await.expect("load");
-    assert!(result.is_some(), "should still load despite corrupt row");
-    let (_metadata, entries) = result.unwrap();
+    let (_metadata, entries) = store
+        .load(session_id)
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     // Should have 2 entries: the original valid message + the valid message after corrupt
     assert_eq!(entries.len(), 2, "corrupt row should be skipped");
 
@@ -563,6 +585,7 @@ async fn corrupt_row_skipped_not_fatal() {
         }
         _ => panic!("Expected Message entry at index 1"),
     }
+    Ok(())
 }
 
 // ================================================================
@@ -570,7 +593,7 @@ async fn corrupt_row_skipped_not_fatal() {
 // ================================================================
 
 #[tokio::test]
-async fn title_extracted_from_first_user_message_sqlite() {
+async fn title_extracted_from_first_user_message_sqlite() -> Result<()> {
     let store = SqliteSessionStore::new(":memory:")
         .await
         .expect("create store");
@@ -593,15 +616,20 @@ async fn title_extracted_from_first_user_message_sqlite() {
     );
 
     // Verify via load
-    let (metadata, _entries) = store.load("title-test-1").await.expect("load").unwrap();
+    let (metadata, _entries) = store
+        .load("title-test-1")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(
         metadata.title,
         Some("Hello, this is my first message".to_string())
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn title_none_when_no_user_message_sqlite() {
+async fn title_none_when_no_user_message_sqlite() -> Result<()> {
     let store = SqliteSessionStore::new(":memory:")
         .await
         .expect("create store");
@@ -622,13 +650,14 @@ async fn title_none_when_no_user_message_sqlite() {
     let (metadata, _entries) = store
         .load("no-user-msg-sqlite")
         .await
-        .expect("load")
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(metadata.title, None);
+    Ok(())
 }
 
 #[tokio::test]
-async fn title_survives_round_trip_sqlite() {
+async fn title_survives_round_trip_sqlite() -> Result<()> {
     let store = SqliteSessionStore::new(":memory:")
         .await
         .expect("create store");
@@ -644,8 +673,13 @@ async fn title_survives_round_trip_sqlite() {
     let session = sessions.iter().find(|s| s.id == "round-trip").unwrap();
     assert_eq!(session.title, Some("Round trip title test".to_string()));
 
-    let (metadata, _entries) = store.load("round-trip").await.expect("load").unwrap();
+    let (metadata, _entries) = store
+        .load("round-trip")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(metadata.title, Some("Round trip title test".to_string()));
+    Ok(())
 }
 
 // ================================================================

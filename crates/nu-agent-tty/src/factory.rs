@@ -1,7 +1,8 @@
 use std::io::Write;
 
-use nu_agent_core::policy::UiPolicy;
 use nu_agent_core::renderer::UiRenderer;
+
+use crate::policy::UiPolicy;
 
 use crate::renderer::StderrUiRenderer;
 

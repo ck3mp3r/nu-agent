@@ -25,7 +25,7 @@ impl BlockRenderer for TuiRenderer {
         // This ensures tables and other width-sensitive constructs can use the
         // actual terminal width rather than a fixed size baked in at construction.
         let projected_lines: Vec<ContentLine>;
-        let content_lines: &[ContentLine] = if let Some(ref md) = block.markdown {
+        let content_lines: &[ContentLine] = if let Some(md) = &block.markdown {
             let canvas_width = u16::try_from(ctx.width).unwrap_or(u16::MAX);
             projected_lines = crate::markdown::render_markdown_lines(md, Some(canvas_width));
             &projected_lines
@@ -52,10 +52,10 @@ impl BlockRenderer for TuiRenderer {
                     self.lane_prefix(block.role.clone(), ctx.cursor, block.suppress_prefix);
 
                 // Add status indicator if present
-                if let Some(ref status) = ctx.status {
+                if let Some(status) = &ctx.status {
                     let indicator = Self::indicator_char(status, ctx.now_millis);
                     let style = self.indicator_style(status);
-                    spans.push(RatatuiSpan::styled(format!("{} ", indicator), style));
+                    spans.push(RatatuiSpan::styled(format!("{indicator} "), style));
                 }
 
                 spans
@@ -228,7 +228,7 @@ impl TuiRenderer {
         ctx: &RenderContext,
         cache: &mut HashMap<String, Vec<ContentLine>>,
     ) -> Vec<Line<'static>> {
-        let block = if let Some(ref md) = block.markdown {
+        let block = if let Some(md) = &block.markdown {
             let content_lines = cache.entry(md.clone()).or_insert_with(|| {
                 let canvas_width = u16::try_from(ctx.width).unwrap_or(u16::MAX);
                 crate::markdown::render_markdown_lines(md, Some(canvas_width))

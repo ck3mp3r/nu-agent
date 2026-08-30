@@ -30,7 +30,7 @@ fn drain(transport: &mut TuiTransport) -> Vec<TransportItem> {
 
 #[test]
 fn poll_next_returns_none_when_empty_non_blocking() {
-    let mut transport = TuiTransport::new();
+    let mut transport = TuiTransport::default();
 
     assert!(transport.poll_next().is_none());
     assert!(transport.is_empty());
@@ -102,7 +102,7 @@ fn table_driven_fifo_and_deterministic_merge_policy_round_robin_user_first() {
     ];
 
     for case in cases {
-        let mut transport = TuiTransport::new();
+        let mut transport = TuiTransport::default();
 
         for item in case.enqueue {
             match item {
@@ -123,7 +123,7 @@ fn table_driven_fifo_and_deterministic_merge_policy_round_robin_user_first() {
 
 #[test]
 fn explicit_unbounded_policy_accepts_large_burst_without_drops() {
-    let mut transport = TuiTransport::new();
+    let mut transport = TuiTransport::default();
     let total = 10_000usize;
 
     for _ in 0..total {

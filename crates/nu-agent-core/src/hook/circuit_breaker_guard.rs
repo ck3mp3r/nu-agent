@@ -34,9 +34,8 @@ impl CircuitBreakerGuard {
                 "circuit_breaker: MCP server '{server_name}' disabled, skipping {tool_name}"
             );
             return Some(ToolCallAction::skip(format!(
-                "MCP server '{}' is disabled (circuit breaker tripped). \
-                     Re-enable via MCP panel.",
-                server_name
+                "MCP server '{server_name}' is disabled (circuit breaker tripped). \
+                     Re-enable via MCP panel."
             )));
         }
         None
@@ -50,7 +49,7 @@ impl CircuitBreakerGuard {
     /// Auth errors (401/403) are NOT transport errors — they bypass the circuit
     /// breaker entirely so that user-actionable auth failures don't disable the
     /// server.
-    pub fn record_result(
+    pub async fn record_result(
         &self,
         tool_name: &str,
         result: &str,
@@ -82,13 +81,15 @@ impl CircuitBreakerGuard {
                 if let Err(e) = mcp_registry.set_server_enabled(server_name, false) {
                     log::error!("Failed to disable MCP server '{}': {}", server_name, e);
                 }
-                let _ = bus.warning().send(WarningEvent::Message {
-                    message: format!(
-                        "MCP server '{}' disconnected — tools disabled. \
-                         Re-enable via MCP panel.",
-                        server_name
-                    ),
-                });
+                let _ = bus
+                    .warning()
+                    .send(WarningEvent::Message {
+                        message: format!(
+                            "MCP server '{server_name}' disconnected — tools disabled. \
+                         Re-enable via MCP panel."
+                        ),
+                    })
+                    .await;
             }
         } else if success {
             let mut cb = self.breaker.lock().expect("circuit breaker mutex poisoned");

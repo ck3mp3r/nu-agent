@@ -5,13 +5,16 @@ use nu_agent_core::protocol::prompt::{
     merge_preamble_with_prompt_and_context, merge_prompt_with_context,
 };
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
-fn test_extract_prompt_from_string() {
+fn test_extract_prompt_from_string() -> Result<()> {
     let input = Value::test_string("What is Rust?");
     let result = extract_prompt_from_input(&input);
 
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), "What is Rust?");
+    let value = result.map_err(|e| format!("{e:?}"))?;
+    assert_eq!(value, "What is Rust?");
+    Ok(())
 }
 
 #[test]
@@ -68,17 +71,18 @@ fn test_extract_prompt_from_nothing() {
 // ============================================================================
 
 #[test]
-fn test_extract_context_from_string_input_returns_none() {
+fn test_extract_context_from_string_input_returns_none() -> Result<()> {
     // String input has no context field
     let input = Value::test_string("What is Rust?");
     let result = extract_context_from_input(&input);
 
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), None);
+    let value = result.map_err(|e| format!("{e:?}"))?;
+    assert_eq!(value, None);
+    Ok(())
 }
 
 #[test]
-fn test_extract_context_from_record_without_context_field() {
+fn test_extract_context_from_record_without_context_field() -> Result<()> {
     // Record with only prompt field has no context
     let input = Value::test_record(
         vec![("prompt".to_string(), Value::test_string("test prompt"))]
@@ -87,12 +91,13 @@ fn test_extract_context_from_record_without_context_field() {
     );
     let result = extract_context_from_input(&input);
 
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), None);
+    let value = result.map_err(|e| format!("{e:?}"))?;
+    assert_eq!(value, None);
+    Ok(())
 }
 
 #[test]
-fn test_extract_context_from_record_with_context_field() {
+fn test_extract_context_from_record_with_context_field() -> Result<()> {
     // RED: Test that context field is extracted from record input
     let input = Value::test_record(
         vec![
@@ -107,11 +112,9 @@ fn test_extract_context_from_record_with_context_field() {
     );
     let result = extract_context_from_input(&input);
 
-    assert!(result.is_ok());
-    assert_eq!(
-        result.unwrap(),
-        Some("Additional context information".to_string())
-    );
+    let value = result.map_err(|e| format!("{e:?}"))?;
+    assert_eq!(value, Some("Additional context information".to_string()));
+    Ok(())
 }
 
 #[test]
@@ -137,7 +140,7 @@ fn test_extract_context_rejects_non_string_context() {
 }
 
 #[test]
-fn test_extract_context_accepts_empty_context() {
+fn test_extract_context_accepts_empty_context() -> Result<()> {
     // Empty context is valid (will be treated as None in merging)
     let input = Value::test_record(
         vec![
@@ -149,10 +152,11 @@ fn test_extract_context_accepts_empty_context() {
     );
     let result = extract_context_from_input(&input);
 
-    assert!(result.is_ok());
+    let value = result.map_err(|e| format!("{e:?}"))?;
     // Empty string should be treated as Some("") for now
     // The merging logic will decide how to handle it
-    assert_eq!(result.unwrap(), Some("".to_string()));
+    assert_eq!(value, Some("".to_string()));
+    Ok(())
 }
 
 // ============================================================================
@@ -249,18 +253,21 @@ mod record_input_tests {
     use super::extract_prompt_from_input;
     use nu_protocol::Value;
 
+    type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
     #[test]
-    fn extract_prompt_from_string_input() {
+    fn extract_prompt_from_string_input() -> Result<()> {
         // Test existing functionality - string input
         let input = Value::test_string("test prompt");
         let result = extract_prompt_from_input(&input);
 
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "test prompt");
+        let value = result.map_err(|e| format!("{e:?}"))?;
+        assert_eq!(value, "test prompt");
+        Ok(())
     }
 
     #[test]
-    fn extract_prompt_from_record_input_with_prompt_field() {
+    fn extract_prompt_from_record_input_with_prompt_field() -> Result<()> {
         // RED: Test record input with {prompt: "test"}
         // This will fail because extract_prompt_from_input currently only accepts String
 
@@ -273,12 +280,9 @@ mod record_input_tests {
         let result = extract_prompt_from_input(&input);
 
         // Expected: should extract "test prompt" from record
-        assert!(
-            result.is_ok(),
-            "Failed to extract prompt from record: {:?}",
-            result
-        );
-        assert_eq!(result.unwrap(), "test prompt");
+        let value = result.map_err(|e| format!("{e:?}"))?;
+        assert_eq!(value, "test prompt");
+        Ok(())
     }
 
     #[test]
@@ -328,7 +332,7 @@ mod record_input_tests {
     }
 
     #[test]
-    fn extract_prompt_from_record_with_optional_fields() {
+    fn extract_prompt_from_record_with_optional_fields() -> Result<()> {
         // RED: Test that record with optional fields (context, model) still works
         // For now, we just need to extract the prompt, optional fields are ignored
 
@@ -347,12 +351,9 @@ mod record_input_tests {
 
         let result = extract_prompt_from_input(&input);
 
-        assert!(
-            result.is_ok(),
-            "Failed to extract prompt from record with optional fields: {:?}",
-            result
-        );
-        assert_eq!(result.unwrap(), "test prompt");
+        let value = result.map_err(|e| format!("{e:?}"))?;
+        assert_eq!(value, "test prompt");
+        Ok(())
     }
 
     #[test]

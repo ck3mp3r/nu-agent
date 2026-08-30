@@ -5,56 +5,63 @@ use serial_test::serial;
 use std::env;
 use tempfile::TempDir;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 /// Helper to run a test with a controlled XDG_CONFIG_HOME pointing to a temp dir.
-fn with_xdg_config_home<F>(test: F)
+fn with_xdg_config_home<F>(test: F) -> Result<()>
 where
-    F: FnOnce(&TempDir),
+    F: FnOnce(&TempDir) -> Result<()>,
 {
-    let dir = TempDir::new().expect("failed to create temp dir");
+    let dir = TempDir::new().map_err(|e| format!("failed to create temp dir: {e}"))?;
     unsafe {
         env::set_var("XDG_CONFIG_HOME", dir.path());
     }
-    test(&dir);
+    let result = test(&dir);
     unsafe {
         env::remove_var("XDG_CONFIG_HOME");
     }
+    result
 }
 
 #[test]
 #[serial]
-fn config_path_returns_xdg_path() {
+fn config_path_returns_xdg_path() -> Result<()> {
     with_xdg_config_home(|dir| {
         let expected = dir.path().join("nu-agent").join("config.toml");
-        let path = config_path().expect("config_path should succeed");
+        let path = config_path().map_err(|e| format!("config_path should succeed: {e:?}"))?;
         assert_eq!(path, expected);
-    });
+        Ok(())
+    })
 }
 
 #[test]
 #[serial]
-fn load_returns_default_when_file_missing() {
+fn load_returns_default_when_file_missing() -> Result<()> {
     with_xdg_config_home(|_| {
-        let config = load().expect("load should not error when file missing");
+        let config =
+            load().map_err(|e| format!("load should not error when file missing: {e:?}"))?;
         assert_eq!(config, PluginConfig::default());
-    });
+        Ok(())
+    })
 }
 
 #[test]
 #[serial]
-fn load_parses_minimal_config() {
+fn load_parses_minimal_config() -> Result<()> {
     with_xdg_config_home(|dir| {
         let config_dir = dir.path().join("nu-agent");
         std::fs::create_dir_all(&config_dir).expect("create config dir");
         std::fs::write(config_dir.join("config.toml"), "").expect("write config");
 
-        let config = load().expect("load should succeed");
+        let config = load().map_err(|e| format!("load should succeed: {e:?}"))?;
         assert_eq!(config, PluginConfig::default());
-    });
+        Ok(())
+    })
 }
 
 #[test]
 #[serial]
-fn load_parses_full_config() {
+fn load_parses_full_config() -> Result<()> {
     with_xdg_config_home(|dir| {
         let config_dir = dir.path().join("nu-agent");
         std::fs::create_dir_all(&config_dir).expect("create config dir");
@@ -92,28 +99,28 @@ default = "planner"
         )
         .expect("write config");
 
-        let config = load().expect("load should succeed");
+        let config = load().map_err(|e| format!("load should succeed: {e:?}"))?;
 
         // Models
-        let default = config.models.get("default").expect("default role");
+        let default = config.models.get("default").ok_or("default role")?;
         assert_eq!(default.model, "openai/gpt-4");
         assert_eq!(default.temperature, Some(0.7));
         assert_eq!(default.max_tokens, Some(2048));
 
-        let heavy = config.models.get("heavy").expect("heavy role");
+        let heavy = config.models.get("heavy").ok_or("heavy role")?;
         assert_eq!(heavy.model, "openai/gpt-4-turbo");
 
         // Providers
-        let openai = config.providers.get("openai").expect("openai provider");
+        let openai = config.providers.get("openai").ok_or("openai provider")?;
         assert_eq!(openai.name.as_deref(), Some("OpenAI"));
         assert_eq!(openai.base_url.as_deref(), Some("https://api.openai.com"));
-        let gpt4 = openai.models.get("gpt-4").expect("gpt-4 model");
+        let gpt4 = openai.models.get("gpt-4").ok_or("gpt-4 model")?;
         assert_eq!(gpt4.name.as_deref(), Some("GPT-4"));
         assert_eq!(gpt4.temperature, Some(0.5));
         assert_eq!(gpt4.tool_call, Some(true));
 
         // Compaction
-        let compaction = config.compaction.expect("compaction");
+        let compaction = config.compaction.ok_or("compaction")?;
         assert_eq!(
             compaction.strategy,
             Some(CompactionStrategy::SlidingSummary)
@@ -127,26 +134,31 @@ default = "planner"
 
         // A2A
         assert_eq!(config.a2a_enabled, Some(true));
-    });
+        Ok(())
+    })
 }
 
 #[test]
 #[serial]
-fn load_returns_error_on_malformed_toml() {
+fn load_returns_error_on_malformed_toml() -> Result<()> {
     with_xdg_config_home(|dir| {
         let config_dir = dir.path().join("nu-agent");
         std::fs::create_dir_all(&config_dir).expect("create config dir");
         std::fs::write(config_dir.join("config.toml"), "this is = not valid [toml")
             .expect("write config");
 
-        let err = load().expect_err("load should error on malformed toml");
+        let err = match load() {
+            Ok(_) => return Err("load should error on malformed toml".into()),
+            Err(e) => e,
+        };
         assert!(matches!(err, TomlConfigError::Parse(_)));
-    });
+        Ok(())
+    })
 }
 
 #[test]
 #[serial]
-fn load_returns_error_on_wrong_types() {
+fn load_returns_error_on_wrong_types() -> Result<()> {
     with_xdg_config_home(|dir| {
         let config_dir = dir.path().join("nu-agent");
         std::fs::create_dir_all(&config_dir).expect("create config dir");
@@ -156,14 +168,18 @@ fn load_returns_error_on_wrong_types() {
         )
         .expect("write config");
 
-        let err = load().expect_err("load should error on wrong types");
+        let err = match load() {
+            Ok(_) => return Err("load should error on wrong types".into()),
+            Err(e) => e,
+        };
         assert!(matches!(err, TomlConfigError::Parse(_)));
-    });
+        Ok(())
+    })
 }
 
 #[test]
 #[serial]
-fn load_handles_partial_config() {
+fn load_handles_partial_config() -> Result<()> {
     with_xdg_config_home(|dir| {
         let config_dir = dir.path().join("nu-agent");
         std::fs::create_dir_all(&config_dir).expect("create config dir");
@@ -176,7 +192,7 @@ model = "openai/gpt-4"
         )
         .expect("write config");
 
-        let config = load().expect("load should succeed");
+        let config = load().map_err(|e| format!("load should succeed: {e:?}"))?;
 
         // Only models.default set; everything else defaults
         assert_eq!(config.models.len(), 1);
@@ -185,19 +201,21 @@ model = "openai/gpt-4"
         assert!(config.compaction.is_none());
         assert_eq!(config.a2a_enabled, None);
         assert_eq!(config.agents, AgentsConfig::default());
-    });
+        Ok(())
+    })
 }
 
 #[test]
 #[serial]
-fn load_handles_serde_default_annotations() {
+fn load_handles_serde_default_annotations() -> Result<()> {
     with_xdg_config_home(|dir| {
         let config_dir = dir.path().join("nu-agent");
         std::fs::create_dir_all(&config_dir).expect("create config dir");
         // No sections at all — all #[serde(default)] fields should resolve
         std::fs::write(config_dir.join("config.toml"), "").expect("write config");
 
-        let config = load().expect("load should succeed");
+        let config = load().map_err(|e| format!("load should succeed: {e:?}"))?;
         assert_eq!(config, PluginConfig::default());
-    });
+        Ok(())
+    })
 }

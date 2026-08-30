@@ -2,6 +2,8 @@ use super::*;
 use crate::bus::Bus;
 use crate::tools::handler::ToolErrorKind;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
 fn bounded_tree_cache_evicts_oldest_when_over_capacity() {
     let mut cache = BoundedTreeCache::<u32>::new();
@@ -39,7 +41,7 @@ async fn ast_query_tool_missing_query_returns_validation_error() {
     let path = dir.path().join("main.rs");
     std::fs::write(&path, "fn main() {}").unwrap();
     let args = serde_json::json!({ "path": path.to_str().unwrap(), "language": "rust" });
-    let err = AstQueryTool::execute(&args, dir.path(), &Bus::new())
+    let err = AstQueryTool::execute(&args, dir.path(), &Bus::default())
         .await
         .unwrap_err();
     assert_eq!(err.kind, ToolErrorKind::Validation);
@@ -51,7 +53,7 @@ async fn ast_nodes_tool_missing_node_type_returns_validation_error() {
     let path = dir.path().join("main.rs");
     std::fs::write(&path, "fn main() {}").unwrap();
     let args = serde_json::json!({ "path": path.to_str().unwrap(), "language": "rust" });
-    let err = AstNodesTool::execute(&args, dir.path(), &Bus::new())
+    let err = AstNodesTool::execute(&args, dir.path(), &Bus::default())
         .await
         .unwrap_err();
     assert_eq!(err.kind, ToolErrorKind::Validation);
@@ -63,7 +65,7 @@ async fn ast_refs_tool_missing_name_returns_validation_error() {
     let path = dir.path().join("main.rs");
     std::fs::write(&path, "fn main() {}").unwrap();
     let args = serde_json::json!({ "path": path.to_str().unwrap(), "language": "rust" });
-    let err = AstRefsTool::execute(&args, dir.path(), &Bus::new())
+    let err = AstRefsTool::execute(&args, dir.path(), &Bus::default())
         .await
         .unwrap_err();
     assert_eq!(err.kind, ToolErrorKind::Validation);
@@ -73,7 +75,7 @@ async fn ast_refs_tool_missing_name_returns_validation_error() {
 async fn ast_tree_tool_missing_language_returns_validation_error() {
     let dir = tempfile::tempdir().unwrap();
     let args = serde_json::json!({ "path": "main.rs" });
-    let err = AstTreeTool::execute(&args, dir.path(), &Bus::new())
+    let err = AstTreeTool::execute(&args, dir.path(), &Bus::default())
         .await
         .unwrap_err();
     assert_eq!(err.kind, ToolErrorKind::Validation);
@@ -91,7 +93,7 @@ async fn missing_config_returns_runtime_error() {
     let missing_dir = dir.path().join("nonexistent-tree-sitter-dir");
     let previous = std::env::var_os("TREE_SITTER_DIR");
     unsafe { std::env::set_var("TREE_SITTER_DIR", &missing_dir) };
-    let result = AstTreeTool::execute(&args, dir.path(), &Bus::new()).await;
+    let result = AstTreeTool::execute(&args, dir.path(), &Bus::default()).await;
     match previous {
         Some(v) => unsafe { std::env::set_var("TREE_SITTER_DIR", v) },
         None => unsafe { std::env::remove_var("TREE_SITTER_DIR") },
@@ -102,7 +104,7 @@ async fn missing_config_returns_runtime_error() {
 }
 #[tokio::test]
 #[ignore]
-async fn ast_query_tool_finds_function_names() {
+async fn ast_query_tool_finds_function_names() -> Result<()> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("main.rs");
     std::fs::write(&path, "fn foo() {}\nfn bar() {}\n").unwrap();
@@ -111,9 +113,9 @@ async fn ast_query_tool_finds_function_names() {
         "language": "rust",
         "query": "(function_item name: (identifier) @fn-name)"
     });
-    let result = AstQueryTool::execute(&args, dir.path(), &Bus::new())
+    let result = AstQueryTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let matches = result["matches"].as_array().unwrap();
     assert!(!matches.is_empty());
     let names: Vec<String> = matches
@@ -122,10 +124,11 @@ async fn ast_query_tool_finds_function_names() {
         .collect();
     assert!(names.contains(&"foo".to_string()));
     assert!(names.contains(&"bar".to_string()));
+    Ok(())
 }
 #[tokio::test]
 #[ignore]
-async fn ast_nodes_tool_finds_match_arms() {
+async fn ast_nodes_tool_finds_match_arms() -> Result<()> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("main.rs");
     std::fs::write(
@@ -138,17 +141,18 @@ async fn ast_nodes_tool_finds_match_arms() {
         "language": "rust",
         "node_type": "match_arm"
     });
-    let result = AstNodesTool::execute(&args, dir.path(), &Bus::new())
+    let result = AstNodesTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let nodes = result["nodes"].as_array().unwrap();
     assert!(!nodes.is_empty());
     assert_eq!(result["node_type"], "match_arm");
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore]
-async fn ast_refs_tool_finds_symbol() {
+async fn ast_refs_tool_finds_symbol() -> Result<()> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("main.rs");
     std::fs::write(
@@ -161,9 +165,9 @@ async fn ast_refs_tool_finds_symbol() {
         "language": "rust",
         "name": "Foo"
     });
-    let result = AstRefsTool::execute(&args, dir.path(), &Bus::new())
+    let result = AstRefsTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let matches = result["matches"].as_array().unwrap();
     assert!(!matches.is_empty());
     let texts: Vec<String> = matches
@@ -171,36 +175,39 @@ async fn ast_refs_tool_finds_symbol() {
         .filter_map(|m| m["captures"]["name"]["text"].as_str().map(String::from))
         .collect();
     assert!(texts.iter().all(|t| t == "Foo"));
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore]
-async fn ast_tree_tool_returns_sexp() {
+async fn ast_tree_tool_returns_sexp() -> Result<()> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("main.rs");
     std::fs::write(&path, "fn main() {}").unwrap();
     let args = serde_json::json!({ "path": path.to_str().unwrap(), "language": "rust" });
-    let result = AstTreeTool::execute(&args, dir.path(), &Bus::new())
+    let result = AstTreeTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let tree = result["tree"].as_str().unwrap();
     assert!(tree.contains("source_file"));
     assert!(tree.contains("function_item"));
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore]
-async fn ast_tree_tool_with_max_depth_1_returns_truncated() {
+async fn ast_tree_tool_with_max_depth_1_returns_truncated() -> Result<()> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("main.rs");
     std::fs::write(&path, "fn main() {}").unwrap();
     let args =
         serde_json::json!({ "path": path.to_str().unwrap(), "language": "rust", "max_depth": 1 });
-    let result = AstTreeTool::execute(&args, dir.path(), &Bus::new())
+    let result = AstTreeTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let tree = result["tree"].as_str().unwrap();
     assert!(tree.contains("..."));
+    Ok(())
 }
 // ── E2E tests with fixtures ────────────────────────────────────────────────
 
@@ -215,7 +222,7 @@ async fn e2e_nonexistent_file_returns_runtime_error() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("nonexistent.rs");
     let args = serde_json::json!({ "path": path.to_str().unwrap(), "language": "rust", "query": "(function_item)" });
-    let err = AstQueryTool::execute(&args, dir.path(), &Bus::new())
+    let err = AstQueryTool::execute(&args, dir.path(), &Bus::default())
         .await
         .unwrap_err();
     assert_eq!(err.kind, ToolErrorKind::Runtime);
@@ -224,7 +231,7 @@ async fn e2e_nonexistent_file_returns_runtime_error() {
 
 #[tokio::test]
 #[ignore]
-async fn e2e_query_on_sample_rs_returns_function_matches() {
+async fn e2e_query_on_sample_rs_returns_function_matches() -> Result<()> {
     let path = fixture_path("sample.rs");
     let cwd = path.parent().unwrap();
     let args = serde_json::json!({
@@ -232,9 +239,9 @@ async fn e2e_query_on_sample_rs_returns_function_matches() {
         "language": "rust",
         "query": "(function_item name: (identifier) @fn-name)"
     });
-    let result = AstQueryTool::execute(&args, cwd, &Bus::new())
+    let result = AstQueryTool::execute(&args, cwd, &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let matches = result["matches"].as_array().unwrap();
     assert!(!matches.is_empty());
     let names: Vec<String> = matches
@@ -243,11 +250,12 @@ async fn e2e_query_on_sample_rs_returns_function_matches() {
         .collect();
     assert!(names.contains(&"process".to_string()));
     assert!(names.contains(&"main".to_string()));
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore]
-async fn e2e_nodes_on_sample_rs_returns_match_arms() {
+async fn e2e_nodes_on_sample_rs_returns_match_arms() -> Result<()> {
     let path = fixture_path("sample.rs");
     let cwd = path.parent().unwrap();
     let args = serde_json::json!({
@@ -255,17 +263,18 @@ async fn e2e_nodes_on_sample_rs_returns_match_arms() {
         "language": "rust",
         "node_type": "match_arm"
     });
-    let result = AstNodesTool::execute(&args, cwd, &Bus::new())
+    let result = AstNodesTool::execute(&args, cwd, &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let nodes = result["nodes"].as_array().unwrap();
     assert!(!nodes.is_empty());
     assert_eq!(result["node_type"], "match_arm");
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore]
-async fn e2e_refs_on_sample_rs_finds_status_occurrences() {
+async fn e2e_refs_on_sample_rs_finds_status_occurrences() -> Result<()> {
     let path = fixture_path("sample.rs");
     let cwd = path.parent().unwrap();
     let args = serde_json::json!({
@@ -273,7 +282,9 @@ async fn e2e_refs_on_sample_rs_finds_status_occurrences() {
         "language": "rust",
         "name": "Status"
     });
-    let result = AstRefsTool::execute(&args, cwd, &Bus::new()).await.unwrap();
+    let result = AstRefsTool::execute(&args, cwd, &Bus::default())
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     let matches = result["matches"].as_array().unwrap();
     assert!(!matches.is_empty());
     let texts: Vec<String> = matches
@@ -281,29 +292,36 @@ async fn e2e_refs_on_sample_rs_finds_status_occurrences() {
         .filter_map(|m| m["captures"]["name"]["text"].as_str().map(String::from))
         .collect();
     assert!(texts.iter().all(|t| t == "Status"));
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore]
-async fn e2e_tree_on_sample_rs_returns_valid_sexp() {
+async fn e2e_tree_on_sample_rs_returns_valid_sexp() -> Result<()> {
     let path = fixture_path("sample.rs");
     let cwd = path.parent().unwrap();
     let args = serde_json::json!({ "path": path.to_str().unwrap(), "language": "rust" });
-    let result = AstTreeTool::execute(&args, cwd, &Bus::new()).await.unwrap();
+    let result = AstTreeTool::execute(&args, cwd, &Bus::default())
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     let tree = result["tree"].as_str().unwrap();
     assert!(tree.contains("source_file"));
     assert!(tree.contains("function_item"));
     assert!(tree.contains("struct_item"));
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore]
-async fn e2e_tree_with_max_depth_1_returns_truncated() {
+async fn e2e_tree_with_max_depth_1_returns_truncated() -> Result<()> {
     let path = fixture_path("sample.rs");
     let cwd = path.parent().unwrap();
     let args =
         serde_json::json!({ "path": path.to_str().unwrap(), "language": "rust", "max_depth": 1 });
-    let result = AstTreeTool::execute(&args, cwd, &Bus::new()).await.unwrap();
+    let result = AstTreeTool::execute(&args, cwd, &Bus::default())
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     let tree = result["tree"].as_str().unwrap();
     assert!(tree.contains("..."));
+    Ok(())
 }

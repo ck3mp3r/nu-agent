@@ -7,7 +7,7 @@ use std::path::Path;
 
 #[tokio::test]
 async fn missing_action_returns_validation_error() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxLayoutTool::execute(
         &serde_json::json!({"session": "main", "window": "0", "layout": "tiled"}),
         Path::new("/tmp"),
@@ -20,7 +20,7 @@ async fn missing_action_returns_validation_error() {
 
 #[tokio::test]
 async fn unknown_action_returns_validation_error() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxLayoutTool::execute(
         &serde_json::json!({
             "action": "bogus",
@@ -39,7 +39,7 @@ async fn unknown_action_returns_validation_error() {
 
 #[tokio::test]
 async fn missing_layout_returns_validation_error() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxLayoutTool::execute(
         &serde_json::json!({"action": "select", "session": "main", "window": "0"}),
         Path::new("/tmp"),

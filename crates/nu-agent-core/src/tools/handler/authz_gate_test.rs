@@ -5,8 +5,7 @@ use serde_json::json;
 
 use super::*;
 use crate::tools::authz::{
-    AskChoice, AskContext, PermissionDecision, PermissionEventSink, PermissionsConfig,
-    SessionGrantCache,
+    AskChoice, AskContext, PermissionDecision, PermissionsConfig, SessionGrantCache,
 };
 
 use async_trait::async_trait;
@@ -15,23 +14,16 @@ struct AlwaysDenyHook;
 
 #[async_trait]
 impl crate::tools::authz::AskApprovalHook for AlwaysDenyHook {
-    async fn choose<S: crate::tools::authz::PermissionEventSink + Send>(
+    async fn choose(
         &mut self,
         _decision: &PermissionDecision,
         _tool_name: &str,
         _source: &str,
         _args: &serde_json::Value,
         _ask_context: &AskContext,
-        _sink: Option<&mut S>,
     ) -> AskChoice {
         AskChoice::Deny
     }
-}
-
-struct NoopSink;
-
-impl PermissionEventSink for NoopSink {
-    fn emit(&mut self, _event: crate::protocol::event::UiEvent) {}
 }
 
 fn make_tool_call(name: &str) -> ToolCall {
@@ -51,7 +43,6 @@ async fn config_allow_tools_pass_permission_flow() {
         ask_context: AskContext::default(),
     };
     let mut ask_hook = AlwaysDenyHook;
-    let mut sink = NoopSink;
 
     for tool_name in ["read", "glob", "grep"] {
         let tool_call = make_tool_call(tool_name);
@@ -62,7 +53,6 @@ async fn config_allow_tools_pass_permission_flow() {
             Arc::clone(&grant_cache),
             &flow_context,
             &mut ask_hook,
-            &mut sink,
         )
         .await;
         assert!(
@@ -83,7 +73,6 @@ async fn config_ask_tools_prompt_through_permission_flow() {
         ask_context: AskContext::default(),
     };
     let mut ask_hook = AlwaysDenyHook;
-    let mut sink = NoopSink;
 
     for tool_name in ["nu", "edit", "skill", "spawn_agent", "send_message"] {
         let tool_call = make_tool_call(tool_name);
@@ -94,7 +83,6 @@ async fn config_ask_tools_prompt_through_permission_flow() {
             Arc::clone(&grant_cache),
             &flow_context,
             &mut ask_hook,
-            &mut sink,
         )
         .await;
         assert!(
@@ -113,7 +101,6 @@ async fn non_builtin_tools_go_through_permission_flow() {
         ask_context: AskContext::default(),
     };
     let mut ask_hook = AlwaysDenyHook;
-    let mut sink = NoopSink;
 
     // An unknown MCP tool with deny hook should be denied
     let tool_call = make_tool_call("some_mcp_tool");
@@ -124,7 +111,6 @@ async fn non_builtin_tools_go_through_permission_flow() {
         Arc::clone(&grant_cache),
         &flow_context,
         &mut ask_hook,
-        &mut sink,
     )
     .await;
     assert!(

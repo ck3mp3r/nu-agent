@@ -1,12 +1,14 @@
 use super::*;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // ---------------------------------------------------------------------------
 // PeerCache — unit tests
 // ---------------------------------------------------------------------------
 
 #[test]
 fn test_add_and_list() {
-    let cache = PeerCache::new();
+    let cache = PeerCache::default();
     cache.add_or_update(Peer {
         name: "a".into(),
         url: "http://127.0.0.1:1".into(),
@@ -35,8 +37,8 @@ fn test_add_and_list() {
 }
 
 #[test]
-fn test_add_and_get() {
-    let cache = PeerCache::new();
+fn test_add_and_get() -> Result<()> {
+    let cache = PeerCache::default();
     cache.add_or_update(Peer {
         name: "alice".into(),
         url: "http://127.0.0.1:8080".into(),
@@ -45,14 +47,15 @@ fn test_add_and_get() {
         card: None,
         discovered_at: std::time::Instant::now(),
     });
-    let peer = cache.get("alice").unwrap();
+    let peer = cache.get("alice").ok_or("should find alice peer")?;
     assert_eq!(peer.name, "alice");
     assert_eq!(peer.url, "http://127.0.0.1:8080");
+    Ok(())
 }
 
 #[test]
-fn test_add_and_get_card() {
-    let cache = PeerCache::new();
+fn test_add_and_get_card() -> Result<()> {
+    let cache = PeerCache::default();
     let card = AgentCard {
         name: "alice".into(),
         ..Default::default()
@@ -65,12 +68,14 @@ fn test_add_and_get_card() {
         card: Some(card.clone()),
         discovered_at: std::time::Instant::now(),
     });
-    assert_eq!(cache.card("alice").unwrap().name, "alice");
+    let card = cache.card("alice").ok_or("should find alice card")?;
+    assert_eq!(card.name, "alice");
+    Ok(())
 }
 
 #[test]
 fn test_add_then_remove() {
-    let cache = PeerCache::new();
+    let cache = PeerCache::default();
     cache.add_or_update(Peer {
         name: "alice".into(),
         ..Default::default()
@@ -81,8 +86,8 @@ fn test_add_then_remove() {
 }
 
 #[test]
-fn test_add_update() {
-    let cache = PeerCache::new();
+fn test_add_update() -> Result<()> {
+    let cache = PeerCache::default();
     cache.add_or_update(Peer {
         name: "alice".into(),
         url: "http://127.0.0.1:8080".into(),
@@ -99,25 +104,27 @@ fn test_add_update() {
         card: None,
         discovered_at: std::time::Instant::now(),
     });
-    assert_eq!(cache.get("alice").unwrap().port, 9090);
+    let peer = cache.get("alice").ok_or("should find alice peer")?;
+    assert_eq!(peer.port, 9090);
+    Ok(())
 }
 
 #[test]
 fn test_get_nonexistent() {
-    let cache = PeerCache::new();
+    let cache = PeerCache::default();
     assert!(cache.get("nobody").is_none());
 }
 
 #[test]
 fn test_card_nonexistent() {
-    let cache = PeerCache::new();
+    let cache = PeerCache::default();
     assert!(cache.card("nobody").is_none());
 }
 
 #[test]
 fn test_concurrent_access() {
     use std::sync::Arc;
-    let cache = Arc::new(PeerCache::new());
+    let cache = Arc::new(PeerCache::default());
     let mut handles = vec![];
     for i in 0..10 {
         let c = cache.clone();
@@ -137,7 +144,7 @@ fn test_concurrent_access() {
 
 #[test]
 fn peer_cache_updates_on_name_change() {
-    let cache = PeerCache::new();
+    let cache = PeerCache::default();
     cache.add_or_update(Peer {
         name: "researcher-12345".into(),
         url: "http://127.0.0.1:9999".into(),

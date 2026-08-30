@@ -123,7 +123,7 @@ impl AgentBuilder {
             },
         };
 
-        let cache = Arc::new(PeerCache::new());
+        let cache = Arc::new(PeerCache::default());
 
         // ── A2A completion event channel ──────────────────────────────────
         let (completion_tx, completion_rx) = mpsc::channel::<A2aCompletionEvent>(64);

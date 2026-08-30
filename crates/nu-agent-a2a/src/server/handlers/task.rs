@@ -70,7 +70,7 @@ pub async fn handle_tasks_get(
                 .and_then(|v| v.parse::<i32>().ok());
 
             if let Some(len) = history_length
-                && let Some(ref mut history) = task.history
+                && let Some(history) = &mut task.history
             {
                 if len == 0 {
                     task.history = None;

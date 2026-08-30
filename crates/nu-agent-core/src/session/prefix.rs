@@ -11,8 +11,8 @@ fn hash_hex(path: &Path) -> String {
             let hi = (b >> 4) as u32;
             let lo = (b & 0xf) as u32;
             [
-                char::from_digit(hi, 16).expect("hex digit"),
-                char::from_digit(lo, 16).expect("hex digit"),
+                char::from_digit(hi, 16).unwrap_or('0'),
+                char::from_digit(lo, 16).unwrap_or('0'),
             ]
         })
         .collect()

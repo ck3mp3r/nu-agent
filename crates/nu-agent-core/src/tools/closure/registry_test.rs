@@ -21,13 +21,13 @@ fn create_test_resolved() -> ResolvedClosure {
 
 #[test]
 fn new_registry_is_empty() {
-    let registry = ClosureRegistry::new();
+    let registry = ClosureRegistry::default();
     assert_eq!(registry.names().count(), 0);
 }
 
 #[test]
 fn register_adds_closure() {
-    let mut registry = ClosureRegistry::new();
+    let mut registry = ClosureRegistry::default();
 
     registry.register("add".to_string(), create_test_resolved());
 
@@ -37,7 +37,7 @@ fn register_adds_closure() {
 
 #[test]
 fn register_multiple_closures() {
-    let mut registry = ClosureRegistry::new();
+    let mut registry = ClosureRegistry::default();
 
     registry.register("add".to_string(), create_test_resolved());
     registry.register("multiply".to_string(), create_test_resolved());
@@ -51,13 +51,13 @@ fn register_multiple_closures() {
 
 #[test]
 fn get_returns_none_for_missing_closure() {
-    let registry = ClosureRegistry::new();
+    let registry = ClosureRegistry::default();
     assert!(registry.get("nonexistent").is_none());
 }
 
 #[test]
 fn register_overwrites_existing() {
-    let mut registry = ClosureRegistry::new();
+    let mut registry = ClosureRegistry::default();
 
     registry.register("add".to_string(), create_test_resolved());
     registry.register("add".to_string(), create_test_resolved());
@@ -67,7 +67,7 @@ fn register_overwrites_existing() {
 
 #[test]
 fn names_returns_all_registered_names() {
-    let mut registry = ClosureRegistry::new();
+    let mut registry = ClosureRegistry::default();
 
     registry.register("add".to_string(), create_test_resolved());
     registry.register("sub".to_string(), create_test_resolved());
@@ -82,7 +82,7 @@ fn names_returns_all_registered_names() {
 
 #[test]
 fn register_stores_resolved_closure_with_params() {
-    let mut reg = ClosureRegistry::new();
+    let mut reg = ClosureRegistry::default();
     let resolved = ResolvedClosure {
         closure: create_test_closure(),
         params: vec![ClosureParameter {

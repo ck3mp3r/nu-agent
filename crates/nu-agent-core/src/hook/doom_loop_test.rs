@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::bus::create_bus;
 
-#[test]
-fn no_doom_loop_under_threshold() {
+#[tokio::test]
+async fn no_doom_loop_under_threshold() {
     let state = Arc::new(Mutex::new(DoomLoopState::default()));
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
@@ -13,13 +13,15 @@ fn no_doom_loop_under_threshold() {
     let bus = create_bus();
 
     for _ in 0..(DOOM_LOOP_THRESHOLD - 1) {
-        let result = detector.check_and_record("read_file", "{\"path\": \"same\"}", &bus);
+        let result = detector
+            .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
+            .await;
         assert!(result.is_none());
     }
 }
 
-#[test]
-fn doom_loop_fires_at_threshold() {
+#[tokio::test]
+async fn doom_loop_fires_at_threshold() {
     let state = Arc::new(Mutex::new(DoomLoopState::default()));
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
@@ -27,7 +29,9 @@ fn doom_loop_fires_at_threshold() {
     let bus = create_bus();
 
     for i in 0..DOOM_LOOP_THRESHOLD {
-        let result = detector.check_and_record("read_file", "{\"path\": \"same\"}", &bus);
+        let result = detector
+            .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
+            .await;
         if i < DOOM_LOOP_THRESHOLD - 1 {
             assert!(result.is_none(), "call {i} should not trip doom loop");
         } else {
@@ -50,8 +54,8 @@ fn doom_loop_state_reset_clears_signatures() {
     assert_eq!(state.recent_signatures.len(), 0);
 }
 
-#[test]
-fn different_args_does_not_trip_doom_loop() {
+#[tokio::test]
+async fn different_args_does_not_trip_doom_loop() {
     let state = Arc::new(Mutex::new(DoomLoopState::default()));
     let detector = DoomLoopDetector {
         state: Arc::clone(&state),
@@ -59,8 +63,9 @@ fn different_args_does_not_trip_doom_loop() {
     let bus = create_bus();
 
     for i in 0..DOOM_LOOP_THRESHOLD {
-        let result =
-            detector.check_and_record("read_file", &format!("{{\"path\": \"{i}\"}}"), &bus);
+        let result = detector
+            .check_and_record("read_file", &format!("{{\"path\": \"{i}\"}}"), &bus)
+            .await;
         assert!(
             result.is_none(),
             "call {i} should not trip doom loop (different args)"

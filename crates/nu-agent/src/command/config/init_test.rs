@@ -53,13 +53,13 @@ fn generate_config_content_with_env_vars_has_active_model() {
 
 #[test]
 fn command_name_is_agent_config_init() {
-    let command = AgentConfigInit::new();
+    let command = AgentConfigInit;
     assert_eq!(SimplePluginCommand::name(&command), "agent config init");
 }
 
 #[test]
 fn command_has_force_flag() {
-    let command = AgentConfigInit::new();
+    let command = AgentConfigInit;
     let sig = SimplePluginCommand::signature(&command);
     let force_flag = sig.named.iter().find(|f| f.long == "force");
     assert!(force_flag.is_some(), "Missing --force switch");

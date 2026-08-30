@@ -1,17 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use serde_json::Value as JsonValue;
 
 use async_trait::async_trait;
 
-use crate::protocol::{
-    event::{PermissionDecision as UiPermissionDecision, PermissionRequestContext, ToolDisplay},
-    permission::{
-        PermissionController, PermissionRequest, PermissionRequestToken, PermissionResolution,
-    },
-};
+use crate::protocol::event::{PermissionDecision as UiPermissionDecision, ToolDisplay};
 use crate::tools::handler::builtin_tool::BuiltinTool;
 use crate::tools::handler::glob::GlobTool;
 use crate::tools::handler::grep::GrepTool;
@@ -22,8 +15,6 @@ use crate::tools::handler::tmux_pane::TmuxPaneTool;
 use crate::tools::handler::tmux_session::TmuxSessionTool;
 use crate::tools::handler::tmux_window::TmuxWindowTool;
 use crate::tools::handler::tree_sitter::{AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool};
-
-static NEXT_PERMISSION_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionAction {
@@ -68,147 +59,21 @@ impl From<UiPermissionDecision> for AskChoice {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NonInteractiveAskMode {
-    Deny,
-    Allow,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct AskRuntimeConfig {
-    pub interactive: bool,
-    pub non_interactive_mode: NonInteractiveAskMode,
-    pub timeout: Duration,
-}
-
-impl Default for AskRuntimeConfig {
-    fn default() -> Self {
-        Self {
-            interactive: true,
-            non_interactive_mode: NonInteractiveAskMode::Deny,
-            timeout: Duration::from_secs(30),
-        }
-    }
-}
-
-pub trait PermissionEventSink: Send {
-    fn emit(&mut self, event: crate::protocol::event::UiEvent);
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct AskContext {
     pub pre_authorize_display: Option<ToolDisplay>,
 }
 
-#[derive(Debug)]
-pub struct AsyncAskHook {
-    controller: PermissionController,
-    config: AskRuntimeConfig,
-    current_token: Option<PermissionRequestToken>,
-    active_request_id: Option<String>,
-}
-
-impl AsyncAskHook {
-    pub fn new(config: AskRuntimeConfig) -> Self {
-        Self {
-            controller: PermissionController::new(config.timeout),
-            config,
-            current_token: None,
-            active_request_id: None,
-        }
-    }
-
-    pub fn active_request_id(&self) -> Option<&str> {
-        self.active_request_id.as_deref()
-    }
-
-    pub async fn choose_with_sink<S: PermissionEventSink + Send>(
+#[async_trait]
+pub trait AskApprovalHook {
+    async fn choose(
         &mut self,
         decision: &PermissionDecision,
         tool_name: &str,
         source: &str,
         args: &JsonValue,
         ask_context: &AskContext,
-        mut sink: Option<&mut S>,
-    ) -> AskChoice {
-        if !self.config.interactive {
-            return match self.config.non_interactive_mode {
-                NonInteractiveAskMode::Deny => AskChoice::Deny,
-                NonInteractiveAskMode::Allow => AskChoice::AllowOnce,
-            };
-        }
-
-        let request_id = next_request_id();
-        let request_context = PermissionRequestContext {
-            tool: display_tool_name(tool_name, args),
-            source: source.to_string(),
-            mode: args
-                .get("mode")
-                .and_then(JsonValue::as_str)
-                .map(ToString::to_string),
-            matched_rule_identity: decision.matched_rule.identity.clone(),
-            scope: decision.matched_rule.scope.to_string(),
-            target_field: decision.matched_rule.target_field.clone(),
-            pattern: decision.matched_rule.pattern.clone(),
-            summary: summarize_ask_payload(args),
-            pre_authorize_display: ask_context.pre_authorize_display.clone(),
-        };
-
-        let (token, requested_event) = match self.controller.begin_request(PermissionRequest {
-            request_id: request_id.clone(),
-            context: request_context,
-        }) {
-            Ok(value) => value,
-            Err(_) => return AskChoice::Deny,
-        };
-
-        crate::protocol::permission::install_active_permission_submission_sender(Some(
-            token.sender_clone(),
-        ));
-        self.active_request_id = Some(request_id);
-        self.current_token = Some(token);
-        if let Some(s) = &mut sink {
-            s.emit(requested_event);
-        }
-
-        let (resolution, events) = self
-            .controller
-            .await_resolution(self.current_token.as_ref().expect("token set"))
-            .await;
-        if let Some(s) = &mut sink {
-            for event in events {
-                s.emit(event);
-            }
-        }
-
-        crate::protocol::permission::install_active_permission_submission_sender(None);
-        self.current_token = None;
-        self.active_request_id = None;
-
-        match resolution {
-            PermissionResolution::Decision { decision, .. } => AskChoice::from(decision),
-            PermissionResolution::TimedOut | PermissionResolution::ChannelClosed => AskChoice::Deny,
-        }
-    }
-}
-
-fn next_request_id() -> String {
-    format!(
-        "ask-{:016x}",
-        NEXT_PERMISSION_REQUEST_ID.fetch_add(1, Ordering::SeqCst)
-    )
-}
-
-fn summarize_ask_payload(args: &JsonValue) -> String {
-    let compact = serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string());
-    let trimmed = if compact.chars().count() > 240 {
-        let mut prefix = compact.chars().take(240).collect::<String>();
-        prefix.push('…');
-        prefix
-    } else {
-        compact
-    };
-    format!("→ {trimmed}")
+    ) -> AskChoice;
 }
 
 /// Format tool name with arguments for display in permission prompts.
@@ -282,53 +147,6 @@ fn format_arg_value(value: &JsonValue) -> String {
         JsonValue::Null => String::new(), // Should never reach here as nulls are filtered
     }
 }
-
-#[async_trait]
-pub trait AskApprovalHook {
-    async fn choose<S: PermissionEventSink + Send>(
-        &mut self,
-        decision: &PermissionDecision,
-        tool_name: &str,
-        source: &str,
-        args: &JsonValue,
-        ask_context: &AskContext,
-        sink: Option<&mut S>,
-    ) -> AskChoice;
-}
-
-#[async_trait]
-impl AskApprovalHook for AsyncAskHook {
-    async fn choose<S: PermissionEventSink + Send>(
-        &mut self,
-        decision: &PermissionDecision,
-        tool_name: &str,
-        source: &str,
-        args: &JsonValue,
-        ask_context: &AskContext,
-        sink: Option<&mut S>,
-    ) -> AskChoice {
-        AsyncAskHook::choose_with_sink(self, decision, tool_name, source, args, ask_context, sink)
-            .await
-    }
-}
-
-#[async_trait]
-impl AskApprovalHook for AutoApproveAskHook {
-    async fn choose<S: PermissionEventSink + Send>(
-        &mut self,
-        _decision: &PermissionDecision,
-        _tool_name: &str,
-        _source: &str,
-        _args: &JsonValue,
-        _ask_context: &AskContext,
-        _sink: Option<&mut S>,
-    ) -> AskChoice {
-        AskChoice::AllowOnce
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct AutoApproveAskHook;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionDiagnostic {
@@ -819,7 +637,7 @@ impl SessionGrantCache {
     /// Used when disabling an MCP server so that its tool grants are revoked.
     /// MCP tool names use the format `{server_name}__{tool_name}`.
     pub fn clear_for_server(&mut self, server_name: &str) {
-        let prefix = format!("{}__", server_name);
+        let prefix = format!("{server_name}__");
         self.grants_by_scope
             .retain(|key, _| !key.tool_name.starts_with(&prefix));
     }
@@ -870,7 +688,7 @@ fn value_to_action(value: &nu_protocol::Value) -> Result<PermissionAction, Strin
         .as_str()
         .map_err(|_| "permission action must be a string".to_string())?;
     PermissionAction::from_str(action_str)
-        .ok_or_else(|| format!("invalid permission action '{}'", action_str))
+        .ok_or_else(|| format!("invalid permission action '{action_str}'"))
 }
 
 fn toml_value_to_action(value: &toml::Value) -> Result<PermissionAction, String> {
@@ -878,7 +696,7 @@ fn toml_value_to_action(value: &toml::Value) -> Result<PermissionAction, String>
         .as_str()
         .ok_or_else(|| "permission action must be a string".to_string())?;
     PermissionAction::from_str(action_str)
-        .ok_or_else(|| format!("invalid permission action '{}'", action_str))
+        .ok_or_else(|| format!("invalid permission action '{action_str}'"))
 }
 
 fn pattern_specificity(pattern: &str) -> usize {

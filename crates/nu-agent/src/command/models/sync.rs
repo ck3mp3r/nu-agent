@@ -6,15 +6,9 @@ use crate::plugin::AgentPlugin;
 
 pub struct AgentModelsSync;
 
-impl AgentModelsSync {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl Default for AgentModelsSync {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 

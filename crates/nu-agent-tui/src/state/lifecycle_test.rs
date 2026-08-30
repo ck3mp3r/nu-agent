@@ -2,6 +2,8 @@ use crate::state::*;
 use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 /// The active prompt is the one currently in `InProgress` status.
 fn active_prompt_id(state: &AppState) -> Option<u64> {
     state
@@ -23,7 +25,7 @@ fn pending_prompt_ids(state: &AppState) -> Vec<u64> {
 
 #[test]
 fn submit_acceptance_clears_input_and_keeps_input_editable() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     state.enqueue_prompt("check cluster status".to_string());
 
@@ -33,7 +35,7 @@ fn submit_acceptance_clears_input_and_keeps_input_editable() {
 
 #[test]
 fn non_idle_phase_keeps_input_editable_for_queueing() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     state.enqueue_prompt("one".to_string());
     assert!(!state.input_locked);
@@ -51,7 +53,7 @@ fn non_idle_phase_keeps_input_editable_for_queueing() {
 
 #[test]
 fn abort_pending_requires_busy_context() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     assert!(!state.request_abort_confirmation());
     assert_eq!(state.phase, UiPhase::Idle);
 
@@ -64,7 +66,7 @@ fn abort_pending_requires_busy_context() {
 
 #[test]
 fn finalize_resets_abort_pending_and_unlocks_input() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("run".to_string());
     let _ = state.activate_next_prompt();
     let marker = state.abort.confirmation_marker;
@@ -81,7 +83,7 @@ fn finalize_resets_abort_pending_and_unlocks_input() {
 
 #[test]
 fn prompt_queue_lifecycle_is_fifo_and_single_in_progress() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("p1".to_string());
     state.enqueue_prompt("p2".to_string());
     state.enqueue_prompt("p3".to_string());
@@ -119,7 +121,7 @@ fn prompt_queue_lifecycle_is_fifo_and_single_in_progress() {
 
 #[test]
 fn global_abort_cancels_active_and_all_pending_prompts() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("p1".to_string());
     state.enqueue_prompt("p2".to_string());
     state.enqueue_prompt("p3".to_string());
@@ -145,7 +147,7 @@ fn global_abort_cancels_active_and_all_pending_prompts() {
 
 #[test]
 fn record_token_usage_tracks_latest_and_accumulates_session_total() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     state.record_token_usage(7, 5, 12);
     assert_eq!(state.latest_input_tokens, Some(7));
@@ -162,7 +164,7 @@ fn record_token_usage_tracks_latest_and_accumulates_session_total() {
 
 #[test]
 fn enqueue_external_prompt_creates_in_progress_prompt_without_pending() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     state.enqueue_external_prompt("mailbox message".to_string());
 
@@ -179,8 +181,8 @@ fn enqueue_external_prompt_creates_in_progress_prompt_without_pending() {
 }
 
 #[test]
-fn enqueue_external_prompt_adds_user_transcript_line() {
-    let mut state = AppState::new();
+fn enqueue_external_prompt_adds_user_transcript_line() -> Result<()> {
+    let mut state = AppState::default();
 
     state.enqueue_external_prompt("hello from parent".to_string());
 
@@ -191,15 +193,17 @@ fn enqueue_external_prompt_adds_user_transcript_line() {
         TranscriptEntryKind::Spacer(_)
     ));
     assert_eq!(state.transcript_preview[1].role(), Role::User);
-    assert!(matches!(
-        state.transcript_preview.last().unwrap().kind,
-        TranscriptEntryKind::Spacer(_)
-    ));
+    let last = state
+        .transcript_preview
+        .last()
+        .ok_or("should have last transcript entry")?;
+    assert!(matches!(last.kind, TranscriptEntryKind::Spacer(_)));
+    Ok(())
 }
 
 #[test]
 fn enqueue_external_prompt_completes_via_complete_active_prompt() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     state.enqueue_external_prompt("external task".to_string());
     assert_eq!(state.prompt_items()[0].status, PromptStatus::InProgress);
@@ -214,7 +218,7 @@ fn enqueue_external_prompt_completes_via_complete_active_prompt() {
 
 #[test]
 fn enqueue_external_prompt_not_returned_by_take_submitted_prompt() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     state.enqueue_external_prompt("external".to_string());
 
@@ -226,7 +230,7 @@ fn enqueue_external_prompt_not_returned_by_take_submitted_prompt() {
 
 #[test]
 fn enqueue_prompt_does_not_add_transcript_entry() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_external_prompt("first".to_string());
     let before = state.transcript_preview.len();
     state.enqueue_prompt("second".to_string());
@@ -235,10 +239,12 @@ fn enqueue_prompt_does_not_add_transcript_entry() {
 
 #[test]
 fn clear_transcript_resets_token_fields() {
-    let mut state = AppState::new();
-    state.latest_input_tokens = Some(100);
-    state.latest_output_tokens = Some(200);
-    state.latest_total_tokens = Some(300);
+    let mut state = AppState {
+        latest_input_tokens: Some(100),
+        latest_output_tokens: Some(200),
+        latest_total_tokens: Some(300),
+        ..AppState::default()
+    };
     state.clear_transcript();
     assert!(state.latest_input_tokens.is_none());
     assert!(state.latest_output_tokens.is_none());
@@ -246,8 +252,8 @@ fn clear_transcript_resets_token_fields() {
 }
 
 #[test]
-fn activate_next_prompt_adds_user_entry_to_transcript() {
-    let mut state = AppState::new();
+fn activate_next_prompt_adds_user_entry_to_transcript() -> Result<()> {
+    let mut state = AppState::default();
     state.enqueue_external_prompt("first".to_string());
     state.enqueue_prompt("second".to_string());
     state.complete_active_prompt();
@@ -263,15 +269,17 @@ fn activate_next_prompt_adds_user_entry_to_transcript() {
         state.transcript_preview.get(before + 1).map(|e| &e.kind),
         Some(TranscriptEntryKind::User(_))
     ));
-    assert!(matches!(
-        state.transcript_preview.last().unwrap().kind,
-        TranscriptEntryKind::Spacer(_)
-    ));
+    let last = state
+        .transcript_preview
+        .last()
+        .ok_or("should have last transcript entry")?;
+    assert!(matches!(last.kind, TranscriptEntryKind::Spacer(_)));
+    Ok(())
 }
 
 #[test]
 fn cancel_and_restore_drains_pending_texts_into_input_buffer() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("alpha".to_string());
     let _ = state.activate_next_prompt();
     state.enqueue_prompt("beta".to_string());
@@ -287,7 +295,7 @@ fn cancel_and_restore_drains_pending_texts_into_input_buffer() {
 
 #[test]
 fn cancel_and_restore_with_no_pending_leaves_buffer_empty() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("only".to_string());
     let _ = state.activate_next_prompt();
 
@@ -299,14 +307,14 @@ fn cancel_and_restore_with_no_pending_leaves_buffer_empty() {
 
 #[test]
 fn cancel_and_restore_on_idle_is_noop() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let result = state.cancel_and_restore_pending_to_input();
     assert_eq!(result, None);
 }
 
 #[test]
 fn coalesced_dispatch_joins_all_pending_into_one_string() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("first".to_string());
     state.enqueue_prompt("second".to_string());
     state.enqueue_prompt("third".to_string());
@@ -323,7 +331,7 @@ fn coalesced_dispatch_joins_all_pending_into_one_string() {
 
 #[test]
 fn coalesced_dispatch_single_pending_returns_text_unchanged() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("only".to_string());
     state.phase = UiPhase::Idle;
     state.active_cycle = false;
@@ -336,14 +344,14 @@ fn coalesced_dispatch_single_pending_returns_text_unchanged() {
 
 #[test]
 fn coalesced_dispatch_empty_queue_returns_none() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let result = state.take_next_prompt_for_execution();
     assert_eq!(result, None);
 }
 
 #[test]
 fn history_up_on_first_use_loads_last_submitted() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("p1".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
@@ -353,7 +361,7 @@ fn history_up_on_first_use_loads_last_submitted() {
 
 #[test]
 fn history_up_cycles_newest_first_and_clamps_at_oldest() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     for t in ["a", "b", "c"] {
         state.enqueue_prompt(t.to_string());
         let _ = state.activate_next_prompt();
@@ -371,7 +379,7 @@ fn history_up_cycles_newest_first_and_clamps_at_oldest() {
 
 #[test]
 fn history_down_past_newest_restores_draft() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("p1".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
@@ -383,7 +391,7 @@ fn history_down_past_newest_restores_draft() {
 fn history_up_moves_cursor_up_in_multiline_buffer() {
     // History navigation now returns text; cursor is managed by TextArea.
     // This test verifies the text is returned correctly.
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("prev".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
@@ -394,7 +402,7 @@ fn history_up_moves_cursor_up_in_multiline_buffer() {
 #[test]
 fn history_up_clamps_column_to_shorter_prev_line() {
     // History navigation now returns text; cursor is managed by TextArea.
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("prev".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
@@ -404,7 +412,7 @@ fn history_up_clamps_column_to_shorter_prev_line() {
 
 #[test]
 fn history_up_on_first_line_of_multiline_enters_history() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("prev".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
@@ -415,13 +423,13 @@ fn history_up_on_first_line_of_multiline_enters_history() {
 #[test]
 fn history_down_moves_cursor_down_in_multiline() {
     // History navigation now returns text; cursor is managed by TextArea.
-    let result = AppState::new().history_down();
+    let result = AppState::default().history_down();
     assert_eq!(result, None);
 }
 
 #[test]
 fn typing_resets_history_navigation() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("p1".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
@@ -436,7 +444,7 @@ fn typing_resets_history_navigation() {
 
 #[test]
 fn insert_exit_pending_j_is_true_within_timeout() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     assert!(!state.insert_exit_pending_j());
 
     state.set_insert_exit_pending_j();
@@ -445,7 +453,7 @@ fn insert_exit_pending_j_is_true_within_timeout() {
 
 #[test]
 fn insert_exit_pending_j_is_false_after_timeout() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_insert_exit_pending_j();
 
     std::thread::sleep(std::time::Duration::from_millis(600));
@@ -454,7 +462,7 @@ fn insert_exit_pending_j_is_false_after_timeout() {
 
 #[test]
 fn clear_insert_exit_pending_j_resets_to_false() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_insert_exit_pending_j();
     assert!(state.insert_exit_pending_j());
 
@@ -466,7 +474,7 @@ fn clear_insert_exit_pending_j_resets_to_false() {
 
 #[test]
 fn push_spacer_adds_spacer_when_last_is_not_spacer() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.push_transcript_item(TranscriptEntry {
         id: 0,
         kind: TranscriptEntryKind::User(ProseMessage {
@@ -484,7 +492,7 @@ fn push_spacer_adds_spacer_when_last_is_not_spacer() {
 
 #[test]
 fn user_prompt_queued_during_external_prompt_not_double_delivered() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     // External prompt arrives and is active
     state.enqueue_external_prompt("external task".to_string());

@@ -7,7 +7,7 @@ use std::path::Path;
 
 #[tokio::test]
 async fn missing_action_returns_validation_error() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxPaneTool::execute(
         &serde_json::json!({ "session": "main" }),
         Path::new("/tmp"),
@@ -20,7 +20,7 @@ async fn missing_action_returns_validation_error() {
 
 #[tokio::test]
 async fn missing_session_returns_validation_error() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxPaneTool::execute(
         &serde_json::json!({ "action": "list" }),
         Path::new("/tmp"),
@@ -33,7 +33,7 @@ async fn missing_session_returns_validation_error() {
 
 #[tokio::test]
 async fn unknown_action_returns_validation_error() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxPaneTool::execute(
         &serde_json::json!({ "action": "bogus", "session": "main" }),
         Path::new("/tmp"),
@@ -47,7 +47,7 @@ async fn unknown_action_returns_validation_error() {
 
 #[tokio::test]
 async fn find_requires_name_or_context() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxPaneTool::execute(
         &serde_json::json!({ "action": "find", "session": "main" }),
         Path::new("/tmp"),
@@ -61,7 +61,7 @@ async fn find_requires_name_or_context() {
 
 #[tokio::test]
 async fn send_requires_command() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxPaneTool::execute(
         &serde_json::json!({ "action": "send", "session": "main" }),
         Path::new("/tmp"),
@@ -75,7 +75,7 @@ async fn send_requires_command() {
 
 #[tokio::test]
 async fn split_requires_valid_direction() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxPaneTool::execute(
         &serde_json::json!({ "action": "split", "session": "main", "direction": "diagonal" }),
         Path::new("/tmp"),
@@ -89,7 +89,7 @@ async fn split_requires_valid_direction() {
 
 #[tokio::test]
 async fn kill_requires_force() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxPaneTool::execute(
         &serde_json::json!({ "action": "kill", "session": "main" }),
         Path::new("/tmp"),

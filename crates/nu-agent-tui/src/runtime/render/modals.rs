@@ -150,7 +150,11 @@ impl RuntimeCoordinator {
                         status_panel_lines(&self.state, &self.active_model_identity)
                     }
                     InfoPanel::Skills => skills_panel_lines(&self.state),
-                    InfoPanel::Mcps => unreachable!("handled above"),
+                    InfoPanel::Mcps => (
+                        "MCPs",
+                        // Handled by the dedicated Mcps arm above; empty is never rendered.
+                        Vec::new(),
+                    ),
                 };
 
                 let panel_inner_height = popup.height.saturating_sub(2);

@@ -19,7 +19,7 @@ use crate::types::Message;
 // TurnContext
 // ---------------------------------------------------------------------------
 
-/// Caller-local context available in `execute_turn_with_channel` but not
+/// Caller-local context available in `execute_turn` but not
 /// at the `From<>` boundary. Passed alongside `TurnError` to the executor.
 #[derive(Debug)]
 pub(crate) struct TurnContext {
@@ -355,8 +355,9 @@ impl From<rig::agent::StreamingError> for TurnError {
             },
 
             rig::agent::StreamingError::Completion(completion_err) => {
+                let msg = completion_err.to_string();
                 match completion_err {
-                    CompletionError::HttpError(ref http_err) => {
+                    CompletionError::HttpError(http_err) => {
                         let kind = match http_err {
                             http_client::Error::InvalidStatusCode(s) => {
                                 classify_by_status(s.as_u16())
@@ -371,39 +372,33 @@ impl From<rig::agent::StreamingError> for TurnError {
                             }
                             _ => CompletionErrorKind::Unknown,
                         };
-                        Self::CompletionFailed {
-                            msg: completion_err.to_string(),
-                            kind,
-                        }
+                        Self::CompletionFailed { msg, kind }
                     }
-                    CompletionError::ResponseError(ref s) => Self::CompletionFailed {
-                        kind: classify_from_display(s),
-                        msg: completion_err.to_string(),
+                    CompletionError::ResponseError(s) => Self::CompletionFailed {
+                        kind: classify_from_display(&s),
+                        msg,
                     },
-                    CompletionError::ProviderError(ref s) => Self::CompletionFailed {
-                        kind: classify_from_display(s),
-                        msg: completion_err.to_string(),
+                    CompletionError::ProviderError(s) => Self::CompletionFailed {
+                        kind: classify_from_display(&s),
+                        msg,
                     },
-                    CompletionError::RequestError(ref s) => Self::CompletionFailed {
+                    CompletionError::RequestError(s) => Self::CompletionFailed {
                         kind: classify_from_display(&s.to_string()),
-                        msg: completion_err.to_string(),
+                        msg,
                     },
                     // rig 0.42.0 surfaces a failed streaming handshake (connect-time
                     // non-success, e.g. a 500) as `ProviderResponse` carrying the
                     // status and body, instead of `HttpError(InvalidStatusCodeWithMessage)`.
                     // Classify by status when present so a 500/503/429 stays retryable.
-                    CompletionError::ProviderResponse(ref e) => {
+                    CompletionError::ProviderResponse(e) => {
                         let kind = match e.status {
                             Some(status) => classify_by_status(status.as_u16()),
                             None => classify_from_display(&e.body),
                         };
-                        Self::CompletionFailed {
-                            msg: completion_err.to_string(),
-                            kind,
-                        }
+                        Self::CompletionFailed { msg, kind }
                     }
                     _ => Self::CompletionFailed {
-                        msg: completion_err.to_string(),
+                        msg,
                         kind: CompletionErrorKind::Unknown,
                     },
                 }

@@ -36,6 +36,8 @@ use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::TranscriptEntryKind;
 use nu_agent_core::transcript::renderer::ItemStatus;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 impl RuntimeCoordinator {
     pub(crate) fn new_for_test_with_watchdog(
         columns: u16,
@@ -126,7 +128,7 @@ pub(super) struct StubEventSource {
 }
 
 impl TerminalEventSource for StubEventSource {
-    fn poll_event(&mut self) -> Result<Option<TerminalEvent>, String> {
+    fn poll_event(&mut self) -> core::result::Result<Option<TerminalEvent>, String> {
         Ok(self.next.take())
     }
 }
@@ -135,7 +137,7 @@ impl TerminalEventSource for StubEventSource {
 pub(super) struct ErrorEventSource;
 
 impl TerminalEventSource for ErrorEventSource {
-    fn poll_event(&mut self) -> Result<Option<TerminalEvent>, String> {
+    fn poll_event(&mut self) -> core::result::Result<Option<TerminalEvent>, String> {
         Err("simulated source failure".to_string())
     }
 }
@@ -147,7 +149,7 @@ pub(super) struct ErrorWithDiagnosticsEventSource {
 }
 
 impl TerminalEventSource for ErrorWithDiagnosticsEventSource {
-    fn poll_event(&mut self) -> Result<Option<TerminalEvent>, String> {
+    fn poll_event(&mut self) -> core::result::Result<Option<TerminalEvent>, String> {
         Err(self.error.clone())
     }
 
@@ -162,7 +164,7 @@ pub(super) struct DiagnosticsOnlyEventSource {
 }
 
 impl TerminalEventSource for DiagnosticsOnlyEventSource {
-    fn poll_event(&mut self) -> Result<Option<TerminalEvent>, String> {
+    fn poll_event(&mut self) -> core::result::Result<Option<TerminalEvent>, String> {
         Ok(None)
     }
 
@@ -618,7 +620,7 @@ fn user_then_assistant_flows_without_turn_separator() {
 
 #[test]
 fn busy_input_line_has_no_spinner_prefix_and_never_shows_locked_label() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     let idle_line = input_line_for_test(&state);
     assert_eq!(idle_line, "");
@@ -706,7 +708,7 @@ fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() {
 
 #[test]
 fn status_lines_do_not_report_input_mode() {
-    let state = AppState::new();
+    let state = AppState::default();
 
     let lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4");
     assert!(!lines.iter().any(|line| line.starts_with("Input mode:")));
@@ -1145,7 +1147,7 @@ fn idle_escape_status_copy_mentions_ctrlc_only_not_q() {
 }
 
 #[test]
-fn watchdog_fails_fast_when_no_input_backend_available() {
+fn watchdog_fails_fast_when_no_input_backend_available() -> Result<()> {
     let mut coordinator = RuntimeCoordinator::new_for_test_with_watchdog(
         120,
         30,
@@ -1165,12 +1167,15 @@ fn watchdog_fails_fast_when_no_input_backend_available() {
 
     coordinator.pump_once(&mut source);
 
-    let fatal = coordinator.fatal_error().expect("expected watchdog fatal");
+    let fatal = coordinator
+        .fatal_error()
+        .ok_or("should have watchdog fatal error")?;
     assert!(fatal.contains("No interactive input backend available"));
     assert!(fatal.contains("Last poll: crossterm error; /dev/tty unavailable"));
     assert!(fatal.contains("Last error: crossterm poll failed"));
     assert!(fatal.contains("interactive terminal"));
     assert!(coordinator.quit_requested());
+    Ok(())
 }
 
 #[test]
@@ -1199,7 +1204,8 @@ fn diagnostics_snapshot_reports_active_backend_last_poll_and_last_error() {
 }
 
 #[test]
-fn immediate_poll_error_fails_fast_with_actionable_message_when_no_backends_available() {
+fn immediate_poll_error_fails_fast_with_actionable_message_when_no_backends_available() -> Result<()>
+{
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
 
     let mut source = ErrorWithDiagnosticsEventSource {
@@ -1217,7 +1223,7 @@ fn immediate_poll_error_fails_fast_with_actionable_message_when_no_backends_avai
 
     let fatal = coordinator
         .fatal_error()
-        .expect("expected fatal fail-fast error");
+        .ok_or("should have fatal fail-fast error")?;
     assert!(coordinator.quit_requested());
     assert!(coordinator.take_cancel_requested());
     assert!(fatal.contains("No interactive input backend available"));
@@ -1225,6 +1231,7 @@ fn immediate_poll_error_fails_fast_with_actionable_message_when_no_backends_avai
     assert!(fatal.contains("Last error: crossterm poll failed: not a terminal"));
     assert!(fatal.contains("Run `agent` in an interactive terminal"));
     assert!(!fatal.contains("Terminal input error:"));
+    Ok(())
 }
 
 #[test]
@@ -1684,8 +1691,10 @@ fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
 
 #[test]
 fn multiline_input_prompt_icon_appears_only_on_first_visual_row() {
-    let mut state = AppState::new();
-    state.input_mode = InputMode::Insert;
+    let state = AppState {
+        input_mode: InputMode::Insert,
+        ..Default::default()
+    };
 
     let rows = input_rows_with_prompt_for_test(&state, 5);
     assert_eq!(rows, vec!["❯ "]);
@@ -1693,14 +1702,20 @@ fn multiline_input_prompt_icon_appears_only_on_first_visual_row() {
 
 #[test]
 fn prompt_prefix_uses_mode_indicator_insert_vs_normal_visual() {
-    let mut insert = AppState::new();
-    insert.input_mode = InputMode::Insert;
+    let insert = AppState {
+        input_mode: InputMode::Insert,
+        ..Default::default()
+    };
 
-    let mut normal = AppState::new();
-    normal.input_mode = InputMode::Normal;
+    let normal = AppState {
+        input_mode: InputMode::Normal,
+        ..Default::default()
+    };
 
-    let mut visual = AppState::new();
-    visual.input_mode = InputMode::Visual;
+    let visual = AppState {
+        input_mode: InputMode::Visual,
+        ..Default::default()
+    };
 
     assert_eq!(input_rows_with_prompt_for_test(&insert, 20), vec!["❯ "]);
     assert_eq!(input_rows_with_prompt_for_test(&normal, 20), vec!["❮ "]);
@@ -1709,9 +1724,11 @@ fn prompt_prefix_uses_mode_indicator_insert_vs_normal_visual() {
 
 #[test]
 fn prompt_prefix_switches_immediately_when_mode_changes() {
-    let mut state = AppState::new();
+    let mut state = AppState {
+        input_mode: InputMode::Insert,
+        ..Default::default()
+    };
 
-    state.input_mode = InputMode::Insert;
     assert_eq!(input_rows_with_prompt_for_test(&state, 20), vec!["❯ "]);
 
     state.input_mode = InputMode::Normal;
@@ -1720,7 +1737,7 @@ fn prompt_prefix_switches_immediately_when_mode_changes() {
 
 #[test]
 fn status_contract_a_model_line_reports_identity_and_busy_idle() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     let idle_lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
     assert!(
@@ -1740,7 +1757,7 @@ fn status_contract_a_model_line_reports_identity_and_busy_idle() {
 
 #[test]
 fn status_contract_b_excludes_input_mode_backend_poll_and_hint_lines() {
-    let state = AppState::new();
+    let state = AppState::default();
 
     let lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
     assert!(!lines.iter().any(|line| line.starts_with("Input mode:")));
@@ -1752,7 +1769,7 @@ fn status_contract_b_excludes_input_mode_backend_poll_and_hint_lines() {
 
 #[test]
 fn status_contract_c_mcp_counts_include_configured_enabled_disabled_failed() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
@@ -1778,7 +1795,7 @@ fn status_contract_c_mcp_counts_include_configured_enabled_disabled_failed() {
 
 #[test]
 fn status_contract_d_visible_mcp_tool_count_uses_runtime_truth_and_updates() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_llm_visible_mcp_tool_count(5);
 
     let before = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
@@ -1791,7 +1808,7 @@ fn status_contract_d_visible_mcp_tool_count_uses_runtime_truth_and_updates() {
 
 #[test]
 fn status_contract_e_failures_show_names_and_reasons_and_healthy_none_when_clear() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
@@ -1837,8 +1854,10 @@ fn status_contract_e_failures_show_names_and_reasons_and_healthy_none_when_clear
 
 #[test]
 fn status_contract_f_narrow_layout_is_compact_and_ellipsizes_deterministically() {
-    let mut state = AppState::new();
-    state.phase = UiPhase::Busy;
+    let mut state = AppState {
+        phase: UiPhase::Busy,
+        ..Default::default()
+    };
     state.set_mcp_servers(vec![crate::state::McpServerState {
         name: "very-long-mcp-server-name-that-must-be-truncated".to_string(),
         state: McpServerUsabilityState::Failed,
@@ -1883,7 +1902,7 @@ fn status_contract_f_narrow_layout_is_compact_and_ellipsizes_deterministically()
 
 #[test]
 fn status_lines_include_stable_active_model_identity_line() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
@@ -2032,15 +2051,16 @@ fn help_panel_scroll_can_reach_final_content_line_with_keyboard_scroll_model() {
 }
 
 #[test]
-fn help_panel_shows_overflow_position_cue_when_content_exceeds_viewport() {
+fn help_panel_shows_overflow_position_cue_when_content_exceeds_viewport() -> Result<()> {
     let (_title, lines) = help_panel_lines(&crate::rendering::theme::TuiTheme::default());
     let viewport_inner_height = 8u16;
     let cue = help_panel_overflow_cue_for_test(&lines, viewport_inner_height, 3)
-        .expect("overflow cue should appear when help exceeds viewport");
+        .ok_or("should have overflow cue when help exceeds viewport")?;
 
     assert!(cue.contains("PgUp/PgDn"));
     assert!(cue.contains("Esc close"));
     assert!(cue.contains("/"));
+    Ok(())
 }
 
 #[test]
@@ -2068,7 +2088,7 @@ fn help_panel_escape_closes_panel_after_scroll() {
 
 #[test]
 fn status_panel_exposes_model_and_mcp_backend_status_lines() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
@@ -2102,7 +2122,7 @@ fn status_panel_exposes_model_and_mcp_backend_status_lines() {
 
 #[test]
 fn mcp_panel_renders_columns_selection_and_compact_table_contract() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
@@ -2137,7 +2157,7 @@ fn mcp_panel_renders_columns_selection_and_compact_table_contract() {
 
 #[test]
 fn mcp_table_status_icon_mapping_is_deterministic() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "enabled-srv".to_string(),
@@ -2161,7 +2181,7 @@ fn mcp_table_status_icon_mapping_is_deterministic() {
 
 #[test]
 fn mcp_table_emoji_status_rows_use_safe_status_column_width_contract() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "enabled-srv".to_string(),
@@ -2234,7 +2254,7 @@ fn mcp_details_height_formula_matches_step_table() {
 
 #[test]
 fn mcp_panel_layout_keeps_table_primary_with_multiple_visible_rows_in_common_height() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(
         (0..8)
             .map(|idx| crate::state::McpServerState {
@@ -2275,7 +2295,7 @@ fn mcp_panel_controls_line_removes_status_legend_and_keeps_toggle_hint_compact()
 
 #[test]
 fn mcp_table_visible_tool_count_uses_live_per_server_mapping_without_state_gating() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
@@ -2295,8 +2315,8 @@ fn mcp_table_visible_tool_count_uses_live_per_server_mapping_without_state_gatin
 }
 
 #[test]
-fn mcp_selected_details_model_shows_full_error_text_tools_list_and_fallback() {
-    let mut state = AppState::new();
+fn mcp_selected_details_model_shows_full_error_text_tools_list_and_fallback() -> Result<()> {
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
@@ -2319,21 +2339,24 @@ fn mcp_selected_details_model_shows_full_error_text_tools_list_and_fallback() {
     );
 
     state.mcp_panel_selection = 1;
-    let failed = super::mcp_selected_details_for_test(&state).expect("selected details");
+    let failed =
+        super::mcp_selected_details_for_test(&state).ok_or("should have selected MCP details")?;
     assert_eq!(failed.server_line, "Server: k8s (failed)");
     assert_eq!(failed.error_line, format!("Error: {reason}"));
     assert_eq!(failed.tools_line, "Tools: k8s__a_first, k8s__z_last");
 
     state.mcp_panel_selection = 0;
-    let healthy = super::mcp_selected_details_for_test(&state).expect("selected details");
+    let healthy =
+        super::mcp_selected_details_for_test(&state).ok_or("should have selected MCP details")?;
     assert_eq!(healthy.server_line, "Server: gh (enabled)");
     assert_eq!(healthy.error_line, "Error: None");
     assert_eq!(healthy.tools_line, "Tools: None");
+    Ok(())
 }
 
 #[test]
 fn mcp_table_visible_tool_count_respects_live_updates_after_selection_changes() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
@@ -2360,7 +2383,7 @@ fn mcp_table_visible_tool_count_respects_live_updates_after_selection_changes() 
 
 #[test]
 fn mcp_selected_details_height_zero_and_one_rows_preserve_error_presence() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![crate::state::McpServerState {
         name: "k8s".to_string(),
         state: McpServerUsabilityState::Failed,
@@ -2382,7 +2405,7 @@ fn mcp_selected_details_height_zero_and_one_rows_preserve_error_presence() {
 
 #[test]
 fn mcp_selected_details_constrained_two_rows_preserve_full_error_line() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![crate::state::McpServerState {
         name: "k8s".to_string(),
         state: McpServerUsabilityState::Failed,
@@ -2404,7 +2427,7 @@ fn mcp_selected_details_constrained_two_rows_preserve_full_error_line() {
 
 #[test]
 fn mcp_selected_details_normal_height_preserves_full_error_line() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![crate::state::McpServerState {
         name: "k8s".to_string(),
         state: McpServerUsabilityState::Failed,
@@ -2426,7 +2449,7 @@ fn mcp_selected_details_normal_height_preserves_full_error_line() {
 
 #[test]
 fn mcp_selected_details_packs_multiple_tools_per_line_with_comma_separators() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![crate::state::McpServerState {
         name: "gh".to_string(),
         state: McpServerUsabilityState::Enabled,
@@ -2454,7 +2477,7 @@ fn mcp_selected_details_packs_multiple_tools_per_line_with_comma_separators() {
 
 #[test]
 fn mcp_selected_details_clipped_tool_list_shows_deterministic_plus_n_more_cue() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![crate::state::McpServerState {
         name: "gh".to_string(),
         state: McpServerUsabilityState::Enabled,
@@ -2486,7 +2509,7 @@ fn mcp_selected_details_clipped_tool_list_shows_deterministic_plus_n_more_cue() 
 
 #[test]
 fn mcp_selected_details_single_tool_row_budget_prefers_truncation_cue_visibility() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![crate::state::McpServerState {
         name: "gh".to_string(),
         state: McpServerUsabilityState::Enabled,
@@ -2514,7 +2537,7 @@ fn mcp_selected_details_single_tool_row_budget_prefers_truncation_cue_visibility
 
 #[test]
 fn mcp_selected_details_continuation_rows_align_and_use_tools_prefix_once() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![crate::state::McpServerState {
         name: "gh".to_string(),
         state: McpServerUsabilityState::Enabled,
@@ -2539,7 +2562,7 @@ fn mcp_selected_details_continuation_rows_align_and_use_tools_prefix_once() {
 
 #[test]
 fn mcp_selected_details_wrapping_uses_actual_details_width() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![crate::state::McpServerState {
         name: "gh".to_string(),
         state: McpServerUsabilityState::Enabled,
@@ -2566,7 +2589,7 @@ fn mcp_selected_details_wrapping_uses_actual_details_width() {
 
 #[test]
 fn mcp_table_model_narrow_width_keeps_required_columns() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![crate::state::McpServerState {
         name: "gh".to_string(),
         state: McpServerUsabilityState::Enabled,
@@ -2578,8 +2601,8 @@ fn mcp_table_model_narrow_width_keeps_required_columns() {
 }
 
 #[test]
-fn mcp_table_model_overflow_top_window_locks_exact_cue_and_selected_mapping() {
-    let mut state = AppState::new();
+fn mcp_table_model_overflow_top_window_locks_exact_cue_and_selected_mapping() -> Result<()> {
+    let mut state = AppState::default();
     state.set_mcp_servers(
         (0..8)
             .map(|idx| crate::state::McpServerState {
@@ -2596,16 +2619,18 @@ fn mcp_table_model_overflow_top_window_locks_exact_cue_and_selected_mapping() {
 
     let model = mcp_table_model_for_test(&state, 80, 7);
     assert_eq!(model.selected, Some(0));
-    assert_eq!(model.rows[model.selected.expect("selection")][0], "srv-0");
+    let selected = model.selected.ok_or("should have selection")?;
+    assert_eq!(model.rows[selected][0], "srv-0");
     assert_eq!(
         model.overflow_cue,
         Some("↑/↓ or j/k | Enter/Space toggle | Esc close | 1-5 / 8".to_string())
     );
+    Ok(())
 }
 
 #[test]
-fn mcp_table_model_overflow_middle_window_locks_exact_cue_and_selected_mapping() {
-    let mut state = AppState::new();
+fn mcp_table_model_overflow_middle_window_locks_exact_cue_and_selected_mapping() -> Result<()> {
+    let mut state = AppState::default();
     state.set_mcp_servers(
         (0..8)
             .map(|idx| crate::state::McpServerState {
@@ -2622,16 +2647,18 @@ fn mcp_table_model_overflow_middle_window_locks_exact_cue_and_selected_mapping()
 
     let model = mcp_table_model_for_test(&state, 80, 7);
     assert_eq!(model.selected, Some(4));
-    assert_eq!(model.rows[model.selected.expect("selection")][0], "srv-5");
+    let selected = model.selected.ok_or("should have selection")?;
+    assert_eq!(model.rows[selected][0], "srv-5");
     assert_eq!(
         model.overflow_cue,
         Some("↑/↓ or j/k | Enter/Space toggle | Esc close | 2-6 / 8".to_string())
     );
+    Ok(())
 }
 
 #[test]
-fn mcp_table_model_overflow_bottom_window_locks_exact_cue_and_selected_mapping() {
-    let mut state = AppState::new();
+fn mcp_table_model_overflow_bottom_window_locks_exact_cue_and_selected_mapping() -> Result<()> {
+    let mut state = AppState::default();
     state.set_mcp_servers(
         (0..8)
             .map(|idx| crate::state::McpServerState {
@@ -2648,16 +2675,18 @@ fn mcp_table_model_overflow_bottom_window_locks_exact_cue_and_selected_mapping()
 
     let model = mcp_table_model_for_test(&state, 80, 7);
     assert_eq!(model.selected, Some(4));
-    assert_eq!(model.rows[model.selected.expect("selection")][0], "srv-7");
+    let selected = model.selected.ok_or("should have selection")?;
+    assert_eq!(model.rows[selected][0], "srv-7");
     assert_eq!(
         model.overflow_cue,
         Some("↑/↓ or j/k | Enter/Space toggle | Esc close | 4-8 / 8".to_string())
     );
+    Ok(())
 }
 
 #[test]
 fn command_palette_table_renders_required_columns_and_rows() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_command_palette();
 
     let model = command_palette_table_model_for_test(&state, 80, 10);
@@ -2678,7 +2707,7 @@ fn command_palette_table_renders_required_columns_and_rows() {
 
 #[test]
 fn command_palette_table_renders_skills_action_row() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_command_palette();
 
     let model = command_palette_table_model_for_test(&state, 80, 10);
@@ -2694,7 +2723,7 @@ fn command_palette_table_renders_skills_action_row() {
 
 #[test]
 fn skills_panel_renders_empty_state_when_no_skills_available() {
-    let state = AppState::new();
+    let state = AppState::default();
     let (title, lines) = crate::runtime::skills_panel_lines(&state);
 
     assert_eq!(title, "Skills");
@@ -2707,8 +2736,8 @@ fn skills_panel_renders_empty_state_when_no_skills_available() {
 }
 
 #[test]
-fn skills_panel_lists_skills_in_deterministic_order() {
-    let mut state = AppState::new();
+fn skills_panel_lists_skills_in_deterministic_order() -> Result<()> {
+    let mut state = AppState::default();
     state.set_discoverable_skills(vec![
         crate::state::DiscoverableSkill {
             source_priority: 1,
@@ -2734,11 +2763,12 @@ fn skills_panel_lists_skills_in_deterministic_order() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    let alpha_idx = rendered.find("alpha").expect("alpha row present");
-    let beta_idx = rendered.find("beta").expect("beta row present");
-    let zeta_idx = rendered.find("zeta").expect("zeta row present");
+    let alpha_idx = rendered.find("alpha").ok_or("should find alpha row")?;
+    let beta_idx = rendered.find("beta").ok_or("should find beta row")?;
+    let zeta_idx = rendered.find("zeta").ok_or("should find zeta row")?;
     assert!(alpha_idx < beta_idx);
     assert!(beta_idx < zeta_idx);
+    Ok(())
 }
 
 #[test]
@@ -2773,7 +2803,7 @@ fn status_panel_scroll_offset_applied() {
     // Status content is short; with a large viewport the max scroll is 0 and
     // any requested offset is clamped to 0. With a very small viewport the
     // offset should be clamped correctly.
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![crate::state::McpServerState {
         name: "gh".to_string(),
         state: crate::state::McpServerUsabilityState::Enabled,
@@ -2814,7 +2844,7 @@ fn status_panel_scroll_offset_applied() {
 
 #[test]
 fn skills_panel_scroll_offset_applied() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_discoverable_skills(vec![
         crate::state::DiscoverableSkill {
             source_priority: 0,
@@ -2852,7 +2882,7 @@ fn skills_panel_scroll_offset_applied() {
 
 #[test]
 fn inline_slash_suggestions_render_inline_with_single_hint_contract() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.check_inline_slash("/");
 
     let rows = inline_slash_lines_for_test(&state);
@@ -2865,16 +2895,17 @@ fn inline_slash_suggestions_render_inline_with_single_hint_contract() {
 }
 
 #[test]
-fn command_palette_table_emits_overflow_position_cue_when_viewport_is_small() {
-    let mut state = AppState::new();
+fn command_palette_table_emits_overflow_position_cue_when_viewport_is_small() -> Result<()> {
+    let mut state = AppState::default();
     state.open_command_palette();
 
     let model = command_palette_table_model_for_test(&state, 80, 5);
     let cue = model
         .overflow_cue
-        .expect("expected overflow cue when rows exceed viewport");
+        .ok_or("should have overflow cue when rows exceed viewport")?;
     assert!(cue.contains("/"));
     assert!(cue.contains("Esc close"));
+    Ok(())
 }
 
 #[test]
@@ -2956,7 +2987,7 @@ fn themes_modal_uses_layout_policy_defaults() {
 
 #[test]
 fn modal_open_state_applies_dimmed_backdrop() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_command_palette();
 
     assert!(modal_open_state_applies_dimmed_backdrop_for_test(&state));
@@ -2964,7 +2995,7 @@ fn modal_open_state_applies_dimmed_backdrop() {
 
 #[test]
 fn inline_model_picker_modal_respects_border_and_backdrop_policy() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_model_picker();
 
     assert!(inline_model_picker_modal_respects_border_and_backdrop_policy_for_test(&state));
@@ -2972,7 +3003,7 @@ fn inline_model_picker_modal_respects_border_and_backdrop_policy() {
 
 #[test]
 fn permission_prompt_does_not_open_global_dimmed_modal_backdrop() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_permission_prompt(crate::state::PermissionPrompt {
         request_id: "ask-0000000000000001".to_string(),
         matched_rule_identity: "nested:nu.command:*".to_string(),
@@ -2990,7 +3021,7 @@ fn permission_prompt_does_not_open_global_dimmed_modal_backdrop() {
 
 #[test]
 fn model_picker_empty_catalog_shows_deterministic_empty_state() {
-    let state = AppState::new();
+    let state = AppState::default();
     assert_eq!(
         crate::runtime::panels::MODEL_PICKER_EMPTY_STATE_MESSAGE,
         "No models available in cached startup config."
@@ -3000,7 +3031,7 @@ fn model_picker_empty_catalog_shows_deterministic_empty_state() {
 
 #[test]
 fn status_lines_report_failed_state_count_when_present() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
@@ -3023,7 +3054,7 @@ fn status_lines_report_failed_state_count_when_present() {
 
 #[test]
 fn status_lines_include_tokens_line_with_na_before_any_llm_end() {
-    let state = AppState::new();
+    let state = AppState::default();
     let status_lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
 
     assert!(
@@ -3072,10 +3103,6 @@ fn status_lines_include_latest_and_rolling_tokens_after_llm_end_events() {
 
 #[test]
 fn compact_status_line_reports_lane_1_only() {
-    let mut state = AppState::new();
-    state.latest_total_tokens = Some(7);
-    state.session_total_tokens = 27;
-
     let status_line = crate::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
     let text: String = status_line
         .spans
@@ -3089,8 +3116,10 @@ fn compact_status_line_reports_lane_1_only() {
 
 #[test]
 fn lane_2_context_line_uses_exact_usage_format_without_extra_text() {
-    let mut state = AppState::new();
-    state.latest_total_tokens = Some(250);
+    let mut state = AppState {
+        latest_total_tokens: Some(250),
+        ..Default::default()
+    };
     state.set_context_window_max_tokens(Some(1000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 120);
@@ -3107,8 +3136,10 @@ fn lane_2_context_line_uses_exact_usage_format_without_extra_text() {
 
 #[test]
 fn lane_2_context_line_falls_back_to_used_only_when_max_unavailable() {
-    let mut state = AppState::new();
-    state.latest_total_tokens = Some(42);
+    let mut state = AppState {
+        latest_total_tokens: Some(42),
+        ..Default::default()
+    };
     state.set_context_window_max_tokens(None);
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 120);
@@ -3125,8 +3156,10 @@ fn lane_2_context_line_falls_back_to_used_only_when_max_unavailable() {
 
 #[test]
 fn footer_two_lane_contract_exposes_lane_1_and_lane_2_simultaneously() {
-    let mut state = AppState::new();
-    state.latest_total_tokens = Some(250);
+    let mut state = AppState {
+        latest_total_tokens: Some(250),
+        ..Default::default()
+    };
     state.set_context_window_max_tokens(Some(1000));
 
     let lane_1 = crate::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
@@ -3193,8 +3226,10 @@ fn lane_2_context_line_updates_after_each_turn_and_does_not_stale() {
 
 #[test]
 fn lane_2_context_line_truncation_removes_any_extra_labels_or_hints() {
-    let mut state = AppState::new();
-    state.latest_total_tokens = Some(12345);
+    let mut state = AppState {
+        latest_total_tokens: Some(12345),
+        ..Default::default()
+    };
     state.set_context_window_max_tokens(Some(128000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 30);
@@ -3315,7 +3350,7 @@ fn lane_2_rehydrate_is_replaced_by_live_turn_usage() {
 
 #[test]
 fn lane_2_threshold_formatting_contract_100_and_1000_and_11657() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_context_window_max_tokens(Some(200_000));
 
     state.latest_total_tokens = Some(100);
@@ -3348,8 +3383,10 @@ fn lane_2_threshold_formatting_contract_100_and_1000_and_11657() {
 
 #[test]
 fn lane_2_is_right_aligned_in_wide_layout() {
-    let mut state = AppState::new();
-    state.latest_total_tokens = Some(11_657);
+    let mut state = AppState {
+        latest_total_tokens: Some(11_657),
+        ..Default::default()
+    };
     state.set_context_window_max_tokens(Some(200_000));
 
     let width = 40usize;
@@ -3363,8 +3400,10 @@ fn lane_2_is_right_aligned_in_wide_layout() {
 
 #[test]
 fn lane_2_narrow_width_uses_deterministic_right_anchored_truncation() {
-    let mut state = AppState::new();
-    state.latest_total_tokens = Some(11_657);
+    let mut state = AppState {
+        latest_total_tokens: Some(11_657),
+        ..Default::default()
+    };
     state.set_context_window_max_tokens(Some(200_000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 8);
@@ -3424,7 +3463,7 @@ impl MockTerminalBackend {
         }
     }
 
-    fn run(&self, action: TerminalAction) -> Result<(), TerminalLifecycleError> {
+    fn run(&self, action: TerminalAction) -> core::result::Result<(), TerminalLifecycleError> {
         self.actions.borrow_mut().push(action);
 
         if self.fail_on == Some(action) {
@@ -3439,49 +3478,49 @@ impl MockTerminalBackend {
 }
 
 impl TerminalBackend for MockTerminalBackend {
-    fn enable_raw_mode(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn enable_raw_mode(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::EnableRawMode)?;
         self.state.borrow_mut().raw_mode_enabled = true;
         Ok(())
     }
 
-    fn disable_raw_mode(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn disable_raw_mode(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::DisableRawMode)?;
         self.state.borrow_mut().raw_mode_enabled = false;
         Ok(())
     }
 
-    fn enter_alt_screen(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn enter_alt_screen(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::EnterAltScreen)?;
         self.state.borrow_mut().alt_screen_enabled = true;
         Ok(())
     }
 
-    fn leave_alt_screen(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn leave_alt_screen(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::LeaveAltScreen)?;
         self.state.borrow_mut().alt_screen_enabled = false;
         Ok(())
     }
 
-    fn hide_cursor(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn hide_cursor(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::HideCursor)?;
         self.state.borrow_mut().cursor_visible = false;
         Ok(())
     }
 
-    fn show_cursor(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn show_cursor(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::ShowCursor)?;
         self.state.borrow_mut().cursor_visible = true;
         Ok(())
     }
 
-    fn enable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn enable_bracketed_paste(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::EnableBracketedPaste)?;
         self.state.borrow_mut().bracketed_paste_enabled = true;
         Ok(())
     }
 
-    fn disable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn disable_bracketed_paste(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::DisableBracketedPaste)?;
         self.state.borrow_mut().bracketed_paste_enabled = false;
         Ok(())
@@ -3501,14 +3540,14 @@ fn assert_terminal_restored(state: &Rc<RefCell<MockTerminalState>>) {
 }
 
 #[test]
-fn run_with_terminal_restore_sync_executes_enter_run_and_restore_in_order() {
+fn run_with_terminal_restore_sync_executes_enter_run_and_restore_in_order() -> Result<()> {
     let actions = Rc::new(RefCell::new(Vec::new()));
     let state = Rc::new(RefCell::new(MockTerminalState::default()));
     let backend = MockTerminalBackend::new(actions.clone(), state.clone(), None);
     let mut lifecycle = TerminalLifecycle::new(backend);
 
     let value = run_with_terminal_restore_sync(&mut lifecycle, || Ok::<_, &'static str>(42))
-        .expect("run should succeed");
+        .map_err(|e| format!("run should succeed: {e:?}"))?;
     assert_eq!(value, 42);
 
     assert_eq!(
@@ -3525,6 +3564,7 @@ fn run_with_terminal_restore_sync_executes_enter_run_and_restore_in_order() {
         ]
     );
     assert_terminal_restored(&state);
+    Ok(())
 }
 
 #[test]
@@ -3847,6 +3887,39 @@ fn hydration_compaction_renders_markdown_body() {
 }
 
 #[test]
+fn hydration_compaction_fenced_body_renders_markdown_not_raw() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.hydrate_transcript_from_messages(
+        vec![UiMessageSnapshot::new(
+            "compaction",
+            "```\n## Work State\n### Completed\n- Mapped `63e90e73`; confirmed `7722bef9`.\n```",
+        )],
+        None,
+    );
+
+    let projected_texts: Vec<String> = coordinator
+        .state()
+        .transcript_preview
+        .iter()
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
+        .collect();
+
+    assert!(
+        !projected_texts.iter().any(|t| t.contains("##")),
+        "raw '##' must not appear after hydration of fenced body: {projected_texts:?}"
+    );
+    assert!(
+        projected_texts.iter().any(|t| t.contains("Work State")),
+        "heading text must render: {projected_texts:?}"
+    );
+    assert!(
+        projected_texts.iter().any(|t| t.starts_with('•')),
+        "bullet marker must render as '•': {projected_texts:?}"
+    );
+}
+
+#[test]
 fn hydration_compaction_empty_summary_shows_block_only() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator
@@ -4079,8 +4152,10 @@ fn drain_transport_single_assistant_message_not_affected() {
 
 #[test]
 fn lane_2_shows_agent_when_active() {
-    let mut state = AppState::new();
-    state.latest_total_tokens = Some(42_300);
+    let mut state = AppState {
+        latest_total_tokens: Some(42_300),
+        ..Default::default()
+    };
     state.set_context_window_max_tokens(Some(128_000));
     state.set_active_agent_identity("coder");
 
@@ -4094,8 +4169,10 @@ fn lane_2_shows_agent_when_active() {
 
 #[test]
 fn lane_2_shows_only_tokens_when_no_agent() {
-    let mut state = AppState::new();
-    state.latest_total_tokens = Some(250);
+    let mut state = AppState {
+        latest_total_tokens: Some(250),
+        ..Default::default()
+    };
     state.set_context_window_max_tokens(Some(1000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 40);
@@ -4107,7 +4184,7 @@ fn lane_2_shows_only_tokens_when_no_agent() {
 
 #[test]
 fn lane_1_no_longer_shows_agent() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_active_agent_identity("coder");
 
     let lane_1 = crate::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
@@ -4264,23 +4341,19 @@ fn status_target_height_is_three() {
 
 #[test]
 fn status_left_content_contains_model() {
-    let state = AppState::new();
+    let state = AppState::default();
     let line = crate::runtime::status_left_content_for_test("openai/gpt-4", None, &state, 80);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(text.contains("openai/gpt-4"));
 }
 
 #[test]
-fn status_right_content_contains_branch() {
+fn status_right_content_contains_branch() -> Result<()> {
     let line = crate::runtime::status_right_content_for_test(Some("main"), None);
-    assert!(line.is_some());
-    let text: String = line
-        .unwrap()
-        .spans
-        .iter()
-        .map(|s| s.content.as_ref())
-        .collect();
+    let line = line.ok_or("should have right content line")?;
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(text.contains("main"));
+    Ok(())
 }
 
 #[test]
@@ -4290,23 +4363,21 @@ fn status_right_content_shows_none_when_no_branch_and_no_cwd() {
 }
 
 #[test]
-fn status_right_content_shows_cwd_when_given() {
+fn status_right_content_shows_cwd_when_given() -> Result<()> {
     let cwd = std::path::Path::new("/home/user/projects/my-project");
     let line = crate::runtime::status_right_content_for_test(None, Some(cwd));
-    assert!(line.is_some());
-    let text: String = line
-        .unwrap()
-        .spans
-        .iter()
-        .map(|s| s.content.as_ref())
-        .collect();
+    let line = line.ok_or("should have right content line")?;
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(text.contains("my-project"));
+    Ok(())
 }
 
 #[test]
 fn status_left_content_contains_tokens() {
-    let mut state = AppState::new();
-    state.latest_total_tokens = Some(250);
+    let mut state = AppState {
+        latest_total_tokens: Some(250),
+        ..Default::default()
+    };
     state.set_context_window_max_tokens(Some(1000));
     let line = crate::runtime::status_left_content_for_test("openai/gpt-4", None, &state, 80);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -4334,7 +4405,7 @@ fn transcript_list_area_is_two_columns_narrower_than_content_area() {
 
 #[test]
 fn model_picker_rows_do_not_contain_selection_prefix() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_model_picker_options(vec![
         crate::state::ModelPickerOption {
             provider: "openai".to_string(),
@@ -4390,7 +4461,7 @@ fn model_picker_rows_do_not_contain_selection_prefix() {
 
 #[test]
 fn agent_picker_rows_do_not_contain_selection_prefix() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(vec![
         crate::state::AgentPickerOption {
             name: "default".to_string(),
@@ -4429,18 +4500,13 @@ fn agent_picker_rows_do_not_contain_selection_prefix() {
 }
 
 #[test]
-fn status_right_content_width_exceeds_narrow_line_triggering_overflow() {
+fn status_right_content_width_exceeds_narrow_line_triggering_overflow() -> Result<()> {
     let narrow_width: u16 = 20;
     let branch = "feature/my-very-long-branch";
     let cwd = std::path::Path::new("/home/user/projects/deep/nested/dir");
     let right_line = crate::runtime::status_right_content_for_test(Some(branch), Some(cwd));
-    assert!(
-        right_line.is_some(),
-        "expected right content with branch+cwd"
-    );
+    let right_line = right_line.ok_or("should have right content line")?;
     let right_width: u16 = right_line
-        .as_ref()
-        .unwrap()
         .spans
         .iter()
         .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()) as u16)
@@ -4449,6 +4515,7 @@ fn status_right_content_width_exceeds_narrow_line_triggering_overflow() {
         right_width > narrow_width,
         "right_width={right_width} must exceed narrow_width={narrow_width} to exercise overflow"
     );
+    Ok(())
 }
 
 // ── sync_input_state / sync_textarea_from_input_state tests ──
@@ -4518,7 +4585,7 @@ fn should_scan_for_yank_visual_mode_returns_true() {
 
 #[test]
 fn entry_visual_info_computed_on_new_entry() {
-    let mut state = crate::state::AppState::new();
+    let mut state = crate::state::AppState::default();
     state.push_transcript_line(crate::state::TranscriptRole::User, "hello".to_string());
     state.recompute_entry_visual_info(80);
     assert_eq!(state.entry_visual_info.len(), 1);
@@ -4528,7 +4595,7 @@ fn entry_visual_info_computed_on_new_entry() {
 
 #[test]
 fn total_visual_rows_from_entry_visual_info() {
-    let mut state = crate::state::AppState::new();
+    let mut state = crate::state::AppState::default();
     state.push_transcript_line(crate::state::TranscriptRole::User, "a".to_string());
     state.push_transcript_line(
         crate::state::TranscriptRole::Assistant,
@@ -4552,7 +4619,7 @@ fn total_visual_rows_from_entry_visual_info() {
 
 #[test]
 fn entry_visual_info_cleared_on_clear_transcript() {
-    let mut state = crate::state::AppState::new();
+    let mut state = crate::state::AppState::default();
     state.push_transcript_line(crate::state::TranscriptRole::User, "hello".to_string());
     state.recompute_entry_visual_info(80);
     assert!(!state.entry_visual_info.is_empty());

@@ -5,7 +5,6 @@ pub mod contracts;
 pub mod event;
 pub mod mcp_management;
 pub mod model_switching;
-pub mod permission;
 pub mod persona;
 pub mod picker;
 pub mod preamble;

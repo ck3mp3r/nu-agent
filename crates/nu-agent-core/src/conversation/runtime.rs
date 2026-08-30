@@ -4,9 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use nu_plugin::EngineInterface;
 use nu_protocol::{LabeledError, Span, Value};
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
 
+use crate::bus::Bus;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::SessionInfo;
@@ -19,13 +18,13 @@ use super::managers::{
 };
 use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 
+use crate::bus::OneshotTx;
+
 /// Shared pending-permission map for TUI mode: maps request IDs to oneshot senders
 /// that unblock the `InteractivePermissionResolver` awaiting a user decision.
-pub type PendingPermissions =
-    Arc<Mutex<HashMap<String, oneshot::Sender<ProtocolPermissionDecision>>>>;
+pub type PendingPermissions = Arc<Mutex<HashMap<String, OneshotTx<ProtocolPermissionDecision>>>>;
 use crate::protocol::{
-    contracts::{CoreRuntime, McpUsabilityState, ProgressUi},
-    event::UiEvent,
+    contracts::{CoreRuntime, McpUsabilityState},
     mcp_management::McpManagement,
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
@@ -158,9 +157,9 @@ where
     Persona: PersonaManager + Send,
     Multi: MultiAgentManager + Send,
 {
-    async fn execute_turn<U: ProgressUi + Send>(
+    async fn execute_turn(
         &mut self,
-        ui: &mut U,
+        bus: &Bus,
         prompt: String,
         context: Option<String>,
         span: Span,
@@ -170,7 +169,7 @@ where
         };
         use crate::hook::{InteractivePermissionResolver, PolicyPermissionResolver};
 
-        self.permission_state.emit_startup_summary_once(ui);
+        self.permission_state.emit_startup_summary_once(bus).await;
 
         // Build system preamble from cached components
         let cwd_str = self.cwd.to_str().map(|s| format!("Working directory: {s}"));
@@ -224,25 +223,21 @@ where
             );
 
             let outcome = if let Some(pending) = self.interactive_pending.as_ref() {
-                // TUI mode: construct InteractivePermissionResolver.
-                //
-                // Create the tokio UI event channel here so that we can:
-                //   1. Pass the (ui_tx, ui_rx) pair to the executor so the drain loop uses
-                //      the same channel that the hook's ui_tx writes events to.
-                //   2. The resolver does NOT own a ui_tx — it receives one per-call from
-                //      the AgentHook, preventing the executor's stack-held resolver from
-                //      keeping a sender alive that would deadlock the drain loop.
-                let (ui_tx, ui_rx) = mpsc::unbounded_channel::<UiEvent>();
+                // TUI mode: construct InteractivePermissionResolver. The resolver owns
+                // a clone of the shared bus and publishes `PermissionEvent` on
+                // `bus.permission()` directly. No UI channel is threaded through the
+                // executor; the turn's drain loop creates its own channel internally
+                // and terminates when the prompt resolves.
                 let resolver = InteractivePermissionResolver::new(
                     Arc::clone(pending),
                     Arc::clone(&permissions),
                     Arc::clone(&session_grants),
                     Arc::clone(&closure_registry),
                     Arc::clone(&mcp_registry),
+                    self.bus.clone(),
                 );
                 executor
                     .execute(
-                        ui,
                         ExecuteInput {
                             prompt,
                             preamble,
@@ -250,7 +245,6 @@ where
                         },
                         resolver,
                         self.final_session_id.as_deref(),
-                        Some((ui_tx, ui_rx)),
                     )
                     .await
             } else {
@@ -263,7 +257,6 @@ where
                 };
                 executor
                     .execute(
-                        ui,
                         ExecuteInput {
                             prompt,
                             preamble,
@@ -271,7 +264,6 @@ where
                         },
                         permission_resolver,
                         self.final_session_id.as_deref(),
-                        None,
                     )
                     .await
             };
@@ -384,8 +376,8 @@ where
                 .switch_agent(agent_name, &cwd, self.multi_agent.agents_config())?;
 
         // If persona specifies a model, attempt to switch (ignore errors)
-        if let Some(ref model) = result.model {
-            let _ = self.provider.switch_model(model);
+        if let Some(model) = result.model {
+            let _ = self.provider.switch_model(&model);
         }
 
         // Apply persona config overrides for in-session switch.

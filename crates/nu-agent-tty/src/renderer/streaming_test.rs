@@ -1,8 +1,8 @@
-use nu_agent_core::policy::{UiPolicy, Verbosity};
 use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::renderer::UiRenderer;
 
 use super::StderrUiRenderer;
+use crate::policy::{UiPolicy, Verbosity};
 
 #[test]
 fn normal_mode_streams_text() {

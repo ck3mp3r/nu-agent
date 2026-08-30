@@ -66,7 +66,7 @@ pub(super) fn resolve_effective_permissions_config(
         effective = effective.with_overlay(overlay);
     }
 
-    if let Some(ref overlay) = cli_overlay {
+    if let Some(overlay) = &cli_overlay {
         effective = effective.with_overlay(overlay);
     }
 

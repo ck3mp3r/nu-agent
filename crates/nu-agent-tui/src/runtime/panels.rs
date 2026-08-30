@@ -1,4 +1,11 @@
-use super::*;
+use ratatui::{
+    layout::Rect,
+    text::{Line, Span, Text},
+    widgets::Paragraph,
+};
+
+use crate::{rendering::theme::TuiTheme, state::AppState};
+use nu_agent_core::transcript::items::TranscriptEntry;
 
 pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect, theme: &TuiTheme) {
     let controls = Line::from(vec![

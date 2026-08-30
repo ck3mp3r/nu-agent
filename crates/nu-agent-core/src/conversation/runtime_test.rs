@@ -1,25 +1,9 @@
 use super::*;
 
 use crate::conversation::providers::ClientCacheKey;
-use crate::protocol::{contracts::ProgressUi, event::UiEvent};
 use crate::types::ToolDefinition;
 
-#[derive(Default)]
-struct TestProgressUi {
-    events: Vec<UiEvent>,
-}
-
-impl ProgressUi for TestProgressUi {
-    fn emit(&mut self, event: &UiEvent) {
-        self.events.push(event.clone());
-    }
-
-    fn flush(&mut self) {}
-
-    fn take_cancel_requested(&self) -> bool {
-        false
-    }
-}
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Build a `MemoryState<FsSessionStore>` (no compaction — `CachedMemory` used
 /// directly) so tests never invoke a real LLM.
@@ -31,11 +15,12 @@ fn test_memory_state() -> super::super::state::memory::MemoryState<crate::sessio
     super::super::state::memory::MemoryState::new(store)
 }
 
-#[test]
-fn permissions_startup_summary_emits_once_before_first_turn() {
+#[tokio::test]
+async fn permissions_startup_summary_emits_once_before_first_turn() {
     use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
 
-    let mut ui = TestProgressUi::default();
+    let bus = crate::bus::create_bus();
+    let mut warning_rx = bus.warning().subscribe();
     let summary =
         "permissions policy: overlay_active=false global=ask tool_rules=5 nested_command_rules=1";
 
@@ -47,25 +32,28 @@ fn permissions_startup_summary_emits_once_before_first_turn() {
         summary.to_string(),
     );
 
-    state.emit_startup_summary_once(&mut ui);
-    state.emit_startup_summary_once(&mut ui);
+    state.emit_startup_summary_once(&bus).await;
+    state.emit_startup_summary_once(&bus).await;
 
-    let warnings = ui
-        .events
-        .iter()
-        .filter(|e| matches!(e, UiEvent::Warning { .. }))
-        .count();
-    assert_eq!(warnings, 1);
-
-    let warning_message = ui
-        .events
-        .iter()
-        .find_map(|event| match event {
-            UiEvent::Warning { message } => Some(message.clone()),
-            _ => None,
-        })
-        .expect("warning event");
-    assert_eq!(warning_message, summary);
+    // Only the first call should publish a WarningEvent::Message.
+    let mut count = 0usize;
+    let mut first_message: Option<String> = None;
+    loop {
+        match warning_rx.try_recv() {
+            Ok(crate::bus::WarningEvent::Message { message }) => {
+                count += 1;
+                if first_message.is_none() {
+                    first_message = Some(message);
+                }
+            }
+            Ok(_) => {}
+            Err(crate::bus::TryRecvError::Empty) => break,
+            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
+            Err(crate::bus::TryRecvError::Closed) => break,
+        }
+    }
+    assert_eq!(count, 1);
+    assert_eq!(first_message.as_deref(), Some(summary));
 }
 
 // ========================================================================
@@ -73,7 +61,7 @@ fn permissions_startup_summary_emits_once_before_first_turn() {
 // ========================================================================
 
 #[test]
-fn build_system_preamble_joins_non_empty_parts() {
+fn build_system_preamble_joins_non_empty_parts() -> Result<()> {
     let result = super::build_system_preamble(
         None,
         Some("preamble text"),
@@ -85,15 +73,16 @@ fn build_system_preamble_joins_non_empty_parts() {
     );
 
     assert!(result.is_some());
-    let text = result.unwrap();
+    let text = result.ok_or("build_system_preamble should yield a Some")?;
     assert!(text.contains("preamble text"));
     assert!(text.contains("context text"));
     assert!(text.contains("agents chain"));
     assert!(text.contains("available skills"));
+    Ok(())
 }
 
 #[test]
-fn build_system_preamble_includes_cwd_first() {
+fn build_system_preamble_includes_cwd_first() -> Result<()> {
     let result = super::build_system_preamble(
         Some("Working directory: /tmp/project"),
         Some("config preamble"),
@@ -105,16 +94,21 @@ fn build_system_preamble_includes_cwd_first() {
     );
 
     assert!(result.is_some());
-    let text = result.unwrap();
+    let text = result.ok_or("build_system_preamble should yield a Some")?;
     assert!(text.contains("Working directory: /tmp/project"));
 
     // cwd must be the first part the LLM sees
-    let cwd_pos = text.find("Working directory: /tmp/project").unwrap();
-    let config_pos = text.find("config preamble").unwrap();
+    let cwd_pos = text
+        .find("Working directory: /tmp/project")
+        .ok_or("cwd marker missing")?;
+    let config_pos = text
+        .find("config preamble")
+        .ok_or("config preamble missing")?;
     assert!(
         cwd_pos < config_pos,
         "cwd should come before config preamble"
     );
+    Ok(())
 }
 
 #[test]
@@ -124,7 +118,7 @@ fn build_system_preamble_returns_none_when_all_empty() {
 }
 
 #[test]
-fn build_system_preamble_handles_partial_inputs() {
+fn build_system_preamble_handles_partial_inputs() -> Result<()> {
     let result = super::build_system_preamble(
         None,
         Some("preamble"),
@@ -136,13 +130,14 @@ fn build_system_preamble_handles_partial_inputs() {
     );
 
     assert!(result.is_some());
-    let text = result.unwrap();
+    let text = result.ok_or("build_system_preamble should yield a Some")?;
     assert!(text.contains("preamble"));
     assert!(text.contains("agents"));
+    Ok(())
 }
 
 #[test]
-fn build_system_preamble_includes_persona_in_correct_position() {
+fn build_system_preamble_includes_persona_in_correct_position() -> Result<()> {
     let result = super::build_system_preamble(
         None,
         Some("config preamble"),
@@ -154,7 +149,7 @@ fn build_system_preamble_includes_persona_in_correct_position() {
     );
 
     assert!(result.is_some());
-    let text = result.unwrap();
+    let text = result.ok_or("build_system_preamble should yield a Some")?;
 
     // Verify all parts are present
     assert!(text.contains("config preamble"));
@@ -164,9 +159,11 @@ fn build_system_preamble_includes_persona_in_correct_position() {
     assert!(text.contains("available skills"));
 
     // Verify persona appears between config preamble and context
-    let config_pos = text.find("config preamble").unwrap();
-    let persona_pos = text.find("agent persona").unwrap();
-    let context_pos = text.find("context text").unwrap();
+    let config_pos = text
+        .find("config preamble")
+        .ok_or("config preamble missing")?;
+    let persona_pos = text.find("agent persona").ok_or("agent persona missing")?;
+    let context_pos = text.find("context text").ok_or("context text missing")?;
 
     assert!(
         config_pos < persona_pos,
@@ -176,20 +173,22 @@ fn build_system_preamble_includes_persona_in_correct_position() {
         persona_pos < context_pos,
         "persona should come before context"
     );
+    Ok(())
 }
 
 #[test]
-fn build_system_preamble_persona_only() {
+fn build_system_preamble_persona_only() -> Result<()> {
     let result =
         super::build_system_preamble(None, None, Some("persona only"), None, None, None, None);
 
     assert!(result.is_some());
-    let text = result.unwrap();
+    let text = result.ok_or("build_system_preamble should yield a Some")?;
     assert_eq!(text, "persona only");
+    Ok(())
 }
 
 #[test]
-fn build_system_preamble_includes_sub_agent_instruction() {
+fn build_system_preamble_includes_sub_agent_instruction() -> Result<()> {
     let result = super::build_system_preamble(
         None,
         None,
@@ -201,21 +200,24 @@ fn build_system_preamble_includes_sub_agent_instruction() {
     );
 
     assert!(result.is_some());
-    let text = result.unwrap();
+    let text = result.ok_or("build_system_preamble should yield a Some")?;
     assert!(text.contains("persona"));
     assert!(text.contains("sub-agent instruction"));
 
     // sub-agent instruction should come after persona
-    let persona_pos = text.find("persona").unwrap();
-    let instruction_pos = text.find("sub-agent instruction").unwrap();
+    let persona_pos = text.find("persona").ok_or("persona marker missing")?;
+    let instruction_pos = text
+        .find("sub-agent instruction")
+        .ok_or("sub-agent instruction marker missing")?;
     assert!(
         persona_pos < instruction_pos,
         "sub-agent instruction should come after persona"
     );
+    Ok(())
 }
 
 #[test]
-fn build_system_preamble_sub_agent_instruction_only() {
+fn build_system_preamble_sub_agent_instruction_only() -> Result<()> {
     let result = super::build_system_preamble(
         None,
         None,
@@ -227,8 +229,9 @@ fn build_system_preamble_sub_agent_instruction_only() {
     );
 
     assert!(result.is_some());
-    let text = result.unwrap();
+    let text = result.ok_or("build_system_preamble should yield a Some")?;
     assert_eq!(text, "you are a sub-agent");
+    Ok(())
 }
 
 // ========================================================================
@@ -621,8 +624,8 @@ fn active_model_identity_returns_provider_slash_model() {
 // Phase E: PermissionState characterisation tests
 // ========================================================================
 
-#[test]
-fn permission_state_startup_not_emitted_on_construction() {
+#[tokio::test]
+async fn permission_state_startup_not_emitted_on_construction() {
     // After construction, startup_emitted must be false even when
     // startup_summary is non-empty — emission only happens during
     // execute_turn, not at construction time.
@@ -631,7 +634,8 @@ fn permission_state_startup_not_emitted_on_construction() {
     // the flag was false).
     use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
 
-    let mut ui = TestProgressUi::default();
+    let bus = crate::bus::create_bus();
+    let mut warning_rx = bus.warning().subscribe();
     let mut state = super::super::state::permission::PermissionState::new(
         PermissionsConfig::safe_defaults(true),
         PermissionsConfig::safe_defaults(true),
@@ -640,26 +644,32 @@ fn permission_state_startup_not_emitted_on_construction() {
         "non-empty summary".to_string(),
     );
 
-    state.emit_startup_summary_once(&mut ui);
+    state.emit_startup_summary_once(&bus).await;
 
-    let warnings = ui
-        .events
-        .iter()
-        .filter(|e| matches!(e, UiEvent::Warning { .. }))
-        .count();
+    let mut count = 0usize;
+    loop {
+        match warning_rx.try_recv() {
+            Ok(crate::bus::WarningEvent::Message { .. }) => count += 1,
+            Ok(_) => {}
+            Err(crate::bus::TryRecvError::Empty) => break,
+            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
+            Err(crate::bus::TryRecvError::Closed) => break,
+        }
+    }
     assert_eq!(
-        warnings, 1,
+        count, 1,
         "fresh PermissionState must have startup_emitted=false, so first call emits"
     );
 }
 
-#[test]
-fn permission_state_emit_startup_summary_emits_once() {
+#[tokio::test]
+async fn permission_state_emit_startup_summary_emits_once() {
     // emit_startup_summary_once must emit exactly one Warning event, even
     // when called twice.
     use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
 
-    let mut ui = TestProgressUi::default();
+    let bus = crate::bus::create_bus();
+    let mut warning_rx = bus.warning().subscribe();
     let summary = "test permissions summary";
 
     let mut state = super::super::state::permission::PermissionState::new(
@@ -670,15 +680,20 @@ fn permission_state_emit_startup_summary_emits_once() {
         summary.to_string(),
     );
 
-    state.emit_startup_summary_once(&mut ui);
-    state.emit_startup_summary_once(&mut ui);
+    state.emit_startup_summary_once(&bus).await;
+    state.emit_startup_summary_once(&bus).await;
 
-    let warnings = ui
-        .events
-        .iter()
-        .filter(|e| matches!(e, UiEvent::Warning { .. }))
-        .count();
-    assert_eq!(warnings, 1, "must emit exactly 1 warning, not 2");
+    let mut count = 0usize;
+    loop {
+        match warning_rx.try_recv() {
+            Ok(crate::bus::WarningEvent::Message { .. }) => count += 1,
+            Ok(_) => {}
+            Err(crate::bus::TryRecvError::Empty) => break,
+            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
+            Err(crate::bus::TryRecvError::Closed) => break,
+        }
+    }
+    assert_eq!(count, 1, "must emit exactly 1 warning, not 2");
 }
 
 // ========================================================================
@@ -694,7 +709,7 @@ fn provider_state_switch_model_returns_err_when_no_startup_config() {
     let startup_plugin_config: Option<crate::config::PluginConfig> = None;
 
     // Replicate the switch_model error path with no startup config
-    let result: Result<String, String> = startup_plugin_config
+    let result: std::result::Result<String, String> = startup_plugin_config
         .ok_or_else(|| {
             "model switch unavailable: startup plugin config cache is missing".to_string()
         })
@@ -702,7 +717,11 @@ fn provider_state_switch_model_returns_err_when_no_startup_config() {
 
     assert!(result.is_err());
     assert!(
-        result.unwrap_err().contains("model switch unavailable"),
+        result
+            .err()
+            .as_deref()
+            .unwrap_or_default()
+            .contains("model switch unavailable"),
         "error must mention 'model switch unavailable'"
     );
 }
@@ -831,13 +850,17 @@ fn multi_agent_state_switch_agent_fails_without_cwd() {
     //     .ok_or_else(|| "agent switch unavailable: working directory not set".to_string())?;
 
     let cwd: Option<String> = None;
-    let result: Result<String, String> = cwd
+    let result: std::result::Result<String, String> = cwd
         .clone()
         .ok_or_else(|| "agent switch unavailable: working directory not set".to_string());
 
     assert!(result.is_err());
     assert!(
-        result.unwrap_err().contains("working directory not set"),
+        result
+            .err()
+            .as_deref()
+            .unwrap_or_default()
+            .contains("working directory not set"),
         "error must mention 'working directory not set'"
     );
 }
@@ -1129,8 +1152,8 @@ fn mcp_state_lifecycle_projection_empty_by_default() {
     assert!(projection.is_empty());
 }
 
-#[test]
-fn set_permissions_replaces_config_and_resets_startup() {
+#[tokio::test]
+async fn set_permissions_replaces_config_and_resets_startup() -> Result<()> {
     use crate::tools::authz::{PermissionAction, PermissionsConfig, SessionGrantCache};
 
     let initial = PermissionsConfig::safe_defaults(true);
@@ -1155,7 +1178,8 @@ fn set_permissions_replaces_config_and_resets_startup() {
     use crate::tools::authz::PermissionsOverlay;
     let mut deny_mapping = noyalib::Mapping::new();
     deny_mapping.insert("*", noyalib::Value::String("deny".to_string()));
-    let deny_overlay = PermissionsOverlay::parse_from_yaml(&deny_mapping).expect("valid overlay");
+    let deny_overlay = PermissionsOverlay::parse_from_yaml(&deny_mapping)
+        .map_err(|e| format!("valid overlay: {e:?}"))?;
     let new_permissions = state.permissions().with_overlay(&deny_overlay);
 
     state.set_permissions(new_permissions, summary.clone());
@@ -1165,19 +1189,32 @@ fn set_permissions_replaces_config_and_resets_startup() {
 
     // startup_emitted is reset to false so the next execute_turn naturally
     // emits the summary via emit_startup_summary_once.
-    let mut ui = TestProgressUi::default();
-    state.emit_startup_summary_once(&mut ui);
+    let bus = crate::bus::create_bus();
+    let mut warning_rx = bus.warning().subscribe();
+    state.emit_startup_summary_once(&bus).await;
     // SHOULD emit because set_permissions sets startup_emitted = false
+    let mut count = 0usize;
+    let mut first_message: Option<String> = None;
+    loop {
+        match warning_rx.try_recv() {
+            Ok(crate::bus::WarningEvent::Message { message }) => {
+                count += 1;
+                if first_message.is_none() {
+                    first_message = Some(message);
+                }
+            }
+            Ok(_) => {}
+            Err(crate::bus::TryRecvError::Empty) => break,
+            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
+            Err(crate::bus::TryRecvError::Closed) => break,
+        }
+    }
     assert_eq!(
-        ui.events.len(),
-        1,
+        count, 1,
         "set_permissions sets startup_emitted=false, so emit should fire"
     );
 
     // Verify the summary content matches what was passed to set_permissions
-    let warning = ui.events.iter().find_map(|event| match event {
-        UiEvent::Warning { message } => Some(message.clone()),
-        _ => None,
-    });
-    assert_eq!(warning, Some(summary));
+    assert_eq!(first_message.as_deref(), Some(summary.as_str()));
+    Ok(())
 }

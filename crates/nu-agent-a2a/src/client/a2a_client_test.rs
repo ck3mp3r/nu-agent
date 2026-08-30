@@ -7,6 +7,8 @@ use crate::{
 
 use super::{A2aClient, cancel_task, send_task};
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // The workspace reqwest is built with `rustls-no-provider`, meaning the
 // application must install a crypto provider before constructing a Client.
 static CRYPTO_INIT: std::sync::Once = std::sync::Once::new();
@@ -43,7 +45,7 @@ fn test_default_trait() {
 #[tokio::test]
 async fn test_list_peers() {
     ensure_crypto_provider();
-    let cache = PeerCache::new();
+    let cache = PeerCache::default();
     cache.add_or_update(Peer {
         name: "alice".into(),
         url: "http://127.0.0.1:8080".into(),
@@ -74,7 +76,7 @@ async fn test_setup() -> (crate::A2aServer, A2aClient, String) {
         skills: vec![],
         ..Default::default()
     };
-    let server = crate::A2aServer::start(card, Arc::new(PeerCache::new()), 0)
+    let server = crate::A2aServer::start(card, Arc::new(PeerCache::default()), 0)
         .await
         .unwrap();
     let client = A2aClient::new().unwrap();
@@ -83,7 +85,7 @@ async fn test_setup() -> (crate::A2aServer, A2aClient, String) {
 }
 
 #[tokio::test]
-async fn test_subscribe_task_immediate_terminal() {
+async fn test_subscribe_task_immediate_terminal() -> Result<()> {
     let (_server, client, url) = test_setup().await;
 
     // Send a task, then cancel it so it's in a terminal state
@@ -96,14 +98,22 @@ async fn test_subscribe_task_immediate_terminal() {
         extensions: None,
         metadata: None,
     };
-    let sent = send_task(&client, &url, msg, None, None).await.unwrap();
-    let canceled = cancel_task(&client, &url, &sent.id).await.unwrap();
+    let sent = send_task(&client, &url, msg, None, None)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    let canceled = cancel_task(&client, &url, &sent.id)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(canceled.status.state, TaskState::Canceled);
 
     // Now subscribe — should immediately return the terminal state
-    let result = client.subscribe_task(&url, &sent.id).await.unwrap();
+    let result = client
+        .subscribe_task(&url, &sent.id)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(result.status.state, TaskState::Canceled);
     assert_eq!(result.id, sent.id);
+    Ok(())
 }
 
 #[tokio::test]
@@ -130,7 +140,7 @@ async fn test_subscribe_task_connection_refused() {
 }
 
 #[tokio::test]
-async fn test_subscribe_task_streams_lifecycle() {
+async fn test_subscribe_task_streams_lifecycle() -> Result<()> {
     let (server, client, url) = test_setup().await;
 
     // Send a task
@@ -143,23 +153,29 @@ async fn test_subscribe_task_streams_lifecycle() {
         extensions: None,
         metadata: None,
     };
-    let sent = send_task(&client, &url, msg, None, None).await.unwrap();
+    let sent = send_task(&client, &url, msg, None, None)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
     // Complete the task directly via the server's task store (no HTTP needed)
     server
         .task_store()
         .complete_task(&sent.id, "Task completed successfully")
-        .expect("Working → Completed should succeed");
+        .map_err(|e| format!("{e:?}"))?;
 
     // Give the SSE notification time to propagate
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Subscribe — should get the terminal Completed state
-    let result = client.subscribe_task(&url, &sent.id).await.unwrap();
+    let result = client
+        .subscribe_task(&url, &sent.id)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(result.status.state, TaskState::Completed);
     assert_eq!(result.id, sent.id);
 
     server.shutdown().await;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -167,7 +183,7 @@ async fn test_subscribe_task_streams_lifecycle() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_client_sends_a2a_version_header() {
+async fn test_client_sends_a2a_version_header() -> Result<()> {
     ensure_crypto_provider();
 
     // Mini echo server that captures the A2A-Version request header
@@ -217,7 +233,8 @@ async fn test_client_sends_a2a_version_header() {
 
     let captured = tokio::time::timeout(Duration::from_secs(2), version_rx.recv())
         .await
-        .expect("timeout waiting for echo server")
-        .expect("echo server closed channel");
+        .map_err(|e| format!("timeout waiting for echo server: {e:?}"))?
+        .ok_or("echo server closed channel")?;
     assert_eq!(captured, "1.0", "client should send A2A-Version: 1.0");
+    Ok(())
 }

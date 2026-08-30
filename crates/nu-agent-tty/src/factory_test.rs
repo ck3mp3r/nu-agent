@@ -1,8 +1,8 @@
-use nu_agent_core::policy::{UiPolicy, Verbosity};
 use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::renderer::UiRenderer;
 
 use crate::factory::{StderrUiFactory, UiRendererFactory};
+use crate::policy::{UiPolicy, Verbosity};
 
 #[test]
 fn factory_creates_renderer_without_core_loop_changes() {

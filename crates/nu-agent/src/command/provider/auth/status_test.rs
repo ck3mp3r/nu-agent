@@ -3,7 +3,7 @@ use nu_plugin::SimplePluginCommand;
 
 #[test]
 fn status_command_name() {
-    let command = AgentProviderAuthStatus::new();
+    let command = AgentProviderAuthStatus;
     assert_eq!(
         SimplePluginCommand::name(&command),
         "agent provider auth status",
@@ -13,7 +13,7 @@ fn status_command_name() {
 
 #[test]
 fn status_signature_has_no_positional_args() {
-    let command = AgentProviderAuthStatus::new();
+    let command = AgentProviderAuthStatus;
     let sig = SimplePluginCommand::signature(&command);
 
     assert_eq!(

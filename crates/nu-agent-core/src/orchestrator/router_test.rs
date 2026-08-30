@@ -18,8 +18,7 @@ use crate::orchestrator::{
     UiRequestResponse, WorkerCommand, run_interactive_loop_impl,
 };
 use crate::protocol::{
-    contracts::{CoreRuntime, McpUsabilityState, ProgressUi, UiMessageSnapshot, UserInputUi},
-    event::UiEvent,
+    contracts::{CoreRuntime, McpUsabilityState, UiMessageSnapshot, UserInputUi},
     mcp_management::McpManagement,
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
@@ -48,9 +47,9 @@ impl Default for AgentSwitchRuntime {
 }
 
 impl CoreRuntime for AgentSwitchRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        _ui: &mut U,
+        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
@@ -58,7 +57,8 @@ impl CoreRuntime for AgentSwitchRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         Ok(Value::nothing(span))
     }
 }
@@ -262,9 +262,9 @@ impl LongRunningAgentRuntime {
 }
 
 impl CoreRuntime for LongRunningAgentRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        ui: &mut U,
+        bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         _span: Span,
@@ -276,13 +276,19 @@ impl CoreRuntime for LongRunningAgentRuntime {
             .push(prompt.clone());
 
         if prompt == "first" {
-            while !self.block_first_turn.load(Ordering::SeqCst) {
-                if ui.take_cancel_requested() {
-                    self.active.store(false, Ordering::SeqCst);
-                    return Err(LabeledError::new("LLM call cancelled"));
+            let mut cancel_rx = bus.cancel().subscribe();
+            loop {
+                tokio::select! {
+                    Ok(crate::bus::CancelEvent::Requested) = cancel_rx.recv() => {
+                        self.active.store(false, Ordering::SeqCst);
+                        return Err(LabeledError::new("LLM call cancelled"));
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(2)) => {
+                        if !self.block_first_turn.load(Ordering::SeqCst) {
+                            break;
+                        }
+                    }
                 }
-                ui.emit(&UiEvent::Tick);
-                tokio::time::sleep(Duration::from_millis(2)).await;
             }
         }
 
@@ -291,7 +297,8 @@ impl CoreRuntime for LongRunningAgentRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         self.active.store(false, Ordering::SeqCst);
         Ok(Value::nothing(Span::test_data()))
     }
@@ -479,7 +486,8 @@ impl UserInputUi for ResponsiveAgentSwitchUi {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn agent_switch_sends_command_and_updates_ui_identity() {
+async fn agent_switch_sends_command_and_updates_ui_identity()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
     let bus = create_bus();
     let runtime = AgentSwitchRuntime {
         bus: bus.clone(),
@@ -495,7 +503,7 @@ async fn agent_switch_sends_command_and_updates_ui_identity() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e:?}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.switched_agents, vec!["research-agent"]);
@@ -511,10 +519,12 @@ async fn agent_switch_sends_command_and_updates_ui_identity() {
             .expect("active model identity lock"),
         Some("openai/gpt-4o-mini".to_string())
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn agent_switch_failure_warns_and_keeps_previous_agent() {
+async fn agent_switch_failure_warns_and_keeps_previous_agent()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
     let bus = create_bus();
     let runtime = AgentSwitchRuntime {
         switch_agent_result: Some(Err("agent not found".to_string())),
@@ -531,7 +541,7 @@ async fn agent_switch_failure_warns_and_keeps_previous_agent() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e:?}"))?;
 
     assert!(value.is_nothing());
     assert!(
@@ -547,10 +557,12 @@ async fn agent_switch_failure_warns_and_keeps_previous_agent() {
             .expect("active agent identity lock"),
         None
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn agent_switch_while_worker_active_is_queued_for_next_turn() {
+async fn agent_switch_while_worker_active_is_queued_for_next_turn()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
     let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningAgentRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
@@ -571,7 +583,7 @@ async fn agent_switch_while_worker_active_is_queued_for_next_turn() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e:?}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -595,10 +607,12 @@ async fn agent_switch_while_worker_active_is_queued_for_next_turn() {
             .expect("active agent identity lock"),
         Some("research-agent".to_string())
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn queued_agent_switch_last_write_wins() {
+async fn queued_agent_switch_last_write_wins()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
     let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningAgentRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
@@ -620,7 +634,7 @@ async fn queued_agent_switch_last_write_wins() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e:?}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -637,6 +651,7 @@ async fn queued_agent_switch_last_write_wins() {
             .expect("active agent identity lock"),
         Some("agent-b".to_string())
     );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -649,14 +664,17 @@ struct SwitchSessionRuntime {
 }
 
 impl CoreRuntime for SwitchSessionRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        ui: &mut U,
+        bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
-        ui.emit(&UiEvent::Completed { tool_calls: 0 });
+        let _ = bus
+            .turn()
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         Ok(Value::nothing(span))
     }
 }
@@ -702,24 +720,14 @@ crate::default_mcp!(SwitchSessionRuntime);
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn switch_session_dispatches_async_load_without_panic() {
+async fn switch_session_dispatches_async_load_without_panic()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
     let loaded_session_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     let mut runtime = SwitchSessionRuntime {
         loaded_session_id: Arc::clone(&loaded_session_id),
         active_model: "openai/gpt-4o-mini".to_string(),
     };
-
-    // Minimal ProgressUi — only needed to satisfy the trait bound on dispatch
-    struct NoopProgressUi;
-    impl ProgressUi for NoopProgressUi {
-        fn emit(&mut self, _event: &UiEvent) {}
-        fn flush(&mut self) {}
-        fn take_cancel_requested(&self) -> bool {
-            false
-        }
-    }
-    let mut ui = NoopProgressUi;
 
     // result_tx is unused by SwitchSession but required by the dispatch signature
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
@@ -738,7 +746,7 @@ async fn switch_session_dispatches_async_load_without_panic() {
     // that was panicking with "Cannot start a runtime from within a runtime"
     // when load_session used Handle::current().block_on(...)
     let should_continue =
-        CommandRouter::dispatch(cmd, &mut runtime, &mut ui, &result_tx, None, &create_bus()).await;
+        CommandRouter::dispatch(cmd, &mut runtime, &result_tx, None, &create_bus()).await;
 
     // 1. No panic occurred (reaching here proves it)
     assert!(should_continue, "SwitchSession should not trigger shutdown");
@@ -754,7 +762,7 @@ async fn switch_session_dispatches_async_load_without_panic() {
     }
 
     // 3. The result is sent through the response channel
-    let response = response_rx.recv().await.expect("response should be sent");
+    let response = response_rx.recv().await.ok_or("response should be sent")?;
     match response {
         UiRequestResponse::SessionSwitch { id, result } => {
             assert_eq!(id, "test-session-123");
@@ -765,6 +773,7 @@ async fn switch_session_dispatches_async_load_without_panic() {
         }
         other => panic!("unexpected response: {other:?}"),
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -772,7 +781,8 @@ async fn switch_session_dispatches_async_load_without_panic() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn on_agent_switch_callback_invoked_after_successful_switch() {
+async fn on_agent_switch_callback_invoked_after_successful_switch()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
     let switched_name = Arc::new(std::sync::Mutex::new(None::<String>));
     let switched_desc = Arc::new(std::sync::Mutex::new(None::<Option<String>>));
     let switched_icon = Arc::new(std::sync::Mutex::new(None::<Option<String>>));
@@ -803,7 +813,7 @@ async fn on_agent_switch_callback_invoked_after_successful_switch() {
         .with_spawn_render_loop(spawner);
 
     let (_runtime, result) = run_interactive_loop_impl(runtime, config).await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e:?}"))?;
     assert!(value.is_nothing());
 
     // Verify the callback was invoked with the correct values
@@ -817,6 +827,7 @@ async fn on_agent_switch_callback_invoked_after_successful_switch() {
     // The AgentSwitchRuntime doesn't implement agent_icon(), so it
     // returns None (the default trait method).
     assert_eq!(icon, Some(None));
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -824,7 +835,8 @@ async fn on_agent_switch_callback_invoked_after_successful_switch() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn dispatch_ui_request_switch_model() {
+async fn dispatch_ui_request_switch_model() -> core::result::Result<(), Box<dyn std::error::Error>>
+{
     let mut runtime = AgentSwitchRuntime::default();
     let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
 
@@ -838,7 +850,7 @@ async fn dispatch_ui_request_switch_model() {
     )
     .await;
 
-    let response = response_rx.recv().await.expect("response should be sent");
+    let response = response_rx.recv().await.ok_or("response should be sent")?;
     match response {
         UiRequestResponse::ModelSwitch(result) => {
             assert!(
@@ -848,10 +860,12 @@ async fn dispatch_ui_request_switch_model() {
         }
         other => panic!("expected ModelSwitch, got {other:?}"),
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn dispatch_ui_request_switch_agent() {
+async fn dispatch_ui_request_switch_agent() -> core::result::Result<(), Box<dyn std::error::Error>>
+{
     let mut runtime = AgentSwitchRuntime::default();
     let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
 
@@ -865,19 +879,22 @@ async fn dispatch_ui_request_switch_agent() {
     )
     .await;
 
-    let response = response_rx.recv().await.expect("response should be sent");
+    let response = response_rx.recv().await.ok_or("response should be sent")?;
     match response {
         UiRequestResponse::AgentSwitch(result) => {
-            let (agent, model, _max_tokens, _icon) = result.expect("switch should succeed");
+            let (agent, model, _max_tokens, _icon) =
+                result.map_err(|e| format!("switch should succeed: {e:?}"))?;
             assert_eq!(agent, "research-agent");
             assert_eq!(model, "openai/gpt-4o-mini");
         }
         other => panic!("expected AgentSwitch, got {other:?}"),
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn dispatch_ui_request_switch_agent_invokes_callback() {
+async fn dispatch_ui_request_switch_agent_invokes_callback()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
     let switched_name = Arc::new(Mutex::new(None::<String>));
     let cb_name = Arc::clone(&switched_name);
     let callback: OnAgentSwitch = Arc::new(
@@ -899,7 +916,7 @@ async fn dispatch_ui_request_switch_agent_invokes_callback() {
     )
     .await;
 
-    let response = response_rx.recv().await.expect("response should be sent");
+    let response = response_rx.recv().await.ok_or("response should be sent")?;
     match response {
         UiRequestResponse::AgentSwitch(result) => {
             assert!(result.is_ok(), "switch should succeed");
@@ -909,10 +926,12 @@ async fn dispatch_ui_request_switch_agent_invokes_callback() {
 
     let name = switched_name.lock().expect("name lock").take();
     assert_eq!(name.as_deref(), Some("research-agent"));
+    Ok(())
 }
 
 #[tokio::test]
-async fn dispatch_ui_request_switch_session() {
+async fn dispatch_ui_request_switch_session() -> core::result::Result<(), Box<dyn std::error::Error>>
+{
     let loaded_session_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let mut runtime = SwitchSessionRuntime {
         loaded_session_id: Arc::clone(&loaded_session_id),
@@ -930,7 +949,7 @@ async fn dispatch_ui_request_switch_session() {
     )
     .await;
 
-    let response = response_rx.recv().await.expect("response should be sent");
+    let response = response_rx.recv().await.ok_or("response should be sent")?;
     match response {
         UiRequestResponse::SessionSwitch { id, result } => {
             assert_eq!(id, "test-session-123");
@@ -941,10 +960,11 @@ async fn dispatch_ui_request_switch_session() {
 
     let loaded = loaded_session_id.lock().expect("lock");
     assert_eq!(loaded.as_deref(), Some("test-session-123"));
+    Ok(())
 }
 
 #[tokio::test]
-async fn dispatch_ui_request_toggle_mcp() {
+async fn dispatch_ui_request_toggle_mcp() -> core::result::Result<(), Box<dyn std::error::Error>> {
     let mut runtime = AgentSwitchRuntime::default();
     let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
 
@@ -959,7 +979,7 @@ async fn dispatch_ui_request_toggle_mcp() {
     )
     .await;
 
-    let response = response_rx.recv().await.expect("response should be sent");
+    let response = response_rx.recv().await.ok_or("response should be sent")?;
     match response {
         UiRequestResponse::McpToggle {
             server,
@@ -976,10 +996,12 @@ async fn dispatch_ui_request_toggle_mcp() {
         }
         other => panic!("expected McpToggle, got {other:?}"),
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn dispatch_ui_request_refresh_session_picker() {
+async fn dispatch_ui_request_refresh_session_picker()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
     let mut runtime = AgentSwitchRuntime::default();
     let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
 
@@ -991,11 +1013,12 @@ async fn dispatch_ui_request_refresh_session_picker() {
     )
     .await;
 
-    let response = response_rx.recv().await.expect("response should be sent");
+    let response = response_rx.recv().await.ok_or("response should be sent")?;
     match response {
         UiRequestResponse::SessionRefresh(result) => {
             assert!(result.is_ok(), "default list_sessions returns Ok");
         }
         other => panic!("expected SessionRefresh, got {other:?}"),
     }
+    Ok(())
 }

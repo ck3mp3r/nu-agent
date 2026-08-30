@@ -21,17 +21,9 @@ impl CwdInterface for EngineInterface {
 /// The `agent session inspect` command displays full details of a specific session.
 pub struct AgentSessionInspect;
 
-impl AgentSessionInspect {
-    /// Creates a new AgentSessionInspect command. The session store is obtained
-    /// lazily from the plugin in `run()`.
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl Default for AgentSessionInspect {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 
@@ -56,14 +48,14 @@ impl AgentSessionInspect {
         let loaded = store
             .load(&new_id)
             .await
-            .map_err(|e| LabeledError::new(format!("Failed to load session: {}", e)))?;
+            .map_err(|e| LabeledError::new(format!("Failed to load session: {e}")))?;
         let (metadata, entries) = match loaded {
             Some(v) => v,
             None => {
                 let legacy = store
                     .load(&legacy_id)
                     .await
-                    .map_err(|e| LabeledError::new(format!("Failed to load session: {}", e)))?;
+                    .map_err(|e| LabeledError::new(format!("Failed to load session: {e}")))?;
                 legacy
                     .ok_or_else(|| LabeledError::new(format!("Session not found: {session_id}")))?
             }

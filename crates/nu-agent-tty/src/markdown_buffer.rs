@@ -13,10 +13,6 @@ pub struct StreamingMarkdownBuffer {
 }
 
 impl StreamingMarkdownBuffer {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Append a new text delta and return the newly-safe prefix to render.
     ///
     /// Rescans the entire accumulated buffer from the start and returns the

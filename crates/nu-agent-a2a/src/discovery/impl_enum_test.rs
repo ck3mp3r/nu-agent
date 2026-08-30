@@ -1,4 +1,5 @@
 use super::*;
+use crate::AgentCard;
 use crate::discovery::static_discovery::StaticPeerDiscovery;
 
 fn test_card(name: &str) -> AgentCard {

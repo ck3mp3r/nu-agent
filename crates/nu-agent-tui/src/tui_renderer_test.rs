@@ -8,6 +8,8 @@ use nu_agent_core::transcript::items::*;
 use nu_agent_core::transcript::renderer::*;
 use std::collections::HashMap;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 fn make_renderer() -> TuiRenderer {
     TuiRenderer {
         theme: TuiTheme::default(),
@@ -196,7 +198,7 @@ fn tool_failed_shows_cross() {
 }
 
 #[test]
-fn diff_add_line_uses_done_fg_color() {
+fn diff_add_line_uses_done_fg_color() -> Result<()> {
     let r = make_renderer();
     let block = RenderBlock {
         role: Role::ToolDisplay,
@@ -213,12 +215,13 @@ fn diff_add_line_uses_done_fg_color() {
         .spans
         .iter()
         .find(|s| s.content.contains("+added"))
-        .expect("should have +added span");
+        .ok_or("should have +added span")?;
     assert_eq!(span.style.fg, TuiTheme::default().status_done.fg);
+    Ok(())
 }
 
 #[test]
-fn diff_remove_line_uses_failed_fg_color() {
+fn diff_remove_line_uses_failed_fg_color() -> Result<()> {
     let r = make_renderer();
     let block = RenderBlock {
         role: Role::ToolDisplay,
@@ -235,12 +238,13 @@ fn diff_remove_line_uses_failed_fg_color() {
         .spans
         .iter()
         .find(|s| s.content.contains("-removed"))
-        .expect("should have -removed span");
+        .ok_or("should have -removed span")?;
     assert_eq!(span.style.fg, TuiTheme::default().status_failed.fg);
+    Ok(())
 }
 
 #[test]
-fn diff_hunk_line_has_bold_modifier() {
+fn diff_hunk_line_has_bold_modifier() -> Result<()> {
     let r = make_renderer();
     let block = RenderBlock {
         role: Role::ToolDisplay,
@@ -257,11 +261,12 @@ fn diff_hunk_line_has_bold_modifier() {
         .spans
         .iter()
         .find(|s| s.content.contains("@@"))
-        .expect("should have hunk span");
+        .ok_or("should have hunk span")?;
     assert!(
         span.style.add_modifier.contains(Modifier::BOLD),
         "hunk should be bold"
     );
+    Ok(())
 }
 
 #[test]
@@ -455,26 +460,28 @@ mod task_5_visual_diff_tests {
     }
 
     #[test]
-    fn user_md_bold_renders_with_bold_modifier() {
+    fn user_md_bold_renders_with_bold_modifier() -> Result<()> {
         // Pass raw markdown — renderer projects at render time
         let lines = render_block_for(true, "**world**");
         let bold = lines
             .iter()
             .flat_map(|l| l.spans.iter())
             .find(|s| s.content.contains("world"))
-            .expect("bold span containing 'world'");
+            .ok_or("should have bold span containing 'world'")?;
         assert!(bold.style.add_modifier.contains(Modifier::BOLD));
+        Ok(())
     }
 
     #[test]
-    fn assistant_md_bold_renders_with_bold_modifier() {
+    fn assistant_md_bold_renders_with_bold_modifier() -> Result<()> {
         let lines = render_block_for(false, "**world**");
         let bold = lines
             .iter()
             .flat_map(|l| l.spans.iter())
             .find(|s| s.content.contains("world"))
-            .expect("bold span containing 'world'");
+            .ok_or("should have bold span containing 'world'")?;
         assert!(bold.style.add_modifier.contains(Modifier::BOLD));
+        Ok(())
     }
 
     // ── New tests added by task 70c69610 ────────────────────────────────────

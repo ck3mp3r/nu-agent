@@ -1,6 +1,6 @@
 use nu_plugin::EvaluatedCall;
 
-use nu_agent_core::policy::{UiPolicy, Verbosity};
+use nu_agent_tty::policy::{UiPolicy, Verbosity};
 
 fn count_short_flag_occurrences(call: &EvaluatedCall, short: char) -> usize {
     let mut count = 0;

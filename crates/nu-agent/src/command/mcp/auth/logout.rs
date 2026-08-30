@@ -19,15 +19,9 @@ pub(crate) fn perform_logout(store: &mut McpCredentialsStore, server_name: &str)
 
 pub struct AgentAuthMcpLogout;
 
-impl AgentAuthMcpLogout {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl Default for AgentAuthMcpLogout {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 

@@ -1,4 +1,5 @@
-use super::*;
+use crate::state::AppState;
+use ratatui::text::Line;
 
 pub(super) const SESSION_PICKER_EMPTY_STATE_MESSAGE: &str =
     "No sessions found. Start a new session with /new.";
@@ -17,7 +18,7 @@ pub(super) fn session_picker_table_model(
     let options = state.session_picker_filtered_options();
     let total = options.len();
     let overflow_cue = if total > available_rows {
-        Some(format!("{} of {}", available_rows, total))
+        Some(format!("{available_rows} of {total}"))
     } else {
         None
     };

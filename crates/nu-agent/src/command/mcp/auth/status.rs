@@ -49,15 +49,9 @@ pub(crate) fn determine_status(
 
 pub struct AgentAuthMcpStatus;
 
-impl AgentAuthMcpStatus {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl Default for AgentAuthMcpStatus {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 

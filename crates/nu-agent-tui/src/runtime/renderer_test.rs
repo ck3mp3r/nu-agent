@@ -2,6 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 
+use nu_agent_core::protocol::event::UiEvent;
+use nu_agent_core::renderer::UiRenderer;
+
 #[derive(Default)]
 pub(crate) struct FakeRenderer {
     emitted: Vec<UiEvent>,

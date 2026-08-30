@@ -141,16 +141,18 @@ pub fn adapt_closures(
 ) -> Vec<DynamicTool> {
     registry
         .names()
-        .map(|name| {
-            let resolved = registry.get(name).unwrap().clone();
-            ClosureToolAdapter::new(
-                name.clone(),
-                resolved,
-                executor.clone(),
-                span,
-                max_tool_result_bytes,
+        .filter_map(|name| {
+            let resolved = registry.get(name)?;
+            Some(
+                ClosureToolAdapter::new(
+                    name.clone(),
+                    resolved.clone(),
+                    executor.clone(),
+                    span,
+                    max_tool_result_bytes,
+                )
+                .into_dynamic_tool(),
             )
-            .into_dynamic_tool()
         })
         .collect()
 }

@@ -42,7 +42,7 @@ async fn invalid_args_missing_url() {
     let result = HttpTool::execute(
         &serde_json::json!({}),
         std::path::Path::new("/tmp"),
-        &Bus::new(),
+        &Bus::default(),
     )
     .await;
 
@@ -56,7 +56,7 @@ async fn invalid_url_scheme() {
     let result = HttpTool::execute(
         &serde_json::json!({"url": "ftp://example.com"}),
         std::path::Path::new("/tmp"),
-        &Bus::new(),
+        &Bus::default(),
     )
     .await;
 
@@ -145,7 +145,7 @@ async fn empty_url_is_invalid() {
     let result = HttpTool::execute(
         &serde_json::json!({"url": ""}),
         std::path::Path::new("/tmp"),
-        &Bus::new(),
+        &Bus::default(),
     )
     .await;
     let err = result.expect_err("expected an error for empty url");

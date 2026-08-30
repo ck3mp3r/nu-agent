@@ -1,13 +1,15 @@
 use nu_protocol::Span;
 use tokio::sync::mpsc;
 
-use crate::bus::{Bus, SessionEvent, WarningEvent, create_bus};
+use crate::bus::{Bus, SessionEvent, SessionRx, UiStateRx, WarningEvent, WarningRx, create_bus};
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::ui_request::UiRequestStage;
 use crate::orchestrator::stages::{OrchestrationContext, UiRequestHandler};
 use crate::orchestrator::{UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand};
 use crate::protocol::contracts::{McpUsabilityState, UiMessageSnapshot};
 use crate::session::SessionInfo;
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Mutable per-test state that the `UiRequestStage` reads and writes through
 /// `OrchestrationContext`. Kept separate from the channels so `ctx()` can
@@ -27,9 +29,9 @@ struct HarnessParts<'a> {
     concurrent_tx: &'a mpsc::Sender<UiRequestResponse>,
     bus: &'a Bus,
     worker_rx: &'a mut Option<mpsc::Receiver<WorkerCommand>>,
-    warning_rx: &'a mut tokio::sync::broadcast::Receiver<WarningEvent>,
-    ui_state_rx: &'a mut tokio::sync::broadcast::Receiver<UiStateEvent>,
-    session_rx: &'a mut tokio::sync::broadcast::Receiver<SessionEvent>,
+    warning_rx: &'a mut WarningRx,
+    ui_state_rx: &'a mut UiStateRx,
+    session_rx: &'a mut SessionRx,
     ctx_state: &'a mut CtxState,
 }
 
@@ -40,9 +42,9 @@ struct Harness {
     blocking_tx: mpsc::Sender<UiRequestResponse>,
     concurrent_tx: mpsc::Sender<UiRequestResponse>,
     bus: Bus,
-    warning_rx: tokio::sync::broadcast::Receiver<WarningEvent>,
-    ui_state_rx: tokio::sync::broadcast::Receiver<UiStateEvent>,
-    session_rx: tokio::sync::broadcast::Receiver<SessionEvent>,
+    warning_rx: WarningRx,
+    ui_state_rx: UiStateRx,
+    session_rx: SessionRx,
     ctx_state: CtxState,
 }
 
@@ -119,7 +121,7 @@ fn recv_command(worker_rx: &mut Option<mpsc::Receiver<WorkerCommand>>) -> Option
     worker_rx.as_mut()?.try_recv().ok()
 }
 
-fn take_warnings(warning_rx: &mut tokio::sync::broadcast::Receiver<WarningEvent>) -> Vec<String> {
+fn take_warnings(warning_rx: &mut WarningRx) -> Vec<String> {
     let mut out = Vec::new();
     while let Ok(event) = warning_rx.try_recv() {
         match event {
@@ -130,9 +132,7 @@ fn take_warnings(warning_rx: &mut tokio::sync::broadcast::Receiver<WarningEvent>
     out
 }
 
-fn take_ui_state(
-    ui_state_rx: &mut tokio::sync::broadcast::Receiver<UiStateEvent>,
-) -> Vec<UiStateEvent> {
+fn take_ui_state(ui_state_rx: &mut UiStateRx) -> Vec<UiStateEvent> {
     let mut out = Vec::new();
     while let Ok(event) = ui_state_rx.try_recv() {
         out.push(event);
@@ -140,9 +140,7 @@ fn take_ui_state(
     out
 }
 
-fn take_session_events(
-    session_rx: &mut tokio::sync::broadcast::Receiver<SessionEvent>,
-) -> Vec<SessionEvent> {
+fn take_session_events(session_rx: &mut SessionRx) -> Vec<SessionEvent> {
     let mut out = Vec::new();
     while let Ok(event) = session_rx.try_recv() {
         out.push(event);
@@ -159,7 +157,7 @@ fn worker_rx_drop(h: &mut Harness) {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn switch_model_dispatches_when_idle() {
+async fn switch_model_dispatches_when_idle() -> Result<()> {
     let mut h = Harness::new();
     let p = h.parts();
     let mut ctx = make_ctx(
@@ -178,7 +176,7 @@ async fn switch_model_dispatches_when_idle() {
         )
         .await;
 
-    let cmd = recv_command(p.worker_rx).expect("command should be dispatched");
+    let cmd = recv_command(p.worker_rx).ok_or("command should be dispatched")?;
     match cmd {
         WorkerCommand::HandleUiRequest { request, .. } => {
             assert!(matches!(request, UiRequest::SwitchModel { spec } if spec == "test-model"));
@@ -186,6 +184,7 @@ async fn switch_model_dispatches_when_idle() {
         _ => panic!("expected HandleUiRequest, got unexpected variant"),
     }
     assert!(p.stage.has_blocking_pending());
+    Ok(())
 }
 
 #[tokio::test]
@@ -223,7 +222,7 @@ async fn switch_model_queues_when_worker_active() {
 }
 
 #[tokio::test]
-async fn switch_agent_dispatches_when_idle() {
+async fn switch_agent_dispatches_when_idle() -> Result<()> {
     let mut h = Harness::new();
     let p = h.parts();
     let mut ctx = make_ctx(
@@ -242,7 +241,7 @@ async fn switch_agent_dispatches_when_idle() {
         )
         .await;
 
-    let cmd = recv_command(p.worker_rx).expect("command should be dispatched");
+    let cmd = recv_command(p.worker_rx).ok_or("command should be dispatched")?;
     match cmd {
         WorkerCommand::HandleUiRequest { request, .. } => {
             assert!(matches!(request, UiRequest::SwitchAgent { name } if name == "research-agent"));
@@ -250,6 +249,7 @@ async fn switch_agent_dispatches_when_idle() {
         _ => panic!("expected HandleUiRequest, got unexpected variant"),
     }
     assert!(p.stage.has_blocking_pending());
+    Ok(())
 }
 
 #[tokio::test]
@@ -286,7 +286,7 @@ async fn switch_agent_queues_when_worker_active() {
 }
 
 #[tokio::test]
-async fn switch_session_dispatches_when_idle() {
+async fn switch_session_dispatches_when_idle() -> Result<()> {
     let mut h = Harness::new();
     let p = h.parts();
     let mut ctx = make_ctx(
@@ -305,7 +305,7 @@ async fn switch_session_dispatches_when_idle() {
         )
         .await;
 
-    let cmd = recv_command(p.worker_rx).expect("command should be dispatched");
+    let cmd = recv_command(p.worker_rx).ok_or("command should be dispatched")?;
     match cmd {
         WorkerCommand::HandleUiRequest { request, .. } => {
             assert!(matches!(request, UiRequest::SwitchSession { id } if id == "session-1"));
@@ -313,6 +313,7 @@ async fn switch_session_dispatches_when_idle() {
         _ => panic!("expected HandleUiRequest, got unexpected variant"),
     }
     assert!(p.stage.has_blocking_pending());
+    Ok(())
 }
 
 #[tokio::test]
@@ -398,7 +399,7 @@ async fn switch_session_ignored_when_blocking_pending() {
 }
 
 #[tokio::test]
-async fn toggle_mcp_dispatches_immediately() {
+async fn toggle_mcp_dispatches_immediately() -> Result<()> {
     let mut h = Harness::new();
     let p = h.parts();
     p.ctx_state.worker_active = true; // MCP toggle works even when worker is active
@@ -419,7 +420,7 @@ async fn toggle_mcp_dispatches_immediately() {
         )
         .await;
 
-    let cmd = recv_command(p.worker_rx).expect("command should be dispatched");
+    let cmd = recv_command(p.worker_rx).ok_or("command should be dispatched")?;
     match cmd {
         WorkerCommand::HandleUiRequest { request, .. } => {
             assert!(
@@ -429,10 +430,11 @@ async fn toggle_mcp_dispatches_immediately() {
         _ => panic!("expected HandleUiRequest, got unexpected variant"),
     }
     assert!(p.stage.has_pending());
+    Ok(())
 }
 
 #[tokio::test]
-async fn refresh_session_picker_dispatches_when_not_in_flight() {
+async fn refresh_session_picker_dispatches_when_not_in_flight() -> Result<()> {
     let mut h = Harness::new();
     let p = h.parts();
     let mut ctx = make_ctx(
@@ -446,13 +448,14 @@ async fn refresh_session_picker_dispatches_when_not_in_flight() {
         .handle_incoming(UiRequest::RefreshSessionPicker, &mut ctx)
         .await;
 
-    let cmd = recv_command(p.worker_rx).expect("command should be dispatched");
+    let cmd = recv_command(p.worker_rx).ok_or("command should be dispatched")?;
     match cmd {
         WorkerCommand::HandleUiRequest { request, .. } => {
             assert!(matches!(request, UiRequest::RefreshSessionPicker));
         }
         _ => panic!("expected HandleUiRequest, got unexpected variant"),
     }
+    Ok(())
 }
 
 #[tokio::test]
@@ -550,10 +553,12 @@ async fn blocking_response_model_switch_success() {
         p.bus,
         p.ctx_state,
     );
-    p.stage.handle_blocking_response(
-        UiRequestResponse::ModelSwitch(Ok(("test-model".to_string(), Some(128000)))),
-        &mut ctx,
-    );
+    p.stage
+        .handle_blocking_response(
+            UiRequestResponse::ModelSwitch(Ok(("test-model".to_string(), Some(128000)))),
+            &mut ctx,
+        )
+        .await;
 
     let ui_events = take_ui_state(p.ui_state_rx);
     assert!(
@@ -599,10 +604,12 @@ async fn blocking_response_model_switch_error() {
         p.bus,
         p.ctx_state,
     );
-    p.stage.handle_blocking_response(
-        UiRequestResponse::ModelSwitch(Err("model not found".to_string())),
-        &mut ctx,
-    );
+    p.stage
+        .handle_blocking_response(
+            UiRequestResponse::ModelSwitch(Err("model not found".to_string())),
+            &mut ctx,
+        )
+        .await;
 
     let warnings = take_warnings(p.warning_rx);
     assert!(warnings.iter().any(|w| w == "model not found"));
@@ -637,15 +644,17 @@ async fn blocking_response_agent_switch_success() {
         p.bus,
         p.ctx_state,
     );
-    p.stage.handle_blocking_response(
-        UiRequestResponse::AgentSwitch(Ok((
-            "research-agent".to_string(),
-            "openai/gpt-4o".to_string(),
-            Some(200000),
-            Some("icon".to_string()),
-        ))),
-        &mut ctx,
-    );
+    p.stage
+        .handle_blocking_response(
+            UiRequestResponse::AgentSwitch(Ok((
+                "research-agent".to_string(),
+                "openai/gpt-4o".to_string(),
+                Some(200000),
+                Some("icon".to_string()),
+            ))),
+            &mut ctx,
+        )
+        .await;
 
     let ui_events = take_ui_state(p.ui_state_rx);
     assert!(
@@ -705,10 +714,12 @@ async fn blocking_response_agent_switch_error() {
         p.bus,
         p.ctx_state,
     );
-    p.stage.handle_blocking_response(
-        UiRequestResponse::AgentSwitch(Err("agent not found".to_string())),
-        &mut ctx,
-    );
+    p.stage
+        .handle_blocking_response(
+            UiRequestResponse::AgentSwitch(Err("agent not found".to_string())),
+            &mut ctx,
+        )
+        .await;
 
     let warnings = take_warnings(p.warning_rx);
     assert!(warnings.iter().any(|w| w == "agent not found"));
@@ -744,13 +755,15 @@ async fn blocking_response_session_switch_success() {
         p.bus,
         p.ctx_state,
     );
-    p.stage.handle_blocking_response(
-        UiRequestResponse::SessionSwitch {
-            id: "session-1".to_string(),
-            result: Ok(vec![snapshot]),
-        },
-        &mut ctx,
-    );
+    p.stage
+        .handle_blocking_response(
+            UiRequestResponse::SessionSwitch {
+                id: "session-1".to_string(),
+                result: Ok(vec![snapshot]),
+            },
+            &mut ctx,
+        )
+        .await;
 
     let ui_events = take_ui_state(p.ui_state_rx);
     assert!(
@@ -796,13 +809,15 @@ async fn blocking_response_session_switch_error() {
         p.bus,
         p.ctx_state,
     );
-    p.stage.handle_blocking_response(
-        UiRequestResponse::SessionSwitch {
-            id: "session-1".to_string(),
-            result: Err("session not found".to_string()),
-        },
-        &mut ctx,
-    );
+    p.stage
+        .handle_blocking_response(
+            UiRequestResponse::SessionSwitch {
+                id: "session-1".to_string(),
+                result: Err("session not found".to_string()),
+            },
+            &mut ctx,
+        )
+        .await;
 
     let warnings = take_warnings(p.warning_rx);
     assert!(warnings.iter().any(|w| w == "session not found"));
@@ -842,16 +857,18 @@ async fn concurrent_response_mcp_toggle_success() {
         p.bus,
         p.ctx_state,
     );
-    p.stage.handle_concurrent_response(
-        UiRequestResponse::McpToggle {
-            server: "test-server".to_string(),
-            result: Ok(McpUsabilityState::Enabled),
-            total: 5,
-            server_count: 3,
-            names_by_server: vec![("test-server".to_string(), vec!["tool1".to_string()])],
-        },
-        &mut ctx,
-    );
+    p.stage
+        .handle_concurrent_response(
+            UiRequestResponse::McpToggle {
+                server: "test-server".to_string(),
+                result: Ok(McpUsabilityState::Enabled),
+                total: 5,
+                server_count: 3,
+                names_by_server: vec![("test-server".to_string(), vec!["tool1".to_string()])],
+            },
+            &mut ctx,
+        )
+        .await;
 
     let ui_events = take_ui_state(p.ui_state_rx);
     assert!(ui_events.iter().any(|e| matches!(e, UiStateEvent::SetMcpServerState { server, state, error, total } if server == "test-server" && *state == McpUsabilityState::Enabled && error.is_none() && *total == 5)));
@@ -889,16 +906,18 @@ async fn concurrent_response_mcp_toggle_error() {
         p.bus,
         p.ctx_state,
     );
-    p.stage.handle_concurrent_response(
-        UiRequestResponse::McpToggle {
-            server: "test-server".to_string(),
-            result: Err("toggle failed".to_string()),
-            total: 5,
-            server_count: 3,
-            names_by_server: Vec::new(),
-        },
-        &mut ctx,
-    );
+    p.stage
+        .handle_concurrent_response(
+            UiRequestResponse::McpToggle {
+                server: "test-server".to_string(),
+                result: Err("toggle failed".to_string()),
+                total: 5,
+                server_count: 3,
+                names_by_server: Vec::new(),
+            },
+            &mut ctx,
+        )
+        .await;
 
     let ui_events = take_ui_state(p.ui_state_rx);
     assert!(ui_events.iter().any(|e| matches!(e, UiStateEvent::SetMcpServerState { server, state, error, total } if server == "test-server" && *state == McpUsabilityState::Failed && error.as_deref() == Some("toggle failed") && *total == 5)));
@@ -934,10 +953,12 @@ async fn concurrent_response_session_refresh_success() {
         p.bus,
         p.ctx_state,
     );
-    p.stage.handle_concurrent_response(
-        UiRequestResponse::SessionRefresh(Ok(vec![session])),
-        &mut ctx,
-    );
+    p.stage
+        .handle_concurrent_response(
+            UiRequestResponse::SessionRefresh(Ok(vec![session])),
+            &mut ctx,
+        )
+        .await;
 
     let ui_events = take_ui_state(p.ui_state_rx);
     assert!(ui_events.iter().any(
@@ -969,10 +990,12 @@ async fn concurrent_response_session_refresh_error() {
         p.bus,
         p.ctx_state,
     );
-    p.stage.handle_concurrent_response(
-        UiRequestResponse::SessionRefresh(Err("refresh failed".to_string())),
-        &mut ctx,
-    );
+    p.stage
+        .handle_concurrent_response(
+            UiRequestResponse::SessionRefresh(Err("refresh failed".to_string())),
+            &mut ctx,
+        )
+        .await;
 
     let warnings = take_warnings(p.warning_rx);
     assert!(warnings.iter().any(|w| w == "refresh failed"));
@@ -980,7 +1003,7 @@ async fn concurrent_response_session_refresh_error() {
 }
 
 #[tokio::test]
-async fn switch_model_queue_last_write_wins() {
+async fn switch_model_queue_last_write_wins() -> Result<()> {
     let mut h = Harness::new();
     let p = h.parts();
     p.ctx_state.worker_active = true;
@@ -1029,7 +1052,7 @@ async fn switch_model_queue_last_write_wins() {
     );
     p.stage.drain_queued(&mut ctx).await;
 
-    let cmd = recv_command(p.worker_rx).expect("queued command should be dispatched");
+    let cmd = recv_command(p.worker_rx).ok_or("queued command should be dispatched")?;
     match cmd {
         WorkerCommand::HandleUiRequest { request, .. } => {
             assert!(
@@ -1039,10 +1062,11 @@ async fn switch_model_queue_last_write_wins() {
         }
         _ => panic!("expected HandleUiRequest, got unexpected variant"),
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn switch_agent_queue_last_write_wins() {
+async fn switch_agent_queue_last_write_wins() -> Result<()> {
     let mut h = Harness::new();
     let p = h.parts();
     p.ctx_state.worker_active = true;
@@ -1091,7 +1115,7 @@ async fn switch_agent_queue_last_write_wins() {
     );
     p.stage.drain_queued(&mut ctx).await;
 
-    let cmd = recv_command(p.worker_rx).expect("queued command should be dispatched");
+    let cmd = recv_command(p.worker_rx).ok_or("queued command should be dispatched")?;
     match cmd {
         WorkerCommand::HandleUiRequest { request, .. } => {
             assert!(
@@ -1101,6 +1125,7 @@ async fn switch_agent_queue_last_write_wins() {
         }
         _ => panic!("expected HandleUiRequest, got unexpected variant"),
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1108,7 +1133,7 @@ async fn switch_agent_queue_last_write_wins() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn drain_queued_dispatches_when_idle() {
+async fn drain_queued_dispatches_when_idle() -> Result<()> {
     let mut h = Harness::new();
     let p = h.parts();
     // Queue a model switch while worker is active.
@@ -1141,7 +1166,7 @@ async fn drain_queued_dispatches_when_idle() {
     );
     p.stage.drain_queued(&mut ctx).await;
 
-    let cmd = recv_command(p.worker_rx).expect("queued command should be dispatched");
+    let cmd = recv_command(p.worker_rx).ok_or("queued command should be dispatched")?;
     match cmd {
         WorkerCommand::HandleUiRequest { request, .. } => {
             assert!(matches!(request, UiRequest::SwitchModel { spec } if spec == "test-model"));
@@ -1149,6 +1174,7 @@ async fn drain_queued_dispatches_when_idle() {
         _ => panic!("expected HandleUiRequest, got unexpected variant"),
     }
     assert!(p.stage.has_blocking_pending());
+    Ok(())
 }
 
 #[tokio::test]
@@ -1298,10 +1324,12 @@ async fn has_pending_reflects_blocking_and_concurrent() {
         p.bus,
         p.ctx_state,
     );
-    p.stage.handle_blocking_response(
-        UiRequestResponse::ModelSwitch(Ok(("test-model".to_string(), None))),
-        &mut ctx,
-    );
+    p.stage
+        .handle_blocking_response(
+            UiRequestResponse::ModelSwitch(Ok(("test-model".to_string(), None))),
+            &mut ctx,
+        )
+        .await;
     assert!(!p.stage.has_blocking_pending());
     assert!(p.stage.has_pending()); // concurrent still pending
 
@@ -1313,15 +1341,17 @@ async fn has_pending_reflects_blocking_and_concurrent() {
         p.bus,
         p.ctx_state,
     );
-    p.stage.handle_concurrent_response(
-        UiRequestResponse::McpToggle {
-            server: "test-server".to_string(),
-            result: Ok(McpUsabilityState::Enabled),
-            total: 0,
-            server_count: 0,
-            names_by_server: Vec::new(),
-        },
-        &mut ctx,
-    );
+    p.stage
+        .handle_concurrent_response(
+            UiRequestResponse::McpToggle {
+                server: "test-server".to_string(),
+                result: Ok(McpUsabilityState::Enabled),
+                total: 0,
+                server_count: 0,
+                names_by_server: Vec::new(),
+            },
+            &mut ctx,
+        )
+        .await;
     assert!(!p.stage.has_pending());
 }

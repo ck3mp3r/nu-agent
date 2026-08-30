@@ -1,20 +1,137 @@
 //! Shared test utilities for turn execution tests.
 //!
-//! `MockUi`, `MockResolver`, and `test_config()` are extracted here so both
-//! `executor_test.rs` and `journey_test.rs` can share them without duplication.
+//! `MockResolver`, `CancellingTool`, `BusEventCollector`, and `test_config()`
+//! are extracted here so both `executor_test.rs` and `journey_test.rs` can
+//! share them without duplication.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::bus::Bus;
+use crate::bus::{Bus, CompactionRx, LlmRx, PermissionRx, ToolRx, TurnRx, WarningRx};
 use crate::compaction::CompactionParams;
 use crate::config::Config;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
-use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::UiEvent;
 use rig::agent::ModelHandle;
 use rig::test_utils::MockCompletionModel;
-use tokio::sync::mpsc;
+
+// ---------------------------------------------------------------------------
+// BusEventCollector — collects UiEvents from the shared bus during a turn
+// ---------------------------------------------------------------------------
+
+/// Collects lifecycle events published on a `Bus` during a turn and converts
+/// them to `UiEvent` at the boundary. Since core no longer threads a
+/// `ProgressUi` through the turn, tests observe events by subscribing to the
+/// same channels the TUI/TTY renderers subscribe to.
+pub(super) struct BusEventCollector {
+    tool_rx: ToolRx,
+    llm_rx: LlmRx,
+    turn_rx: TurnRx,
+    warning_rx: WarningRx,
+    compaction_rx: CompactionRx,
+    permission_rx: PermissionRx,
+}
+
+impl BusEventCollector {
+    pub(super) fn subscribe(bus: &Bus) -> Self {
+        Self {
+            tool_rx: bus.tool().subscribe(),
+            llm_rx: bus.llm().subscribe(),
+            turn_rx: bus.turn().subscribe(),
+            warning_rx: bus.warning().subscribe(),
+            compaction_rx: bus.compaction().subscribe(),
+            permission_rx: bus.permission().subscribe(),
+        }
+    }
+
+    fn drain_channel<T>(rx: &mut crate::bus::BroadcastRx<T>, events: &mut Vec<UiEvent>)
+    where
+        Option<UiEvent>: From<T>,
+        T: Clone + Send + 'static,
+    {
+        loop {
+            match rx.try_recv() {
+                Ok(event) => {
+                    if let Some(e) = Option::<UiEvent>::from(event) {
+                        events.push(e);
+                    }
+                }
+                Err(crate::bus::TryRecvError::Empty) => break,
+                Err(crate::bus::TryRecvError::Lagged(_)) => continue,
+                Err(crate::bus::TryRecvError::Closed) => break,
+            }
+        }
+    }
+
+    /// Drain all subscribed channels, converting events to `UiEvent` in
+    /// insertion order (tool, llm, turn, warning, compaction, permission).
+    pub(super) fn drain(&mut self) -> Vec<UiEvent> {
+        let mut events = Vec::new();
+        Self::drain_channel(&mut self.tool_rx, &mut events);
+        Self::drain_channel(&mut self.llm_rx, &mut events);
+        Self::drain_channel(&mut self.turn_rx, &mut events);
+        Self::drain_channel(&mut self.warning_rx, &mut events);
+        Self::drain_channel(&mut self.compaction_rx, &mut events);
+        Self::drain_channel(&mut self.permission_rx, &mut events);
+        events
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CancellingTool — a tool that publishes a CancelEvent after its first call
+// ---------------------------------------------------------------------------
+
+/// A `Tool` that publishes `CancelEvent::Requested` on the shared bus after
+/// producing its result. This is the deterministic cancellation trigger used
+/// by tests: the model must emit a `ToolCall` to this tool, and when the tool
+/// runs (inside the turn's async context, after the hook has subscribed to
+/// `bus.cancel()`) it publishes the cancel that terminates the turn.
+pub struct CancellingTool {
+    pub bus: Bus,
+    fired: Arc<AtomicBool>,
+}
+
+impl CancellingTool {
+    pub fn new(bus: Bus) -> Self {
+        Self {
+            bus,
+            fired: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl rig::tool::Tool for CancellingTool {
+    const NAME: &'static str = "test_cancel_tool";
+    type Error = std::convert::Infallible;
+    type Args = serde_json::Value;
+    type Output = String;
+
+    fn description(&self) -> String {
+        "Tool that cancels the turn after its first invocation".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        _args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        // Publish the cancel only on the first invocation so the tool result is
+        // recorded before the turn terminates.
+        if !self.fired.swap(true, Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+            let _ = self
+                .bus
+                .cancel()
+                .send(crate::bus::CancelEvent::Requested)
+                .await;
+        }
+        Ok("cancelling_tool_result".to_string())
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Compaction test defaults
@@ -25,7 +142,7 @@ use tokio::sync::mpsc;
 pub(super) fn test_compactor(
     bus: Bus,
 ) -> crate::conversation::compaction::compactor::NuCompactor<crate::session::FsSessionStore> {
-    use crate::conversation::compaction::compactor::{NoopProgressUi, NuCompactor};
+    use crate::conversation::compaction::compactor::NuCompactor;
     let turns: Vec<Vec<rig::test_utils::MockStreamEvent>> = (0..8)
         .map(|_| {
             vec![
@@ -37,7 +154,6 @@ pub(super) fn test_compactor(
     let model = MockCompletionModel::from_stream_turns(turns);
     NuCompactor::from_shared_model(
         Arc::new(std::sync::Mutex::new(ModelHandle::new(model))),
-        NoopProgressUi,
         bus,
         None,
     )
@@ -74,76 +190,6 @@ pub(super) fn shared_model_handle(
 }
 
 // ---------------------------------------------------------------------------
-// MockUi
-// ---------------------------------------------------------------------------
-
-pub(super) struct MockUi {
-    pub events: Vec<UiEvent>,
-    cancel_flag: Arc<AtomicBool>,
-    cancel_bus: Option<Bus>,
-    cancel_published: Arc<AtomicBool>,
-}
-
-impl MockUi {
-    pub fn new() -> Self {
-        Self {
-            events: Vec::new(),
-            cancel_flag: Arc::new(AtomicBool::new(false)),
-            cancel_bus: None,
-            cancel_published: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Pre-set cancel so the first `take_cancel_requested()` fires and publishes
-    /// a `CancelEvent` to the bus. This drives cancellation through the shared
-    /// bus channel (which the hook and tool proxies subscribe to) instead of a
-    /// standalone flag, matching the production flow.
-    pub fn immediately_cancelled(bus: Bus) -> Self {
-        Self {
-            events: Vec::new(),
-            cancel_flag: Arc::new(AtomicBool::new(true)),
-            cancel_bus: Some(bus),
-            cancel_published: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Returns a `MockUi` and the `Bus` used to cancel the running turn.
-    ///
-    /// Call `bus.cancel().send(CancelEvent::Requested)` at any point during
-    /// the running turn to cancel it from outside — including from within a mock
-    /// tool's `call()` implementation.
-    pub fn with_external_cancel() -> (Self, Bus) {
-        let bus = crate::bus::create_bus();
-        let ui = Self {
-            events: Vec::new(),
-            cancel_flag: Arc::new(AtomicBool::new(false)),
-            cancel_bus: None,
-            cancel_published: Arc::new(AtomicBool::new(false)),
-        };
-        (ui, bus)
-    }
-}
-
-impl ProgressUi for MockUi {
-    fn emit(&mut self, event: &UiEvent) {
-        self.events.push(event.clone());
-    }
-
-    fn flush(&mut self) {}
-
-    fn take_cancel_requested(&self) -> bool {
-        let was_cancelled = self.cancel_flag.swap(false, Ordering::SeqCst);
-        if was_cancelled
-            && !self.cancel_published.swap(true, Ordering::SeqCst)
-            && let Some(bus) = &self.cancel_bus
-        {
-            let _ = bus.cancel().send(crate::bus::CancelEvent::Requested);
-        }
-        was_cancelled
-    }
-}
-
-// ---------------------------------------------------------------------------
 // MockResolver — always allows
 // ---------------------------------------------------------------------------
 
@@ -156,7 +202,7 @@ impl AsyncPermissionResolver for MockResolver {
         _tool_name: &str,
         _arguments: &str,
         _tool_call_id: Option<String>,
-        _ui_tx: Option<mpsc::UnboundedSender<UiEvent>>,
+        _bus: &crate::bus::Bus,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let decision = PermissionDecision::Allow;
         async move { decision }

@@ -41,15 +41,9 @@ pub(crate) fn validate_login_config(
 
 pub struct AgentAuthMcpLogin;
 
-impl AgentAuthMcpLogin {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl Default for AgentAuthMcpLogin {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 
@@ -140,7 +134,18 @@ async fn run_inner(
             scope,
             redirect_uri,
         } => (client_id, client_secret, scope, redirect_uri),
-        _ => unreachable!("validate_login_config already confirmed OAuth"),
+        _ => {
+            return Err(
+                LabeledError::new("MCP server is not configured for OAuth authentication")
+                    .with_label(
+                        format!(
+                            "Server '{}' has auth type {:?}; expected OAuth",
+                            server_name, server.auth
+                        ),
+                        call.head,
+                    ),
+            );
+        }
     };
 
     // Validate the server URL for SSRF protection

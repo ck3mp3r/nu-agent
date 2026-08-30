@@ -1,4 +1,4 @@
-use nu_agent_core::policy::Verbosity;
+use crate::policy::Verbosity;
 
 const TRACE_HARD_LIMIT: usize = 8192;
 const VERY_VERBOSE_LIMIT: usize = 2048;

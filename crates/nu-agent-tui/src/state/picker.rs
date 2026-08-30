@@ -1,3 +1,5 @@
+use nu_agent_core::protocol::slash::SlashCommand;
+
 use super::*;
 
 impl AppState {

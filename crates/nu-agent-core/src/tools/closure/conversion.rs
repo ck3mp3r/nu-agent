@@ -12,7 +12,7 @@ pub trait EngineInterfaceLike {
 impl EngineInterfaceLike for EngineInterface {
     fn get_span_contents(&self, span: Span) -> Result<Vec<u8>, String> {
         self.get_span_contents(span)
-            .map_err(|e| format!("Failed to get span contents: {}", e))
+            .map_err(|e| format!("Failed to get span contents: {e}"))
     }
 }
 
@@ -25,7 +25,7 @@ pub fn closure_to_tool_definition(
     params: &[ClosureParameter],
     description: Option<String>,
 ) -> ToolDefinition {
-    let desc = description.unwrap_or_else(|| format!("Nushell closure tool: {}", name));
+    let desc = description.unwrap_or_else(|| format!("Nushell closure tool: {name}"));
 
     if params.is_empty() {
         return fallback_tool_definition(name, desc);

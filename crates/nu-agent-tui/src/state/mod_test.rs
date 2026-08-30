@@ -2,7 +2,7 @@ use crate::state::*;
 
 #[test]
 fn defaults_start_idle_with_unlocked_input_and_no_abort_pending() {
-    let state = AppState::new();
+    let state = AppState::default();
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
@@ -18,7 +18,7 @@ fn defaults_start_idle_with_unlocked_input_and_no_abort_pending() {
 
 #[test]
 fn mode_helpers_toggle_between_insert_and_normal() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     assert_eq!(state.input_mode, InputMode::Insert);
 
     state.enter_normal_mode();
@@ -30,7 +30,7 @@ fn mode_helpers_toggle_between_insert_and_normal() {
 
 #[test]
 fn normal_mode_defaults_focus_to_transcript_and_insert_focuses_input() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     assert_eq!(state.pane_focus, PaneFocus::Input);
 
     state.enter_normal_mode();
@@ -42,7 +42,7 @@ fn normal_mode_defaults_focus_to_transcript_and_insert_focuses_input() {
 
 #[test]
 fn pane_focus_can_cycle_left_and_right() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enter_normal_mode();
 
     state.focus_next_pane();

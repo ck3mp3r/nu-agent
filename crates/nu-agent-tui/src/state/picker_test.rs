@@ -1,9 +1,11 @@
 use crate::state::*;
 use nu_agent_core::protocol::slash::SlashCommand;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
 fn command_palette_empty_query_returns_canonical_help_status_order_only() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_command_palette();
 
     assert_eq!(
@@ -23,7 +25,7 @@ fn command_palette_empty_query_returns_canonical_help_status_order_only() {
 
 #[test]
 fn command_palette_empty_query_returns_canonical_help_status_mcps_skills_order() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_command_palette();
 
     assert_eq!(
@@ -43,7 +45,7 @@ fn command_palette_empty_query_returns_canonical_help_status_mcps_skills_order()
 
 #[test]
 fn command_palette_fuzzy_matching_is_case_insensitive_and_non_prefix() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_command_palette();
 
     for ch in "HP".chars() {
@@ -66,7 +68,7 @@ fn command_palette_fuzzy_matching_is_case_insensitive_and_non_prefix() {
 
 #[test]
 fn command_palette_fuzzy_query_matches_mcps_entry() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_command_palette();
 
     for ch in "mcp".chars() {
@@ -81,7 +83,7 @@ fn command_palette_fuzzy_query_matches_mcps_entry() {
 
 #[test]
 fn command_palette_fuzzy_query_matches_skills_entry() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_command_palette();
 
     for ch in "skls".chars() {
@@ -96,7 +98,7 @@ fn command_palette_fuzzy_query_matches_skills_entry() {
 
 #[test]
 fn command_palette_includes_models_action() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_command_palette();
 
     assert!(
@@ -108,7 +110,7 @@ fn command_palette_includes_models_action() {
 
 #[test]
 fn command_palette_includes_agents_action() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_command_palette();
 
     assert!(
@@ -125,7 +127,7 @@ fn info_panel_for_command_palette_action_agents_returns_none() {
 
 #[test]
 fn inline_slash_suggestions_open_on_leading_slash() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     state.check_inline_slash("/");
 
@@ -150,7 +152,7 @@ fn inline_slash_suggestions_open_on_leading_slash() {
 
 #[test]
 fn inline_slash_suggestions_filter_incrementally_as_input_grows() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     state.check_inline_slash("/");
     assert_eq!(state.inline_slash_suggestions().len(), 10);
@@ -164,7 +166,7 @@ fn inline_slash_suggestions_filter_incrementally_as_input_grows() {
 
 #[test]
 fn inline_slash_suggestions_close_when_prefix_removed() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     state.check_inline_slash("/c");
     assert!(state.inline_slash_open);
@@ -177,7 +179,7 @@ fn inline_slash_suggestions_close_when_prefix_removed() {
 
 #[test]
 fn inline_slash_suggestions_do_not_open_command_palette() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     state.check_inline_slash("/");
 
@@ -187,7 +189,7 @@ fn inline_slash_suggestions_do_not_open_command_palette() {
 
 #[test]
 fn inline_model_picker_opens_with_available_models() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_model_picker_options(vec![
         ModelPickerOption {
             provider: "openai".to_string(),
@@ -223,7 +225,7 @@ fn inline_model_picker_opens_with_available_models() {
 
 #[test]
 fn inline_model_picker_filters_incrementally() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_model_picker_options(vec![
         ModelPickerOption {
             provider: "openai".to_string(),
@@ -261,7 +263,7 @@ fn inline_model_picker_filters_incrementally() {
 
 #[test]
 fn inline_model_picker_moves_selection_deterministically() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_model_picker_options(vec![
         ModelPickerOption {
             provider: "openai".to_string(),
@@ -300,7 +302,7 @@ fn inline_model_picker_moves_selection_deterministically() {
 
 #[test]
 fn inline_model_picker_closes_on_escape() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_model_picker_options(vec![ModelPickerOption {
         provider: "openai".to_string(),
         model: "gpt-4o-mini".to_string(),
@@ -323,7 +325,7 @@ fn inline_model_picker_closes_on_escape() {
 
 #[test]
 fn inline_model_picker_uses_cached_startup_plugin_config_catalog() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_model_picker_options(vec![
         ModelPickerOption {
             provider: "z-provider".to_string(),
@@ -357,7 +359,7 @@ fn inline_model_picker_uses_cached_startup_plugin_config_catalog() {
 
 #[test]
 fn model_picker_query_changes_results_with_hydrated_catalog() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_model_picker_options(vec![
         ModelPickerOption {
             provider: "openai".to_string(),
@@ -397,7 +399,7 @@ fn model_picker_query_changes_results_with_hydrated_catalog() {
 
 #[test]
 fn model_picker_empty_catalog_shows_deterministic_empty_state() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_model_picker_options(Vec::new());
     state.open_model_picker();
 
@@ -433,7 +435,7 @@ fn test_agent_options() -> Vec<AgentPickerOption> {
 
 #[test]
 fn test_open_agent_picker() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(test_agent_options());
     state.agent_picker_query = "leftover".to_string();
     state.agent_picker_selection = 2;
@@ -447,7 +449,7 @@ fn test_open_agent_picker() {
 
 #[test]
 fn test_close_agent_picker() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(test_agent_options());
     state.open_agent_picker();
     state.agent_picker_query = "al".to_string();
@@ -462,7 +464,7 @@ fn test_close_agent_picker() {
 
 #[test]
 fn test_queue_agent_picker_launch_request() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     state.queue_agent_picker_launch_request();
 
@@ -471,7 +473,7 @@ fn test_queue_agent_picker_launch_request() {
 
 #[test]
 fn test_take_next_agent_picker_launch_request() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     // No pending requests
     assert!(!state.take_next_agent_picker_launch_request());
@@ -486,7 +488,7 @@ fn test_take_next_agent_picker_launch_request() {
 
 #[test]
 fn test_filtered_agent_picker_options_empty_query() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(test_agent_options());
     state.open_agent_picker();
 
@@ -496,7 +498,7 @@ fn test_filtered_agent_picker_options_empty_query() {
 
 #[test]
 fn test_filtered_agent_picker_options_with_query() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(test_agent_options());
     state.open_agent_picker();
 
@@ -520,7 +522,7 @@ fn test_filtered_agent_picker_options_with_query() {
 
 #[test]
 fn test_filtered_agent_picker_options_no_match() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(test_agent_options());
     state.open_agent_picker();
 
@@ -532,27 +534,34 @@ fn test_filtered_agent_picker_options_no_match() {
 }
 
 #[test]
-fn test_selected_agent_picker_option() {
-    let mut state = AppState::new();
+fn test_selected_agent_picker_option() -> Result<()> {
+    let mut state = AppState::default();
     state.set_agent_picker_options(test_agent_options());
     state.open_agent_picker();
 
     // set_agent_picker_options sorts by name: alpha, beta, gamma
-    let first = state.selected_agent_picker_option();
-    assert_eq!(first.unwrap().name, "alpha");
+    let first = state
+        .selected_agent_picker_option()
+        .ok_or("should have first selected option")?;
+    assert_eq!(first.name, "alpha");
 
     state.agent_picker_move_down();
-    let second = state.selected_agent_picker_option();
-    assert_eq!(second.unwrap().name, "beta");
+    let second = state
+        .selected_agent_picker_option()
+        .ok_or("should have second selected option")?;
+    assert_eq!(second.name, "beta");
 
     state.agent_picker_move_down();
-    let third = state.selected_agent_picker_option();
-    assert_eq!(third.unwrap().name, "gamma");
+    let third = state
+        .selected_agent_picker_option()
+        .ok_or("should have third selected option")?;
+    assert_eq!(third.name, "gamma");
+    Ok(())
 }
 
 #[test]
 fn test_queue_selected_agent_switch_request() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(test_agent_options());
     state.open_agent_picker();
 
@@ -566,7 +575,7 @@ fn test_queue_selected_agent_switch_request() {
 
 #[test]
 fn test_take_next_agent_switch_request() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(test_agent_options());
     state.open_agent_picker();
 
@@ -589,7 +598,7 @@ fn test_take_next_agent_switch_request() {
 
 #[test]
 fn test_set_active_agent_identity() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(test_agent_options());
 
     state.set_active_agent_identity("beta");
@@ -608,7 +617,7 @@ fn test_set_active_agent_identity() {
 
 #[test]
 fn test_agent_picker_move_up_wraps() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(test_agent_options());
     state.open_agent_picker();
 
@@ -621,7 +630,7 @@ fn test_agent_picker_move_up_wraps() {
 
 #[test]
 fn test_agent_picker_move_down_wraps() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(test_agent_options());
     state.open_agent_picker();
 
@@ -637,29 +646,35 @@ fn test_agent_picker_move_down_wraps() {
 
 #[test]
 fn test_has_agents_to_cycle_empty() {
-    let state = AppState::new();
+    let state = AppState::default();
     assert!(state.agent_cycle_names.is_empty());
     assert!(!state.has_agents_to_cycle());
 }
 
 #[test]
 fn test_has_agents_to_cycle_one() {
-    let mut state = AppState::new();
-    state.agent_cycle_names = vec!["planner".to_string()];
+    let state = AppState {
+        agent_cycle_names: vec!["planner".to_string()],
+        ..AppState::default()
+    };
     assert!(!state.has_agents_to_cycle());
 }
 
 #[test]
 fn test_has_agents_to_cycle_two() {
-    let mut state = AppState::new();
-    state.agent_cycle_names = vec!["planner".to_string(), "maker".to_string()];
+    let state = AppState {
+        agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
+        ..AppState::default()
+    };
     assert!(state.has_agents_to_cycle());
 }
 
 #[test]
 fn test_next_agent_cycle_name_cycles() {
-    let mut state = AppState::new();
-    state.agent_cycle_names = vec!["planner".to_string(), "maker".to_string()];
+    let mut state = AppState {
+        agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
+        ..AppState::default()
+    };
 
     // Set active to "planner" → next should be "maker"
     state.set_active_agent_identity("planner");
@@ -672,8 +687,10 @@ fn test_next_agent_cycle_name_cycles() {
 
 #[test]
 fn test_next_agent_cycle_name_no_current() {
-    let mut state = AppState::new();
-    state.agent_cycle_names = vec!["planner".to_string(), "maker".to_string()];
+    let state = AppState {
+        agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
+        ..AppState::default()
+    };
     // active_agent_identity is None → unwrap_or("") → position not found → unwrap_or(0)
     // next_idx = (0 + 1) % 2 = 1 → "maker"
     assert_eq!(state.next_agent_cycle_name(), Some("maker".to_string()));
@@ -681,8 +698,10 @@ fn test_next_agent_cycle_name_no_current() {
 
 #[test]
 fn test_queue_cycle_agent_request() {
-    let mut state = AppState::new();
-    state.agent_cycle_names = vec!["planner".to_string(), "maker".to_string()];
+    let mut state = AppState {
+        agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
+        ..AppState::default()
+    };
     state.set_active_agent_identity("planner");
 
     state.queue_cycle_agent_request();

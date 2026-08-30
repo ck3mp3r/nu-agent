@@ -12,9 +12,11 @@ use crate::{
     state::AppState,
 };
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
 fn request_cancel_is_idempotent() {
-    let controller = CancelController::new();
+    let controller = CancelController::default();
 
     assert!(controller.request_cancel());
     assert!(!controller.request_cancel());
@@ -23,7 +25,7 @@ fn request_cancel_is_idempotent() {
 
 #[test]
 fn cancel_request_stays_visible_until_finalize_path() {
-    let controller = CancelController::new();
+    let controller = CancelController::default();
     controller.request_cancel();
 
     assert!(controller.is_cancel_requested());
@@ -31,15 +33,15 @@ fn cancel_request_stays_visible_until_finalize_path() {
 
 #[test]
 fn repeated_request_after_initial_cancel_is_idempotent() {
-    let controller = CancelController::new();
+    let controller = CancelController::default();
     assert!(controller.request_cancel());
     assert!(!controller.request_cancel());
     assert!(controller.is_cancel_requested());
 }
 
 #[test]
-fn cross_thread_request_is_visible_to_consumer() {
-    let controller = CancelController::new();
+fn cross_thread_request_is_visible_to_consumer() -> Result<()> {
+    let controller = CancelController::default();
     let controller_for_thread = controller.clone();
     let (tx, rx) = mpsc::channel::<()>();
 
@@ -57,18 +59,21 @@ fn cross_thread_request_is_visible_to_consumer() {
     assert!(controller.is_cancel_requested());
 
     rx.recv_timeout(Duration::from_secs(1))
-        .expect("producer completion signal");
+        .map_err(|_| "should receive producer completion signal")?;
     producer.join().expect("producer joins cleanly");
+    Ok(())
 }
 
 #[test]
 fn reducer_second_escape_triggers_cancel_request() {
-    let cancel_controller = CancelController::new();
-    let mut state = AppState::new();
+    let cancel_controller = CancelController::default();
+    let mut state = AppState {
+        pending_submit_text: Some("work".to_string()),
+        ..Default::default()
+    };
 
     // InsertChar is now a no-op in the reducer (handled by TextArea).
     // Set pending_submit_text directly so Submit creates an active cycle.
-    state.pending_submit_text = Some("work".to_string());
     reduce_with_cancel_controller(
         &mut state,
         ReducerInput::User(UserAction::Submit),

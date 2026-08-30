@@ -1,5 +1,10 @@
 use super::*;
 
+use nu_agent_core::protocol::event::UiEvent;
+use nu_agent_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
+use nu_agent_core::renderer::UiRenderer;
+use nu_agent_core::tools::mcp::runtime::McpServerLifecycle;
+
 pub struct TuiRuntimeRenderer<R, E>
 where
     R: UiRenderer,

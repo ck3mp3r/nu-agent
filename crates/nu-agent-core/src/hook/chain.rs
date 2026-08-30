@@ -14,8 +14,6 @@
 
 use std::sync::{Arc, Mutex};
 
-use tokio::sync::{broadcast, mpsc};
-
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
     InvalidToolCallContext, ModelHandle, ModelSelection, ModelSelectionAction, ObservationAction,
@@ -25,12 +23,13 @@ use rig::agent::{
 use rig::core::wasm_compat::WasmCompatSend;
 use rig::message::Message;
 
-use crate::bus::{Bus, CancelEvent, CompactionEvent, LlmEvent, ToolEvent, WarningEvent};
+use crate::bus::{
+    Bus, CancelEvent, CancelRx, CompactionEvent, LlmEvent, ToolEvent, TryRecvError, WarningEvent,
+};
 use crate::config::defaults;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::compaction::compactor::{NuCompactor, SummaryArtifact};
 use crate::conversation::turn::token_estimate::estimate_token_count;
-use crate::protocol::event::UiEvent;
 use crate::session::SessionStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::{McpToolRegistry, builtin_kinds::BuiltinKind};
@@ -73,14 +72,12 @@ pub struct HookChain<
     P: AsyncPermissionResolver,
     S: SessionStore + Clone + Send + Sync = crate::session::SessionStoreBackend,
 > {
-    cancel_rx: Arc<Mutex<broadcast::Receiver<CancelEvent>>>,
+    cancel_rx: Arc<Mutex<CancelRx>>,
     subturn: SubTurnCap,
     doom: DoomLoopDetector,
     circuit: CircuitBreakerGuard,
     history: HistorySnapshot,
     permission: P,
-    /// mpsc sender used by the permission resolver for permission events (request/response).
-    ui_tx: mpsc::UnboundedSender<UiEvent>,
     /// Shared signal bus — tool/LLM/warning events are published here.
     bus: Bus,
     closure_registry: Arc<ClosureRegistry>,
@@ -107,7 +104,6 @@ pub struct HookChain<
 impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChain<P, S> {
     pub fn new(
         bus: Bus,
-        ui_tx: mpsc::UnboundedSender<UiEvent>,
         permission_resolver: P,
         closure_registry: Arc<ClosureRegistry>,
         mcp_registry: Arc<McpToolRegistry>,
@@ -125,9 +121,8 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChai
             circuit: CircuitBreakerGuard {
                 breaker: hook_state.circuit_breaker,
             },
-            history: HistorySnapshot::new(),
+            history: HistorySnapshot::default(),
             permission: permission_resolver,
-            ui_tx,
             bus,
             closure_registry,
             mcp_registry,
@@ -156,7 +151,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChai
         let mut rx = self.cancel_rx.lock().expect("cancel_rx mutex poisoned");
         matches!(
             rx.try_recv(),
-            Ok(CancelEvent::Requested) | Err(broadcast::error::TryRecvError::Lagged(_))
+            Ok(CancelEvent::Requested) | Err(TryRecvError::Lagged(_))
         )
     }
 }
@@ -216,7 +211,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             if cancelled {
                 return CompletionCallAction::stop("Cancelled by user");
             }
-            let _ = bus.llm().send(LlmEvent::Started);
+            let _ = bus.llm().send(LlmEvent::Started).await;
 
             // Compaction decision: patch the per-turn history when a marker
             // already summarizes the prefix, or when a new compaction is needed.
@@ -251,7 +246,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             if cancelled {
                 return ObservationAction::stop("Cancelled by user");
             }
-            let _ = bus.llm().send(LlmEvent::AssistantMessage { text });
+            let _ = bus.llm().send(LlmEvent::AssistantMessage { text }).await;
             ObservationAction::continue_run()
         }
     }
@@ -270,7 +265,6 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         // Pre-compute all synchronous checks and capture values for the async block
         let cancelled = self.is_cancelled();
         let subturn_action = self.subturn.check_and_increment(tool_name);
-        let doom_action = self.doom.check_and_record(tool_name, args, &self.bus);
         let circuit_action = self
             .circuit
             .check_server_enabled(tool_name, &self.mcp_registry);
@@ -279,18 +273,11 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             .as_str()
             .to_string();
 
-        let _ = self.bus.tool().send(ToolEvent::Started {
-            name: tool_name.to_string(),
-            source: source.clone(),
-            arguments: args.to_string(),
-        });
-
         let permission = self.permission.clone();
-        let ui_tx = self.ui_tx.clone();
         let bus = self.bus.clone();
         let tool_name_owned = tool_name.to_string();
         let args_owned = args.to_string();
-        let source_owned = source;
+        let source_owned = source.clone();
         let id_owned = tool_call_id.map(|s| s.to_string());
 
         async move {
@@ -300,6 +287,10 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             if let Some(action) = subturn_action {
                 return action;
             }
+            let doom_action = self
+                .doom
+                .check_and_record(&tool_name_owned, &args_owned, &bus)
+                .await;
             if let Some(action) = doom_action {
                 return action;
             }
@@ -307,22 +298,34 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                 return action;
             }
 
+            let _ = bus
+                .tool()
+                .send(ToolEvent::Started {
+                    name: tool_name_owned.clone(),
+                    source: source_owned.clone(),
+                    arguments: args_owned.clone(),
+                })
+                .await;
+
             let decision = permission
-                .resolve(&tool_name_owned, &args_owned, id_owned, Some(ui_tx.clone()))
+                .resolve(&tool_name_owned, &args_owned, id_owned, &bus)
                 .await;
             match decision {
                 PermissionDecision::Allow => ToolCallAction::run(),
                 PermissionDecision::Deny => {
-                    let _ = bus.tool().send(ToolEvent::Completed {
-                        name: tool_name_owned,
-                        source: source_owned,
-                        arguments: args_owned,
-                        success: false,
-                        result: String::new(),
-                        display: None,
-                        error_kind: None,
-                        message: Some("Permission denied".to_string()),
-                    });
+                    let _ = bus
+                        .tool()
+                        .send(ToolEvent::Completed {
+                            name: tool_name_owned,
+                            source: source_owned,
+                            arguments: args_owned,
+                            success: false,
+                            result: String::new(),
+                            display: None,
+                            error_kind: None,
+                            message: Some("Permission denied".to_string()),
+                        })
+                        .await;
                     ToolCallAction::skip("Permission denied")
                 }
             }
@@ -380,27 +383,44 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             &result_text,
         );
 
-        let _ = self.bus.tool().send(ToolEvent::Completed {
-            name: tool_name.to_string(),
-            source,
-            arguments: args.to_string(),
-            success,
-            result: result_text.to_string(),
-            display,
-            error_kind,
-            message: None,
-        });
+        let tool_name_owned = tool_name.to_string();
+        let args_owned = args.to_string();
+        let result_text_owned = result_text.to_string();
+        let source_owned = source;
+        let display_owned = display;
+        let error_kind_owned = error_kind;
+        let bus = self.bus.clone();
+        let circuit = self.circuit.clone();
+        let mcp_registry = Arc::clone(&self.mcp_registry);
 
-        // 5. Circuit breaker — track transport failures per server
-        self.circuit.record_result(
-            tool_name,
-            &result_text,
-            success,
-            &self.mcp_registry,
-            &self.bus,
-        );
+        async move {
+            let _ = bus
+                .tool()
+                .send(ToolEvent::Completed {
+                    name: tool_name_owned.clone(),
+                    source: source_owned,
+                    arguments: args_owned.clone(),
+                    success,
+                    result: result_text_owned.clone(),
+                    display: display_owned,
+                    error_kind: error_kind_owned,
+                    message: None,
+                })
+                .await;
 
-        async { ToolResultAction::keep() }
+            // 5. Circuit breaker — track transport failures per server
+            circuit
+                .record_result(
+                    &tool_name_owned,
+                    &result_text_owned,
+                    success,
+                    &mcp_registry,
+                    &bus,
+                )
+                .await;
+
+            ToolResultAction::keep()
+        }
     }
 
     fn on_stream_response_finish(
@@ -409,7 +429,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         event: StreamResponseFinish<'_>,
     ) -> impl std::future::Future<Output = ObservationAction> + WasmCompatSend {
         let usage = event.usage;
-        if usage.total_tokens > 0 {
+        let completed = if usage.total_tokens > 0 {
             let mut response_chars = 0usize;
             let mut tool_calls = 0usize;
             for item in event.content.iter() {
@@ -424,15 +444,23 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             // Store the real API token count for the compaction threshold check.
             // Mutex poison is a fatal internal inconsistency — panicking is correct.
             *self.last_total_tokens.lock().unwrap() = Some(usage.total_tokens);
-            let _ = self.bus.llm().send(LlmEvent::Completed {
+            Some(LlmEvent::Completed {
                 response_chars,
                 tool_calls,
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
                 total_tokens: usage.total_tokens,
-            });
+            })
+        } else {
+            None
+        };
+        let bus = self.bus.clone();
+        async move {
+            if let Some(event) = completed {
+                let _ = bus.llm().send(event).await;
+            }
+            ObservationAction::continue_run()
         }
-        async { ObservationAction::continue_run() }
     }
 
     fn on_invalid_tool_call(
@@ -446,10 +474,16 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             event.tool_name,
             event.available_tools.join(", ")
         );
-        let _ = self.bus.warning().send(WarningEvent::Message {
-            message: feedback.clone(),
-        });
-        async { Some(InvalidToolCallAction::retry(feedback)) }
+        let bus = self.bus.clone();
+        async move {
+            let _ = bus
+                .warning()
+                .send(WarningEvent::Message {
+                    message: feedback.clone(),
+                })
+                .await;
+            Some(InvalidToolCallAction::retry(feedback))
+        }
     }
 }
 
@@ -523,7 +557,7 @@ where
     let over_threshold = threshold_tokens.is_some_and(|limit| total >= limit);
     if !over_threshold {
         if last_marker.is_some() {
-            return patch_from_marker(&messages_after_marker, &last_marker, bus);
+            return patch_from_marker(&messages_after_marker, &last_marker, bus).await;
         }
         return None;
     }
@@ -533,10 +567,13 @@ where
     // compaction on the worker. The current turn proceeds with the existing
     // marker patch (or the full history); the new marker is applied on the next
     // turn via `patch_from_marker`.
-    let _ = bus.compaction().send(CompactionEvent::Requested {
-        source: "auto".to_string(),
-    });
-    patch_from_marker(&messages_after_marker, &last_marker, bus)
+    let _ = bus
+        .compaction()
+        .send(CompactionEvent::Requested {
+            source: "auto".to_string(),
+        })
+        .await;
+    patch_from_marker(&messages_after_marker, &last_marker, bus).await
 }
 
 /// Run a compaction for `conversation_id`, returning the patched history
@@ -579,11 +616,14 @@ where
     // Emit a `Completed` with an empty summary so the TUI gets feedback that
     // the `/compact` command ran even when there was nothing to compact.
     if messages_to_summarize.is_empty() {
-        let _ = bus.compaction().send(CompactionEvent::Completed {
-            source: source.to_string(),
-            summary_preview: String::new(),
-            summary_body: String::new(),
-        });
+        let _ = bus
+            .compaction()
+            .send(CompactionEvent::Completed {
+                source: source.to_string(),
+                summary_preview: String::new(),
+                summary_body: String::new(),
+            })
+            .await;
         return None;
     }
 
@@ -626,7 +666,7 @@ where
 /// back to `(None, Vec::new())` so the caller degrades gracefully but the
 /// failure is never silently swallowed.
 async fn load_marker_context<S>(
-    compactor: &NuCompactor<S, crate::conversation::compaction::compactor::NoopProgressUi>,
+    compactor: &NuCompactor<S>,
     memory: &crate::session::CachedMemory<S>,
     conversation_id: &str,
     bus: &Bus,
@@ -637,10 +677,13 @@ where
     let marker = match compactor.last_marker(conversation_id, "auto").await {
         Ok(marker) => marker,
         Err(e) => {
-            let _ = bus.compaction().send(CompactionEvent::Failed {
-                source: "auto".to_string(),
-                message: format!("Failed to load marker: {e}"),
-            });
+            let _ = bus
+                .compaction()
+                .send(CompactionEvent::Failed {
+                    source: "auto".to_string(),
+                    message: format!("Failed to load marker: {e}"),
+                })
+                .await;
             return (None, Vec::new());
         }
     };
@@ -649,10 +692,13 @@ where
             let entries = match memory.load_all(conversation_id).await {
                 Ok(entries) => entries,
                 Err(e) => {
-                    let _ = bus.compaction().send(CompactionEvent::Failed {
-                        source: "auto".to_string(),
-                        message: format!("Failed to load session entries: {e}"),
-                    });
+                    let _ = bus
+                        .compaction()
+                        .send(CompactionEvent::Failed {
+                            source: "auto".to_string(),
+                            message: format!("Failed to load session entries: {e}"),
+                        })
+                        .await;
                     return (None, Vec::new());
                 }
             };
@@ -682,7 +728,7 @@ where
 /// Returns `None` when no marker is present. An empty-summary marker is
 /// surfaced as a `CompactionEvent::Failed` on `bus` instead of silently
 /// degrading to the full history.
-fn patch_from_marker(
+async fn patch_from_marker(
     messages_after_marker: &[Message],
     last_marker: &Option<crate::session::CompactionMarker>,
     bus: &Bus,
@@ -691,10 +737,13 @@ fn patch_from_marker(
         return None;
     };
     if marker.summary.is_empty() {
-        let _ = bus.compaction().send(CompactionEvent::Failed {
-            source: "hook".to_string(),
-            message: "Marker has empty summary, cannot patch".to_string(),
-        });
+        let _ = bus
+            .compaction()
+            .send(CompactionEvent::Failed {
+                source: "hook".to_string(),
+                message: "Marker has empty summary, cannot patch".to_string(),
+            })
+            .await;
         return None;
     }
     let summary_message =

@@ -2,7 +2,10 @@ use super::*;
 use crate::compaction::CompactionStrategy;
 use crate::session::StoreType;
 use serial_test::serial;
+use std::collections::HashMap;
 use std::env;
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // Helper to set env vars for tests
 fn with_env_vars<F>(vars: Vec<(&str, &str)>, test: F)
@@ -228,7 +231,7 @@ fn test_validate_minimal_config() {
 }
 
 #[test]
-fn test_validate_empty_provider() {
+fn test_validate_empty_provider() -> Result<()> {
     // Test that empty provider fails validation
     let config = Config {
         a2a_port: None,
@@ -255,14 +258,16 @@ fn test_validate_empty_provider() {
         session_store_type: None,
     };
 
-    let result = config.validate();
-    assert!(result.is_err());
-    let err = result.unwrap_err();
+    let err = match config.validate() {
+        Ok(_) => return Err("empty provider should fail validation".into()),
+        Err(e) => e,
+    };
     assert!(err.contains("provider"));
+    Ok(())
 }
 
 #[test]
-fn test_validate_empty_model() {
+fn test_validate_empty_model() -> Result<()> {
     // Test that empty model fails validation
     let config = Config {
         a2a_port: None,
@@ -289,14 +294,16 @@ fn test_validate_empty_model() {
         session_store_type: None,
     };
 
-    let result = config.validate();
-    assert!(result.is_err());
-    let err = result.unwrap_err();
+    let err = match config.validate() {
+        Ok(_) => return Err("empty model should fail validation".into()),
+        Err(e) => e,
+    };
     assert!(err.contains("model"));
+    Ok(())
 }
 
 #[test]
-fn test_validate_max_output_exceeds_context() {
+fn test_validate_max_output_exceeds_context() -> Result<()> {
     // Test that max_output_tokens > max_context_tokens fails
     let config = Config {
         a2a_port: None,
@@ -323,11 +330,13 @@ fn test_validate_max_output_exceeds_context() {
         session_store_type: None,
     };
 
-    let result = config.validate();
-    assert!(result.is_err());
-    let err = result.unwrap_err();
+    let err = match config.validate() {
+        Ok(_) => return Err("max output exceeding context should fail validation".into()),
+        Err(e) => e,
+    };
     assert!(err.contains("max_output_tokens"));
     assert!(err.contains("max_context_tokens"));
+    Ok(())
 }
 
 #[test]
@@ -362,7 +371,7 @@ fn test_validate_max_output_equals_context() {
 }
 
 #[test]
-fn test_validate_zero_max_tool_turns() {
+fn test_validate_zero_max_tool_turns() -> Result<()> {
     // Test that max_tool_turns = 0 fails
     let config = Config {
         a2a_port: None,
@@ -390,9 +399,12 @@ fn test_validate_zero_max_tool_turns() {
     };
 
     let result = config.validate();
-    assert!(result.is_err());
-    let err = result.unwrap_err();
+    let err = match result {
+        Ok(_) => return Err("zero max_tool_turns should fail validation".into()),
+        Err(e) => e,
+    };
     assert!(err.contains("max_tool_turns"));
+    Ok(())
 }
 
 #[test]
@@ -458,7 +470,7 @@ fn test_validate_only_output_tokens_set() {
 }
 
 #[test]
-fn test_validate_context_warning_threshold_zero_is_err() {
+fn test_validate_context_warning_threshold_zero_is_err() -> Result<()> {
     let config = Config {
         a2a_port: None,
         provider: "openai".to_string(),
@@ -467,12 +479,16 @@ fn test_validate_context_warning_threshold_zero_is_err() {
         ..Config::default()
     };
     let result = config.validate();
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("context_warning_threshold"));
+    let err = match result {
+        Ok(_) => return Err("zero context_warning_threshold should fail validation".into()),
+        Err(e) => e,
+    };
+    assert!(err.contains("context_warning_threshold"));
+    Ok(())
 }
 
 #[test]
-fn test_validate_context_warning_threshold_above_one_is_err() {
+fn test_validate_context_warning_threshold_above_one_is_err() -> Result<()> {
     let config = Config {
         a2a_port: None,
         provider: "openai".to_string(),
@@ -481,8 +497,12 @@ fn test_validate_context_warning_threshold_above_one_is_err() {
         ..Config::default()
     };
     let result = config.validate();
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("context_warning_threshold"));
+    let err = match result {
+        Ok(_) => return Err("above-one context_warning_threshold should fail validation".into()),
+        Err(e) => e,
+    };
+    assert!(err.contains("context_warning_threshold"));
+    Ok(())
 }
 
 #[test]
@@ -511,7 +531,7 @@ fn test_validate_context_warning_threshold_typical_is_ok() {
 }
 
 #[test]
-fn test_validate_model_context_tokens_zero_is_err() {
+fn test_validate_model_context_tokens_zero_is_err() -> Result<()> {
     let config = Config {
         a2a_port: None,
         provider: "openai".to_string(),
@@ -520,8 +540,12 @@ fn test_validate_model_context_tokens_zero_is_err() {
         ..Config::default()
     };
     let result = config.validate();
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("model_context_tokens"));
+    let err = match result {
+        Ok(_) => return Err("zero model_context_tokens should fail validation".into()),
+        Err(e) => e,
+    };
+    assert!(err.contains("model_context_tokens"));
+    Ok(())
 }
 
 #[test]
@@ -565,7 +589,7 @@ fn test_model_role_config_default() {
 
 #[test]
 #[serial]
-fn test_resolve_model_basic() {
+fn test_resolve_model_basic() -> Result<()> {
     // Test resolving a basic model specification
     let plugin_config = PluginConfig {
         models: {
@@ -626,7 +650,7 @@ fn test_resolve_model_basic() {
     };
     let config = plugin_config
         .resolve_model(&role_config)
-        .expect("should resolve");
+        .map_err(|e| format!("should resolve: {e:?}"))?;
 
     assert_eq!(config.provider, "openai");
     assert_eq!(config.model, "gpt-4");
@@ -634,11 +658,12 @@ fn test_resolve_model_basic() {
     assert_eq!(config.temperature, Some(0.7));
     assert_eq!(config.max_context_tokens, Some(128000));
     assert_eq!(config.max_output_tokens, Some(4096));
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_resolve_model_with_env_fallback() {
+fn test_resolve_model_with_env_fallback() -> Result<()> {
     // Test that resolve_model falls back to env vars when provider doesn't have api_key
     let plugin_config = PluginConfig {
         models: {
@@ -683,17 +708,18 @@ fn test_resolve_model_with_env_fallback() {
     };
     let config = plugin_config
         .resolve_model(&role_config)
-        .expect("should resolve");
+        .map_err(|e| format!("should resolve: {e:?}"))?;
 
     assert_eq!(config.provider, "anthropic");
     assert_eq!(config.model, "claude");
     // API key should be None (will be read from env later)
     assert_eq!(config.api_key, None);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_resolve_model_invalid_format() {
+fn test_resolve_model_invalid_format() -> Result<()> {
     // Test that invalid model format returns error
     let plugin_config = PluginConfig {
         models: {
@@ -723,8 +749,11 @@ fn test_resolve_model_invalid_format() {
         model: "openaigpt4".to_string(),
         ..ModelRoleConfig::default()
     });
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("Expected 'provider/model'"));
+    let err = match result {
+        Ok(_) => return Err("missing slash should fail resolution".into()),
+        Err(e) => e,
+    };
+    assert!(err.contains("Expected 'provider/model'"));
 
     // Empty provider
     let result = plugin_config.resolve_model(&ModelRoleConfig {
@@ -739,11 +768,12 @@ fn test_resolve_model_invalid_format() {
         ..ModelRoleConfig::default()
     });
     assert!(result.is_err());
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_resolve_model_provider_not_found() {
+fn test_resolve_model_provider_not_found() -> Result<()> {
     // Test that unknown provider resolves successfully (provider block is optional)
     let plugin_config = PluginConfig {
         models: {
@@ -773,15 +803,15 @@ fn test_resolve_model_provider_not_found() {
         ..ModelRoleConfig::default()
     });
     // Provider block is optional — should resolve with env-based config only
-    assert!(result.is_ok());
-    let config = result.unwrap();
+    let config = result.map_err(|e| format!("unknown provider should resolve: {e:?}"))?;
     assert_eq!(config.provider, "unknown");
     assert_eq!(config.model, "model");
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_resolve_model_model_not_in_config() {
+fn test_resolve_model_model_not_in_config() -> Result<()> {
     // Isolate from AGENT_* env vars set by the surrounding environment
     // (e.g. nix build sets AGENT_TEMPERATURE), which would otherwise be
     // picked up by Config::from_env and break the default expectations.
@@ -833,18 +863,19 @@ fn test_resolve_model_model_not_in_config() {
     };
     let config = plugin_config
         .resolve_model(&role_config)
-        .expect("should resolve");
+        .map_err(|e| format!("should resolve: {e:?}"))?;
 
     assert_eq!(config.provider, "openai");
     assert_eq!(config.model, "gpt-3.5-turbo");
     assert_eq!(config.api_key, Some("sk-test123".to_string()));
     // No model-specific config, so should use defaults
     assert_eq!(config.temperature, None);
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_resolve_model_with_provider_field() {
+fn test_resolve_model_with_provider_field() -> Result<()> {
     // Test resolving with custom provider field (like github-copilot)
     let plugin_config = PluginConfig {
         models: {
@@ -889,7 +920,7 @@ fn test_resolve_model_with_provider_field() {
     };
     let config = plugin_config
         .resolve_model(&role_config)
-        .expect("should resolve");
+        .map_err(|e| format!("should resolve: {e:?}"))?;
 
     assert_eq!(config.provider, "copilot");
     assert_eq!(config.model, "claude");
@@ -899,11 +930,12 @@ fn test_resolve_model_with_provider_field() {
         Some("https://api.githubcopilot.com".to_string())
     );
     assert_eq!(config.provider_impl, Some("openai".to_string()));
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn test_resolve_model_merges_limits() {
+fn test_resolve_model_merges_limits() -> Result<()> {
     // Test that model limits are properly merged into Config
     let plugin_config = PluginConfig {
         models: {
@@ -964,14 +996,15 @@ fn test_resolve_model_merges_limits() {
     };
     let config = plugin_config
         .resolve_model(&role_config)
-        .expect("should resolve");
+        .map_err(|e| format!("should resolve: {e:?}"))?;
 
     assert_eq!(config.max_context_tokens, Some(128000));
     assert_eq!(config.max_output_tokens, Some(8192));
+    Ok(())
 }
 
 #[test]
-fn test_plugin_config_resolve_model_role_level_overrides() {
+fn test_plugin_config_resolve_model_role_level_overrides() -> Result<()> {
     let make_config = |model_temperature: Option<f64>| -> PluginConfig {
         let mut models = HashMap::new();
         models.insert(
@@ -1048,7 +1081,7 @@ fn test_plugin_config_resolve_model_role_level_overrides() {
     // Case 1: no model-level temperature — role-level 0.5 must survive
     let cfg = make_config(None)
         .resolve_model(&default_role)
-        .expect("resolve");
+        .map_err(|e| format!("resolve: {e:?}"))?;
     assert_eq!(cfg.temperature, Some(0.5));
     assert_eq!(cfg.max_tokens, Some(2048));
     assert_eq!(cfg.max_context_tokens, Some(32000));
@@ -1064,8 +1097,9 @@ fn test_plugin_config_resolve_model_role_level_overrides() {
     // (role config is highest priority within resolve_model)
     let cfg = make_config(Some(0.9))
         .resolve_model(&default_role)
-        .expect("resolve");
+        .map_err(|e| format!("resolve: {e:?}"))?;
     assert_eq!(cfg.temperature, Some(0.5));
+    Ok(())
 }
 // ============================================================================
 // 3-Part Format Tests (github-copilot/backend/model)
@@ -1073,7 +1107,7 @@ fn test_plugin_config_resolve_model_role_level_overrides() {
 
 #[test]
 #[serial]
-fn resolve_model_handles_two_part_format() {
+fn resolve_model_handles_two_part_format() -> Result<()> {
     // Test that traditional 2-part format still works (backward compatibility)
     let plugin_config = PluginConfig {
         models: {
@@ -1118,16 +1152,17 @@ fn resolve_model_handles_two_part_format() {
     };
     let config = plugin_config
         .resolve_model(&role_config)
-        .expect("should resolve 2-part format");
+        .map_err(|e| format!("should resolve 2-part format: {e:?}"))?;
 
     assert_eq!(config.provider, "openai");
     assert_eq!(config.model, "gpt-4");
     assert_eq!(config.api_key, Some("sk-test123".to_string()));
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn resolve_model_validates_empty_parts() {
+fn resolve_model_validates_empty_parts() -> Result<()> {
     // Test that empty parts in model specification are rejected
     let plugin_config = PluginConfig {
         models: {
@@ -1157,16 +1192,22 @@ fn resolve_model_validates_empty_parts() {
         model: "/model".to_string(),
         ..ModelRoleConfig::default()
     });
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("cannot be empty"));
+    let err = match result {
+        Ok(_) => return Err("empty provider part should fail".into()),
+        Err(e) => e,
+    };
+    assert!(err.contains("cannot be empty"));
 
     // Empty model
     let result = plugin_config.resolve_model(&ModelRoleConfig {
         model: "provider/".to_string(),
         ..ModelRoleConfig::default()
     });
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("cannot be empty"));
+    let err = match result {
+        Ok(_) => return Err("empty model part should fail".into()),
+        Err(e) => e,
+    };
+    assert!(err.contains("cannot be empty"));
 
     // Both empty
     let result = plugin_config.resolve_model(&ModelRoleConfig {
@@ -1174,6 +1215,7 @@ fn resolve_model_validates_empty_parts() {
         ..ModelRoleConfig::default()
     });
     assert!(result.is_err());
+    Ok(())
 }
 
 // ============================================================================
@@ -1182,7 +1224,7 @@ fn resolve_model_validates_empty_parts() {
 
 #[test]
 #[serial]
-fn resolve_model_uses_split_once_for_multi_part_models() {
+fn resolve_model_uses_split_once_for_multi_part_models() -> Result<()> {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
@@ -1226,7 +1268,7 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
     };
     let config = plugin_config
         .resolve_model(&role_config)
-        .expect("Should resolve github-copilot model");
+        .map_err(|e| format!("Should resolve github-copilot model: {e:?}"))?;
 
     // Provider should be "github-copilot"
     assert_eq!(config.provider, "github-copilot");
@@ -1236,11 +1278,12 @@ fn resolve_model_uses_split_once_for_multi_part_models() {
 
     // API key should come from provider config
     assert_eq!(config.api_key, Some("test-key".to_string()));
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn resolve_model_works_with_simple_two_part() {
+fn resolve_model_works_with_simple_two_part() -> Result<()> {
     let plugin_config = PluginConfig {
         models: {
             let mut m = HashMap::new();
@@ -1284,14 +1327,15 @@ fn resolve_model_works_with_simple_two_part() {
     };
     let config = plugin_config
         .resolve_model(&role_config)
-        .expect("Should resolve openai model");
+        .map_err(|e| format!("Should resolve openai model: {e:?}"))?;
 
     assert_eq!(config.provider, "openai");
     assert_eq!(config.model, "gpt-4");
+    Ok(())
 }
 
 #[test]
-fn integration_github_copilot_with_backend_in_model() {
+fn integration_github_copilot_with_backend_in_model() -> Result<()> {
     // This simulates the full flow:
     // 1. Config has github-copilot provider
     // 2. User specifies model as "github-copilot/anthropic/claude-sonnet-4-20250514"
@@ -1349,7 +1393,7 @@ fn integration_github_copilot_with_backend_in_model() {
     };
     let config = plugin_config
         .resolve_model(&default_role)
-        .expect("Should resolve github-copilot anthropic model");
+        .map_err(|e| format!("Should resolve github-copilot anthropic model: {e:?}"))?;
 
     assert_eq!(config.provider, "github-copilot");
     assert_eq!(config.model, "anthropic/claude-sonnet-4-20250514");
@@ -1366,11 +1410,12 @@ fn integration_github_copilot_with_backend_in_model() {
     };
     let config = plugin_config
         .resolve_model(&light_role)
-        .expect("Should resolve github-copilot openai model");
+        .map_err(|e| format!("Should resolve github-copilot openai model: {e:?}"))?;
 
     assert_eq!(config.provider, "github-copilot");
     assert_eq!(config.model, "openai/gpt-4o-mini");
     assert_eq!(config.api_key, Some("test-key".to_string()));
+    Ok(())
 }
 
 // RED TEST: max_tool_turns defaults to None (not Some(20))
@@ -1414,7 +1459,7 @@ fn test_validate_none_max_tool_turns_is_valid() {
 
 // RED TEST: max_tool_turns Some(0) is still invalid
 #[test]
-fn test_validate_zero_max_tool_turns_still_invalid() {
+fn test_validate_zero_max_tool_turns_still_invalid() -> Result<()> {
     let config = Config {
         a2a_port: None,
         provider: "openai".to_string(),
@@ -1441,9 +1486,12 @@ fn test_validate_zero_max_tool_turns_still_invalid() {
     };
 
     let result = config.validate();
-    assert!(result.is_err());
-    let err = result.unwrap_err();
+    let err = match result {
+        Ok(_) => return Err("zero max_tool_turns should still be invalid".into()),
+        Err(e) => e,
+    };
     assert!(err.contains("max_tool_turns"));
+    Ok(())
 }
 
 // ============================================================================
@@ -1587,13 +1635,16 @@ fn compaction_config_validate_valid() {
 }
 
 #[test]
-fn compaction_config_validate_pct_out_of_range() {
+fn compaction_config_validate_pct_out_of_range() -> Result<()> {
     // pct > 1.0
     let config = CompactionConfig {
         proactive_threshold_pct: Some(1.5),
         ..CompactionConfig::default()
     };
-    let err = config.validate().unwrap_err();
+    let err = match config.validate() {
+        Ok(_) => return Err("pct above 1.0 should fail validation".into()),
+        Err(e) => e,
+    };
     assert!(err.contains("proactive_threshold_pct"));
 
     // pct < 0.0
@@ -1601,8 +1652,12 @@ fn compaction_config_validate_pct_out_of_range() {
         proactive_threshold_pct: Some(-0.1),
         ..CompactionConfig::default()
     };
-    let err = config.validate().unwrap_err();
+    let err = match config.validate() {
+        Ok(_) => return Err("pct below 0.0 should fail validation".into()),
+        Err(e) => e,
+    };
     assert!(err.contains("proactive_threshold_pct"));
+    Ok(())
 }
 
 // ============================================================================

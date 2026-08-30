@@ -252,7 +252,7 @@ pub(crate) async fn run_render_loop(
                 }
                 let ui_state_events = coordinator.state.take_pending_ui_state_events();
                 for ev in ui_state_events {
-                    let _ = bus.ui_state().send(ev);
+                    let _ = bus.ui_state().send(ev).await;
                 }
                 if coordinator.state.quit_requested {
                     let _ = event_tx.send(OrchestratorEvent::Quit).await;
@@ -321,7 +321,7 @@ pub(crate) async fn run_render_loop(
                     }
                     let ui_state_events = coordinator.state.take_pending_ui_state_events();
                     for ev in ui_state_events {
-                        let _ = bus.ui_state().send(ev);
+                        let _ = bus.ui_state().send(ev).await;
                     }
                     coordinator.mark_render_needed();
                     let _ = coordinator.render_if_needed(live_terminal);

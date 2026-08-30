@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -9,7 +9,7 @@ use nu_agent_a2a::{
     A2aCompletionEvent, AgentCard, InMemoryTaskStore, IncomingTask, Part, Peer, PeerCache,
     PeerDiscoveryImpl, mdns_name_for_switch, rebuild_card_for_switch, skill_from_persona,
 };
-use nu_agent_core::bus::{ExternalEvent, TurnEvent};
+use nu_agent_core::bus::{OneshotTx, TurnEvent};
 use nu_agent_core::utils::value_ext::extract_response_text_from_value;
 use nu_agent_core::{
     conversation::runtime::AgentConversationRuntime,
@@ -17,13 +17,12 @@ use nu_agent_core::{
         InteractiveLoopConfig, OnAgentSwitch, run_hydrated_interactive_loop_with_external_prompts,
         run_interactive_loop_with_external_prompts, run_single_turn,
     },
-    policy::UiPolicy,
     protocol::{
         contracts::UiMessageSnapshot, event::PermissionDecision, mcp_management::McpManagement,
         session_management::SessionPersistence,
     },
 };
-use nu_agent_tty::StderrProgressUi;
+use nu_agent_tty::policy::UiPolicy;
 use nu_agent_tty::{StderrUiFactory, UiRendererFactory};
 use nu_agent_tui::TuiInteractiveUi;
 use nu_agent_tui::platform::terminal::TerminalLifecycle;
@@ -112,7 +111,7 @@ pub(crate) async fn run_tui_mode(
     // Set up the interactive permission pending map for TUI mode.
     // This Arc is shared between the worker thread (via InteractivePermissionResolver)
     // and the main thread (via the orchestrator's permission poll loop).
-    let pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>> =
+    let pending: Arc<Mutex<HashMap<String, OneshotTx<PermissionDecision>>>> =
         Arc::new(Mutex::new(HashMap::new()));
     runtime_impl.interactive_pending = Some(Arc::clone(&pending));
 
@@ -206,83 +205,25 @@ pub(crate) async fn run_tui_mode(
         tui_ui.push_startup_logo();
     }
 
-    // Publish A2A channels (incoming tasks + completion events) onto the
-    // signal bus's external channel, which the orchestrator subscribes to.
-    let external_bus = runtime_impl.bus.clone();
-    {
-        // Forward incoming A2A tasks
-        if let Some(mut rx) = a2a.task_rx {
-            let bus = external_bus.clone();
-            std::thread::spawn(move || {
-                while let Some(incoming) = rx.blocking_recv() {
-                    let text: String = incoming
-                        .message
-                        .parts
-                        .iter()
-                        .filter_map(|p| match p {
-                            Part::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    let prompt = format!(
-                        "[A2A Task {} from {}]: {}\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result.",
-                        incoming.task_id, incoming.sender_url, text
-                    );
-                    let _ = bus.external().send(ExternalEvent::PromptReceived {
-                        prompt,
-                        task_id: incoming.task_id,
-                    });
-                }
-                log::warn!("incoming task channel closed");
-            });
-        }
-
-        // Forward A2A completion events
-        if let Some(mut rx) = a2a.completion_rx {
-            let bus = external_bus.clone();
-            std::thread::spawn(move || {
-                while let Some(event) = rx.blocking_recv() {
-                    let prompt = format!(
-                        "[A2A Task {} completed by {}]: {}\n\nStatus: {}.",
-                        event.task_id, event.agent_name, event.result, event.status
-                    );
-                    let _ = bus.external().send(ExternalEvent::PromptReceived {
-                        prompt,
-                        task_id: event.task_id,
-                    });
-                }
-                log::warn!("completion event channel closed");
-            });
-        }
-    }
-
-    // Bridge the A2A task cancel channel into a std channel that the
-    // orchestrator can poll without A2A knowledge.
-    let task_cancel_rx: Option<std::sync::mpsc::Receiver<String>> =
-        a2a.task_cancel_rx.map(|mut rx| {
-            let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<String>();
-            std::thread::spawn(move || {
-                while let Some(task_id) = rx.blocking_recv() {
-                    if cancel_tx.send(task_id).is_err() {
-                        break; // std receiver dropped, no more forwarding needed
-                    }
-                }
-                log::warn!("task cancel channel closed");
-            });
-            cancel_rx
-        });
+    // The incoming A2A task, completion-event, and cancel channels are all
+    // `tokio::sync` receivers. They are passed directly into `InteractiveLoopConfig`,
+    // and the orchestrator `select!`s over them. No std-bridge forwarder threads
+    // are needed.
+    let task_cancel_rx = a2a.task_cancel_rx;
+    let a2a_task_rx = a2a.task_rx;
+    let a2a_completion_rx = a2a.completion_rx;
 
     // Auto-complete A2A tasks from turn-completion events on the signal bus.
     // The session stage publishes `TurnEvent::TaskCompleted` with the task ID after
     // each external turn completes. A background thread reads these and calls
     // `store.complete_task()`.
-    if let Some(ref store) = a2a.task_store {
+    if let Some(store) = &a2a.task_store {
         let store = Arc::clone(store);
-        let mut turn_rx = runtime_impl.bus.turn().subscribe();
-        std::thread::spawn(move || {
+        let bus = runtime_impl.bus.clone();
+        tokio::spawn(async move {
+            let mut turn_rx = bus.turn().subscribe();
             loop {
-                match turn_rx.blocking_recv() {
+                match turn_rx.recv().await {
                     Ok(TurnEvent::TaskCompleted { output, task_id }) => {
                         if let Err(e) = store.complete_task(&task_id, &output) {
                             log::warn!("auto-complete failed for task {task_id}: {e}");
@@ -290,8 +231,9 @@ pub(crate) async fn run_tui_mode(
                     }
                     Ok(TurnEvent::Completed { .. }) => {}
                     Ok(TurnEvent::Started { .. }) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(nu_agent_core::bus::ChannelError::Lagged { .. }) => {}
+                    Err(nu_agent_core::bus::ChannelError::Closed) => break,
+                    Err(_) => {}
                 }
             }
         });
@@ -318,7 +260,7 @@ pub(crate) async fn run_tui_mode(
                 rebuild_card_for_switch(&card, &name, description.as_deref(), vec![skill]);
             *card = new_card.clone();
             // Update the peer cache self-entry so agent_list reflects the new name.
-            if let (Some(ref cache), Some(port)) = (cache.clone(), self_port) {
+            if let (Some(cache), Some(port)) = (cache.clone(), self_port) {
                 cache.remove(&old_name);
                 cache.add_or_update(Peer {
                     name: name.clone(),
@@ -333,8 +275,9 @@ pub(crate) async fn run_tui_mode(
             if let (Some(discovery), Some(mesh_key)) = (discovery.as_ref(), mesh_key.as_ref()) {
                 let mut d = discovery.lock().expect("discovery lock");
                 let old_fullname = d.fullname().map(|s| s.to_string());
-                if let Some(ref old_fullname) = old_fullname {
-                    let port = self_port.expect("self_port must be set when discovery is active");
+                if let Some(old_fullname) = &old_fullname
+                    && let Some(port) = self_port
+                {
                     let new_mdns_name = mdns_name_for_switch(&old_name, &name, port);
                     d.rename(old_fullname, &new_mdns_name, port, &card, mesh_key);
                 }
@@ -353,6 +296,8 @@ pub(crate) async fn run_tui_mode(
                 .with_hydration(hydration.initial_messages, hydration.last_total_tokens)
                 .with_interactive_pending(Some(Arc::clone(&pending)))
                 .with_task_cancel_rx(task_cancel_rx)
+                .with_a2a_task_rx(a2a_task_rx)
+                .with_a2a_completion_rx(a2a_completion_rx)
                 .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()));
             if let Some(cb) = on_agent_switch {
                 config = config.with_on_agent_switch(cb);
@@ -363,6 +308,8 @@ pub(crate) async fn run_tui_mode(
                 .with_bus(runtime_impl.bus.clone())
                 .with_interactive_pending(Some(Arc::clone(&pending)))
                 .with_task_cancel_rx(task_cancel_rx)
+                .with_a2a_task_rx(a2a_task_rx)
+                .with_a2a_completion_rx(a2a_completion_rx)
                 .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()));
             if let Some(cb) = on_agent_switch {
                 config = config.with_on_agent_switch(cb);
@@ -371,7 +318,11 @@ pub(crate) async fn run_tui_mode(
         }
     } else {
         let (prompt, context) = super::input::extract_prompt_and_context(input)?;
-        run_single_turn(&mut runtime_impl, &mut tui_ui, prompt, context, span).await
+        // Single-turn TUI: core emits domain events on the bus; the renderer
+        // subscribes to bus channels directly (the render loop subscribes), so we
+        // pass the bus rather than a `ProgressUi`.
+        let bus = runtime_impl.bus.clone();
+        run_single_turn(&mut runtime_impl, &bus, prompt, context, span).await
     };
 
     let _ = terminal_lifecycle.restore();
@@ -388,34 +339,32 @@ pub(crate) async fn run_stderr_mode(
 ) -> Result<Value, LabeledError> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
-    // Spawn a tokio task that awaits SIGINT and sets the cancel flag
-    let signal_flag = Arc::clone(&cancel_flag);
-    runtime_impl.spawn(async move {
-        loop {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                signal_flag.store(true, Ordering::SeqCst);
-            }
-        }
-    });
-
-    let mut stderr_ui = StderrProgressUi::new(
-        StderrUiFactory::new(std::io::stderr(), stderr_is_tty).create(ui_policy),
-        cancel_flag,
-    );
+    // Build the stderr renderer. In stderr mode core emits domain events on the
+    // bus; this function subscribes to the bus channels and forwards each event
+    // to the renderer while the turn runs.
+    let stderr_renderer = StderrUiFactory::new(std::io::stderr(), stderr_is_tty).create(ui_policy);
 
     // Check for A2A completion events first (highest priority).
-    if let Some(ref mut rx) = a2a.completion_rx
+    if let Some(rx) = &mut a2a.completion_rx
         && let Ok(event) = rx.try_recv()
     {
         let prompt = format!(
             "[A2A Task {} completed by {}]: {}\n\nStatus: {}.",
             event.task_id, event.agent_name, event.result, event.status
         );
-        return run_single_turn(runtime_impl, &mut stderr_ui, prompt, None, span).await;
+        return run_stderr_turn(
+            runtime_impl,
+            stderr_renderer,
+            &cancel_flag,
+            prompt,
+            None,
+            span,
+        )
+        .await;
     }
 
     // Then check for pending A2A incoming tasks.
-    if let Some(ref mut rx) = a2a.task_rx
+    if let Some(rx) = &mut a2a.task_rx
         && let Ok(incoming) = rx.try_recv()
     {
         let task_id = incoming.task_id.clone();
@@ -433,11 +382,19 @@ pub(crate) async fn run_stderr_mode(
             "[A2A Task {} from {}]: {}\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result.",
             incoming.task_id, incoming.sender_url, text
         );
-        let result = run_single_turn(runtime_impl, &mut stderr_ui, prompt, None, span).await;
+        let result = run_stderr_turn(
+            runtime_impl,
+            stderr_renderer,
+            &cancel_flag,
+            prompt,
+            None,
+            span,
+        )
+        .await;
 
         // Auto-complete the A2A task after the LLM finishes its tool chain
-        if let Some(ref store) = a2a.task_store
-            && let Ok(ref response) = result
+        if let Some(store) = &a2a.task_store
+            && let Ok(response) = &result
         {
             auto_complete_a2a_task(store, &task_id, response);
         }
@@ -446,5 +403,135 @@ pub(crate) async fn run_stderr_mode(
     }
 
     let (prompt, context) = super::input::extract_prompt_and_context(input)?;
-    run_single_turn(runtime_impl, &mut stderr_ui, prompt, context, span).await
+    run_stderr_turn(
+        runtime_impl,
+        stderr_renderer,
+        &cancel_flag,
+        prompt,
+        context,
+        span,
+    )
+    .await
+}
+
+/// Run a single turn in stderr mode, forwarding bus lifecycle events to the
+/// renderer and mapping SIGINT/cancel to a `CancelEvent` on the bus.
+///
+/// Core no longer threads a `ProgressUi` through the turn; it publishes domain
+/// events (tool/LLM/turn/warning/compaction/permission) on the shared `Bus`.
+/// This helper subscribes to those channels, converts each event to a `UiEvent`
+/// at the boundary, and emits it on the stderr renderer while the turn runs.
+/// It also bridges the user's Ctrl+C (via `cancel_flag`) into a `CancelEvent`
+/// on `bus.cancel()`.
+async fn run_stderr_turn<R: nu_agent_core::renderer::UiRenderer + Send + 'static>(
+    runtime_impl: &mut AgentConversationRuntime,
+    renderer: R,
+    cancel_flag: &Arc<AtomicBool>,
+    prompt: String,
+    context: Option<String>,
+    span: nu_protocol::Span,
+) -> Result<Value, LabeledError> {
+    use std::sync::atomic::Ordering as AtomicOrdering;
+
+    use nu_agent_core::protocol::event::UiEvent;
+
+    let bus = runtime_impl.bus.clone();
+    // The renderer is shared between the drain task and the final flush.
+    let shared = Arc::new(std::sync::Mutex::new(renderer));
+    let stop = Arc::new(AtomicBool::new(false));
+
+    // Spawn a task that drains the SIGINT-set cancel flag into the bus cancel
+    // channel while the turn runs.
+    let signal_flag = Arc::clone(cancel_flag);
+    let cancel_bus = bus.clone();
+    runtime_impl.spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            if signal_flag.swap(false, AtomicOrdering::SeqCst) {
+                let _ = cancel_bus
+                    .cancel()
+                    .send(nu_agent_core::bus::CancelEvent::Requested)
+                    .await;
+            }
+        }
+    });
+
+    // Drain task: subscribe to the bus channels the turn publishes on and forward
+    // each event to the shared renderer (converted to `UiEvent` at the boundary).
+    // Runs concurrently with the turn so events stream in real time.
+    let drain_shared = Arc::clone(&shared);
+    let drain_stop = Arc::clone(&stop);
+    let drain_bus = bus.clone();
+    runtime_impl.spawn(async move {
+        let mut tool_rx = drain_bus.tool().subscribe();
+        let mut llm_rx = drain_bus.llm().subscribe();
+        let mut turn_rx = drain_bus.turn().subscribe();
+        let mut warning_rx = drain_bus.warning().subscribe();
+        let mut compaction_rx = drain_bus.compaction().subscribe();
+        let mut permission_rx = drain_bus.permission().subscribe();
+        // Emit a periodic Tick so the stderr spinner animates while the turn
+        // runs (the renderer's SystemTickGate throttles it).
+        let mut tick_interval = tokio::time::interval(std::time::Duration::from_millis(16));
+        loop {
+            if drain_stop.load(AtomicOrdering::SeqCst) {
+                break;
+            }
+            // Drain all channels each iteration; emit converted events. Each
+            // channel is handled explicitly because the receiver types differ.
+            drain_channel(&mut tool_rx, &drain_shared);
+            drain_channel(&mut llm_rx, &drain_shared);
+            drain_channel(&mut turn_rx, &drain_shared);
+            drain_channel(&mut warning_rx, &drain_shared);
+            drain_channel(&mut compaction_rx, &drain_shared);
+            drain_channel(&mut permission_rx, &drain_shared);
+            // Tick the spinner on a fixed cadence.
+            tick_interval.tick().await;
+            if let Ok(mut guard) = drain_shared.lock() {
+                guard.emit(&UiEvent::Tick);
+            }
+        }
+    });
+
+    // Drive the turn. Core publishes events on the bus; the drain task forwards
+    // them to the renderer as they arrive.
+    let result = run_single_turn(runtime_impl, &bus, prompt, context, span).await;
+
+    // Give the drain task a moment to process the final events before we stop it.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+    // Stop the drain task and flush any remaining events.
+    stop.store(true, AtomicOrdering::SeqCst);
+    if let Ok(mut guard) = shared.lock() {
+        guard.flush();
+    }
+
+    result
+}
+
+/// Drain a single broadcast channel, forwarding each event that converts to a
+/// `Some(UiEvent)` to the shared stderr renderer. `Empty` ends the drain;
+/// `Lagged` skips to the next event; `Closed` ends the drain.
+fn drain_channel<T, R>(
+    rx: &mut nu_agent_core::bus::BroadcastRx<T>,
+    renderer: &Arc<std::sync::Mutex<R>>,
+) where
+    Option<nu_agent_core::protocol::event::UiEvent>: From<T>,
+    T: Clone + Send + 'static,
+    R: nu_agent_core::renderer::UiRenderer,
+{
+    loop {
+        match rx.try_recv() {
+            Ok(event) => {
+                if let Some(ui_event) =
+                    Option::<nu_agent_core::protocol::event::UiEvent>::from(event)
+                    && let Ok(mut guard) = renderer.lock()
+                {
+                    guard.emit(&ui_event);
+                }
+            }
+            Err(nu_agent_core::bus::TryRecvError::Empty) => break,
+            Err(nu_agent_core::bus::TryRecvError::Lagged(_)) => continue,
+            Err(nu_agent_core::bus::TryRecvError::Closed) => break,
+        }
+    }
 }

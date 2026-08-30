@@ -389,8 +389,8 @@ pub fn orchestrator_tool_definitions(available_agents: &[PersonaSummary]) -> Vec
         );
         for agent in available_agents {
             desc.push_str(&format!("- {}", agent.name));
-            if let Some(ref d) = agent.description {
-                desc.push_str(&format!(": {}", d));
+            if let Some(d) = &agent.description {
+                desc.push_str(&format!(": {d}"));
             }
             desc.push('\n');
         }
@@ -509,11 +509,10 @@ impl<'a> AgentRuntimeBuilder<'a> {
 
         // Create audit log directory ONCE before prompt loop
         let log_dir = crate::utils::xdg::data_dir()
-            .map_err(|e| LabeledError::new(format!("XDG data directory error: {}", e)))?
+            .map_err(|e| LabeledError::new(format!("XDG data directory error: {e}")))?
             .join("nu-agent");
-        std::fs::create_dir_all(&log_dir).map_err(|e| {
-            LabeledError::new(format!("Failed to create audit log directory: {}", e))
-        })?;
+        std::fs::create_dir_all(&log_dir)
+            .map_err(|e| LabeledError::new(format!("Failed to create audit log directory: {e}")))?;
         let log_path = log_dir.join("tool_audit.log");
 
         let audit_logger = Arc::new(AuditLogger::new(log_path));

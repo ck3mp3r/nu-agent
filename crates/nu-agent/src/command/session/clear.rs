@@ -22,17 +22,9 @@ impl CwdInterface for EngineInterface {
 /// The `agent session clear` command deletes a session by removing its JSONL file.
 pub struct AgentSessionClear;
 
-impl AgentSessionClear {
-    /// Creates a new AgentSessionClear command. The session store is obtained
-    /// lazily from the plugin in `run()`.
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl Default for AgentSessionClear {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 
@@ -58,7 +50,7 @@ impl AgentSessionClear {
         let new_exists = store
             .load(&new_id)
             .await
-            .map_err(|e| LabeledError::new(format!("Failed to load session: {}", e)))?
+            .map_err(|e| LabeledError::new(format!("Failed to load session: {e}")))?
             .is_some();
         let target_id = if new_exists {
             new_id
@@ -66,7 +58,7 @@ impl AgentSessionClear {
             let legacy_exists = store
                 .load(&legacy_id)
                 .await
-                .map_err(|e| LabeledError::new(format!("Failed to load session: {}", e)))?
+                .map_err(|e| LabeledError::new(format!("Failed to load session: {e}")))?
                 .is_some();
             if legacy_exists {
                 legacy_id
@@ -81,7 +73,7 @@ impl AgentSessionClear {
         store
             .delete(&target_id)
             .await
-            .map_err(|e| LabeledError::new(format!("Failed to delete session: {}", e)))?;
+            .map_err(|e| LabeledError::new(format!("Failed to delete session: {e}")))?;
 
         // Return empty value (success)
         Ok(Value::nothing(call.head))

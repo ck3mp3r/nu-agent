@@ -6,15 +6,9 @@ use crate::plugin::AgentPlugin;
 
 pub struct AgentModelsList;
 
-impl AgentModelsList {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl Default for AgentModelsList {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 

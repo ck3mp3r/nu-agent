@@ -10,17 +10,13 @@ pub struct CancelController {
 
 impl Default for CancelController {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CancelController {
-    pub fn new() -> Self {
         Self {
             requested: Arc::new(AtomicBool::new(false)),
         }
     }
+}
 
+impl CancelController {
     pub fn request_cancel(&self) -> bool {
         !self.requested.swap(true, Ordering::SeqCst)
     }

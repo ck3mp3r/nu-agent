@@ -4,6 +4,8 @@ use crate::platform::terminal::{
     TerminalAction, TerminalBackend, TerminalLifecycle, TerminalLifecycleError,
 };
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MockTerminalState {
     raw_mode_enabled: bool,
@@ -43,7 +45,7 @@ impl MockTerminalBackend {
         }
     }
 
-    fn run(&self, action: TerminalAction) -> Result<(), TerminalLifecycleError> {
+    fn run(&self, action: TerminalAction) -> core::result::Result<(), TerminalLifecycleError> {
         self.actions.borrow_mut().push(action);
 
         if self.fail_on == Some(action) {
@@ -58,49 +60,49 @@ impl MockTerminalBackend {
 }
 
 impl TerminalBackend for MockTerminalBackend {
-    fn enable_raw_mode(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn enable_raw_mode(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::EnableRawMode)?;
         self.state.borrow_mut().raw_mode_enabled = true;
         Ok(())
     }
 
-    fn disable_raw_mode(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn disable_raw_mode(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::DisableRawMode)?;
         self.state.borrow_mut().raw_mode_enabled = false;
         Ok(())
     }
 
-    fn enter_alt_screen(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn enter_alt_screen(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::EnterAltScreen)?;
         self.state.borrow_mut().alt_screen_enabled = true;
         Ok(())
     }
 
-    fn leave_alt_screen(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn leave_alt_screen(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::LeaveAltScreen)?;
         self.state.borrow_mut().alt_screen_enabled = false;
         Ok(())
     }
 
-    fn hide_cursor(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn hide_cursor(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::HideCursor)?;
         self.state.borrow_mut().cursor_visible = false;
         Ok(())
     }
 
-    fn show_cursor(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn show_cursor(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::ShowCursor)?;
         self.state.borrow_mut().cursor_visible = true;
         Ok(())
     }
 
-    fn enable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn enable_bracketed_paste(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::EnableBracketedPaste)?;
         self.state.borrow_mut().bracketed_paste_enabled = true;
         Ok(())
     }
 
-    fn disable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError> {
+    fn disable_bracketed_paste(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
         self.run(TerminalAction::DisableBracketedPaste)?;
         self.state.borrow_mut().bracketed_paste_enabled = false;
         Ok(())
@@ -120,14 +122,14 @@ fn assert_terminal_restored(state: &Rc<RefCell<MockTerminalState>>) {
 }
 
 #[test]
-fn enter_then_restore_uses_required_operation_order() {
+fn enter_then_restore_uses_required_operation_order() -> Result<()> {
     let actions = Rc::new(RefCell::new(Vec::new()));
     let state = Rc::new(RefCell::new(MockTerminalState::default()));
     let backend = MockTerminalBackend::new(actions.clone(), state.clone(), None);
     let mut lifecycle = TerminalLifecycle::new(backend);
 
-    lifecycle.enter().expect("enter should succeed");
-    lifecycle.restore().expect("restore should succeed");
+    lifecycle.enter().map_err(|_| "enter should succeed")?;
+    lifecycle.restore().map_err(|_| "restore should succeed")?;
 
     assert_eq!(
         *actions.borrow(),
@@ -143,18 +145,23 @@ fn enter_then_restore_uses_required_operation_order() {
         ]
     );
     assert_terminal_restored(&state);
+    Ok(())
 }
 
 #[test]
-fn restore_is_idempotent_and_safe_to_call_multiple_times() {
+fn restore_is_idempotent_and_safe_to_call_multiple_times() -> Result<()> {
     let actions = Rc::new(RefCell::new(Vec::new()));
     let state = Rc::new(RefCell::new(MockTerminalState::default()));
     let backend = MockTerminalBackend::new(actions.clone(), state.clone(), None);
     let mut lifecycle = TerminalLifecycle::new(backend);
 
-    lifecycle.enter().expect("enter should succeed");
-    lifecycle.restore().expect("first restore should succeed");
-    lifecycle.restore().expect("second restore should be no-op");
+    lifecycle.enter().map_err(|_| "enter should succeed")?;
+    lifecycle
+        .restore()
+        .map_err(|_| "first restore should succeed")?;
+    lifecycle
+        .restore()
+        .map_err(|_| "second restore should be a no-op")?;
 
     assert_eq!(
         *actions.borrow(),
@@ -170,10 +177,11 @@ fn restore_is_idempotent_and_safe_to_call_multiple_times() {
         ]
     );
     assert_terminal_restored(&state);
+    Ok(())
 }
 
 #[test]
-fn enter_failure_recovers_partial_state_and_followup_restore_is_noop() {
+fn enter_failure_recovers_partial_state_and_followup_restore_is_noop() -> Result<()> {
     let actions = Rc::new(RefCell::new(Vec::new()));
     let state = Rc::new(RefCell::new(MockTerminalState::default()));
     let backend = MockTerminalBackend::new(
@@ -201,7 +209,7 @@ fn enter_failure_recovers_partial_state_and_followup_restore_is_noop() {
 
     lifecycle
         .restore()
-        .expect("restore after recovery should be a no-op");
+        .map_err(|_| "restore after recovery should be a no-op")?;
     assert_eq!(
         *actions.borrow(),
         vec![
@@ -213,10 +221,11 @@ fn enter_failure_recovers_partial_state_and_followup_restore_is_noop() {
         ]
     );
     assert_terminal_restored(&state);
+    Ok(())
 }
 
 #[test]
-fn enter_failure_before_full_init_keeps_terminal_in_restored_state() {
+fn enter_failure_before_full_init_keeps_terminal_in_restored_state() -> Result<()> {
     let actions = Rc::new(RefCell::new(Vec::new()));
     let state = Rc::new(RefCell::new(MockTerminalState::default()));
     let backend = MockTerminalBackend::new(
@@ -235,6 +244,7 @@ fn enter_failure_before_full_init_keeps_terminal_in_restored_state() {
 
     lifecycle
         .restore()
-        .expect("restore after pre-init failure should be a no-op");
+        .map_err(|_| "restore after pre-init failure should be a no-op")?;
     assert_terminal_restored(&state);
+    Ok(())
 }

@@ -11,7 +11,7 @@ use tempfile::TempDir;
 /// this is kept for tests that only check signature/name properties.
 pub(super) fn create_test_agent() -> (Agent, TempDir) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let agent = Agent::new();
+    let agent = Agent;
     (agent, temp_dir)
 }
 

@@ -39,7 +39,7 @@ pub(crate) fn assert_msgs_eq(left: &[Message], right: &[Message]) {
 // JsonlConversationStore tests
 
 #[tokio::test]
-async fn jsonl_store_round_trip() {
+async fn jsonl_store_round_trip() -> TestResult<()> {
     // RED: Write test for basic round-trip functionality
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
@@ -54,7 +54,11 @@ async fn jsonl_store_round_trip() {
     store.create("test-session", &messages).await.unwrap();
 
     // Read them back
-    let (_metadata, entries) = store.load("test-session").await.unwrap().unwrap();
+    let (_metadata, entries) = store
+        .load("test-session")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
 
     // Verify they match
     assert_eq!(entries.len(), messages.len());
@@ -65,10 +69,11 @@ async fn jsonl_store_round_trip() {
             panic!("Expected Message entry");
         }
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn jsonl_store_append_messages() {
+async fn jsonl_store_append_messages() -> TestResult<()> {
     // RED: Test appending messages to existing session
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
@@ -97,7 +102,11 @@ async fn jsonl_store_append_messages() {
     store.append("test-session", &entries).await.unwrap();
 
     // Load and verify all messages are present
-    let (_metadata, loaded) = store.load("test-session").await.unwrap().unwrap();
+    let (_metadata, loaded) = store
+        .load("test-session")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(loaded.len(), 4);
     if let StoreEntry::Message(m) = &loaded[0] {
         assert_msg_eq(m, &initial_messages[0]);
@@ -111,6 +120,7 @@ async fn jsonl_store_append_messages() {
     if let StoreEntry::Message(m) = &loaded[3] {
         assert_msg_eq(m, &additional_messages[1]);
     }
+    Ok(())
 }
 
 #[tokio::test]
@@ -146,7 +156,7 @@ async fn jsonl_store_delete_removes_session() {
 }
 
 #[tokio::test]
-async fn jsonl_store_handles_corrupt_lines() {
+async fn jsonl_store_handles_corrupt_lines() -> TestResult<()> {
     // RED: Test that corrupt lines are skipped with warning
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
@@ -170,7 +180,11 @@ async fn jsonl_store_handles_corrupt_lines() {
     .unwrap();
 
     // Load should skip corrupt line but return valid messages
-    let (_metadata, entries) = store.load("test-session").await.unwrap().unwrap();
+    let (_metadata, entries) = store
+        .load("test-session")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 3); // 2 original + 1 after corrupt line
     if let StoreEntry::Message(m) = &entries[0] {
         assert_msg_eq(m, &messages[0]);
@@ -181,10 +195,11 @@ async fn jsonl_store_handles_corrupt_lines() {
     if let StoreEntry::Message(m) = &entries[2] {
         assert_msg_eq(m, &Message::user("Valid message 2"));
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn jsonl_store_append_creates_session_if_missing() {
+async fn jsonl_store_append_creates_session_if_missing() -> TestResult<()> {
     // RED: Test that append creates session if it doesn't exist
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
@@ -197,13 +212,18 @@ async fn jsonl_store_append_creates_session_if_missing() {
     store.append("new-session", &entries).await.unwrap();
 
     // Load and verify
-    let (_metadata, loaded) = store.load("new-session").await.unwrap().unwrap();
+    let (_metadata, loaded) = store
+        .load("new-session")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(loaded.len(), 1);
     if let StoreEntry::Message(m) = &loaded[0] {
         assert_msg_eq(m, &Message::user("First message in new session"));
     } else {
         panic!("Expected Message entry");
     }
+    Ok(())
 }
 
 // --- CompactionMarker and StoreEntry tests ---
@@ -273,7 +293,7 @@ async fn append_marker_writes_type_field_to_raw_jsonl() {
 }
 
 #[tokio::test]
-async fn append_marker_writes_to_store() {
+async fn append_marker_writes_to_store() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
 
@@ -289,7 +309,11 @@ async fn append_marker_writes_to_store() {
         .unwrap();
 
     // load should return messages + marker
-    let (_metadata, entries) = store.load("test-session").await.unwrap().unwrap();
+    let (_metadata, entries) = store
+        .load("test-session")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 3);
     match &entries[2] {
         StoreEntry::Marker(m) => {
@@ -297,10 +321,11 @@ async fn append_marker_writes_to_store() {
         }
         _ => panic!("Expected marker as third entry"),
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn load_returns_messages_and_markers_in_order() {
+async fn load_returns_messages_and_markers_in_order() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
 
@@ -321,7 +346,11 @@ async fn load_returns_messages_and_markers_in_order() {
     ];
     store.append("test-session", &follow_up).await.unwrap();
 
-    let (_metadata, entries) = store.load("test-session").await.unwrap().unwrap();
+    let (_metadata, entries) = store
+        .load("test-session")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 5); // 2 msgs + 1 marker + 2 msgs
 
     assert!(matches!(&entries[0], StoreEntry::Message(_)));
@@ -329,10 +358,11 @@ async fn load_returns_messages_and_markers_in_order() {
     assert!(matches!(&entries[2], StoreEntry::Marker(_)));
     assert!(matches!(&entries[3], StoreEntry::Message(_)));
     assert!(matches!(&entries[4], StoreEntry::Message(_)));
+    Ok(())
 }
 
 #[tokio::test]
-async fn load_returns_all_entries_including_markers() {
+async fn load_returns_all_entries_including_markers() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
 
@@ -353,12 +383,17 @@ async fn load_returns_all_entries_including_markers() {
         .unwrap();
 
     // load() returns all entries including markers
-    let (_metadata, entries) = store.load("test-session").await.unwrap().unwrap();
+    let (_metadata, entries) = store
+        .load("test-session")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 4); // m1, r1, marker, m2
     assert!(matches!(&entries[0], StoreEntry::Message(_)));
     assert!(matches!(&entries[1], StoreEntry::Message(_)));
     assert!(matches!(&entries[2], StoreEntry::Marker(_)));
     assert!(matches!(&entries[3], StoreEntry::Message(_)));
+    Ok(())
 }
 
 #[test]
@@ -658,7 +693,7 @@ async fn append_marker_writes_marker_to_jsonl() {
 }
 
 #[tokio::test]
-async fn load_returns_all_entries_after_multiple_appends() {
+async fn load_returns_all_entries_after_multiple_appends() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
     store.create("s1", &[Message::user("hi")]).await.unwrap();
@@ -666,18 +701,28 @@ async fn load_returns_all_entries_after_multiple_appends() {
         .append("s1", &[StoreEntry::Message(Message::assistant("hello"))])
         .await
         .unwrap();
-    let (_metadata, entries) = store.load("s1").await.unwrap().unwrap();
+    let (_metadata, entries) = store
+        .load("s1")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 2);
+    Ok(())
 }
 
 #[tokio::test]
-async fn create_then_load_round_trips() {
+async fn create_then_load_round_trips() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
     let msgs = vec![Message::user("hi"), Message::assistant("there")];
     store.create("s1", &msgs).await.unwrap();
-    let (_meta, entries) = store.load("s1").await.unwrap().unwrap();
+    let (_meta, entries) = store
+        .load("s1")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 2);
+    Ok(())
 }
 
 // --- Orphan user message trimming tests ---
@@ -740,7 +785,7 @@ fn extract_llm_context_empty_after_trimming_returns_empty() {
 // --- Post-compaction entry ordering tests ---
 
 #[tokio::test]
-async fn load_preserves_marker_and_post_marker_entries() {
+async fn load_preserves_marker_and_post_marker_entries() -> TestResult<()> {
     // JSONL layout: [msg, marker, msg]
     // Verify load returns all entries in correct order
     let temp_dir = TempDir::new().unwrap();
@@ -769,15 +814,20 @@ async fn load_preserves_marker_and_post_marker_entries() {
         .await
         .unwrap();
 
-    let (_metadata, entries) = store.load(session_id).await.unwrap().unwrap();
+    let (_metadata, entries) = store
+        .load(session_id)
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 3); // original msg + marker + kept msg
     assert!(matches!(&entries[0], StoreEntry::Message(_)));
     assert!(matches!(&entries[1], StoreEntry::Marker(_)));
     assert!(matches!(&entries[2], StoreEntry::Message(_)));
+    Ok(())
 }
 
 #[tokio::test]
-async fn load_preserves_multiple_post_compaction_entries() {
+async fn load_preserves_multiple_post_compaction_entries() -> TestResult<()> {
     // JSONL layout: [msg, marker, msg, msg]
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
@@ -811,12 +861,17 @@ async fn load_preserves_multiple_post_compaction_entries() {
         .await
         .unwrap();
 
-    let (_metadata, entries) = store.load(session_id).await.unwrap().unwrap();
+    let (_metadata, entries) = store
+        .load(session_id)
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 4);
     assert!(matches!(&entries[0], StoreEntry::Message(_)));
     assert!(matches!(&entries[1], StoreEntry::Marker(_)));
     assert!(matches!(&entries[2], StoreEntry::Message(_)));
     assert!(matches!(&entries[3], StoreEntry::Message(_)));
+    Ok(())
 }
 
 // ================================================================
@@ -949,7 +1004,7 @@ async fn fs_store_list_returns_created_sessions() {
 }
 
 #[tokio::test]
-async fn fs_store_replace_entries_preserves_metadata() {
+async fn fs_store_replace_entries_preserves_metadata() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
 
@@ -969,13 +1024,18 @@ async fn fs_store_replace_entries_preserves_metadata() {
         .await
         .unwrap();
 
-    let (_metadata, entries) = store.load("replace-test").await.unwrap().unwrap();
+    let (_metadata, entries) = store
+        .load("replace-test")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(entries.len(), 2);
     if let StoreEntry::Message(m) = &entries[0] {
         assert!(matches!(m, Message::User { .. }));
     } else {
         panic!("Expected Message entry");
     }
+    Ok(())
 }
 
 #[tokio::test]
@@ -1044,7 +1104,7 @@ fn title_none_when_empty_user_message() {
 }
 
 #[tokio::test]
-async fn title_survives_round_trip_fs_store() {
+async fn title_survives_round_trip_fs_store() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
 
@@ -1064,15 +1124,20 @@ async fn title_survives_round_trip_fs_store() {
     );
 
     // Verify via load
-    let (metadata, _entries) = store.load("title-test").await.unwrap().unwrap();
+    let (metadata, _entries) = store
+        .load("title-test")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(
         metadata.title,
         Some("My first message to the agent".to_string())
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn title_none_when_no_user_message_fs_store() {
+async fn title_none_when_no_user_message_fs_store() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let store = FsSessionStore::new(temp_dir.path().to_path_buf());
 
@@ -1084,6 +1149,11 @@ async fn title_none_when_no_user_message_fs_store() {
     let session = sessions.iter().find(|s| s.id == "no-user-msg").unwrap();
     assert_eq!(session.title, None);
 
-    let (metadata, _entries) = store.load("no-user-msg").await.unwrap().unwrap();
+    let (metadata, _entries) = store
+        .load("no-user-msg")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
     assert_eq!(metadata.title, None);
+    Ok(())
 }

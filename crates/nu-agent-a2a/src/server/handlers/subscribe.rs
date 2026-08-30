@@ -58,7 +58,7 @@ pub async fn handle_tasks_subscribe(
     tokio::spawn(async move {
         // Send initial Task as first SSE event (§3.1.6)
         let task = task_store.get_task(&id).ok();
-        if let Some(ref t) = task {
+        if let Some(t) = &task {
             let data = json!({ "task": t });
             if tx
                 .send(Ok(axum::response::sse::Event::default()

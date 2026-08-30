@@ -8,17 +8,14 @@ use std::sync::{Arc, Mutex};
 
 use nu_protocol::{LabeledError, Span, Value};
 use rig::memory::ConversationMemory;
-use tokio::sync::mpsc;
 
 use crate::bus::{Bus, LlmEvent, TurnEvent};
 use crate::config::{Config, defaults};
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::managers::SessionManager;
-use crate::conversation::turn::{TurnContext, error, execute_turn, execute_turn_with_channel};
+use crate::conversation::turn::{TurnContext, error, execute_turn};
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
-use crate::protocol::contracts::ProgressUi;
-use crate::protocol::event::UiEvent;
 use crate::session::repair::inject_missing_tool_results;
 use crate::session::{CachedMemory, SessionStore};
 use crate::tools::closure::ClosureRegistry;
@@ -124,21 +121,11 @@ where
     /// paths, persist messages, and emit UI events. Returns `TurnOutcome::Completed`
     /// on success (caller should then evaluate compaction and call `build_response`),
     /// or `TurnOutcome::EarlyReturn(value)` for cancellation paths.
-    ///
-    /// The optional `ui_channel` is used in TUI mode: the caller creates `(ui_tx, ui_rx)`
-    /// and passes the pair here so the drain loop and the `AgentHook` share the same
-    /// channel. The hook passes its `ui_tx` to the permission resolver on each call.
-    /// Pass `None` for TTY/policy mode (the channel is created internally).
-    pub async fn execute<U: ProgressUi + Send, P: AsyncPermissionResolver>(
+    pub async fn execute<P: AsyncPermissionResolver>(
         &mut self,
-        ui: &mut U,
         input: ExecuteInput,
         permission_resolver: P,
         final_session_id: Option<&str>,
-        mut ui_channel: Option<(
-            mpsc::UnboundedSender<UiEvent>,
-            mpsc::UnboundedReceiver<UiEvent>,
-        )>,
     ) -> Result<TurnOutcome, LabeledError> {
         let prompt = input.prompt;
         let preamble = input.preamble;
@@ -201,16 +188,8 @@ where
                 self.config,
             );
 
-            // Only pass the pre-built channel on the first attempt; retries create
-            // their own internally.
-            let result = if attempt == 0
-                && let Some((ui_tx, ui_rx)) = ui_channel.take()
-            {
-                execute_turn_with_channel(turn_ctx, ui, permission_resolver.clone(), ui_tx, ui_rx)
-                    .await
-            } else {
-                execute_turn(turn_ctx, ui, permission_resolver.clone()).await
-            };
+            // Retries and the initial attempt both run the same turn future.
+            let result = execute_turn(turn_ctx, permission_resolver.clone()).await;
 
             match &result {
                 Err((
@@ -274,12 +253,8 @@ where
         let turn_result = match visitor_result {
             Ok(result) => result,
             Err((
-                crate::conversation::turn::TurnError::MaxTurnsExceeded {
-                    ref msg,
-                    ref messages,
-                    ..
-                },
-                ref ctx,
+                crate::conversation::turn::TurnError::MaxTurnsExceeded { msg, messages, .. },
+                ctx,
             )) => {
                 // Path A (non-cancelled): MaxTurnsError carries full chat_history.
                 // Persist only the delta (new messages from this turn) so the session remembers
@@ -321,14 +296,7 @@ where
                 let user_msg = msg.clone();
                 return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
             }
-            Err((
-                crate::conversation::turn::TurnError::UnknownTool {
-                    ref msg,
-                    ref messages,
-                    ..
-                },
-                ref ctx,
-            )) => {
+            Err((crate::conversation::turn::TurnError::UnknownTool { msg, messages, .. }, ctx)) => {
                 if let Some(session_id) = final_session_id {
                     let delta: Vec<Message> = messages
                         .iter()
@@ -362,10 +330,7 @@ where
                         .to_string();
                 return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
             }
-            Err((
-                crate::conversation::turn::TurnError::Cancelled { ref messages, .. },
-                ref ctx,
-            )) => {
+            Err((crate::conversation::turn::TurnError::Cancelled { messages, .. }, ctx)) => {
                 // Path A: rig hook cancelled — persist chat_history delta if available.
                 // messages for PromptCancelled is rig's full_history() — it DOES include
                 // the current-turn user prompt and any tool exchanges. skip(pre_turn_message_count)
@@ -518,7 +483,7 @@ where
         // always carries chat_history. Kept as a safety net for future rig version changes.
         if turn_result.cancelled {
             if let Some(session_id) = final_session_id {
-                if let Some(ref messages) = turn_result.messages {
+                if let Some(messages) = turn_result.messages {
                     // Normal path: rig provided chat_history via PromptCancelled.
                     // PromptCancelled.chat_history is rig's full_history() — it DOES include
                     // the current-turn user prompt and any tool exchanges. skip(pre_turn_message_count)
@@ -600,10 +565,14 @@ where
                     }
                 }
             }
-            let _ = self.tool_infra.bus.turn().send(TurnEvent::Completed {
-                tool_calls: turn_result.tool_call_count,
-            });
-            ui.flush();
+            let _ = self
+                .tool_infra
+                .bus
+                .turn()
+                .send(TurnEvent::Completed {
+                    tool_calls: turn_result.tool_call_count,
+                })
+                .await;
             return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
                 &crate::llm::LlmResponse {
                     text: String::new(),
@@ -640,14 +609,23 @@ where
 
         // Emit UI events via bus
         if !turn_result.deltas_emitted {
-            let _ = self.tool_infra.bus.llm().send(LlmEvent::AssistantMessage {
-                text: turn_result.text.clone(),
-            });
+            let _ = self
+                .tool_infra
+                .bus
+                .llm()
+                .send(LlmEvent::AssistantMessage {
+                    text: turn_result.text.clone(),
+                })
+                .await;
         }
-        let _ = self.tool_infra.bus.turn().send(TurnEvent::Completed {
-            tool_calls: turn_result.tool_call_count,
-        });
-        ui.flush();
+        let _ = self
+            .tool_infra
+            .bus
+            .turn()
+            .send(TurnEvent::Completed {
+                tool_calls: turn_result.tool_call_count,
+            })
+            .await;
 
         // Store turn data for response building
         self.response_data = Some(TurnResponseData {
@@ -863,7 +841,7 @@ pub fn extract_retry_after_ms(msg: &str) -> Option<u64> {
 
 #[cfg(test)]
 #[path = "test_utils.rs"]
-mod test_utils;
+pub(super) mod test_utils;
 
 #[cfg(test)]
 #[path = "executor_test.rs"]

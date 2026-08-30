@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use nu_agent_core::policy::{UiPolicy, Verbosity};
 use nu_agent_core::protocol::contracts::ProgressUi;
 
+use crate::policy::{UiPolicy, Verbosity};
 use crate::progress::StderrProgressUi;
 use crate::renderer::StderrUiRenderer;
 

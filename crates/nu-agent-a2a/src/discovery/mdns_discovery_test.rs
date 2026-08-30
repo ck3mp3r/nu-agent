@@ -12,13 +12,13 @@ fn test_card(name: &str) -> AgentCard {
 
 #[test]
 fn reregister_does_not_panic_when_not_started() {
-    let mut discovery = MdnsPeerDiscovery::new();
+    let mut discovery = MdnsPeerDiscovery::default();
     discovery.reregister(&test_card("test"));
 }
 
 #[test]
 fn reregister_preserves_fullname_when_no_daemon() {
-    let mut discovery = MdnsPeerDiscovery::new();
+    let mut discovery = MdnsPeerDiscovery::default();
     assert!(discovery.fullname().is_none());
     discovery.reregister(&test_card("test"));
     assert!(discovery.fullname().is_none());
@@ -26,7 +26,7 @@ fn reregister_preserves_fullname_when_no_daemon() {
 
 #[test]
 fn reregister_with_updated_card_does_not_panic() {
-    let mut discovery = MdnsPeerDiscovery::new();
+    let mut discovery = MdnsPeerDiscovery::default();
     let updated_card = AgentCard {
         description: Some("updated".to_string()),
         ..test_card("test")
@@ -36,7 +36,7 @@ fn reregister_with_updated_card_does_not_panic() {
 
 #[test]
 fn shutdown_then_reregister_does_not_panic() {
-    let mut discovery = MdnsPeerDiscovery::new();
+    let mut discovery = MdnsPeerDiscovery::default();
     discovery.shutdown();
     discovery.reregister(&test_card("test"));
 }

@@ -224,9 +224,9 @@ fn build_http_transport_config(
             continue;
         }
         let header_name = HeaderName::from_bytes(name.as_bytes())
-            .map_err(|e| format!("invalid MCP header name '{}': {e}", name))?;
+            .map_err(|e| format!("invalid MCP header name '{name}': {e}"))?;
         let header_value = HeaderValue::from_str(&value)
-            .map_err(|e| format!("invalid MCP header value for '{}': {e}", name))?;
+            .map_err(|e| format!("invalid MCP header value for '{name}': {e}"))?;
         custom_headers.insert(header_name, header_value);
     }
 
@@ -247,7 +247,7 @@ fn build_http_transport_config(
     Ok(config)
 }
 
-fn build_mcp_http_client(read_timeout_secs: u64) -> reqwest::Client {
+fn build_mcp_http_client(read_timeout_secs: u64) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .pool_max_idle_per_host(0) // match rmcp's default_http_client() — avoids Delayed ACK stall
@@ -255,7 +255,9 @@ fn build_mcp_http_client(read_timeout_secs: u64) -> reqwest::Client {
     if read_timeout_secs > 0 {
         builder = builder.read_timeout(std::time::Duration::from_secs(read_timeout_secs));
     }
-    builder.build().expect("failed to build MCP HTTP client")
+    builder
+        .build()
+        .map_err(|e| format!("failed to build MCP HTTP client: {e}"))
 }
 
 impl McpRuntime {
@@ -416,7 +418,7 @@ pub(crate) async fn connect_server(
                 McpAuthConfig::None | McpAuthConfig::Bearer { .. } => {
                     // EXISTING PATH — no change
                     let transport = rmcp::transport::StreamableHttpClientTransport::with_client(
-                        build_mcp_http_client(defaults::MCP_READ_TIMEOUT_SECS),
+                        build_mcp_http_client(defaults::MCP_READ_TIMEOUT_SECS)?,
                         config,
                     );
                     let (service, raw_tools) = handler
@@ -499,7 +501,7 @@ pub(crate) async fn connect_server(
                     // rmcp's AuthorizationManager loads it from FileCredentialStore.
 
                     // Build HTTP client and wrap with AuthClient
-                    let http_client = build_mcp_http_client(defaults::MCP_READ_TIMEOUT_SECS);
+                    let http_client = build_mcp_http_client(defaults::MCP_READ_TIMEOUT_SECS)?;
                     let auth_client = rmcp::transport::AuthClient::new(http_client, auth_manager);
 
                     let transport = rmcp::transport::StreamableHttpClientTransport::with_client(

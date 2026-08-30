@@ -3,6 +3,8 @@ use nu_agent_core::conversation::builder::{
     list_agents_tool_definitions, messaging_tool_definitions, orchestrator_tool_definitions,
 };
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
 fn builtin_tool_registration_contains_exact_unprefixed_names() {
     let names = builtin_tool_definitions()
@@ -106,12 +108,12 @@ fn list_agents_tool_registration_contains_only_list_agents() {
 }
 
 #[test]
-fn send_message_description_explains_delivery_semantics() {
+fn send_message_description_explains_delivery_semantics() -> Result<()> {
     let defs = messaging_tool_definitions();
     let send = defs
         .iter()
         .find(|d| d.name == "send_message")
-        .expect("send_message tool");
+        .ok_or("should have send_message tool")?;
     assert!(
         send.description.contains("conversation turns"),
         "Expected delivery semantics, got: {}",
@@ -132,6 +134,7 @@ fn send_message_description_explains_delivery_semantics() {
         "send_message description must not reference list_agents (sub-agents cannot use it), got: {}",
         send.description
     );
+    Ok(())
 }
 
 #[test]
@@ -146,15 +149,16 @@ fn builtin_tool_registration_explicitly_rejects_prefixed_names() {
 }
 
 #[test]
-fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_fields() {
+fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_fields() -> Result<()>
+{
     let edit = builtin_tool_definitions()
         .into_iter()
         .find(|tool| tool.name == "edit")
-        .expect("edit tool definition");
+        .ok_or("should have edit tool definition")?;
 
     let required = edit.parameters["required"]
         .as_array()
-        .expect("required array")
+        .ok_or("should have required array")?
         .iter()
         .filter_map(|v| v.as_str())
         .collect::<Vec<_>>();
@@ -166,6 +170,7 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_f
     let op_types = &edit.parameters["properties"]["operation"]["properties"]["type"]["enum"];
     assert_eq!(op_types[0], "search_replace");
     assert_eq!(op_types[1], "create");
+    Ok(())
 }
 
 // --- Tool assembly tests: A2A tools gated on a2a_enabled ---

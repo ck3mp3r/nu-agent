@@ -1,3 +1,5 @@
+use nu_agent_core::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
+
 use super::*;
 
 impl AppState {

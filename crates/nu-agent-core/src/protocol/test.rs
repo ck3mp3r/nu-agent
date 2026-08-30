@@ -1,6 +1,5 @@
 // === Imports ===
 use std::fs;
-use std::time::Duration;
 
 use tempfile::tempdir;
 
@@ -19,13 +18,11 @@ use super::slash::{
     filter_inline_slash_suggestions, parse_slash_command,
 };
 
+use crate::bus::PermissionEvent;
 use crate::compaction::CompactionStrategy;
-use crate::protocol::event::{
-    PermissionDecision, PermissionDecisionSubmission, PermissionRequestContext, UiEvent,
-};
-use crate::protocol::permission::{
-    PermissionController, PermissionRequest, PermissionResolution, RequestError, SubmitOutcome,
-};
+use crate::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // === Tests: agents ===
 
@@ -74,7 +71,7 @@ fn loads_ancestor_agents_in_root_to_leaf_order() {
 }
 
 #[test]
-fn nearest_agents_has_highest_precedence_position() {
+fn nearest_agents_has_highest_precedence_position() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     let root = tmp.path().join("root");
     let cwd = root.join("child");
@@ -83,10 +80,13 @@ fn nearest_agents_has_highest_precedence_position() {
     fs::write(cwd.join("AGENTS.md"), "CWD\n").expect("cwd agents");
 
     let loaded = load_agents_chain(&cwd, None, Some(&root), None);
-    let merged = loaded.merged_chain.expect("merged chain");
+    let merged = loaded
+        .merged_chain
+        .ok_or("merged chain should be present")?;
 
     assert!(merged.ends_with("CWD\n"));
     assert!(merged.contains("ROOT\n"));
+    Ok(())
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn unreadable_agents_is_non_fatal() {
 }
 
 #[test]
-fn canonical_path_dedup_prevents_duplicate_load() {
+fn canonical_path_dedup_prevents_duplicate_load() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     let root = tmp.path().join("root");
     let real = root.join("real");
@@ -133,13 +133,16 @@ fn canonical_path_dedup_prevents_duplicate_load() {
     fs::create_dir_all(&cwd).expect("cwd");
 
     let loaded = load_agents_chain(&cwd, None, Some(&root), None);
-    let merged = loaded.merged_chain.expect("merged chain");
+    let merged = loaded
+        .merged_chain
+        .ok_or("merged chain should be present")?;
 
     assert_eq!(merged.matches("REAL").count(), 1);
+    Ok(())
 }
 
 #[test]
-fn loads_from_home_dot_agents() {
+fn loads_from_home_dot_agents() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path().join("home");
     let cwd = tmp.path().join("cwd");
@@ -148,7 +151,11 @@ fn loads_from_home_dot_agents() {
     fs::write(home.join(".agents/AGENTS.md"), "HOME_AGENTS\n").expect("write");
 
     let result = load_agents_chain(&cwd, None, Some(tmp.path()), Some(&home));
-    assert!(result.merged_chain.unwrap().contains("HOME_AGENTS"));
+    let merged = result
+        .merged_chain
+        .ok_or("merged chain should be present")?;
+    assert!(merged.contains("HOME_AGENTS"));
+    Ok(())
 }
 
 // === Tests: compaction ===
@@ -335,9 +342,9 @@ fn ui_event_contract_exposes_required_variants() {
 
 #[test]
 fn permission_event_field_shape_is_explicit_and_stable() {
-    let requested = UiEvent::PermissionRequested {
+    let requested = PermissionEvent::Requested {
         request_id: "ask-0000000000000001".to_string(),
-        context: PermissionRequestContext {
+        context: Box::new(PermissionRequestContext {
             tool: "nu(command=echo hi)".to_string(),
             source: "closure".to_string(),
             mode: Some("apply".to_string()),
@@ -347,10 +354,10 @@ fn permission_event_field_shape_is_explicit_and_stable() {
             pattern: "*".to_string(),
             summary: "→ {\"command\":\"echo hi\"}".to_string(),
             pre_authorize_display: None,
-        },
+        }),
     };
     match requested {
-        UiEvent::PermissionRequested {
+        PermissionEvent::Requested {
             request_id,
             context,
         } => {
@@ -368,13 +375,13 @@ fn permission_event_field_shape_is_explicit_and_stable() {
         other => panic!("unexpected variant: {other:?}"),
     }
 
-    let submitted = UiEvent::PermissionDecisionSubmitted {
+    let submitted = PermissionEvent::DecisionSubmitted {
         request_id: "ask-0000000000000001".to_string(),
         decision: PermissionDecision::AllowAlways,
         matched_rule_identity: "nested:nu.command:*".to_string(),
     };
     match submitted {
-        UiEvent::PermissionDecisionSubmitted {
+        PermissionEvent::DecisionSubmitted {
             request_id,
             decision,
             matched_rule_identity,
@@ -386,129 +393,27 @@ fn permission_event_field_shape_is_explicit_and_stable() {
         other => panic!("unexpected variant: {other:?}"),
     }
 
-    let timed_out = UiEvent::PermissionDecisionTimedOut {
+    let timed_out = PermissionEvent::DecisionTimedOut {
         request_id: "ask-0000000000000002".to_string(),
     };
     match timed_out {
-        UiEvent::PermissionDecisionTimedOut { request_id } => {
+        PermissionEvent::DecisionTimedOut { request_id } => {
             assert_eq!(request_id, "ask-0000000000000002");
         }
         other => panic!("unexpected variant: {other:?}"),
     }
 
-    let ignored = UiEvent::PermissionDecisionIgnored {
+    let ignored = PermissionEvent::DecisionIgnored {
         request_id: "ask-0000000000000003".to_string(),
         reason: "rule_identity_mismatch".to_string(),
     };
     match ignored {
-        UiEvent::PermissionDecisionIgnored { request_id, reason } => {
+        PermissionEvent::DecisionIgnored { request_id, reason } => {
             assert_eq!(request_id, "ask-0000000000000003");
             assert_eq!(reason, "rule_identity_mismatch");
         }
         other => panic!("unexpected variant: {other:?}"),
     }
-}
-
-// === Tests: permission ===
-
-fn request_with_id(request_id: &str) -> PermissionRequest {
-    PermissionRequest {
-        request_id: request_id.to_string(),
-        context: PermissionRequestContext {
-            tool: "nu".to_string(),
-            source: "closure".to_string(),
-            mode: Some("apply".to_string()),
-            matched_rule_identity: "nested:nu.command:*".to_string(),
-            scope: "nested".to_string(),
-            target_field: Some("command".to_string()),
-            pattern: "*".to_string(),
-            summary: "→ {\"command\":\"echo hi\"}".to_string(),
-            pre_authorize_display: None,
-        },
-    }
-}
-
-#[test]
-fn begin_request_rejects_duplicate_request_id() {
-    let controller = PermissionController::new(Duration::from_millis(100));
-    let first = controller.begin_request(request_with_id("ask-0000000000000001"));
-    assert!(first.is_ok());
-
-    let second = controller.begin_request(request_with_id("ask-0000000000000001"));
-    assert!(matches!(second, Err(RequestError::AlreadyWaiting)));
-}
-
-#[tokio::test]
-async fn await_resolution_emits_ignored_event_for_rule_identity_mismatch_then_times_out() {
-    let controller = PermissionController::new(Duration::from_millis(30));
-    let (token, _event) = controller
-        .begin_request(request_with_id("ask-0000000000000002"))
-        .expect("begin request");
-
-    let outcome = token.submit(PermissionDecisionSubmission {
-        request_id: token.request_id().to_string(),
-        decision: PermissionDecision::AllowAlways,
-        matched_rule_identity: "wrong-rule".to_string(),
-    });
-    assert_eq!(
-        outcome,
-        SubmitOutcome::Ignored {
-            reason: "rule_identity_mismatch"
-        }
-    );
-
-    let (resolution, events) = controller.await_resolution(&token).await;
-    assert_eq!(resolution, PermissionResolution::TimedOut);
-    assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, UiEvent::PermissionDecisionTimedOut { .. }))
-    );
-}
-
-#[tokio::test]
-async fn await_resolution_ignores_stale_submission_and_accepts_matching_submission() {
-    let controller = PermissionController::new(Duration::from_secs(1));
-    let (token, _event) = controller
-        .begin_request(request_with_id("ask-0000000000000003"))
-        .expect("begin request");
-
-    let sender = token.sender_clone();
-    sender
-        .send(PermissionDecisionSubmission {
-            request_id: "stale-request-id".to_string(),
-            decision: PermissionDecision::AllowAlways,
-            matched_rule_identity: token.matched_rule_identity().to_string(),
-        })
-        .expect("send stale submission");
-    sender
-        .send(PermissionDecisionSubmission {
-            request_id: token.request_id().to_string(),
-            decision: PermissionDecision::AllowOnce,
-            matched_rule_identity: token.matched_rule_identity().to_string(),
-        })
-        .expect("send matching submission");
-
-    let (resolution, events) = controller.await_resolution(&token).await;
-    assert_eq!(
-        resolution,
-        PermissionResolution::Decision {
-            decision: PermissionDecision::AllowOnce,
-            matched_rule_identity: token.matched_rule_identity().to_string(),
-        }
-    );
-    assert!(events.iter().any(|event| matches!(
-        event,
-        UiEvent::PermissionDecisionIgnored {
-            request_id,
-            reason
-        } if request_id == "stale-request-id" && reason == "stale_or_unknown_request"
-    )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        UiEvent::PermissionDecisionSubmitted { request_id, decision, .. }
-            if request_id == token.request_id() && *decision == PermissionDecision::AllowOnce
-    )));
 }
 
 // === Tests: skills ===
@@ -537,7 +442,7 @@ fn discovers_home_skills_in_catalog() {
 }
 
 #[test]
-fn resolves_explicit_skill_request_from_home_source() {
+fn resolves_explicit_skill_request_from_home_source() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path().join("home");
     let cwd = tmp.path().join("repo");
@@ -551,15 +456,16 @@ fn resolves_explicit_skill_request_from_home_source() {
     fs::create_dir_all(&cwd).expect("cwd");
 
     let resolved = resolve_explicit_skill_request(&cwd, Some(&home), Some(tmp.path()), "context")
-        .expect("resolve should succeed")
-        .expect("skill must resolve");
+        .map_err(|e| format!("resolve should succeed: {e:?}"))?
+        .ok_or("skill must resolve")?;
 
     assert_eq!(resolved.source, SkillSource::Home);
     assert_eq!(resolved.content, "home context skill\n");
+    Ok(())
 }
 
 #[test]
-fn local_source_wins_on_skill_name_collision() {
+fn local_source_wins_on_skill_name_collision() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path().join("home");
     let repo = tmp.path().join("repo");
@@ -571,15 +477,16 @@ fn local_source_wins_on_skill_name_collision() {
     fs::write(repo.join(".agents/skills/context/SKILL.md"), "local\n").expect("local skill");
 
     let resolved = resolve_explicit_skill_request(&repo, Some(&home), Some(tmp.path()), "context")
-        .expect("resolve should succeed")
-        .expect("skill must resolve");
+        .map_err(|e| format!("resolve should succeed: {e:?}"))?
+        .ok_or("skill must resolve")?;
 
     assert_eq!(resolved.source, SkillSource::Local);
     assert_eq!(resolved.content, "local\n");
+    Ok(())
 }
 
 #[test]
-fn rejects_path_traversal_skill_lookup() {
+fn rejects_path_traversal_skill_lookup() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path().join("home");
     let cwd = tmp.path().join("repo");
@@ -587,14 +494,18 @@ fn rejects_path_traversal_skill_lookup() {
     fs::write(home.join(".agents/skills/context/SKILL.md"), "home\n").expect("home skill");
     fs::create_dir_all(&cwd).expect("cwd");
 
-    let err = resolve_explicit_skill_request(&cwd, Some(&home), Some(tmp.path()), "../context")
-        .expect_err("traversal must be rejected");
+    let err =
+        match resolve_explicit_skill_request(&cwd, Some(&home), Some(tmp.path()), "../context") {
+            Ok(_) => return Err("traversal must be rejected".into()),
+            Err(e) => e,
+        };
 
     assert!(matches!(err, SkillResolveError::InvalidSkillName(_)));
+    Ok(())
 }
 
 #[test]
-fn rejects_symlink_escape_outside_home_skills_root() {
+fn rejects_symlink_escape_outside_home_skills_root() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path().join("home");
     let cwd = tmp.path().join("repo");
@@ -613,17 +524,20 @@ fn rejects_symlink_escape_outside_home_skills_root() {
     std::os::windows::fs::symlink_dir(&outside, home.join(".agents/skills/escaped"))
         .expect("symlink");
 
-    let err = resolve_explicit_skill_request(&cwd, Some(&home), Some(tmp.path()), "escaped")
-        .expect_err("symlink escape must be rejected");
+    let err = match resolve_explicit_skill_request(&cwd, Some(&home), Some(tmp.path()), "escaped") {
+        Ok(_) => return Err("symlink escape must be rejected".into()),
+        Err(e) => e,
+    };
 
     assert!(matches!(
         err,
         SkillResolveError::HomeSkillEscapesRoot { skill_name } if skill_name == "escaped"
     ));
+    Ok(())
 }
 
 #[test]
-fn missing_skill_preserves_not_found_semantics() {
+fn missing_skill_preserves_not_found_semantics() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path().join("home");
     let cwd = tmp.path().join("repo");
@@ -632,9 +546,10 @@ fn missing_skill_preserves_not_found_semantics() {
 
     let resolved =
         resolve_explicit_skill_request(&cwd, Some(&home), Some(tmp.path()), "does-not-exist")
-            .expect("missing skill should not error");
+            .map_err(|e| format!("missing skill should not error: {e:?}"))?;
 
     assert_eq!(resolved, None);
+    Ok(())
 }
 
 #[test]
@@ -653,7 +568,7 @@ fn precedence_ordering_handles_deep_ancestry_rank_without_packing_collision() {
 }
 
 #[test]
-fn available_skills_preamble_renders_catalog_entries() {
+fn available_skills_preamble_renders_catalog_entries() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     let repo = tmp.path().join("repo");
     fs::create_dir_all(repo.join(".agents/skills/context")).expect("local skills dir");
@@ -664,11 +579,12 @@ fn available_skills_preamble_renders_catalog_entries() {
         None,
         Some(tmp.path()),
     ))
-    .expect("preamble should render");
+    .ok_or("preamble should render")?;
 
     assert!(preamble.contains("<available_skills>"));
     assert!(preamble.contains("<name>context</name>"));
     assert!(preamble.contains("<source>local</source>"));
+    Ok(())
 }
 
 #[test]
@@ -686,7 +602,7 @@ fn available_skills_preamble_absent_when_catalog_empty() {
 }
 
 #[test]
-fn skill_preamble_xml_structure_with_description() {
+fn skill_preamble_xml_structure_with_description() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     let repo = tmp.path().join("repo");
     fs::create_dir_all(repo.join(".agents/skills/example")).expect("local skills dir");
@@ -701,7 +617,7 @@ fn skill_preamble_xml_structure_with_description() {
         None,
         Some(tmp.path()),
     ))
-    .expect("preamble should render");
+    .ok_or("preamble should render")?;
 
     // Verify the XML structure includes description between name and source
     let expected_structure = r#"  <skill>
@@ -711,10 +627,11 @@ fn skill_preamble_xml_structure_with_description() {
   </skill>"#;
 
     assert!(preamble.contains(expected_structure));
+    Ok(())
 }
 
 #[test]
-fn extract_skill_description_from_first_non_heading_line() {
+fn extract_skill_description_from_first_non_heading_line() -> Result<()> {
     let content = r#"# Skill: nushell-shell
 
 # Nushell Shell Patterns
@@ -723,20 +640,22 @@ This skill covers using Nushell as a shell, including redirection.
 
 More content here.
 "#;
-    let desc = extract_skill_description(content).expect("should extract description");
+    let desc = extract_skill_description(content).ok_or("should extract description")?;
     assert_eq!(
         desc,
         "This skill covers using Nushell as a shell, including redirection."
     );
+    Ok(())
 }
 
 #[test]
-fn extract_skill_description_truncates_long_lines() {
+fn extract_skill_description_truncates_long_lines() -> Result<()> {
     let long_line = "a".repeat(200);
     let content = format!("# Heading\n\n{long_line}\n");
-    let desc = extract_skill_description(&content).expect("should extract description");
+    let desc = extract_skill_description(&content).ok_or("should extract description")?;
     assert_eq!(desc.len(), 153); // 150 + '…' (3 bytes in UTF-8)
     assert!(desc.ends_with('…'));
+    Ok(())
 }
 
 #[test]
@@ -747,14 +666,15 @@ fn extract_skill_description_returns_none_when_only_headings() {
 }
 
 #[test]
-fn extract_skill_description_skips_empty_lines() {
+fn extract_skill_description_skips_empty_lines() -> Result<()> {
     let content = "# Heading\n\n\n\nActual description here.\n";
-    let desc = extract_skill_description(content).expect("should extract description");
+    let desc = extract_skill_description(content).ok_or("should extract description")?;
     assert_eq!(desc, "Actual description here.");
+    Ok(())
 }
 
 #[test]
-fn available_skills_preamble_includes_descriptions() {
+fn available_skills_preamble_includes_descriptions() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     let repo = tmp.path().join("repo");
     fs::create_dir_all(repo.join(".agents/skills/context")).expect("local skills dir");
@@ -769,16 +689,17 @@ fn available_skills_preamble_includes_descriptions() {
         None,
         Some(tmp.path()),
     ))
-    .expect("preamble should render");
+    .ok_or("preamble should render")?;
 
     assert!(preamble.contains("<available_skills>"));
     assert!(preamble.contains("<name>context</name>"));
     assert!(preamble.contains("<description>Manage context effectively.</description>"));
     assert!(preamble.contains("<source>local</source>"));
+    Ok(())
 }
 
 #[test]
-fn available_skills_preamble_works_without_descriptions() {
+fn available_skills_preamble_works_without_descriptions() -> Result<()> {
     let tmp = tempdir().expect("tempdir");
     let repo = tmp.path().join("repo");
     fs::create_dir_all(repo.join(".agents/skills/empty")).expect("local skills dir");
@@ -793,32 +714,36 @@ fn available_skills_preamble_works_without_descriptions() {
         None,
         Some(tmp.path()),
     ))
-    .expect("preamble should render");
+    .ok_or("preamble should render")?;
 
     assert!(preamble.contains("<name>empty</name>"));
     assert!(!preamble.contains("<description>"));
+    Ok(())
 }
 
 #[test]
-fn extract_skill_description_from_frontmatter() {
+fn extract_skill_description_from_frontmatter() -> Result<()> {
     let content = "---\nname: context\ndescription: Working effectively with c5t.\nlicense: GPL-2.0\n---\n\n# c5t Context Management\n\nc5t is a personal context manager.\n";
-    let desc = extract_skill_description(content).expect("should extract");
+    let desc = extract_skill_description(content).ok_or("should extract")?;
     assert_eq!(desc, "Working effectively with c5t.");
+    Ok(())
 }
 
 #[test]
-fn extract_skill_description_falls_back_to_body_when_no_frontmatter_description() {
+fn extract_skill_description_falls_back_to_body_when_no_frontmatter_description() -> Result<()> {
     let content =
         "---\nname: nushell\nlicense: GPL-2.0\n---\n\n# Nushell Guide\n\nBody description here.\n";
-    let desc = extract_skill_description(content).expect("should extract");
+    let desc = extract_skill_description(content).ok_or("should extract")?;
     assert_eq!(desc, "Body description here.");
+    Ok(())
 }
 
 #[test]
-fn extract_skill_description_handles_quoted_frontmatter_value() {
+fn extract_skill_description_handles_quoted_frontmatter_value() -> Result<()> {
     let content = "---\ndescription: \"Use Nushell as a shell.\"\n---\n\n# Heading\n";
-    let desc = extract_skill_description(content).expect("should extract");
+    let desc = extract_skill_description(content).ok_or("should extract")?;
     assert_eq!(desc, "Use Nushell as a shell.");
+    Ok(())
 }
 
 // === Tests: slash ===

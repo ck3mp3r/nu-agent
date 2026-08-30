@@ -1,10 +1,10 @@
+use nu_agent_core::protocol::slash::filter_inline_slash_suggestions;
+use nu_agent_core::transcript::items::{ToolInvocation, TranscriptEntry, TranscriptEntryKind};
+use nu_agent_core::transcript::renderer::ItemStatus;
+
 use super::*;
 
 impl AppState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn new_with_sender(
         event_tx: tokio::sync::mpsc::Sender<nu_agent_core::orchestrator::OrchestratorEvent>,
     ) -> Self {

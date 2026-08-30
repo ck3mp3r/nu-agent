@@ -6,6 +6,8 @@ use crate::transcript::{
     markdown::project_markdown_to_lines,
 };
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 fn plain_line(line: &crate::transcript::ir::ContentLine) -> String {
     line.spans
         .iter()
@@ -93,7 +95,7 @@ fn markdown_projection_fixture_lists_and_blockquote_render_deterministically() {
 }
 
 #[test]
-fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_language() {
+fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_language() -> Result<()> {
     let markdown = markdown_fixture("fenced_code_blocks.md");
     let lines = project_markdown_to_lines(&markdown, None);
     let rendered = lines.iter().map(plain_line).collect::<Vec<_>>();
@@ -115,7 +117,7 @@ fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_langua
     let rust_signature = lines
         .iter()
         .find(|line| plain_line(line) == "    fn main() {")
-        .expect("rust line should be present");
+        .ok_or("rust line should be present")?;
     assert!(
         line_has_code_hint(rust_signature, StyleHint::MdCodeKeyword),
         "rust keyword should map to syntax keyword hint"
@@ -124,7 +126,7 @@ fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_langua
     let json_line = lines
         .iter()
         .find(|line| plain_line(line).contains("\"nu-agent\""))
-        .expect("json line should be present");
+        .ok_or("json line should be present")?;
     assert!(
         line_has_code_hint(json_line, StyleHint::MdCodeString),
         "json string token should map to syntax string hint"
@@ -133,25 +135,25 @@ fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_langua
     let bash_line = lines
         .iter()
         .find(|line| plain_line(line) == "    echo \"hello\"")
-        .expect("bash line should be present");
+        .ok_or("bash line should be present")?;
     assert!(line_has_non_default_token_style(bash_line));
 
     let sh_line = lines
         .iter()
         .find(|line| plain_line(line) == "    printf '%s\\n' \"$HOME\"")
-        .expect("sh line should be present");
+        .ok_or("sh line should be present")?;
     assert!(line_has_non_default_token_style(sh_line));
 
     let yaml_line = lines
         .iter()
         .find(|line| plain_line(line) == "    enabled: true")
-        .expect("yaml line should be present");
+        .ok_or("yaml line should be present")?;
     assert!(line_has_non_default_token_style(yaml_line));
 
     let toml_line = lines
         .iter()
         .find(|line| plain_line(line) == "    count = 3")
-        .expect("toml line should be present");
+        .ok_or("toml line should be present")?;
     if adapter_supports_colored_tokens("toml", "count = 3") {
         assert!(line_has_non_default_token_style(toml_line));
     } else {
@@ -167,7 +169,7 @@ fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_langua
     let python_line = lines
         .iter()
         .find(|line| plain_line(line) == "    def greet(name):")
-        .expect("python line should be present");
+        .ok_or("python line should be present")?;
     assert!(
         line_has_code_hint(python_line, StyleHint::MdCodeFunction),
         "python function token should map to syntax function hint"
@@ -176,7 +178,7 @@ fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_langua
     let unknown_line = lines
         .iter()
         .find(|line| plain_line(line) == "    plain block")
-        .expect("unknown language fallback line should be present");
+        .ok_or("unknown language fallback line should be present")?;
     assert!(
         unknown_line
             .spans
@@ -184,6 +186,7 @@ fn markdown_projection_fixture_fenced_code_blocks_render_with_and_without_langua
             .all(|span| matches!(span.hint, StyleHint::Normal | StyleHint::MdCodePlain)),
         "unknown language fences should fallback to plain code hint"
     );
+    Ok(())
 }
 
 #[test]
@@ -219,17 +222,19 @@ fn markdown_projection_fixture_unsupported_constructs_have_readable_fallback() {
 }
 
 #[test]
-fn markdown_projection_fixture_malformed_markdown_does_not_panic_and_remains_readable() {
+fn markdown_projection_fixture_malformed_markdown_does_not_panic_and_remains_readable() -> Result<()>
+{
     let markdown = markdown_fixture("malformed.md");
 
     let result = std::panic::catch_unwind(|| plain_lines(&markdown));
     assert!(result.is_ok(), "projection panicked for malformed fixture");
 
-    let lines = result.expect("catch_unwind should return projected lines");
+    let lines = result.map_err(|_| "catch_unwind should return projected lines")?;
     let joined = lines.join("\n");
     assert!(!joined.trim().is_empty());
     assert!(joined.contains("fn main() {"));
     assert!(joined.contains("{\"broken\":"));
+    Ok(())
 }
 
 #[test]
@@ -289,7 +294,7 @@ fn markdown_projection_preserves_valid_markdown_fences_while_sanitizing_control_
 }
 
 #[test]
-fn markdown_projection_renders_table_with_separator_and_bold_header() {
+fn markdown_projection_renders_table_with_separator_and_bold_header() -> Result<()> {
     let markdown =
         "| Commit | Message |\n|--------|--------|\n| abc123 | fix bug |\n| def456 | add feature |";
     let lines = project_markdown_to_lines(markdown, None);
@@ -319,16 +324,17 @@ fn markdown_projection_renders_table_with_separator_and_bold_header() {
             let text = plain_line(l);
             text.contains("Commit")
         })
-        .expect("header line exists");
+        .ok_or("header line exists")?;
     let has_bold = header_line
         .spans
         .iter()
         .any(|s| s.hint == StyleHint::MdBold);
     assert!(has_bold, "header cells should be bold");
+    Ok(())
 }
 
 #[test]
-fn markdown_projection_renders_table_with_aligned_columns() {
+fn markdown_projection_renders_table_with_aligned_columns() -> Result<()> {
     let markdown = "| A | Long Header |\n|---|---|\n| x | y |\n| longer text | z |";
     let lines = project_markdown_to_lines(markdown, None);
     let plain: Vec<String> = lines.iter().map(plain_line).collect();
@@ -337,7 +343,7 @@ fn markdown_projection_renders_table_with_aligned_columns() {
     let sep = plain
         .iter()
         .find(|l| l.contains("┼"))
-        .expect("separator line exists");
+        .ok_or("separator line exists")?;
     // Separator parts should have different widths matching column content
     let parts: Vec<&str> = sep.split('┼').collect();
     assert_eq!(parts.len(), 2, "two columns = two separator parts");
@@ -346,10 +352,11 @@ fn markdown_projection_renders_table_with_aligned_columns() {
         "first separator should be at least as wide as longest cell: {:?}",
         parts[0]
     );
+    Ok(())
 }
 
 #[test]
-fn markdown_projection_table_separator_intersections_align_with_header_bars() {
+fn markdown_projection_table_separator_intersections_align_with_header_bars() -> Result<()> {
     // Locks in the alignment between header `│` column-separators and separator `┼`
     // intersections. With rounded borders the edges use `├`/`┤` (separator) and
     // `│` (content rows), so we compare only the inter-column positions — skipping
@@ -363,11 +370,11 @@ fn markdown_projection_table_separator_intersections_align_with_header_bars() {
     let header = plain
         .iter()
         .find(|l| l.contains("Hash") && l.contains("Author"))
-        .expect("header row exists");
+        .ok_or("header row exists")?;
     let separator = plain
         .iter()
         .find(|l| l.contains("┼"))
-        .expect("separator row exists");
+        .ok_or("separator row exists")?;
 
     // Header: leading `│` + inter-column `│`s + trailing `│`.
     // We want the inter-column positions only (skip first and last).
@@ -405,30 +412,33 @@ fn markdown_projection_table_separator_intersections_align_with_header_bars() {
         separator.ends_with('┤'),
         "separator right edge should be ┤, got: {separator}"
     );
+    Ok(())
 }
 
 #[test]
-fn table_has_rounded_top_border() {
+fn table_has_rounded_top_border() -> Result<()> {
     let markdown = "| A | B |\n|---|---|\n| x | y |";
     let plain = plain_lines(markdown);
 
-    let top = plain.first().expect("table should have at least one line");
+    let top = plain.first().ok_or("table should have at least one line")?;
     assert!(
         top.contains('╭') && top.contains('╮'),
         "first output line should be the rounded top border with ╭ and ╮, got: {top}"
     );
+    Ok(())
 }
 
 #[test]
-fn table_has_rounded_bottom_border() {
+fn table_has_rounded_bottom_border() -> Result<()> {
     let markdown = "| A | B |\n|---|---|\n| x | y |";
     let plain = plain_lines(markdown);
 
-    let bottom = plain.last().expect("table should have at least one line");
+    let bottom = plain.last().ok_or("table should have at least one line")?;
     assert!(
         bottom.contains('╰') && bottom.contains('╯'),
         "last output line should be the rounded bottom border with ╰ and ╯, got: {bottom}"
     );
+    Ok(())
 }
 
 #[test]
@@ -459,7 +469,7 @@ fn table_has_left_and_right_borders_on_data_rows() {
 }
 
 #[test]
-fn table_clamped_when_over_max_width() {
+fn table_clamped_when_over_max_width() -> Result<()> {
     // Build a 5-column table; choose max_width so only 3 columns fit.
     // Each column header is 1 char wide → col_width = 1.
     // Total for N cols = 1 + 3*N + sum(col_widths) = 1 + 3*N + N*1 = 1 + 4*N.
@@ -480,7 +490,7 @@ fn table_clamped_when_over_max_width() {
 
     // The clamped table should have exactly 3 columns:
     // top border: ╭──...─┬──...─┬──...─╮ → 2 ┬ chars
-    let top = plain.first().expect("non-empty output");
+    let top = plain.first().ok_or("non-empty output")?;
     let top_joiners = top.chars().filter(|c| *c == '┬').count();
     assert_eq!(
         top_joiners, 2,
@@ -496,6 +506,7 @@ fn table_clamped_when_over_max_width() {
         !plain.iter().any(|l| l.contains('E')),
         "column E should have been clamped away"
     );
+    Ok(())
 }
 
 #[test]
@@ -519,14 +530,14 @@ fn table_always_renders_at_least_one_column() {
 }
 
 #[test]
-fn table_clamped_columns_have_correct_right_border() {
+fn table_clamped_columns_have_correct_right_border() -> Result<()> {
     // After clamping, the rightmost border chars should be ╮/┤/╯, not ┬/┼/┴.
     let markdown = "| A | B | C | D | E |\n|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 |";
     // max_width=16 → 3 columns
     let lines = project_markdown_to_lines(markdown, Some(16));
     let plain: Vec<String> = lines.iter().map(plain_line).collect();
 
-    let top = plain.first().expect("has top border");
+    let top = plain.first().ok_or("has top border")?;
     assert!(
         top.ends_with('╮'),
         "top border should end with ╮ after clamping, got: {top}"
@@ -535,21 +546,22 @@ fn table_clamped_columns_have_correct_right_border() {
     let separator = plain
         .iter()
         .find(|l| l.contains('┼') || l.contains('┤'))
-        .expect("separator row exists");
+        .ok_or("separator row exists")?;
     assert!(
         separator.ends_with('┤'),
         "separator should end with ┤ after clamping, got: {separator}"
     );
 
-    let bottom = plain.last().expect("has bottom border");
+    let bottom = plain.last().ok_or("has bottom border")?;
     assert!(
         bottom.ends_with('╯'),
         "bottom border should end with ╯ after clamping, got: {bottom}"
     );
+    Ok(())
 }
 
 #[test]
-fn markdown_projection_renders_table_with_code_in_cells_correctly() {
+fn markdown_projection_renders_table_with_code_in_cells_correctly() -> Result<()> {
     let markdown = r#"This is the **nu-agent** project directory. Here's a summary of its contents:
 
 | Name | Type | Description |
@@ -588,30 +600,19 @@ It's a **Rust project** using **Nix flakes** for development/build environment m
     ];
 
     for (name, typ, desc_part) in &data_rows {
-        let matching_line = plain
+        let line = plain
             .iter()
-            .find(|line| line.contains(name) && line.contains("│"));
-
-        assert!(
-            matching_line.is_some(),
-            "Should find a table row containing '{}' with cell separator │",
-            name
-        );
-
-        let line = matching_line.unwrap();
+            .find(|line| line.contains(name) && line.contains("│"))
+            .ok_or_else(|| {
+                format!("Should find a table row containing '{name}' with cell separator │")
+            })?;
         assert!(
             line.contains(typ),
-            "Row with '{}' should also contain type '{}'\nGot: {}",
-            name,
-            typ,
-            line
+            "Row with '{name}' should also contain type '{typ}'\nGot: {line}"
         );
         assert!(
             line.contains(desc_part),
-            "Row with '{}' should also contain description part '{}'\nGot: {}",
-            name,
-            desc_part,
-            line
+            "Row with '{name}' should also contain description part '{desc_part}'\nGot: {line}"
         );
     }
 
@@ -627,12 +628,55 @@ It's a **Rust project** using **Nix flakes** for development/build environment m
         plain.iter().any(|l| l.contains("─") && l.contains("┼")),
         "Should have separator row"
     );
+    Ok(())
 }
 
 // === render_markdown_lines tests ===
 
 use crate::transcript::ir::StyleHint as IrStyleHint;
 use crate::transcript::markdown::render_markdown_lines;
+
+// === unwrap_single_fenced_block tests ===
+
+use crate::transcript::markdown::unwrap_single_fenced_block;
+
+#[test]
+fn unwrap_single_fenced_block_strips_outer_fence_and_trims() {
+    let input = "```\n## Work State\n- bullet\n```";
+    assert_eq!(unwrap_single_fenced_block(input), "## Work State\n- bullet");
+}
+
+#[test]
+fn unwrap_single_fenced_block_with_language_hint() {
+    let input = "```markdown\n# Title\n```";
+    assert_eq!(unwrap_single_fenced_block(input), "# Title");
+}
+
+#[test]
+fn unwrap_single_fenced_block_preserves_plain_text() {
+    let input = "## Work State\n- bullet";
+    assert_eq!(unwrap_single_fenced_block(input), input);
+}
+
+#[test]
+fn unwrap_single_fenced_block_empty_or_single_line() {
+    assert_eq!(unwrap_single_fenced_block(""), "");
+    assert_eq!(unwrap_single_fenced_block("  "), "");
+    assert_eq!(unwrap_single_fenced_block("hello"), "hello");
+}
+
+#[test]
+fn unwrap_single_fenced_block_unclosed_fence_returns_trimmed() {
+    let input = "```\n## Work State";
+    assert_eq!(unwrap_single_fenced_block(input), "## Work State");
+}
+
+#[test]
+fn unwrap_single_fenced_block_preserves_inner_code_block() {
+    let input = "```\nBefore\n```rust\nlet x = 1;\n```\nAfter\n```";
+    let result = unwrap_single_fenced_block(input);
+    assert_eq!(result, "Before\n```rust\nlet x = 1;\n```\nAfter");
+}
 
 #[test]
 fn render_markdown_lines_empty_input_returns_empty_vec() {
@@ -654,36 +698,39 @@ fn render_markdown_lines_plain_text_yields_normal_spans() {
 }
 
 #[test]
-fn render_markdown_lines_bold() {
+fn render_markdown_lines_bold() -> Result<()> {
     let lines = render_markdown_lines("**bold**", None);
     let bold = lines
         .iter()
         .flat_map(|l| l.spans.iter())
         .find(|s| matches!(s.hint, IrStyleHint::MdBold))
-        .expect("expected MdBold span");
+        .ok_or("expected MdBold span")?;
     assert_eq!(bold.text, "bold");
+    Ok(())
 }
 
 #[test]
-fn render_markdown_lines_italic() {
+fn render_markdown_lines_italic() -> Result<()> {
     let lines = render_markdown_lines("*italic*", None);
     let italic = lines
         .iter()
         .flat_map(|l| l.spans.iter())
         .find(|s| matches!(s.hint, IrStyleHint::MdItalic))
-        .expect("expected MdItalic span");
+        .ok_or("expected MdItalic span")?;
     assert_eq!(italic.text, "italic");
+    Ok(())
 }
 
 #[test]
-fn render_markdown_lines_inline_code() {
+fn render_markdown_lines_inline_code() -> Result<()> {
     let lines = render_markdown_lines("a `code` b", None);
     let code = lines
         .iter()
         .flat_map(|l| l.spans.iter())
         .find(|s| matches!(s.hint, IrStyleHint::MdInlineCode))
-        .expect("expected MdInlineCode span");
+        .ok_or("expected MdInlineCode span")?;
     assert!(code.text.contains("code"));
+    Ok(())
 }
 
 #[test]
@@ -731,14 +778,14 @@ fn render_markdown_lines_no_leading_trailing_blanks() {
 }
 
 #[test]
-fn markdown_table_with_emoji_aligns_right_border_correctly() {
+fn markdown_table_with_emoji_aligns_right_border_correctly() -> Result<()> {
     use unicode_width::UnicodeWidthStr;
     let markdown = "| Name | Status |\n| --- | --- |\n| server | 🟢 |\n| other | ⚪ |\n";
     let lines = plain_lines(markdown);
     let top_border = lines
         .iter()
         .find(|l| l.starts_with('╭'))
-        .expect("no top border");
+        .ok_or("no top border")?;
     let border_width = UnicodeWidthStr::width(top_border.as_str());
     for line in &lines {
         if line.contains('│') && !line.contains('─') {
@@ -750,6 +797,7 @@ fn markdown_table_with_emoji_aligns_right_border_correctly() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]

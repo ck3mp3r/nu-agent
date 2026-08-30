@@ -7,15 +7,9 @@ use crate::plugin::AgentPlugin;
 
 pub struct AgentProviderAuthStatus;
 
-impl AgentProviderAuthStatus {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl Default for AgentProviderAuthStatus {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 

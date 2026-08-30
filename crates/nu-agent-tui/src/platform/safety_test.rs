@@ -2,6 +2,8 @@ use std::{cell::RefCell, panic, rc::Rc};
 
 use crate::platform::safety::{RestoreRunError, TerminalRestorer, run_with_restore};
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[derive(Clone)]
 struct MockRestorer {
     restore_calls: Rc<RefCell<usize>>,
@@ -20,7 +22,7 @@ impl MockRestorer {
 impl TerminalRestorer for MockRestorer {
     type Error = &'static str;
 
-    fn restore_terminal(&mut self) -> Result<(), Self::Error> {
+    fn restore_terminal(&mut self) -> core::result::Result<(), Self::Error> {
         *self.restore_calls.borrow_mut() += 1;
 
         if self.fail_restore {
@@ -32,14 +34,15 @@ impl TerminalRestorer for MockRestorer {
 }
 
 #[test]
-fn success_path_attempts_restore_and_returns_success() {
+fn success_path_attempts_restore_and_returns_success() -> Result<()> {
     let restore_calls = Rc::new(RefCell::new(0usize));
     let mut restorer = MockRestorer::new(restore_calls.clone(), false);
 
     let result = run_with_restore(&mut restorer, || Ok::<_, &'static str>("ok"));
 
-    assert_eq!(result.expect("success should propagate"), "ok");
+    assert_eq!(result.map_err(|e| format!("{e:?}"))?, "ok");
     assert_eq!(*restore_calls.borrow(), 1);
+    Ok(())
 }
 
 #[test]

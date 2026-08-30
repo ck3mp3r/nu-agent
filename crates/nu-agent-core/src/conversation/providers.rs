@@ -9,7 +9,7 @@ use crate::config::{Config, defaults};
 /// Read timeout: defaults to 120s — fires only when no bytes received for the duration.
 ///   Pass `Some(0)` to disable. This is safe for long active LLM responses.
 /// Uses system certificate store via rustls-native-certs (supports corporate CAs).
-fn build_http_client(read_timeout_secs: Option<u64>) -> reqwest::Client {
+fn build_http_client(read_timeout_secs: Option<u64>) -> Result<reqwest::Client, LabeledError> {
     let read_timeout = read_timeout_secs.unwrap_or(defaults::READ_TIMEOUT_SECS);
     let mut builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
@@ -18,7 +18,9 @@ fn build_http_client(read_timeout_secs: Option<u64>) -> reqwest::Client {
     if read_timeout > 0 {
         builder = builder.read_timeout(Duration::from_secs(read_timeout));
     }
-    builder.build().expect("failed to build HTTP client")
+    builder
+        .build()
+        .map_err(|e| LabeledError::new(format!("Failed to build HTTP client: {e}")))
 }
 
 /// Build a GitHub Copilot client, resolving credentials in priority order:
@@ -36,6 +38,8 @@ pub(super) fn build_copilot_client(
             "Copilot auth failed: {e}. Run `agent auth login` to authenticate."
         ))
     };
+
+    let http_client = build_http_client(config.read_timeout_secs)?;
 
     // Base URL: config takes precedence, then env vars (same as rig's from_env)
     let base_url = config
@@ -55,8 +59,7 @@ pub(super) fn build_copilot_client(
     // 1. Explicit api_key from --api-key flag or plugin config
     if let Some(key) = &config.api_key {
         log::debug!("Copilot auth: using explicit api_key");
-        let mut b = rig::providers::copilot::Client::builder()
-            .http_client(build_http_client(config.read_timeout_secs));
+        let mut b = rig::providers::copilot::Client::builder().http_client(http_client.clone());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -72,8 +75,7 @@ pub(super) fn build_copilot_client(
         && !key.trim().is_empty()
     {
         log::debug!("Copilot auth: using GITHUB_COPILOT_API_KEY");
-        let mut b = rig::providers::copilot::Client::builder()
-            .http_client(build_http_client(config.read_timeout_secs));
+        let mut b = rig::providers::copilot::Client::builder().http_client(http_client.clone());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -89,8 +91,7 @@ pub(super) fn build_copilot_client(
         && !token.trim().is_empty()
     {
         log::debug!("Copilot auth: using COPILOT_GITHUB_ACCESS_TOKEN/GITHUB_TOKEN");
-        let mut b = rig::providers::copilot::Client::builder()
-            .http_client(build_http_client(config.read_timeout_secs));
+        let mut b = rig::providers::copilot::Client::builder().http_client(http_client.clone());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
@@ -100,8 +101,7 @@ pub(super) fn build_copilot_client(
     // 4. OAuth — delegate the full lifecycle to rig-core: reads cached access-token,
     //    checks api-key.json expiry, retries on 401/403 with device-code re-auth.
     log::debug!("Copilot auth: falling back to OAuth");
-    let mut b = rig::providers::copilot::Client::builder()
-        .http_client(build_http_client(config.read_timeout_secs));
+    let mut b = rig::providers::copilot::Client::builder().http_client(http_client);
     if let Some(url) = &base_url {
         b = b.base_url(url.clone());
     }
@@ -126,9 +126,10 @@ pub(super) fn build_openai_client(
         ))
     };
 
+    let http_client = build_http_client(config.read_timeout_secs)?;
+
     if let Some(key) = &config.api_key {
-        let mut builder = rig::providers::openai::Client::builder()
-            .http_client(build_http_client(config.read_timeout_secs));
+        let mut builder = rig::providers::openai::Client::builder().http_client(http_client);
         if let Some(url) = &config.base_url {
             builder = builder.base_url(url.clone());
         }
@@ -140,7 +141,7 @@ pub(super) fn build_openai_client(
             )
         })?;
         let mut builder = rig::providers::openai::Client::builder()
-            .http_client(build_http_client(config.read_timeout_secs))
+            .http_client(http_client)
             .api_key(key);
         if let Ok(url) = std::env::var("OPENAI_BASE_URL") {
             builder = builder.base_url(url);
@@ -163,9 +164,10 @@ pub(super) fn build_anthropic_client(
         ))
     };
 
+    let http_client = build_http_client(config.read_timeout_secs)?;
+
     if let Some(key) = &config.api_key {
-        let mut builder = rig::providers::anthropic::Client::builder()
-            .http_client(build_http_client(config.read_timeout_secs));
+        let mut builder = rig::providers::anthropic::Client::builder().http_client(http_client);
         if let Some(url) = &config.base_url {
             builder = builder.base_url(url.clone());
         }
@@ -177,7 +179,7 @@ pub(super) fn build_anthropic_client(
             )
         })?;
         rig::providers::anthropic::Client::builder()
-            .http_client(build_http_client(config.read_timeout_secs))
+            .http_client(http_client)
             .api_key(key)
             .build()
             .map_err(map_build_err)
@@ -207,8 +209,10 @@ pub(super) fn build_ollama_client(
 
     log::debug!("Ollama client: base_url={base_url}");
 
+    let http_client = build_http_client(config.read_timeout_secs)?;
+
     rig::providers::ollama::Client::builder()
-        .http_client(build_http_client(config.read_timeout_secs))
+        .http_client(http_client)
         .base_url(base_url)
         .api_key(Nothing)
         .build()

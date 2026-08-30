@@ -19,10 +19,10 @@ use nu_agent_a2a::{AgentBuilder, AgentHandle, Skill};
 use nu_agent_core::{
     config::defaults,
     conversation::{builder::BuildInput, runtime::AgentConversationRuntime},
-    policy::UiPolicy,
     session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
     tools::handler::McpToolRegistry,
 };
+use nu_agent_tty::policy::UiPolicy;
 
 pub(super) fn run_command(
     _agent: &super::Agent,
@@ -143,7 +143,7 @@ pub(super) fn run_command(
 
     // Extract tools from --tools flag and build ClosureRegistry
     let tools_map = extract_tools_from_call(call)?;
-    let mut closure_registry = nu_agent_core::tools::closure::ClosureRegistry::new();
+    let mut closure_registry = nu_agent_core::tools::closure::ClosureRegistry::default();
     for (name, closure) in tools_map {
         let params = nu_agent_core::tools::closure::resolve_closure_params(&closure, engine);
         closure_registry.register(
@@ -185,7 +185,7 @@ pub(super) fn run_command(
     )?;
 
     // 4. Apply persona config (front matter overrides)
-    if let Some(ref p) = persona {
+    if let Some(p) = &persona {
         let cli_max_turns_provided = call.get_flag::<Value>("max-turns").ok().flatten().is_some();
         super::runtime_build::apply_persona_config(&mut config, p, cli_max_turns_provided);
     }
@@ -208,7 +208,7 @@ pub(super) fn run_command(
     // Use the shared runtime from AgentPlugin — created once at plugin startup,
     // reused for all command invocations. The handle is cloned for use inside
     // the async block and for spawning tasks (ToolServer, A2A, etc.).
-    let handle = plugin.runtime.handle().clone();
+    let handle = plugin.runtime()?.handle().clone();
     handle.clone().block_on(async move {
         // ── A2A agent startup (optional, experimental) ───────────────────────
         let mut a2a_handle: Option<AgentHandle> = if config.a2a_enabled.unwrap_or(false) {
@@ -225,7 +225,7 @@ pub(super) fn run_command(
                 }
                 // Populate A2A skills from the agent persona so other agents can
                 // see what this agent does via agent.getCard / agent.list.
-                if let Some(ref persona) = persona {
+                if let Some(persona) = &persona {
                     let persona_skill = Skill {
                         id: persona.name.clone().unwrap_or_default(),
                         name: persona.name.clone().unwrap_or_default(),
@@ -356,7 +356,7 @@ pub(super) fn run_command(
         // ── A2A tool registration ──────────────────────────────────────────────
         // Must run BEFORE build_runtime() so tools are available when the agent
         // context snapshots its tool set.
-        if let Some(ref a2a_h) = a2a_handle {
+        if let Some(a2a_h) = &a2a_handle {
             let ctx = a2a_h.a2a_tool_context(handle.clone());
             if let Err(e) = nu_agent_a2a::register_tools_on_server(&tool_server_handle, ctx).await {
                 log::warn!("A2A tool registration failed (non-fatal): {e}");

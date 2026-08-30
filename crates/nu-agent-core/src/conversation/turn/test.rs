@@ -5,10 +5,10 @@
 //!  - `execute_turn` using `MockResolver` + rig's `MockCompletionModel` (integration tests)
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
+use super::proxy::FilteredToolProxy;
 use super::*;
 use crate::config::Config;
 use crate::conversation::state::memory::MemoryOf;
@@ -19,9 +19,11 @@ use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::{
-    AssistantContent, Message, Text, ToolCall, ToolCallId, ToolFunction, ToolResultContent,
-    UserContent,
+    AssistantContent, Message, Text, ToolCall, ToolCallId, ToolDefinition, ToolFunction,
+    ToolResultContent, UserContent,
 };
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 pub(crate) fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreaker>> {
     Arc::new(std::sync::Mutex::new(McpCircuitBreaker::default()))
@@ -50,7 +52,7 @@ fn make_compacting_memory() -> (tempfile::TempDir, MemoryOf<FsSessionStore>) {
 fn test_compaction_config(
     bus: crate::bus::Bus,
 ) -> crate::conversation::compaction::CompactionConfig<FsSessionStore> {
-    use crate::conversation::compaction::compactor::{NoopProgressUi, NuCompactor};
+    use crate::conversation::compaction::compactor::NuCompactor;
     use rig::agent::ModelHandle;
     use rig::test_utils::MockCompletionModel;
 
@@ -66,7 +68,6 @@ fn test_compaction_config(
     crate::conversation::compaction::CompactionConfig {
         compactor: NuCompactor::from_shared_model(
             std::sync::Arc::new(std::sync::Mutex::new(ModelHandle::new(model))),
-            NoopProgressUi,
             bus.clone(),
             None,
         ),
@@ -88,86 +89,10 @@ impl AsyncPermissionResolver for MockResolver {
         _tool_name: &str,
         _arguments: &str,
         _tool_call_id: Option<String>,
-        _ui_tx: Option<tokio::sync::mpsc::UnboundedSender<UiEvent>>,
+        _bus: &crate::bus::Bus,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let decision = self.0;
         async move { decision }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// MockUi: ProgressUi that collects events
-// ---------------------------------------------------------------------------
-
-use crate::protocol::contracts::ProgressUi;
-use crate::protocol::event::UiEvent;
-
-struct MockUi {
-    pub events: Vec<UiEvent>,
-    cancel_after: Option<usize>,
-    tick_count: usize,
-    cancel_flag: Arc<AtomicBool>,
-    cancel_bus: Option<crate::bus::Bus>,
-    cancel_published: Arc<AtomicBool>,
-}
-
-impl MockUi {
-    fn new() -> Self {
-        Self {
-            events: Vec::new(),
-            cancel_after: None,
-            tick_count: 0,
-            cancel_flag: Arc::new(AtomicBool::new(false)),
-            cancel_bus: None,
-            cancel_published: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Create a MockUi that returns `true` from `take_cancel_requested()` on the
-    /// very first call — before any tick is emitted. This is used to test cancellation
-    /// without relying on stream-timing races: the cancel fires in the drain loop's
-    /// first iteration, before the spawned tokio task has had time to call
-    /// `on_completion_call` or poll the first stream event.
-    ///
-    /// The first `take_cancel_requested()` also publishes a `CancelEvent` to the
-    /// shared bus so the hook and tool proxies observe it, matching the production
-    /// flow (the bus is the single cancellation channel).
-    fn immediately_cancelled(bus: crate::bus::Bus) -> Self {
-        Self {
-            events: Vec::new(),
-            cancel_after: None,
-            tick_count: 0,
-            cancel_flag: Arc::new(AtomicBool::new(true)),
-            cancel_bus: Some(bus),
-            cancel_published: Arc::new(AtomicBool::new(false)),
-        }
-    }
-}
-
-impl ProgressUi for MockUi {
-    fn emit(&mut self, event: &UiEvent) {
-        if matches!(event, UiEvent::Tick) {
-            self.tick_count += 1;
-            if let Some(threshold) = self.cancel_after
-                && self.tick_count >= threshold
-            {
-                self.cancel_flag.store(true, Ordering::SeqCst);
-            }
-        }
-        self.events.push(event.clone());
-    }
-
-    fn flush(&mut self) {}
-
-    fn take_cancel_requested(&self) -> bool {
-        let was_cancelled = self.cancel_flag.swap(false, Ordering::SeqCst);
-        if was_cancelled
-            && !self.cancel_published.swap(true, Ordering::SeqCst)
-            && let Some(bus) = &self.cancel_bus
-        {
-            let _ = bus.cancel().send(crate::bus::CancelEvent::Requested);
-        }
-        was_cancelled
     }
 }
 
@@ -195,7 +120,7 @@ fn make_turn_context<'a>(
         max_turns: None,
     };
     let tool_infra = executor::ToolInfra {
-        closure_registry: Arc::new(ClosureRegistry::new()),
+        closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         visible_tool_definitions: vec![],
@@ -221,7 +146,7 @@ fn shared_handle(
 
 /// Text-only stream: verify `TurnResult.text` is populated and `tool_call_count == 0`.
 #[tokio::test]
-async fn execute_turn_text_only_response() {
+async fn execute_turn_text_only_response() -> Result<()> {
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("Hello, world!".to_string()),
         MockStreamEvent::final_response_with_default_usage(),
@@ -229,12 +154,11 @@ async fn execute_turn_text_only_response() {
 
     let config = Config::default();
     let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
-    let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
-    let result = execute_turn(ctx, &mut ui, resolver)
+    let result = execute_turn(ctx, resolver)
         .await
-        .expect("execute_turn should succeed");
+        .map_err(|e| format!("execute_turn should succeed: {e:?}"))?;
 
     assert!(
         result.text.contains("Hello, world!") || !result.text.is_empty(),
@@ -246,34 +170,94 @@ async fn execute_turn_text_only_response() {
         "No tools should have been called"
     );
     assert!(!result.cancelled, "Turn should not be cancelled");
+    Ok(())
 }
 
-/// Cancellation via UI: the UI requests cancellation before the agent starts,
-/// which causes the cancel_token to fire on the drain loop's first iteration.
+/// Regression test: a turn that completes without any bus events still returns.
+///
+/// Core no longer spawns a per-turn `ui_rx` drain loop. Cancellation and all
+/// lifecycle events flow through the shared `Bus`, so a turn that produces no
+/// events still completes normally when the agent finishes.
 #[tokio::test]
-async fn execute_turn_cancel_returns_cancelled_true() {
+async fn execute_turn_completes_when_no_events_arrive_on_bus() -> Result<()> {
     let model = MockCompletionModel::from_stream_turns([[
-        MockStreamEvent::Text("partial".to_string()),
+        MockStreamEvent::Text("no events on bus".to_string()),
         MockStreamEvent::final_response_with_default_usage(),
     ]]);
 
     let config = Config::default();
-    let bus = crate::bus::create_bus();
-    let ctx = make_turn_context(shared_handle(model), &config, bus.clone());
-    let mut ui = MockUi::immediately_cancelled(bus);
+    let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
     let resolver = MockResolver(PermissionDecision::Allow);
 
-    let result = execute_turn(ctx, &mut ui, resolver)
+    let result = execute_turn(ctx, resolver)
         .await
-        .expect("execute_turn should not error");
+        .map_err(|e| format!("execute_turn should terminate and succeed: {e:?}"))?;
+
+    assert!(!result.cancelled, "Turn should not be cancelled");
+    assert!(
+        !result.text.is_empty(),
+        "Text-only turn should produce a non-empty response"
+    );
+    Ok(())
+}
+
+/// Cancellation via the bus: a `CancelEvent` published from within a tool call
+/// causes the hook to terminate, and the turn returns `cancelled = true`.
+///
+/// The model emits a tool call; the `CancellingTool` publishes the cancel on the
+/// shared bus from inside `call()` — after the hook has subscribed to
+/// `bus.cancel()` — so the next `on_completion_call` sees the pending event and
+/// the turn returns cancelled. This is deterministic.
+#[tokio::test]
+async fn execute_turn_cancel_returns_cancelled_true() -> Result<()> {
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "test_cancel_tool", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::Text("unreachable".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+
+    let config = Config::default();
+    let bus = crate::bus::create_bus();
+    let handle = rig::tool::server::ToolServer::new()
+        .tool(executor::test_utils::CancellingTool::new(bus.clone()))
+        .run();
+    let tool_infra = executor::ToolInfra {
+        closure_registry: Arc::new(ClosureRegistry::default()),
+        mcp_registry: Arc::new(McpToolRegistry::empty()),
+        tool_server_handle: handle,
+        visible_tool_definitions: vec![ToolDefinition {
+            name: "test_cancel_tool".to_string(),
+            description: "cancels the turn".to_string(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        }],
+        circuit_breaker: default_circuit_breaker(),
+        doom_state: default_doom_state(),
+        last_total_tokens: default_last_total_tokens(),
+        bus: bus.clone(),
+    };
+    let ctx = make_turn_context(shared_handle(model), &config, bus);
+    // Override the tool infra with the cancelling tool. `make_turn_context`
+    // builds a context; rebuild with the cancelling tool infra.
+    let ctx = TurnContext::new(ctx.conversation, ctx.input, tool_infra, &config);
+    let resolver = MockResolver(PermissionDecision::Allow);
+
+    let result = execute_turn(ctx, resolver)
+        .await
+        .map_err(|e| format!("execute_turn should not error: {e:?}"))?;
 
     assert!(result.cancelled, "Turn should be marked as cancelled");
+    Ok(())
 }
 
 /// Verify that `additional_params` set in `Config` is forwarded through `AgentPromptConfig`
 /// to `AgentBuilder` without panicking.
 #[tokio::test]
-async fn execute_turn_with_additional_params_succeeds() {
+async fn execute_turn_with_additional_params_succeeds() -> Result<()> {
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("OK".to_string()),
         MockStreamEvent::final_response_with_default_usage(),
@@ -284,13 +268,13 @@ async fn execute_turn_with_additional_params_succeeds() {
         ..Config::default()
     };
     let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
-    let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
-    let result = execute_turn(ctx, &mut ui, resolver)
+    let result = execute_turn(ctx, resolver)
         .await
-        .expect("execute_turn should succeed");
+        .map_err(|e| format!("execute_turn should succeed: {e:?}"))?;
     assert!(!result.cancelled, "Turn should not be cancelled");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +455,7 @@ fn streaming_error_from_prompt_cancelled_captures_messages() {
 /// only deliver messages sent after the receiver subscribes. Publishing before the
 /// call would race the subscription and not exercise the cancel branch.
 #[tokio::test]
-async fn filtered_tool_proxy_cancels_during_execution() {
+async fn filtered_tool_proxy_cancels_during_execution() -> Result<()> {
     let handle = rig::tool::server::ToolServer::new().run();
     // Register a tool that sleeps so the cancel can fire mid-execution.
     handle
@@ -509,17 +493,20 @@ async fn filtered_tool_proxy_cancels_during_execution() {
     let bus2 = bus.clone();
     let cancel_handle = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let _ = bus2.cancel().send(crate::bus::CancelEvent::Requested);
+        let _ = bus2.cancel().send(crate::bus::CancelEvent::Requested).await;
     });
 
     let mut context = rig::tool::ToolContext::new();
     let result = toolset.execute("sleeping_tool", "{}", &mut context).await;
-    cancel_handle.await.unwrap();
+    cancel_handle
+        .await
+        .map_err(|e| format!("cancel task panicked: {e:?}"))?;
 
     assert!(
         result.is_error_kind(rig::tool::ToolErrorKind::Cancelled),
         "A cancel during execution must produce a Cancelled error"
     );
+    Ok(())
 }
 
 /// TurnError from PromptCancelled captures chat_history as messages.
@@ -894,7 +881,7 @@ fn cancel_preserves_multiple_tool_use_cycles() {
 /// After the fix, `.memory()` is omitted from the rig `AgentBuilder` when
 /// `has_session = false`, so `memory.append()` is never called.
 #[tokio::test]
-async fn transient_turn_does_not_write_jsonl() {
+async fn transient_turn_does_not_write_jsonl() -> Result<()> {
     let (temp_dir, memory) = make_compacting_memory();
     let sessions_path = temp_dir.path().to_path_buf();
     let model = MockCompletionModel::from_stream_turns([[
@@ -920,7 +907,7 @@ async fn transient_turn_does_not_write_jsonl() {
         max_turns: None,
     };
     let tool_infra = executor::ToolInfra {
-        closure_registry: Arc::new(ClosureRegistry::new()),
+        closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         visible_tool_definitions: vec![],
@@ -931,16 +918,15 @@ async fn transient_turn_does_not_write_jsonl() {
     };
     let config = Config::default();
     let ctx = TurnContext::new(conversation, input, tool_infra, &config);
-    let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
-    let result = execute_turn(ctx, &mut ui, resolver)
+    let result = execute_turn(ctx, resolver)
         .await
-        .expect("execute_turn should succeed");
+        .map_err(|e| format!("execute_turn should succeed: {e:?}"))?;
     assert!(!result.cancelled, "transient turn should not be cancelled");
 
     let jsonl_files: Vec<_> = std::fs::read_dir(&sessions_path)
-        .expect("sessions dir must be readable")
+        .map_err(|e| format!("sessions dir must be readable: {e:?}"))?
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "jsonl"))
         .collect();
@@ -950,6 +936,7 @@ async fn transient_turn_does_not_write_jsonl() {
         "transient turn must not write any JSONL file; found: {:?}",
         jsonl_files.iter().map(|e| e.path()).collect::<Vec<_>>()
     );
+    Ok(())
 }
 
 /// Persistent turn (`has_session = true`) MUST create a JSONL file for the session.
@@ -957,7 +944,7 @@ async fn transient_turn_does_not_write_jsonl() {
 /// Verifies that the guard does not accidentally suppress JSONL writes for real
 /// sessions — only transient invocations are exempted.
 #[tokio::test]
-async fn persistent_turn_writes_jsonl() {
+async fn persistent_turn_writes_jsonl() -> Result<()> {
     let (temp_dir, memory) = make_compacting_memory();
     let sessions_path = temp_dir.path().to_path_buf();
     let session_id = "test-persistent-session";
@@ -979,7 +966,7 @@ async fn persistent_turn_writes_jsonl() {
         max_turns: None,
     };
     let tool_infra = executor::ToolInfra {
-        closure_registry: Arc::new(ClosureRegistry::new()),
+        closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
         visible_tool_definitions: vec![],
@@ -990,16 +977,15 @@ async fn persistent_turn_writes_jsonl() {
     };
     let config = Config::default();
     let ctx = TurnContext::new(conversation, input, tool_infra, &config);
-    let mut ui = MockUi::new();
     let resolver = MockResolver(PermissionDecision::Allow);
 
-    let result = execute_turn(ctx, &mut ui, resolver)
+    let result = execute_turn(ctx, resolver)
         .await
-        .expect("execute_turn should succeed");
+        .map_err(|e| format!("execute_turn should succeed: {e:?}"))?;
     assert!(!result.cancelled, "persistent turn should not be cancelled");
 
     let jsonl_files: Vec<_> = std::fs::read_dir(&sessions_path)
-        .expect("sessions dir must be readable")
+        .map_err(|e| format!("sessions dir must be readable: {e:?}"))?
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "jsonl"))
         .collect();
@@ -1008,4 +994,5 @@ async fn persistent_turn_writes_jsonl() {
         !jsonl_files.is_empty(),
         "persistent turn must write a JSONL file for the session; sessions dir is empty"
     );
+    Ok(())
 }

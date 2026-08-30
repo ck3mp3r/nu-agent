@@ -26,7 +26,10 @@
 /// ```
 #[macro_export]
 macro_rules! block_on {
-    ($plugin:expr, $future:expr) => {{ $plugin.runtime.block_on($future) }};
+    ($plugin:expr, $future:expr) => {{
+        let rt = $plugin.runtime()?;
+        rt.block_on($future)
+    }};
     ($future:expr) => {{
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()

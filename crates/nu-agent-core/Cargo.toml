@@ -4,6 +4,7 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+nu-agent-a2a = { workspace = true }
 nu-plugin = { workspace = true }
 nu-protocol = { workspace = true }
 rig = { workspace = true }
@@ -22,6 +23,7 @@ serde_json = { workspace = true }
 toml = { workspace = true }
 tempfile = { workspace = true }
 log = { workspace = true }
+tracing = { workspace = true }
 sha2 = { workspace = true }
 regex = { workspace = true }
 ignore = { workspace = true }

@@ -1,3 +1,11 @@
+use std::collections::HashMap;
+
+use nu_agent_core::transcript::ir::{ContentLine, DisplayLine};
+use nu_agent_core::transcript::items::{
+    ProseMessage, Spacer as SpacerItem, SystemMessage, ToolInvocation,
+    ToolResult as TranscriptToolResult, TranscriptEntry, TranscriptEntryKind, annotate_diff_hint,
+};
+
 use super::*;
 
 const MAX_TRANSCRIPT_ENTRIES: usize = 2000;
@@ -127,7 +135,7 @@ impl AppState {
         let mut start = 0usize;
         for entry in &self.transcript_preview {
             let block = entry.to_render_block();
-            let content_lines: Vec<ContentLine> = if let Some(ref md) = block.markdown {
+            let content_lines: Vec<ContentLine> = if let Some(md) = &block.markdown {
                 if let Some(cached) = self.assistant_projection_cache.get(md) {
                     cached.clone()
                 } else {

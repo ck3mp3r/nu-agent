@@ -1,5 +1,6 @@
 use nu_protocol::{LabeledError, Span, Value};
 
+use crate::bus::Bus;
 use crate::orchestrator::OrchestratorEvent;
 use crate::protocol::event::{ToolDisplay, UiEvent};
 
@@ -157,9 +158,9 @@ pub trait TranscriptUi {
 
 /// Minimal runtime required for a single turn. Used by run_single_turn.
 pub trait CoreRuntime {
-    fn execute_turn<U: ProgressUi + Send>(
+    fn execute_turn(
         &mut self,
-        ui: &mut U,
+        bus: &Bus,
         prompt: String,
         context: Option<String>,
         span: Span,

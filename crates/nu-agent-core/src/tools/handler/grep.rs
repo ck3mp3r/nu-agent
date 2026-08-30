@@ -33,8 +33,8 @@ impl BuiltinTool for GrepTool {
                 message: format!("Invalid grep arguments: {e}"),
                 details: None,
             })?;
-        let search_path = if let Some(ref p) = args.path {
-            super::resolve_fs_path_for_cwd(p, cwd)
+        let search_path = if let Some(p) = args.path {
+            super::resolve_fs_path_for_cwd(&p, cwd)
         } else {
             cwd.to_path_buf()
         };

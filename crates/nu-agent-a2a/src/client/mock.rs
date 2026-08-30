@@ -22,15 +22,16 @@ pub struct MockHttpClient {
     get_responses: Arc<RwLock<GetResponseMap>>,
 }
 
-impl MockHttpClient {
-    /// Create a new mock client with no responses registered.
-    pub fn new() -> Self {
+impl Default for MockHttpClient {
+    fn default() -> Self {
         Self {
             post_responses: Arc::new(RwLock::new(HashMap::new())),
             get_responses: Arc::new(RwLock::new(HashMap::new())),
         }
     }
+}
 
+impl MockHttpClient {
     /// Register a canned response for a POST request.
     ///
     /// The key is `"POST {url}"`. Returns the old response if one was
@@ -81,12 +82,6 @@ impl MockHttpClient {
     /// Convenience: register a GET error.
     pub fn expect_get_error(&self, url: &str, error: A2aError) {
         self.expect_get(url, Err(error));
-    }
-}
-
-impl Default for MockHttpClient {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

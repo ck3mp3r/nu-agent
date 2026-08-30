@@ -7,16 +7,9 @@ use nu_protocol::{Category, LabeledError, Signature, Value};
 /// current environment variables.
 pub struct AgentConfigInit;
 
-impl AgentConfigInit {
-    /// Creates a new AgentConfigInit command.
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl Default for AgentConfigInit {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 

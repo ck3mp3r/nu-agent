@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use nu_agent_core::config::{Config, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
 fn apply_persona_config_all_fields_when_config_empty() {
     let mut config = Config::default();
@@ -31,7 +33,7 @@ fn apply_persona_config_all_fields_when_config_empty() {
 }
 
 #[test]
-fn apply_persona_config_cli_wins_over_persona() {
+fn apply_persona_config_cli_wins_over_persona() -> Result<()> {
     let mut config = Config {
         temperature: Some(0.9),
         max_tokens: Some(4096),
@@ -66,9 +68,10 @@ fn apply_persona_config_cli_wins_over_persona() {
         config
             .additional_params
             .as_ref()
-            .expect("additional_params should be set")["from"],
+            .ok_or("should have additional_params set")?["from"],
         "cli"
     );
+    Ok(())
 }
 
 #[test]
@@ -189,7 +192,7 @@ fn make_plugin_config(models: HashMap<String, ModelRoleConfig>) -> PluginConfig 
 }
 
 #[test]
-fn apply_persona_model_literal_slash_applied() {
+fn apply_persona_model_literal_slash_applied() -> Result<()> {
     let mut config = Config::default();
     let mut models = HashMap::new();
     models.insert(
@@ -208,14 +211,15 @@ fn apply_persona_model_literal_slash_applied() {
         false,
     );
 
-    assert!(result.is_ok());
-    assert!(result.unwrap());
+    let applied = result.map_err(|e| format!("{e:?}"))?;
+    assert!(applied);
     assert_eq!(config.provider, "anthropic");
     assert_eq!(config.model, "claude-sonnet-4-6");
+    Ok(())
 }
 
 #[test]
-fn apply_persona_model_role_label_resolved() {
+fn apply_persona_model_role_label_resolved() -> Result<()> {
     let mut config = Config::default();
     let mut models = HashMap::new();
     models.insert(
@@ -230,14 +234,15 @@ fn apply_persona_model_role_label_resolved() {
     let result =
         super::apply_persona_model(&mut config, Some(&plugin_config), Some("heavy"), false);
 
-    assert!(result.is_ok());
-    assert!(result.unwrap());
+    let applied = result.map_err(|e| format!("{e:?}"))?;
+    assert!(applied);
     assert_eq!(config.provider, "anthropic");
     assert_eq!(config.model, "claude-opus-4");
+    Ok(())
 }
 
 #[test]
-fn apply_persona_model_role_label_default_resolved() {
+fn apply_persona_model_role_label_default_resolved() -> Result<()> {
     let mut config = Config::default();
     let mut models = HashMap::new();
     models.insert(
@@ -252,10 +257,11 @@ fn apply_persona_model_role_label_default_resolved() {
     let result =
         super::apply_persona_model(&mut config, Some(&plugin_config), Some("default"), false);
 
-    assert!(result.is_ok());
-    assert!(result.unwrap());
+    let applied = result.map_err(|e| format!("{e:?}"))?;
+    assert!(applied);
     assert_eq!(config.provider, "openai");
     assert_eq!(config.model, "gpt-4o");
+    Ok(())
 }
 
 #[test]
@@ -321,20 +327,21 @@ fn apply_persona_model_role_not_configured_returns_error() {
 }
 
 #[test]
-fn apply_persona_model_none_no_change() {
+fn apply_persona_model_none_no_change() -> Result<()> {
     let mut config = Config::default();
     let plugin_config = make_plugin_config(HashMap::new());
 
     let result = super::apply_persona_model(&mut config, Some(&plugin_config), None, false);
 
-    assert!(result.is_ok());
-    assert!(!result.unwrap());
+    let applied = result.map_err(|e| format!("{e:?}"))?;
+    assert!(!applied);
     assert_eq!(config.provider, "");
     assert_eq!(config.model, "");
+    Ok(())
 }
 
 #[test]
-fn apply_persona_model_cli_flag_skips_persona() {
+fn apply_persona_model_cli_flag_skips_persona() -> Result<()> {
     let mut config = Config::default();
     let plugin_config = make_plugin_config(HashMap::new());
 
@@ -345,10 +352,11 @@ fn apply_persona_model_cli_flag_skips_persona() {
         true, // cli_model_provided
     );
 
-    assert!(result.is_ok());
-    assert!(!result.unwrap());
+    let applied = result.map_err(|e| format!("{e:?}"))?;
+    assert!(!applied);
     assert_eq!(config.provider, "");
     assert_eq!(config.model, "");
+    Ok(())
 }
 
 #[test]
@@ -499,7 +507,7 @@ fn resolve_preamble_for_model_unknown_provider_returns_none() {
 // ── apply_persona_model preamble re-resolution tests ────────────────────────
 
 #[test]
-fn apply_persona_model_re_resolves_preamble_for_literal_model() {
+fn apply_persona_model_re_resolves_preamble_for_literal_model() -> Result<()> {
     let mut models = HashMap::new();
     models.insert(
         "claude-sonnet-4-6".to_string(),
@@ -534,16 +542,17 @@ fn apply_persona_model_re_resolves_preamble_for_literal_model() {
         false,
     );
 
-    assert!(result.is_ok());
-    assert!(result.unwrap());
+    let applied = result.map_err(|e| format!("{e:?}"))?;
+    assert!(applied);
     assert_eq!(config.provider, "anthropic");
     assert_eq!(config.model, "claude-sonnet-4-6");
     // Preamble should be re-resolved for the new model
     assert_eq!(config.preamble, Some("You are Claude Sonnet.".to_string()));
+    Ok(())
 }
 
 #[test]
-fn apply_persona_model_re_resolves_preamble_for_role_label() {
+fn apply_persona_model_re_resolves_preamble_for_role_label() -> Result<()> {
     let mut models = HashMap::new();
     models.insert(
         "claude-opus-4".to_string(),
@@ -580,16 +589,17 @@ fn apply_persona_model_re_resolves_preamble_for_role_label() {
 
     let result = super::apply_persona_model(&mut config, Some(&pc), Some("heavy"), false);
 
-    assert!(result.is_ok());
-    assert!(result.unwrap());
+    let applied = result.map_err(|e| format!("{e:?}"))?;
+    assert!(applied);
     assert_eq!(config.provider, "anthropic");
     assert_eq!(config.model, "claude-opus-4");
     // Preamble should be re-resolved for the heavy model
     assert_eq!(config.preamble, Some("You are Claude Opus.".to_string()));
+    Ok(())
 }
 
 #[test]
-fn apply_persona_model_skipped_does_not_change_preamble() {
+fn apply_persona_model_skipped_does_not_change_preamble() -> Result<()> {
     let mut models = HashMap::new();
     models.insert(
         "claude-sonnet-4-6".to_string(),
@@ -625,14 +635,15 @@ fn apply_persona_model_skipped_does_not_change_preamble() {
         true, // cli_model_provided
     );
 
-    assert!(result.is_ok());
-    assert!(!result.unwrap());
+    let applied = result.map_err(|e| format!("{e:?}"))?;
+    assert!(!applied);
     // Preamble should NOT change
     assert_eq!(config.preamble, Some("Original preamble.".to_string()));
+    Ok(())
 }
 
 #[test]
-fn apply_persona_model_none_does_not_change_preamble() {
+fn apply_persona_model_none_does_not_change_preamble() -> Result<()> {
     let mut config = Config {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
@@ -642,8 +653,9 @@ fn apply_persona_model_none_does_not_change_preamble() {
 
     let result = super::apply_persona_model(&mut config, None, None, false);
 
-    assert!(result.is_ok());
-    assert!(!result.unwrap());
+    let applied = result.map_err(|e| format!("{e:?}"))?;
+    assert!(!applied);
     // Preamble should NOT change
     assert_eq!(config.preamble, Some("Original preamble.".to_string()));
+    Ok(())
 }

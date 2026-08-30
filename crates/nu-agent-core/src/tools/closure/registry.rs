@@ -2,24 +2,12 @@ use super::ResolvedClosure;
 use std::collections::HashMap;
 
 /// Registry for storing and managing tool closures.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ClosureRegistry {
     closures: HashMap<String, ResolvedClosure>,
 }
 
-impl Default for ClosureRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ClosureRegistry {
-    pub fn new() -> Self {
-        Self {
-            closures: HashMap::new(),
-        }
-    }
-
     pub fn register(&mut self, name: String, resolved: ResolvedClosure) {
         self.closures.insert(name, resolved);
     }

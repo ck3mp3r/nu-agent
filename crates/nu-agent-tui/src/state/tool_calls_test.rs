@@ -5,7 +5,7 @@ use nu_agent_core::transcript::renderer::ItemStatus;
 
 #[test]
 fn tool_call_lifecycle_tracks_transcript_line_status_by_same_row() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     state.start_tool_call("k8s__list_pods", r#"{"namespace":"prod"}"#);
 
@@ -29,7 +29,7 @@ fn tool_call_lifecycle_tracks_transcript_line_status_by_same_row() {
 
 #[test]
 fn concurrent_same_name_tool_calls_get_correct_statuses() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     // Start two tool calls with the same name but different arguments
     state.start_tool_call("k8s__get_pod", r#"{"name":"api-0"}"#);

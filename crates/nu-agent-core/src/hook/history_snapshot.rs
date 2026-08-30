@@ -18,13 +18,6 @@ pub struct HistorySnapshot {
 }
 
 impl HistorySnapshot {
-    /// Create a new, empty snapshot.
-    pub fn new() -> Self {
-        Self {
-            history: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
     /// Overwrite the snapshot with `history + [prompt]`.
     pub fn update(&self, history: &[Message], prompt: &Message) {
         let mut snapshot = history.to_vec();
@@ -46,7 +39,9 @@ impl HistorySnapshot {
 
 impl Default for HistorySnapshot {
     fn default() -> Self {
-        Self::new()
+        Self {
+            history: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 }
 

@@ -12,6 +12,8 @@ use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
 use nu_agent_core::transcript::renderer::ItemStatus;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // Helper to extract all text content from transcript entries
 fn extract_all_text_from_entry(entry: &TranscriptEntry) -> Vec<String> {
     match &entry.kind {
@@ -58,8 +60,10 @@ fn pending_prompt_ids(state: &AppState) -> Vec<u64> {
 }
 
 fn busy_state_with_clean_transcript() -> AppState {
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("run".to_string());
+    let mut state = AppState {
+        pending_submit_text: Some("run".to_string()),
+        ..Default::default()
+    };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
     state.transcript_preview.clear();
@@ -70,8 +74,10 @@ fn busy_state_with_clean_transcript() -> AppState {
 
 #[test]
 fn submit_transition_is_deterministic_and_keeps_input_editable() {
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("status pods".to_string());
+    let mut state = AppState {
+        pending_submit_text: Some("status pods".to_string()),
+        ..Default::default()
+    };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
 
     assert_eq!(state.phase, UiPhase::Busy);
@@ -85,8 +91,10 @@ fn submit_transition_is_deterministic_and_keeps_input_editable() {
 
 #[test]
 fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("prompt".to_string());
+    let mut state = AppState {
+        pending_submit_text: Some("prompt".to_string()),
+        ..Default::default()
+    };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
 
@@ -139,8 +147,10 @@ fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
 
 #[test]
 fn esc_then_esc_confirm_moves_into_abort_requested_without_unlocking() {
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("do work".to_string());
+    let mut state = AppState {
+        pending_submit_text: Some("do work".to_string()),
+        ..Default::default()
+    };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
 
@@ -160,8 +170,10 @@ fn esc_then_esc_confirm_moves_into_abort_requested_without_unlocking() {
 
 #[test]
 fn completed_event_clears_pending_and_unlocks_input() {
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("do work".to_string());
+    let mut state = AppState {
+        pending_submit_text: Some("do work".to_string()),
+        ..Default::default()
+    };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
@@ -180,8 +192,10 @@ fn completed_event_clears_pending_and_unlocks_input() {
 
 #[test]
 fn locked_input_prevents_typing_and_submission() {
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("first".to_string());
+    let mut state = AppState {
+        pending_submit_text: Some("first".to_string()),
+        ..Default::default()
+    };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
 
     state.pending_submit_text = Some("second".to_string());
@@ -202,8 +216,10 @@ fn locked_input_prevents_typing_and_submission() {
 
 #[test]
 fn submit_whitespace_only_prompt_is_noop() {
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("  \t\n ".to_string());
+    let mut state = AppState {
+        pending_submit_text: Some("  \t\n ".to_string()),
+        ..Default::default()
+    };
 
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
 
@@ -214,8 +230,10 @@ fn submit_whitespace_only_prompt_is_noop() {
 
 #[test]
 fn race_completion_before_second_escape_prevents_reentry_into_abort_pending() {
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("race".to_string());
+    let mut state = AppState {
+        pending_submit_text: Some("race".to_string()),
+        ..Default::default()
+    };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
 
@@ -239,8 +257,10 @@ fn race_completion_before_second_escape_prevents_reentry_into_abort_pending() {
 
 #[test]
 fn completed_event_unlocks_and_clears_abort_pending() {
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("finalize".to_string());
+    let mut state = AppState {
+        pending_submit_text: Some("finalize".to_string()),
+        ..Default::default()
+    };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
@@ -271,7 +291,7 @@ fn insert_newline_action_inserts_line_break_without_submit() {
 
 #[test]
 fn enter_insert_and_normal_mode_actions_toggle_mode_only_in_idle() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     assert_eq!(state.input_mode, InputMode::Insert);
 
     state.enter_normal_mode();
@@ -287,7 +307,7 @@ fn enter_insert_and_normal_mode_actions_toggle_mode_only_in_idle() {
 
 #[test]
 fn enter_normal_mode_from_chord_removes_last_j_and_switches_mode() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -300,8 +320,10 @@ fn enter_normal_mode_from_chord_removes_last_j_and_switches_mode() {
 
 #[test]
 fn assistant_message_is_appended_to_transcript_before_completed_unlock() {
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("ping".to_string());
+    let mut state = AppState {
+        pending_submit_text: Some("ping".to_string()),
+        ..Default::default()
+    };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
     assert!(!state.input_locked);
@@ -342,7 +364,7 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() {
 
 #[test]
 fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     reduce_with_cancel_controller(
         &mut state,
         event_input(UiEvent::ToolStarted {
@@ -388,7 +410,7 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
 
 #[test]
 fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -422,7 +444,7 @@ fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status(
 
 #[test]
 fn tool_end_transitions_same_row_to_done_or_failed_status() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -457,7 +479,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
     assert_eq!(state.transcript_preview[1].text(), "gh__get_pr");
     assert_eq!(state.transcript_preview[1].status, Some(ItemStatus::Done));
 
-    let mut failed = AppState::new();
+    let mut failed = AppState::default();
     reduce_with_cancel_controller(
         &mut failed,
         event_input(UiEvent::ToolStarted {
@@ -494,7 +516,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
 
 #[test]
 fn llm_end_event_updates_latest_and_rolling_token_usage() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -540,7 +562,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
     }
 
     fn idle() -> AppState {
-        AppState::new()
+        AppState::default()
     }
 
     fn busy_empty_status() -> AppState {
@@ -719,7 +741,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
 
 #[test]
 fn compaction_summary_is_rendered_in_transcript() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -742,7 +764,7 @@ fn compaction_summary_is_rendered_in_transcript() {
 
 #[test]
 fn permission_request_focuses_transcript_for_immediate_prompt_visibility() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.pane_focus = crate::state::PaneFocus::Input;
 
     reduce_with_cancel_controller(
@@ -770,7 +792,7 @@ fn permission_request_focuses_transcript_for_immediate_prompt_visibility() {
 
 #[test]
 fn compaction_artifact_renders_as_single_markdown_block() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -810,7 +832,7 @@ fn compaction_artifact_renders_as_single_markdown_block() {
 
 #[test]
 fn compaction_artifact_does_not_double_wrap_summary_heading() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -835,7 +857,7 @@ fn compaction_artifact_does_not_double_wrap_summary_heading() {
 
 #[test]
 fn compaction_artifact_preserves_bullets_without_duplication() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -875,7 +897,7 @@ fn compaction_artifact_preserves_bullets_without_duplication() {
 
 #[test]
 fn compaction_block_completion_hides_source_and_explanatory_copy() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -924,7 +946,7 @@ fn compaction_block_completion_hides_source_and_explanatory_copy() {
 
 #[test]
 fn compaction_block_header_is_concise_without_artifact_label() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -945,7 +967,7 @@ fn compaction_block_header_is_concise_without_artifact_label() {
 
 #[test]
 fn compaction_block_summary_rendering_remains_clean_after_copy_removal() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -999,7 +1021,7 @@ fn compaction_block_summary_rendering_remains_clean_after_copy_removal() {
 
 #[test]
 fn compaction_metadata_not_included_in_future_prompt_history() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1033,7 +1055,7 @@ fn compaction_metadata_not_included_in_future_prompt_history() {
 
 #[test]
 fn compaction_noop_does_not_claim_persisted_summary() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1070,7 +1092,7 @@ fn compaction_noop_does_not_claim_persisted_summary() {
 
 #[test]
 fn compaction_block_renders_for_slash_and_auto_triggers() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     for source in ["slash_compact", "auto_threshold"] {
         reduce_with_cancel_controller(
@@ -1109,13 +1131,14 @@ fn table_driven_user_action_noop_and_contract_matrix() {
     }
 
     fn idle() -> AppState {
-        AppState::new()
+        AppState::default()
     }
 
     fn idle_with_text() -> AppState {
-        let mut state = AppState::new();
-        state.pending_submit_text = Some("draft".to_string());
-        state
+        AppState {
+            pending_submit_text: Some("draft".to_string()),
+            ..Default::default()
+        }
     }
 
     fn busy() -> AppState {
@@ -1241,7 +1264,7 @@ fn assistant_message_whitespace_only_is_noop() {
 
 #[test]
 fn tool_start_truncates_long_args_summary_with_ellipsis() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let long_args = format!("{{\"payload\":\"{}\"}}", "x".repeat(300));
 
     reduce_with_cancel_controller(
@@ -1272,7 +1295,7 @@ fn tool_start_truncates_long_args_summary_with_ellipsis() {
 
 #[test]
 fn tool_display_renders_diff_sections_as_dedicated_code_blocks() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1322,8 +1345,8 @@ fn tool_display_renders_diff_sections_as_dedicated_code_blocks() {
 }
 
 #[test]
-fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed() {
-    let mut state = AppState::new();
+fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed() -> Result<()> {
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1363,7 +1386,7 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
         .transcript_preview
         .iter()
         .find(|entry| matches!(&entry.kind, TranscriptEntryKind::Tool(t) if t.name == "edit"))
-        .expect("tool call row should exist");
+        .ok_or("should have tool call row")?;
     assert_eq!(call_row.role(), Role::Tool);
 
     let display_rows: Vec<_> = state
@@ -1385,11 +1408,12 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
             .iter()
             .all(|entry| entry.role() == Role::ToolDisplay)
     );
+    Ok(())
 }
 
 #[test]
 fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1444,7 +1468,7 @@ fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
 
 #[test]
 fn edit_preview_display_omits_redundant_edit_path_header() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1491,7 +1515,7 @@ fn edit_preview_display_omits_redundant_edit_path_header() {
 
 #[test]
 fn edit_preview_display_omits_redundant_single_file_stats_line() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1545,7 +1569,7 @@ fn edit_preview_display_omits_redundant_single_file_stats_line() {
 
 #[test]
 fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_present() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1603,7 +1627,7 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
 
 #[test]
 fn normal_assistant_response_remains_when_no_direct_display_is_present() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1625,7 +1649,7 @@ fn normal_assistant_response_remains_when_no_direct_display_is_present() {
 
 #[test]
 fn diff_display_preserves_hunk_line_range_context() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1674,7 +1698,7 @@ fn diff_display_preserves_hunk_line_range_context() {
 
 #[test]
 fn diff_display_supports_line_number_readability_without_breaking_highlighting() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1729,7 +1753,7 @@ fn diff_display_supports_line_number_readability_without_breaking_highlighting()
 
 #[test]
 fn permission_requested_with_display_pushes_to_transcript() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1790,7 +1814,7 @@ fn permission_requested_with_display_pushes_to_transcript() {
 
 #[test]
 fn tool_end_after_permission_does_not_duplicate_display() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1861,7 +1885,7 @@ fn tool_end_after_permission_does_not_duplicate_display() {
 
 #[test]
 fn tool_end_without_prior_permission_pushes_display_normally() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1914,7 +1938,7 @@ fn tool_end_without_prior_permission_pushes_display_normally() {
 
 #[test]
 fn permission_requested_without_display_does_not_add_transcript_entries() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     reduce_with_cancel_controller(
         &mut state,
@@ -1955,7 +1979,7 @@ fn permission_requested_without_display_does_not_add_transcript_entries() {
 }
 
 #[test]
-fn streaming_replaces_not_appends() {
+fn streaming_replaces_not_appends() -> Result<()> {
     let mut state = busy_state_with_clean_transcript();
 
     // Emit first AssistantMessage delta
@@ -1969,7 +1993,9 @@ fn streaming_replaces_not_appends() {
 
     // First message should set streaming_message_start
     assert!(state.streaming_message_start.is_some());
-    let first_start = state.streaming_message_start.unwrap();
+    let first_start = state
+        .streaming_message_start
+        .ok_or("should have streaming_message_start")?;
 
     // Emit second AssistantMessage delta (accumulated text)
     reduce_with_cancel_controller(
@@ -2006,6 +2032,7 @@ fn streaming_replaces_not_appends() {
             .any(|entry| entry.text() == "hello"),
         "Should not have standalone 'hello' entry - it should be replaced"
     );
+    Ok(())
 }
 
 #[test]
@@ -2419,7 +2446,7 @@ mod task_4a_tests {
 
     #[test]
     fn assistant_message_with_bold_emits_md_bold() {
-        let mut state = AppState::new();
+        let mut state = AppState::default();
         reduce_with_cancel_controller(
             &mut state,
             ReducerInput::Event(Box::new(UiEvent::AssistantMessage {
@@ -2439,7 +2466,7 @@ mod task_4a_tests {
 
     #[test]
     fn assistant_streaming_truncates_prior_render() {
-        let mut state = AppState::new();
+        let mut state = AppState::default();
         for text in ["hello", "hello world"] {
             reduce_with_cancel_controller(
                 &mut state,
@@ -2458,7 +2485,7 @@ mod task_4a_tests {
 
     #[test]
     fn compaction_chunk_with_italic_emits_md_italic() {
-        let mut state = AppState::new();
+        let mut state = AppState::default();
         reduce_with_cancel_controller(
             &mut state,
             ReducerInput::Event(Box::new(UiEvent::CompactionSummaryChunk {
@@ -2476,9 +2503,50 @@ mod task_4a_tests {
     }
 
     #[test]
+    fn compaction_completed_fenced_body_renders_markdown_not_raw() {
+        let mut state = AppState::default();
+        reduce_with_cancel_controller(
+            &mut state,
+            event_input(UiEvent::CompactionStarted {
+                source: "auto".to_string(),
+            }),
+            None,
+        );
+        reduce_with_cancel_controller(
+            &mut state,
+            event_input(UiEvent::CompactionCompleted {
+                source: "auto".to_string(),
+                summary_preview: String::new(),
+                summary_body: "```\n## Work State\n### Completed\n- Mapped c5t notes for project `63e90e73`; confirmed `7722bef9`.\n```"
+                    .to_string(),
+            }),
+            None,
+        );
+
+        let markdowns = assistant_markdown_entries(&state);
+        let concat: String = markdowns.join("\n");
+        let projected = project_spans(&concat);
+        // Fenced wrapper must not cause raw markdown to leak into the visible body.
+        assert!(
+            projected.iter().any(|(t, _)| t == "Work State"),
+            "heading text must render; got: {projected:?}"
+        );
+        assert!(
+            projected.iter().any(|(t, _)| t.starts_with('•')),
+            "bullet marker must render as '•'; got: {projected:?}"
+        );
+        assert!(
+            !projected.iter().any(|(t, _)| t.starts_with("##")),
+            "raw '##' must not appear in rendered body; got: {projected:?}"
+        );
+    }
+
+    #[test]
     fn esc_esc_with_pending_restores_texts_to_input_buffer() {
-        let mut state = AppState::new();
-        state.pending_submit_text = Some("first".to_string());
+        let mut state = AppState {
+            pending_submit_text: Some("first".to_string()),
+            ..Default::default()
+        };
         reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
         let _ = state.activate_next_prompt();
         state.enqueue_prompt("second".to_string());
@@ -2496,8 +2564,10 @@ mod task_4a_tests {
 
     #[test]
     fn esc_esc_with_no_pending_clears_state_but_not_buffer() {
-        let mut state = AppState::new();
-        state.pending_submit_text = Some("do work".to_string());
+        let mut state = AppState {
+            pending_submit_text: Some("do work".to_string()),
+            ..Default::default()
+        };
         reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
         let _ = state.activate_next_prompt();
 
@@ -2518,8 +2588,10 @@ mod visual_selection_tests {
 
     #[test]
     fn enter_visual_mode_selects_first_visible_entry_not_scroll_offset() {
-        let mut state = AppState::new();
-        state.pane_focus = PaneFocus::Transcript;
+        let mut state = AppState {
+            pane_focus: PaneFocus::Transcript,
+            ..Default::default()
+        };
         // Populate transcript with entries that render as multiple lines
         // Entry 0: multi-line markdown (renders as 3 visual rows)
         // Entry 1: multi-line markdown (renders as 2 visual rows)
@@ -2558,11 +2630,13 @@ mod visual_selection_tests {
 
     #[test]
     fn enter_visual_mode_sets_selection_at_scroll_offset() {
-        let mut state = AppState::new();
-        state.pane_focus = PaneFocus::Transcript;
-        state.cursor_visual_row = 5;
-        state.entry_indices = (0..10).collect();
-        state.total_visual_rows = 10;
+        let mut state = AppState {
+            pane_focus: PaneFocus::Transcript,
+            cursor_visual_row: 5,
+            entry_indices: (0..10).collect(),
+            total_visual_rows: 10,
+            ..Default::default()
+        };
         reduce_with_cancel_controller(
             &mut state,
             ReducerInput::User(UserAction::EnterVisualMode),
@@ -2577,8 +2651,10 @@ mod visual_selection_tests {
 
     #[test]
     fn enter_visual_mode_requires_transcript_focus() {
-        let mut state = AppState::new();
-        state.pane_focus = PaneFocus::Input;
+        let mut state = AppState {
+            pane_focus: PaneFocus::Input,
+            ..Default::default()
+        };
         reduce_with_cancel_controller(
             &mut state,
             ReducerInput::User(UserAction::EnterVisualMode),
@@ -2590,8 +2666,10 @@ mod visual_selection_tests {
 
     #[test]
     fn enter_visual_mode_noop_when_busy() {
-        let mut state = AppState::new();
-        state.phase = UiPhase::Busy;
+        let mut state = AppState {
+            phase: UiPhase::Busy,
+            ..Default::default()
+        };
         reduce_with_cancel_controller(
             &mut state,
             ReducerInput::User(UserAction::EnterVisualMode),
@@ -2602,11 +2680,13 @@ mod visual_selection_tests {
 
     #[test]
     fn visual_j_extends_selection_down() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        state.transcript_selection = Some(TranscriptSelection::new(0));
-        state.entry_indices = (0..5).collect();
-        state.total_visual_rows = 5;
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            transcript_selection: Some(TranscriptSelection::new(0)),
+            entry_indices: (0..5).collect(),
+            total_visual_rows: 5,
+            ..Default::default()
+        };
         for i in 0..5 {
             state.push_transcript_item(TranscriptEntry {
                 id: 0,
@@ -2630,12 +2710,14 @@ mod visual_selection_tests {
 
     #[test]
     fn visual_k_extends_selection_up() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        state.transcript_selection = Some(TranscriptSelection::new(2));
-        state.cursor_visual_row = 2;
-        state.entry_indices = (0..3).collect();
-        state.total_visual_rows = 3;
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            transcript_selection: Some(TranscriptSelection::new(2)),
+            cursor_visual_row: 2,
+            entry_indices: (0..3).collect(),
+            total_visual_rows: 3,
+            ..Default::default()
+        };
         reduce_with_cancel_controller(
             &mut state,
             ReducerInput::User(UserAction::ScrollLineUp),
@@ -2650,16 +2732,18 @@ mod visual_selection_tests {
 
     #[test]
     fn visual_yank_copies_and_exits_visual() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        state.rendered_line_text = vec![
-            "line 0".to_string(),
-            "line 1".to_string(),
-            "line 2".to_string(),
-            "line 3".to_string(),
-            "line 4".to_string(),
-        ];
-        state.rendered_line_start_row = 0;
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            rendered_line_text: vec![
+                "line 0".to_string(),
+                "line 1".to_string(),
+                "line 2".to_string(),
+                "line 3".to_string(),
+                "line 4".to_string(),
+            ],
+            rendered_line_start_row: 0,
+            ..Default::default()
+        };
         // Set selection covering visual rows 1-3
         let mut sel = TranscriptSelection::new(1);
         sel.set_cursor(3);
@@ -2677,10 +2761,12 @@ mod visual_selection_tests {
 
     #[test]
     fn visual_yank_copies_only_selected_rows_not_whole_entry() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        state.rendered_line_text = (0..10).map(|i| format!("row {i}")).collect();
-        state.rendered_line_start_row = 0;
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            rendered_line_text: (0..10).map(|i| format!("row {i}")).collect(),
+            rendered_line_start_row: 0,
+            ..Default::default()
+        };
         // Select rows 3-5 out of 10
         let mut sel = TranscriptSelection::new(3);
         sel.set_cursor(5);
@@ -2698,17 +2784,19 @@ mod visual_selection_tests {
 
     #[test]
     fn visual_yank_with_nonzero_scroll_offset_copies_correct_rows() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        // Simulate viewport scrolled down — rendered_line_text[0] is absolute row 10
-        state.rendered_line_start_row = 10;
-        state.rendered_line_text = vec![
-            "row 10".to_string(),
-            "row 11".to_string(),
-            "row 12".to_string(),
-            "row 13".to_string(),
-            "row 14".to_string(),
-        ];
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            // Simulate viewport scrolled down — rendered_line_text[0] is absolute row 10
+            rendered_line_start_row: 10,
+            rendered_line_text: vec![
+                "row 10".to_string(),
+                "row 11".to_string(),
+                "row 12".to_string(),
+                "row 13".to_string(),
+                "row 14".to_string(),
+            ],
+            ..Default::default()
+        };
         // Select absolute visual rows 11-13
         let mut sel = TranscriptSelection::new(11);
         sel.set_cursor(13);
@@ -2726,11 +2814,13 @@ mod visual_selection_tests {
 
     #[test]
     fn visual_yank_nothing_to_yank_shows_status() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        state.rendered_line_text = Vec::new();
-        state.transcript_scroll_offset = 0;
-        state.transcript_selection = Some(TranscriptSelection::new(0));
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            rendered_line_text: Vec::new(),
+            transcript_scroll_offset: 0,
+            transcript_selection: Some(TranscriptSelection::new(0)),
+            ..Default::default()
+        };
         reduce_with_cancel_controller(
             &mut state,
             ReducerInput::User(UserAction::YankSelection),
@@ -2744,7 +2834,7 @@ mod visual_selection_tests {
 
     #[test]
     fn visual_yank_empty_selection_noop() {
-        let mut state = AppState::new();
+        let mut state = AppState::default();
         reduce_with_cancel_controller(
             &mut state,
             ReducerInput::User(UserAction::YankSelection),
@@ -2755,9 +2845,11 @@ mod visual_selection_tests {
 
     #[test]
     fn visual_esc_clears_selection_and_exits() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        state.transcript_selection = Some(TranscriptSelection::new(0));
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            transcript_selection: Some(TranscriptSelection::new(0)),
+            ..Default::default()
+        };
         reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
         assert!(state.transcript_selection.is_none());
         assert_eq!(state.input_mode, InputMode::Normal);
@@ -2765,9 +2857,11 @@ mod visual_selection_tests {
 
     #[test]
     fn visual_gg_jumps_to_top() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        state.transcript_selection = Some(TranscriptSelection::new(5));
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            transcript_selection: Some(TranscriptSelection::new(5)),
+            ..Default::default()
+        };
         reduce_with_cancel_controller(
             &mut state,
             ReducerInput::User(UserAction::ScrollToTop),
@@ -2781,10 +2875,12 @@ mod visual_selection_tests {
 
     #[test]
     fn visual_g_jumps_to_bottom() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        state.transcript_selection = Some(TranscriptSelection::new(0));
-        state.total_visual_rows = 5;
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            transcript_selection: Some(TranscriptSelection::new(0)),
+            total_visual_rows: 5,
+            ..Default::default()
+        };
         for i in 0..5 {
             state.push_transcript_item(TranscriptEntry {
                 id: 0,
@@ -2806,14 +2902,15 @@ mod visual_selection_tests {
 
     #[test]
     fn normal_j_moves_cursor_not_viewport() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Normal;
-        state.pane_focus = PaneFocus::Transcript;
-        state.viewport_height = 10;
-        state.cursor_visual_row = 5;
-        state.transcript_scroll_offset = 0;
-        state.entry_indices = (0..20).collect();
-        state.total_visual_rows = 20;
+        let mut state = AppState {
+            input_mode: InputMode::Normal,
+            pane_focus: PaneFocus::Transcript,
+            viewport_height: 10,
+            cursor_visual_row: 5,
+            entry_indices: (0..20).collect(),
+            total_visual_rows: 20,
+            ..Default::default()
+        };
         for i in 0..20 {
             state.push_transcript_item(TranscriptEntry {
                 id: 0,
@@ -2836,14 +2933,15 @@ mod visual_selection_tests {
 
     #[test]
     fn normal_j_scrolls_viewport_when_cursor_leaves_margin() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Normal;
-        state.pane_focus = PaneFocus::Transcript;
-        state.viewport_height = 10;
-        state.cursor_visual_row = 6;
-        state.transcript_scroll_offset = 0;
-        state.entry_indices = (0..20).collect();
-        state.total_visual_rows = 20;
+        let mut state = AppState {
+            input_mode: InputMode::Normal,
+            pane_focus: PaneFocus::Transcript,
+            viewport_height: 10,
+            cursor_visual_row: 6,
+            entry_indices: (0..20).collect(),
+            total_visual_rows: 20,
+            ..Default::default()
+        };
         for i in 0..20 {
             state.push_transcript_item(TranscriptEntry {
                 id: 0,
@@ -2867,15 +2965,17 @@ mod visual_selection_tests {
 
     #[test]
     fn visual_j_scrolls_viewport_only_when_cursor_leaves_visible_area() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        state.transcript_following_tail = false;
-        state.viewport_height = 10;
-        state.transcript_scroll_offset = 0;
-        state.transcript_selection = Some(TranscriptSelection::new(0));
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            transcript_following_tail: false,
+            viewport_height: 10,
+            transcript_scroll_offset: 0,
+            transcript_selection: Some(TranscriptSelection::new(0)),
+            entry_indices: (0..20).collect(),
+            total_visual_rows: 20,
+            ..Default::default()
+        };
         // 20 entries, 1 visual row each
-        state.entry_indices = (0..20).collect();
-        state.total_visual_rows = 20;
         for i in 0..20 {
             state.push_transcript_item(TranscriptEntry {
                 id: 0,
@@ -2906,15 +3006,17 @@ mod visual_selection_tests {
 
     #[test]
     fn visual_k_syncs_scroll_offset_when_exiting_tail_following() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        state.transcript_following_tail = true;
-        state.max_scroll = 50;
-        state.transcript_scroll_offset = 0; // stale
-        state.cursor_visual_row = 55;
-        state.transcript_selection = Some(TranscriptSelection::new(55));
-        state.entry_indices = (0..60).collect();
-        state.total_visual_rows = 60;
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            transcript_following_tail: true,
+            max_scroll: 50,
+            transcript_scroll_offset: 0, // stale
+            cursor_visual_row: 55,
+            transcript_selection: Some(TranscriptSelection::new(55)),
+            entry_indices: (0..60).collect(),
+            total_visual_rows: 60,
+            ..Default::default()
+        };
         for i in 0..60 {
             state.push_transcript_item(TranscriptEntry {
                 id: 0,
@@ -2939,15 +3041,17 @@ mod visual_selection_tests {
 
     #[test]
     fn ctrl_u_moves_cursor_up_by_page() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Normal;
-        state.pane_focus = PaneFocus::Transcript;
-        state.viewport_height = 10;
-        state.cursor_visual_row = 10;
-        state.total_visual_rows = 30;
-        state.transcript_scroll_offset = 5;
-        state.transcript_following_tail = false;
-        state.entry_indices = (0..30).collect();
+        let mut state = AppState {
+            input_mode: InputMode::Normal,
+            pane_focus: PaneFocus::Transcript,
+            viewport_height: 10,
+            cursor_visual_row: 10,
+            total_visual_rows: 30,
+            transcript_scroll_offset: 5,
+            transcript_following_tail: false,
+            entry_indices: (0..30).collect(),
+            ..Default::default()
+        };
         for i in 0..30 {
             state.push_transcript_item(TranscriptEntry {
                 id: 0,
@@ -2971,15 +3075,17 @@ mod visual_selection_tests {
 
     #[test]
     fn ctrl_d_moves_cursor_down_by_page() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Normal;
-        state.pane_focus = PaneFocus::Transcript;
-        state.viewport_height = 10;
-        state.cursor_visual_row = 0;
-        state.total_visual_rows = 30;
-        state.transcript_scroll_offset = 0;
-        state.transcript_following_tail = false;
-        state.entry_indices = (0..30).collect();
+        let mut state = AppState {
+            input_mode: InputMode::Normal,
+            pane_focus: PaneFocus::Transcript,
+            viewport_height: 10,
+            cursor_visual_row: 0,
+            total_visual_rows: 30,
+            transcript_scroll_offset: 0,
+            transcript_following_tail: false,
+            entry_indices: (0..30).collect(),
+            ..Default::default()
+        };
         for i in 0..30 {
             state.push_transcript_item(TranscriptEntry {
                 id: 0,
@@ -3003,16 +3109,18 @@ mod visual_selection_tests {
 
     #[test]
     fn ctrl_u_in_visual_mode_extends_selection() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        state.pane_focus = PaneFocus::Transcript;
-        state.transcript_selection = Some(TranscriptSelection::new(10));
-        state.cursor_visual_row = 10;
-        state.total_visual_rows = 30;
-        state.viewport_height = 10;
-        state.transcript_scroll_offset = 5;
-        state.transcript_following_tail = false;
-        state.entry_indices = (0..30).collect();
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            pane_focus: PaneFocus::Transcript,
+            transcript_selection: Some(TranscriptSelection::new(10)),
+            cursor_visual_row: 10,
+            total_visual_rows: 30,
+            viewport_height: 10,
+            transcript_scroll_offset: 5,
+            transcript_following_tail: false,
+            entry_indices: (0..30).collect(),
+            ..Default::default()
+        };
         for i in 0..30 {
             state.push_transcript_item(TranscriptEntry {
                 id: 0,
@@ -3034,16 +3142,18 @@ mod visual_selection_tests {
 
     #[test]
     fn ctrl_d_in_visual_mode_extends_selection() {
-        let mut state = AppState::new();
-        state.input_mode = InputMode::Visual;
-        state.pane_focus = PaneFocus::Transcript;
-        state.transcript_selection = Some(TranscriptSelection::new(0));
-        state.cursor_visual_row = 0;
-        state.total_visual_rows = 30;
-        state.viewport_height = 10;
-        state.transcript_scroll_offset = 0;
-        state.transcript_following_tail = false;
-        state.entry_indices = (0..30).collect();
+        let mut state = AppState {
+            input_mode: InputMode::Visual,
+            pane_focus: PaneFocus::Transcript,
+            transcript_selection: Some(TranscriptSelection::new(0)),
+            cursor_visual_row: 0,
+            total_visual_rows: 30,
+            viewport_height: 10,
+            transcript_scroll_offset: 0,
+            transcript_following_tail: false,
+            entry_indices: (0..30).collect(),
+            ..Default::default()
+        };
         for i in 0..30 {
             state.push_transcript_item(TranscriptEntry {
                 id: 0,
@@ -3065,9 +3175,11 @@ mod visual_selection_tests {
 }
 
 #[test]
-fn finalize_pushes_closing_spacer() {
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("prompt".to_string());
+fn finalize_pushes_closing_spacer() -> Result<()> {
+    let mut state = AppState {
+        pending_submit_text: Some("prompt".to_string()),
+        ..Default::default()
+    };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
     state.push_transcript_item(TranscriptEntry {
@@ -3085,13 +3197,17 @@ fn finalize_pushes_closing_spacer() {
         None,
     );
 
-    let last = state.transcript_preview.last().unwrap();
+    let last = state
+        .transcript_preview
+        .last()
+        .ok_or("should have last transcript entry")?;
     assert!(matches!(last.kind, TranscriptEntryKind::Spacer(_)));
+    Ok(())
 }
 
 #[test]
 fn handle_tool_start_pushes_starting_spacer() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     reduce_with_cancel_controller(
         &mut state,
         event_input(UiEvent::ToolStarted {
@@ -3113,7 +3229,7 @@ fn handle_tool_start_pushes_starting_spacer() {
 
 #[test]
 fn handle_assistant_message_pushes_starting_spacer() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     reduce_with_cancel_controller(
         &mut state,
         event_input(UiEvent::AssistantMessage {
@@ -3133,7 +3249,7 @@ fn handle_assistant_message_pushes_starting_spacer() {
 
 #[test]
 fn handle_tool_end_does_not_push_spacer_between_tool_calls() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     // Two tool calls within the same block
     for name in ["read", "write"] {
         reduce_with_cancel_controller(
@@ -3178,12 +3294,14 @@ fn handle_tool_end_does_not_push_spacer_between_tool_calls() {
 }
 
 #[test]
-fn cancel_pushes_closing_spacer() {
+fn cancel_pushes_closing_spacer() -> Result<()> {
     use crate::interaction::cancel::CancelController;
 
-    let cancel_controller = CancelController::new();
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("hello".to_string());
+    let cancel_controller = CancelController::default();
+    let mut state = AppState {
+        pending_submit_text: Some("hello".to_string()),
+        ..Default::default()
+    };
     reduce_with_cancel_controller(
         &mut state,
         ReducerInput::User(UserAction::Submit),
@@ -3210,6 +3328,10 @@ fn cancel_pushes_closing_spacer() {
         Some(&cancel_controller),
     );
 
-    let last = state.transcript_preview.last().unwrap();
+    let last = state
+        .transcript_preview
+        .last()
+        .ok_or("should have last transcript entry")?;
     assert!(matches!(last.kind, TranscriptEntryKind::Spacer(_)));
+    Ok(())
 }

@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use crate::protocol::contracts::ProgressUi;
-use crate::protocol::event::UiEvent;
+use crate::bus::{Bus, WarningEvent};
 use crate::tools::authz::{PermissionsConfig, PermissionsOverlay, SessionGrantCache};
 
 /// Tracks effective permissions state, the base config (without persona overlays),
@@ -66,7 +65,7 @@ impl PermissionState {
     pub fn with_agent_overlay(&mut self, overlay: &PermissionsOverlay) {
         let mut config = self.base.clone();
         config = config.with_overlay(overlay);
-        if let Some(ref cli) = self.cli_overlay {
+        if let Some(cli) = &self.cli_overlay {
             config = config.with_overlay(cli);
         }
         let summary = config.summary();
@@ -98,11 +97,14 @@ impl PermissionState {
             .clear_for_server(server_name);
     }
 
-    pub fn emit_startup_summary_once<U: ProgressUi>(&mut self, ui: &mut U) {
+    pub async fn emit_startup_summary_once(&mut self, bus: &Bus) {
         if !self.startup_emitted {
-            ui.emit(&UiEvent::Warning {
-                message: self.startup_summary.clone(),
-            });
+            let _ = bus
+                .warning()
+                .send(WarningEvent::Message {
+                    message: self.startup_summary.clone(),
+                })
+                .await;
             self.startup_emitted = true;
         }
     }

@@ -1,8 +1,12 @@
 use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 
 use nu_agent_core::transcript::ir::{ContentLine, StyleHint};
 
-use super::*;
+use crate::rendering::theme::TuiTheme;
+use crate::state::AppState;
+
+use super::content::build_status_lines;
 
 pub(crate) fn help_panel_lines(theme: &TuiTheme) -> (&'static str, Vec<Line<'static>>) {
     (

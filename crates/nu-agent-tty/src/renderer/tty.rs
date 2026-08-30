@@ -22,7 +22,7 @@ impl BlockRenderer for TtyRenderer {
             Role::ToolDisplay => "  ",
             Role::Compaction => "[compaction] ",
             Role::System => "[system] ",
-            Role::Separator => unreachable!(), // handled above
+            Role::Separator => "", // handled above; kept for exhaustiveness
         };
 
         // 2. Status indicator
@@ -40,7 +40,7 @@ impl BlockRenderer for TtyRenderer {
         // ContentLine values are provided, use those instead.
         let mut content_parts = Vec::new();
 
-        if let Some(ref md) = block.markdown {
+        if let Some(md) = &block.markdown {
             // Split raw markdown by line and join; strip blank lines so the
             // output looks clean on a plain terminal.
             for line in md.lines() {

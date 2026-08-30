@@ -28,9 +28,9 @@ pub(crate) fn resolve_persona(
     // Determine effective agent name:
     // 1. CLI --agent flag provided → validate it's not a disabled built-in
     // 2. No CLI flag → resolve from config default/fallback
-    let effective_agent_name = if let Some(ref name) = agent_name {
-        if nu_agent_core::protocol::persona::builtins::is_builtin_persona(name)
-            && !is_builtin_enabled(name, agents_config)
+    let effective_agent_name = if let Some(name) = agent_name {
+        if nu_agent_core::protocol::persona::builtins::is_builtin_persona(&name)
+            && !is_builtin_enabled(&name, agents_config)
         {
             return Err(LabeledError::new(format!(
                 "Agent '{}' is disabled in config. Enable it or use a different agent.",
@@ -38,13 +38,13 @@ pub(crate) fn resolve_persona(
             ))
             .with_label("disabled agent", call.head));
         }
-        Some(name.clone())
+        Some(name)
     } else {
         resolve_default_agent(agents_config)?
     };
     log::debug!("effective_agent_name={effective_agent_name:?}");
 
-    let persona = if let Some(ref name) = effective_agent_name {
+    let persona = if let Some(name) = &effective_agent_name {
         let cwd = std::path::PathBuf::from(cwd);
         let config_dir = nu_agent_core::utils::xdg::config_dir()
             .map(|base| base.join("nu-agent"))

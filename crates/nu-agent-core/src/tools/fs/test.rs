@@ -9,6 +9,8 @@ use std::fs;
 use std::path::Path;
 use tempfile::tempdir;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn test_line_count(content: &str) -> usize {
@@ -71,24 +73,25 @@ fn check_conflict_detects_mismatch_and_accepts_match() {
 }
 
 #[test]
-fn atomic_overwrite_replaces_file_content() {
+fn atomic_overwrite_replaces_file_content() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("target.txt");
 
     fs::write(&file, "before").expect("seed file");
-    atomic_overwrite(&file, b"after").expect("atomic overwrite");
+    atomic_overwrite(&file, b"after").map_err(|e| format!("{e:?}"))?;
 
     let actual = fs::read_to_string(&file).expect("read file");
     assert_eq!(actual, "after");
+    Ok(())
 }
 
 #[test]
-fn metadata_helper_returns_size_and_mtime() {
+fn metadata_helper_returns_size_and_mtime() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("meta.txt");
 
     fs::write(&file, "12345").expect("write file");
-    let metadata = metadata_for_path(&file).expect("metadata");
+    let metadata = metadata_for_path(&file).map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(
         metadata,
@@ -98,6 +101,7 @@ fn metadata_helper_returns_size_and_mtime() {
         }
     );
     assert!(metadata.modified_unix_seconds > 0);
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -105,22 +109,23 @@ fn metadata_helper_returns_size_and_mtime() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn read_file_without_offset_limit_returns_full_content_and_metadata() {
+fn read_file_without_offset_limit_returns_full_content_and_metadata() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("sample.txt");
     fs::write(&file, "line1\nline2\nline3\n").expect("write file");
 
-    let response = read_file(&file, ReadRequest::default()).expect("read file");
+    let response = read_file(&file, ReadRequest::default()).map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(response.content, "line1\nline2\nline3\n");
     assert_eq!(response.total_lines, 3);
     assert_eq!(response.offset, None);
     assert_eq!(response.limit, None);
     assert!(!response.version.is_empty());
+    Ok(())
 }
 
 #[test]
-fn read_file_with_offset_and_limit_returns_window_content_and_metadata() {
+fn read_file_with_offset_and_limit_returns_window_content_and_metadata() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("window.txt");
     fs::write(&file, "a\nb\nc\nd\n").expect("write file");
@@ -132,32 +137,34 @@ fn read_file_with_offset_and_limit_returns_window_content_and_metadata() {
             limit: Some(2),
         },
     )
-    .expect("read file");
+    .map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(response.content, "b\nc\n");
     assert_eq!(response.total_lines, 4);
     assert_eq!(response.offset, Some(1));
     assert_eq!(response.limit, Some(2));
     assert!(!response.version.is_empty());
+    Ok(())
 }
 
 #[test]
-fn read_file_empty_file_is_deterministic() {
+fn read_file_empty_file_is_deterministic() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("empty.txt");
     fs::write(&file, "").expect("write file");
 
-    let response = read_file(&file, ReadRequest::default()).expect("read file");
+    let response = read_file(&file, ReadRequest::default()).map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(response.content, "");
     assert_eq!(response.total_lines, 0);
     assert_eq!(response.offset, None);
     assert_eq!(response.limit, None);
     assert!(!response.version.is_empty());
+    Ok(())
 }
 
 #[test]
-fn read_file_offset_beyond_eof_returns_empty_window_deterministically() {
+fn read_file_offset_beyond_eof_returns_empty_window_deterministically() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("eof.txt");
     fs::write(&file, "x\ny\n").expect("write file");
@@ -169,13 +176,14 @@ fn read_file_offset_beyond_eof_returns_empty_window_deterministically() {
             limit: Some(3),
         },
     )
-    .expect("read file");
+    .map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(response.content, "");
     assert_eq!(response.total_lines, 2);
     assert_eq!(response.offset, Some(10));
     assert_eq!(response.limit, Some(3));
     assert!(!response.version.is_empty());
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -183,7 +191,8 @@ fn read_file_offset_beyond_eof_returns_empty_window_deterministically() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn apply_full_content_mutation_matching_version_writes_and_reports_deterministic_summary() {
+fn apply_full_content_mutation_matching_version_writes_and_reports_deterministic_summary()
+-> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("apply.txt");
 
@@ -192,8 +201,8 @@ fn apply_full_content_mutation_matching_version_writes_and_reports_deterministic
     fs::write(&file, original).expect("seed file");
 
     let expected_version = version_token(original);
-    let summary =
-        apply_full_content_mutation(&file, Some(&expected_version), updated).expect("apply");
+    let summary = apply_full_content_mutation(&file, Some(&expected_version), updated)
+        .map_err(|e| format!("{e:?}"))?;
 
     assert!(summary.wrote);
     assert!(summary.changed);
@@ -204,6 +213,7 @@ fn apply_full_content_mutation_matching_version_writes_and_reports_deterministic
     assert_eq!(summary.previous_lines, test_line_count(original));
     assert_eq!(summary.new_lines, test_line_count(updated));
     assert_eq!(fs::read_to_string(&file).expect("read"), updated);
+    Ok(())
 }
 
 #[test]
@@ -235,7 +245,8 @@ fn apply_full_content_mutation_missing_expected_version_is_validation_error() {
 }
 
 #[test]
-fn apply_full_content_mutation_unchanged_content_matching_version_is_deterministic_without_write() {
+fn apply_full_content_mutation_unchanged_content_matching_version_is_deterministic_without_write()
+-> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("unchanged.txt");
 
@@ -243,7 +254,8 @@ fn apply_full_content_mutation_unchanged_content_matching_version_is_determinist
     fs::write(&file, content).expect("seed file");
 
     let version = version_token(content);
-    let summary = apply_full_content_mutation(&file, Some(&version), content).expect("apply");
+    let summary = apply_full_content_mutation(&file, Some(&version), content)
+        .map_err(|e| format!("{e:?}"))?;
 
     assert!(!summary.wrote);
     assert!(!summary.changed);
@@ -255,6 +267,7 @@ fn apply_full_content_mutation_unchanged_content_matching_version_is_determinist
     assert_eq!(summary.previous_lines, lines);
     assert_eq!(summary.new_lines, lines);
     assert_eq!(fs::read_to_string(&file).expect("read"), content);
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -285,7 +298,7 @@ fn apply_line_range_patch_batch_requires_expected_version() {
 }
 
 #[test]
-fn apply_line_range_patch_batch_conflict_on_version_mismatch_and_does_not_write() {
+fn apply_line_range_patch_batch_conflict_on_version_mismatch_and_does_not_write() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("conflict.txt");
     let content = "alpha\nbeta\ngamma\ndelta\n";
@@ -300,14 +313,15 @@ fn apply_line_range_patch_batch_conflict_on_version_mismatch_and_does_not_write(
             replacement: "BETA\n".to_string(),
         }],
     )
-    .expect("conflict summary");
+    .map_err(|e| format!("{e:?}"))?;
 
     let current = version_token(content);
     assert_conflict_and_unchanged(summary, stale, &current, &file);
+    Ok(())
 }
 
 #[test]
-fn apply_line_range_patch_batch_applies_multiple_ops_in_reverse_order() {
+fn apply_line_range_patch_batch_applies_multiple_ops_in_reverse_order() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("reverse-order.txt");
     let content = "line1\nline2\nline3\nline4\n";
@@ -328,7 +342,7 @@ fn apply_line_range_patch_batch_applies_multiple_ops_in_reverse_order() {
             },
         ],
     )
-    .expect("apply");
+    .map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(summary.operation_count, 2);
     assert!(summary.wrote);
@@ -341,10 +355,11 @@ fn apply_line_range_patch_batch_applies_multiple_ops_in_reverse_order() {
         fs::read_to_string(&file).expect("read"),
         "line1\nX\nY\ntail\n"
     );
+    Ok(())
 }
 
 #[test]
-fn apply_line_range_patch_batch_handles_ops_in_descending_line_order_without_panic() {
+fn apply_line_range_patch_batch_handles_ops_in_descending_line_order_without_panic() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("descending-order.txt");
     let content = "line1\nline2\nline3\nline4\nline5\nline6\n";
@@ -367,7 +382,7 @@ fn apply_line_range_patch_batch_handles_ops_in_descending_line_order_without_pan
             },
         ],
     )
-    .expect("apply");
+    .map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(summary.operation_count, 2);
     assert!(summary.wrote);
@@ -377,6 +392,7 @@ fn apply_line_range_patch_batch_handles_ops_in_descending_line_order_without_pan
         fs::read_to_string(&file).expect("read"),
         "line1\nX\nY\nline4\nFIVE\nline6\n"
     );
+    Ok(())
 }
 
 #[test]
@@ -436,7 +452,7 @@ fn apply_line_range_patch_batch_rejects_overlapping_ranges() {
 }
 
 #[test]
-fn apply_line_range_patch_batch_noop_returns_deterministic_summary_without_write() {
+fn apply_line_range_patch_batch_noop_returns_deterministic_summary_without_write() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("noop.txt");
     let content = "one\ntwo\nthree\n";
@@ -451,7 +467,7 @@ fn apply_line_range_patch_batch_noop_returns_deterministic_summary_without_write
             replacement: "two\n".to_string(),
         }],
     )
-    .expect("apply");
+    .map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(summary.operation_count, 1);
     assert!(!summary.wrote);
@@ -461,6 +477,7 @@ fn apply_line_range_patch_batch_noop_returns_deterministic_summary_without_write
     assert_eq!(summary.previous_version, expected_version);
     assert_eq!(summary.new_version, expected_version);
     assert_eq!(fs::read_to_string(&file).expect("read"), content);
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -490,7 +507,7 @@ fn apply_search_replace_edit_requires_expected_version() {
 }
 
 #[test]
-fn apply_search_replace_edit_conflict_on_stale_version_without_write() {
+fn apply_search_replace_edit_conflict_on_stale_version_without_write() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("conflict.txt");
     let content = "alpha beta alpha\n";
@@ -506,7 +523,7 @@ fn apply_search_replace_edit_conflict_on_stale_version_without_write() {
             occurrence: EditOccurrence::All,
         },
     )
-    .expect("conflict summary");
+    .map_err(|e| format!("{e:?}"))?;
 
     let current = version_token(content);
     assert_eq!(summary.replacements, 0);
@@ -518,15 +535,16 @@ fn apply_search_replace_edit_conflict_on_stale_version_without_write() {
     assert_eq!(summary.previous_version, current);
     assert_eq!(summary.new_version, current);
     assert_eq!(fs::read_to_string(&file).expect("read"), content);
+    Ok(())
 }
 
 #[test]
-fn plan_create_file_returns_plan_for_nonexistent_file() {
+fn plan_create_file_returns_plan_for_nonexistent_file() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("new-create.txt");
     let content = "hello world\n";
 
-    let plan = plan_create_file(&file, content).expect("plan");
+    let plan = plan_create_file(&file, content).map_err(|e| format!("{e:?}"))?;
 
     assert!(!plan.conflict);
     assert!(plan.would_change);
@@ -539,29 +557,31 @@ fn plan_create_file_returns_plan_for_nonexistent_file() {
     assert_eq!(plan.previous_lines, 0);
     assert_eq!(plan.new_lines, 1);
     assert_eq!(plan.previous_version, version_token(""));
+    Ok(())
 }
 
 #[test]
-fn plan_create_file_conflicts_when_file_already_exists() {
+fn plan_create_file_conflicts_when_file_already_exists() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("exists.txt");
     fs::write(&file, "existing\n").expect("seed");
 
-    let plan = plan_create_file(&file, "new content\n").expect("plan");
+    let plan = plan_create_file(&file, "new content\n").map_err(|e| format!("{e:?}"))?;
 
     assert!(plan.conflict);
     assert!(!plan.would_change);
     assert!(!plan.noop);
     assert_eq!(plan.previous_version, version_token("existing\n"));
+    Ok(())
 }
 
 #[test]
-fn apply_create_file_creates_new_file_atomically() {
+fn apply_create_file_creates_new_file_atomically() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("created-by-apply.txt");
     let content = "brand new file\nline two\n";
 
-    let summary = apply_create_file(&file, content).expect("apply");
+    let summary = apply_create_file(&file, content).map_err(|e| format!("{e:?}"))?;
 
     assert!(summary.wrote);
     assert!(summary.changed);
@@ -571,17 +591,18 @@ fn apply_create_file_creates_new_file_atomically() {
     assert_eq!(fs::read_to_string(&file).expect("read"), content);
     assert_eq!(summary.previous_version, version_token(""));
     assert_eq!(summary.new_version, version_token(content));
+    Ok(())
 }
 
 #[test]
-fn apply_create_file_conflicts_when_file_appears_between_plan_and_apply() {
+fn apply_create_file_conflicts_when_file_appears_between_plan_and_apply() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("race-condition.txt");
     let content = "intended content\n";
 
     fs::write(&file, "someone else created it\n").expect("seed");
 
-    let summary = apply_create_file(&file, content).expect("summary");
+    let summary = apply_create_file(&file, content).map_err(|e| format!("{e:?}"))?;
 
     assert!(!summary.wrote);
     assert!(!summary.changed);
@@ -590,10 +611,11 @@ fn apply_create_file_conflicts_when_file_appears_between_plan_and_apply() {
         fs::read_to_string(&file).expect("read"),
         "someone else created it\n"
     );
+    Ok(())
 }
 
 #[test]
-fn apply_search_replace_edit_literal_first_replaces_only_first_match() {
+fn apply_search_replace_edit_literal_first_replaces_only_first_match() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("literal-first.txt");
     let content = "alpha beta alpha\n";
@@ -610,7 +632,7 @@ fn apply_search_replace_edit_literal_first_replaces_only_first_match() {
             occurrence: EditOccurrence::First,
         },
     )
-    .expect("apply");
+    .map_err(|e| format!("{e:?}"))?;
 
     let expected_content = "omega beta alpha\n";
     assert_eq!(summary.replacements, 1);
@@ -622,10 +644,11 @@ fn apply_search_replace_edit_literal_first_replaces_only_first_match() {
     assert_eq!(summary.previous_version, expected_version);
     assert_eq!(summary.new_version, version_token(expected_content));
     assert_eq!(fs::read_to_string(&file).expect("read"), expected_content);
+    Ok(())
 }
 
 #[test]
-fn apply_search_replace_edit_literal_all_replaces_all_matches() {
+fn apply_search_replace_edit_literal_all_replaces_all_matches() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("literal-all.txt");
     let content = "alpha beta alpha\n";
@@ -642,7 +665,7 @@ fn apply_search_replace_edit_literal_all_replaces_all_matches() {
             occurrence: EditOccurrence::All,
         },
     )
-    .expect("apply");
+    .map_err(|e| format!("{e:?}"))?;
 
     let expected_content = "omega beta omega\n";
     assert_eq!(summary.replacements, 2);
@@ -654,10 +677,11 @@ fn apply_search_replace_edit_literal_all_replaces_all_matches() {
     assert_eq!(summary.previous_version, expected_version);
     assert_eq!(summary.new_version, version_token(expected_content));
     assert_eq!(fs::read_to_string(&file).expect("read"), expected_content);
+    Ok(())
 }
 
 #[test]
-fn apply_search_replace_edit_regex_first_replaces_only_first_match() {
+fn apply_search_replace_edit_regex_first_replaces_only_first_match() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("regex-first.txt");
     let content = "alpha 1\nalpha 2\n";
@@ -674,7 +698,7 @@ fn apply_search_replace_edit_regex_first_replaces_only_first_match() {
             occurrence: EditOccurrence::First,
         },
     )
-    .expect("apply");
+    .map_err(|e| format!("{e:?}"))?;
 
     let expected_content = "omega\nalpha 2\n";
     assert_eq!(summary.replacements, 1);
@@ -686,10 +710,11 @@ fn apply_search_replace_edit_regex_first_replaces_only_first_match() {
     assert_eq!(summary.previous_version, expected_version);
     assert_eq!(summary.new_version, version_token(expected_content));
     assert_eq!(fs::read_to_string(&file).expect("read"), expected_content);
+    Ok(())
 }
 
 #[test]
-fn apply_search_replace_edit_regex_all_replaces_all_matches() {
+fn apply_search_replace_edit_regex_all_replaces_all_matches() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("regex-all.txt");
     let content = "alpha 1\nalpha 2\n";
@@ -706,7 +731,7 @@ fn apply_search_replace_edit_regex_all_replaces_all_matches() {
             occurrence: EditOccurrence::All,
         },
     )
-    .expect("apply");
+    .map_err(|e| format!("{e:?}"))?;
 
     let expected_content = "omega\nomega\n";
     assert_eq!(summary.replacements, 2);
@@ -718,10 +743,11 @@ fn apply_search_replace_edit_regex_all_replaces_all_matches() {
     assert_eq!(summary.previous_version, expected_version);
     assert_eq!(summary.new_version, version_token(expected_content));
     assert_eq!(fs::read_to_string(&file).expect("read"), expected_content);
+    Ok(())
 }
 
 #[test]
-fn apply_search_replace_edit_no_match_returns_noop_summary_without_write() {
+fn apply_search_replace_edit_no_match_returns_noop_summary_without_write() -> Result<()> {
     let dir = tempdir().expect("temp dir");
     let file = dir.path().join("no-match.txt");
     let content = "alpha beta\n";
@@ -738,7 +764,7 @@ fn apply_search_replace_edit_no_match_returns_noop_summary_without_write() {
             occurrence: EditOccurrence::All,
         },
     )
-    .expect("apply");
+    .map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(summary.replacements, 0);
     assert!(!summary.wrote);
@@ -749,6 +775,7 @@ fn apply_search_replace_edit_no_match_returns_noop_summary_without_write() {
     assert_eq!(summary.previous_version, expected_version);
     assert_eq!(summary.new_version, expected_version);
     assert_eq!(fs::read_to_string(&file).expect("read"), content);
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

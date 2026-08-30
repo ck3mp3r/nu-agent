@@ -1,7 +1,7 @@
 use nu_protocol::{LabeledError, Span};
 use tokio::sync::mpsc;
 
-use crate::bus::{Bus, SessionEvent, WarningEvent, create_bus};
+use crate::bus::{Bus, SessionEvent, SessionRx, UiStateRx, WarningEvent, WarningRx, create_bus};
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::session::SessionStage;
 use crate::orchestrator::stages::ui_request::UiRequestStage;
@@ -10,6 +10,8 @@ use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand};
 use crate::protocol::contracts::{McpUsabilityState, UiMessageSnapshot};
 use crate::session::SessionInfo;
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 struct CtxState {
     worker_active: bool,
@@ -26,9 +28,9 @@ struct HarnessParts<'a> {
     concurrent_tx: &'a mpsc::Sender<UiRequestResponse>,
     bus: &'a Bus,
     worker_rx: &'a mut Option<mpsc::Receiver<WorkerCommand>>,
-    warning_rx: &'a mut tokio::sync::broadcast::Receiver<WarningEvent>,
-    ui_state_rx: &'a mut tokio::sync::broadcast::Receiver<UiStateEvent>,
-    session_rx: &'a mut tokio::sync::broadcast::Receiver<SessionEvent>,
+    warning_rx: &'a mut WarningRx,
+    ui_state_rx: &'a mut UiStateRx,
+    session_rx: &'a mut SessionRx,
     state: &'a mut CtxState,
 }
 
@@ -39,9 +41,9 @@ struct Harness {
     blocking_tx: mpsc::Sender<UiRequestResponse>,
     concurrent_tx: mpsc::Sender<UiRequestResponse>,
     bus: Bus,
-    warning_rx: tokio::sync::broadcast::Receiver<WarningEvent>,
-    ui_state_rx: tokio::sync::broadcast::Receiver<UiStateEvent>,
-    session_rx: tokio::sync::broadcast::Receiver<SessionEvent>,
+    warning_rx: WarningRx,
+    ui_state_rx: UiStateRx,
+    session_rx: SessionRx,
     state: CtxState,
 }
 
@@ -115,7 +117,7 @@ fn recv_command(worker_rx: &mut Option<mpsc::Receiver<WorkerCommand>>) -> Option
     worker_rx.as_mut()?.try_recv().ok()
 }
 
-fn take_warnings(warning_rx: &mut tokio::sync::broadcast::Receiver<WarningEvent>) -> Vec<String> {
+fn take_warnings(warning_rx: &mut WarningRx) -> Vec<String> {
     let mut out = Vec::new();
     while let Ok(event) = warning_rx.try_recv() {
         match event {
@@ -126,9 +128,7 @@ fn take_warnings(warning_rx: &mut tokio::sync::broadcast::Receiver<WarningEvent>
     out
 }
 
-fn take_ui_state(
-    ui_state_rx: &mut tokio::sync::broadcast::Receiver<UiStateEvent>,
-) -> Vec<UiStateEvent> {
+fn take_ui_state(ui_state_rx: &mut UiStateRx) -> Vec<UiStateEvent> {
     let mut out = Vec::new();
     while let Ok(event) = ui_state_rx.try_recv() {
         out.push(event);
@@ -136,9 +136,7 @@ fn take_ui_state(
     out
 }
 
-fn take_session_events(
-    session_rx: &mut tokio::sync::broadcast::Receiver<SessionEvent>,
-) -> Vec<SessionEvent> {
+fn take_session_events(session_rx: &mut SessionRx) -> Vec<SessionEvent> {
     let mut out = Vec::new();
     while let Ok(event) = session_rx.try_recv() {
         out.push(event);
@@ -199,7 +197,7 @@ async fn model_switch_send_failure_emits_warning() {
 }
 
 #[tokio::test]
-async fn model_switch_error_response_emits_warning() {
+async fn model_switch_error_response_emits_warning() -> Result<()> {
     let mut h = Harness::new();
     let HarnessParts {
         stage,
@@ -224,18 +222,21 @@ async fn model_switch_error_response_emits_warning() {
         .await;
 
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    stage.handle_blocking_response(
-        UiRequestResponse::ModelSwitch(Err("model failed".to_string())),
-        &mut ctx,
-    );
+    stage
+        .handle_blocking_response(
+            UiRequestResponse::ModelSwitch(Err("model failed".to_string())),
+            &mut ctx,
+        )
+        .await;
 
     let warnings = take_warnings(warning_rx);
     assert!(warnings.iter().any(|w| w == "model failed"));
-    let cmd = recv_command(worker_rx).expect("HandleUiRequest dispatched");
+    let cmd = recv_command(worker_rx).ok_or("HandleUiRequest should be dispatched")?;
     assert!(
         matches!(cmd, WorkerCommand::HandleUiRequest { .. }),
         "expected HandleUiRequest command"
     );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -278,7 +279,7 @@ async fn agent_switch_send_failure_emits_warning() {
 }
 
 #[tokio::test]
-async fn agent_switch_error_response_emits_warning() {
+async fn agent_switch_error_response_emits_warning() -> Result<()> {
     let mut h = Harness::new();
     let HarnessParts {
         stage,
@@ -303,18 +304,21 @@ async fn agent_switch_error_response_emits_warning() {
         .await;
 
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    stage.handle_blocking_response(
-        UiRequestResponse::AgentSwitch(Err("agent failed".to_string())),
-        &mut ctx,
-    );
+    stage
+        .handle_blocking_response(
+            UiRequestResponse::AgentSwitch(Err("agent failed".to_string())),
+            &mut ctx,
+        )
+        .await;
 
     let warnings = take_warnings(warning_rx);
     assert!(warnings.iter().any(|w| w == "agent failed"));
-    let cmd = recv_command(worker_rx).expect("HandleUiRequest dispatched");
+    let cmd = recv_command(worker_rx).ok_or("HandleUiRequest should be dispatched")?;
     assert!(
         matches!(cmd, WorkerCommand::HandleUiRequest { .. }),
         "expected HandleUiRequest command"
     );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -435,13 +439,15 @@ async fn session_switch_success_clears_and_hydrates_transcript() {
 
     let snapshot = UiMessageSnapshot::new("user", "hello");
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    stage.handle_blocking_response(
-        UiRequestResponse::SessionSwitch {
-            id: "sess-1".to_string(),
-            result: Ok(vec![snapshot]),
-        },
-        &mut ctx,
-    );
+    stage
+        .handle_blocking_response(
+            UiRequestResponse::SessionSwitch {
+                id: "sess-1".to_string(),
+                result: Ok(vec![snapshot]),
+            },
+            &mut ctx,
+        )
+        .await;
 
     let ui_events = take_ui_state(ui_state_rx);
     assert!(
@@ -494,13 +500,15 @@ async fn session_switch_error_emits_warning() {
     let _ = recv_command(worker_rx);
 
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    stage.handle_blocking_response(
-        UiRequestResponse::SessionSwitch {
-            id: "sess-1".to_string(),
-            result: Err("session load failed".to_string()),
-        },
-        &mut ctx,
-    );
+    stage
+        .handle_blocking_response(
+            UiRequestResponse::SessionSwitch {
+                id: "sess-1".to_string(),
+                result: Err("session load failed".to_string()),
+            },
+            &mut ctx,
+        )
+        .await;
 
     let warnings = take_warnings(warning_rx);
     assert!(warnings.iter().any(|w| w == "session load failed"));
@@ -547,7 +555,7 @@ async fn session_switch_send_failure_emits_warning() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn session_picker_launch_dispatches_refresh_command() {
+async fn session_picker_launch_dispatches_refresh_command() -> Result<()> {
     let mut h = Harness::new();
     let HarnessParts {
         stage,
@@ -566,7 +574,7 @@ async fn session_picker_launch_dispatches_refresh_command() {
         .handle_incoming(UiRequest::RefreshSessionPicker, &mut ctx)
         .await;
 
-    let cmd = recv_command(worker_rx).expect("RefreshSessionPicker dispatched");
+    let cmd = recv_command(worker_rx).ok_or("RefreshSessionPicker should be dispatched")?;
     assert!(
         matches!(
             cmd,
@@ -577,10 +585,11 @@ async fn session_picker_launch_dispatches_refresh_command() {
         ),
         "expected RefreshSessionPicker command"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn session_picker_refresh_dispatched_when_no_pending() {
+async fn session_picker_refresh_dispatched_when_no_pending() -> Result<()> {
     let mut h = Harness::new();
     let HarnessParts {
         stage,
@@ -599,7 +608,7 @@ async fn session_picker_refresh_dispatched_when_no_pending() {
         .handle_incoming(UiRequest::RefreshSessionPicker, &mut ctx)
         .await;
 
-    let cmd = recv_command(worker_rx).expect("RefreshSessionPicker dispatched");
+    let cmd = recv_command(worker_rx).ok_or("RefreshSessionPicker should be dispatched")?;
     assert!(
         matches!(
             cmd,
@@ -610,6 +619,7 @@ async fn session_picker_refresh_dispatched_when_no_pending() {
         ),
         "expected RefreshSessionPicker command when no refresh is pending"
     );
+    Ok(())
 }
 
 #[tokio::test]
@@ -667,10 +677,12 @@ async fn session_picker_refresh_success_sets_options() {
     let _ = recv_command(worker_rx);
 
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    stage.handle_concurrent_response(
-        UiRequestResponse::SessionRefresh(Ok(vec![session_info("sess-1")])),
-        &mut ctx,
-    );
+    stage
+        .handle_concurrent_response(
+            UiRequestResponse::SessionRefresh(Ok(vec![session_info("sess-1")])),
+            &mut ctx,
+        )
+        .await;
 
     let ui_events = take_ui_state(ui_state_rx);
     assert!(
@@ -710,10 +722,12 @@ async fn session_picker_refresh_error_warns() {
     let _ = recv_command(worker_rx);
 
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    stage.handle_concurrent_response(
-        UiRequestResponse::SessionRefresh(Err("refresh failed".to_string())),
-        &mut ctx,
-    );
+    stage
+        .handle_concurrent_response(
+            UiRequestResponse::SessionRefresh(Err("refresh failed".to_string())),
+            &mut ctx,
+        )
+        .await;
 
     let warnings = take_warnings(warning_rx);
     assert!(warnings.iter().any(|w| w == "refresh failed"));
@@ -751,7 +765,7 @@ async fn session_picker_refresh_send_failure_warns() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn worker_result_processed_before_model_switch_result() {
+async fn worker_result_processed_before_model_switch_result() -> Result<()> {
     let mut h = Harness::new();
     let HarnessParts {
         stage,
@@ -765,33 +779,38 @@ async fn worker_result_processed_before_model_switch_result() {
         session_rx: _,
         state,
     } = h.parts();
-    let mut session = SessionStage::new();
+    let mut session = SessionStage;
     state.worker_active = true;
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    session.handle_outcome(
-        TurnOutcome::Error(LabeledError::new("turn failed")),
-        &mut ctx,
-    );
+    session
+        .handle_outcome(
+            TurnOutcome::Error(LabeledError::new("turn failed")),
+            &mut ctx,
+        )
+        .await;
 
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    stage.handle_blocking_response(
-        UiRequestResponse::ModelSwitch(Err("model failed".to_string())),
-        &mut ctx,
-    );
+    stage
+        .handle_blocking_response(
+            UiRequestResponse::ModelSwitch(Err("model failed".to_string())),
+            &mut ctx,
+        )
+        .await;
 
     let warnings = take_warnings(warning_rx);
     let session_idx = warnings
         .iter()
         .position(|w| w.starts_with("Turn failed:"))
-        .expect("session turn error warning");
+        .ok_or("session turn error warning should be present")?;
     let model_idx = warnings
         .iter()
         .position(|w| w == "model failed")
-        .expect("model switch error warning");
+        .ok_or("model switch error warning should be present")?;
     assert!(
         session_idx < model_idx,
         "session result must be processed before model result, got {warnings:?}"
     );
+    Ok(())
 }
 
 #[tokio::test]
@@ -881,27 +900,31 @@ async fn concurrent_in_flight_rules_allow_multiple_mcp_toggles() {
     );
 
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    stage.handle_concurrent_response(
-        UiRequestResponse::McpToggle {
-            server: "gh".to_string(),
-            result: Ok(McpUsabilityState::Disabled),
-            total: 0,
-            server_count: 0,
-            names_by_server: vec![],
-        },
-        &mut ctx,
-    );
+    stage
+        .handle_concurrent_response(
+            UiRequestResponse::McpToggle {
+                server: "gh".to_string(),
+                result: Ok(McpUsabilityState::Disabled),
+                total: 0,
+                server_count: 0,
+                names_by_server: vec![],
+            },
+            &mut ctx,
+        )
+        .await;
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    stage.handle_concurrent_response(
-        UiRequestResponse::McpToggle {
-            server: "fs".to_string(),
-            result: Ok(McpUsabilityState::Enabled),
-            total: 0,
-            server_count: 0,
-            names_by_server: vec![],
-        },
-        &mut ctx,
-    );
+    stage
+        .handle_concurrent_response(
+            UiRequestResponse::McpToggle {
+                server: "fs".to_string(),
+                result: Ok(McpUsabilityState::Enabled),
+                total: 0,
+                server_count: 0,
+                names_by_server: vec![],
+            },
+            &mut ctx,
+        )
+        .await;
 
     assert!(!stage.has_pending());
 }
@@ -933,16 +956,18 @@ async fn session_switch_success_rehydrates_transcript_from_snapshots() {
     let _ = recv_command(worker_rx);
 
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    stage.handle_blocking_response(
-        UiRequestResponse::SessionSwitch {
-            id: "sess-1".to_string(),
-            result: Ok(vec![
-                UiMessageSnapshot::new("user", "first"),
-                UiMessageSnapshot::new("assistant", "second"),
-            ]),
-        },
-        &mut ctx,
-    );
+    stage
+        .handle_blocking_response(
+            UiRequestResponse::SessionSwitch {
+                id: "sess-1".to_string(),
+                result: Ok(vec![
+                    UiMessageSnapshot::new("user", "first"),
+                    UiMessageSnapshot::new("assistant", "second"),
+                ]),
+            },
+            &mut ctx,
+        )
+        .await;
 
     let ui_events = take_ui_state(ui_state_rx);
     assert!(

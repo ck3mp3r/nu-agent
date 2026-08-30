@@ -1,5 +1,7 @@
 use nu_agent_a2a::{AgentBuilder, Peer, Skill, rebuild_card_for_switch, skill_from_persona};
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // The workspace reqwest is built with `rustls-no-provider`, meaning the
 // application must install a crypto provider before constructing a Client.
 static CRYPTO_INIT: std::sync::Once = std::sync::Once::new();
@@ -32,7 +34,7 @@ fn test_client() -> reqwest::Client {
 ///   AgentBuilder::build → card_handle → rebuild_card_for_switch → server
 ///   serves updated card.
 #[tokio::test]
-async fn test_a2a_card_updated_on_agent_switch() {
+async fn test_a2a_card_updated_on_agent_switch() -> Result<()> {
     ensure_crypto_provider();
 
     // ── 1. Build an agent with initial card "Agent A" ─────────────────────
@@ -50,7 +52,7 @@ async fn test_a2a_card_updated_on_agent_switch() {
         .port(0)
         .build()
         .await
-        .expect("AgentBuilder::build should succeed");
+        .map_err(|e| format!("{e:?}"))?;
 
     let local_url = handle.server.local_url.clone();
     let client = test_client();
@@ -60,17 +62,29 @@ async fn test_a2a_card_updated_on_agent_switch() {
         .get(format!("{}/.well-known/agent-card.json", local_url))
         .send()
         .await
-        .expect("GET initial card should succeed");
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await.map_err(|e| format!("{e:?}"))?;
     assert_eq!(body["name"], "Agent A");
     assert_eq!(body["description"], "Initial agent description");
-    assert_eq!(body["skills"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        body["skills"]
+            .as_array()
+            .ok_or("skills should be an array")?
+            .len(),
+        1
+    );
     assert_eq!(body["skills"][0]["name"], "Agent A");
 
     // Capture server-bound fields before the switch
-    let initial_url = body["url"].as_str().unwrap().to_string();
-    let initial_version = body["version"].as_str().unwrap().to_string();
+    let initial_url = body["url"]
+        .as_str()
+        .ok_or("url should be a string")?
+        .to_string();
+    let initial_version = body["version"]
+        .as_str()
+        .ok_or("version should be a string")?
+        .to_string();
 
     // ── 3. Simulate an agent switch via the card_handle ──────────────────
     // This replicates the exact closure pattern from mode_execute.rs:288-312:
@@ -93,7 +107,7 @@ async fn test_a2a_card_updated_on_agent_switch() {
     let self_port = handle.server.port;
     let old_name: String;
     {
-        let card_handle = handle.card_handle().expect("card_handle should be Some");
+        let card_handle = handle.card_handle().ok_or("card_handle should be Some")?;
         let mut card = card_handle.write().expect("agent_card lock");
         old_name = card.name.clone();
         let skill = skill_from_persona("Agent B", Some("Switched agent description"));
@@ -122,12 +136,18 @@ async fn test_a2a_card_updated_on_agent_switch() {
         .get(format!("{}/.well-known/agent-card.json", local_url))
         .send()
         .await
-        .expect("GET updated card should succeed");
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = resp.json().await.unwrap();
+    let body: serde_json::Value = resp.json().await.map_err(|e| format!("{e:?}"))?;
     assert_eq!(body["name"], "Agent B");
     assert_eq!(body["description"], "Switched agent description");
-    assert_eq!(body["skills"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        body["skills"]
+            .as_array()
+            .ok_or("skills should be an array")?
+            .len(),
+        1
+    );
     assert_eq!(body["skills"][0]["name"], "Agent B");
     assert_eq!(
         body["skills"][0]["description"],
@@ -148,11 +168,11 @@ async fn test_a2a_card_updated_on_agent_switch() {
         let new_peer = peers
             .iter()
             .find(|p| p.name == "Agent B")
-            .expect("new peer 'Agent B' must exist in cache");
+            .ok_or("new peer 'Agent B' must exist in cache")?;
         let cached_card = new_peer
             .card
             .as_ref()
-            .expect("cached peer must have a card");
+            .ok_or("cached peer must have a card")?;
         assert_eq!(cached_card.name, "Agent B");
         assert_eq!(
             cached_card.description.as_deref(),
@@ -174,4 +194,5 @@ async fn test_a2a_card_updated_on_agent_switch() {
 
     // ── 6. Clean up ──────────────────────────────────────────────────────
     handle.shutdown().await;
+    Ok(())
 }

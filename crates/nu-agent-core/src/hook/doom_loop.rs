@@ -53,22 +53,28 @@ impl DoomLoopDetector {
     ///
     /// Returns `Some(ToolCallAction::skip(...))` with a detection message if a doom loop is detected, `None` otherwise.
     /// Using `Skip` feeds the message to the LLM as a tool result so it can change course.
-    pub fn check_and_record(
+    pub async fn check_and_record(
         &self,
         tool_name: &str,
         args: &str,
         bus: &Bus,
     ) -> Option<ToolCallAction> {
-        let mut state = self.state.lock().expect("doom loop mutex poisoned");
-        if let Some(tool) = state.check_and_record(tool_name, args) {
+        let detected = {
+            let mut state = self.state.lock().expect("doom loop mutex poisoned");
+            state.check_and_record(tool_name, args)
+        };
+        if let Some(tool) = detected {
             log::warn!("Doom loop detected: tool={tool_name}");
             let message = format!(
                 "Doom loop detected: '{}' called {} times with identical arguments",
                 tool, DOOM_LOOP_THRESHOLD
             );
-            let _ = bus.warning().send(WarningEvent::Message {
-                message: message.clone(),
-            });
+            let _ = bus
+                .warning()
+                .send(WarningEvent::Message {
+                    message: message.clone(),
+                })
+                .await;
             Some(ToolCallAction::skip(message))
         } else {
             None

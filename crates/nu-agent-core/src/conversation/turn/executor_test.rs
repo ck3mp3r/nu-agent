@@ -11,12 +11,15 @@ use std::sync::Arc;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::super::test::{default_circuit_breaker, default_doom_state, default_last_total_tokens};
-use super::test_utils::{MockResolver, MockUi, test_compaction_config, test_config};
+use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
 use crate::conversation::state::memory::MemoryState;
+use crate::protocol::event::UiEvent;
 use crate::session::{FsSessionStore, StoreEntry};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Build a `MemoryState<FsSessionStore>` backed by the given tempdir (no
 /// compaction — `CachedMemory` is used directly).
@@ -30,7 +33,7 @@ fn turn_executor_new_constructs_without_panic() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let mut memory_state = make_memory_state(&temp_dir);
-    let closure_registry = ClosureRegistry::new();
+    let closure_registry = ClosureRegistry::default();
     let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
     let shared_model = super::test_utils::shared_mock_model_handle();
@@ -59,7 +62,7 @@ fn turn_executor_exposes_memory_state() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let mut memory_state = make_memory_state(&temp_dir);
-    let closure_registry = ClosureRegistry::new();
+    let closure_registry = ClosureRegistry::default();
     let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
     let shared_model = super::test_utils::shared_mock_model_handle();
@@ -90,7 +93,7 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let mut memory_state = make_memory_state(&temp_dir);
-    let closure_registry = ClosureRegistry::new();
+    let closure_registry = ClosureRegistry::default();
     let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
     let shared_model = super::test_utils::shared_mock_model_handle();
@@ -137,25 +140,39 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
 ///   3. UiEvent::Completed was emitted
 ///   4. UiEvent::AssistantMessage was NOT emitted
 #[tokio::test]
-async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed() {
+async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed() -> Result<()>
+{
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-cancelled-session";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    let model = MockCompletionModel::from_stream_turns([[
-        MockStreamEvent::Text("partial response".to_string()),
-        MockStreamEvent::final_response_with_default_usage(),
-    ]]);
+    // The model emits a tool call to the cancelling tool, which publishes a
+    // CancelEvent on the shared bus from inside `call()`. This drives the
+    // cancelled path deterministically (the hook subscribes to `bus.cancel()`
+    // before the turn runs).
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "test_cancel_tool", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::Text("unreachable".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
     let bus = crate::bus::create_bus();
     let mut turn_rx = bus.turn().subscribe();
-    let mut ui = MockUi::immediately_cancelled(bus.clone());
 
-    let closure_registry = ClosureRegistry::new();
+    let handle = rig::tool::server::ToolServer::new()
+        .tool(super::test_utils::CancellingTool::new(bus.clone()))
+        .run();
+    let closure_registry = ClosureRegistry::default();
     let mcp_registry = McpToolRegistry::empty();
-    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut event_collector = super::test_utils::BusEventCollector::subscribe(&bus);
 
     let mut executor = TurnExecutor::new(
         &config,
@@ -163,8 +180,12 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
-            tool_server_handle,
-            visible_tool_definitions: vec![],
+            tool_server_handle: handle,
+            visible_tool_definitions: vec![crate::types::ToolDefinition {
+                name: "test_cancel_tool".to_string(),
+                description: "cancels the turn".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
             last_total_tokens: default_last_total_tokens(),
@@ -176,7 +197,6 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "hello".to_string(),
                 preamble: None,
@@ -184,7 +204,6 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -194,8 +213,9 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
         "execute() must not return Err for a cancelled turn; got: {:?}",
         result.err()
     );
+    let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)),
+        matches!(outcome, TurnOutcome::EarlyReturn(_)),
         "cancelled Ok path must return TurnOutcome::EarlyReturn, not TurnOutcome::Completed"
     );
 
@@ -205,7 +225,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -213,16 +233,14 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
             _ => None,
         })
         .collect();
-    // The mock cancels immediately (before any assistant response), so path C appends
-    // the delta from PromptCancelled::chat_history. With pre_turn_count=0 on a fresh
-    // session the delta is [user("hello")] = 1 message. However the mock timing may
-    // include a partial assistant message depending on scheduler ordering, so we allow
-    // up to 2 (user + optional partial assistant). We assert strictly > 0 AND <= 2 to
-    // catch duplication (which would produce 3+ messages).
+    // The cancelling tool produces a result and then cancels, so path C appends
+    // the delta from PromptCancelled::chat_history plus the synthetic assistant
+    // close-block: [user("hello"), asst(tool_call), user(tool_result),
+    // asst(close)]. We assert the delta is non-empty and small (<= 4) to catch
+    // duplication (which would produce more).
     assert!(
-        !persisted.is_empty() && persisted.len() <= 2,
-        "cancelled turn: expected 1-2 messages (user + optional partial), got {}; \
-         messages: {:?}",
+        !persisted.is_empty() && persisted.len() <= 4,
+        "cancelled turn: expected 1-4 messages, got {}; messages: {:?}",
         persisted.len(),
         persisted
     );
@@ -243,12 +261,15 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
     );
 
     // 4. UiEvent::AssistantMessage must NOT have been emitted
+    let events = event_collector.drain();
     assert!(
-        !ui.events
+        !events
             .iter()
             .any(|e| matches!(e, UiEvent::AssistantMessage { .. })),
         "UiEvent::AssistantMessage must NOT be emitted for a cancelled turn (path C)"
     );
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +283,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
 /// conversation_store().append() for completed turns. The single write happens
 /// through memory.append() which rig calls internally at turn end.
 #[tokio::test]
-async fn completed_turn_no_explicit_store_append_needed() {
+async fn completed_turn_no_explicit_store_append_needed() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-completed-session";
@@ -274,9 +295,8 @@ async fn completed_turn_no_explicit_store_append_needed() {
     ]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -299,7 +319,6 @@ async fn completed_turn_no_explicit_store_append_needed() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "hello".to_string(),
                 preamble: None,
@@ -307,7 +326,6 @@ async fn completed_turn_no_explicit_store_append_needed() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -320,8 +338,9 @@ async fn completed_turn_no_explicit_store_append_needed() {
         "execute() must succeed; got: {:?}",
         result.err()
     );
+    let outcome = result.map_err(|e| format!("completed turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(result.unwrap(), TurnOutcome::Completed),
+        matches!(outcome, TurnOutcome::Completed),
         "completed turn must return TurnOutcome::Completed"
     );
 
@@ -330,7 +349,7 @@ async fn completed_turn_no_explicit_store_append_needed() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -348,6 +367,8 @@ async fn completed_turn_no_explicit_store_append_needed() {
         response_data.is_some(),
         "TurnResponseData must be populated after completed turn"
     );
+
+    Ok(())
 }
 
 /// Cancelled turn (path C) writes to both JSONL and in-memory cache via a
@@ -356,7 +377,7 @@ async fn completed_turn_no_explicit_store_append_needed() {
 /// Verifying the single-write pattern: both `conversation_store().load()` and
 /// `memory().load()` return the same messages after a cancelled turn.
 #[tokio::test]
-async fn cancelled_turn_writes_via_single_memory_append() {
+async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
     use rig::memory::ConversationMemory;
 
     let config = test_config();
@@ -364,18 +385,27 @@ async fn cancelled_turn_writes_via_single_memory_append() {
     let session_id = "test-single-write-cancelled";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    let model = MockCompletionModel::from_stream_turns([[
-        MockStreamEvent::Text("partial".to_string()),
-        MockStreamEvent::final_response_with_default_usage(),
-    ]]);
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "test_cancel_tool", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::Text("unreachable".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
     let bus = crate::bus::create_bus();
-    let mut ui = MockUi::immediately_cancelled(bus.clone());
-
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    // The cancelling tool publishes a CancelEvent from inside `call()` (after
+    // the hook subscribes to `bus.cancel()`), driving the cancelled path
+    // deterministically.
+    let handle = rig::tool::server::ToolServer::new()
+        .tool(super::test_utils::CancellingTool::new(bus.clone()))
+        .run();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
-    let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
         &config,
@@ -383,8 +413,12 @@ async fn cancelled_turn_writes_via_single_memory_append() {
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
-            tool_server_handle,
-            visible_tool_definitions: vec![],
+            tool_server_handle: handle,
+            visible_tool_definitions: vec![crate::types::ToolDefinition {
+                name: "test_cancel_tool".to_string(),
+                description: "cancels the turn".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
             last_total_tokens: default_last_total_tokens(),
@@ -396,7 +430,6 @@ async fn cancelled_turn_writes_via_single_memory_append() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "hello".to_string(),
                 preamble: None,
@@ -404,19 +437,19 @@ async fn cancelled_turn_writes_via_single_memory_append() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
     assert!(result.is_ok());
-    assert!(matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)));
+    let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
+    assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
 
     // Both store (JSONL) and memory cache must have the messages
     let from_store_entries = memory_state
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let from_store: Vec<crate::types::Message> = from_store_entries
         .iter()
         .filter_map(|e| match e {
@@ -438,7 +471,9 @@ async fn cancelled_turn_writes_via_single_memory_append() {
         .inner_memory()
         .load(session_id)
         .await
-        .expect("memory load should succeed without error");
+        .map_err(|e| format!("memory load should succeed without error: {e:?}"))?;
+
+    Ok(())
 }
 
 /// `last_total_tokens` is set on the memory before rig calls `memory.append()` at turn end.
@@ -451,7 +486,7 @@ async fn cancelled_turn_writes_via_single_memory_append() {
 /// This test verifies that `last_total_tokens_mut()` on MemoryState is updated
 /// to reflect the turn result's last_total_tokens after a completed turn.
 #[tokio::test]
-async fn last_total_tokens_updated_on_completed_turn() {
+async fn last_total_tokens_updated_on_completed_turn() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-token-tracking";
@@ -466,9 +501,8 @@ async fn last_total_tokens_updated_on_completed_turn() {
     ]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -491,7 +525,6 @@ async fn last_total_tokens_updated_on_completed_turn() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "test prompt".to_string(),
                 preamble: None,
@@ -499,12 +532,12 @@ async fn last_total_tokens_updated_on_completed_turn() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
     assert!(result.is_ok());
-    assert!(matches!(result.unwrap(), TurnOutcome::Completed));
+    let outcome = result.map_err(|e| format!("completed turn must be Ok: {e:?}"))?;
+    assert!(matches!(outcome, TurnOutcome::Completed));
 
     // After a completed turn with a session, last_total_tokens must be Some(...)
     // (even if 0 from the mock model — the key is it was set).
@@ -512,6 +545,8 @@ async fn last_total_tokens_updated_on_completed_turn() {
         memory_state.last_total_tokens().is_some(),
         "last_total_tokens must be Some after a completed turn with a session"
     );
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +560,7 @@ async fn last_total_tokens_updated_on_completed_turn() {
 /// gets messages=Some(chat_history). After Fix 2, executor persists those messages
 /// before returning LabeledError.
 #[tokio::test]
-async fn max_turns_error_persists_full_history() {
+async fn max_turns_error_persists_full_history() -> Result<()> {
     // max_tool_turns=0: rig raises MaxTurnsError as soon as a tool-call turn would
     // be scheduled (current_turn > 0 + 1 after the first tool response).
     let config = Config {
@@ -544,9 +579,8 @@ async fn max_turns_error_persists_full_history() {
     ]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -569,7 +603,6 @@ async fn max_turns_error_persists_full_history() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "please call a tool".to_string(),
                 preamble: None,
@@ -577,7 +610,6 @@ async fn max_turns_error_persists_full_history() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -592,7 +624,7 @@ async fn max_turns_error_persists_full_history() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted
         .iter()
         .filter_map(|e| match e {
@@ -604,6 +636,8 @@ async fn max_turns_error_persists_full_history() {
         !persisted.is_empty(),
         "MaxTurnsError must persist chat_history to JSONL (Fix 1 + Fix 2 path A history)"
     );
+
+    Ok(())
 }
 
 /// UnknownToolCall carries full chat_history — executor must persist it and return Err.
@@ -612,7 +646,7 @@ async fn max_turns_error_persists_full_history() {
 /// in the agent's tool list. Rig raises UnknownToolCall. After Fix 1, TurnError
 /// gets messages=Some(chat_history). After Fix 2, executor persists them.
 #[tokio::test]
-async fn unknown_tool_error_persists_full_history() {
+async fn unknown_tool_error_persists_full_history() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-unknown-tool";
@@ -630,9 +664,8 @@ async fn unknown_tool_error_persists_full_history() {
     ]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -655,7 +688,6 @@ async fn unknown_tool_error_persists_full_history() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "use a tool please".to_string(),
                 preamble: None,
@@ -663,7 +695,6 @@ async fn unknown_tool_error_persists_full_history() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -678,7 +709,7 @@ async fn unknown_tool_error_persists_full_history() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -690,6 +721,8 @@ async fn unknown_tool_error_persists_full_history() {
         !persisted.is_empty(),
         "UnknownToolCall must persist chat_history to JSONL (Fix 1 + Fix 2 path A history)"
     );
+
+    Ok(())
 }
 
 /// Network/CompletionError on a fresh session — executor persists the user prompt
@@ -700,7 +733,7 @@ async fn unknown_tool_error_persists_full_history() {
 /// so the delta path fires and persists just the user message. The placeholder path
 /// is no longer triggered for this case.
 #[tokio::test]
-async fn network_error_on_fresh_session_persists_user_message() {
+async fn network_error_on_fresh_session_persists_user_message() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-network-error";
@@ -712,9 +745,8 @@ async fn network_error_on_fresh_session_persists_user_message() {
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("network timeout")]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -737,7 +769,6 @@ async fn network_error_on_fresh_session_persists_user_message() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: prompt_text.to_string(),
                 preamble: None,
@@ -745,7 +776,6 @@ async fn network_error_on_fresh_session_persists_user_message() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -762,7 +792,7 @@ async fn network_error_on_fresh_session_persists_user_message() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -781,6 +811,8 @@ async fn network_error_on_fresh_session_persists_user_message() {
         matches!(persisted[0], crate::types::Message::User { .. }),
         "persisted[0] must be a User message"
     );
+
+    Ok(())
 }
 
 /// When `on_completion_call` fires before a CompletionError on a fresh session,
@@ -796,7 +828,7 @@ async fn network_error_on_fresh_session_persists_user_message() {
 /// This is CORRECT: we now save the user's question even if the API fails to respond,
 /// which is better than saving a fake `[Turn failed:]` assistant message.
 #[tokio::test]
-async fn hard_error_on_first_llm_call_persists_user_message() {
+async fn hard_error_on_first_llm_call_persists_user_message() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-hard-error-no-hook-history";
@@ -810,9 +842,8 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -835,7 +866,6 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: prompt_text.to_string(),
                 preamble: None,
@@ -843,7 +873,6 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -858,7 +887,7 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -880,6 +909,8 @@ async fn hard_error_on_first_llm_call_persists_user_message() {
         "persisted[0] must be a User message; got {:?}",
         persisted[0]
     );
+
+    Ok(())
 }
 
 /// When there is no session (transient invocation), hard errors must NOT write
@@ -895,9 +926,8 @@ async fn hard_error_no_session_persists_nothing() {
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -920,7 +950,6 @@ async fn hard_error_no_session_persists_nothing() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "a transient prompt".to_string(),
                 preamble: None,
@@ -928,7 +957,6 @@ async fn hard_error_no_session_persists_nothing() {
             },
             MockResolver,
             None, // <-- no session
-            None,
         )
         .await;
 
@@ -966,27 +994,37 @@ async fn hard_error_no_session_persists_nothing() {
 /// After inject_missing_tool_results, the persisted JSONL must contain both
 /// the Assistant(ToolCall) and a User(ToolResult{id, content:"[interrupted]"}).
 #[tokio::test]
-async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
+async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-cancel-inject";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    // Model issues a tool call — the cancel fires before the tool result is
-    // appended, so chat_history will contain Assistant(ToolCall) with no
-    // matching User(ToolResult).
-    let model = MockCompletionModel::from_stream_turns([[
-        MockStreamEvent::tool_call("tc_cancel_1", "some_tool", serde_json::json!({"x": 1})),
-        MockStreamEvent::final_response_with_default_usage(),
-    ]]);
+    // Model issues a tool call to the cancelling tool — the cancel fires after
+    // the tool result is produced but before the next on_completion_call, so
+    // chat_history will contain Assistant(ToolCall) with no matching
+    // User(ToolResult), exercising the synthetic-result injection.
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc_cancel_1", "test_cancel_tool", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::Text("unreachable".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
     let bus = crate::bus::create_bus();
-    let mut ui = MockUi::immediately_cancelled(bus.clone());
-
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    // The cancelling tool publishes a CancelEvent from inside `call()` (after
+    // the hook subscribes to `bus.cancel()`), driving the cancelled path
+    // deterministically.
+    let handle = rig::tool::server::ToolServer::new()
+        .tool(super::test_utils::CancellingTool::new(bus.clone()))
+        .run();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
-    let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
         &config,
@@ -994,8 +1032,12 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
-            tool_server_handle,
-            visible_tool_definitions: vec![],
+            tool_server_handle: handle,
+            visible_tool_definitions: vec![crate::types::ToolDefinition {
+                name: "test_cancel_tool".to_string(),
+                description: "cancels the turn".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
             last_total_tokens: default_last_total_tokens(),
@@ -1007,7 +1049,6 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "call a tool".to_string(),
                 preamble: None,
@@ -1015,12 +1056,12 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
     assert!(result.is_ok(), "cancelled turn must not return Err");
-    assert!(matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)));
+    let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
+    assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
 
     // The persisted JSONL must contain both ToolCall and ToolResult entries.
     // If the model was fast enough that the tool call was actually processed
@@ -1030,7 +1071,7 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -1071,13 +1112,15 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() {
             );
         }
     }
+
+    Ok(())
 }
 
 /// On UnknownToolCall (Err path, e.messages=Some) with an unpaired ToolCall in
 /// chat_history, the messages persisted to JSONL must contain a synthetic
 /// User(ToolResult) immediately after the unpaired Assistant(ToolCall).
 #[tokio::test]
-async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
+async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-unknown-inject";
@@ -1096,9 +1139,8 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
     ]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -1121,7 +1163,6 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "use a tool".to_string(),
                 preamble: None,
@@ -1129,7 +1170,6 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -1140,7 +1180,7 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -1179,6 +1219,8 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
             );
         }
     }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1193,33 +1235,33 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() {
 
 /// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
 /// an `InvalidStatusCode` HTTP error (numeric status code, no body).
-fn turn_error_from_http_status(status: u16) -> CompletionErrorKind {
+fn turn_error_from_http_status(status: u16) -> Result<CompletionErrorKind> {
     use rig::http_client;
     let http_err = http_client::Error::InvalidStatusCode(
-        reqwest::StatusCode::from_u16(status).expect("valid status code"),
+        reqwest::StatusCode::from_u16(status).map_err(|e| format!("valid status code: {e:?}"))?,
     );
     let streaming_err = rig::agent::StreamingError::Completion(
         rig::completion::CompletionError::HttpError(http_err),
     );
     match crate::conversation::turn::TurnError::from(streaming_err) {
-        crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => kind,
+        crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => Ok(kind),
         other => panic!("expected CompletionFailed, got: {other:?}"),
     }
 }
 
 /// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
 /// an `InvalidStatusCodeWithMessage` HTTP error (status + body string).
-fn turn_error_from_http_status_with_msg(status: u16, body: &str) -> CompletionErrorKind {
+fn turn_error_from_http_status_with_msg(status: u16, body: &str) -> Result<CompletionErrorKind> {
     use rig::http_client;
     let http_err = http_client::Error::InvalidStatusCodeWithMessage(
-        reqwest::StatusCode::from_u16(status).expect("valid status code"),
+        reqwest::StatusCode::from_u16(status).map_err(|e| format!("valid status code: {e:?}"))?,
         body.to_string(),
     );
     let streaming_err = rig::agent::StreamingError::Completion(
         rig::completion::CompletionError::HttpError(http_err),
     );
     match crate::conversation::turn::TurnError::from(streaming_err) {
-        crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => kind,
+        crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => Ok(kind),
         other => panic!("expected CompletionFailed, got: {other:?}"),
     }
 }
@@ -1243,19 +1285,20 @@ fn turn_error_from_response_error(msg: &str) -> CompletionErrorKind {
 /// HTTP 429 with a message body must classify as `RateLimit`.
 /// Uses `InvalidStatusCodeWithMessage` (status + body) path.
 #[test]
-fn http_429_with_message_is_rate_limit() {
-    let kind = turn_error_from_http_status_with_msg(429, "rate_limit_error");
+fn http_429_with_message_is_rate_limit() -> Result<()> {
+    let kind = turn_error_from_http_status_with_msg(429, "rate_limit_error")?;
     assert_eq!(
         kind,
         CompletionErrorKind::RateLimit,
         "HTTP 429 with message must classify as RateLimit"
     );
     assert!(kind.is_retryable(), "RateLimit must be retryable");
+    Ok(())
 }
 
 /// Every HTTP status code maps to the correct error kind and retryable flag.
 #[test]
-fn http_status_to_error_kind() {
+fn http_status_to_error_kind() -> Result<()> {
     let cases: &[(u16, CompletionErrorKind, bool)] = &[
         (429, CompletionErrorKind::RateLimit, true),
         (500, CompletionErrorKind::ServerError, true),
@@ -1270,13 +1313,14 @@ fn http_status_to_error_kind() {
         (502, CompletionErrorKind::Unknown, false),
     ];
     for (status, expected_kind, retryable) in cases {
-        let kind = turn_error_from_http_status(*status);
+        let kind = turn_error_from_http_status(*status)?;
         assert_eq!(
             kind, *expected_kind,
             "status={status}: expected {expected_kind:?}, got {kind:?}"
         );
         assert_eq!(kind.is_retryable(), *retryable, "retryable status={status}");
     }
+    Ok(())
 }
 
 /// `StreamEnded` must classify as `Network` (retryable).
@@ -1450,7 +1494,7 @@ fn is_retryable_matches_spec() {
 /// Key regression assertion: store must be exactly 3 (2 prior + 1 user prompt),
 /// NOT 4 (old placeholder pair) and NOT 5 (the doubled result from the pre-delta-fix bug).
 #[tokio::test]
-async fn hard_error_after_prior_history_persists_user_message() {
+async fn hard_error_after_prior_history_persists_user_message() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-hard-error-hook-history";
@@ -1478,7 +1522,7 @@ async fn hard_error_after_prior_history_persists_user_message() {
             .inner_memory()
             .append(session_id, prior_messages.clone())
             .await
-            .unwrap();
+            .map_err(|e| format!("append prior messages: {e:?}"))?;
     }
 
     // Mock model: errors immediately (simulates CompletionError / network failure).
@@ -1486,9 +1530,8 @@ async fn hard_error_after_prior_history_persists_user_message() {
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("http decode error")]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -1511,7 +1554,6 @@ async fn hard_error_after_prior_history_persists_user_message() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "new prompt".to_string(),
                 preamble: None,
@@ -1519,7 +1561,6 @@ async fn hard_error_after_prior_history_persists_user_message() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -1530,7 +1571,7 @@ async fn hard_error_after_prior_history_persists_user_message() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -1606,6 +1647,8 @@ async fn hard_error_after_prior_history_persists_user_message() {
         "prior user message must still be in store; got messages: {:?}",
         persisted
     );
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1623,7 +1666,7 @@ async fn hard_error_after_prior_history_persists_user_message() {
 /// The bound is now exactly 3 (not < 5). The delta path fires with just the user
 /// prompt — no placeholder is synthesised because the delta is non-empty.
 #[tokio::test]
-async fn hard_error_after_prior_history_persists_only_delta() {
+async fn hard_error_after_prior_history_persists_only_delta() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-delta-hard-error";
@@ -1640,7 +1683,7 @@ async fn hard_error_after_prior_history_persists_only_delta() {
             .inner_memory()
             .append(session_id, prior_msgs)
             .await
-            .unwrap();
+            .map_err(|e| format!("append prior messages: {e:?}"))?;
     }
 
     // Model errors immediately — simulates CompletionError / network failure.
@@ -1652,8 +1695,7 @@ async fn hard_error_after_prior_history_persists_only_delta() {
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("network timeout")]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
-    let closure_registry = ClosureRegistry::new();
+    let closure_registry = ClosureRegistry::default();
     let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -1676,7 +1718,6 @@ async fn hard_error_after_prior_history_persists_only_delta() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "new question".to_string(),
                 preamble: None,
@@ -1684,7 +1725,6 @@ async fn hard_error_after_prior_history_persists_only_delta() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -1694,7 +1734,7 @@ async fn hard_error_after_prior_history_persists_only_delta() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -1717,6 +1757,8 @@ async fn hard_error_after_prior_history_persists_only_delta() {
         "prior messages must be preserved; got {}",
         persisted.len()
     );
+
+    Ok(())
 }
 
 /// Regression test: two consecutive hard errors must not double history each time.
@@ -1730,7 +1772,7 @@ async fn hard_error_after_prior_history_persists_only_delta() {
 ///   - Turn 2 error: +1 = 3 messages (delta = [user("t2")])
 ///   - Turn 3 error: +1 = 4 messages (delta = [user("t3")])
 #[tokio::test]
-async fn hard_error_twice_does_not_double_history() {
+async fn hard_error_twice_does_not_double_history() -> Result<()> {
     let config = test_config();
     let session_id = "test-no-double";
     let temp_dir = tempfile::tempdir().unwrap();
@@ -1743,8 +1785,7 @@ async fn hard_error_twice_does_not_double_history() {
             MockStreamEvent::final_response_with_default_usage(),
         ]]);
         let shared_model = super::test_utils::shared_model_handle(model);
-        let mut ui = MockUi::new();
-        let closure_registry = ClosureRegistry::new();
+        let closure_registry = ClosureRegistry::default();
         let mcp_registry = McpToolRegistry::empty();
         let tool_server_handle = rig::tool::server::ToolServer::new().run();
         let mut executor = TurnExecutor::new(
@@ -1765,7 +1806,6 @@ async fn hard_error_twice_does_not_double_history() {
         );
         let result = executor
             .execute(
-                &mut ui,
                 ExecuteInput {
                     prompt: "t1".to_string(),
                     preamble: None,
@@ -1773,7 +1813,6 @@ async fn hard_error_twice_does_not_double_history() {
                 },
                 MockResolver,
                 Some(session_id),
-                None,
             )
             .await;
         assert!(result.is_ok(), "turn 1 must succeed");
@@ -1785,8 +1824,7 @@ async fn hard_error_twice_does_not_double_history() {
         let mut memory_state = make_memory_state(&temp_dir);
         let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::error("timeout")]]);
         let shared_model = super::test_utils::shared_model_handle(model);
-        let mut ui = MockUi::new();
-        let closure_registry = ClosureRegistry::new();
+        let closure_registry = ClosureRegistry::default();
         let mcp_registry = McpToolRegistry::empty();
         let tool_server_handle = rig::tool::server::ToolServer::new().run();
         let mut executor = TurnExecutor::new(
@@ -1807,7 +1845,6 @@ async fn hard_error_twice_does_not_double_history() {
         );
         let _ = executor
             .execute(
-                &mut ui,
                 ExecuteInput {
                     prompt: "t2".to_string(),
                     preamble: None,
@@ -1815,7 +1852,6 @@ async fn hard_error_twice_does_not_double_history() {
                 },
                 MockResolver,
                 Some(session_id),
-                None,
             )
             .await;
     }
@@ -1826,8 +1862,7 @@ async fn hard_error_twice_does_not_double_history() {
         let mut memory_state = make_memory_state(&temp_dir);
         let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::error("timeout")]]);
         let shared_model = super::test_utils::shared_model_handle(model);
-        let mut ui = MockUi::new();
-        let closure_registry = ClosureRegistry::new();
+        let closure_registry = ClosureRegistry::default();
         let mcp_registry = McpToolRegistry::empty();
         let tool_server_handle = rig::tool::server::ToolServer::new().run();
         let mut executor = TurnExecutor::new(
@@ -1848,7 +1883,6 @@ async fn hard_error_twice_does_not_double_history() {
         );
         let _ = executor
             .execute(
-                &mut ui,
                 ExecuteInput {
                     prompt: "t3".to_string(),
                     preamble: None,
@@ -1856,7 +1890,6 @@ async fn hard_error_twice_does_not_double_history() {
                 },
                 MockResolver,
                 Some(session_id),
-                None,
             )
             .await;
     }
@@ -1869,7 +1902,7 @@ async fn hard_error_twice_does_not_double_history() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let final_count: Vec<crate::types::Message> = final_entries
         .iter()
         .filter_map(|e| match e {
@@ -1890,6 +1923,8 @@ async fn hard_error_twice_does_not_double_history() {
         "original turn 1 messages must be preserved; got {}",
         final_count
     );
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1905,7 +1940,7 @@ async fn hard_error_twice_does_not_double_history() {
 /// Expected: store grows by at most the new messages from this turn, not by the
 /// full prior history again.
 #[tokio::test]
-async fn cancelled_turn_after_prior_history_persists_only_delta() {
+async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-cancelled-delta";
@@ -1922,19 +1957,29 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
             .inner_memory()
             .append(session_id, prior_msgs)
             .await
-            .unwrap();
+            .map_err(|e| format!("append prior messages: {e:?}"))?;
     }
 
-    let model = MockCompletionModel::from_stream_turns([[
-        MockStreamEvent::Text("partial".to_string()),
-        MockStreamEvent::final_response_with_default_usage(),
-    ]]);
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "test_cancel_tool", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::Text("unreachable".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
     let shared_model = super::test_utils::shared_model_handle(model);
     let bus = crate::bus::create_bus();
-    let mut ui = MockUi::immediately_cancelled(bus.clone());
-    let closure_registry = ClosureRegistry::new();
+    // The cancelling tool publishes a CancelEvent from inside `call()` (after
+    // the hook subscribes to `bus.cancel()`), driving the cancelled path
+    // deterministically.
+    let handle = rig::tool::server::ToolServer::new()
+        .tool(super::test_utils::CancellingTool::new(bus.clone()))
+        .run();
+    let closure_registry = ClosureRegistry::default();
     let mcp_registry = McpToolRegistry::empty();
-    let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
         &config,
@@ -1942,8 +1987,12 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
         ToolInfra {
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
-            tool_server_handle,
-            visible_tool_definitions: vec![],
+            tool_server_handle: handle,
+            visible_tool_definitions: vec![crate::types::ToolDefinition {
+                name: "test_cancel_tool".to_string(),
+                description: "cancels the turn".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
             last_total_tokens: default_last_total_tokens(),
@@ -1955,7 +2004,6 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "new question".to_string(),
                 preamble: None,
@@ -1963,18 +2011,18 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
     assert!(result.is_ok(), "cancelled turn must not return Err");
-    assert!(matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)));
+    let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
+    assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
 
     let persisted_entries = memory_state
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -1983,10 +2031,13 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
         })
         .collect();
 
-    // MUST be <= 4 (2 prior + at most 2 new), NOT 5+ (prior doubled)
+    // MUST NOT include the full prior history again. The turn is cancelled by the
+    // cancelling tool, so the new-message delta is [user("new question"),
+    // asst(tool_call), user(tool_result), asst(close)] = up to 4 new messages.
+    // Total must be 2 prior + delta (<= 6), NOT the prior history doubled.
     assert!(
-        persisted.len() <= 4,
-        "cancelled turn after prior history must not double the store; got {} messages (expected <= 4)",
+        persisted.len() <= 6,
+        "cancelled turn after prior history must not double the store; got {} messages (expected <= 6)",
         persisted.len()
     );
     assert!(
@@ -1994,6 +2045,8 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
         "prior messages must be preserved; got {}",
         persisted.len()
     );
+
+    Ok(())
 }
 
 /// When `on_completion_call` fires on the first LLM call of a fresh session
@@ -2007,7 +2060,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() {
 /// This also confirms the `test-hard-error-no-hook-history` session_id is used
 /// consistently across this and the renamed test.
 #[tokio::test]
-async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
+async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-hard-error-fresh-session-2";
@@ -2021,9 +2074,8 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -2046,7 +2098,6 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: prompt_text.to_string(),
                 preamble: None,
@@ -2054,7 +2105,6 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -2069,7 +2119,7 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -2091,6 +2141,8 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() {
         "persisted[0] must be a User message; got {:?}",
         persisted[0]
     );
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -2149,13 +2201,13 @@ impl rig::tool::Tool for SimpleEchoTool {
         &self,
         _context: &mut rig::tool::ToolContext,
         _args: Self::Args,
-    ) -> Result<Self::Output, Self::Error> {
+    ) -> std::result::Result<Self::Output, Self::Error> {
         Ok("real_tool_output".to_string())
     }
 }
 
 #[tokio::test]
-async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
+async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-mid-tool-loop-error";
@@ -2172,9 +2224,8 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
     ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new()
         .tool(SimpleEchoTool)
@@ -2203,7 +2254,6 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "do the thing".to_string(),
                 preamble: None,
@@ -2211,7 +2261,6 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -2225,7 +2274,7 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -2328,6 +2377,8 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() {
         "test requires at least one ToolCall to be persisted; got: {:?}",
         persisted
     );
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -2451,7 +2502,7 @@ fn close_open_tool_result_block_noop_when_last_user_has_mixed_content() {
 /// Retry succeeds on the second attempt: first call returns a retryable 500 error,
 /// second call succeeds. Result should be Ok with 2 messages in JSONL.
 #[tokio::test]
-async fn retry_succeeds_on_second_attempt() {
+async fn retry_succeeds_on_second_attempt() -> Result<()> {
     let config = Config {
         max_retries: Some(3),
         retry_base_delay_ms: Some(1),
@@ -2471,9 +2522,8 @@ async fn retry_succeeds_on_second_attempt() {
     ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = ClosureRegistry::new();
+    let closure_registry = ClosureRegistry::default();
     let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -2496,7 +2546,6 @@ async fn retry_succeeds_on_second_attempt() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "hello".to_string(),
                 preamble: None,
@@ -2504,7 +2553,6 @@ async fn retry_succeeds_on_second_attempt() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -2513,13 +2561,14 @@ async fn retry_succeeds_on_second_attempt() {
         "retry should succeed on second attempt; got: {:?}",
         result.err()
     );
-    assert!(matches!(result.unwrap(), TurnOutcome::Completed));
+    let outcome = result.map_err(|e| format!("retry should succeed on second attempt: {e:?}"))?;
+    assert!(matches!(outcome, TurnOutcome::Completed));
 
     let persisted_entries = memory_state
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -2533,12 +2582,14 @@ async fn retry_succeeds_on_second_attempt() {
         "successful retry must produce 2 messages (user + assistant); got {}",
         persisted.len()
     );
+
+    Ok(())
 }
 
 /// Retry exhausted: all attempts fail with retryable errors. The final error
 /// message must mention the retry attempt count.
 #[tokio::test]
-async fn retry_exhausted_surfaces_attempt_count() {
+async fn retry_exhausted_surfaces_attempt_count() -> Result<()> {
     let config = Config {
         max_retries: Some(2),
         retry_base_delay_ms: Some(1),
@@ -2556,9 +2607,8 @@ async fn retry_exhausted_surfaces_attempt_count() {
     ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = ClosureRegistry::new();
+    let closure_registry = ClosureRegistry::default();
     let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -2581,7 +2631,6 @@ async fn retry_exhausted_surfaces_attempt_count() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "hello".to_string(),
                 preamble: None,
@@ -2589,16 +2638,20 @@ async fn retry_exhausted_surfaces_attempt_count() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
     assert!(result.is_err(), "exhausted retries must return Err");
-    let err_msg = result.unwrap_err().to_string();
+    let err_msg = result
+        .err()
+        .map(|e| e.to_string())
+        .ok_or("exhausted retries must return Err")?;
     assert!(
         err_msg.contains("after 2 retries"),
         "error message must mention retry count; got: {err_msg}"
     );
+
+    Ok(())
 }
 
 /// Non-retryable errors (e.g., context_length_exceeded) must NOT be retried.
@@ -2621,9 +2674,8 @@ async fn non_retryable_error_not_retried() {
     )]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = ClosureRegistry::new();
+    let closure_registry = ClosureRegistry::default();
     let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -2646,7 +2698,6 @@ async fn non_retryable_error_not_retried() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "hello".to_string(),
                 preamble: None,
@@ -2654,7 +2705,6 @@ async fn non_retryable_error_not_retried() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -2674,7 +2724,7 @@ async fn non_retryable_error_not_retried() {
 /// The test verifies the error message does NOT contain "retries" — proving the retry
 /// path was not entered.
 #[tokio::test]
-async fn retry_disabled_when_max_retries_is_zero() {
+async fn retry_disabled_when_max_retries_is_zero() -> Result<()> {
     let config = Config {
         max_retries: Some(0),
         retry_base_delay_ms: Some(1),
@@ -2689,9 +2739,8 @@ async fn retry_disabled_when_max_retries_is_zero() {
     )]]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = ClosureRegistry::new();
+    let closure_registry = ClosureRegistry::default();
     let mcp_registry = McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -2714,7 +2763,6 @@ async fn retry_disabled_when_max_retries_is_zero() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "hello".to_string(),
                 preamble: None,
@@ -2722,17 +2770,21 @@ async fn retry_disabled_when_max_retries_is_zero() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
     assert!(result.is_err(), "error must propagate without retry");
-    let err_msg = result.unwrap_err().to_string();
+    let err_msg = result
+        .err()
+        .map(|e| e.to_string())
+        .ok_or("error must propagate without retry")?;
     // When max_retries=0, attempt never increments, so "retries" should not appear
     assert!(
         !err_msg.contains("retries"),
         "error message must NOT mention retries when max_retries=0; got: {err_msg}"
     );
+
+    Ok(())
 }
 
 /// When `last_known_history` is empty the retry guard (`has_partial_history`) prevents
@@ -2845,21 +2897,19 @@ fn extract_retry_after_ms_handles_zero() {
 ///
 /// We exercise this end-to-end using the `JourneyHarness` pattern: a mock tool that
 /// publishes a cancel event to the bus from within `call()` after producing its result.
-/// The `MockUi::with_external_cancel()` returns the bus so the cancel fires
-/// deterministically.
+/// The bus is threaded into the tool, so the cancel fires deterministically.
 ///
 /// This is intentionally an integration test (not a unit test) because the bug
 /// exists at the intersection of `build_agent_and_stream` (which populates
 /// `last_known_history` on `TurnResult`) and `TurnExecutor::execute` (which
 /// reads it in Path B).
 #[tokio::test]
-async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
+async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<()> {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
-    use super::test_utils::MockUi;
     use crate::bus::CancelEvent;
     use crate::session::StoreEntry;
     use crate::tools::closure::ClosureRegistry;
@@ -2890,11 +2940,11 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
             &self,
             _context: &mut rig::tool::ToolContext,
             _args: Self::Args,
-        ) -> Result<Self::Output, Self::Error> {
+        ) -> std::result::Result<Self::Output, Self::Error> {
             let result = self.output.to_string();
             if !self.fired.swap(true, Ordering::SeqCst) {
                 tokio::task::yield_now().await;
-                let _ = self.bus.cancel().send(CancelEvent::Requested);
+                let _ = self.bus.cancel().send(CancelEvent::Requested).await;
             }
             Ok(result)
         }
@@ -2906,7 +2956,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
     let session_id = "test-path-b-lkh";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    let (ui, bus) = MockUi::with_external_cancel();
+    let (bus,) = (crate::bus::create_bus(),);
 
     // Model: sub-turn 1 emits tool_call → tool executes (cancels after result).
     // Sub-turn 2 would normally proceed but cancel fires first.
@@ -2929,7 +2979,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
         })
         .run();
     let tool_infra = ToolInfra {
-        closure_registry: Arc::new(ClosureRegistry::new()),
+        closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: handle,
         visible_tool_definitions: vec![rig::completion::ToolDefinition {
@@ -2944,7 +2994,6 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
     };
 
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = ui;
 
     let mut executor = TurnExecutor::new(
         &config,
@@ -2956,7 +3005,6 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "call the tool".to_string(),
                 preamble: None,
@@ -2964,7 +3012,6 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -2974,8 +3021,9 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
         "cancelled turn must not return Err; got: {:?}",
         result.err()
     );
+    let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(
-        matches!(result.unwrap(), TurnOutcome::EarlyReturn(_)),
+        matches!(outcome, TurnOutcome::EarlyReturn(_)),
         "cancelled turn must return EarlyReturn"
     );
 
@@ -2984,7 +3032,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
         .inner_memory()
         .load_all(session_id)
         .await
-        .expect("store load should succeed");
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
     let persisted: Vec<crate::types::Message> = persisted_entries
         .iter()
         .filter_map(|e| match e {
@@ -3047,6 +3095,8 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() {
          (not [interrupted] placeholder); got: {:?}",
         persisted
     );
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -3118,7 +3168,7 @@ fn jitter_produces_varying_delays() {
 /// proceeds with the full history (the orchestrator runs compaction
 /// asynchronously; the summary is applied on the next turn via the marker).
 #[tokio::test]
-async fn compaction_fires_when_conversation_exceeds_window() {
+async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
     use rig::memory::ConversationMemory;
 
     let config = test_config();
@@ -3147,7 +3197,6 @@ async fn compaction_fires_when_conversation_exceeds_window() {
     let store_arc = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
     let compactor = crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
         compactor_handle,
-        crate::conversation::compaction::compactor::NoopProgressUi,
         bus.clone(),
         None,
     )
@@ -3165,7 +3214,7 @@ async fn compaction_fires_when_conversation_exceeds_window() {
                 vec![crate::types::Message::user(format!("user-{i}"))],
             )
             .await
-            .expect("append user");
+            .map_err(|e| format!("append user: {e:?}"))?;
         memory_state
             .inner_memory()
             .append(
@@ -3173,7 +3222,7 @@ async fn compaction_fires_when_conversation_exceeds_window() {
                 vec![crate::types::Message::assistant(format!("assistant-{i}"))],
             )
             .await
-            .expect("append assistant");
+            .map_err(|e| format!("append assistant: {e:?}"))?;
     }
 
     // The model must be scripted to produce a final text response on the agent
@@ -3188,9 +3237,8 @@ async fn compaction_fires_when_conversation_exceeds_window() {
     ]);
     let model_spy = model.clone();
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
@@ -3221,7 +3269,6 @@ async fn compaction_fires_when_conversation_exceeds_window() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "hello".to_string(),
                 preamble: None,
@@ -3229,7 +3276,6 @@ async fn compaction_fires_when_conversation_exceeds_window() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -3238,7 +3284,8 @@ async fn compaction_fires_when_conversation_exceeds_window() {
         "turn must complete; got: {:?}",
         result.err()
     );
-    assert!(matches!(result.unwrap(), TurnOutcome::Completed));
+    let outcome = result.map_err(|e| format!("turn must be Ok: {e:?}"))?;
+    assert!(matches!(outcome, TurnOutcome::Completed));
 
     // 1. `CompactionEvent::Requested { source: "auto" }` must have been emitted
     //    on the bus when the conversation exceeds the window.
@@ -3264,6 +3311,8 @@ async fn compaction_fires_when_conversation_exceeds_window() {
         1,
         "agent must have made exactly 1 request"
     );
+
+    Ok(())
 }
 
 /// `on_stream_response_finish` stores the real API token count so the hook's
@@ -3273,7 +3322,7 @@ async fn compaction_fires_when_conversation_exceeds_window() {
 /// whose model reports `total_tokens > 0`, the hook must populate the slot with
 /// that real count (verified through the public executor boundary).
 #[tokio::test]
-async fn on_stream_response_finish_stores_total_tokens() {
+async fn on_stream_response_finish_stores_total_tokens() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let session_id = "test-hook-total-tokens";
@@ -3284,9 +3333,8 @@ async fn on_stream_response_finish_stores_total_tokens() {
         MockStreamEvent::final_response_with_total_tokens(1234),
     ]]);
     let shared_model = super::test_utils::shared_model_handle(model);
-    let mut ui = MockUi::new();
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::new();
+    let closure_registry = crate::tools::closure::ClosureRegistry::default();
     let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
     let last_total_tokens = default_last_total_tokens();
@@ -3310,7 +3358,6 @@ async fn on_stream_response_finish_stores_total_tokens() {
 
     let result = executor
         .execute(
-            &mut ui,
             ExecuteInput {
                 prompt: "hello".to_string(),
                 preamble: None,
@@ -3318,7 +3365,6 @@ async fn on_stream_response_finish_stores_total_tokens() {
             },
             MockResolver,
             Some(session_id),
-            None,
         )
         .await;
 
@@ -3327,7 +3373,8 @@ async fn on_stream_response_finish_stores_total_tokens() {
         "turn must complete; got: {:?}",
         result.err()
     );
-    assert!(matches!(result.unwrap(), TurnOutcome::Completed));
+    let outcome = result.map_err(|e| format!("turn must be Ok: {e:?}"))?;
+    assert!(matches!(outcome, TurnOutcome::Completed));
     assert_eq!(
         *last_total_tokens
             .lock()
@@ -3335,4 +3382,6 @@ async fn on_stream_response_finish_stores_total_tokens() {
         Some(1234),
         "hook must store the real total_tokens from on_stream_response_finish"
     );
+
+    Ok(())
 }

@@ -12,6 +12,7 @@ use crate::discovery::{DiscoveryBrowser, DiscoveryService, PeerEvent, build_serv
 /// advertising this agent, and the [`DiscoveryBrowser`] for discovering
 /// peers.  All three share the same daemon so that registration and browsing
 /// go through a single mDNS responder.
+#[derive(Default)]
 pub struct MdnsPeerDiscovery {
     daemon: Option<ServiceDaemon>,
     service: Option<DiscoveryService>,
@@ -27,30 +28,6 @@ pub struct MdnsPeerDiscovery {
     port: Option<u16>,
     /// The mesh key for discovery isolation.
     mesh_key: Option<String>,
-}
-
-impl MdnsPeerDiscovery {
-    /// Create an unstarted mDNS discovery instance.
-    ///
-    /// Call [`start`](Self::start) to begin advertising and browsing.
-    pub fn new() -> Self {
-        Self {
-            daemon: None,
-            service: None,
-            browser: None,
-            peer_rx: None,
-            fullname: None,
-            instance_name: None,
-            port: None,
-            mesh_key: None,
-        }
-    }
-}
-
-impl Default for MdnsPeerDiscovery {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl MdnsPeerDiscovery {

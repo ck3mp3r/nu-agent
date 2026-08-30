@@ -3,6 +3,8 @@ use crate::protocol::persona::{
     FrontMatterParser, PulldownCmarkFrontMatterParser, interpret_front_matter,
 };
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
 fn test_builtin_planner_content_not_empty() {
     assert!(
@@ -35,16 +37,16 @@ fn test_is_builtin_persona_unknown() {
 }
 
 #[test]
-fn test_builtin_content_has_valid_front_matter() {
+fn test_builtin_content_has_valid_front_matter() -> Result<()> {
     let parser = PulldownCmarkFrontMatterParser;
 
     // Planner
     let planner_raw = parser
         .parse(BUILTIN_PLANNER_CONTENT)
-        .expect("planner content should parse");
+        .map_err(|e| format!("planner content should parse: {e:?}"))?;
     let planner_parsed =
         interpret_front_matter(planner_raw.front_matter.as_ref(), planner_raw.body)
-            .expect("planner front matter should be interpretable");
+            .map_err(|e| format!("planner front matter should be interpretable: {e:?}"))?;
     assert!(
         planner_parsed.name.is_some(),
         "planner front matter must contain a name"
@@ -57,9 +59,9 @@ fn test_builtin_content_has_valid_front_matter() {
     // Maker
     let maker_raw = parser
         .parse(BUILTIN_MAKER_CONTENT)
-        .expect("maker content should parse");
+        .map_err(|e| format!("maker content should parse: {e:?}"))?;
     let maker_parsed = interpret_front_matter(maker_raw.front_matter.as_ref(), maker_raw.body)
-        .expect("maker front matter should be interpretable");
+        .map_err(|e| format!("maker front matter should be interpretable: {e:?}"))?;
     assert!(
         maker_parsed.name.is_some(),
         "maker front matter must contain a name"
@@ -68,19 +70,23 @@ fn test_builtin_content_has_valid_front_matter() {
         maker_parsed.description.is_some(),
         "maker front matter must contain a description"
     );
+    Ok(())
 }
 
 #[test]
-fn builtin_personas_have_icon() {
+fn builtin_personas_have_icon() -> Result<()> {
     let parser = PulldownCmarkFrontMatterParser;
     for builtin in BUILTIN_PERSONAS {
-        let raw = parser.parse(builtin.content).expect("builtin must parse");
+        let raw = parser
+            .parse(builtin.content)
+            .map_err(|e| format!("builtin must parse: {e:?}"))?;
         let persona = interpret_front_matter(raw.front_matter.as_ref(), raw.body)
-            .expect("builtin front matter must be valid");
+            .map_err(|e| format!("builtin front matter must be valid: {e:?}"))?;
         assert!(
             persona.icon.is_some(),
             "builtin '{}' must have an icon",
             builtin.name
         );
     }
+    Ok(())
 }

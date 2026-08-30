@@ -1,6 +1,5 @@
-use super::*;
 use crate::runtime::session_picker::{relative_timestamp, session_picker_table_model};
-use crate::state::SessionPickerOption;
+use crate::state::{AppState, SessionPickerOption};
 
 #[test]
 fn relative_timestamp_seconds() {
@@ -53,7 +52,7 @@ fn relative_timestamp_years() {
 
 #[test]
 fn session_picker_table_model_empty() {
-    let state = AppState::new();
+    let state = AppState::default();
     let model = session_picker_table_model(&state, 20);
     assert!(model.rows.is_empty());
     assert_eq!(model.query_line.to_string(), "Query: ");
@@ -61,7 +60,7 @@ fn session_picker_table_model_empty() {
 
 #[test]
 fn session_picker_table_model_with_options() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let now = chrono::Utc::now();
     state.set_session_picker_options(vec![
         SessionPickerOption {
@@ -89,7 +88,7 @@ fn session_picker_table_model_with_options() {
 
 #[test]
 fn session_picker_table_model_overflow_cue() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let now = chrono::Utc::now();
     let options: Vec<SessionPickerOption> = (0..5)
         .map(|i| SessionPickerOption {

@@ -101,7 +101,7 @@ impl FsSessionStore {
 
     /// Get the file path for a session.
     fn session_path(&self, session_id: &str) -> PathBuf {
-        self.base_path.join(format!("{}.jsonl", session_id))
+        self.base_path.join(format!("{session_id}.jsonl"))
     }
 
     /// Parse a single JSONL line (after metadata) into a StoreEntry.
@@ -207,7 +207,7 @@ impl SessionStore for FsSessionStore {
         let metadata: SessionMetadata = serde_json::from_str(&metadata_line).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Failed to parse metadata: {}", e),
+                format!("Failed to parse metadata: {e}"),
             )
         })?;
 
@@ -276,13 +276,13 @@ impl SessionStore for FsSessionStore {
             serde_json::from_str::<SessionMetadata>(first_line).map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("Failed to parse metadata: {}", e),
+                    format!("Failed to parse metadata: {e}"),
                 )
             })?
         } else {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("Session '{}' not found", id),
+                format!("Session '{id}' not found"),
             ));
         };
 
@@ -494,9 +494,15 @@ pub fn extract_llm_context(entries: &[StoreEntry]) -> Vec<Message> {
 
     let messages = match last_marker_idx {
         Some(idx) => {
+            // The index came from `rposition` matching a Marker, so this arm
+            // is always a Marker. Treating a non-Marker defensively yields an
+            // empty context rather than panicking.
             let marker = match &entries[idx] {
                 StoreEntry::Marker(m) => m,
-                _ => unreachable!(),
+                _ => {
+                    log::warn!("extract_llm_context: expected Marker at index {idx}",);
+                    return Vec::new();
+                }
             };
             let mut context = Vec::new();
             if !marker.summary.is_empty() {

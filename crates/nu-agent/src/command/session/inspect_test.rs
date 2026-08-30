@@ -7,13 +7,15 @@ use nu_protocol::{LabeledError, Span, Value};
 use std::sync::Arc;
 use tempfile::TempDir;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 /// Minimal mock for CwdInterface that returns a fixed directory path.
 struct MockCwd {
     dir: String,
 }
 
 impl CwdInterface for MockCwd {
-    fn get_current_dir(&self) -> Result<String, LabeledError> {
+    fn get_current_dir(&self) -> std::result::Result<String, LabeledError> {
         Ok(self.dir.clone())
     }
 }
@@ -29,7 +31,7 @@ fn make_call(session_id: &str) -> EvaluatedCall {
 }
 
 #[tokio::test]
-async fn test_agent_session_inspect_displays_full_session_details() {
+async fn test_agent_session_inspect_displays_full_session_details() -> Result<()> {
     let temp_dir = TempDir::new().unwrap();
     let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
@@ -41,33 +43,42 @@ async fn test_agent_session_inspect_displays_full_session_details() {
     let messages: Vec<Message> = (0..10)
         .map(|i| Message::user(format!("Message {}", i)))
         .collect();
-    store.create(&full_id, &messages).await.unwrap();
+    store
+        .create(&full_id, &messages)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
     // Run inspect via run_inner
-    let command = AgentSessionInspect::new();
+    let command = AgentSessionInspect;
     let engine = MockCwd {
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call("test-session");
-    let result = command.run_inner(&engine, &call, &store).await.unwrap();
+    let result = command
+        .run_inner(&engine, &call, &store)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
     // Extract message_count from the returned record
-    if let Value::Record { val, .. } = &result {
-        let count = val
-            .get("message_count")
-            .and_then(|v| v.as_int().ok())
-            .unwrap();
-        assert_eq!(count, 10, "Should have 10 messages");
-
-        let id = val.get("id").and_then(|v| v.as_str().ok()).unwrap();
-        assert_eq!(id, full_id);
-    } else {
+    let Value::Record { val, .. } = &result else {
         panic!("Expected record result");
-    }
+    };
+    let count = val
+        .get("message_count")
+        .and_then(|v| v.as_int().ok())
+        .ok_or("should have message_count field")?;
+    assert_eq!(count, 10, "Should have 10 messages");
+
+    let id = val
+        .get("id")
+        .and_then(|v| v.as_str().ok())
+        .ok_or("should have id field")?;
+    assert_eq!(id, full_id);
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_agent_session_inspect_returns_error_for_nonexistent_session() {
+async fn test_agent_session_inspect_returns_error_for_nonexistent_session() -> Result<()> {
     let temp_dir = TempDir::new().unwrap();
     let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
@@ -75,19 +86,16 @@ async fn test_agent_session_inspect_returns_error_for_nonexistent_session() {
 
     let prefix = dir_prefix(temp_dir.path());
     let full_id = format!("{prefix}-nonexistent");
-    let result = store.load(&full_id).await;
+    let result = store.load(&full_id).await.map_err(|e| format!("{e:?}"))?;
 
     // Should be Ok(None) — session not found
-    assert!(result.is_ok(), "load should succeed but return None");
-    assert!(
-        result.unwrap().is_none(),
-        "should be None for nonexistent session"
-    );
+    assert!(result.is_none(), "should be None for nonexistent session");
+    Ok(())
 }
 
 #[test]
 fn test_agent_session_inspect_command_signature() {
-    let command = AgentSessionInspect::new();
+    let command = AgentSessionInspect;
 
     // Verify command name
     assert_eq!(SimplePluginCommand::name(&command), "agent session inspect");
@@ -102,7 +110,7 @@ fn test_agent_session_inspect_command_signature() {
 }
 
 #[tokio::test]
-async fn run_prepends_cwd_prefix_to_session_id() {
+async fn run_prepends_cwd_prefix_to_session_id() -> Result<()> {
     // Verify that run_inner() prepends the cwd-derived prefix to the user-supplied session ID,
     // so store.load receives "<prefix>-my-session" rather than the raw "my-session".
 
@@ -119,19 +127,20 @@ async fn run_prepends_cwd_prefix_to_session_id() {
     store
         .create(&full_id, &[Message::user("hello")])
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
 
-    let command = AgentSessionInspect::new();
+    let command = AgentSessionInspect;
     let engine = MockCwd {
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call("my-session");
 
-    let result = command.run_inner(&engine, &call, &store).await;
-    assert!(result.is_ok(), "run_inner failed: {:?}", result.err());
+    let result = command
+        .run_inner(&engine, &call, &store)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
-    let value = result.unwrap();
-    let id = match &value {
+    let id = match &result {
         Value::Record { val, .. } => val
             .get("id")
             .and_then(|v| v.as_str().ok())
@@ -143,10 +152,11 @@ async fn run_prepends_cwd_prefix_to_session_id() {
         Some(full_id.as_str()),
         "returned id should equal the prefixed session id"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn inspect_finds_legacy_prefixed_session_via_fallback() {
+async fn inspect_finds_legacy_prefixed_session_via_fallback() -> Result<()> {
     let temp_dir = TempDir::new().unwrap();
     let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
         temp_dir.path().to_path_buf(),
@@ -159,19 +169,20 @@ async fn inspect_finds_legacy_prefixed_session_via_fallback() {
     store
         .create(&legacy_id, &[Message::user("hello")])
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
 
-    let command = AgentSessionInspect::new();
+    let command = AgentSessionInspect;
     let engine = MockCwd {
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call("old-session");
 
-    let result = command.run_inner(&engine, &call, &store).await;
-    assert!(result.is_ok(), "run_inner failed: {:?}", result.err());
+    let result = command
+        .run_inner(&engine, &call, &store)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
-    let value = result.unwrap();
-    let id = match &value {
+    let id = match &result {
         Value::Record { val, .. } => val
             .get("id")
             .and_then(|v| v.as_str().ok())
@@ -183,4 +194,5 @@ async fn inspect_finds_legacy_prefixed_session_via_fallback() {
         Some(legacy_id.as_str()),
         "returned id should equal the legacy-prefixed session id"
     );
+    Ok(())
 }

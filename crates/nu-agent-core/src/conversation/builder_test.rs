@@ -6,6 +6,8 @@ use crate::compaction::{CompactionParams, CompactionStrategy};
 use crate::config::CompactionConfig;
 use crate::protocol::persona::PersonaSummary;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // ── merge_compaction_configs ─────────────────────────────────────────────────
 
 #[test]
@@ -159,15 +161,16 @@ fn builtin_tool_registration_explicitly_rejects_prefixed_names() {
 }
 
 #[test]
-fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_fields() {
+fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_fields() -> Result<()>
+{
     let edit = builtin_tool_definitions()
         .into_iter()
         .find(|tool| tool.name == "edit")
-        .expect("edit tool definition");
+        .ok_or("edit tool definition")?;
 
     let required = edit.parameters["required"]
         .as_array()
-        .expect("required array")
+        .ok_or("required array")?
         .iter()
         .filter_map(|v| v.as_str())
         .collect::<Vec<_>>();
@@ -188,6 +191,7 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_f
             .unwrap_or_default()
             .contains("create")
     );
+    Ok(())
 }
 
 // ── messaging_tool_definitions ───────────────────────────────────────────────
@@ -203,12 +207,12 @@ fn messaging_tool_registration_contains_only_send_message() {
 }
 
 #[test]
-fn send_message_description_explains_delivery_semantics() {
+fn send_message_description_explains_delivery_semantics() -> Result<()> {
     let defs = messaging_tool_definitions();
     let send = defs
         .iter()
         .find(|d| d.name == "send_message")
-        .expect("send_message tool");
+        .ok_or("send_message tool")?;
     assert!(
         send.description.contains("conversation turns"),
         "Expected delivery semantics, got: {}",
@@ -229,6 +233,7 @@ fn send_message_description_explains_delivery_semantics() {
         "send_message description must not reference list_agents, got: {}",
         send.description
     );
+    Ok(())
 }
 
 // ── orchestrator_tool_definitions ────────────────────────────────────────────

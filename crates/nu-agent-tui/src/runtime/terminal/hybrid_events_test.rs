@@ -3,19 +3,21 @@ use crate::{
     runtime::{HybridTerminalEvents, TerminalEventSource},
 };
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 struct SequenceEventSource {
-    events: Vec<Result<Option<TerminalEvent>, String>>,
+    events: Vec<core::result::Result<Option<TerminalEvent>, String>>,
     idx: usize,
 }
 
 impl SequenceEventSource {
-    fn new(events: Vec<Result<Option<TerminalEvent>, String>>) -> Self {
+    fn new(events: Vec<core::result::Result<Option<TerminalEvent>, String>>) -> Self {
         Self { events, idx: 0 }
     }
 }
 
 impl TerminalEventSource for SequenceEventSource {
-    fn poll_event(&mut self) -> Result<Option<TerminalEvent>, String> {
+    fn poll_event(&mut self) -> core::result::Result<Option<TerminalEvent>, String> {
         if self.idx >= self.events.len() {
             return Ok(None);
         }
@@ -75,7 +77,7 @@ fn diagnostics_report_fallback_backend_and_last_poll_state() {
 }
 
 #[test]
-fn diagnostics_mark_both_backends_unavailable_on_double_failure() {
+fn diagnostics_mark_both_backends_unavailable_on_double_failure() -> Result<()> {
     let primary = SequenceEventSource::new(vec![Err("primary failed".to_string())]);
     let fallback = SequenceEventSource::new(vec![Err("fallback failed".to_string())]);
     let mut hybrid = HybridTerminalEvents::new_for_test(primary, fallback);
@@ -85,12 +87,9 @@ fn diagnostics_mark_both_backends_unavailable_on_double_failure() {
     assert_eq!(diagnostics.primary_available, Some(false));
     assert_eq!(diagnostics.fallback_available, Some(false));
     assert_eq!(diagnostics.active_backend, "none");
-    assert!(
-        diagnostics
-            .last_error
-            .expect("last error")
-            .contains("fallback failed")
-    );
+    let last_error = diagnostics.last_error.ok_or("should have last error")?;
+    assert!(last_error.contains("fallback failed"));
+    Ok(())
 }
 
 #[test]

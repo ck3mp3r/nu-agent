@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use super::StderrUiRenderer;
-use nu_agent_core::policy::{UiPolicy, Verbosity};
 use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::renderer::UiRenderer;
+
+use crate::policy::{UiPolicy, Verbosity};
 
 #[derive(Clone)]
 struct FakeRenderer {

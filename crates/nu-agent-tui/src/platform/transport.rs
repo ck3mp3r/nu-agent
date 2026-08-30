@@ -39,14 +39,6 @@ pub struct TuiTransport {
 }
 
 impl TuiTransport {
-    pub fn new() -> Self {
-        Self {
-            user_actions: VecDeque::new(),
-            ui_events: VecDeque::new(),
-            next_when_both: Source::User,
-        }
-    }
-
     pub fn enqueue_user_action(&mut self, action: UserAction) {
         self.user_actions.push_back(action);
     }
@@ -89,6 +81,10 @@ impl TuiTransport {
 
 impl Default for TuiTransport {
     fn default() -> Self {
-        Self::new()
+        Self {
+            user_actions: VecDeque::new(),
+            ui_events: VecDeque::new(),
+            next_when_both: Source::User,
+        }
     }
 }

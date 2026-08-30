@@ -4,6 +4,8 @@ use crate::{A2aError, AgentCapabilities, AgentCard, Message, Part, PeerCache, Ro
 
 use super::{A2aClient, cancel_task, get_agent_card, get_task, list_tasks, send_task};
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // ---------------------------------------------------------------------------
 // Crypto provider
 // ---------------------------------------------------------------------------
@@ -32,7 +34,7 @@ async fn test_setup() -> (crate::A2aServer, A2aClient, String) {
         skills: vec![],
         ..Default::default()
     };
-    let server = crate::A2aServer::start(card, Arc::new(PeerCache::new()), 0)
+    let server = crate::A2aServer::start(card, Arc::new(PeerCache::default()), 0)
         .await
         .unwrap();
     let client = A2aClient::new().unwrap();
@@ -45,7 +47,7 @@ async fn test_setup() -> (crate::A2aServer, A2aClient, String) {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_send_task() {
+async fn test_send_task() -> Result<()> {
     let (_server, client, url) = test_setup().await;
 
     let msg = Message {
@@ -58,7 +60,9 @@ async fn test_send_task() {
         metadata: None,
     };
 
-    let task = send_task(&client, &url, msg, None, None).await.unwrap();
+    let task = send_task(&client, &url, msg, None, None)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
     assert!(!task.id.is_empty(), "Task should have an ID");
     assert_eq!(
@@ -68,10 +72,11 @@ async fn test_send_task() {
     );
     // UUID format: 36 chars
     assert_eq!(task.id.len(), 36, "Task ID should be a UUID");
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_send_task_with_session() {
+async fn test_send_task_with_session() -> Result<()> {
     let (_server, client, url) = test_setup().await;
 
     let msg = Message {
@@ -86,12 +91,13 @@ async fn test_send_task_with_session() {
 
     let task = send_task(&client, &url, msg, Some("sess-1".into()), None)
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(task.session_id, Some("sess-1".into()));
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_send_task_with_sender_url() {
+async fn test_send_task_with_sender_url() -> Result<()> {
     let (_server, client, url) = test_setup().await;
 
     let msg = Message {
@@ -112,9 +118,10 @@ async fn test_send_task_with_sender_url() {
         Some("http://me.local:12345".into()),
     )
     .await
-    .unwrap();
+    .map_err(|e| format!("{e:?}"))?;
 
     assert!(!task.id.is_empty(), "Task should have an ID");
+    Ok(())
 }
 
 #[tokio::test]
@@ -143,7 +150,7 @@ async fn test_send_task_connection_refused() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_get_task() {
+async fn test_get_task() -> Result<()> {
     let (_server, client, url) = test_setup().await;
 
     let msg = Message {
@@ -155,11 +162,16 @@ async fn test_get_task() {
         extensions: None,
         metadata: None,
     };
-    let sent = send_task(&client, &url, msg, None, None).await.unwrap();
+    let sent = send_task(&client, &url, msg, None, None)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
-    let retrieved = get_task(&client, &url, &sent.id).await.unwrap();
+    let retrieved = get_task(&client, &url, &sent.id)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(retrieved.id, sent.id);
     assert_eq!(retrieved.status.state, TaskState::Working);
+    Ok(())
 }
 
 #[tokio::test]
@@ -177,7 +189,7 @@ async fn test_get_task_not_found() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_cancel_task() {
+async fn test_cancel_task() -> Result<()> {
     let (_server, client, url) = test_setup().await;
 
     let msg = Message {
@@ -189,14 +201,19 @@ async fn test_cancel_task() {
         extensions: None,
         metadata: None,
     };
-    let sent = send_task(&client, &url, msg, None, None).await.unwrap();
+    let sent = send_task(&client, &url, msg, None, None)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
-    let canceled = cancel_task(&client, &url, &sent.id).await.unwrap();
+    let canceled = cancel_task(&client, &url, &sent.id)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(canceled.status.state, TaskState::Canceled);
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_cancel_already_completed() {
+async fn test_cancel_already_completed() -> Result<()> {
     let (_server, client, url) = test_setup().await;
 
     let msg = Message {
@@ -208,10 +225,14 @@ async fn test_cancel_already_completed() {
         extensions: None,
         metadata: None,
     };
-    let sent = send_task(&client, &url, msg, None, None).await.unwrap();
+    let sent = send_task(&client, &url, msg, None, None)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
     // First cancel should succeed
-    let first = cancel_task(&client, &url, &sent.id).await.unwrap();
+    let first = cancel_task(&client, &url, &sent.id)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(first.status.state, TaskState::Canceled);
 
     // Second cancel should fail — already Canceled
@@ -220,6 +241,7 @@ async fn test_cancel_already_completed() {
         matches!(result, Err(A2aError::InvalidStateTransition { .. })),
         "Second cancel should return InvalidStateTransition, got: {result:?}"
     );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -227,11 +249,14 @@ async fn test_cancel_already_completed() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_get_agent_card() {
+async fn test_get_agent_card() -> Result<()> {
     let (_server, client, url) = test_setup().await;
-    let card = get_agent_card(&client, &url).await.unwrap();
+    let card = get_agent_card(&client, &url)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(card.name, "test-server");
     assert_eq!(card.version, "1.0");
+    Ok(())
 }
 
 #[tokio::test]
@@ -247,7 +272,7 @@ async fn test_get_agent_card_connection_refused() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_list_tasks() {
+async fn test_list_tasks() -> Result<()> {
     let (_server, client, url) = test_setup().await;
 
     // Send a couple of tasks
@@ -260,7 +285,9 @@ async fn test_list_tasks() {
         extensions: None,
         metadata: None,
     };
-    send_task(&client, &url, msg, None, None).await.unwrap();
+    send_task(&client, &url, msg, None, None)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
     let msg2 = Message {
         role: Role::User,
@@ -271,15 +298,20 @@ async fn test_list_tasks() {
         extensions: None,
         metadata: None,
     };
-    send_task(&client, &url, msg2, None, None).await.unwrap();
+    send_task(&client, &url, msg2, None, None)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
     // List all tasks
-    let tasks = list_tasks(&client, &url, None).await.unwrap();
+    let tasks = list_tasks(&client, &url, None)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(tasks.len(), 2, "Should list 2 tasks");
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_list_tasks_filtered() {
+async fn test_list_tasks_filtered() -> Result<()> {
     let (_server, client, url) = test_setup().await;
 
     // Send a task (it starts Submitted then transitions to Working)
@@ -299,7 +331,7 @@ async fn test_list_tasks_filtered() {
         None,
     )
     .await
-    .unwrap();
+    .map_err(|e| format!("{e:?}"))?;
 
     let msg2 = Message {
         role: Role::User,
@@ -310,24 +342,29 @@ async fn test_list_tasks_filtered() {
         extensions: None,
         metadata: None,
     };
-    send_task(&client, &url, msg2, None, None).await.unwrap();
+    send_task(&client, &url, msg2, None, None)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
     // Cancel the first task so it's in 'canceled' state
-    cancel_task(&client, &url, &send_resp.id).await.unwrap();
+    cancel_task(&client, &url, &send_resp.id)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
     // List only working tasks
     let working = list_tasks(&client, &url, Some(TaskState::Working))
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(working.len(), 1, "Should have 1 working task");
     assert_eq!(working[0].status.state, TaskState::Working);
 
     // List only canceled tasks
     let canceled = list_tasks(&client, &url, Some(TaskState::Canceled))
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(canceled.len(), 1, "Should have 1 canceled task");
     assert_eq!(canceled[0].status.state, TaskState::Canceled);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -335,7 +372,7 @@ async fn test_list_tasks_filtered() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_full_lifecycle() {
+async fn test_full_lifecycle() -> Result<()> {
     let (_server, client, url) = test_setup().await;
 
     // Send
@@ -348,20 +385,29 @@ async fn test_full_lifecycle() {
         extensions: None,
         metadata: None,
     };
-    let sent = send_task(&client, &url, msg, None, None).await.unwrap();
+    let sent = send_task(&client, &url, msg, None, None)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(sent.status.state, TaskState::Working);
 
     // Get
-    let retrieved = get_task(&client, &url, &sent.id).await.unwrap();
+    let retrieved = get_task(&client, &url, &sent.id)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(retrieved.id, sent.id);
 
     // Cancel
-    let canceled = cancel_task(&client, &url, &sent.id).await.unwrap();
+    let canceled = cancel_task(&client, &url, &sent.id)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(canceled.status.state, TaskState::Canceled);
 
     // Get after cancel
-    let final_task = get_task(&client, &url, &sent.id).await.unwrap();
+    let final_task = get_task(&client, &url, &sent.id)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(final_task.status.state, TaskState::Canceled);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -369,7 +415,7 @@ async fn test_full_lifecycle() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_send_task_with_trailing_slash() {
+async fn test_send_task_with_trailing_slash() -> Result<()> {
     let (_server, client, url) = test_setup().await;
 
     let url_with_slash = format!("{}/", url.trim_end_matches('/'));
@@ -386,6 +432,7 @@ async fn test_send_task_with_trailing_slash() {
 
     let task = send_task(&client, &url_with_slash, msg, None, None)
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert!(!task.id.is_empty(), "Task should have an ID");
+    Ok(())
 }

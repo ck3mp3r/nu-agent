@@ -1,5 +1,5 @@
 use crate::formatter::{ToolEndView, format_tool_start};
-use nu_agent_core::policy::Verbosity;
+use crate::policy::Verbosity;
 
 #[test]
 fn default_level_shows_tool_name_and_status_only() {

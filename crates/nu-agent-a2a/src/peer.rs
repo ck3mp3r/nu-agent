@@ -60,17 +60,13 @@ impl Clone for PeerCache {
 
 impl Default for PeerCache {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PeerCache {
-    pub fn new() -> Self {
         Self {
             peers: RwLock::new(HashMap::new()),
         }
     }
+}
 
+impl PeerCache {
     pub fn add_or_update(&self, peer: Peer) {
         let mut peers = self.peers.write().expect("PeerCache write lock poisoned");
         peers.insert(peer.name.clone(), peer);

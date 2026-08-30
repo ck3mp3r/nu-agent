@@ -2,6 +2,8 @@ use nu_agent_core::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTrans
 
 use super::login::validate_login_config;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 fn make_oauth_server(name: &str, url: Option<&str>) -> McpServerConfig {
     McpServerConfig {
         name: name.to_string(),
@@ -92,11 +94,11 @@ fn login_errors_when_server_has_no_url() {
 }
 
 #[test]
-fn login_succeeds_with_valid_oauth_config() {
+fn login_succeeds_with_valid_oauth_config() -> Result<()> {
     let server = make_oauth_server("valid-server", Some("https://example.com/mcp"));
     let result = validate_login_config(&server);
-    assert!(result.is_ok());
-    let (url, auth) = result.unwrap();
+
+    let (url, auth) = result?;
     assert_eq!(url, "https://example.com/mcp");
     match auth {
         McpAuthConfig::OAuth {
@@ -107,10 +109,11 @@ fn login_succeeds_with_valid_oauth_config() {
         }
         _ => panic!("expected OAuth config"),
     }
+    Ok(())
 }
 
 #[test]
-fn login_succeeds_with_oauth_no_client_id() {
+fn login_succeeds_with_oauth_no_client_id() -> Result<()> {
     let server = McpServerConfig {
         name: "dynamic-server".to_string(),
         transport: McpTransportType::Sse,
@@ -129,8 +132,8 @@ fn login_succeeds_with_oauth_no_client_id() {
         env: Default::default(),
     };
     let result = validate_login_config(&server);
-    assert!(result.is_ok());
-    let (url, auth) = result.unwrap();
+
+    let (url, auth) = result?;
     assert_eq!(url, "https://example.com/mcp");
     match auth {
         McpAuthConfig::OAuth { client_id, .. } => {
@@ -138,4 +141,5 @@ fn login_succeeds_with_oauth_no_client_id() {
         }
         _ => panic!("expected OAuth config"),
     }
+    Ok(())
 }

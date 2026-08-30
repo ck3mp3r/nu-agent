@@ -54,7 +54,7 @@ pub(crate) fn build_model_picker_catalog(
                     provider: provider_id.clone(),
                     model: model_id.clone(),
                     identity: identity.clone(),
-                    display: format!("{} / {}", provider_id, model_id),
+                    display: format!("{provider_id} / {model_id}"),
                     active: identity == active_model_identity,
                     context_window: None,
                     max_output: None,

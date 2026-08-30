@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use crate::bus::Bus;
 use crate::compaction::CompactionParams;
 use crate::conversation::compaction::CompactionConfig;
-use crate::conversation::compaction::compactor::{NoopProgressUi, NuCompactor};
+use crate::conversation::compaction::compactor::NuCompactor;
 use crate::session::{CachedMemory, FsSessionStore, SessionStore, StoreEntry};
 use crate::types::Message;
 use rig::agent::ModelHandle;
@@ -83,13 +83,12 @@ async fn load_marker_context_surfaces_store_error_as_failed() -> Result<()> {
             rig::test_utils::MockStreamEvent::Text("summary".to_string()),
             rig::test_utils::MockStreamEvent::final_response_with_default_usage(),
         ]])),
-        NoopProgressUi,
-        Bus::new(),
+        Bus::default(),
         None,
     )
     .with_store(store.clone());
     let memory = Arc::new(CachedMemory::new(store));
-    let bus = Bus::new();
+    let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
 
     // -- Exec
@@ -119,7 +118,7 @@ async fn load_marker_context_surfaces_store_error_as_failed() -> Result<()> {
 #[tokio::test]
 async fn patch_from_marker_with_empty_summary_emits_failed() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = Bus::new();
+    let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
     let empty_marker = Some(crate::session::CompactionMarker::new(
         "".to_string(),
@@ -127,7 +126,7 @@ async fn patch_from_marker_with_empty_summary_emits_failed() -> Result<()> {
     ));
 
     // -- Exec
-    let action = patch_from_marker(&[], &empty_marker, &bus);
+    let action = patch_from_marker(&[], &empty_marker, &bus).await;
 
     // -- Check
     assert!(
@@ -170,16 +169,11 @@ async fn over_threshold_fires_requested_and_does_not_compact_synchronously() -> 
         MockStreamEvent::Text("rolled-up summary".to_string()),
         MockStreamEvent::final_response_with_default_usage(),
     ]]);
-    let compactor = NuCompactor::new(
-        ModelHandle::new(model.clone()),
-        NoopProgressUi,
-        Bus::new(),
-        None,
-    )
-    .with_store(store_arc.clone());
+    let compactor = NuCompactor::new(ModelHandle::new(model.clone()), Bus::default(), None)
+        .with_store(store_arc.clone());
 
     let memory = Arc::new(CachedMemory::new(store_arc));
-    let bus = Bus::new();
+    let bus = Bus::default();
     let mut compaction_rx = bus.compaction().subscribe();
     let compaction = CompactionConfig {
         compactor,
@@ -281,10 +275,10 @@ fn decide_fixture() -> Result<DecideFixture> {
         MockStreamEvent::Text("summary".to_string()),
         MockStreamEvent::final_response_with_default_usage(),
     ]]);
-    let compactor = NuCompactor::new(ModelHandle::new(model), NoopProgressUi, Bus::new(), None)
-        .with_store(store.clone());
+    let compactor =
+        NuCompactor::new(ModelHandle::new(model), Bus::default(), None).with_store(store.clone());
     let memory = Arc::new(CachedMemory::new(store));
-    let bus = Bus::new();
+    let bus = Bus::default();
     let compaction = CompactionConfig {
         compactor,
         params: CompactionParams::default(),
@@ -370,10 +364,7 @@ async fn decide_compaction_real_tokens_under_threshold_does_not_fire() -> Result
         "under-threshold turn with no marker must return None"
     );
     assert!(
-        matches!(
-            rx.try_recv(),
-            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
-        ),
+        matches!(rx.try_recv(), Err(crate::bus::TryRecvError::Empty)),
         "under-threshold turn must not publish any compaction event"
     );
     Ok(())

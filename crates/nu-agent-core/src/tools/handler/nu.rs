@@ -41,8 +41,12 @@ impl BuiltinTool for NuTool {
             .map_err(|e| ToolHandlerError::runtime(format!("Failed to spawn nu: {e}")))?;
 
         // Take pipe handles before select!
-        let mut stdout_handle = child.stdout.take().expect("stdout piped");
-        let mut stderr_handle = child.stderr.take().expect("stderr piped");
+        let mut stdout_handle = child.stdout.take().ok_or_else(|| {
+            ToolHandlerError::runtime("failed to capture nu stdout pipe".to_string())
+        })?;
+        let mut stderr_handle = child.stderr.take().ok_or_else(|| {
+            ToolHandlerError::runtime("failed to capture nu stderr pipe".to_string())
+        })?;
 
         let mut cancel_rx = bus.cancel().subscribe();
 

@@ -47,7 +47,8 @@ pub fn a2a_json_response(body: Value) -> (axum::http::HeaderMap, Json<Value>) {
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(
         axum::http::header::CONTENT_TYPE,
-        "application/a2a+json".parse().expect("static content-type"),
+        // Static constant; from_static is infallible for a valid value.
+        axum::http::HeaderValue::from_static("application/a2a+json"),
     );
     (headers, Json(body))
 }

@@ -47,9 +47,8 @@ pub async fn a2a_version_middleware(
     let mut response = next.run(request).await;
     let _ = response.headers_mut().insert(
         "A2A-Version",
-        crate::A2A_VERSION
-            .parse()
-            .expect("A2A_VERSION is a valid header value"),
+        // A2A_VERSION is a compile-time constant, so from_static is infallible.
+        axum::http::HeaderValue::from_static(crate::A2A_VERSION),
     );
     response
 }

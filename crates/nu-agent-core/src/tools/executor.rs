@@ -106,12 +106,12 @@ impl ToolExecutor {
             }
             // Timeout succeeded, spawn_blocking succeeded, eval_closure failed
             Ok(Ok(Err(e))) => {
-                let audit = AuditResult::Err(format!("Execution error: {}", e));
+                let audit = AuditResult::Err(format!("Execution error: {e}"));
                 (audit, Err(ToolError::Execution(e)))
             }
             // Timeout succeeded, spawn_blocking failed (task panic)
             Ok(Err(join_error)) => {
-                let err_msg = format!("Closure execution panicked: {}", join_error);
+                let err_msg = format!("Closure execution panicked: {join_error}");
                 let audit = AuditResult::Err(err_msg.clone());
                 let shell_error: ShellError =
                     GenericError::new("Closure execution panicked", join_error.to_string(), span)
@@ -140,7 +140,7 @@ impl ToolExecutor {
 
         // Log audit entry (don't fail the call if audit fails - just warn)
         if let Err(e) = self.audit_logger.log(audit_entry).await {
-            eprintln!("Warning: Failed to log audit entry: {}", e);
+            eprintln!("Warning: Failed to log audit entry: {e}");
         }
 
         return_value

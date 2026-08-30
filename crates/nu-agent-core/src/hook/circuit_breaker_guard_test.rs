@@ -23,13 +23,15 @@ fn non_mcp_tool_check_returns_none() {
     assert!(result.is_none());
 }
 
-#[test]
-fn record_result_non_mcp_tool_is_noop() {
+#[tokio::test]
+async fn record_result_non_mcp_tool_is_noop() {
     let guard = make_guard();
     let registry = make_registry_empty();
     let bus = create_bus();
     // Should not panic or emit events
-    guard.record_result("local_tool", "some result", true, &registry, &bus);
+    guard
+        .record_result("local_tool", "some result", true, &registry, &bus)
+        .await;
 }
 
 #[test]

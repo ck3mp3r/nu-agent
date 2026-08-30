@@ -4,6 +4,8 @@ use serial_test::serial;
 
 use super::{ModelLimit, ModelSpec, ModelsCache, ModelsCacheError, ProviderSpec};
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 fn make_test_cache() -> ModelsCache {
     ModelsCache {
         providers: HashMap::from([(
@@ -55,11 +57,13 @@ fn load_returns_error_when_file_missing() {
 }
 
 #[test]
-fn get_spec_returns_model_when_found() {
+fn get_spec_returns_model_when_found() -> Result<()> {
     let cache = make_test_cache();
-    let spec = cache.get_spec("openai", "gpt-4");
-    assert!(spec.is_some());
-    assert_eq!(spec.unwrap().name, "GPT-4");
+    let spec = cache
+        .get_spec("openai", "gpt-4")
+        .ok_or("spec should be found")?;
+    assert_eq!(spec.name, "GPT-4");
+    Ok(())
 }
 
 #[test]

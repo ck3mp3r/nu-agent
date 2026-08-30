@@ -2,7 +2,7 @@ use crate::orchestrator::{
     OnAgentSwitch, UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome,
 };
 use crate::protocol::{
-    contracts::{CoreRuntime, ProgressUi},
+    contracts::CoreRuntime,
     mcp_management::McpManagement,
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
@@ -26,22 +26,20 @@ impl CommandRouter {
     ///
     /// `on_agent_switch` is an optional callback invoked after a successful
     /// agent switch, receiving the new agent's identity and description.
-    pub async fn dispatch<R, U>(
+    pub async fn dispatch<R>(
         cmd: WorkerCommand,
         runtime: &mut R,
-        ui: &mut U,
         result_tx: &mpsc::Sender<TurnOutcome>,
         on_agent_switch: Option<OnAgentSwitch>,
         bus: &crate::bus::Bus,
     ) -> bool
     where
         R: CoreRuntime + McpManagement + ModelSwitching + SessionState + SessionPersistence + Send,
-        U: ProgressUi + Send,
     {
         match cmd {
             WorkerCommand::ExecuteTurn { prompt, span } => {
                 log::debug!("Router: ExecuteTurn prompt_len={}", prompt.len());
-                let result = runtime.execute_turn(ui, prompt, None, span).await;
+                let result = runtime.execute_turn(bus, prompt, None, span).await;
                 // Convert Result<Value, LabeledError> to TurnOutcome
                 // Detect cancellation by message content:
                 // - v2 path: "Turn cancelled: ..."
@@ -60,7 +58,8 @@ impl CommandRouter {
                 if let Err(e) = runtime.run_compaction(&source).await {
                     let _ = bus
                         .compaction()
-                        .send(crate::bus::CompactionEvent::Failed { source, message: e });
+                        .send(crate::bus::CompactionEvent::Failed { source, message: e })
+                        .await;
                 }
                 true
             }

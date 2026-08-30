@@ -47,7 +47,11 @@ impl UiRequestStage {
                 }
                 _ => "Worker channel closed".to_string(),
             };
-            let _ = ctx.bus.warning().send(WarningEvent::Message { message });
+            let _ = ctx
+                .bus
+                .warning()
+                .send(WarningEvent::Message { message })
+                .await;
         }
     }
 
@@ -70,17 +74,25 @@ impl UiRequestStage {
         } else {
             match &request {
                 UiRequest::ToggleMcp { server, .. } => {
-                    let _ = ctx.bus.ui_state().send(UiStateEvent::SetMcpServerState {
-                        server: server.clone(),
-                        state: McpUsabilityState::Failed,
-                        error: Some("worker channel closed".to_string()),
-                        total: self.last_authoritative_visible_count,
-                    });
+                    let _ = ctx
+                        .bus
+                        .ui_state()
+                        .send(UiStateEvent::SetMcpServerState {
+                            server: server.clone(),
+                            state: McpUsabilityState::Failed,
+                            error: Some("worker channel closed".to_string()),
+                            total: self.last_authoritative_visible_count,
+                        })
+                        .await;
                 }
                 _ => {
-                    let _ = ctx.bus.warning().send(WarningEvent::Message {
-                        message: "Worker channel closed".to_string(),
-                    });
+                    let _ = ctx
+                        .bus
+                        .warning()
+                        .send(WarningEvent::Message {
+                            message: "Worker channel closed".to_string(),
+                        })
+                        .await;
                 }
             }
         }
@@ -96,9 +108,13 @@ impl UiRequestHandler for UiRequestStage {
                         .retain(|r| !matches!(r, UiRequest::SwitchModel { .. }));
                     self.queued
                         .push_back(UiRequest::SwitchModel { spec: spec.clone() });
-                    let _ = ctx.bus.warning().send(WarningEvent::Message {
-                        message: format!("Model switch queued for next turn: {spec}"),
-                    });
+                    let _ = ctx
+                        .bus
+                        .warning()
+                        .send(WarningEvent::Message {
+                            message: format!("Model switch queued for next turn: {spec}"),
+                        })
+                        .await;
                 } else {
                     self.dispatch_blocking(UiRequest::SwitchModel { spec }, ctx)
                         .await;
@@ -110,9 +126,13 @@ impl UiRequestHandler for UiRequestStage {
                         .retain(|r| !matches!(r, UiRequest::SwitchAgent { .. }));
                     self.queued
                         .push_back(UiRequest::SwitchAgent { name: name.clone() });
-                    let _ = ctx.bus.warning().send(WarningEvent::Message {
-                        message: format!("Agent switch queued for next turn: {name}"),
-                    });
+                    let _ = ctx
+                        .bus
+                        .warning()
+                        .send(WarningEvent::Message {
+                            message: format!("Agent switch queued for next turn: {name}"),
+                        })
+                        .await;
                 } else {
                     self.dispatch_blocking(UiRequest::SwitchAgent { name }, ctx)
                         .await;
@@ -120,9 +140,13 @@ impl UiRequestHandler for UiRequestStage {
             }
             UiRequest::SwitchSession { id } => {
                 if *ctx.worker_active {
-                    let _ = ctx.bus.warning().send(WarningEvent::Message {
-                        message: "Cannot switch session while worker is active".to_string(),
-                    });
+                    let _ = ctx
+                        .bus
+                        .warning()
+                        .send(WarningEvent::Message {
+                            message: "Cannot switch session while worker is active".to_string(),
+                        })
+                        .await;
                 } else if self.pending_blocking.is_none() {
                     self.dispatch_blocking(UiRequest::SwitchSession { id }, ctx)
                         .await;
@@ -147,30 +171,37 @@ impl UiRequestHandler for UiRequestStage {
         }
     }
 
-    fn handle_blocking_response(
+    async fn handle_blocking_response(
         &mut self,
         response: UiRequestResponse,
-        ctx: &mut OrchestrationContext,
+        ctx: &mut OrchestrationContext<'_>,
     ) {
         match response {
             UiRequestResponse::ModelSwitch(Ok((identity, max_tokens))) => {
                 let _ = ctx
                     .bus
                     .ui_state()
-                    .send(UiStateEvent::SetActiveModelIdentity(identity.clone()));
+                    .send(UiStateEvent::SetActiveModelIdentity(identity.clone()))
+                    .await;
                 let _ = ctx
                     .bus
                     .ui_state()
-                    .send(UiStateEvent::SetContextWindowMaxTokens(max_tokens));
-                let _ = ctx.bus.warning().send(WarningEvent::Message {
-                    message: format!("Model switched: {identity}"),
-                });
+                    .send(UiStateEvent::SetContextWindowMaxTokens(max_tokens))
+                    .await;
+                let _ = ctx
+                    .bus
+                    .warning()
+                    .send(WarningEvent::Message {
+                        message: format!("Model switched: {identity}"),
+                    })
+                    .await;
             }
             UiRequestResponse::ModelSwitch(Err(msg)) => {
                 let _ = ctx
                     .bus
                     .warning()
-                    .send(WarningEvent::Message { message: msg });
+                    .send(WarningEvent::Message { message: msg })
+                    .await;
             }
             UiRequestResponse::AgentSwitch(Ok((
                 agent_identity,
@@ -181,45 +212,66 @@ impl UiRequestHandler for UiRequestStage {
                 let _ = ctx
                     .bus
                     .ui_state()
-                    .send(UiStateEvent::SetActiveAgentIdentity(agent_identity.clone()));
+                    .send(UiStateEvent::SetActiveAgentIdentity(agent_identity.clone()))
+                    .await;
                 let _ = ctx
                     .bus
                     .ui_state()
-                    .send(UiStateEvent::SetActivePersonaIcon(icon));
+                    .send(UiStateEvent::SetActivePersonaIcon(icon))
+                    .await;
                 let _ = ctx
                     .bus
                     .ui_state()
-                    .send(UiStateEvent::SetActiveModelIdentity(model_identity));
+                    .send(UiStateEvent::SetActiveModelIdentity(model_identity))
+                    .await;
                 let _ = ctx
                     .bus
                     .ui_state()
-                    .send(UiStateEvent::SetContextWindowMaxTokens(max_tokens));
-                let _ = ctx.bus.warning().send(WarningEvent::Message {
-                    message: format!("Agent switched to: {agent_identity}"),
-                });
+                    .send(UiStateEvent::SetContextWindowMaxTokens(max_tokens))
+                    .await;
+                let _ = ctx
+                    .bus
+                    .warning()
+                    .send(WarningEvent::Message {
+                        message: format!("Agent switched to: {agent_identity}"),
+                    })
+                    .await;
             }
             UiRequestResponse::AgentSwitch(Err(msg)) => {
                 let _ = ctx
                     .bus
                     .warning()
-                    .send(WarningEvent::Message { message: msg });
+                    .send(WarningEvent::Message { message: msg })
+                    .await;
             }
             UiRequestResponse::SessionSwitch {
                 id,
                 result: Ok(snapshots),
             } => {
-                let _ = ctx.bus.ui_state().send(UiStateEvent::ClearTranscript);
-                let _ = ctx.bus.ui_state().send(UiStateEvent::HydrateTranscript {
-                    messages: snapshots,
-                    last_total_tokens: None,
-                });
-                let _ = ctx.bus.warning().send(WarningEvent::Message {
-                    message: "Session switched".to_string(),
-                });
-                let _ = ctx.bus.session().send(SessionEvent::Switched {
-                    from_session_id: None,
-                    to_session_id: id,
-                });
+                let _ = ctx.bus.ui_state().send(UiStateEvent::ClearTranscript).await;
+                let _ = ctx
+                    .bus
+                    .ui_state()
+                    .send(UiStateEvent::HydrateTranscript {
+                        messages: snapshots,
+                        last_total_tokens: None,
+                    })
+                    .await;
+                let _ = ctx
+                    .bus
+                    .warning()
+                    .send(WarningEvent::Message {
+                        message: "Session switched".to_string(),
+                    })
+                    .await;
+                let _ = ctx
+                    .bus
+                    .session()
+                    .send(SessionEvent::Switched {
+                        from_session_id: None,
+                        to_session_id: id,
+                    })
+                    .await;
             }
             UiRequestResponse::SessionSwitch {
                 result: Err(msg), ..
@@ -227,17 +279,18 @@ impl UiRequestHandler for UiRequestStage {
                 let _ = ctx
                     .bus
                     .warning()
-                    .send(WarningEvent::Message { message: msg });
+                    .send(WarningEvent::Message { message: msg })
+                    .await;
             }
             _ => {}
         }
         self.pending_blocking = None;
     }
 
-    fn handle_concurrent_response(
+    async fn handle_concurrent_response(
         &mut self,
         response: UiRequestResponse,
-        ctx: &mut OrchestrationContext,
+        ctx: &mut OrchestrationContext<'_>,
     ) {
         let (remove_mcp_server, remove_session_refresh) = match &response {
             UiRequestResponse::McpToggle { server, .. } => (Some(server.clone()), false),
@@ -259,19 +312,25 @@ impl UiRequestHandler for UiRequestStage {
                     .send(UiStateEvent::SetMcpVisibleToolCount {
                         server: server.clone(),
                         count: server_count,
-                    });
+                    })
+                    .await;
                 for (srv, names) in names_by_server {
                     let _ = ctx
                         .bus
                         .ui_state()
-                        .send(UiStateEvent::SetMcpVisibleToolNames { server: srv, names });
+                        .send(UiStateEvent::SetMcpVisibleToolNames { server: srv, names })
+                        .await;
                 }
-                let _ = ctx.bus.ui_state().send(UiStateEvent::SetMcpServerState {
-                    server,
-                    state,
-                    error: None,
-                    total,
-                });
+                let _ = ctx
+                    .bus
+                    .ui_state()
+                    .send(UiStateEvent::SetMcpServerState {
+                        server,
+                        state,
+                        error: None,
+                        total,
+                    })
+                    .await;
             }
             UiRequestResponse::McpToggle {
                 server,
@@ -287,31 +346,39 @@ impl UiRequestHandler for UiRequestStage {
                     .send(UiStateEvent::SetMcpVisibleToolCount {
                         server: server.clone(),
                         count: server_count,
-                    });
+                    })
+                    .await;
                 for (srv, names) in names_by_server {
                     let _ = ctx
                         .bus
                         .ui_state()
-                        .send(UiStateEvent::SetMcpVisibleToolNames { server: srv, names });
+                        .send(UiStateEvent::SetMcpVisibleToolNames { server: srv, names })
+                        .await;
                 }
-                let _ = ctx.bus.ui_state().send(UiStateEvent::SetMcpServerState {
-                    server,
-                    state: McpUsabilityState::Failed,
-                    error: Some(err),
-                    total,
-                });
+                let _ = ctx
+                    .bus
+                    .ui_state()
+                    .send(UiStateEvent::SetMcpServerState {
+                        server,
+                        state: McpUsabilityState::Failed,
+                        error: Some(err),
+                        total,
+                    })
+                    .await;
             }
             UiRequestResponse::SessionRefresh(Ok(sessions)) => {
                 let _ = ctx
                     .bus
                     .ui_state()
-                    .send(UiStateEvent::SetSessionPickerOptions(sessions));
+                    .send(UiStateEvent::SetSessionPickerOptions(sessions))
+                    .await;
             }
             UiRequestResponse::SessionRefresh(Err(msg)) => {
                 let _ = ctx
                     .bus
                     .warning()
-                    .send(WarningEvent::Message { message: msg });
+                    .send(WarningEvent::Message { message: msg })
+                    .await;
             }
             _ => {}
         }

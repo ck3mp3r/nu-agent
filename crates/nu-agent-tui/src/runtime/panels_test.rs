@@ -1,4 +1,4 @@
-use super::*;
+use ratatui::text::Line;
 
 pub(crate) fn help_panel_visible_window(
     lines: &[Line<'_>],

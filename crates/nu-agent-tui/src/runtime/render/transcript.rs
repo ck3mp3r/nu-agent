@@ -191,7 +191,7 @@ impl RuntimeCoordinator {
 
             // Post-render buffer manipulation: apply selection highlight to visual rows
             if self.state.input_mode == InputMode::Visual
-                && let Some(ref sel) = self.state.transcript_selection
+                && let Some(sel) = &self.state.transcript_selection
             {
                 let (sel_start, sel_end) = sel.normalized_range();
                 Self::apply_selection_highlight(

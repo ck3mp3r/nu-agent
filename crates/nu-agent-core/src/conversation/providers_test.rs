@@ -1,5 +1,7 @@
 use super::*;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
 fn build_copilot_client_function_signature_exists() {
     // Compile-time verification that build_copilot_client exists with correct signature
@@ -7,8 +9,9 @@ fn build_copilot_client_function_signature_exists() {
     use nu_protocol::LabeledError;
 
     // Type annotation forces the compiler to verify the function signature
-    let _function: fn(&Config) -> Result<rig::providers::copilot::Client, LabeledError> =
-        build_copilot_client;
+    let _function: fn(
+        &Config,
+    ) -> std::result::Result<rig::providers::copilot::Client, LabeledError> = build_copilot_client;
 
     // If this compiles, the function exists with the correct signature
 }
@@ -175,11 +178,13 @@ fn resolve_provider_type_custom_key_with_known_impl() {
 // ========================================================================
 
 #[test]
-fn build_http_client_returns_configured_client() {
+fn build_http_client_returns_configured_client()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
     // Install crypto provider needed by reqwest+rustls
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let client = super::build_http_client(None);
+    let client = super::build_http_client(None)?;
     drop(client);
+    Ok(())
 }
 
 #[test]
@@ -229,7 +234,7 @@ fn resolve_provider_type_falls_back_to_key_when_field_none() {
 
 #[test]
 #[serial_test::serial]
-fn cached_provider_client_copilot_variant_holds_client() {
+fn cached_provider_client_copilot_variant_holds_client() -> Result<()> {
     use crate::config::Config;
 
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -241,14 +246,15 @@ fn cached_provider_client_copilot_variant_holds_client() {
         api_key: Some("fake-token".to_string()),
         ..Config::default()
     };
-    let client = build_copilot_client(&config).unwrap();
+    let client = build_copilot_client(&config).map_err(|e| format!("{e:?}"))?;
     let c = CachedProviderClient::Copilot(client);
     assert!(matches!(c, CachedProviderClient::Copilot(_)));
+    Ok(())
 }
 
 #[test]
 #[serial_test::serial]
-fn cached_provider_client_openai_variant_holds_client() {
+fn cached_provider_client_openai_variant_holds_client() -> Result<()> {
     use crate::config::Config;
 
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -260,14 +266,15 @@ fn cached_provider_client_openai_variant_holds_client() {
         api_key: Some("sk-fake".to_string()),
         ..Config::default()
     };
-    let client = build_openai_client(&config).unwrap();
+    let client = build_openai_client(&config).map_err(|e| format!("{e:?}"))?;
     let c = CachedProviderClient::OpenAi(client);
     assert!(matches!(c, CachedProviderClient::OpenAi(_)));
+    Ok(())
 }
 
 #[test]
 #[serial_test::serial]
-fn cached_provider_client_ollama_variant_holds_client() {
+fn cached_provider_client_ollama_variant_holds_client() -> Result<()> {
     use crate::config::Config;
 
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -280,9 +287,10 @@ fn cached_provider_client_ollama_variant_holds_client() {
         base_url: Some("http://localhost:11434".to_string()),
         ..Config::default()
     };
-    let client = build_ollama_client(&config).unwrap();
+    let client = build_ollama_client(&config).map_err(|e| format!("{e:?}"))?;
     let c = CachedProviderClient::Ollama(client);
     assert!(matches!(c, CachedProviderClient::Ollama(_)));
+    Ok(())
 }
 
 // ========================================================================
@@ -291,7 +299,7 @@ fn cached_provider_client_ollama_variant_holds_client() {
 
 #[test]
 #[serial_test::serial]
-fn openai_without_base_url_produces_openai_variant() {
+fn openai_without_base_url_produces_openai_variant() -> Result<()> {
     use crate::config::Config;
     use crate::conversation::state::provider::ProviderState;
 
@@ -306,16 +314,17 @@ fn openai_without_base_url_produces_openai_variant() {
         ..Config::default()
     };
     let mut state = ProviderState::new(config, None);
-    state.ensure_client_cached().unwrap();
-    assert!(matches!(
-        state.client().unwrap(),
-        CachedProviderClient::OpenAi(_)
-    ));
+    state.ensure_client_cached().map_err(|e| format!("{e:?}"))?;
+    let client = state
+        .client()
+        .ok_or("client should be cached after ensure_client_cached")?;
+    assert!(matches!(client, CachedProviderClient::OpenAi(_)));
+    Ok(())
 }
 
 #[test]
 #[serial_test::serial]
-fn openai_with_base_url_produces_openai_completions_variant() {
+fn openai_with_base_url_produces_openai_completions_variant() -> Result<()> {
     use crate::config::Config;
     use crate::conversation::state::provider::ProviderState;
 
@@ -330,11 +339,12 @@ fn openai_with_base_url_produces_openai_completions_variant() {
         ..Config::default()
     };
     let mut state = ProviderState::new(config, None);
-    state.ensure_client_cached().unwrap();
-    assert!(matches!(
-        state.client().unwrap(),
-        CachedProviderClient::OpenAiCompletions(_)
-    ));
+    state.ensure_client_cached().map_err(|e| format!("{e:?}"))?;
+    let client = state
+        .client()
+        .ok_or("client should be cached after ensure_client_cached")?;
+    assert!(matches!(client, CachedProviderClient::OpenAiCompletions(_)));
+    Ok(())
 }
 
 // ========================================================================
@@ -342,7 +352,7 @@ fn openai_with_base_url_produces_openai_completions_variant() {
 // ========================================================================
 
 #[test]
-fn plugin_config_read_timeout_secs_propagates_to_resolved_config() {
+fn plugin_config_read_timeout_secs_propagates_to_resolved_config() -> Result<()> {
     use std::collections::HashMap;
 
     use crate::config::{AgentsConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
@@ -391,17 +401,18 @@ fn plugin_config_read_timeout_secs_propagates_to_resolved_config() {
     };
     let resolved = plugin_config
         .resolve_model(&role_config)
-        .expect("should resolve");
+        .map_err(|e| format!("should resolve: {e:?}"))?;
 
     assert_eq!(
         resolved.read_timeout_secs,
         Some(60),
         "read_timeout_secs should be 60 after resolve"
     );
+    Ok(())
 }
 
 #[test]
-fn plugin_config_without_read_timeout_secs_resolves_to_none() {
+fn plugin_config_without_read_timeout_secs_resolves_to_none() -> Result<()> {
     use std::collections::HashMap;
 
     use crate::config::{AgentsConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
@@ -448,10 +459,11 @@ fn plugin_config_without_read_timeout_secs_resolves_to_none() {
     };
     let resolved = plugin_config
         .resolve_model(&role_config)
-        .expect("should resolve");
+        .map_err(|e| format!("should resolve: {e:?}"))?;
 
     assert_eq!(
         resolved.read_timeout_secs, None,
         "read_timeout_secs should be None when not configured"
     );
+    Ok(())
 }

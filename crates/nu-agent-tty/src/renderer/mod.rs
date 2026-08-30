@@ -6,7 +6,6 @@ pub mod tty;
 #[cfg(test)]
 mod tty_test;
 
-use nu_agent_core::policy::{UiPolicy, Verbosity};
 use nu_agent_core::protocol::event::{ToolDisplay, UiEvent};
 use nu_agent_core::renderer::UiRenderer;
 use nu_agent_core::transcript::ir::StyleHint;
@@ -16,6 +15,7 @@ use std::time::{Duration, Instant};
 use crate::ansi::style_text;
 use crate::formatter::{ToolEndView, format_tool_start};
 use crate::markdown_buffer::StreamingMarkdownBuffer;
+use crate::policy::{UiPolicy, Verbosity};
 use crate::spinner::SpinnerState;
 
 pub struct StderrUiRenderer<W: Write> {
@@ -79,7 +79,7 @@ impl<W: Write> StderrUiRenderer<W> {
             active_tool_args: None,
             streaming_started: false,
             streaming_printed_len: 0,
-            markdown_buffer: StreamingMarkdownBuffer::new(),
+            markdown_buffer: StreamingMarkdownBuffer::default(),
             use_color: stderr_is_tty,
         }
     }
@@ -274,7 +274,7 @@ impl<W: Write> StderrUiRenderer<W> {
                     None
                 }
             }
-            UiEvent::TurnError { message } => Some(format!("Error: {}", message)),
+            UiEvent::TurnError { message } => Some(format!("Error: {message}")),
             UiEvent::CompactionStarted { source } => {
                 if self.policy.quiet {
                     None

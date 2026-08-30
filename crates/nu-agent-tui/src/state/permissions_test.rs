@@ -1,9 +1,11 @@
 use crate::state::*;
 use nu_agent_core::protocol::event::PermissionDecision;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
 fn permission_prompt_open_sets_required_status_and_presence() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_permission_prompt(PermissionPrompt {
         request_id: "ask-0000000000000001".to_string(),
         matched_rule_identity: "nested:nu.command:*".to_string(),
@@ -22,7 +24,7 @@ fn permission_prompt_open_sets_required_status_and_presence() {
 
 #[test]
 fn permission_prompt_open_scrolls_to_bottom() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.push_transcript_line(TranscriptRole::User, "msg1".to_string());
     state.push_transcript_line(TranscriptRole::Assistant, "msg2".to_string());
     state.push_transcript_line(TranscriptRole::Tool, "tool1".to_string());
@@ -45,8 +47,8 @@ fn permission_prompt_open_scrolls_to_bottom() {
 }
 
 #[test]
-fn submit_permission_decision_enqueues_submission_and_closes_prompt() {
-    let mut state = AppState::new();
+fn submit_permission_decision_enqueues_submission_and_closes_prompt() -> Result<()> {
+    let mut state = AppState::default();
     state.open_permission_prompt(PermissionPrompt {
         request_id: "ask-0000000000000002".to_string(),
         matched_rule_identity: "nested:nu.command:*".to_string(),
@@ -64,8 +66,9 @@ fn submit_permission_decision_enqueues_submission_and_closes_prompt() {
 
     let submission = state
         .take_next_permission_decision_submission()
-        .expect("queued submission");
+        .ok_or("should have queued permission submission")?;
     assert_eq!(submission.request_id, "ask-0000000000000002");
     assert_eq!(submission.matched_rule_identity, "nested:nu.command:*");
     assert_eq!(submission.decision, PermissionDecision::AllowAlways);
+    Ok(())
 }

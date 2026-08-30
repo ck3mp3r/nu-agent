@@ -4,6 +4,8 @@ use nu_agent_core::tools::mcp::credentials::McpCredentialsStore;
 
 use super::logout::perform_logout;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 fn make_store_with_entry(server_name: &str) -> McpCredentialsStore {
     let mut store = McpCredentialsStore::default();
     store
@@ -34,7 +36,7 @@ fn logout_on_nonexistent_server_returns_no_credentials_message() {
 }
 
 #[test]
-fn logout_persists_to_disk() {
+fn logout_persists_to_disk() -> Result<()> {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("mcp-auth.json");
 
@@ -43,16 +45,17 @@ fn logout_persists_to_disk() {
     store.save_to(&path).expect("save");
 
     // Reload, perform logout, save
-    let mut loaded = McpCredentialsStore::load_from(&path).expect("load");
+    let mut loaded = McpCredentialsStore::load_from(&path).map_err(|e| format!("{e:?}"))?;
     assert!(loaded.entries.contains_key("my-server"));
 
     let _msg = perform_logout(&mut loaded, "my-server");
     loaded.save_to(&path).expect("save");
 
     // Reload again and verify entry is gone
-    let final_store = McpCredentialsStore::load_from(&path).expect("load");
+    let final_store = McpCredentialsStore::load_from(&path).map_err(|e| format!("{e:?}"))?;
     assert!(!final_store.entries.contains_key("my-server"));
     assert!(final_store.entries.is_empty());
+    Ok(())
 }
 
 #[test]

@@ -1,8 +1,11 @@
 use super::test_shared::*;
-use crate::protocol::event::PermissionDecisionSubmission;
+use crate::protocol::contracts::ProgressUi;
+use crate::protocol::event::{PermissionDecisionSubmission, UiEvent};
+
+type TResult = core::result::Result<(), Box<dyn std::error::Error>>;
 
 #[tokio::test]
-async fn recognized_slash_commands_never_sent_to_llm() {
+async fn recognized_slash_commands_never_sent_to_llm() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -21,15 +24,16 @@ async fn recognized_slash_commands_never_sent_to_llm() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.run_compaction_calls, 1);
     assert!(runtime.prompts.is_empty());
+    Ok(())
 }
 
 #[tokio::test]
-async fn new_slash_command_clears_transcript_and_pushes_startup_logo() {
+async fn new_slash_command_clears_transcript_and_pushes_startup_logo() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -45,16 +49,17 @@ async fn new_slash_command_clears_transcript_and_pushes_startup_logo() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(ui.clear_transcript_count.load(Ordering::SeqCst), 1);
     assert_eq!(ui.push_startup_logo_count.load(Ordering::SeqCst), 1);
     assert!(runtime.prompts.is_empty());
+    Ok(())
 }
 
 #[tokio::test]
-async fn models_slash_command_not_sent_to_llm() {
+async fn models_slash_command_not_sent_to_llm() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -70,14 +75,15 @@ async fn models_slash_command_not_sent_to_llm() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert!(runtime.prompts.is_empty());
+    Ok(())
 }
 
 #[tokio::test]
-async fn models_slash_command_routes_to_shared_models_action() {
+async fn models_slash_command_routes_to_shared_models_action() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -93,17 +99,18 @@ async fn models_slash_command_routes_to_shared_models_action() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
         ui.shared_actions.lock().unwrap().clone(),
         vec![SharedUiAction::Models]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_loop_routes_compact_slash_to_compaction_executor() {
+async fn interactive_loop_routes_compact_slash_to_compaction_executor() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -122,15 +129,16 @@ async fn interactive_loop_routes_compact_slash_to_compaction_executor() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.run_compaction_calls, 1);
     assert_eq!(runtime.prompts, vec!["hello".to_string()]);
+    Ok(())
 }
 
 #[tokio::test]
-async fn typed_compact_submit_triggers_compaction_path() {
+async fn typed_compact_submit_triggers_compaction_path() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -146,15 +154,16 @@ async fn typed_compact_submit_triggers_compaction_path() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.run_compaction_calls, 1);
     assert!(runtime.prompts.is_empty());
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_loop_unknown_slash_emits_warning_and_continues() {
+async fn interactive_loop_unknown_slash_emits_warning_and_continues() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -171,7 +180,7 @@ async fn interactive_loop_unknown_slash_emits_warning_and_continues() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert!(
@@ -182,10 +191,11 @@ async fn interactive_loop_unknown_slash_emits_warning_and_continues() {
             .any(|entry| entry == "Unknown slash command: /compact now")
     );
     assert_eq!(runtime.prompts, vec!["real prompt".to_string()]);
+    Ok(())
 }
 
 #[tokio::test]
-async fn recognized_slash_commands_not_persisted_as_session_turn_messages() {
+async fn recognized_slash_commands_not_persisted_as_session_turn_messages() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -202,7 +212,7 @@ async fn recognized_slash_commands_not_persisted_as_session_turn_messages() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -210,10 +220,11 @@ async fn recognized_slash_commands_not_persisted_as_session_turn_messages() {
         "only /compact should route to session compaction"
     );
     assert!(runtime.prompts.is_empty());
+    Ok(())
 }
 
 #[tokio::test]
-async fn manual_compaction_failure_is_not_surfaced_as_warning() {
+async fn manual_compaction_failure_is_not_surfaced_as_warning() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         run_compaction_fail: true,
@@ -232,7 +243,7 @@ async fn manual_compaction_failure_is_not_surfaced_as_warning() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -252,10 +263,11 @@ async fn manual_compaction_failure_is_not_surfaced_as_warning() {
             .all(|w| { w != "auto compaction failed" }),
         "a failed compaction must not surface as a warning (it is fire-and-forget via the bus)"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn slash_commands_reuse_command_palette_action_handlers() {
+async fn slash_commands_reuse_command_palette_action_handlers() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -274,7 +286,7 @@ async fn slash_commands_reuse_command_palette_action_handlers() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -289,10 +301,11 @@ async fn slash_commands_reuse_command_palette_action_handlers() {
         ]
     );
     assert!(runtime.prompts.is_empty());
+    Ok(())
 }
 
 #[tokio::test]
-async fn command_palette_models_action_opens_inline_model_picker() {
+async fn command_palette_models_action_opens_inline_model_picker() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -310,17 +323,18 @@ async fn command_palette_models_action_opens_inline_model_picker() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
         ui.shared_actions.lock().unwrap().clone(),
         vec![SharedUiAction::Models]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn manual_compaction_slash_works_with_turn_processing() {
+async fn manual_compaction_slash_works_with_turn_processing() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -339,11 +353,12 @@ async fn manual_compaction_slash_works_with_turn_processing() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.run_compaction_calls, 1);
     assert_eq!(runtime.prompts, vec!["hello".to_string()]);
+    Ok(())
 }
 
 // ── ContextWindowRuntime ────────────────────────────────────────────────
@@ -365,9 +380,9 @@ impl Default for ContextWindowRuntime {
 }
 
 impl CoreRuntime for ContextWindowRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        _ui: &mut U,
+        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
@@ -375,7 +390,8 @@ impl CoreRuntime for ContextWindowRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         Ok(Value::nothing(span))
     }
 }
@@ -543,9 +559,9 @@ struct TokenSeedingRuntime {
 }
 
 impl CoreRuntime for TokenSeedingRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        _ui: &mut U,
+        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
@@ -553,7 +569,8 @@ impl CoreRuntime for TokenSeedingRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         Ok(Value::nothing(span))
     }
 }
@@ -590,7 +607,7 @@ impl SessionPersistence for TokenSeedingRuntime {}
 crate::default_mcp!(TokenSeedingRuntime);
 
 #[tokio::test]
-async fn context_window_max_tokens_set_on_ui_at_startup() {
+async fn context_window_max_tokens_set_on_ui_at_startup() -> TResult {
     let bus = create_bus();
     let runtime = ContextWindowRuntime {
         bus: bus.clone(),
@@ -608,17 +625,18 @@ async fn context_window_max_tokens_set_on_ui_at_startup() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    result.expect("interactive loop");
+    result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert_eq!(
         *ui.context_window_max_tokens.lock().unwrap(),
         Some(Some(128_000)),
         "expected context_window_max_tokens to be set to Some(128_000) at startup"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn model_switch_updates_context_window_max_tokens_in_ui() {
+async fn model_switch_updates_context_window_max_tokens_in_ui() -> TResult {
     let bus = create_bus();
     let runtime = ContextWindowRuntime {
         bus: bus.clone(),
@@ -634,7 +652,7 @@ async fn model_switch_updates_context_window_max_tokens_in_ui() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -646,10 +664,11 @@ async fn model_switch_updates_context_window_max_tokens_in_ui() {
         Some(Some(128_000)),
         "expected context_window_max_tokens to be updated with 128_000 after model switch"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn model_switch_updates_context_window_max_tokens_none_when_unset() {
+async fn model_switch_updates_context_window_max_tokens_none_when_unset() -> TResult {
     let bus = create_bus();
     let runtime = ContextWindowRuntime {
         max_context_tokens: None,
@@ -666,7 +685,7 @@ async fn model_switch_updates_context_window_max_tokens_none_when_unset() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -674,10 +693,11 @@ async fn model_switch_updates_context_window_max_tokens_none_when_unset() {
         Some(None),
         "expected context_window_max_tokens to be set to None when model has no limit"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn session_resume_seeds_last_total_tokens() {
+async fn session_resume_seeds_last_total_tokens() -> TResult {
     let bus = create_bus();
     let runtime = TokenSeedingRuntime {
         bus: bus.clone(),
@@ -694,17 +714,18 @@ async fn session_resume_seeds_last_total_tokens() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    result.expect("hydrated interactive loop");
+    result.map_err(|e| format!("hydrated interactive loop: {e}"))?;
 
     assert_eq!(
         runtime.seeded_tokens,
         Some(Some(90_000)),
         "seed_last_total_tokens must be called with the loaded token count on session resume"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn session_resume_seeds_last_total_tokens_none_when_no_prior_session() {
+async fn session_resume_seeds_last_total_tokens_none_when_no_prior_session() -> TResult {
     let bus = create_bus();
     let runtime = TokenSeedingRuntime {
         bus: bus.clone(),
@@ -721,71 +742,68 @@ async fn session_resume_seeds_last_total_tokens_none_when_no_prior_session() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    result.expect("hydrated interactive loop");
+    result.map_err(|e| format!("hydrated interactive loop: {e}"))?;
 
     assert_eq!(
         runtime.seeded_tokens,
         Some(None),
         "seed_last_total_tokens must be called with None when no prior token count exists"
     );
-}
-
-// ── FakeProgressUi ──────────────────────────────────────────────────────
-
-#[derive(Default)]
-struct FakeProgressUi {
-    events: Vec<UiEvent>,
-}
-
-impl ProgressUi for FakeProgressUi {
-    fn emit(&mut self, event: &UiEvent) {
-        self.events.push(event.clone());
-    }
-
-    fn flush(&mut self) {}
-
-    fn take_cancel_requested(&self) -> bool {
-        false
-    }
+    Ok(())
 }
 
 // ── ToolDisplayOnlyRuntime ──────────────────────────────────────────────
 
 #[derive(Default)]
-struct ToolDisplayOnlyRuntime;
+struct ToolDisplayOnlyRuntime {
+    bus: crate::bus::Bus,
+}
 
 impl CoreRuntime for ToolDisplayOnlyRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        ui: &mut U,
+        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
-        ui.emit(&UiEvent::ToolStarted {
-            name: "edit".to_string(),
-            source: "closure".to_string(),
-            arguments: "{}".to_string(),
-        });
-        ui.emit(&UiEvent::ToolCompleted {
-            name: "edit".to_string(),
-            source: "closure".to_string(),
-            arguments: "{}".to_string(),
-            success: true,
-            result: r#"{"path":"file.txt","diff":"--- a/file.txt\n+++ b/file.txt\n"}"#.to_string(),
-            display: Some(ToolDisplay {
-                title: "edit file.txt".to_string(),
-                sections: vec![ToolDisplaySection {
-                    label: "file.txt".to_string(),
-                    language: "diff".to_string(),
-                    content: "--- a/file.txt\n+++ b/file.txt\n".to_string(),
-                    stats: None,
-                }],
-            }),
-            error_kind: None,
-            message: None,
-        });
-        ui.emit(&UiEvent::Completed { tool_calls: 1 });
+        let _ = self
+            .bus
+            .tool()
+            .send(crate::bus::ToolEvent::Started {
+                name: "edit".to_string(),
+                source: "closure".to_string(),
+                arguments: "{}".to_string(),
+            })
+            .await;
+        let _ = self
+            .bus
+            .tool()
+            .send(crate::bus::ToolEvent::Completed {
+                name: "edit".to_string(),
+                source: "closure".to_string(),
+                arguments: "{}".to_string(),
+                success: true,
+                result: r#"{"path":"file.txt","diff":"--- a/file.txt\n+++ b/file.txt\n"}"#
+                    .to_string(),
+                display: Some(ToolDisplay {
+                    title: "edit file.txt".to_string(),
+                    sections: vec![ToolDisplaySection {
+                        label: "file.txt".to_string(),
+                        language: "diff".to_string(),
+                        content: "--- a/file.txt\n+++ b/file.txt\n".to_string(),
+                        stats: None,
+                    }],
+                }),
+                error_kind: None,
+                message: None,
+            })
+            .await;
+        let _ = self
+            .bus
+            .turn()
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 1 })
+            .await;
         Ok(Value::nothing(span))
     }
 }
@@ -817,9 +835,9 @@ struct CancelFirstRuntime {
 }
 
 impl CoreRuntime for CancelFirstRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        _ui: &mut U,
+        _bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         _span: Span,
@@ -828,7 +846,8 @@ impl CoreRuntime for CancelFirstRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         if self.prompts.len() == 1 {
             return Err(LabeledError::new("LLM call cancelled"));
         }
@@ -866,9 +885,9 @@ struct ErrorFirstRuntime {
 }
 
 impl CoreRuntime for ErrorFirstRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        _ui: &mut U,
+        _bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         _span: Span,
@@ -877,7 +896,8 @@ impl CoreRuntime for ErrorFirstRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         if self.prompts.len() == 1 {
             return Err(LabeledError::new("API rate limit exceeded"));
         }
@@ -915,6 +935,7 @@ struct PermissionGateRuntime {
     active: Arc<AtomicBool>,
     request_id: String,
     rule_identity: String,
+    pending: crate::conversation::runtime::PendingPermissions,
     bus: crate::bus::Bus,
 }
 
@@ -927,6 +948,7 @@ impl PermissionGateRuntime {
             active: Arc::new(AtomicBool::new(false)),
             request_id: "ask-0000000000000abc".to_string(),
             rule_identity: "nested:nu.command:*".to_string(),
+            pending: Arc::new(Mutex::new(std::collections::HashMap::new())),
             bus: crate::bus::Bus::default(),
         }
     }
@@ -938,61 +960,60 @@ impl PermissionGateRuntime {
 }
 
 impl CoreRuntime for PermissionGateRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        ui: &mut U,
+        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
         self.active.store(true, Ordering::SeqCst);
 
-        let controller =
-            crate::protocol::permission::PermissionController::new(Duration::from_secs(2));
-        let (token, requested_event) = controller
-            .begin_request(crate::protocol::permission::PermissionRequest {
-                request_id: self.request_id.clone(),
-                context: PermissionRequestContext {
-                    tool: "nu".to_string(),
-                    source: "closure".to_string(),
-                    mode: Some("apply".to_string()),
-                    matched_rule_identity: self.rule_identity.clone(),
-                    scope: "nested".to_string(),
-                    target_field: Some("command".to_string()),
-                    pattern: "*".to_string(),
-                    summary: "→ {\"command\":\"echo hi\"}".to_string(),
-                    pre_authorize_display: None,
-                },
+        // Publish a permission request on the bus and register a oneshot in the
+        // shared pending map, mirroring production `InteractivePermissionResolver`.
+        let request_id = self.request_id.clone();
+        let context = crate::protocol::event::PermissionRequestContext {
+            tool: "nu".to_string(),
+            source: "closure".to_string(),
+            mode: Some("apply".to_string()),
+            matched_rule_identity: self.rule_identity.clone(),
+            scope: "nested".to_string(),
+            target_field: Some("command".to_string()),
+            pattern: "*".to_string(),
+            summary: "→ {\"command\":\"echo hi\"}".to_string(),
+            pre_authorize_display: None,
+        };
+        let (tx, rx) = crate::bus::OneshotTx::channel("permission");
+        self.pending
+            .lock()
+            .expect("pending lock")
+            .insert(request_id.clone(), tx);
+        let _ = self
+            .bus
+            .permission()
+            .send(crate::bus::PermissionEvent::Requested {
+                request_id: request_id.clone(),
+                context: Box::new(context),
             })
-            .expect("permission request");
-
-        crate::protocol::permission::install_active_permission_submission_sender(Some(
-            token.sender_clone(),
-        ));
-        ui.emit(&requested_event);
+            .await;
         self.requested.store(true, Ordering::SeqCst);
 
-        let (resolution, events) = controller.await_resolution(&token).await;
-        for event in events {
-            ui.emit(&event);
-        }
+        // Await the UI's decision via the oneshot. Deny on channel drop.
+        let decision = rx.await.unwrap_or(PermissionDecision::Deny);
 
-        crate::protocol::permission::install_active_permission_submission_sender(None);
-
-        if let crate::protocol::permission::PermissionResolution::Decision { decision, .. } =
-            resolution
-            && decision != PermissionDecision::Deny
-        {
+        if decision != PermissionDecision::Deny {
             self.side_effects.fetch_add(1, Ordering::SeqCst);
             // Publish the tool-start to the bus tool channel directly, matching
-            // production where the hook publishes ToolEvent::Started. The worker
-            // bridge no longer forwards a worker-emitted UiEvent::ToolStarted to
-            // the bus.
-            let _ = self.bus.tool().send(crate::bus::ToolEvent::Started {
-                name: "nu".to_string(),
-                source: "closure".to_string(),
-                arguments: r#"{"command":"echo hi"}"#.to_string(),
-            });
+            // production where the hook publishes ToolEvent::Started.
+            let _ = self
+                .bus
+                .tool()
+                .send(crate::bus::ToolEvent::Started {
+                    name: "nu".to_string(),
+                    source: "closure".to_string(),
+                    arguments: r#"{"command":"echo hi"}"#.to_string(),
+                })
+                .await;
         }
 
         // Publish TurnCompleted directly to the bus (worker bridge no longer
@@ -1000,7 +1021,8 @@ impl CoreRuntime for PermissionGateRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         self.finished.store(true, Ordering::SeqCst);
         self.active.store(false, Ordering::SeqCst);
         Ok(Value::nothing(span))
@@ -1111,8 +1133,6 @@ impl PermissionOrderingUi {
         let mut tool_rx = bus.tool().subscribe();
 
         self._background_tasks.push(tokio::spawn(async move {
-            let mut pending_tool_starts: Vec<UiEvent> = Vec::new();
-            let mut decision_recorded = false;
             loop {
                 tokio::select! {
                     Ok(event) = permission_rx.recv() => {
@@ -1128,20 +1148,6 @@ impl PermissionOrderingUi {
                                 context: context.as_ref().clone(),
                             });
                         }
-                        if let crate::bus::PermissionEvent::DecisionSubmitted { ref request_id, decision, ref matched_rule_identity } = event {
-                            decision_recorded = true;
-                            events.lock().expect("events lock").push(UiEvent::PermissionDecisionSubmitted {
-                                request_id: request_id.clone(),
-                                decision,
-                                matched_rule_identity: matched_rule_identity.clone(),
-                            });
-                            // Flush buffered tool starts now that the decision is recorded,
-                            // preserving the deterministic PermissionRequested <
-                            // PermissionDecisionSubmitted < ToolStarted ordering.
-                            if !pending_tool_starts.is_empty() {
-                                events.lock().expect("events lock").append(&mut pending_tool_starts);
-                            }
-                        }
                         if let crate::bus::PermissionEvent::DecisionTimedOut { ref request_id } = event {
                             events.lock().expect("events lock").push(UiEvent::PermissionDecisionTimedOut { request_id: request_id.clone() });
                         }
@@ -1156,16 +1162,11 @@ impl PermissionOrderingUi {
                     }
                     Ok(event) = tool_rx.recv() => {
                         if let crate::bus::ToolEvent::Started { name, source, arguments } = event {
-                            let tool_start = UiEvent::ToolStarted {
+                            events.lock().expect("events lock").push(UiEvent::ToolStarted {
                                 name,
                                 source,
                                 arguments,
-                            };
-                            if decision_recorded {
-                                events.lock().expect("events lock").push(tool_start);
-                            } else {
-                                pending_tool_starts.push(tool_start);
-                            }
+                            });
                         }
                     }
                     else => break,
@@ -1293,7 +1294,8 @@ impl ModelPickerLaunchWhileActiveUi {
             tokio::spawn(async move {
                 for _ in 0..pending_launches {
                     let _ = ui_state_tx
-                        .send(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Models));
+                        .send(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Models))
+                        .await;
                 }
                 loop {
                     if let Some(prompt) = submitted.pop_front() {
@@ -1326,9 +1328,9 @@ struct StartupHydrationRuntime {
 }
 
 impl CoreRuntime for StartupHydrationRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        _ui: &mut U,
+        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
@@ -1336,7 +1338,8 @@ impl CoreRuntime for StartupHydrationRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         Ok(Value::nothing(span))
     }
 }
@@ -1387,22 +1390,40 @@ impl ModelSwitching for StartupHydrationRuntime {
 crate::default_session!(StartupHydrationRuntime);
 
 #[tokio::test]
-async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() {
-    let mut runtime = ToolDisplayOnlyRuntime;
-    let mut ui = FakeProgressUi::default();
+async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() -> TResult {
+    let bus = create_bus();
+    let mut runtime = ToolDisplayOnlyRuntime { bus: bus.clone() };
+    let mut tool_rx = bus.tool().subscribe();
 
     let value = run_single_turn(
         &mut runtime,
-        &mut ui,
+        &bus,
         "show me diff".to_string(),
         None,
         Span::test_data(),
     )
     .await
-    .expect("single turn");
+    .map_err(|e| format!("single turn: {e}"))?;
 
     assert!(value.is_nothing());
-    assert!(ui.events.iter().any(|event| matches!(
+
+    // Drain the bus tool channel (events published by the runtime) and convert
+    // to UiEvent at the boundary.
+    let mut events = Vec::new();
+    loop {
+        match tool_rx.try_recv() {
+            Ok(event) => {
+                if let Some(e) = Option::<UiEvent>::from(event) {
+                    events.push(e);
+                }
+            }
+            Err(crate::bus::TryRecvError::Empty) => break,
+            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
+            Err(crate::bus::TryRecvError::Closed) => break,
+        }
+    }
+
+    assert!(events.iter().any(|event| matches!(
         event,
         UiEvent::ToolCompleted {
             display: Some(_),
@@ -1410,33 +1431,35 @@ async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() {
         }
     )));
     assert!(
-        !ui.events
+        !events
             .iter()
             .any(|event| matches!(event, UiEvent::AssistantMessage { .. }))
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn run_single_turn_uses_progress_ui_trait_boundary() {
+async fn run_single_turn_uses_progress_ui_trait_boundary() -> TResult {
+    let bus = create_bus();
     let mut runtime = FakeRuntime::default();
-    let mut ui = FakeProgressUi::default();
 
     let value = run_single_turn(
         &mut runtime,
-        &mut ui,
+        &bus,
         "hello".to_string(),
         Some("ctx".to_string()),
         Span::test_data(),
     )
     .await
-    .expect("single turn");
+    .map_err(|e| format!("single turn: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.prompts, vec!["hello".to_string()]);
+    Ok(())
 }
 
 #[tokio::test]
-async fn run_interactive_loop_uses_interactive_ui_trait_boundary() {
+async fn run_interactive_loop_uses_interactive_ui_trait_boundary() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -1452,14 +1475,15 @@ async fn run_interactive_loop_uses_interactive_ui_trait_boundary() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.prompts, vec!["a".to_string(), "b".to_string()]);
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_loop_does_not_return_per_turn_values_to_stdout() {
+async fn interactive_loop_does_not_return_per_turn_values_to_stdout() -> TResult {
     let bus = create_bus();
     let runtime = FakeValueRuntime {
         bus: bus.clone(),
@@ -1475,14 +1499,15 @@ async fn interactive_loop_does_not_return_per_turn_values_to_stdout() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.prompts, vec!["hello".to_string()]);
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_loop_treats_llm_cancellation_as_non_fatal_and_continues() {
+async fn interactive_loop_treats_llm_cancellation_as_non_fatal_and_continues() -> TResult {
     let bus = create_bus();
     let runtime = CancelFirstRuntime {
         bus: bus.clone(),
@@ -1498,17 +1523,19 @@ async fn interactive_loop_treats_llm_cancellation_as_non_fatal_and_continues() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop should continue after cancellation");
+    let value =
+        result.map_err(|e| format!("interactive loop should continue after cancellation: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
         runtime.prompts,
         vec!["first".to_string(), "second".to_string()]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() {
+async fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() -> TResult {
     let bus = create_bus();
     let runtime = ErrorFirstRuntime {
         bus: bus.clone(),
@@ -1524,7 +1551,7 @@ async fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop should continue after error");
+    let value = result.map_err(|e| format!("interactive loop should continue after error: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -1539,10 +1566,11 @@ async fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() {
             .any(|w| w.contains("API rate limit exceeded")),
         "error should be displayed as inline warning"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn run_hydrated_interactive_loop_hydrates_before_first_pump() {
+async fn run_hydrated_interactive_loop_hydrates_before_first_pump() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -1564,17 +1592,18 @@ async fn run_hydrated_interactive_loop_hydrates_before_first_pump() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    result.expect("interactive loop with hydration");
+    result.map_err(|e| format!("interactive loop with hydration: {e}"))?;
 
     assert_eq!(
         &ui.call_order.lock().expect("call_order lock")[..1],
         ["hydrate"],
         "expected hydrate before first pump"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn run_hydrated_interactive_loop_hydrates_exactly_once() {
+async fn run_hydrated_interactive_loop_hydrates_exactly_once() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -1600,16 +1629,17 @@ async fn run_hydrated_interactive_loop_hydrates_exactly_once() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    result.expect("interactive loop with hydration");
+    result.map_err(|e| format!("interactive loop with hydration: {e}"))?;
 
     assert_eq!(
         *ui.hydrated_messages.lock().expect("hydrated_messages lock"),
         messages
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_loop_processes_input_while_first_turn_is_running() {
+async fn interactive_loop_processes_input_while_first_turn_is_running() -> TResult {
     let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
@@ -1640,17 +1670,18 @@ async fn interactive_loop_processes_input_while_first_turn_is_running() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop should stay responsive");
+    let value = result.map_err(|e| format!("interactive loop should stay responsive: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
         _runtime.prompts.lock().expect("prompts lock").as_slice(),
         ["first", "second"]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() {
+async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() -> TResult {
     let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
@@ -1681,19 +1712,22 @@ async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    result.expect("interactive loop should complete queued prompts");
+    result.map_err(|e| format!("interactive loop should complete queued prompts: {e}"))?;
 
     assert_eq!(
         _runtime.prompts.lock().expect("prompts lock").as_slice(),
         ["first", "second", "third"]
     );
+    Ok(())
 }
 
 #[tokio::test]
 #[serial_test::serial]
-async fn permission_requested_emits_before_execution_and_waits_for_decision_before_side_effects() {
+async fn permission_requested_emits_before_execution_and_waits_for_decision_before_side_effects()
+-> TResult {
     let bus = create_bus();
     let runtime = PermissionGateRuntime::new().with_bus(bus.clone());
+    let pending = runtime.pending.clone();
     let pumps_while_waiting = Arc::new(AtomicUsize::new(0));
     let ui = PermissionOrderingUi::new(
         PermissionDecision::AllowOnce,
@@ -1707,10 +1741,11 @@ async fn permission_requested_emits_before_execution_and_waits_for_decision_befo
         runtime,
         InteractiveLoopConfig::new(Span::test_data())
             .with_bus(bus)
+            .with_interactive_pending(Some(pending))
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(_runtime.side_effects.load(Ordering::SeqCst), 1);
@@ -1723,25 +1758,26 @@ async fn permission_requested_emits_before_execution_and_waits_for_decision_befo
     let requested_idx = events
         .iter()
         .position(|event| matches!(event, UiEvent::PermissionRequested { .. }))
-        .expect("PermissionRequested must be emitted");
-    let submitted_idx = events
-        .iter()
-        .position(|event| matches!(event, UiEvent::PermissionDecisionSubmitted { .. }))
-        .expect("PermissionDecisionSubmitted must be emitted");
+        .ok_or("PermissionRequested must be emitted")?;
     let tool_start_idx = events
         .iter()
         .position(|event| matches!(event, UiEvent::ToolStarted { .. }))
-        .expect("ToolStarted should happen after allow decision");
+        .ok_or("ToolStarted should happen after allow decision")?;
 
-    assert!(requested_idx < submitted_idx);
-    assert!(submitted_idx < tool_start_idx);
+    assert!(
+        requested_idx < tool_start_idx,
+        "PermissionRequested must precede ToolStarted"
+    );
+    Ok(())
 }
 
 #[tokio::test]
 #[serial_test::serial]
-async fn deny_decision_resumes_deterministically_without_pre_decision_handler_side_effects() {
+async fn deny_decision_resumes_deterministically_without_pre_decision_handler_side_effects()
+-> TResult {
     let bus = create_bus();
     let runtime = PermissionGateRuntime::new().with_bus(bus.clone());
+    let pending = runtime.pending.clone();
     let ui = PermissionOrderingUi::new(PermissionDecision::Deny, 3, Arc::new(AtomicUsize::new(0)))
         .with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
@@ -1750,10 +1786,11 @@ async fn deny_decision_resumes_deterministically_without_pre_decision_handler_si
         runtime,
         InteractiveLoopConfig::new(Span::test_data())
             .with_bus(bus)
+            .with_interactive_pending(Some(pending))
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(_runtime.side_effects.load(Ordering::SeqCst), 0);
@@ -1764,18 +1801,12 @@ async fn deny_decision_resumes_deterministically_without_pre_decision_handler_si
             .iter()
             .any(|event| matches!(event, UiEvent::PermissionRequested { .. }))
     );
-    assert!(events.iter().any(|event| matches!(
-        event,
-        UiEvent::PermissionDecisionSubmitted {
-            decision: PermissionDecision::Deny,
-            ..
-        }
-    )));
     assert!(
         !events
             .iter()
             .any(|event| matches!(event, UiEvent::ToolStarted { .. }))
     );
+    Ok(())
 }
 
 // ── PermissionBridgeUi ──────────────────────────────────────────────────
@@ -1881,9 +1912,10 @@ impl UserInputUi for PermissionBridgeUi {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn permission_flow_reaches_bus_through_worker_bridge() {
+async fn permission_flow_reaches_bus_through_worker_bridge() -> TResult {
     let bus = create_bus();
     let runtime = PermissionGateRuntime::new().with_bus(bus.clone());
+    let pending = runtime.pending.clone();
     let ui = PermissionBridgeUi::new(PermissionDecision::AllowOnce).with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
@@ -1891,10 +1923,11 @@ async fn permission_flow_reaches_bus_through_worker_bridge() {
         runtime,
         InteractiveLoopConfig::new(Span::test_data())
             .with_bus(bus)
+            .with_interactive_pending(Some(pending))
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.side_effects.load(Ordering::SeqCst), 1);
@@ -1904,31 +1937,9 @@ async fn permission_flow_reaches_bus_through_worker_bridge() {
         events
             .iter()
             .any(|event| matches!(event, crate::bus::PermissionEvent::Requested { .. })),
-        "worker bridge must forward a PermissionEvent::Requested to the permission bus"
+        "permission resolver must publish a PermissionEvent::Requested to the permission bus"
     );
-    assert!(
-        events.iter().any(|event| matches!(
-            event,
-            crate::bus::PermissionEvent::DecisionSubmitted {
-                decision: PermissionDecision::AllowOnce,
-                ..
-            }
-        )),
-        "worker bridge must forward a PermissionEvent::DecisionSubmitted after the decision is injected"
-    );
-
-    let requested_idx = events
-        .iter()
-        .position(|event| matches!(event, crate::bus::PermissionEvent::Requested { .. }))
-        .expect("Requested must be present");
-    let submitted_idx = events
-        .iter()
-        .position(|event| matches!(event, crate::bus::PermissionEvent::DecisionSubmitted { .. }))
-        .expect("DecisionSubmitted must be present");
-    assert!(
-        requested_idx < submitted_idx,
-        "PermissionEvent::Requested must precede PermissionEvent::DecisionSubmitted"
-    );
+    Ok(())
 }
 
 // ── PermissionTimeoutIgnoredRuntime ───────────────────────────────────
@@ -1939,26 +1950,35 @@ struct PermissionTimeoutIgnoredRuntime {
 }
 
 impl CoreRuntime for PermissionTimeoutIgnoredRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        ui: &mut U,
+        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
-        ui.emit(&UiEvent::PermissionDecisionTimedOut {
-            request_id: self.request_id.clone(),
-        });
-        ui.emit(&UiEvent::PermissionDecisionIgnored {
-            request_id: self.request_id.clone(),
-            reason: "decision_channel_closed".to_string(),
-        });
+        let _ = self
+            .bus
+            .permission()
+            .send(crate::bus::PermissionEvent::DecisionTimedOut {
+                request_id: self.request_id.clone(),
+            })
+            .await;
+        let _ = self
+            .bus
+            .permission()
+            .send(crate::bus::PermissionEvent::DecisionIgnored {
+                request_id: self.request_id.clone(),
+                reason: "decision_channel_closed".to_string(),
+            })
+            .await;
         // Publish TurnCompleted directly to the bus (worker bridge no longer
         // converts UiEvent::Completed), matching production.
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         Ok(Value::nothing(span))
     }
 }
@@ -2007,7 +2027,7 @@ impl ModelSwitching for PermissionTimeoutIgnoredRuntime {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn permission_timeout_and_ignored_reach_bus_through_worker_bridge() {
+async fn permission_timeout_and_ignored_reach_bus_through_worker_bridge() -> TResult {
     let bus = create_bus();
     let runtime = PermissionTimeoutIgnoredRuntime {
         request_id: "ask-0000000000000abc".to_string(),
@@ -2023,7 +2043,7 @@ async fn permission_timeout_and_ignored_reach_bus_through_worker_bridge() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
     assert!(value.is_nothing());
 
     let events = ui.events.lock().unwrap();
@@ -2039,10 +2059,11 @@ async fn permission_timeout_and_ignored_reach_bus_through_worker_bridge() {
             .any(|event| matches!(event, crate::bus::PermissionEvent::DecisionIgnored { .. })),
         "worker bridge must forward PermissionEvent::DecisionIgnored to the permission bus"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn models_launcher_opens_picker_while_worker_active() {
+async fn models_launcher_opens_picker_while_worker_active() -> TResult {
     let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
@@ -2063,7 +2084,8 @@ async fn models_launcher_opens_picker_while_worker_active() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop should process model launcher while active");
+    let value = result
+        .map_err(|e| format!("interactive loop should process model launcher while active: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -2074,10 +2096,11 @@ async fn models_launcher_opens_picker_while_worker_active() {
         _runtime.prompts.lock().expect("prompts lock").as_slice(),
         ["first"]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn models_slash_opens_picker_while_worker_active() {
+async fn models_slash_opens_picker_while_worker_active() -> TResult {
     let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
@@ -2098,7 +2121,8 @@ async fn models_slash_opens_picker_while_worker_active() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop should process /models while active");
+    let value =
+        result.map_err(|e| format!("interactive loop should process /models while active: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -2109,10 +2133,11 @@ async fn models_slash_opens_picker_while_worker_active() {
         _runtime.prompts.lock().expect("prompts lock").as_slice(),
         ["first"]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_prompt() {
+async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_prompt() -> TResult {
     let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
@@ -2135,17 +2160,20 @@ async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_pr
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop should treat cancellation as non-fatal");
+    let value = result
+        .map_err(|e| format!("interactive loop should treat cancellation as non-fatal: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
         rt.prompts.lock().expect("prompts lock").as_slice(),
         ["first"]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_loop_startup_hydration_initializes_per_server_visible_counts_before_toggles() {
+async fn interactive_loop_startup_hydration_initializes_per_server_visible_counts_before_toggles()
+-> TResult {
     let bus = create_bus();
     let runtime = StartupHydrationRuntime {
         names_by_server: vec![
@@ -2167,13 +2195,14 @@ async fn interactive_loop_startup_hydration_initializes_per_server_visible_count
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
         ui.mcp_visible_tool_count_updates.lock().unwrap().clone(),
         vec![("gh".to_string(), 2), ("k8s".to_string(), 1)]
     );
+    Ok(())
 }
 
 #[test]
@@ -2262,9 +2291,9 @@ struct McpToggleRuntime {
 }
 
 impl CoreRuntime for McpToggleRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        _ui: &mut U,
+        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
@@ -2272,7 +2301,8 @@ impl CoreRuntime for McpToggleRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         Ok(Value::nothing(span))
     }
 }
@@ -2329,9 +2359,9 @@ struct FailingMcpToggleRuntime {
 }
 
 impl CoreRuntime for FailingMcpToggleRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        _ui: &mut U,
+        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
@@ -2339,7 +2369,8 @@ impl CoreRuntime for FailingMcpToggleRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         Ok(Value::nothing(span))
     }
 }
@@ -2400,9 +2431,9 @@ struct SequencedMcpToggleRuntime {
 }
 
 impl CoreRuntime for SequencedMcpToggleRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        _ui: &mut U,
+        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
@@ -2410,7 +2441,8 @@ impl CoreRuntime for SequencedMcpToggleRuntime {
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         Ok(Value::nothing(span))
     }
 }
@@ -2555,7 +2587,7 @@ impl StagedToggleUi {
 }
 
 #[tokio::test]
-async fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() {
+async fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() -> TResult {
     let bus = create_bus();
     let runtime = McpToggleRuntime {
         toggles: Vec::new(),
@@ -2583,7 +2615,7 @@ async fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), false)]);
@@ -2595,10 +2627,11 @@ async fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() {
         ui.mcp_visible_tool_count_updates.lock().unwrap().clone(),
         vec![("gh".to_string(), 0)]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_loop_marks_enable_failure_as_failed_state() {
+async fn interactive_loop_marks_enable_failure_as_failed_state() -> TResult {
     let bus = create_bus();
     let runtime = McpToggleRuntime {
         toggles: Vec::new(),
@@ -2626,7 +2659,7 @@ async fn interactive_loop_marks_enable_failure_as_failed_state() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
@@ -2638,10 +2671,11 @@ async fn interactive_loop_marks_enable_failure_as_failed_state() {
         ui.mcp_visible_tool_count_updates.lock().unwrap().clone(),
         vec![("gh".to_string(), 0)]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_loop_marks_enable_success_as_enabled_state() {
+async fn interactive_loop_marks_enable_success_as_enabled_state() -> TResult {
     let bus = create_bus();
     let runtime = McpToggleRuntime {
         toggles: Vec::new(),
@@ -2669,7 +2703,7 @@ async fn interactive_loop_marks_enable_success_as_enabled_state() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
@@ -2681,10 +2715,12 @@ async fn interactive_loop_marks_enable_success_as_enabled_state() {
         ui.mcp_visible_tool_count_updates.lock().unwrap().clone(),
         vec![("gh".to_string(), 5)]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_toggle_error() {
+async fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_toggle_error()
+-> TResult {
     let bus = create_bus();
     let runtime = FailingMcpToggleRuntime {
         toggles: Vec::new(),
@@ -2710,7 +2746,7 @@ async fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_to
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(runtime.toggles, vec![("gh".to_string(), true)]);
@@ -2727,10 +2763,11 @@ async fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_to
         ui.mcp_visible_tool_count_updates.lock().unwrap().clone(),
         vec![("gh".to_string(), 0)]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn interactive_toggle_enable_disable_cycle_refreshes_per_server_visible_counts() {
+async fn interactive_toggle_enable_disable_cycle_refreshes_per_server_visible_counts() -> TResult {
     let bus = create_bus();
     let runtime = SequencedMcpToggleRuntime {
         toggles: Vec::new(),
@@ -2753,17 +2790,18 @@ async fn interactive_toggle_enable_disable_cycle_refreshes_per_server_visible_co
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
         runtime.toggles,
         vec![("gh".to_string(), false), ("gh".to_string(), true)]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn palette_models_does_not_bypass_shared_models_action_path() {
+async fn palette_models_does_not_bypass_shared_models_action_path() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -2779,7 +2817,7 @@ async fn palette_models_does_not_bypass_shared_models_action_path() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -2787,10 +2825,11 @@ async fn palette_models_does_not_bypass_shared_models_action_path() {
         vec![SharedUiAction::Models]
     );
     assert!(runtime.prompts.is_empty());
+    Ok(())
 }
 
 #[tokio::test]
-async fn inline_model_picker_enter_switches_active_model_and_provider() {
+async fn inline_model_picker_enter_switches_active_model_and_provider() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -2812,7 +2851,7 @@ async fn inline_model_picker_enter_switches_active_model_and_provider() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -2823,10 +2862,11 @@ async fn inline_model_picker_enter_switches_active_model_and_provider() {
         *ui.active_model_identity.lock().unwrap(),
         Some("openai/gpt-4o-mini".to_string())
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn model_switch_failure_keeps_previous_model_and_warns() {
+async fn model_switch_failure_keeps_previous_model_and_warns() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         switch_model_result: Some(Err("switch failed".to_string())),
@@ -2846,7 +2886,7 @@ async fn model_switch_failure_keeps_previous_model_and_warns() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -2864,10 +2904,11 @@ async fn model_switch_failure_keeps_previous_model_and_warns() {
             .iter()
             .any(|w| w == "switch failed")
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn model_switch_uses_cached_startup_plugin_config() {
+async fn model_switch_uses_cached_startup_plugin_config() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -2887,17 +2928,18 @@ async fn model_switch_uses_cached_startup_plugin_config() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
         runtime.switched_models,
         vec!["openai/gpt-4o-mini".to_string()]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn model_switch_updates_footer_active_model_identity_immediately() {
+async fn model_switch_updates_footer_active_model_identity_immediately() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -2917,17 +2959,18 @@ async fn model_switch_updates_footer_active_model_identity_immediately() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
         *ui.active_model_identity.lock().unwrap(),
         Some("openai/gpt-4o-mini".to_string())
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn model_switch_result_artifact_is_rendered() {
+async fn model_switch_result_artifact_is_rendered() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -2947,7 +2990,7 @@ async fn model_switch_result_artifact_is_rendered() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert!(
@@ -2957,10 +3000,11 @@ async fn model_switch_result_artifact_is_rendered() {
             .iter()
             .any(|w| w == "Model switched: openai/gpt-4o-mini")
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn next_turn_uses_newly_selected_model() {
+async fn next_turn_uses_newly_selected_model() -> TResult {
     let bus = create_bus();
     let runtime = FakeRuntime {
         bus: bus.clone(),
@@ -2980,7 +3024,7 @@ async fn next_turn_uses_newly_selected_model() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -2988,10 +3032,11 @@ async fn next_turn_uses_newly_selected_model() {
         vec!["openai/gpt-4o-mini".to_string()]
     );
     assert_eq!(runtime.prompts, vec!["after-switch".to_string()]);
+    Ok(())
 }
 
 #[tokio::test]
-async fn model_switch_while_worker_active_is_queued_for_next_turn() {
+async fn model_switch_while_worker_active_is_queued_for_next_turn() -> TResult {
     let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
@@ -3022,7 +3067,7 @@ async fn model_switch_while_worker_active_is_queued_for_next_turn() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -3044,10 +3089,11 @@ async fn model_switch_while_worker_active_is_queued_for_next_turn() {
             .iter()
             .any(|w| w == "Model switch queued for next turn: openai/gpt-4o-mini")
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
+async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() -> TResult {
     let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
@@ -3078,7 +3124,7 @@ async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -3089,10 +3135,11 @@ async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() {
             .as_slice(),
         ["turn:first", "turn:second", "switch:openai/gpt-4o-mini"]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn queued_model_switch_last_write_wins() {
+async fn queued_model_switch_last_write_wins() -> TResult {
     let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
@@ -3123,7 +3170,7 @@ async fn queued_model_switch_last_write_wins() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -3134,10 +3181,11 @@ async fn queued_model_switch_last_write_wins() {
             .as_slice(),
         ["anthropic/claude-3-5-sonnet"]
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn queued_model_switch_failure_keeps_previous_model_and_warns() {
+async fn queued_model_switch_failure_keeps_previous_model_and_warns() -> TResult {
     let bus = create_bus();
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn))
@@ -3170,7 +3218,7 @@ async fn queued_model_switch_failure_keeps_previous_model_and_warns() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    let value = result.expect("interactive loop");
+    let value = result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(value.is_nothing());
     assert_eq!(
@@ -3185,6 +3233,7 @@ async fn queued_model_switch_failure_keeps_previous_model_and_warns() {
             .iter()
             .any(|w| w == "queued switch failed")
     );
+    Ok(())
 }
 
 // ── CancellableBlockingRuntime ─────────────────────────────────────────
@@ -3223,31 +3272,43 @@ impl CancellableBlockingRuntime {
 }
 
 impl CoreRuntime for CancellableBlockingRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        ui: &mut U,
+        _bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         _span: Span,
     ) -> Result<Value, LabeledError> {
         self.prompts.lock().expect("prompts lock").push(prompt);
         self.started.store(true, Ordering::SeqCst);
-        while !self.block.load(Ordering::SeqCst) {
-            if ui.take_cancel_requested() {
-                self.cancelled.store(true, Ordering::SeqCst);
-                let _ = self
-                    .bus
-                    .turn()
-                    .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
-                return Err(LabeledError::new("LLM call cancelled"));
+        // Subscribe to the bus cancel channel directly, matching production where
+        // the hook/tool proxies subscribe to `bus.cancel()`.
+        let mut cancel_rx = self.bus.cancel().subscribe();
+        loop {
+            tokio::select! {
+                recv = cancel_rx.recv() => {
+                    if matches!(recv, Ok(crate::bus::CancelEvent::Requested) | Err(crate::bus::ChannelError::Lagged { .. })) {
+                        self.cancelled.store(true, Ordering::SeqCst);
+                        let _ = self
+                            .bus
+                            .turn()
+                            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+                            .await;
+                        return Err(LabeledError::new("LLM call cancelled"));
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_millis(2)) => {
+                    if self.block.load(Ordering::SeqCst) {
+                        break;
+                    }
+                }
             }
-            ui.emit(&UiEvent::Tick);
-            tokio::time::sleep(Duration::from_millis(2)).await;
         }
         let _ = self
             .bus
             .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 });
+            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .await;
         Ok(Value::nothing(Span::test_data()))
     }
 }
@@ -3274,13 +3335,13 @@ crate::default_session!(CancellableBlockingRuntime);
 crate::default_mcp!(CancellableBlockingRuntime);
 
 #[tokio::test]
-async fn matching_a2a_task_cancel_sets_cancel_requested() {
+async fn matching_a2a_task_cancel_sets_cancel_requested() -> TResult {
     let block = Arc::new(AtomicBool::new(false));
     let bus = create_bus();
     let runtime = CancellableBlockingRuntime::new(Arc::clone(&block)).with_bus(bus.clone());
     let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
 
-    let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<String>();
+    let (cancel_tx, cancel_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     // Publish an external A2A task, retrying until the loop subscribes.
     let publish_bus = bus.clone();
@@ -3290,7 +3351,7 @@ async fn matching_a2a_task_cancel_sets_cancel_requested() {
                 .to_string(),
             task_id: "11111111-2222-3333-4444-555555555555".to_string(),
         };
-        while publish_bus.external().send(event.clone()).is_err() {
+        while publish_bus.external().send(event.clone()).await.is_err() {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
     });
@@ -3316,7 +3377,7 @@ async fn matching_a2a_task_cancel_sets_cancel_requested() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    result.expect("interactive loop");
+    result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(
         runtime.cancelled(),
@@ -3324,16 +3385,17 @@ async fn matching_a2a_task_cancel_sets_cancel_requested() {
     );
     // Unblock so the test exits cleanly.
     block.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 #[tokio::test]
-async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() {
+async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() -> TResult {
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let bus = create_bus();
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
 
-    let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<String>();
+    let (cancel_tx, cancel_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     // Publish an external A2A task, retrying until the loop subscribes.
     let publish_bus = bus.clone();
@@ -3343,7 +3405,7 @@ async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() {
                 .to_string(),
             task_id: "11111111-2222-3333-4444-555555555555".to_string(),
         };
-        while publish_bus.external().send(event.clone()).is_err() {
+        while publish_bus.external().send(event.clone()).await.is_err() {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
     });
@@ -3367,7 +3429,7 @@ async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    result.expect("interactive loop");
+    result.map_err(|e| format!("interactive loop: {e}"))?;
 
     let prompts = runtime.prompts.lock().expect("prompts lock");
     assert_eq!(prompts.len(), 1, "one external prompt should be processed");
@@ -3375,16 +3437,17 @@ async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() {
         prompts[0].starts_with("[A2A Task 11111111-2222-3333-4444-555555555555"),
         "non-matching cancel must not abort the running turn"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn matching_a2a_task_cancel_stops_running_turn() {
+async fn matching_a2a_task_cancel_stops_running_turn() -> TResult {
     let block = Arc::new(AtomicBool::new(false));
     let bus = create_bus();
     let runtime = CancellableBlockingRuntime::new(Arc::clone(&block)).with_bus(bus.clone());
     let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
 
-    let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<String>();
+    let (cancel_tx, cancel_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     // Publish an external A2A task that blocks, then send a matching cancel
     // shortly after the turn has started.
@@ -3395,7 +3458,7 @@ async fn matching_a2a_task_cancel_stops_running_turn() {
                 .to_string(),
             task_id: "22222222-3333-4444-5555-666666666666".to_string(),
         };
-        while publish_bus.external().send(event.clone()).is_err() {
+        while publish_bus.external().send(event.clone()).await.is_err() {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
     });
@@ -3421,7 +3484,7 @@ async fn matching_a2a_task_cancel_stops_running_turn() {
             .with_spawn_render_loop(spawner),
     )
     .await;
-    result.expect("interactive loop");
+    result.map_err(|e| format!("interactive loop: {e}"))?;
 
     assert!(
         runtime.cancelled(),
@@ -3429,4 +3492,5 @@ async fn matching_a2a_task_cancel_stops_running_turn() {
     );
     // Unblock so the test exits cleanly.
     block.store(true, Ordering::SeqCst);
+    Ok(())
 }

@@ -4,6 +4,8 @@ use ratatui::text::{Line, Span};
 
 use crate::{rendering::theme::TuiTheme, state::AppState};
 
+use super::format::{compact_token_count, status_indicator, tail_ellipsize};
+
 pub(crate) fn run_git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .current_dir(dir)
@@ -67,9 +69,9 @@ pub(crate) fn lane_2_status_line(
     let token_str = match state.context_window_max_tokens() {
         Some(max) if max > 0 => {
             let pct = ((current as u128).saturating_mul(100) / (max as u128)).min(100) as u64;
-            format!("{} ({pct}%)", super::compact_token_count(current))
+            format!("{} ({pct}%)", compact_token_count(current))
         }
-        _ => super::compact_token_count(current),
+        _ => compact_token_count(current),
     };
     match state.active_agent_identity().filter(|a| !a.is_empty()) {
         Some(agent) => {
@@ -100,7 +102,7 @@ pub(crate) fn align_right_lane_2_line(
         let pad = available_width.saturating_sub(line.chars().count());
         format!("{}{line}", " ".repeat(pad))
     } else {
-        super::tail_ellipsize(line, available_width)
+        tail_ellipsize(line, available_width)
     };
     Line::from(vec![Span::styled(content, theme.subtle_meta)])
 }
@@ -127,7 +129,7 @@ pub(crate) fn format_lane_1(
     available_width: usize,
     theme: &TuiTheme,
 ) -> Line<'static> {
-    let indicator = super::status_indicator(now_millis);
+    let indicator = status_indicator(now_millis);
     let prefix_width = 2usize;
     let inner_width = available_width.saturating_sub(prefix_width);
     let display_model = model.to_string();
@@ -151,7 +153,7 @@ pub(crate) fn format_lane_1(
             ])
         }
         None => {
-            let model_segment = super::tail_ellipsize(&display_model, inner_width);
+            let model_segment = tail_ellipsize(&display_model, inner_width);
             Line::from(vec![
                 Span::styled(indicator.to_string(), indicator_style),
                 Span::raw(" "),
@@ -191,7 +193,7 @@ pub(crate) fn format_lane_1_parts(
         }
     };
 
-    let model_segment = super::tail_ellipsize(model, model_max);
+    let model_segment = tail_ellipsize(model, model_max);
     let branch_segment = format_branch_segment(branch, branch_max);
     let padding = fields_budget
         .saturating_sub(model_segment.chars().count() + branch_segment.chars().count())
@@ -202,21 +204,23 @@ pub(crate) fn format_lane_1_parts(
 
 pub(crate) fn format_branch_segment(branch: &str, branch_max: usize) -> String {
     if branch_max <= BRANCH_ICON_PREFIX_WIDTH {
-        return super::tail_ellipsize(branch, branch_max);
+        return tail_ellipsize(branch, branch_max);
     }
     let label_budget = branch_max - BRANCH_ICON_PREFIX_WIDTH;
-    let label = super::tail_ellipsize(branch, label_budget);
+    let label = tail_ellipsize(branch, label_budget);
     format!("{BRANCH_ICON_PREFIX}{label}")
 }
 
 pub(crate) fn status_indicator_for_test(now_millis: Option<u128>) -> &'static str {
-    super::status_indicator(now_millis)
+    status_indicator(now_millis)
 }
 
 #[test]
 fn status_bar_uses_persona_icon_when_set() {
-    let mut state = AppState::new();
-    state.active_persona_icon = Some("🧠".to_string());
+    let mut state = AppState {
+        active_persona_icon: Some("🧠".to_string()),
+        ..Default::default()
+    };
     state.set_active_agent_identity("test-agent");
     let line = super::status_left_content(
         "openai/gpt-4o-mini",
@@ -238,8 +242,10 @@ fn status_bar_uses_persona_icon_when_set() {
 
 #[test]
 fn status_bar_no_icon_when_persona_icon_none() {
-    let mut state = AppState::new();
-    state.active_persona_icon = None;
+    let mut state = AppState {
+        active_persona_icon: None,
+        ..Default::default()
+    };
     state.set_active_agent_identity("test-agent");
     let line = super::status_left_content(
         "openai/gpt-4o-mini",

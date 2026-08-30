@@ -11,6 +11,8 @@ use nu_protocol::{ParseError, Span, Spanned, SyntaxShape, Value};
 use serial_test::serial;
 use std::collections::HashMap;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // Helpers to build PluginConfig structures for resolve_with_new_config tests.
 fn test_model() -> ModelConfig {
     ModelConfig::default()
@@ -258,14 +260,14 @@ fn agent_command_signature_does_not_expose_removed_provider_flag() {
 }
 
 #[test]
-fn agent_command_signature_has_model_flag() {
+fn agent_command_signature_has_model_flag() -> Result<()> {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let model_flag = sig.named.iter().find(|f| f.long == "model");
     assert!(model_flag.is_some(), "Missing --model flag");
 
-    let flag = model_flag.unwrap();
+    let flag = model_flag.ok_or("should have --model flag")?;
     assert_eq!(flag.short, Some('m'), "Missing -m short flag");
     assert_eq!(
         flag.arg,
@@ -273,48 +275,55 @@ fn agent_command_signature_has_model_flag() {
         "Wrong type for --model"
     );
     assert!(!flag.desc.is_empty(), "Missing description for --model");
+    Ok(())
 }
 
 #[test]
-fn agent_command_signature_has_api_key_flag() {
+fn agent_command_signature_has_api_key_flag() -> Result<()> {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "api-key");
     assert!(flag.is_some(), "Missing --api-key flag");
+    let flag = flag.ok_or("should have --api-key flag")?;
     assert_eq!(
-        flag.unwrap().arg,
+        flag.arg,
         Some(SyntaxShape::String),
         "Wrong type for --api-key"
     );
+    Ok(())
 }
 
 #[test]
-fn agent_command_signature_has_base_url_flag() {
+fn agent_command_signature_has_base_url_flag() -> Result<()> {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "base-url");
     assert!(flag.is_some(), "Missing --base-url flag");
+    let flag = flag.ok_or("should have --base-url flag")?;
     assert_eq!(
-        flag.unwrap().arg,
+        flag.arg,
         Some(SyntaxShape::String),
         "Wrong type for --base-url"
     );
+    Ok(())
 }
 
 #[test]
-fn agent_command_signature_has_temperature_flag() {
+fn agent_command_signature_has_temperature_flag() -> Result<()> {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "temperature");
     assert!(flag.is_some(), "Missing --temperature flag");
+    let flag = flag.ok_or("should have --temperature flag")?;
     assert_eq!(
-        flag.unwrap().arg,
+        flag.arg,
         Some(SyntaxShape::Number),
         "Wrong type for --temperature"
     );
+    Ok(())
 }
 
 #[test]
@@ -344,16 +353,16 @@ fn agent_command_signature_help_text_excludes_removed_flags() {
         "signature/help debug output should not contain removed max-tokens long flag"
     );
 }
-
 #[test]
-fn invocation_agent_provider_flag_is_rejected_with_unknown_option_and_help_guidance() {
+fn invocation_agent_provider_flag_is_rejected_with_unknown_option_and_help_guidance() -> Result<()>
+{
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
     let parse_errors =
         parse_agent_invocation_with_signature(sig.clone(), "agent --provider openai");
 
     let (cmd, flag, help) = first_unknown_flag_error(&parse_errors)
-        .expect("expected parser-level unknown-flag rejection for --provider");
+        .ok_or("should have unknown flag error for --provider")?;
     assert_eq!(cmd, "agent");
     assert_eq!(flag, "provider");
 
@@ -361,16 +370,18 @@ fn invocation_agent_provider_flag_is_rejected_with_unknown_option_and_help_guida
         .named
         .iter()
         .find(|f| f.long == "model")
-        .expect("canonical --model flag must remain available");
+        .ok_or("should have --model flag")?;
     assert!(
         help.contains("--help") && model_flag.desc.contains("provider/model"),
         "when unknown-flag help is generic, canonical guidance must still be present on --model; help={help}, model_desc={} ",
         model_flag.desc
     );
+    Ok(())
 }
 
 #[test]
-fn invocation_agent_max_tokens_flag_is_rejected_with_unknown_option_and_help_guidance() {
+fn invocation_agent_max_tokens_flag_is_rejected_with_unknown_option_and_help_guidance() -> Result<()>
+{
     let (agent, _temp_dir) = create_test_agent();
     let parse_errors = parse_agent_invocation_with_signature(
         SimplePluginCommand::signature(&agent),
@@ -378,83 +389,94 @@ fn invocation_agent_max_tokens_flag_is_rejected_with_unknown_option_and_help_gui
     );
 
     let (cmd, flag, help) = first_unknown_flag_error(&parse_errors)
-        .expect("expected parser-level unknown-flag rejection for --max-tokens");
+        .ok_or("should have unknown flag error for --max-tokens")?;
     assert_eq!(cmd, "agent");
     assert_eq!(flag, "max-tokens");
     assert!(
         help.contains("--max-context-tokens") || help.contains("--max-output-tokens"),
         "unknown --max-tokens guidance should point to explicit token knobs, got: {help}"
     );
+    Ok(())
 }
 
 #[test]
-fn agent_command_signature_has_max_context_tokens_flag() {
+fn agent_command_signature_has_max_context_tokens_flag() -> Result<()> {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "max-context-tokens");
     assert!(flag.is_some(), "Missing --max-context-tokens flag");
+    let flag = flag.ok_or("should have --max-context-tokens flag")?;
     assert_eq!(
-        flag.unwrap().arg,
+        flag.arg,
         Some(SyntaxShape::Int),
         "Wrong type for --max-context-tokens"
     );
+    Ok(())
 }
 
 #[test]
-fn agent_command_signature_has_max_output_tokens_flag() {
+fn agent_command_signature_has_max_output_tokens_flag() -> Result<()> {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "max-output-tokens");
     assert!(flag.is_some(), "Missing --max-output-tokens flag");
+    let flag = flag.ok_or("should have --max-output-tokens flag")?;
     assert_eq!(
-        flag.unwrap().arg,
+        flag.arg,
         Some(SyntaxShape::Int),
         "Wrong type for --max-output-tokens"
     );
+    Ok(())
 }
 
 #[test]
-fn agent_command_signature_has_max_turns_flag() {
+fn agent_command_signature_has_max_turns_flag() -> Result<()> {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "max-turns");
     assert!(flag.is_some(), "Missing --max-turns flag");
+    let flag = flag.ok_or("should have --max-turns flag")?;
     assert_eq!(
-        flag.unwrap().arg,
+        flag.arg,
         Some(SyntaxShape::Int),
         "Wrong type for --max-turns"
     );
+    Ok(())
 }
 
 #[test]
-fn agent_command_signature_has_tools_flag() {
+fn agent_command_signature_has_tools_flag() -> Result<()> {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "tools");
     assert!(flag.is_some(), "Missing --tools flag");
+    let flag = flag.ok_or("should have --tools flag")?;
     assert_eq!(
-        flag.unwrap().arg,
+        flag.arg,
         Some(SyntaxShape::Record(vec![].into())),
         "Wrong type for --tools (should be Record)"
     );
+    Ok(())
 }
 
 #[test]
-fn agent_command_signature_has_permissions_flag_as_record() {
+fn agent_command_signature_has_permissions_flag_as_record() -> Result<()> {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let flag = sig.named.iter().find(|f| f.long == "permissions");
     assert!(flag.is_some(), "Missing --permissions flag");
+    let flag = flag.ok_or("should have --permissions flag")?;
     assert_eq!(
-        flag.expect("permissions flag").arg,
+        flag.arg,
         Some(SyntaxShape::Record(vec![].into())),
         "--permissions must accept record/object input"
     );
+    Ok(())
 }
 
 #[test]
@@ -498,29 +520,32 @@ fn cli_does_not_expose_unsupported_compaction_modes() {
 }
 
 #[test]
-fn agent_command_signature_has_quiet_flag() {
+fn agent_command_signature_has_quiet_flag() -> Result<()> {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let quiet_flag = sig.named.iter().find(|f| f.long == "quiet");
     assert!(quiet_flag.is_some(), "Missing --quiet flag");
 
-    let flag = quiet_flag.expect("quiet flag");
+    let flag = quiet_flag.ok_or("should have --quiet flag")?;
     assert_eq!(flag.short, Some('q'), "Missing -q short flag");
     assert_eq!(flag.arg, None, "--quiet should be a switch");
+    Ok(())
 }
 
 #[test]
-fn agent_command_signature_has_log_level_flag() {
+fn agent_command_signature_has_log_level_flag() -> Result<()> {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
     let flag = sig.named.iter().find(|f| f.long == "log-level");
     assert!(flag.is_some(), "Missing --log-level flag");
+    let flag = flag.ok_or("should have --log-level flag")?;
     assert_eq!(
-        flag.unwrap().arg,
+        flag.arg,
         Some(SyntaxShape::String),
         "Wrong type for --log-level"
     );
+    Ok(())
 }
 
 #[test]
@@ -533,21 +558,23 @@ fn agent_command_signature_does_not_expose_tui_switch() {
 }
 
 #[test]
-fn agent_command_signature_updates_verbose_description_for_progressive_levels() {
+fn agent_command_signature_updates_verbose_description_for_progressive_levels() -> Result<()> {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
     let verbose_flag = sig.named.iter().find(|f| f.long == "verbose");
     assert!(verbose_flag.is_some(), "Missing --verbose flag");
-    let desc = &verbose_flag.expect("verbose flag").desc;
+    let desc = &verbose_flag.ok_or("should have --verbose flag")?.desc;
     assert!(
         desc.contains("-v") && desc.contains("-vv") && desc.contains("-vvv"),
         "Verbose description should document progressive levels, got: {desc}"
     );
+    Ok(())
 }
 
 #[test]
-fn agent_command_signature_quiet_and_verbose_help_text_describes_stderr_ux_behavior() {
+fn agent_command_signature_quiet_and_verbose_help_text_describes_stderr_ux_behavior() -> Result<()>
+{
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
@@ -555,7 +582,7 @@ fn agent_command_signature_quiet_and_verbose_help_text_describes_stderr_ux_behav
         .named
         .iter()
         .find(|f| f.long == "quiet")
-        .expect("quiet flag");
+        .ok_or("should have quiet flag")?;
     assert!(
         quiet.desc.contains("Suppress") || quiet.desc.contains("progress"),
         "quiet help text should describe suppression semantics"
@@ -565,13 +592,14 @@ fn agent_command_signature_quiet_and_verbose_help_text_describes_stderr_ux_behav
         .named
         .iter()
         .find(|f| f.long == "verbose")
-        .expect("verbose flag");
+        .ok_or("should have verbose flag")?;
     assert!(
         verbose.desc.contains("-v")
             && verbose.desc.contains("-vv")
             && verbose.desc.contains("-vvv"),
         "verbose help text should describe progressive levels"
     );
+    Ok(())
 }
 
 // ============================================================================
@@ -636,7 +664,7 @@ mod config_resolution_integration {
     use super::*;
 
     #[test]
-    fn resolve_config_with_no_plugin_config() {
+    fn resolve_config_with_no_plugin_config() -> Result<()> {
         // Literal --model flag + minimal provider config. resolve_with_new_config
         // uses the literal provider/model from the flag.
         let plugin_config = test_plugin_config(
@@ -648,18 +676,17 @@ mod config_resolution_integration {
         );
         let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
 
-        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
-        assert!(result.is_ok());
-
-        let config = result.unwrap();
+        let config = runtime_build::resolve_with_new_config(plugin_config, &call)
+            .map_err(|e| format!("{e:?}"))?;
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-4");
         assert!(config.max_tool_turns.is_none()); // Default is None
+        Ok(())
     }
 
     #[test]
     #[serial] // Prevent parallel execution due to env vars
-    fn resolve_config_plugin_overrides_env() {
+    fn resolve_config_plugin_overrides_env() -> Result<()> {
         // Set env vars for testing
         unsafe {
             std::env::set_var("OPENAI_API_KEY", "env_key");
@@ -686,9 +713,7 @@ mod config_resolution_integration {
         let call = create_test_call(vec![]);
 
         let result = runtime_build::resolve_with_new_config(plugin_config, &call);
-        assert!(result.is_ok(), "resolve failed: {:?}", result);
-
-        let config = result.unwrap();
+        let config = result.map_err(|e| format!("{e:?}"))?;
         assert_eq!(config.temperature, Some(0.9)); // Plugin wins over env
         assert_eq!(config.api_key, Some("env_key".to_string())); // Env provides API key
 
@@ -697,11 +722,12 @@ mod config_resolution_integration {
             std::env::remove_var("OPENAI_API_KEY");
             std::env::remove_var("AGENT_TEMPERATURE");
         }
+        Ok(())
     }
 
     #[test]
     #[serial] // Prevent parallel execution due to env vars
-    fn resolve_config_flags_override_everything() {
+    fn resolve_config_flags_override_everything() -> Result<()> {
         // Set env vars for the resolved provider (openai, after --model override)
         unsafe {
             std::env::set_var("OPENAI_API_KEY", "env_key");
@@ -771,9 +797,7 @@ mod config_resolution_integration {
         ]);
 
         let result = runtime_build::resolve_with_new_config(plugin_config, &call);
-        assert!(result.is_ok(), "resolve failed: {:?}", result);
-
-        let config = result.unwrap();
+        let config = result.map_err(|e| format!("{e:?}"))?;
         assert_eq!(config.provider, "openai"); // Flag wins
         assert_eq!(config.model, "gpt-4"); // Flag wins
         assert_eq!(config.temperature, Some(1.2)); // Flag wins
@@ -785,10 +809,11 @@ mod config_resolution_integration {
             std::env::remove_var("OPENAI_API_KEY");
             std::env::remove_var("AGENT_TEMPERATURE");
         }
+        Ok(())
     }
 
     #[test]
-    fn resolve_config_succeeds_without_providers() {
+    fn resolve_config_succeeds_without_providers() -> Result<()> {
         // A plugin config that has models but no providers block should succeed
         // (provider block is optional)
         let mut models = HashMap::new();
@@ -806,10 +831,8 @@ mod config_resolution_integration {
         let call = create_test_call(vec![]);
 
         let result = runtime_build::resolve_with_new_config(plugin_config, &call);
-        assert!(
-            result.is_ok(),
-            "expected Ok for config without providers (provider block is optional), got: {result:?}"
-        );
+        result.map_err(|e| format!("{e:?}"))?;
+        Ok(())
     }
 }
 
@@ -822,14 +845,14 @@ mod new_plugin_config_tests {
     use crate::command::agent::{picker::format_active_model_identity, runtime_build};
 
     #[test]
-    fn signature_has_model_flag_for_provider_model_format() {
+    fn signature_has_model_flag_for_provider_model_format() -> Result<()> {
         let (agent, _temp_dir) = create_test_agent();
         let sig = SimplePluginCommand::signature(&agent);
 
         let model_flag = sig.named.iter().find(|f| f.long == "model");
         assert!(model_flag.is_some(), "Missing --model flag");
 
-        let flag = model_flag.unwrap();
+        let flag = model_flag.ok_or("should have --model flag")?;
         assert_eq!(flag.short, Some('m'), "Missing -m short flag");
         assert_eq!(
             flag.arg,
@@ -843,6 +866,7 @@ mod new_plugin_config_tests {
             "Flag description should mention provider/model format: {}",
             flag.desc
         );
+        Ok(())
     }
 
     #[test]
@@ -859,7 +883,7 @@ mod new_plugin_config_tests {
 
     #[test]
     #[serial]
-    fn resolve_config_with_new_plugin_config_structure() {
+    fn resolve_config_with_new_plugin_config_structure() -> Result<()> {
         // Create NEW plugin config structure with provider/model format
         let mut openai_models = HashMap::new();
         openai_models.insert(
@@ -886,21 +910,20 @@ mod new_plugin_config_tests {
         );
         let call = create_test_call(vec![]);
 
-        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
-        assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
-
-        let config = result.unwrap();
+        let config = runtime_build::resolve_with_new_config(plugin_config, &call)
+            .map_err(|e| format!("{e:?}"))?;
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-4");
         assert_eq!(config.api_key, Some("test_key".to_string()));
         assert_eq!(config.temperature, Some(0.7));
         assert_eq!(config.max_context_tokens, Some(128000));
         assert_eq!(config.max_output_tokens, Some(4096));
+        Ok(())
     }
 
     #[test]
     #[serial]
-    fn resolve_config_accepts_mcp_from_toml_config() {
+    fn resolve_config_accepts_mcp_from_toml_config() -> Result<()> {
         use std::collections::HashMap;
 
         // MCP config is parsed from raw TOML.
@@ -920,8 +943,8 @@ GIT_PAGER = ""
 "#,
         )
         .unwrap();
-        let parsed =
-            nu_agent_core::tools::mcp::config::McpConfig::from_toml(&mcp_value).expect("mcp parse");
+        let parsed = nu_agent_core::tools::mcp::config::McpConfig::from_toml(&mcp_value)
+            .map_err(|e| format!("{e:?}"))?;
         assert_eq!(parsed.mcp.len(), 2);
 
         let mut models = HashMap::new();
@@ -948,11 +971,12 @@ GIT_PAGER = ""
             resolved.is_ok(),
             "config resolve should still succeed with mcp present"
         );
+        Ok(())
     }
 
     #[test]
     #[serial]
-    fn resolve_config_with_model_flag_override() {
+    fn resolve_config_with_model_flag_override() -> Result<()> {
         use std::collections::HashMap;
 
         // Create plugin config with multiple providers and models
@@ -988,17 +1012,16 @@ GIT_PAGER = ""
         let call = create_test_call(vec![("model", Value::test_string("openai/gpt-3.5-turbo"))]);
 
         let result = runtime_build::resolve_with_new_config(plugin_config, &call);
-        assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
-
-        let config = result.unwrap();
+        let config = result.map_err(|e| format!("{e:?}"))?;
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-3.5-turbo"); // Flag overrides default
         assert_eq!(config.temperature, Some(0.9)); // Model-specific temperature
+        Ok(())
     }
 
     #[test]
     #[serial]
-    fn resolve_config_with_model_flag_override_for_tui_path_uses_flag_precedence() {
+    fn resolve_config_with_model_flag_override_for_tui_path_uses_flag_precedence() -> Result<()> {
         use std::collections::HashMap;
 
         let mut openai_models = HashMap::new();
@@ -1022,18 +1045,19 @@ GIT_PAGER = ""
         ]);
 
         let config = runtime_build::resolve_with_new_config(plugin_config, &call)
-            .expect("resolve config for tui");
+            .map_err(|e| format!("{e:?}"))?;
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-4o-mini");
         assert_eq!(
             format_active_model_identity(&config.provider, &config.model),
             "openai/gpt-4o-mini"
         );
+        Ok(())
     }
 
     #[test]
     #[serial]
-    fn resolve_config_uses_models_default() {
+    fn resolve_config_uses_models_default() -> Result<()> {
         use std::collections::HashMap;
 
         // Create plugin config with models.default
@@ -1062,17 +1086,16 @@ GIT_PAGER = ""
         // No --model flag — should use models.default
         let call = create_test_call(vec![]);
 
-        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
-        assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
-
-        let config = result.unwrap();
+        let config = runtime_build::resolve_with_new_config(plugin_config, &call)
+            .map_err(|e| format!("{e:?}"))?;
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-3.5-turbo"); // Uses models.default
         assert_eq!(config.temperature, Some(1.0)); // Model-specific temperature
+        Ok(())
     }
 
     #[test]
-    fn resolve_config_new_flow_resolves_model_preamble_over_provider_preamble() {
+    fn resolve_config_new_flow_resolves_model_preamble_over_provider_preamble() -> Result<()> {
         use std::collections::HashMap;
 
         let mut openai_models = HashMap::new();
@@ -1098,13 +1121,14 @@ GIT_PAGER = ""
 
         let config =
             runtime_build::resolve_with_new_config(plugin_config, &create_test_call(vec![]))
-                .expect("resolve config");
+                .map_err(|e| format!("{e:?}"))?;
 
         assert_eq!(config.preamble.as_deref(), Some("model preamble"));
+        Ok(())
     }
 
     #[test]
-    fn resolve_config_new_flow_falls_back_to_global_preamble_on_complete_miss() {
+    fn resolve_config_new_flow_falls_back_to_global_preamble_on_complete_miss() -> Result<()> {
         use nu_agent_core::protocol::preamble::PreambleDefaults;
         use std::collections::HashMap;
 
@@ -1123,19 +1147,20 @@ GIT_PAGER = ""
 
         let config =
             runtime_build::resolve_with_new_config(plugin_config, &create_test_call(vec![]))
-                .expect("resolve config");
+                .map_err(|e| format!("{e:?}"))?;
 
         let defaults = PreambleDefaults::builtin();
         let expected_global_fallback = defaults
             .global_fallback()
-            .expect("builtin global fallback preamble should always be set");
+            .ok_or("builtin global fallback preamble should be set")?;
 
         assert_eq!(config.preamble.as_deref(), Some(expected_global_fallback));
+        Ok(())
     }
 
     #[test]
     #[serial]
-    fn resolve_config_model_flag_overrides_models_default() {
+    fn resolve_config_model_flag_overrides_models_default() -> Result<()> {
         use std::collections::HashMap;
 
         // Create plugin config
@@ -1158,16 +1183,15 @@ GIT_PAGER = ""
         // --model flag provided, should override models.default
         let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
 
-        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
-        assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
-
-        let config = result.unwrap();
+        let config = runtime_build::resolve_with_new_config(plugin_config, &call)
+            .map_err(|e| format!("{e:?}"))?;
         assert_eq!(config.model, "gpt-4"); // --model wins over models.default
+        Ok(())
     }
 
     #[test]
     #[serial]
-    fn resolve_config_no_plugin_config_requires_model_flag() {
+    fn resolve_config_no_plugin_config_requires_model_flag() -> Result<()> {
         // Literal --model flag with a minimal provider config.
         let plugin_config = test_plugin_config(
             "openai/gpt-4",
@@ -1178,19 +1202,18 @@ GIT_PAGER = ""
         );
         let call = create_test_call(vec![("model", Value::test_string("openai/gpt-4"))]);
 
-        let result = runtime_build::resolve_with_new_config(plugin_config, &call);
-        assert!(result.is_ok(), "Failed to resolve config: {:?}", result);
-
-        let config = result.unwrap();
+        let config = runtime_build::resolve_with_new_config(plugin_config, &call)
+            .map_err(|e| format!("{e:?}"))?;
         assert_eq!(config.provider, "openai");
         assert_eq!(config.model, "gpt-4");
+        Ok(())
     }
 }
 
 #[test]
-fn docs_usage_flag_reference_excludes_removed_flags() {
+fn docs_usage_flag_reference_excludes_removed_flags() -> Result<()> {
     let usage_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/usage.md");
-    let usage = std::fs::read_to_string(&usage_path).expect("read docs/usage.md");
+    let usage = std::fs::read_to_string(&usage_path).map_err(|e| format!("{e:?}"))?;
 
     // Extract the agent `## Flag reference` section only — subcommand flags
     // (e.g. `agent models list --provider`) are separate and may legitimately
@@ -1214,6 +1237,7 @@ fn docs_usage_flag_reference_excludes_removed_flags() {
         usage.contains("--max-output-tokens") && usage.contains("--max-context-tokens"),
         "docs should reference explicit token knobs"
     );
+    Ok(())
 }
 
 // Tests for session flags (task 1.18)
@@ -1222,7 +1246,7 @@ mod session_flags_tests {
     use super::*;
 
     #[test]
-    fn agent_command_signature_has_session_flag() {
+    fn agent_command_signature_has_session_flag() -> Result<()> {
         // RED: Test that --session flag exists
         let (agent, _temp_dir) = create_test_agent();
         let sig = SimplePluginCommand::signature(&agent);
@@ -1230,43 +1254,46 @@ mod session_flags_tests {
         let session_flag = sig.named.iter().find(|f| f.long == "session");
         assert!(session_flag.is_some(), "Missing --session flag");
 
-        let flag = session_flag.unwrap();
+        let flag = session_flag.ok_or("should have --session flag")?;
         assert_eq!(
             flag.arg,
             Some(SyntaxShape::String),
             "Wrong type for --session"
         );
         assert!(!flag.desc.is_empty(), "Missing description for --session");
+        Ok(())
     }
 
     #[test]
-    fn agent_command_signature_has_agent_flag() {
+    fn agent_command_signature_has_agent_flag() -> Result<()> {
         let (agent, _temp_dir) = create_test_agent();
         let sig = SimplePluginCommand::signature(&agent);
 
         let agent_flag = sig.named.iter().find(|f| f.long == "agent");
         assert!(agent_flag.is_some(), "Missing --agent flag");
 
-        let flag = agent_flag.unwrap();
+        let flag = agent_flag.ok_or("should have --agent flag")?;
         assert_eq!(
             flag.arg,
             Some(SyntaxShape::String),
             "Wrong type for --agent"
         );
         assert!(!flag.desc.is_empty(), "Missing description for --agent");
+        Ok(())
     }
 
     #[test]
-    fn agent_command_signature_has_name_flag() {
+    fn agent_command_signature_has_name_flag() -> Result<()> {
         let (agent, _temp_dir) = create_test_agent();
         let sig = SimplePluginCommand::signature(&agent);
 
         let name_flag = sig.named.iter().find(|f| f.long == "name");
         assert!(name_flag.is_some(), "Missing --name flag");
 
-        let flag = name_flag.unwrap();
+        let flag = name_flag.ok_or("should have --name flag")?;
         assert_eq!(flag.arg, Some(SyntaxShape::String), "Wrong type for --name");
         assert!(!flag.desc.is_empty(), "Missing description for --name");
+        Ok(())
     }
 }
 
@@ -1298,25 +1325,25 @@ mod session_validation_tests {
     }
 
     #[test]
-    fn validate_session_flags_accepts_session_id_only() {
+    fn validate_session_flags_accepts_session_id_only() -> Result<()> {
         // RED: Test that --session <id> alone is valid
         let call = create_mock_call_with_session_flags(Some("my-session"));
         let result = extract_and_validate_session_flags(&call);
 
-        assert!(result.is_ok(), "Should accept --session alone");
-        let session_id = result.unwrap();
+        let session_id = result.map_err(|e| format!("{e:?}"))?;
         assert_eq!(session_id, Some("my-session".to_string()));
+        Ok(())
     }
 
     #[test]
-    fn validate_session_flags_accepts_no_flags() {
+    fn validate_session_flags_accepts_no_flags() -> Result<()> {
         // RED: Test that no session flags is valid (default behavior)
         let call = create_mock_call_with_session_flags(None);
         let result = extract_and_validate_session_flags(&call);
 
-        assert!(result.is_ok(), "Should accept no session flags");
-        let session_id = result.unwrap();
+        let session_id = result.map_err(|e| format!("{e:?}"))?;
         assert!(session_id.is_none());
+        Ok(())
     }
 }
 
@@ -1409,25 +1436,25 @@ mod session_integration_tests {
     }
 
     #[test]
-    fn extract_session_flags_with_session_id() {
+    fn extract_session_flags_with_session_id() -> Result<()> {
         // Test extracting --session flag
         let call = create_mock_call_with_session_flags(Some("my-session"));
         let result = extract_and_validate_session_flags(&call);
 
-        assert!(result.is_ok());
-        let session_id = result.unwrap();
+        let session_id = result.map_err(|e| format!("{e:?}"))?;
         assert_eq!(session_id, Some("my-session".to_string()));
+        Ok(())
     }
 
     #[test]
-    fn extract_session_flags_default_no_flags() {
+    fn extract_session_flags_default_no_flags() -> Result<()> {
         // Test default behavior (no session flags)
         let call = create_mock_call_with_session_flags(None);
         let result = extract_and_validate_session_flags(&call);
 
-        assert!(result.is_ok());
-        let session_id = result.unwrap();
+        let session_id = result.map_err(|e| format!("{e:?}"))?;
         assert!(session_id.is_none());
+        Ok(())
     }
 
     /// Helper to create a mock EvaluatedCall for testing (imported from session_validation_tests)
@@ -1452,30 +1479,30 @@ mod session_integration_tests {
     }
 
     #[test]
-    fn extract_tools_from_call_missing_flag() {
+    fn extract_tools_from_call_missing_flag() -> Result<()> {
         // Test with no --tools flag
         let call = create_test_call(vec![]);
         let result = extract_tools_from_call(&call);
 
-        assert!(result.is_ok());
-        let tools = result.unwrap();
+        let tools = result.map_err(|e| format!("{e:?}"))?;
         assert_eq!(tools.len(), 0);
+        Ok(())
     }
 
     #[test]
-    fn extract_tools_from_call_empty_record() {
+    fn extract_tools_from_call_empty_record() -> Result<()> {
         // Test with empty record
         use nu_protocol::Record;
         let call = create_test_call(vec![("tools", Value::test_record(Record::new()))]);
         let result = extract_tools_from_call(&call);
 
-        assert!(result.is_ok());
-        let tools = result.unwrap();
+        let tools = result.map_err(|e| format!("{e:?}"))?;
         assert_eq!(tools.len(), 0);
+        Ok(())
     }
 
     #[test]
-    fn extract_tools_from_call_with_closures() {
+    fn extract_tools_from_call_with_closures() -> Result<()> {
         // Test with record containing closures
         use nu_protocol::{BlockId, Record, engine::Closure};
 
@@ -1498,15 +1525,15 @@ mod session_integration_tests {
         let call = create_test_call(vec![("tools", Value::test_record(record))]);
         let result = extract_tools_from_call(&call);
 
-        assert!(result.is_ok());
-        let tools = result.unwrap();
+        let tools = result.map_err(|e| format!("{e:?}"))?;
         assert_eq!(tools.len(), 2);
         assert!(tools.contains_key("add"));
         assert!(tools.contains_key("multiply"));
+        Ok(())
     }
 
     #[test]
-    fn extract_tools_from_call_filters_non_closures() {
+    fn extract_tools_from_call_filters_non_closures() -> Result<()> {
         // Test that non-closure values are filtered out
         use nu_protocol::{BlockId, Record, engine::Closure};
 
@@ -1531,25 +1558,25 @@ mod session_integration_tests {
         let call = create_test_call(vec![("tools", Value::test_record(record))]);
         let result = extract_tools_from_call(&call);
 
-        assert!(result.is_ok());
-        let tools = result.unwrap();
+        let tools = result.map_err(|e| format!("{e:?}"))?;
         // Only closures should be extracted
         assert_eq!(tools.len(), 2);
         assert!(tools.contains_key("add"));
         assert!(tools.contains_key("multiply"));
         assert!(!tools.contains_key("name"));
         assert!(!tools.contains_key("count"));
+        Ok(())
     }
 
     #[test]
-    fn extract_tools_from_call_non_record_value() {
+    fn extract_tools_from_call_non_record_value() -> Result<()> {
         // Test with non-record value (graceful handling)
         let call = create_test_call(vec![("tools", Value::test_string("not a record"))]);
         let result = extract_tools_from_call(&call);
 
-        assert!(result.is_ok());
-        let tools = result.unwrap();
+        let tools = result.map_err(|e| format!("{e:?}"))?;
         assert_eq!(tools.len(), 0);
+        Ok(())
     }
 }
 
@@ -1595,7 +1622,7 @@ mod tool_timeout_tests {
     }
 
     #[test]
-    fn agent_signature_has_tool_timeout_flag() {
+    fn agent_signature_has_tool_timeout_flag() -> Result<()> {
         // Test that the signature includes --tool-timeout flag
         let (agent, _temp_dir) = create_test_agent();
         let sig = SimplePluginCommand::signature(&agent);
@@ -1603,7 +1630,7 @@ mod tool_timeout_tests {
         let flag = sig.named.iter().find(|f| f.long == "tool-timeout");
         assert!(flag.is_some(), "Missing --tool-timeout flag");
 
-        let flag = flag.unwrap();
+        let flag = flag.ok_or("should have --tool-timeout flag")?;
         assert_eq!(flag.short, Some('t'), "Missing -t short flag");
         assert_eq!(
             flag.arg,
@@ -1614,6 +1641,7 @@ mod tool_timeout_tests {
             !flag.desc.is_empty(),
             "Missing description for --tool-timeout"
         );
+        Ok(())
     }
 }
 
@@ -1622,7 +1650,7 @@ mod tool_timeout_tests {
 // ============================================================================
 
 #[test]
-fn apply_persona_model_overrides_plugin_config() {
+fn apply_persona_model_overrides_plugin_config() -> Result<()> {
     use std::collections::HashMap;
 
     let mut config = Config {
@@ -1673,16 +1701,16 @@ fn apply_persona_model_overrides_plugin_config() {
         false,
     );
 
-    assert!(applied.is_ok(), "Should succeed: {:?}", applied);
-    let applied = applied.unwrap();
+    let applied = applied.map_err(|e| format!("{e:?}"))?;
     assert!(applied, "Should apply persona model");
     assert_eq!(config.provider, "github-copilot");
     assert_eq!(config.model, "claude-opus-4.6");
     assert_eq!(config.provider_impl, None);
+    Ok(())
 }
 
 #[test]
-fn apply_persona_model_cli_wins() {
+fn apply_persona_model_cli_wins() -> Result<()> {
     let mut config = Config {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
@@ -1697,15 +1725,15 @@ fn apply_persona_model_cli_wins() {
         true, // CLI model was provided
     );
 
-    assert!(applied.is_ok(), "Should succeed: {:?}", applied);
-    let applied = applied.unwrap();
+    let applied = applied.map_err(|e| format!("{e:?}"))?;
     assert!(!applied, "Should NOT apply persona model when CLI provided");
     assert_eq!(config.provider, "openai", "Config should be unchanged");
     assert_eq!(config.model, "gpt-4o", "Config should be unchanged");
+    Ok(())
 }
 
 #[test]
-fn apply_persona_model_no_slash_ignored() {
+fn apply_persona_model_no_slash_ignored() -> Result<()> {
     let mut config = Config {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
@@ -1720,10 +1748,11 @@ fn apply_persona_model_no_slash_ignored() {
         applied.is_err(),
         "Should error when no plugin config and no slash"
     );
+    Ok(())
 }
 
 #[test]
-fn apply_persona_model_none_preserves_config() {
+fn apply_persona_model_none_preserves_config() -> Result<()> {
     let mut config = Config {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
@@ -1733,15 +1762,15 @@ fn apply_persona_model_none_preserves_config() {
 
     let applied = runtime_build::apply_persona_model(&mut config, None, None, false);
 
-    assert!(applied.is_ok(), "Should succeed: {:?}", applied);
-    let applied = applied.unwrap();
+    let applied = applied.map_err(|e| format!("{e:?}"))?;
     assert!(!applied, "Should NOT apply when persona model is None");
     assert_eq!(config.provider, "openai", "Config should be unchanged");
     assert_eq!(config.model, "gpt-4o", "Config should be unchanged");
+    Ok(())
 }
 
 #[test]
-fn apply_persona_model_clears_provider_impl() {
+fn apply_persona_model_clears_provider_impl() -> Result<()> {
     use std::collections::HashMap;
 
     let mut config = Config {
@@ -1792,8 +1821,7 @@ fn apply_persona_model_clears_provider_impl() {
         false,
     );
 
-    assert!(applied.is_ok(), "Should succeed: {:?}", applied);
-    let applied = applied.unwrap();
+    let applied = applied.map_err(|e| format!("{e:?}"))?;
     assert!(applied, "Should apply persona model");
     assert_eq!(config.provider, "anthropic");
     assert_eq!(config.model, "claude-sonnet-4-20250514");
@@ -1801,4 +1829,5 @@ fn apply_persona_model_clears_provider_impl() {
         config.provider_impl, None,
         "provider_impl should be cleared"
     );
+    Ok(())
 }

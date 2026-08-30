@@ -12,6 +12,8 @@ use crate::runtime::{HybridTerminalEvents, RuntimeCoordinator};
 
 use super::{TuiInteractiveUi, run_render_loop};
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 struct FakeRenderer;
 
 impl UiRenderer for FakeRenderer {
@@ -48,7 +50,7 @@ fn set_active_persona_icon_clears_state_when_none() {
 }
 
 #[test]
-fn permission_event_requested_opens_permission_prompt() {
+fn permission_event_requested_opens_permission_prompt() -> Result<()> {
     let mut ui = make_ui();
     let event = nu_agent_core::bus::PermissionEvent::Requested {
         request_id: "ask-0000000000000001".to_string(),
@@ -64,17 +66,19 @@ fn permission_event_requested_opens_permission_prompt() {
             pre_authorize_display: None,
         }),
     };
-    let ui_event = Option::<UiEvent>::from(event).expect("PermissionEvent converts to UiEvent");
+    let ui_event =
+        Option::<UiEvent>::from(event).ok_or("PermissionEvent should convert to UiEvent")?;
     ui.renderer.coordinator.state.reduce_ui_event(ui_event);
     assert!(ui.renderer.coordinator.state.has_permission_prompt());
+    Ok(())
 }
 
 #[tokio::test]
-async fn turn_completion_drains_stacked_prompts_without_terminal_input() {
-    let bus = Bus::new();
+async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Result<()> {
+    let bus = Bus::default();
     let bus_for_loop = bus.clone();
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    let cancel_controller = CancelController::new();
+    let cancel_controller = CancelController::default();
     let (event_tx, mut event_rx) = mpsc::channel::<OrchestratorEvent>(64);
     let (terminal_tx, terminal_rx) = mpsc::channel::<TerminalEvent>(64);
     let (_branch_tx, branch_rx) = mpsc::channel::<()>(8);
@@ -104,7 +108,10 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() {
         .send(TerminalEvent::Key(TerminalKey::Enter))
         .await
         .expect("submit first");
-    let first = event_rx.recv().await.expect("first PromptSubmitted");
+    let first = event_rx
+        .recv()
+        .await
+        .ok_or("should receive first PromptSubmitted")?;
     assert!(
         matches!(&first, OrchestratorEvent::PromptSubmitted { text } if text == "hi"),
         "first submitted prompt must be 'hi'"
@@ -133,11 +140,12 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() {
     // prompt into a PromptSubmitted event without any further terminal input.
     bus.turn()
         .send(TurnEvent::Completed { tool_calls: 0 })
+        .await
         .expect("publish TurnCompleted");
     let second = tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
         .await
-        .expect("timed out waiting for second PromptSubmitted")
-        .expect("second PromptSubmitted");
+        .map_err(|_| "should receive second PromptSubmitted before timeout")?
+        .ok_or("should receive second PromptSubmitted")?;
     assert!(
         matches!(&second, OrchestratorEvent::PromptSubmitted { text } if text == "x"),
         "stacked prompt must be drained on turn completion"
@@ -145,4 +153,5 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() {
 
     drop(terminal_tx);
     let _ = tokio::time::timeout(Duration::from_millis(500), loop_handle).await;
+    Ok(())
 }

@@ -67,7 +67,7 @@ impl ProviderState {
             }
             "anthropic" => CachedProviderClient::Anthropic(build_anthropic_client(&self.config)?),
             "ollama" => CachedProviderClient::Ollama(build_ollama_client(&self.config)?),
-            other => return Err(LabeledError::new(format!("Unsupported provider: '{}' (from config key '{}')", other, provider_key))
+            other => return Err(LabeledError::new(format!("Unsupported provider: '{other}' (from config key '{provider_key}')"))
                 .with_help("Supported: copilot, openai, anthropic, ollama. Set 'provider' field in provider config to map custom names.")),
         };
         self.cached_client = Some(client);

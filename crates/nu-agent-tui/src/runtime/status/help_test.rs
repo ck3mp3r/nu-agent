@@ -1,4 +1,6 @@
-use super::*;
+use ratatui::text::Line;
+
+use crate::state::AppState;
 pub(crate) fn help_panel_max_scroll_for_test(lines: &[Line<'_>], viewport_height: u16) -> usize {
     crate::runtime::panels::help_panel_max_scroll(lines, viewport_height, 80)
 }

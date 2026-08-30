@@ -12,8 +12,10 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpSocket;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::Mutex;
 use url::form_urlencoded;
+
+use crate::bus::OneshotTx;
 
 /// Path for the OAuth callback endpoint.
 pub const CALLBACK_PATH: &str = "/mcp/oauth/callback";
@@ -44,7 +46,7 @@ pub enum AuthError {
 }
 
 struct PendingAuth {
-    tx: oneshot::Sender<Result<AuthCode, AuthError>>,
+    tx: OneshotTx<Result<AuthCode, AuthError>>,
 }
 
 /// A loopback HTTP server that receives OAuth authorization code callbacks.
@@ -117,7 +119,7 @@ impl CallbackServer {
         state: &str,
         timeout_secs: u64,
     ) -> Result<AuthCode, AuthError> {
-        let (tx, rx) = oneshot::channel();
+        let (tx, rx) = OneshotTx::<Result<AuthCode, AuthError>>::channel("oauth");
 
         {
             let mut pending = self.pending.lock().await;
@@ -175,7 +177,7 @@ async fn handle_request(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // Only handle the callback path
     if req.uri().path() != CALLBACK_PATH {
-        return Ok(not_found_page());
+        return not_found_page().or_else(internal_error_page);
     }
 
     let query = req.uri().query().unwrap_or("");
@@ -201,13 +203,15 @@ async fn handle_request(
             }
         }
 
-        return Ok(error_page(&format!("OAuth error: {error}")));
+        return error_page(&format!("OAuth error: {error}")).or_else(internal_error_page);
     }
 
     // Validate state parameter
     let state = match params.get("state") {
         Some(s) => s,
-        None => return Ok(error_page("Missing state parameter")),
+        None => {
+            return error_page("Missing state parameter").or_else(internal_error_page);
+        }
     };
 
     // Check if state is known (CSRF protection)
@@ -215,7 +219,8 @@ async fn handle_request(
     let auth = match pending_lock.remove(state) {
         Some(a) => a,
         None => {
-            return Ok(error_page("Invalid state parameter — possible CSRF attack"));
+            return error_page("Invalid state parameter — possible CSRF attack")
+                .or_else(internal_error_page);
         }
     };
 
@@ -224,7 +229,7 @@ async fn handle_request(
         Some(c) => c,
         None => {
             let _ = auth.tx.send(Err(AuthError::MissingCode));
-            return Ok(error_page("Missing authorization code"));
+            return error_page("Missing authorization code").or_else(internal_error_page);
         }
     };
 
@@ -235,20 +240,19 @@ async fn handle_request(
     };
     let _ = auth.tx.send(Ok(auth_code));
 
-    Ok(success_page())
+    success_page().or_else(internal_error_page)
 }
 
-fn success_page() -> Response<Full<Bytes>> {
+fn success_page() -> Result<Response<Full<Bytes>>, http::Error> {
     Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/html")
         .body(Full::new(Bytes::from_static(
             b"<html><body><h1>Authorization successful</h1><p>You can close this window and return to the application.</p></body></html>",
         )))
-        .expect("static success response is valid")
 }
 
-fn error_page(message: &str) -> Response<Full<Bytes>> {
+fn error_page(message: &str) -> Result<Response<Full<Bytes>>, http::Error> {
     let body = format!(
         "<html><body><h1>Authorization failed</h1><p>{}</p></body></html>",
         message
@@ -257,17 +261,34 @@ fn error_page(message: &str) -> Response<Full<Bytes>> {
         .status(StatusCode::BAD_REQUEST)
         .header("Content-Type", "text/html")
         .body(Full::new(Bytes::from(body)))
-        .expect("static error response is valid")
 }
 
-fn not_found_page() -> Response<Full<Bytes>> {
+fn not_found_page() -> Result<Response<Full<Bytes>>, http::Error> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header("Content-Type", "text/html")
         .body(Full::new(Bytes::from_static(
             b"<html><body><h1>Not found</h1></body></html>",
         )))
-        .expect("static not-found response is valid")
+}
+
+/// Fallback served if a static response builder unexpectedly fails. Response
+/// builders only error on invalid HTTP values; these use static constants, so a
+/// build failure is effectively impossible — but we degrade to a plain 500
+/// rather than panicking.
+fn internal_error_page(_e: http::Error) -> Result<Response<Full<Bytes>>, Infallible> {
+    Ok(Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .header("Content-Type", "text/html")
+        .body(Full::new(Bytes::from_static(
+            b"<html><body><h1>Internal server error</h1></body></html>",
+        )))
+        .unwrap_or_else(|_| {
+            // Even the fallback failed to build — degrade to a minimal 500.
+            let mut resp = Response::new(Full::new(Bytes::new()));
+            *resp.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+            resp
+        }))
 }
 
 #[cfg(test)]

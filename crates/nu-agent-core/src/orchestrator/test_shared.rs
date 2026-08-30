@@ -12,12 +12,10 @@ pub(crate) use crate::orchestrator::{
 };
 pub(crate) use crate::protocol::{
     contracts::{
-        CoreRuntime, McpToggleRequest, McpUsabilityState, ProgressUi, SharedUiAction,
-        UiMessageSnapshot, UiMessageUsageSnapshot, UserInputUi,
+        CoreRuntime, McpToggleRequest, McpUsabilityState, SharedUiAction, UiMessageSnapshot,
+        UiMessageUsageSnapshot, UserInputUi,
     },
-    event::{
-        PermissionDecision, PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
-    },
+    event::{PermissionDecision, ToolDisplay, ToolDisplaySection},
     mcp_management::McpManagement,
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
@@ -352,9 +350,9 @@ pub(crate) struct FakeRuntime {
 }
 
 impl CoreRuntime for FakeRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        _ui: &mut U,
+        _bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         _span: Span,
@@ -363,7 +361,11 @@ impl CoreRuntime for FakeRuntime {
         // The worker bridge no longer converts `UiEvent::Completed` to a
         // `TurnEvent::Completed` on the bus. Publish it directly, matching
         // production (see executor.rs).
-        let _ = self.bus.turn().send(TurnEvent::Completed { tool_calls: 0 });
+        let _ = self
+            .bus
+            .turn()
+            .send(TurnEvent::Completed { tool_calls: 0 })
+            .await;
         Ok(Value::nothing(Span::test_data()))
     }
 }
@@ -428,11 +430,15 @@ impl SessionPersistence for FakeRuntime {
         // Publish lifecycle events directly to the bus so test-harness quit-gates
         // that subscribe to bus.compaction() fire (matching production, where the
         // compactor publishes CompactionEvent to the bus directly).
-        let _ = self.bus.compaction().send(CompactionEvent::Completed {
-            source: source.to_string(),
-            summary_preview: "summary".to_string(),
-            summary_body: "summary".to_string(),
-        });
+        let _ = self
+            .bus
+            .compaction()
+            .send(CompactionEvent::Completed {
+                source: source.to_string(),
+                summary_preview: "summary".to_string(),
+                summary_body: "summary".to_string(),
+            })
+            .await;
         Ok(())
     }
 }
@@ -444,9 +450,9 @@ pub(crate) struct FakeValueRuntime {
 }
 
 impl CoreRuntime for FakeValueRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        _ui: &mut U,
+        _bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         span: Span,
@@ -454,7 +460,11 @@ impl CoreRuntime for FakeValueRuntime {
         self.prompts.push(prompt);
         // Publish TurnCompleted directly to the bus (worker bridge no longer
         // converts UiEvent::Completed), matching production.
-        let _ = self.bus.turn().send(TurnEvent::Completed { tool_calls: 0 });
+        let _ = self
+            .bus
+            .turn()
+            .send(TurnEvent::Completed { tool_calls: 0 })
+            .await;
         Ok(Value::record(nu_protocol::Record::new(), span))
     }
 }
@@ -518,9 +528,9 @@ impl LongRunningRuntime {
 }
 
 impl CoreRuntime for LongRunningRuntime {
-    async fn execute_turn<U: ProgressUi>(
+    async fn execute_turn(
         &mut self,
-        ui: &mut U,
+        bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         _span: Span,
@@ -536,19 +546,27 @@ impl CoreRuntime for LongRunningRuntime {
             .push(prompt.clone());
 
         if prompt == "first" {
+            let mut cancel_rx = bus.cancel().subscribe();
             while !self.block_first_turn.load(Ordering::SeqCst) {
-                if ui.take_cancel_requested() {
+                if matches!(
+                    cancel_rx.try_recv(),
+                    Ok(crate::bus::CancelEvent::Requested)
+                        | Err(crate::bus::TryRecvError::Lagged(_))
+                ) {
                     self.active.store(false, Ordering::SeqCst);
                     return Err(LabeledError::new("LLM call cancelled"));
                 }
-                ui.emit(&UiEvent::Tick);
                 tokio::time::sleep(Duration::from_millis(2)).await;
             }
         }
 
         // Publish TurnCompleted directly to the bus (worker bridge no longer
         // converts UiEvent::Completed), matching production.
-        let _ = self.bus.turn().send(TurnEvent::Completed { tool_calls: 0 });
+        let _ = self
+            .bus
+            .turn()
+            .send(TurnEvent::Completed { tool_calls: 0 })
+            .await;
         self.active.store(false, Ordering::SeqCst);
         Ok(Value::nothing(Span::test_data()))
     }
@@ -730,10 +748,7 @@ impl UserInputUi for ResponsiveInteractiveUi {
 
 // Compile-time check: run_single_turn must accept anything that impls CoreRuntime
 // This test will fail to compile until CoreRuntime exists and run_single_turn uses it
-pub(crate) fn _assert_single_turn_accepts_core_runtime<R: CoreRuntime + Send, U: ProgressUi>(
-    _r: R,
-    _u: U,
-) {
+pub(crate) fn _assert_single_turn_accepts_core_runtime<R: CoreRuntime + Send>(_r: R) {
     // if this compiles, the bound is correct
 }
 

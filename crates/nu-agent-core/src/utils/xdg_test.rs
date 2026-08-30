@@ -7,6 +7,8 @@ use serial_test::serial;
 use std::env;
 use std::path::PathBuf;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // Helper to clean up environment variables after tests
 fn cleanup_env() {
     // SAFETY: These tests use serial_test to ensure exclusive access
@@ -40,237 +42,289 @@ fn remove_env(key: &str) {
 
 #[test]
 #[serial]
-fn data_dir_uses_xdg_data_home_when_set() {
+fn data_dir_uses_xdg_data_home_when_set() -> Result<()> {
     cleanup_env();
     set_env("XDG_DATA_HOME", "/custom/data");
-    assert_eq!(data_dir().unwrap(), PathBuf::from("/custom/data"));
+    assert_eq!(
+        data_dir().map_err(|e| format!("{e:?}"))?,
+        PathBuf::from("/custom/data")
+    );
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn data_dir_falls_back_to_home_local_share() {
+fn data_dir_falls_back_to_home_local_share() -> Result<()> {
     cleanup_env();
     remove_env("XDG_DATA_HOME");
-    let home = env::var("HOME").expect("HOME should be set for tests");
+    let home = env::var("HOME").map_err(|_| "HOME should be set for tests")?;
     let expected = PathBuf::from(home).join(".local").join("share");
-    assert_eq!(data_dir().unwrap(), expected);
+    assert_eq!(data_dir().map_err(|e| format!("{e:?}"))?, expected);
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn data_dir_ignores_empty_xdg_data_home() {
+fn data_dir_ignores_empty_xdg_data_home() -> Result<()> {
     cleanup_env();
     set_env("XDG_DATA_HOME", "");
-    let home = env::var("HOME").expect("HOME should be set for tests");
+    let home = env::var("HOME").map_err(|_| "HOME should be set for tests")?;
     let expected = PathBuf::from(home).join(".local").join("share");
-    assert_eq!(data_dir().unwrap(), expected);
+    assert_eq!(data_dir().map_err(|e| format!("{e:?}"))?, expected);
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn data_dir_fails_when_home_missing() {
+fn data_dir_fails_when_home_missing() -> Result<()> {
     cleanup_env();
     let home = env::var("HOME").ok();
     remove_env("HOME");
     remove_env("XDG_DATA_HOME");
 
     let result = data_dir();
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), XdgError::HomeNotFound));
+    let err = match result {
+        Ok(_) => return Err("data_dir should fail when HOME missing".into()),
+        Err(e) => e,
+    };
+    assert!(matches!(err, XdgError::HomeNotFound));
 
     // Restore HOME
     if let Some(h) = home {
         set_env("HOME", &h);
     }
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn cache_dir_uses_xdg_cache_home_when_set() {
+fn cache_dir_uses_xdg_cache_home_when_set() -> Result<()> {
     cleanup_env();
     set_env("XDG_CACHE_HOME", "/custom/cache");
-    assert_eq!(cache_dir().unwrap(), PathBuf::from("/custom/cache"));
+    assert_eq!(
+        cache_dir().map_err(|e| format!("{e:?}"))?,
+        PathBuf::from("/custom/cache")
+    );
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn cache_dir_falls_back_to_home_cache() {
+fn cache_dir_falls_back_to_home_cache() -> Result<()> {
     cleanup_env();
     remove_env("XDG_CACHE_HOME");
-    let home = env::var("HOME").expect("HOME should be set for tests");
+    let home = env::var("HOME").map_err(|_| "HOME should be set for tests")?;
     let expected = PathBuf::from(home).join(".cache");
-    assert_eq!(cache_dir().unwrap(), expected);
+    assert_eq!(cache_dir().map_err(|e| format!("{e:?}"))?, expected);
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn cache_dir_ignores_empty_xdg_cache_home() {
+fn cache_dir_ignores_empty_xdg_cache_home() -> Result<()> {
     cleanup_env();
     set_env("XDG_CACHE_HOME", "");
-    let home = env::var("HOME").expect("HOME should be set for tests");
+    let home = env::var("HOME").map_err(|_| "HOME should be set for tests")?;
     let expected = PathBuf::from(home).join(".cache");
-    assert_eq!(cache_dir().unwrap(), expected);
+    assert_eq!(cache_dir().map_err(|e| format!("{e:?}"))?, expected);
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn cache_dir_fails_when_home_missing() {
+fn cache_dir_fails_when_home_missing() -> Result<()> {
     cleanup_env();
     let home = env::var("HOME").ok();
     remove_env("HOME");
     remove_env("XDG_CACHE_HOME");
 
     let result = cache_dir();
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), XdgError::HomeNotFound));
+    let err = match result {
+        Ok(_) => return Err("cache_dir should fail when HOME missing".into()),
+        Err(e) => e,
+    };
+    assert!(matches!(err, XdgError::HomeNotFound));
 
     // Restore HOME
     if let Some(h) = home {
         set_env("HOME", &h);
     }
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn config_dir_uses_xdg_config_home_when_set() {
+fn config_dir_uses_xdg_config_home_when_set() -> Result<()> {
     cleanup_env();
     set_env("XDG_CONFIG_HOME", "/custom/config");
-    assert_eq!(config_dir().unwrap(), PathBuf::from("/custom/config"));
+    assert_eq!(
+        config_dir().map_err(|e| format!("{e:?}"))?,
+        PathBuf::from("/custom/config")
+    );
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn config_dir_falls_back_to_home_config() {
+fn config_dir_falls_back_to_home_config() -> Result<()> {
     cleanup_env();
     remove_env("XDG_CONFIG_HOME");
-    let home = env::var("HOME").expect("HOME should be set for tests");
+    let home = env::var("HOME").map_err(|_| "HOME should be set for tests")?;
     let expected = PathBuf::from(home).join(".config");
-    assert_eq!(config_dir().unwrap(), expected);
+    assert_eq!(config_dir().map_err(|e| format!("{e:?}"))?, expected);
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn config_dir_ignores_empty_xdg_config_home() {
+fn config_dir_ignores_empty_xdg_config_home() -> Result<()> {
     cleanup_env();
     set_env("XDG_CONFIG_HOME", "");
-    let home = env::var("HOME").expect("HOME should be set for tests");
+    let home = env::var("HOME").map_err(|_| "HOME should be set for tests")?;
     let expected = PathBuf::from(home).join(".config");
-    assert_eq!(config_dir().unwrap(), expected);
+    assert_eq!(config_dir().map_err(|e| format!("{e:?}"))?, expected);
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn config_dir_fails_when_home_missing() {
+fn config_dir_fails_when_home_missing() -> Result<()> {
     cleanup_env();
     let home = env::var("HOME").ok();
     remove_env("HOME");
     remove_env("XDG_CONFIG_HOME");
 
     let result = config_dir();
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), XdgError::HomeNotFound));
+    let err = match result {
+        Ok(_) => return Err("config_dir should fail when HOME missing".into()),
+        Err(e) => e,
+    };
+    assert!(matches!(err, XdgError::HomeNotFound));
 
     // Restore HOME
     if let Some(h) = home {
         set_env("HOME", &h);
     }
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn state_dir_uses_xdg_state_home_when_set() {
+fn state_dir_uses_xdg_state_home_when_set() -> Result<()> {
     cleanup_env();
     set_env("XDG_STATE_HOME", "/custom/state");
-    assert_eq!(state_dir().unwrap(), PathBuf::from("/custom/state"));
+    assert_eq!(
+        state_dir().map_err(|e| format!("{e:?}"))?,
+        PathBuf::from("/custom/state")
+    );
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn state_dir_falls_back_to_home_local_state() {
+fn state_dir_falls_back_to_home_local_state() -> Result<()> {
     cleanup_env();
     remove_env("XDG_STATE_HOME");
-    let home = env::var("HOME").expect("HOME should be set for tests");
+    let home = env::var("HOME").map_err(|_| "HOME should be set for tests")?;
     let expected = PathBuf::from(home).join(".local").join("state");
-    assert_eq!(state_dir().unwrap(), expected);
+    assert_eq!(state_dir().map_err(|e| format!("{e:?}"))?, expected);
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn state_dir_ignores_empty_xdg_state_home() {
+fn state_dir_ignores_empty_xdg_state_home() -> Result<()> {
     cleanup_env();
     set_env("XDG_STATE_HOME", "");
-    let home = env::var("HOME").expect("HOME should be set for tests");
+    let home = env::var("HOME").map_err(|_| "HOME should be set for tests")?;
     let expected = PathBuf::from(home).join(".local").join("state");
-    assert_eq!(state_dir().unwrap(), expected);
+    assert_eq!(state_dir().map_err(|e| format!("{e:?}"))?, expected);
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn state_dir_fails_when_home_missing() {
+fn state_dir_fails_when_home_missing() -> Result<()> {
     cleanup_env();
     let home = env::var("HOME").ok();
     remove_env("HOME");
     remove_env("XDG_STATE_HOME");
 
     let result = state_dir();
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), XdgError::HomeNotFound));
+    let err = match result {
+        Ok(_) => return Err("state_dir should fail when HOME missing".into()),
+        Err(e) => e,
+    };
+    assert!(matches!(err, XdgError::HomeNotFound));
 
     // Restore HOME
     if let Some(h) = home {
         set_env("HOME", &h);
     }
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn runtime_dir_uses_xdg_runtime_dir_when_set() {
+fn runtime_dir_uses_xdg_runtime_dir_when_set() -> Result<()> {
     cleanup_env();
     set_env("XDG_RUNTIME_DIR", "/run/user/1000");
-    assert_eq!(runtime_dir().unwrap(), PathBuf::from("/run/user/1000"));
+    assert_eq!(
+        runtime_dir().map_err(|e| format!("{e:?}"))?,
+        PathBuf::from("/run/user/1000")
+    );
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn runtime_dir_fails_when_not_set() {
+fn runtime_dir_fails_when_not_set() -> Result<()> {
     cleanup_env();
     remove_env("XDG_RUNTIME_DIR");
 
     let result = runtime_dir();
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), XdgError::RuntimeDirNotSet));
+    let err = match result {
+        Ok(_) => return Err("runtime_dir should fail when not set".into()),
+        Err(e) => e,
+    };
+    assert!(matches!(err, XdgError::RuntimeDirNotSet));
 
     cleanup_env();
+    Ok(())
 }
 
 #[test]
 #[serial]
-fn runtime_dir_fails_when_empty() {
+fn runtime_dir_fails_when_empty() -> Result<()> {
     cleanup_env();
     set_env("XDG_RUNTIME_DIR", "");
 
     let result = runtime_dir();
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), XdgError::RuntimeDirNotSet));
+    let err = match result {
+        Ok(_) => return Err("runtime_dir should fail when empty".into()),
+        Err(e) => e,
+    };
+    assert!(matches!(err, XdgError::RuntimeDirNotSet));
 
     cleanup_env();
+    Ok(())
 }
 
 #[test]

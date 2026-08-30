@@ -7,7 +7,7 @@ use std::path::Path;
 
 #[tokio::test]
 async fn missing_action_returns_validation_error() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxWindowTool::execute(
         &serde_json::json!({ "session": "main" }),
         Path::new("/tmp"),
@@ -20,7 +20,7 @@ async fn missing_action_returns_validation_error() {
 
 #[tokio::test]
 async fn missing_session_returns_validation_error() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxWindowTool::execute(
         &serde_json::json!({ "action": "create" }),
         Path::new("/tmp"),
@@ -33,7 +33,7 @@ async fn missing_session_returns_validation_error() {
 
 #[tokio::test]
 async fn unknown_action_returns_validation_error() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxWindowTool::execute(
         &serde_json::json!({ "action": "bogus", "session": "main" }),
         Path::new("/tmp"),
@@ -47,7 +47,7 @@ async fn unknown_action_returns_validation_error() {
 
 #[tokio::test]
 async fn kill_requires_force() {
-    let bus = Bus::new();
+    let bus = Bus::default();
     let err = TmuxWindowTool::execute(
         &serde_json::json!({ "action": "kill", "session": "main" }),
         Path::new("/tmp"),

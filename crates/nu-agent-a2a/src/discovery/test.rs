@@ -6,11 +6,13 @@ use tokio::sync::mpsc;
 
 use super::*;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // Import discovery module items — some are pub(crate) and not re-exported
 // via the pub glob in lib.rs.
 use crate::discovery::static_discovery::StaticPeerDiscovery;
 use crate::discovery::{DiscoveryBrowser, DiscoveryService, PeerDiscoveryImpl, PeerEvent};
-use crate::{A2aServer, PeerCache};
+use crate::{A2aServer, AgentCard, Peer, PeerCache};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -86,14 +88,17 @@ fn test_peer_from_fields_port_zero() {
 /// Verify that sending a [`PeerEvent::PeerDiscovered`] through the channel
 /// preserves event order.
 #[tokio::test]
-async fn test_peer_event_roundtrip_discovered() {
+async fn test_peer_event_roundtrip_discovered() -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<PeerEvent>(16);
 
     let peer = Box::new(peer_from_fields("alpha", "10.0.0.1", 9001, "alpha.local."));
     tx.send(PeerEvent::PeerDiscovered(peer)).await.unwrap();
     drop(tx);
 
-    let event = rx.recv().await.expect("should receive PeerEvent");
+    let event = rx
+        .recv()
+        .await
+        .ok_or("should receive PeerEvent after send")?;
     match event {
         PeerEvent::PeerDiscovered(p) => {
             assert_eq!(p.name, "alpha");
@@ -101,6 +106,7 @@ async fn test_peer_event_roundtrip_discovered() {
         }
         other => panic!("Expected PeerDiscovered, got: {other:?}"),
     }
+    Ok(())
 }
 
 /// Verify that sending multiple discovered events in sequence works.
@@ -484,7 +490,7 @@ fn test_peer_discovery_impl_noop() {
 /// Verify that [`StaticPeerDiscovery`] emits all configured peers through
 /// the channel on first call to [`take_peer_rx`].
 #[tokio::test]
-async fn test_static_discovery_emits_configured_peers() {
+async fn test_static_discovery_emits_configured_peers() -> Result<()> {
     let peers = vec![
         Peer {
             name: "alpha".into(),
@@ -503,7 +509,7 @@ async fn test_static_discovery_emits_configured_peers() {
     ];
 
     let mut discovery = StaticPeerDiscovery::new(peers);
-    let mut rx = discovery.take_peer_rx().expect("should have peer_rx");
+    let mut rx = discovery.take_peer_rx().ok_or("should have peer_rx")?;
 
     // Collect all events non-blockingly.
     let mut names: Vec<String> = Vec::new();
@@ -522,18 +528,20 @@ async fn test_static_discovery_emits_configured_peers() {
         discovery.take_peer_rx().is_none(),
         "second take should be None"
     );
+    Ok(())
 }
 
 /// Verify that [`StaticPeerDiscovery`] with no peers returns a receiver
 /// that is immediately empty (no events).
 #[test]
-fn test_static_discovery_empty_peers() {
+fn test_static_discovery_empty_peers() -> Result<()> {
     let mut discovery = StaticPeerDiscovery::new(vec![]);
-    let mut rx = discovery.take_peer_rx().expect("should have peer_rx");
+    let mut rx = discovery.take_peer_rx().ok_or("should have peer_rx")?;
     assert!(
         rx.try_recv().is_err(),
         "no events expected for empty peer list"
     );
+    Ok(())
 }
 
 /// Verify that [`StaticPeerDiscovery::start`] and [`shutdown`] are safe
@@ -564,7 +572,7 @@ async fn test_card_fetch_roundtrip() {
         ..Default::default()
     };
 
-    let cache = Arc::new(PeerCache::new());
+    let cache = Arc::new(PeerCache::default());
     let server = A2aServer::start(card, cache, 0).await.unwrap();
     let url = format!("{}/.well-known/agent-card.json", server.local_url);
 
@@ -622,7 +630,7 @@ fn test_mdns_name_for_switch_handles_same_name_different_port() {
 
 #[test]
 fn test_mdns_peer_discovery_fullname_starts_none() {
-    let mdns = crate::discovery::mdns_discovery::MdnsPeerDiscovery::new();
+    let mdns = crate::discovery::mdns_discovery::MdnsPeerDiscovery::default();
     assert!(mdns.fullname().is_none());
 }
 
@@ -631,7 +639,7 @@ fn test_mdns_peer_discovery_fullname_after_start() {
     // We can't easily test the full start() path (needs a real daemon), but
     // we can verify that the fullname field is set correctly by calling
     // rename() which sets it.
-    let mut mdns = crate::discovery::mdns_discovery::MdnsPeerDiscovery::new();
+    let mut mdns = crate::discovery::mdns_discovery::MdnsPeerDiscovery::default();
     // Without a daemon, rename() is a no-op and fullname stays None.
     mdns.rename(
         "old._nu-agent-a2a._tcp.local.",

@@ -13,6 +13,8 @@ use crate::{
 use nu_agent_core::protocol::event::PermissionDecision;
 use nu_agent_core::transcript::ir::Role;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 fn open_permission_prompt(state: &mut AppState) {
     state.open_permission_prompt(crate::state::PermissionPrompt {
         request_id: "ask-0000000000000001".to_string(),
@@ -28,8 +30,8 @@ fn open_permission_prompt(state: &mut AppState) {
 }
 
 fn busy_state_with_controller() -> (AppState, CancelController) {
-    let mut state = AppState::new();
-    let cancel_controller = CancelController::new();
+    let mut state = AppState::default();
+    let cancel_controller = CancelController::default();
     state.pending_submit_text = Some("w".to_string());
     dispatch_terminal_event(
         &mut state,
@@ -40,8 +42,10 @@ fn busy_state_with_controller() -> (AppState, CancelController) {
 }
 
 fn busy_state() -> AppState {
-    let mut state = AppState::new();
-    state.pending_submit_text = Some("w".to_string());
+    let mut state = AppState {
+        pending_submit_text: Some("w".to_string()),
+        ..Default::default()
+    };
     dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     state
 }
@@ -87,8 +91,8 @@ fn second_escape_in_abort_pending_after_busy_normal_toggles_cancel_requested() {
 
 #[test]
 fn escape_in_idle_does_not_request_cancellation() {
-    let mut state = AppState::new();
-    let cancel_controller = CancelController::new();
+    let mut state = AppState::default();
+    let cancel_controller = CancelController::default();
 
     let changed = dispatch_terminal_event(
         &mut state,
@@ -105,8 +109,8 @@ fn escape_in_idle_does_not_request_cancellation() {
 
 #[test]
 fn typing_remains_available_while_prompt_is_active() {
-    let mut state = AppState::new();
-    let cancel_controller = CancelController::new();
+    let mut state = AppState::default();
+    let cancel_controller = CancelController::default();
 
     state.pending_submit_text = Some("f".to_string());
     dispatch_terminal_event(
@@ -134,9 +138,11 @@ fn typing_remains_available_while_prompt_is_active() {
 
 #[test]
 fn submit_path_appends_prompt_and_keeps_input_editable() {
-    let mut state = AppState::new();
+    let mut state = AppState {
+        pending_submit_text: Some("s".to_string()),
+        ..Default::default()
+    };
 
-    state.pending_submit_text = Some("s".to_string());
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
 
@@ -154,7 +160,7 @@ fn submit_path_appends_prompt_and_keeps_input_editable() {
 fn backspace_and_cursor_movement_edit_in_dispatch_path() {
     // Backspace and cursor movement are now handled by TextArea, not the dispatch path.
     // The dispatch path's Backspace/Delete/MoveCursor actions are no-ops.
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     let changed = dispatch_terminal_event(
         &mut state,
@@ -166,7 +172,7 @@ fn backspace_and_cursor_movement_edit_in_dispatch_path() {
 
 #[test]
 fn esc_in_idle_insert_mode_switches_to_normal_mode() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     assert_eq!(state.input_mode, InputMode::Insert);
 
     let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
@@ -326,7 +332,7 @@ fn busy_normal_mode_after_jk_chord_requires_i_before_typing() {
 
 #[test]
 fn normal_mode_blocks_plain_typing_and_keeps_input_unchanged() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enter_normal_mode();
 
     let changed = dispatch_terminal_event(
@@ -341,7 +347,7 @@ fn normal_mode_blocks_plain_typing_and_keeps_input_unchanged() {
 
 #[test]
 fn normal_mode_hl_cycles_focus_between_panes() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enter_normal_mode();
 
     let first = dispatch_terminal_event(
@@ -363,7 +369,7 @@ fn normal_mode_hl_cycles_focus_between_panes() {
 
 #[test]
 fn normal_mode_tab_and_backtab_cycle_focus_between_transcript_and_input() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enter_normal_mode();
 
     let tab = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Tab), None);
@@ -377,8 +383,8 @@ fn normal_mode_tab_and_backtab_cycle_focus_between_transcript_and_input() {
 }
 
 #[test]
-fn permission_prompt_key_a_submits_allow_once() {
-    let mut state = AppState::new();
+fn permission_prompt_key_a_submits_allow_once() -> Result<()> {
+    let mut state = AppState::default();
     open_permission_prompt(&mut state);
 
     let changed = dispatch_terminal_event(
@@ -391,13 +397,14 @@ fn permission_prompt_key_a_submits_allow_once() {
 
     let submission = state
         .take_next_permission_decision_submission()
-        .expect("permission submission");
+        .ok_or("should have permission submission")?;
     assert_eq!(submission.decision, PermissionDecision::AllowOnce);
+    Ok(())
 }
 
 #[test]
-fn permission_prompt_key_upper_a_submits_allow_always() {
-    let mut state = AppState::new();
+fn permission_prompt_key_upper_a_submits_allow_always() -> Result<()> {
+    let mut state = AppState::default();
     open_permission_prompt(&mut state);
 
     let changed = dispatch_terminal_event(
@@ -410,13 +417,14 @@ fn permission_prompt_key_upper_a_submits_allow_always() {
 
     let submission = state
         .take_next_permission_decision_submission()
-        .expect("permission submission");
+        .ok_or("should have permission submission")?;
     assert_eq!(submission.decision, PermissionDecision::AllowAlways);
+    Ok(())
 }
 
 #[test]
-fn permission_prompt_key_d_submits_deny() {
-    let mut state = AppState::new();
+fn permission_prompt_key_d_submits_deny() -> Result<()> {
+    let mut state = AppState::default();
     open_permission_prompt(&mut state);
 
     let changed = dispatch_terminal_event(
@@ -429,13 +437,14 @@ fn permission_prompt_key_d_submits_deny() {
 
     let submission = state
         .take_next_permission_decision_submission()
-        .expect("permission submission");
+        .ok_or("should have permission submission")?;
     assert_eq!(submission.decision, PermissionDecision::Deny);
+    Ok(())
 }
 
 #[test]
-fn permission_prompt_esc_submits_deny() {
-    let mut state = AppState::new();
+fn permission_prompt_esc_submits_deny() -> Result<()> {
+    let mut state = AppState::default();
     open_permission_prompt(&mut state);
 
     let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
@@ -444,13 +453,14 @@ fn permission_prompt_esc_submits_deny() {
 
     let submission = state
         .take_next_permission_decision_submission()
-        .expect("permission submission");
+        .ok_or("should have permission submission")?;
     assert_eq!(submission.decision, PermissionDecision::Deny);
+    Ok(())
 }
 
 #[test]
 fn insert_mode_jk_chord_enters_normal_and_removes_j() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     assert_eq!(state.input_mode, InputMode::Insert);
 
     // InsertChar is now a no-op in the dispatch path (handled by TextArea).
@@ -475,7 +485,7 @@ fn insert_mode_jk_chord_enters_normal_and_removes_j() {
 
 #[test]
 fn normal_mode_z_is_noop() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enter_normal_mode();
 
     let z = dispatch_terminal_event(
@@ -490,7 +500,7 @@ fn normal_mode_z_is_noop() {
 fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
     // Alt+Enter and Shift+Enter are now handled by the coordinator (TextArea),
     // not the dispatch path. The dispatch path's InsertNewline is a no-op.
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::AltEnter), None);
@@ -512,7 +522,7 @@ fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
 
 #[test]
 fn ctrl_p_opens_palette_and_second_ctrl_p_moves_selection_up() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     let opened = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert!(opened);
@@ -537,7 +547,7 @@ fn ctrl_p_opens_palette_and_second_ctrl_p_moves_selection_up() {
 
 #[test]
 fn escape_closes_palette_only_and_preserves_insert_mode() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     assert_eq!(state.input_mode, InputMode::Insert);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert!(state.command_palette_open);
@@ -550,7 +560,7 @@ fn escape_closes_palette_only_and_preserves_insert_mode() {
 
 #[test]
 fn palette_navigation_supports_arrows_and_ctrl_np_and_enter_routes_action() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
 
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
@@ -569,7 +579,7 @@ fn palette_navigation_supports_arrows_and_ctrl_np_and_enter_routes_action() {
 
 #[test]
 fn palette_selection_can_open_mcps_panel() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
 
     // Help -> Status -> MCPs
@@ -587,7 +597,7 @@ fn palette_selection_can_open_mcps_panel() {
 
 #[test]
 fn palette_selection_can_open_skills_panel() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
 
     // Help -> Status -> MCPs -> Skills
@@ -606,7 +616,7 @@ fn palette_selection_can_open_skills_panel() {
 
 #[test]
 fn command_palette_models_action_opens_inline_model_picker() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
 
     // Help -> Status -> MCPs -> Skills -> Models
@@ -627,10 +637,12 @@ fn command_palette_models_action_opens_inline_model_picker() {
 
 #[test]
 fn models_slash_and_palette_share_same_action_handler() {
-    let mut slash_state = AppState::new();
+    let mut slash_state = AppState {
+        pending_submit_text: Some("/models".to_string()),
+        ..Default::default()
+    };
     // InsertChar is now a no-op in the dispatch path (handled by TextArea).
     // Set pending_submit_text directly so Submit routes the slash command.
-    slash_state.pending_submit_text = Some("/models".to_string());
     let _ = dispatch_terminal_event(
         &mut slash_state,
         &TerminalEvent::Key(TerminalKey::Enter),
@@ -639,7 +651,7 @@ fn models_slash_and_palette_share_same_action_handler() {
     assert!(slash_state.take_next_model_picker_launch_request());
     assert_eq!(slash_state.take_next_prompt_for_execution(), None);
 
-    let mut palette_state = AppState::new();
+    let mut palette_state = AppState::default();
     let _ = dispatch_terminal_event(
         &mut palette_state,
         &TerminalEvent::Key(TerminalKey::CtrlP),
@@ -677,7 +689,7 @@ fn models_slash_and_palette_share_same_action_handler() {
 
 #[test]
 fn palette_models_does_not_bypass_shared_models_action_path() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
@@ -696,7 +708,7 @@ fn palette_models_does_not_bypass_shared_models_action_path() {
 
 #[test]
 fn models_launcher_opens_picker_while_worker_active() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("first".to_string());
     assert_eq!(
         state.take_next_prompt_for_execution(),
@@ -721,7 +733,7 @@ fn models_launcher_opens_picker_while_worker_active() {
 
 #[test]
 fn models_slash_opens_picker_while_worker_active() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enqueue_prompt("first".to_string());
     assert_eq!(
         state.take_next_prompt_for_execution(),
@@ -744,7 +756,7 @@ fn models_slash_opens_picker_while_worker_active() {
 
 #[test]
 fn model_picker_query_accepts_j_and_k_characters() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_model_picker_options(vec![
         ModelPickerOption {
             provider: "jk-provider-a".to_string(),
@@ -790,7 +802,7 @@ fn model_picker_query_accepts_j_and_k_characters() {
 
 #[test]
 fn model_picker_navigation_does_not_consume_query_jk_input() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_model_picker_options(vec![
         ModelPickerOption {
             provider: "jk-provider-a".to_string(),
@@ -864,7 +876,7 @@ fn model_picker_navigation_does_not_consume_query_jk_input() {
 
 #[test]
 fn model_picker_ctrl_n_moves_to_next_item() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_model_picker_options(vec![
         ModelPickerOption {
             provider: "openai".to_string(),
@@ -900,7 +912,7 @@ fn model_picker_ctrl_n_moves_to_next_item() {
 
 #[test]
 fn query_picker_ctrl_n_moves_to_next_item_consistently() {
-    let mut palette_state = AppState::new();
+    let mut palette_state = AppState::default();
     let _ = dispatch_terminal_event(
         &mut palette_state,
         &TerminalEvent::Key(TerminalKey::CtrlP),
@@ -916,7 +928,7 @@ fn query_picker_ctrl_n_moves_to_next_item_consistently() {
     assert!(palette_changed);
     assert_eq!(palette_state.command_palette_selection, 1);
 
-    let mut model_state = AppState::new();
+    let mut model_state = AppState::default();
     model_state.set_model_picker_options(vec![
         ModelPickerOption {
             provider: "openai".to_string(),
@@ -954,7 +966,7 @@ fn query_picker_ctrl_n_moves_to_next_item_consistently() {
 
 #[test]
 fn esc_closes_mcps_panel_and_preserves_insert_mode() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_info_panel(InfoPanel::Mcps);
     assert_eq!(state.input_mode, InputMode::Insert);
 
@@ -965,8 +977,8 @@ fn esc_closes_mcps_panel_and_preserves_insert_mode() {
 }
 
 #[test]
-fn mcps_panel_navigation_and_enter_toggle_updates_selected_server() {
-    let mut state = AppState::new();
+fn mcps_panel_navigation_and_enter_toggle_updates_selected_server() -> Result<()> {
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         McpServerState {
             name: "gh".to_string(),
@@ -991,14 +1003,15 @@ fn mcps_panel_navigation_and_enter_toggle_updates_selected_server() {
 
     let request = state
         .take_next_mcp_toggle_request()
-        .expect("queued toggle request");
+        .ok_or("should have queued toggle request")?;
     assert_eq!(request.server_name, "k8s");
     assert!(request.enable);
+    Ok(())
 }
 
 #[test]
-fn mcps_panel_supports_up_ctrl_p_and_space_toggle() {
-    let mut state = AppState::new();
+fn mcps_panel_supports_up_ctrl_p_and_space_toggle() -> Result<()> {
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         McpServerState {
             name: "gh".to_string(),
@@ -1026,14 +1039,15 @@ fn mcps_panel_supports_up_ctrl_p_and_space_toggle() {
     );
     let request = state
         .take_next_mcp_toggle_request()
-        .expect("queued toggle request");
+        .ok_or("should have queued toggle request")?;
     assert_eq!(request.server_name, "k8s");
     assert!(request.enable);
+    Ok(())
 }
 
 #[test]
 fn palette_filters_with_non_prefix_query_before_enter_routes_help() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
 
     let _ = dispatch_terminal_event(
@@ -1058,7 +1072,7 @@ fn palette_filters_with_non_prefix_query_before_enter_routes_help() {
 
 #[test]
 fn escape_closes_info_panel_without_mode_regression() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert_eq!(state.info_panel, Some(InfoPanel::Help));
@@ -1072,7 +1086,7 @@ fn escape_closes_info_panel_without_mode_regression() {
 
 #[test]
 fn existing_insert_mode_jk_chord_still_switches_to_normal_outside_palette() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     // InsertChar is now a no-op in the dispatch path (handled by TextArea).
     // The first 'j' sets insert_exit_pending_j but returns false (no-op).
     let first = dispatch_terminal_event(
@@ -1093,7 +1107,7 @@ fn existing_insert_mode_jk_chord_still_switches_to_normal_outside_palette() {
 
 #[test]
 fn inline_slash_suggestions_open_on_leading_slash() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
 
     // check_inline_slash is called by the coordinator after TextArea mutations.
     // In the dispatch-only test, call it directly to set the state.
@@ -1105,10 +1119,12 @@ fn inline_slash_suggestions_open_on_leading_slash() {
 
 #[test]
 fn inline_slash_enter_on_compact_triggers_compaction_path() {
-    let mut state = AppState::new();
+    let mut state = AppState {
+        pending_submit_text: Some("/compact".to_string()),
+        ..Default::default()
+    };
     // InsertChar is now a no-op in the dispatch path (handled by TextArea).
     // Set pending_submit_text directly so Submit routes the slash command.
-    state.pending_submit_text = Some("/compact".to_string());
 
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
@@ -1125,11 +1141,13 @@ fn inline_slash_enter_on_compact_triggers_compaction_path() {
 #[test]
 fn immediate_slash_commands_do_not_set_busy_or_spinner() {
     for command in ["/compact", "/mcp", "/help", "/status", "/skills"] {
-        let mut state = AppState::new();
+        let mut state = AppState {
+            pending_submit_text: Some(command.to_string()),
+            ..Default::default()
+        };
 
         // InsertChar is now a no-op in the dispatch path (handled by TextArea).
         // Set pending_submit_text directly so Submit routes the slash command.
-        state.pending_submit_text = Some(command.to_string());
 
         let changed =
             dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
@@ -1144,7 +1162,7 @@ fn immediate_slash_commands_do_not_set_busy_or_spinner() {
 
 #[test]
 fn inline_slash_suggestions_close_when_prefix_removed() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.check_inline_slash("/");
     assert!(state.inline_slash_open);
 
@@ -1156,7 +1174,7 @@ fn inline_slash_suggestions_close_when_prefix_removed() {
 
 #[test]
 fn palette_escape_closes_without_panel_route_regression() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert!(state.command_palette_open);
 
@@ -1169,7 +1187,7 @@ fn palette_escape_closes_without_panel_route_regression() {
 // ---- agent picker dispatch tests ----
 
 fn setup_agent_picker_open() -> AppState {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(vec![
         AgentPickerOption {
             name: "alpha".into(),
@@ -1244,7 +1262,7 @@ fn agent_picker_open_submit_queues_switch_request_and_closes() {
 
 #[test]
 fn agent_picker_closed_actions_pass_through_normally() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_agent_picker_options(vec![AgentPickerOption {
         name: "alpha".into(),
         description: None,
@@ -1270,8 +1288,10 @@ fn agent_slash_and_palette_share_same_action_handler() {
     // /agent slash command triggers agent picker launch
     // InsertChar is now a no-op in the dispatch path (handled by TextArea).
     // Set pending_submit_text directly so Submit routes the slash command.
-    let mut slash_state = AppState::new();
-    slash_state.pending_submit_text = Some("/agent".to_string());
+    let mut slash_state = AppState {
+        pending_submit_text: Some("/agent".to_string()),
+        ..Default::default()
+    };
     let _ = dispatch_terminal_event(
         &mut slash_state,
         &TerminalEvent::Key(TerminalKey::Enter),
@@ -1281,7 +1301,7 @@ fn agent_slash_and_palette_share_same_action_handler() {
     assert_eq!(slash_state.take_next_prompt_for_execution(), None);
 
     // Command palette Agents action triggers same path
-    let mut palette_state = AppState::new();
+    let mut palette_state = AppState::default();
     let _ = dispatch_terminal_event(
         &mut palette_state,
         &TerminalEvent::Key(TerminalKey::CtrlP),
@@ -1330,7 +1350,7 @@ fn agent_slash_and_palette_share_same_action_handler() {
 
 #[test]
 fn test_tab_cycles_agent_in_insert_mode() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     // Insert mode is default
     assert_eq!(state.input_mode, InputMode::Insert);
     // Set up 2+ builtin cycle names
@@ -1350,7 +1370,7 @@ fn test_tab_cycles_agent_in_insert_mode() {
 
 #[test]
 fn test_tab_does_not_cycle_in_normal_mode() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.enter_normal_mode();
     state.agent_cycle_names = vec!["planner".to_string(), "maker".to_string()];
     state.set_active_agent_identity("planner");
@@ -1367,7 +1387,7 @@ fn test_tab_does_not_cycle_in_normal_mode() {
 
 #[test]
 fn test_tab_does_not_cycle_when_no_builtins() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     assert_eq!(state.input_mode, InputMode::Insert);
     // Empty cycle names
     state.agent_cycle_names = Vec::new();
@@ -1385,7 +1405,7 @@ fn test_tab_does_not_cycle_when_no_builtins() {
 
 #[test]
 fn command_palette_j_feeds_query_not_navigation() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert!(state.command_palette_open);
 
@@ -1404,7 +1424,7 @@ fn command_palette_j_feeds_query_not_navigation() {
 
 #[test]
 fn command_palette_k_feeds_query_not_navigation() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert!(state.command_palette_open);
 
@@ -1422,7 +1442,7 @@ fn command_palette_k_feeds_query_not_navigation() {
 
 #[test]
 fn command_palette_ctrl_n_moves_selection_down() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert!(state.command_palette_open);
     assert_eq!(state.command_palette_selection, 0);
@@ -1437,7 +1457,7 @@ fn command_palette_ctrl_n_moves_selection_down() {
 
 #[test]
 fn command_palette_ctrl_p_moves_selection_up() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert!(state.command_palette_open);
 
@@ -1455,7 +1475,7 @@ fn command_palette_ctrl_p_moves_selection_up() {
 
 #[test]
 fn model_picker_ctrl_p_moves_selection_up() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_model_picker_options(vec![
         ModelPickerOption {
             provider: "openai".to_string(),
@@ -1512,7 +1532,7 @@ fn agent_picker_ctrl_p_moves_selection_up() {
 
 #[test]
 fn ctrl_p_with_no_modal_open_opens_command_palette() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     assert!(!state.command_palette_open);
     assert!(!state.model_picker_open);
     assert!(!state.agent_picker_open);
@@ -1528,7 +1548,7 @@ fn ctrl_p_with_no_modal_open_opens_command_palette() {
 
 #[test]
 fn help_panel_ctrl_n_scrolls_down() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_info_panel(crate::state::InfoPanel::Help);
     assert_eq!(state.info_panel_scroll, 0);
 
@@ -1541,7 +1561,7 @@ fn help_panel_ctrl_n_scrolls_down() {
 
 #[test]
 fn help_panel_ctrl_p_scrolls_up() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_info_panel(crate::state::InfoPanel::Help);
     state.info_panel_scroll = 3;
 
@@ -1554,7 +1574,7 @@ fn help_panel_ctrl_p_scrolls_up() {
 
 #[test]
 fn help_panel_j_is_noop() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.open_info_panel(crate::state::InfoPanel::Help);
     state.info_panel_scroll = 0;
 
@@ -1573,7 +1593,7 @@ fn help_panel_j_is_noop() {
 
 #[test]
 fn mcp_panel_ctrl_n_moves_selection_down() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         McpServerState {
             name: "gh".to_string(),
@@ -1594,7 +1614,7 @@ fn mcp_panel_ctrl_n_moves_selection_down() {
 
 #[test]
 fn mcp_panel_ctrl_p_moves_selection_up() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         McpServerState {
             name: "gh".to_string(),
@@ -1614,8 +1634,60 @@ fn mcp_panel_ctrl_p_moves_selection_up() {
 }
 
 #[test]
+fn normal_v_key_enters_visual_mode_and_j_yank_works() -> Result<()> {
+    let mut state = AppState::default();
+    state.enter_normal_mode();
+    state.cursor_visual_row = 0;
+    state.total_visual_rows = 5;
+    state.entry_indices = (0..5).collect();
+
+    // Press 'v' → should enter Visual mode and set a selection
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('v')),
+        None,
+    );
+    assert_eq!(state.input_mode, InputMode::Visual);
+    let sel = state
+        .transcript_selection
+        .ok_or("should have transcript selection after pressing v")?;
+    assert_eq!(sel.anchor(), 0);
+    assert_eq!(sel.cursor(), 0);
+
+    // Press 'j' → should extend selection down
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('j')),
+        None,
+    );
+    let sel = state
+        .transcript_selection
+        .ok_or("should still have transcript selection after pressing j")?;
+    assert_eq!(sel.cursor(), 1);
+
+    // Populate rendered lines and press 'y' → should yank selected rows
+    state.rendered_line_text = vec![
+        "line 0".to_string(),
+        "line 1".to_string(),
+        "line 2".to_string(),
+    ];
+    state.rendered_line_start_row = 0;
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Char('y')),
+        None,
+    );
+
+    let clipboard = state.take_clipboard_request();
+    assert_eq!(clipboard, Some("line 0\nline 1".to_string()));
+    assert!(state.transcript_selection.is_none());
+    assert_eq!(state.input_mode, InputMode::Normal);
+    Ok(())
+}
+
+#[test]
 fn mcp_panel_j_is_noop() {
-    let mut state = AppState::new();
+    let mut state = AppState::default();
     state.set_mcp_servers(vec![
         McpServerState {
             name: "gh".to_string(),

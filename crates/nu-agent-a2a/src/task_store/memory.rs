@@ -26,21 +26,14 @@ pub struct InMemoryTaskStore {
     idempotency_keys: RwLock<HashMap<String, String>>,
 }
 
-impl InMemoryTaskStore {
-    /// Create an empty task store.
-    pub fn new() -> Self {
+impl Default for InMemoryTaskStore {
+    fn default() -> Self {
         Self {
             tasks: RwLock::new(HashMap::new()),
             subscriptions: RwLock::new(HashMap::new()),
             push_configs: RwLock::new(HashMap::new()),
             idempotency_keys: RwLock::new(HashMap::new()),
         }
-    }
-}
-
-impl Default for InMemoryTaskStore {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -507,7 +500,7 @@ impl InMemoryTaskStore {
         let mut filtered: Vec<Task> = tasks.values().cloned().collect();
 
         // Filter by status if provided
-        if let Some(ref state) = status {
+        if let Some(state) = &status {
             filtered.retain(|t| t.status.state == *state);
         }
 
@@ -623,7 +616,7 @@ async fn deliver_push(config: PushNotificationConfig, payload: Value) {
     let client = reqwest::Client::new();
     let mut req = client.post(&config.url).json(&payload);
 
-    if let Some(ref auth) = config.authentication {
+    if let Some(auth) = &config.authentication {
         match &auth.scheme {
             PushAuthScheme::Bearer { token } => {
                 req = req.header("Authorization", format!("Bearer {token}"));

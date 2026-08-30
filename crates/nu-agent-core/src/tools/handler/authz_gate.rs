@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use crate::types::ToolCall;
 
 use crate::tools::authz::{
-    AskApprovalHook, AskContext, PermissionAction, PermissionEventSink, PermissionsConfig,
-    SessionGrantCache, apply_ask_choice, apply_session_grant_override,
+    AskApprovalHook, AskContext, PermissionAction, PermissionsConfig, SessionGrantCache,
+    apply_ask_choice, apply_session_grant_override,
 };
 
 use super::types::ToolSource;
@@ -21,7 +21,6 @@ pub async fn enforce_authorization_for_tool_call(
     grant_cache: Arc<Mutex<SessionGrantCache>>,
     flow_context: &AuthorizationFlowContext,
     ask_hook: &mut impl AskApprovalHook,
-    event_sink: &mut impl PermissionEventSink,
 ) -> bool {
     let mut auth_decision =
         permissions.evaluate(&tool_call.function.name, &tool_call.function.arguments);
@@ -59,7 +58,6 @@ pub async fn enforce_authorization_for_tool_call(
                 source.as_str(),
                 &tool_call.function.arguments,
                 &flow_context.ask_context,
-                Some(event_sink),
             )
             .await;
 

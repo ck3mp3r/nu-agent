@@ -2,9 +2,11 @@ use super::AgentProviderAuthLogin;
 use nu_plugin::SimplePluginCommand;
 use nu_protocol::SyntaxShape;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
 fn login_command_name() {
-    let command = AgentProviderAuthLogin::new();
+    let command = AgentProviderAuthLogin;
     assert_eq!(
         SimplePluginCommand::name(&command),
         "agent provider auth login",
@@ -13,8 +15,8 @@ fn login_command_name() {
 }
 
 #[test]
-fn login_signature_has_name_arg() {
-    let command = AgentProviderAuthLogin::new();
+fn login_signature_has_name_arg() -> Result<()> {
+    let command = AgentProviderAuthLogin;
     let sig = SimplePluginCommand::signature(&command);
 
     assert_eq!(
@@ -26,27 +28,29 @@ fn login_signature_has_name_arg() {
         .required_positional
         .iter()
         .find(|f| f.name == "name")
-        .expect("Should have required positional 'name' arg");
+        .ok_or("should have required positional 'name' arg")?;
 
     match name_arg.shape {
         SyntaxShape::String => (),
         _ => panic!("'name' arg should accept String argument"),
     }
+    Ok(())
 }
 
 #[test]
-fn login_signature_has_api_key_flag() {
-    let command = AgentProviderAuthLogin::new();
+fn login_signature_has_api_key_flag() -> Result<()> {
+    let command = AgentProviderAuthLogin;
     let sig = SimplePluginCommand::signature(&command);
 
     let api_key_flag = sig
         .named
         .iter()
         .find(|f| f.long == "api-key")
-        .expect("Should have --api-key flag");
+        .ok_or("should have --api-key flag")?;
 
     match api_key_flag.arg {
         Some(SyntaxShape::String) => (),
         _ => panic!("--api-key flag should accept String argument"),
     }
+    Ok(())
 }

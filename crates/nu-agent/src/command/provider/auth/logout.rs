@@ -7,15 +7,9 @@ use crate::plugin::AgentPlugin;
 
 pub struct AgentProviderAuthLogout;
 
-impl AgentProviderAuthLogout {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl Default for AgentProviderAuthLogout {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 

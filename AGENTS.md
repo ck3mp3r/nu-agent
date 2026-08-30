@@ -142,7 +142,7 @@ Group `From` implementations together in a `Froms` region. Place private helpers
 
 ### Error Handling
 
-- Use `derive_more::{Display, From}` for error enums (not `thiserror`)
+- Use `thiserror` for error enums (purpose-built, ergonomic `#[error("...")]` syntax)
 - Define `pub type Result<T> = core::result::Result<T, Error>` in `error.rs`, re-export from `lib.rs`/`main.rs`
 - `Custom` variant with `#[from(String, &String, &str)]` for easy `.ok_or("message")?`
 - External error types below `// -- Externals` comment

@@ -223,7 +223,7 @@ fn get_grammar(path: &Path, language: &str) -> Result<&'static LoadedGrammar, To
     }
     let cache = GRAMMAR_CACHE
         .get()
-        .expect("grammar cache initialized above");
+        .ok_or_else(|| ToolHandlerError::runtime("grammar cache initialization failed"))?;
     if let Some(grammar) = cache.get(language) {
         return Ok(grammar);
     }

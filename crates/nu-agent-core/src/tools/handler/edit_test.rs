@@ -1,8 +1,10 @@
 use super::*;
 use crate::bus::Bus;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[tokio::test]
-async fn edit_apply_search_replace_modifies_file() {
+async fn edit_apply_search_replace_modifies_file() -> Result<()> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.txt");
     std::fs::write(&path, "hello world\n").unwrap();
@@ -16,18 +18,19 @@ async fn edit_apply_search_replace_modifies_file() {
             "replacement": "there"
         }
     });
-    let result = EditTool::execute(&args, dir.path(), &Bus::new())
+    let result = EditTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(result["applied"], true);
     assert_eq!(result["changed"], true);
     assert_eq!(result["wrote"], true);
     let content = std::fs::read_to_string(&path).unwrap();
     assert_eq!(content, "hello there\n");
+    Ok(())
 }
 
 #[tokio::test]
-async fn edit_preview_returns_diff_without_writing() {
+async fn edit_preview_returns_diff_without_writing() -> Result<()> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.txt");
     std::fs::write(&path, "hello world\n").unwrap();
@@ -42,18 +45,19 @@ async fn edit_preview_returns_diff_without_writing() {
             "replacement": "there"
         }
     });
-    let result = EditTool::execute(&args, dir.path(), &Bus::new())
+    let result = EditTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(result["applied"], false);
     assert_eq!(result["would_change"], true);
     assert!(result["diff"].as_str().unwrap().contains("world"));
     let content = std::fs::read_to_string(&path).unwrap();
     assert_eq!(content, "hello world\n");
+    Ok(())
 }
 
 #[tokio::test]
-async fn edit_create_creates_new_file() {
+async fn edit_create_creates_new_file() -> Result<()> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("new.txt");
     let args = serde_json::json!({
@@ -63,18 +67,19 @@ async fn edit_create_creates_new_file() {
             "content": "new content\n"
         }
     });
-    let result = EditTool::execute(&args, dir.path(), &Bus::new())
+    let result = EditTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(result["applied"], true);
     assert_eq!(result["wrote"], true);
     assert!(path.exists());
     let content = std::fs::read_to_string(&path).unwrap();
     assert_eq!(content, "new content\n");
+    Ok(())
 }
 
 #[tokio::test]
-async fn edit_returns_conflict_on_stale_version() {
+async fn edit_returns_conflict_on_stale_version() -> Result<()> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.txt");
     std::fs::write(&path, "hello world\n").unwrap();
@@ -87,17 +92,18 @@ async fn edit_returns_conflict_on_stale_version() {
             "replacement": "there"
         }
     });
-    let result = EditTool::execute(&args, dir.path(), &Bus::new())
+    let result = EditTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(result["conflict"], true);
     assert_eq!(result["applied"], false);
     let content = std::fs::read_to_string(&path).unwrap();
     assert_eq!(content, "hello world\n");
+    Ok(())
 }
 
 #[tokio::test]
-async fn edit_noop_when_no_change() {
+async fn edit_noop_when_no_change() -> Result<()> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.txt");
     std::fs::write(&path, "hello world\n").unwrap();
@@ -111,16 +117,17 @@ async fn edit_noop_when_no_change() {
             "replacement": "world"
         }
     });
-    let result = EditTool::execute(&args, dir.path(), &Bus::new())
+    let result = EditTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(result["noop"], true);
     assert_eq!(result["applied"], false);
     assert_eq!(result["changed"], false);
+    Ok(())
 }
 
 #[tokio::test]
-async fn edit_missing_file_returns_error() {
+async fn edit_missing_file_returns_error() -> Result<()> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("nonexistent.txt");
     let args = serde_json::json!({
@@ -132,16 +139,17 @@ async fn edit_missing_file_returns_error() {
             "replacement": "bar"
         }
     });
-    let result = EditTool::execute(&args, dir.path(), &Bus::new())
+    let result = EditTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(result["applied"], false);
     assert_eq!(result["would_change"], false);
     assert!(result["diagnostics"].as_array().is_some());
+    Ok(())
 }
 
 #[tokio::test]
-async fn edit_json_shape_preserved() {
+async fn edit_json_shape_preserved() -> Result<()> {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test.txt");
     std::fs::write(&path, "hello world\n").unwrap();
@@ -155,9 +163,9 @@ async fn edit_json_shape_preserved() {
             "replacement": "there"
         }
     });
-    let result = EditTool::execute(&args, dir.path(), &Bus::new())
+    let result = EditTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     for field in [
         "path",
         "mode",
@@ -173,4 +181,5 @@ async fn edit_json_shape_preserved() {
     ] {
         assert!(result.get(field).is_some(), "missing field: {field}");
     }
+    Ok(())
 }

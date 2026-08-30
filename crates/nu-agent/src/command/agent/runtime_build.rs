@@ -375,7 +375,7 @@ pub(crate) struct RuntimeBuildParams {
 pub(crate) fn build_runtime(
     params: RuntimeBuildParams,
 ) -> Result<AgentConversationRuntime, LabeledError> {
-    use nu_agent_core::conversation::compaction::compactor::{NoopProgressUi, NuCompactor};
+    use nu_agent_core::conversation::compaction::compactor::NuCompactor;
     use nu_agent_core::conversation::{
         state::mcp::McpState, state::memory::MemoryState, state::multi_agent::MultiAgentState,
         state::permission::PermissionState, state::persona::PersonaState,
@@ -417,13 +417,9 @@ pub(crate) fn build_runtime(
     // Compactor summarizes evicted messages with the shared model handle, so a
     // `switch_model()` swap is visible to the next `compact()` call. It is a
     // standalone service invoked directly by the hook's compaction logic.
-    let compactor = NuCompactor::from_shared_model(
-        Arc::clone(&shared_model),
-        NoopProgressUi,
-        params.bus.clone(),
-        None,
-    )
-    .with_store(Arc::clone(&store_for_session));
+    let compactor =
+        NuCompactor::from_shared_model(Arc::clone(&shared_model), params.bus.clone(), None)
+            .with_store(Arc::clone(&store_for_session));
 
     // The memory state holds the `CachedMemory` backend directly; all compaction
     // logic lives in the hook.

@@ -2,6 +2,8 @@ use super::highlight::{
     HighlightRequest, SyntaxTokenChannel, cached_syntax_set, highlight_source_tokens,
 };
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
 fn highlights_known_rust_language_with_keyword_style() {
     let lines = highlight_source_tokens(HighlightRequest {
@@ -65,7 +67,7 @@ fn empty_input_returns_deterministic_empty_contract() {
 }
 
 #[test]
-fn malformed_source_does_not_panic_and_remains_readable() {
+fn malformed_source_does_not_panic_and_remains_readable() -> Result<()> {
     let malformed = "fn main() {\n\u{0}\n\x07\n}";
 
     let result = std::panic::catch_unwind(|| {
@@ -79,7 +81,7 @@ fn malformed_source_does_not_panic_and_remains_readable() {
         result.is_ok(),
         "highlighting should not panic on malformed source"
     );
-    let lines = result.expect("catch_unwind should return highlighted lines");
+    let lines = result.map_err(|_| "catch_unwind should return highlighted lines")?;
     let joined = lines
         .iter()
         .map(|line| {
@@ -91,6 +93,7 @@ fn malformed_source_does_not_panic_and_remains_readable() {
         .join("\n");
     assert!(joined.contains("fn main() {"));
     assert!(joined.contains("}"));
+    Ok(())
 }
 
 #[test]

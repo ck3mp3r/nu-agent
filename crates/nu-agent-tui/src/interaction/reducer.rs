@@ -278,7 +278,7 @@ fn handle_scroll_line_up(state: &mut AppState) -> bool {
     }
     state.cursor_visual_row = state.cursor_visual_row.saturating_sub(1);
     if state.input_mode == InputMode::Visual
-        && let Some(ref mut sel) = state.transcript_selection
+        && let Some(sel) = &mut state.transcript_selection
     {
         sel.set_cursor(state.cursor_visual_row);
     }
@@ -300,7 +300,7 @@ fn handle_scroll_line_down(state: &mut AppState) -> bool {
         .saturating_add(1)
         .min(max_visual_row);
     if state.input_mode == InputMode::Visual
-        && let Some(ref mut sel) = state.transcript_selection
+        && let Some(sel) = &mut state.transcript_selection
     {
         sel.set_cursor(state.cursor_visual_row);
     }
@@ -323,7 +323,7 @@ fn handle_scroll_to_top(state: &mut AppState) -> bool {
     state.cursor_visual_row = 0;
     state.transcript_scroll_offset = 0;
     if state.input_mode == InputMode::Visual
-        && let Some(ref mut sel) = state.transcript_selection
+        && let Some(sel) = &mut state.transcript_selection
     {
         sel.move_cursor_to_top();
     }
@@ -333,7 +333,7 @@ fn handle_scroll_to_top(state: &mut AppState) -> bool {
 fn handle_scroll_to_bottom(state: &mut AppState) -> bool {
     state.cursor_visual_row = state.total_visual_rows.saturating_sub(1);
     if state.input_mode == InputMode::Visual
-        && let Some(ref mut sel) = state.transcript_selection
+        && let Some(sel) = &mut state.transcript_selection
     {
         sel.move_cursor_to_bottom(state.total_visual_rows.saturating_sub(1));
     }
@@ -355,7 +355,7 @@ fn handle_yank_selection(state: &mut AppState) -> bool {
     if state.input_mode != InputMode::Visual {
         return false;
     }
-    if let Some(ref sel) = state.transcript_selection {
+    if let Some(sel) = &state.transcript_selection {
         let (start_row, end_row) = sel.normalized_range();
         let offset = state.rendered_line_start_row;
         let payload: String = state
@@ -445,7 +445,7 @@ fn handle_scroll_page_up(state: &mut AppState) -> bool {
     let page = TRANSCRIPT_PAGE_LINES.max(1);
     state.cursor_visual_row = state.cursor_visual_row.saturating_sub(page);
     if state.input_mode == InputMode::Visual
-        && let Some(ref mut sel) = state.transcript_selection
+        && let Some(sel) = &mut state.transcript_selection
     {
         sel.set_cursor(state.cursor_visual_row);
     }
@@ -468,7 +468,7 @@ fn handle_scroll_page_down(state: &mut AppState) -> bool {
         .saturating_add(page)
         .min(max_visual_row);
     if state.input_mode == InputMode::Visual
-        && let Some(ref mut sel) = state.transcript_selection
+        && let Some(sel) = &mut state.transcript_selection
     {
         sel.set_cursor(state.cursor_visual_row);
     }
@@ -584,7 +584,7 @@ pub(crate) fn reduce_ui_event_impl(state: &mut AppState, event: UiEvent) -> bool
                 state.push_spacer();
             }
             state.push_spacer();
-            state.push_transcript_line(TranscriptRole::System, format!("Error: {}", message));
+            state.push_transcript_line(TranscriptRole::System, format!("Error: {message}"));
             state.status_line = message.clone();
             finalize(state);
             true
@@ -617,7 +617,9 @@ pub(crate) fn reduce_ui_event_impl(state: &mut AppState, event: UiEvent) -> bool
             if !body.trim().is_empty() {
                 state.push_transcript_item(TranscriptEntry {
                     id: 0,
-                    kind: TranscriptEntryKind::Assistant(ProseMessage { markdown: body }),
+                    kind: TranscriptEntryKind::Assistant(ProseMessage {
+                        markdown: crate::markdown::unwrap_single_fenced_block(&body),
+                    }),
                     status: None,
                 });
             }
@@ -883,16 +885,16 @@ fn add_diff_line_number_readability(diff: &str) -> String {
 
         match (prefix, old_line, new_line) {
             (Some(' '), Some(old), Some(new)) => {
-                out.push_str(&format!(" {:>4} {:>4} │{}{}", old, new, body, newline));
+                out.push_str(&format!(" {old:>4} {new:>4} │{body}{newline}"));
                 old_line = Some(old.saturating_add(1));
                 new_line = Some(new.saturating_add(1));
             }
             (Some('-'), Some(old), _) => {
-                out.push_str(&format!("-{:>4}      │{}{}", old, body, newline));
+                out.push_str(&format!("-{old:>4}      │{body}{newline}"));
                 old_line = Some(old.saturating_add(1));
             }
             (Some('+'), _, Some(new)) => {
-                out.push_str(&format!("+     {:>4} │{}{}", new, body, newline));
+                out.push_str(&format!("+     {new:>4} │{body}{newline}"));
                 new_line = Some(new.saturating_add(1));
             }
             _ => {
@@ -1007,7 +1009,7 @@ fn handle_compaction_summary_chunk(state: &mut AppState, source: &str, text: Str
     state.push_transcript_item(TranscriptEntry {
         id: 0,
         kind: TranscriptEntryKind::Assistant(ProseMessage {
-            markdown: trimmed.to_string(),
+            markdown: crate::markdown::unwrap_single_fenced_block(trimmed),
         }),
         status: None,
     });

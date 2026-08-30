@@ -13,7 +13,10 @@ use crate::command::session::{AgentSessionClear, AgentSessionInspect, AgentSessi
 use nu_agent_core::session::{SessionStoreBackend, StoreError, StoreType, create_store};
 
 pub struct AgentPlugin {
-    pub(crate) runtime: tokio::runtime::Runtime,
+    /// The shared tokio runtime, or the error that prevented its construction.
+    /// Stored as a `Result` so `new()` stays infallible; the error surfaces on
+    /// first use via `runtime()` / `create_store()`.
+    runtime: Result<tokio::runtime::Runtime, String>,
     store_type: StoreType,
     /// Cached in-memory session store, created once and reused for the agent's
     /// entire runtime. A fresh `:memory:` SQLite database is empty each time,
@@ -22,19 +25,21 @@ pub struct AgentPlugin {
 }
 
 impl AgentPlugin {
-    /// Creates a new AgentPlugin. The session store is NOT created at construction
-    /// time — it is created lazily on first use via `create_store()`. This avoids
-    /// panics during `plugin add` when the cache directory may not exist.
-    pub fn new() -> Self {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
+    /// Builds the multi-threaded tokio runtime used to bridge the sync plugin
+    /// boundary. Returns an error string if construction fails.
+    fn build_runtime() -> Result<tokio::runtime::Runtime, String> {
+        tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .expect("Failed to create tokio runtime for AgentPlugin");
-        Self {
-            runtime,
-            store_type: StoreType::Sqlite,
-            cached_memory_store: Mutex::new(None),
-        }
+            .map_err(|e| format!("Failed to create tokio runtime for AgentPlugin: {e}"))
+    }
+
+    /// Returns a reference to the shared tokio runtime, or an error if the
+    /// runtime failed to construct.
+    pub fn runtime(&self) -> Result<&tokio::runtime::Runtime, nu_protocol::LabeledError> {
+        self.runtime
+            .as_ref()
+            .map_err(|e| nu_protocol::LabeledError::new(e.to_string()))
     }
 
     /// Creates the session store on first use. Called by each command's `run()`
@@ -49,18 +54,25 @@ impl AgentPlugin {
         &self,
         store_type: StoreType,
     ) -> Result<SessionStoreBackend, StoreError> {
+        let runtime = self
+            .runtime
+            .as_ref()
+            .map_err(|e| runtime_store_error(&e.to_string()))?;
         if store_type == StoreType::Memory {
             let mut cache = self
                 .cached_memory_store
                 .lock()
                 .expect("cached memory store mutex poisoned");
             if cache.is_none() {
-                let store = self.runtime.block_on(create_store(store_type))?;
+                let store = runtime.block_on(create_store(store_type))?;
                 *cache = Some(store);
             }
-            return Ok(cache.as_ref().expect("memory store just set").clone());
+            return cache
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| runtime_store_error("memory store not yet created"));
         }
-        self.runtime.block_on(create_store(store_type))
+        runtime.block_on(create_store(store_type))
     }
 
     /// Resolve store type from CLI `--store` flag, falling back to plugin default.
@@ -80,9 +92,22 @@ impl AgentPlugin {
 }
 
 impl Default for AgentPlugin {
+    /// Creates a new AgentPlugin. The session store is NOT created at construction
+    /// time — it is created lazily on first use via `create_store()`. This avoids
+    /// panics during `plugin add` when the cache directory may not exist.
     fn default() -> Self {
-        Self::new()
+        Self {
+            runtime: Self::build_runtime(),
+            store_type: StoreType::Sqlite,
+            cached_memory_store: Mutex::new(None),
+        }
     }
+}
+
+/// Converts a runtime construction error string into a `StoreError` for the
+/// `create_store_with` fallible path.
+fn runtime_store_error(msg: &str) -> StoreError {
+    StoreError::Io(std::io::Error::other(msg))
 }
 
 impl Plugin for AgentPlugin {
@@ -92,19 +117,19 @@ impl Plugin for AgentPlugin {
 
     fn commands(&self) -> Vec<Box<dyn PluginCommand<Plugin = Self>>> {
         vec![
-            Box::new(Agent::new()),
-            Box::new(AgentConfigInit::new()),
-            Box::new(AgentModelsSync::new()),
-            Box::new(AgentModelsList::new()),
-            Box::new(AgentProviderAuthLogin::new()),
-            Box::new(AgentProviderAuthLogout::new()),
-            Box::new(AgentProviderAuthStatus::new()),
-            Box::new(AgentAuthMcpLogin::new()),
-            Box::new(AgentAuthMcpLogout::new()),
-            Box::new(AgentAuthMcpStatus::new()),
-            Box::new(AgentSessionClear::new()),
-            Box::new(AgentSessionInspect::new()),
-            Box::new(AgentSessionList::new()),
+            Box::new(Agent),
+            Box::new(AgentConfigInit),
+            Box::new(AgentModelsSync),
+            Box::new(AgentModelsList),
+            Box::new(AgentProviderAuthLogin),
+            Box::new(AgentProviderAuthLogout),
+            Box::new(AgentProviderAuthStatus),
+            Box::new(AgentAuthMcpLogin),
+            Box::new(AgentAuthMcpLogout),
+            Box::new(AgentAuthMcpStatus),
+            Box::new(AgentSessionClear),
+            Box::new(AgentSessionInspect),
+            Box::new(AgentSessionList),
         ]
     }
 }

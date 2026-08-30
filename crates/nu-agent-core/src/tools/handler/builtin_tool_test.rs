@@ -30,7 +30,7 @@ async fn dynamic_tool_calls_grep_tool() {
     let cwd = temp_dir.join("nu-agent-test-builtin-adapter");
     std::fs::create_dir_all(&cwd).unwrap();
 
-    let bus = crate::bus::Bus::new();
+    let bus = crate::bus::Bus::default();
     let dynamic_tool = super::make_dynamic_tool::<super::super::grep::GrepTool>(
         tool_def,
         cwd.clone(),
@@ -90,7 +90,7 @@ async fn dynamic_tool_truncates_large_output() {
             "required": ["pattern"]
         }),
     };
-    let bus = crate::bus::Bus::new();
+    let bus = crate::bus::Bus::default();
     let dynamic_tool = super::make_dynamic_tool::<super::super::grep::GrepTool>(
         tool_def,
         cwd.clone(),

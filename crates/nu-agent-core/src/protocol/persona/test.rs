@@ -7,6 +7,8 @@ use crate::protocol::persona::builtins::BUILTIN_PLANNER_CONTENT;
 use std::fs;
 use tempfile::TempDir;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 /// AgentsConfig with all builtins disabled (for filesystem-only tests)
 fn no_builtins() -> AgentsConfig {
     AgentsConfig {
@@ -17,7 +19,7 @@ fn no_builtins() -> AgentsConfig {
 }
 
 #[test]
-fn resolve_finds_cwd_file() {
+fn resolve_finds_cwd_file() -> Result<()> {
     let temp_cwd = TempDir::new().unwrap();
     let temp_config = TempDir::new().unwrap();
 
@@ -31,16 +33,16 @@ fn resolve_finds_cwd_file() {
         temp_config.path().to_path_buf(),
         AgentsConfig::default(),
     );
-    let result = resolver.resolve("test-agent");
-
-    assert!(result.is_ok());
-    let (path, content) = result.unwrap();
+    let (path, content) = resolver
+        .resolve("test-agent")
+        .map_err(|e| format!("resolve should succeed: {e:?}"))?;
     assert_eq!(path, persona_file);
     assert_eq!(content, "# Test Agent\nContent here");
+    Ok(())
 }
 
 #[test]
-fn resolve_finds_home_file() {
+fn resolve_finds_home_file() -> Result<()> {
     let temp_cwd = TempDir::new().unwrap();
     let temp_config = TempDir::new().unwrap();
 
@@ -54,16 +56,16 @@ fn resolve_finds_home_file() {
         temp_config.path().to_path_buf(),
         AgentsConfig::default(),
     );
-    let result = resolver.resolve("test-agent");
-
-    assert!(result.is_ok());
-    let (path, content) = result.unwrap();
+    let (path, content) = resolver
+        .resolve("test-agent")
+        .map_err(|e| format!("resolve should succeed: {e:?}"))?;
     assert_eq!(path, persona_file);
     assert_eq!(content, "# Home Agent\nHome content");
+    Ok(())
 }
 
 #[test]
-fn resolve_cwd_takes_precedence() {
+fn resolve_cwd_takes_precedence() -> Result<()> {
     let temp_cwd = TempDir::new().unwrap();
     let temp_config = TempDir::new().unwrap();
 
@@ -84,12 +86,12 @@ fn resolve_cwd_takes_precedence() {
         temp_config.path().to_path_buf(),
         AgentsConfig::default(),
     );
-    let result = resolver.resolve("test-agent");
-
-    assert!(result.is_ok());
-    let (path, content) = result.unwrap();
+    let (path, content) = resolver
+        .resolve("test-agent")
+        .map_err(|e| format!("resolve should succeed: {e:?}"))?;
     assert_eq!(path, cwd_persona);
     assert_eq!(content, "# CWD Agent");
+    Ok(())
 }
 
 #[test]
@@ -172,7 +174,7 @@ fn resolve_read_error() {
 // Front matter parser tests
 
 #[test]
-fn parse_with_front_matter() {
+fn parse_with_front_matter() -> Result<()> {
     let input = r#"---
 permissions:
   "*": allow
@@ -182,34 +184,34 @@ permissions:
 Content here"#;
 
     let parser = PulldownCmarkFrontMatterParser;
-    let result = parser.parse(input);
-
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert!(parsed.front_matter.is_some());
-
-    let front_matter = parsed.front_matter.unwrap();
+    let parsed = parser
+        .parse(input)
+        .map_err(|e| format!("parse should succeed: {e:?}"))?;
+    let front_matter = parsed
+        .front_matter
+        .ok_or("front matter should be present")?;
     assert!(front_matter.contains_key("permissions"));
     assert_eq!(parsed.body, "# Body\n\nContent here");
+    Ok(())
 }
 
 #[test]
-fn parse_without_front_matter() {
+fn parse_without_front_matter() -> Result<()> {
     let input = r#"# Body
 
 Content here"#;
 
     let parser = PulldownCmarkFrontMatterParser;
-    let result = parser.parse(input);
-
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
+    let parsed = parser
+        .parse(input)
+        .map_err(|e| format!("parse should succeed: {e:?}"))?;
     assert!(parsed.front_matter.is_none());
     assert_eq!(parsed.body, input);
+    Ok(())
 }
 
 #[test]
-fn parse_empty_front_matter() {
+fn parse_empty_front_matter() -> Result<()> {
     // Note: pulldown-cmark treats `---\n---\n` without content as horizontal rules, not metadata.
     // A truly empty YAML block would need at least whitespace or a comment.
     let input = r#"---
@@ -220,15 +222,15 @@ fn parse_empty_front_matter() {
 Content here"#;
 
     let parser = PulldownCmarkFrontMatterParser;
-    let result = parser.parse(input);
-
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert!(parsed.front_matter.is_some());
-
-    let front_matter = parsed.front_matter.unwrap();
+    let parsed = parser
+        .parse(input)
+        .map_err(|e| format!("parse should succeed: {e:?}"))?;
+    let front_matter = parsed
+        .front_matter
+        .ok_or("front matter should be present")?;
     assert_eq!(front_matter.len(), 0);
     assert_eq!(parsed.body, "# Body\n\nContent here");
+    Ok(())
 }
 
 #[test]
@@ -245,7 +247,7 @@ fn parse_invalid_yaml() {
 }
 
 #[test]
-fn parse_body_preserves_content() {
+fn parse_body_preserves_content() -> Result<()> {
     let input = r#"---
 key: value
 ---
@@ -260,19 +262,19 @@ fn main() {}
 ```"#;
 
     let parser = PulldownCmarkFrontMatterParser;
-    let result = parser.parse(input);
-
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
+    let parsed = parser
+        .parse(input)
+        .map_err(|e| format!("parse should succeed: {e:?}"))?;
 
     // Body should not have leading/trailing whitespace artifacts
     assert!(parsed.body.starts_with("# Heading"));
     assert!(parsed.body.contains("- List item 1"));
     assert!(parsed.body.contains("fn main() {}"));
+    Ok(())
 }
 
 #[test]
-fn parse_multiline_yaml() {
+fn parse_multiline_yaml() -> Result<()> {
     let input = r#"---
 permissions:
   read: allow
@@ -289,31 +291,31 @@ tags:
 Body content"#;
 
     let parser = PulldownCmarkFrontMatterParser;
-    let result = parser.parse(input);
-
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert!(parsed.front_matter.is_some());
-
-    let front_matter = parsed.front_matter.unwrap();
+    let parsed = parser
+        .parse(input)
+        .map_err(|e| format!("parse should succeed: {e:?}"))?;
+    let front_matter = parsed
+        .front_matter
+        .ok_or("front matter should be present")?;
     assert!(front_matter.contains_key("permissions"));
     assert!(front_matter.contains_key("author"));
     assert!(front_matter.contains_key("tags"));
     assert_eq!(parsed.body, "# Document\n\nBody content");
+    Ok(())
 }
 
 // interpret_front_matter tests
 
 #[test]
-fn interpret_name_extracts_string() {
+fn interpret_name_extracts_string() -> Result<()> {
     let mut mapping = noyalib::Mapping::new();
     mapping.insert("name", noyalib::Value::String("test-agent".to_string()));
 
-    let result = interpret_front_matter(Some(&mapping), "body content".to_string());
-    assert!(result.is_ok());
-    let persona = result.unwrap();
+    let persona = interpret_front_matter(Some(&mapping), "body content".to_string())
+        .map_err(|e| format!("interpret should succeed: {e:?}"))?;
     assert_eq!(persona.name, Some("test-agent".to_string()));
     assert_eq!(persona.body, "body content");
+    Ok(())
 }
 
 #[test]
@@ -333,73 +335,72 @@ fn interpret_name_rejects_non_string() {
 }
 
 #[test]
-fn interpret_description_extracts_string() {
+fn interpret_description_extracts_string() -> Result<()> {
     let mut mapping = noyalib::Mapping::new();
     mapping.insert(
         "description",
         noyalib::Value::String("A test agent".to_string()),
     );
 
-    let result = interpret_front_matter(Some(&mapping), "body".to_string());
-    assert!(result.is_ok());
-    let persona = result.unwrap();
+    let persona = interpret_front_matter(Some(&mapping), "body".to_string())
+        .map_err(|e| format!("interpret should succeed: {e:?}"))?;
     assert_eq!(persona.description, Some("A test agent".to_string()));
+    Ok(())
 }
 
 #[test]
-fn interpret_model_extracts_string() {
+fn interpret_model_extracts_string() -> Result<()> {
     let mut mapping = noyalib::Mapping::new();
     mapping.insert("model", noyalib::Value::String("gpt-4".to_string()));
 
-    let result = interpret_front_matter(Some(&mapping), "body".to_string());
-    assert!(result.is_ok());
-    let persona = result.unwrap();
+    let persona = interpret_front_matter(Some(&mapping), "body".to_string())
+        .map_err(|e| format!("interpret should succeed: {e:?}"))?;
     assert_eq!(persona.model, Some("gpt-4".to_string()));
+    Ok(())
 }
 
 #[test]
-fn interpret_permissions_extracts_mapping() {
+fn interpret_permissions_extracts_mapping() -> Result<()> {
     let mut mapping = noyalib::Mapping::new();
     let mut perms = noyalib::Mapping::new();
     perms.insert("read", noyalib::Value::String("allow".to_string()));
     mapping.insert("permissions", noyalib::Value::Mapping(perms.clone()));
 
-    let result = interpret_front_matter(Some(&mapping), "body".to_string());
-    assert!(result.is_ok());
-    let persona = result.unwrap();
-    assert!(persona.permissions.is_some());
-    let extracted_perms = persona.permissions.unwrap();
+    let persona = interpret_front_matter(Some(&mapping), "body".to_string())
+        .map_err(|e| format!("interpret should succeed: {e:?}"))?;
+    let extracted_perms = persona.permissions.ok_or("permissions should be present")?;
     assert_eq!(extracted_perms, perms);
+    Ok(())
 }
 
 #[test]
-fn interpret_no_front_matter() {
-    let result = interpret_front_matter(None, "body content".to_string());
-    assert!(result.is_ok());
-    let persona = result.unwrap();
+fn interpret_no_front_matter() -> Result<()> {
+    let persona = interpret_front_matter(None, "body content".to_string())
+        .map_err(|e| format!("interpret should succeed: {e:?}"))?;
     assert_eq!(persona.name, None);
     assert_eq!(persona.description, None);
     assert_eq!(persona.model, None);
     assert_eq!(persona.permissions, None);
     assert_eq!(persona.body, "body content");
+    Ok(())
 }
 
 #[test]
-fn interpret_unknown_keys_ignored() {
+fn interpret_unknown_keys_ignored() -> Result<()> {
     let mut mapping = noyalib::Mapping::new();
     mapping.insert("name", noyalib::Value::String("test".to_string()));
     mapping.insert("unknown_key", noyalib::Value::String("ignored".to_string()));
     mapping.insert("another_unknown", noyalib::Value::Number(42.into()));
 
-    let result = interpret_front_matter(Some(&mapping), "body".to_string());
-    assert!(result.is_ok());
-    let persona = result.unwrap();
+    let persona = interpret_front_matter(Some(&mapping), "body".to_string())
+        .map_err(|e| format!("interpret should succeed: {e:?}"))?;
     assert_eq!(persona.name, Some("test".to_string()));
     assert_eq!(persona.description, None);
+    Ok(())
 }
 
 #[test]
-fn interpret_all_new_fields_parsed() {
+fn interpret_all_new_fields_parsed() -> Result<()> {
     let mut mapping = noyalib::Mapping::new();
     mapping.insert(
         "temperature",
@@ -426,7 +427,7 @@ fn interpret_all_new_fields_parsed() {
     mapping.insert("additional_params", noyalib::Value::Mapping(params));
 
     let persona = interpret_front_matter(Some(&mapping), "body".to_string())
-        .expect("should parse all new fields");
+        .map_err(|e| format!("should parse all new fields: {e:?}"))?;
 
     assert_eq!(persona.temperature, Some(0.7));
     assert_eq!(persona.max_tokens, Some(2048));
@@ -434,10 +435,11 @@ fn interpret_all_new_fields_parsed() {
     assert_eq!(persona.max_tool_calls_per_subturn, Some(5));
     assert_eq!(persona.max_tool_result_bytes, Some(10000));
     assert!(persona.additional_params.is_some());
-    assert_eq!(
-        persona.additional_params.as_ref().unwrap()["thinking"],
-        "enabled"
-    );
+    let additional_params = persona
+        .additional_params
+        .ok_or("additional_params should be present")?;
+    assert_eq!(additional_params["thinking"], "enabled");
+    Ok(())
 }
 
 #[test]
@@ -493,19 +495,20 @@ fn interpret_integer_fields_reject_negatives() {
 }
 
 #[test]
-fn interpret_no_front_matter_new_fields_none() {
+fn interpret_no_front_matter_new_fields_none() -> Result<()> {
     let persona = interpret_front_matter(None, "body".to_string())
-        .expect("no-front-matter path should succeed");
+        .map_err(|e| format!("no-front-matter path should succeed: {e:?}"))?;
     assert_eq!(persona.temperature, None);
     assert_eq!(persona.max_tokens, None);
     assert_eq!(persona.max_tool_turns, None);
     assert_eq!(persona.max_tool_calls_per_subturn, None);
     assert_eq!(persona.max_tool_result_bytes, None);
     assert_eq!(persona.additional_params, None);
+    Ok(())
 }
 
 #[test]
-fn parse_full_front_matter_with_config_fields() {
+fn parse_full_front_matter_with_config_fields() -> Result<()> {
     // End-to-end: parse a persona Markdown string through
     // PulldownCmarkFrontMatterParser + interpret_front_matter.
     // Tests the flat numeric fields; additional_params (nested YAML) is
@@ -525,14 +528,17 @@ max_tool_result_bytes: 50000\n\
 You are a focused coding agent.\n";
 
     let parser = PulldownCmarkFrontMatterParser;
-    let raw = parser.parse(input).expect("parse should succeed");
+    let raw = parser
+        .parse(input)
+        .map_err(|e| format!("parse should succeed: {e:?}"))?;
     let persona = interpret_front_matter(raw.front_matter.as_ref(), raw.body)
-        .expect("interpret should succeed");
+        .map_err(|e| format!("interpret should succeed: {e:?}"))?;
 
     assert_eq!(persona.name, Some("coder".to_string()));
     assert_eq!(persona.model, Some("openai/gpt-4o".to_string()));
+    let temperature = persona.temperature.ok_or("temperature should be Some")?;
     assert!(
-        (persona.temperature.expect("temperature should be Some") - 0.2).abs() < 1e-9,
+        (temperature - 0.2).abs() < 1e-9,
         "temperature should be approximately 0.2"
     );
     assert_eq!(persona.max_tokens, Some(8192));
@@ -544,10 +550,11 @@ You are a focused coding agent.\n";
         persona.body.contains("focused coding agent"),
         "body should contain 'focused coding agent'"
     );
+    Ok(())
 }
 
 #[test]
-fn interpret_all_fields_together() {
+fn interpret_all_fields_together() -> Result<()> {
     let mut mapping = noyalib::Mapping::new();
     mapping.insert("name", noyalib::Value::String("full-agent".to_string()));
     mapping.insert(
@@ -559,28 +566,28 @@ fn interpret_all_fields_together() {
     perms.insert("*", noyalib::Value::String("allow".to_string()));
     mapping.insert("permissions", noyalib::Value::Mapping(perms.clone()));
 
-    let result = interpret_front_matter(Some(&mapping), "body content".to_string());
-    assert!(result.is_ok());
-    let persona = result.unwrap();
+    let persona = interpret_front_matter(Some(&mapping), "body content".to_string())
+        .map_err(|e| format!("interpret should succeed: {e:?}"))?;
     assert_eq!(persona.name, Some("full-agent".to_string()));
     assert_eq!(persona.description, Some("A complete agent".to_string()));
     assert_eq!(persona.model, Some("claude-3".to_string()));
     assert!(persona.permissions.is_some());
     assert_eq!(persona.body, "body content");
+    Ok(())
 }
 
 #[test]
-fn interpret_empty_mapping() {
+fn interpret_empty_mapping() -> Result<()> {
     let mapping = noyalib::Mapping::new();
 
-    let result = interpret_front_matter(Some(&mapping), "body".to_string());
-    assert!(result.is_ok());
-    let persona = result.unwrap();
+    let persona = interpret_front_matter(Some(&mapping), "body".to_string())
+        .map_err(|e| format!("interpret should succeed: {e:?}"))?;
     assert_eq!(persona.name, None);
     assert_eq!(persona.description, None);
     assert_eq!(persona.model, None);
     assert_eq!(persona.permissions, None);
     assert_eq!(persona.body, "body");
+    Ok(())
 }
 
 #[test]
@@ -725,7 +732,7 @@ fn list_available_skips_non_md_files() {
 // Built-in persona resolution tests
 
 #[test]
-fn resolve_builtin_planner_enabled() {
+fn resolve_builtin_planner_enabled() -> Result<()> {
     let temp_cwd = TempDir::new().unwrap();
     let temp_config = TempDir::new().unwrap();
 
@@ -734,12 +741,16 @@ fn resolve_builtin_planner_enabled() {
         temp_config.path().to_path_buf(),
         AgentsConfig::default(),
     );
-    let result = resolver.resolve("planner");
-
-    assert!(result.is_ok());
-    let (path, content) = result.unwrap();
-    assert!(path.to_str().unwrap().contains("<builtin>"));
+    let (path, content) = resolver
+        .resolve("planner")
+        .map_err(|e| format!("resolve should succeed: {e:?}"))?;
+    assert!(
+        path.to_str()
+            .ok_or("path should be valid UTF-8")?
+            .contains("<builtin>")
+    );
     assert_eq!(content, BUILTIN_PLANNER_CONTENT);
+    Ok(())
 }
 
 #[test]
@@ -763,7 +774,7 @@ fn resolve_builtin_planner_disabled_not_found() {
 }
 
 #[test]
-fn resolve_builtin_falls_through_when_disabled() {
+fn resolve_builtin_falls_through_when_disabled() -> Result<()> {
     let temp_cwd = TempDir::new().unwrap();
     let temp_config = TempDir::new().unwrap();
 
@@ -782,12 +793,12 @@ fn resolve_builtin_falls_through_when_disabled() {
         temp_config.path().to_path_buf(),
         config,
     );
-    let result = resolver.resolve("planner");
-
-    assert!(result.is_ok());
-    let (path, content) = result.unwrap();
+    let (path, content) = resolver
+        .resolve("planner")
+        .map_err(|e| format!("resolve should succeed: {e:?}"))?;
     assert_eq!(path, fs_path);
     assert_eq!(content, "# Custom planner");
+    Ok(())
 }
 
 #[test]
@@ -838,7 +849,7 @@ fn list_available_excludes_disabled_builtins() {
 }
 
 #[test]
-fn resolve_filesystem_persona_still_works() {
+fn resolve_filesystem_persona_still_works() -> Result<()> {
     let temp_cwd = TempDir::new().unwrap();
     let temp_config = TempDir::new().unwrap();
 
@@ -852,12 +863,12 @@ fn resolve_filesystem_persona_still_works() {
         temp_config.path().to_path_buf(),
         AgentsConfig::default(),
     );
-    let result = resolver.resolve("custom");
-
-    assert!(result.is_ok());
-    let (path, content) = result.unwrap();
+    let (path, content) = resolver
+        .resolve("custom")
+        .map_err(|e| format!("resolve should succeed: {e:?}"))?;
     assert_eq!(path, persona_file);
     assert_eq!(content, "# Custom persona");
+    Ok(())
 }
 
 #[test]
@@ -888,22 +899,22 @@ fn list_available_deduplicates_builtin_over_filesystem() {
 }
 
 #[test]
-fn icon_parsed_from_front_matter() {
+fn icon_parsed_from_front_matter() -> Result<()> {
     let mut mapping = noyalib::Mapping::new();
     mapping.insert("icon", noyalib::Value::String("🧠".to_string()));
-    let result = interpret_front_matter(Some(&mapping), "body".to_string());
-    assert!(result.is_ok());
-    let persona = result.unwrap();
+    let persona = interpret_front_matter(Some(&mapping), "body".to_string())
+        .map_err(|e| format!("interpret should succeed: {e:?}"))?;
     assert_eq!(persona.icon.as_deref(), Some("🧠"));
+    Ok(())
 }
 
 #[test]
-fn no_icon_defaults_to_none() {
+fn no_icon_defaults_to_none() -> Result<()> {
     let mapping = noyalib::Mapping::new();
-    let result = interpret_front_matter(Some(&mapping), "body".to_string());
-    assert!(result.is_ok());
-    let persona = result.unwrap();
+    let persona = interpret_front_matter(Some(&mapping), "body".to_string())
+        .map_err(|e| format!("interpret should succeed: {e:?}"))?;
     assert_eq!(persona.icon, None);
+    Ok(())
 }
 
 #[test]

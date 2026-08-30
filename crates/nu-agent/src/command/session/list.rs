@@ -24,17 +24,9 @@ impl CwdInterface for EngineInterface {
 /// The `agent session list` command lists all sessions with their statistics.
 pub struct AgentSessionList;
 
-impl AgentSessionList {
-    /// Creates a new AgentSessionList command. The session store is obtained
-    /// lazily from the plugin in `run()`.
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 impl Default for AgentSessionList {
     fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 
@@ -53,7 +45,7 @@ impl AgentSessionList {
         let all_sessions = store
             .list()
             .await
-            .map_err(|e| LabeledError::new(format!("Failed to list sessions: {}", e)))?;
+            .map_err(|e| LabeledError::new(format!("Failed to list sessions: {e}")))?;
         let sessions = filter_sessions_by_cwd(all_sessions, &cwd);
 
         // Convert SessionInfo list to Nushell Value (list of records)

@@ -27,13 +27,13 @@ pub(crate) fn assemble_tool_definitions(
 ) -> ToolAssembly {
     let mut tool_definitions: Vec<nu_agent_core::types::ToolDefinition> = closure_registry
         .names()
-        .map(|name| {
-            let resolved = closure_registry.get(name).unwrap();
-            nu_agent_core::tools::closure::closure_to_tool_definition(
+        .filter_map(|name| {
+            let resolved = closure_registry.get(name)?;
+            Some(nu_agent_core::tools::closure::closure_to_tool_definition(
                 name.clone(),
                 &resolved.params,
                 None,
-            )
+            ))
         })
         .collect();
 

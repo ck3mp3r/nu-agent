@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use crate::*;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // The workspace reqwest is built with `rustls-no-provider`, meaning the
 // application must install a crypto provider before constructing a Client.
 static CRYPTO_INIT: std::sync::Once = std::sync::Once::new();
@@ -17,7 +19,7 @@ fn ensure_crypto_provider() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_agent_start_shutdown() {
+async fn test_agent_start_shutdown() -> Result<()> {
     ensure_crypto_provider();
 
     let handle = AgentBuilder::new("test-agent")
@@ -26,7 +28,7 @@ async fn test_agent_start_shutdown() {
         .mesh_key("test-mesh".into())
         .build()
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
 
     assert!(handle.server.port > 0, "Server should be on a real port");
     assert_eq!(
@@ -56,11 +58,12 @@ async fn test_agent_start_shutdown() {
     // Port should be free after shutdown
     tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
         .await
-        .expect("Port should be free after shutdown");
+        .map_err(|e| format!("port should be free after shutdown: {e:?}"))?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_agent_card_reflects_persona() {
+async fn test_agent_card_reflects_persona() -> Result<()> {
     ensure_crypto_provider();
 
     let skills = vec![Skill {
@@ -78,19 +81,21 @@ async fn test_agent_card_reflects_persona() {
         .mesh_key("test-mesh".into())
         .build()
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
 
     let client = A2aClient::new().unwrap();
     let card = get_agent_card(&client, &handle.server.local_url)
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(card.name, "coder");
-    assert_eq!(card.description.unwrap(), "A coding agent");
+    let description = card.description.ok_or("card should have description")?;
+    assert_eq!(description, "A coding agent");
     assert_eq!(card.skills.len(), 1);
     assert_eq!(card.skills[0].id, "coding");
 
     handle.shutdown().await;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +103,7 @@ async fn test_agent_card_reflects_persona() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_agent_empty_skills() {
+async fn test_agent_empty_skills() -> Result<()> {
     ensure_crypto_provider();
 
     let handle = AgentBuilder::new("no-skills")
@@ -107,19 +112,20 @@ async fn test_agent_empty_skills() {
         .mesh_key("test-mesh".into())
         .build()
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
 
     let client = A2aClient::new().unwrap();
     let card = get_agent_card(&client, &handle.server.local_url)
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert!(card.skills.is_empty(), "Skills should be empty");
 
     handle.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_agent_no_description() {
+async fn test_agent_no_description() -> Result<()> {
     ensure_crypto_provider();
 
     let handle = AgentBuilder::new("no-desc")
@@ -127,15 +133,16 @@ async fn test_agent_no_description() {
         .mesh_key("test-mesh".into())
         .build()
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
 
     let client = A2aClient::new().unwrap();
     let card = get_agent_card(&client, &handle.server.local_url)
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert!(card.description.is_none());
 
     handle.shutdown().await;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +150,7 @@ async fn test_agent_no_description() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_agent_start_with_card() {
+async fn test_agent_start_with_card() -> Result<()> {
     ensure_crypto_provider();
 
     let card = AgentCard {
@@ -160,7 +167,7 @@ async fn test_agent_start_with_card() {
         .mesh_key("test-mesh".into())
         .build()
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert!(
         handle.card().name.starts_with("custom-card-"),
         "card name should include port suffix, got '{}'",
@@ -173,6 +180,7 @@ async fn test_agent_start_with_card() {
     );
 
     handle.shutdown().await;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +188,7 @@ async fn test_agent_start_with_card() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_two_agents_start_independently() {
+async fn test_two_agents_start_independently() -> Result<()> {
     ensure_crypto_provider();
 
     let agent_a = AgentBuilder::new("agent-a")
@@ -189,14 +197,14 @@ async fn test_two_agents_start_independently() {
         .mesh_key("test-mesh".into())
         .build()
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let agent_b = AgentBuilder::new("agent-b")
         .description("Second agent")
         .port(0)
         .mesh_key("test-mesh".into())
         .build()
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
 
     // Both servers should be on different ports
     assert!(agent_a.server.port > 0);
@@ -210,10 +218,10 @@ async fn test_two_agents_start_independently() {
     let client = A2aClient::new().unwrap();
     let card_a = get_agent_card(&client, &agent_a.server.local_url)
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let card_b = get_agent_card(&client, &agent_b.server.local_url)
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(card_a.name, "agent-a");
     assert_eq!(card_b.name, "agent-b");
     assert_eq!(card_a.description.as_deref(), Some("First agent"));
@@ -241,10 +249,10 @@ async fn test_two_agents_start_independently() {
 
     let task_a = send_task(&client, &agent_a.server.local_url, msg_a, None, None)
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let task_b = send_task(&client, &agent_b.server.local_url, msg_b, None, None)
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(task_a.status.state, TaskState::Working);
     assert_eq!(task_b.status.state, TaskState::Working);
@@ -252,15 +260,16 @@ async fn test_two_agents_start_independently() {
     // Cancel both
     let canceled_a = cancel_task(&client, &agent_a.server.local_url, &task_a.id)
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     let canceled_b = cancel_task(&client, &agent_b.server.local_url, &task_b.id)
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert_eq!(canceled_a.status.state, TaskState::Canceled);
     assert_eq!(canceled_b.status.state, TaskState::Canceled);
 
     agent_a.shutdown().await;
     agent_b.shutdown().await;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +277,7 @@ async fn test_two_agents_start_independently() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_agent_discovers_self() {
+async fn test_agent_discovers_self() -> Result<()> {
     ensure_crypto_provider();
 
     let handle = AgentBuilder::new("self-aware-agent")
@@ -277,7 +286,7 @@ async fn test_agent_discovers_self() {
         .mesh_key("test-mesh".to_string())
         .build()
         .await
-        .expect("agent should start");
+        .map_err(|e| format!("{e:?}"))?;
 
     let peers = handle.cache().list();
     let self_peer = peers.iter().find(|p| p.name.contains("self-aware-agent"));
@@ -286,7 +295,7 @@ async fn test_agent_discovers_self() {
         "Agent should find itself in the peer cache, got peers: {peers:?}"
     );
 
-    let peer = self_peer.unwrap();
+    let peer = self_peer.ok_or("should have self peer")?;
     assert_eq!(
         peer.url,
         format!("http://127.0.0.1:{}", handle.server.port),
@@ -319,6 +328,7 @@ async fn test_agent_discovers_self() {
     }
 
     handle.shutdown().await;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -326,13 +336,13 @@ async fn test_agent_discovers_self() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_mdns_name_appends_port_when_auto() {
+async fn test_mdns_name_appends_port_when_auto() -> Result<()> {
     ensure_crypto_provider();
 
     let builder = AgentBuilder::new("researcher")
         .port(0)
         .mesh_key("test".to_string());
-    let handle = builder.build().await.expect("agent");
+    let handle = builder.build().await.map_err(|e| format!("{e:?}"))?;
     let suffix = format!("-{}", handle.server.port);
     assert!(
         handle.card().name.ends_with(&suffix),
@@ -340,23 +350,25 @@ async fn test_mdns_name_appends_port_when_auto() {
         handle.card().name,
     );
     handle.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_mdns_name_uses_exact_name_when_explicit() {
+async fn test_mdns_name_uses_exact_name_when_explicit() -> Result<()> {
     ensure_crypto_provider();
 
     let builder = AgentBuilder::new("my-custom-agent")
         .has_explicit_name(true)
         .port(0)
         .mesh_key("test".to_string());
-    let handle = builder.build().await.expect("agent");
+    let handle = builder.build().await.map_err(|e| format!("{e:?}"))?;
     assert_eq!(
         handle.card().name,
         "my-custom-agent",
         "explicit name should not have port suffix"
     );
     handle.shutdown().await;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +376,7 @@ async fn test_mdns_name_uses_exact_name_when_explicit() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn reregister_token_is_set_after_build() {
+async fn reregister_token_is_set_after_build() -> Result<()> {
     ensure_crypto_provider();
     let handle = AgentBuilder::new("test-rereg-token")
         .discovery(PeerDiscoveryImpl::Noop)
@@ -372,13 +384,14 @@ async fn reregister_token_is_set_after_build() {
         .mesh_key("test".into())
         .build()
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert!(handle.reregister_token().is_some());
     handle.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn reregister_task_does_not_block_startup() {
+async fn reregister_task_does_not_block_startup() -> Result<()> {
     ensure_crypto_provider();
     let handle = AgentBuilder::new("test-rereg-noblock")
         .discovery(PeerDiscoveryImpl::Noop)
@@ -386,17 +399,18 @@ async fn reregister_task_does_not_block_startup() {
         .mesh_key("test".into())
         .build()
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     assert!(handle.server.port > 0);
     let resp = reqwest::get(&format!("{}/health", handle.server.local_url))
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     handle.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
-async fn shutdown_cancels_reregister_without_panic() {
+async fn shutdown_cancels_reregister_without_panic() -> Result<()> {
     ensure_crypto_provider();
     let handle = AgentBuilder::new("test-rereg-cancel")
         .discovery(PeerDiscoveryImpl::Noop)
@@ -404,6 +418,7 @@ async fn shutdown_cancels_reregister_without_panic() {
         .mesh_key("test".into())
         .build()
         .await
-        .unwrap();
+        .map_err(|e| format!("{e:?}"))?;
     handle.shutdown().await;
+    Ok(())
 }

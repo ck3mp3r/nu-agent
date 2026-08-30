@@ -7,11 +7,8 @@
 //! "What we did thus far:" header.
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use crate::bus::{Bus, CompactionEvent};
-use crate::protocol::contracts::ProgressUi;
-use crate::protocol::event::UiEvent;
 use crate::session::{CompactionMarker, SessionStore, StoreEntry};
 use crate::types::{Message, UserContent};
 use chrono::Utc;
@@ -34,22 +31,6 @@ pub const COMPACTION_SUMMARY_KEY: &str = "compaction_summary";
 
 const COMPACTION_SUMMARY_PROMPT: &str = include_str!("prompts/compaction_summary.md");
 const COMPACTION_ROLLING_PROMPT: &str = include_str!("prompts/compaction_rolling.md");
-
-/// A `ProgressUi` that ignores all events and never requests cancellation.
-///
-/// This is the default `U` type parameter so `NuCompactor` can be named
-/// without an explicit UI. Compaction progress is driven over the `Bus`, not
-/// through `ProgressUi`, so the no-op UI is appropriate for the common case.
-#[derive(Default)]
-pub struct NoopProgressUi;
-
-impl ProgressUi for NoopProgressUi {
-    fn emit(&mut self, _event: &UiEvent) {}
-    fn flush(&mut self) {}
-    fn take_cancel_requested(&self) -> bool {
-        false
-    }
-}
 
 /// The artifact produced by `NuCompactor::compact()`.
 ///
@@ -106,15 +87,13 @@ impl From<SummaryArtifact> for Message {
 ///
 /// The model is held as `Arc<Mutex<ModelHandle>>` so it can be swapped at
 /// runtime via `set_model()` — `ModelHandle` is rig's erased, cloneable handle,
-/// so the concrete `NuCompactor<U>` type stays fixed regardless of provider. The
+/// so the concrete `NuCompactor<S>` type stays fixed regardless of provider. The
 /// handle is constructed eagerly at startup and never empty.
-pub struct NuCompactor<S = NoopStore, U = NoopProgressUi>
+pub struct NuCompactor<S = NoopStore>
 where
     S: SessionStore + Clone + Send + Sync,
-    U: ProgressUi + Send,
 {
     model: Arc<Mutex<ModelHandle>>,
-    ui: Arc<Mutex<U>>,
     bus: Bus,
     max_bytes: Option<usize>,
     /// Backing store for persisting compaction markers. When set, `compact()`
@@ -122,11 +101,10 @@ where
     store: Option<Arc<S>>,
 }
 
-impl<S: SessionStore + Clone + Send + Sync, U: ProgressUi + Send> Clone for NuCompactor<S, U> {
+impl<S: SessionStore + Clone + Send + Sync> Clone for NuCompactor<S> {
     fn clone(&self) -> Self {
         Self {
             model: Arc::clone(&self.model),
-            ui: Arc::clone(&self.ui),
             bus: self.bus.clone(),
             max_bytes: self.max_bytes,
             store: self.store.clone(),
@@ -172,41 +150,10 @@ impl SessionStore for NoopStore {
 }
 
 impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
-    /// Construct a `NuCompactor` using the default no-op UI and no marker store.
-    ///
-    /// `ui` is accepted for API compatibility with callers that pass a real
-    /// `ProgressUi`, but compaction progress is delivered over the `Bus`, so a
-    /// no-op UI is stored.
-    pub fn new(
-        model: ModelHandle,
-        _ui: impl ProgressUi,
-        bus: Bus,
-        max_bytes: Option<usize>,
-    ) -> Self {
+    /// Construct a `NuCompactor` with no marker store.
+    pub fn new(model: ModelHandle, bus: Bus, max_bytes: Option<usize>) -> Self {
         Self {
             model: Arc::new(Mutex::new(model)),
-            ui: Arc::new(Mutex::new(NoopProgressUi)),
-            bus,
-            max_bytes,
-            store: None,
-        }
-    }
-}
-
-impl<S, U> NuCompactor<S, U>
-where
-    S: SessionStore + Clone + Send + Sync,
-    U: ProgressUi + Send,
-{
-    /// Construct a `NuCompactor` with an explicit UI type.
-    ///
-    /// The UI is wrapped in `Arc<Mutex<U>>` for interior mutability so the
-    /// `Compactor` (which receives `&self`) can check cancellation and emit tick
-    /// events through shared state.
-    pub fn with_ui(model: ModelHandle, ui: U, bus: Bus, max_bytes: Option<usize>) -> Self {
-        Self {
-            model: Arc::new(Mutex::new(model)),
-            ui: Arc::new(Mutex::new(ui)),
             bus,
             max_bytes,
             store: None,
@@ -215,20 +162,17 @@ where
 
     /// Construct a `NuCompactor` from an existing shared model handle.
     ///
-    /// Unlike `new()`/`with_ui()`, which create their own internal
-    /// `Arc<Mutex<ModelHandle>>`, this takes an external `Arc` so the
-    /// same handle can be shared with other consumers (e.g. `HookChain`). A
-    /// `set_model()` call through the shared `Arc` from outside is visible to
-    /// the next `compact()` call.
+    /// Unlike `new()`, which creates its own internal `Arc<Mutex<ModelHandle>>`,
+    /// this takes an external `Arc` so the same handle can be shared with other
+    /// consumers (e.g. `HookChain`). A `set_model()` call through the shared
+    /// `Arc` from outside is visible to the next `compact()` call.
     pub fn from_shared_model(
         model_arc: Arc<Mutex<ModelHandle>>,
-        ui: U,
         bus: Bus,
         max_bytes: Option<usize>,
     ) -> Self {
         Self {
             model: model_arc,
-            ui: Arc::new(Mutex::new(ui)),
             bus,
             max_bytes,
             store: None,
@@ -270,9 +214,13 @@ where
 
         // Announce start before the slow summarizer LLM call so the status
         // spinner turns on immediately.
-        let _ = self.bus.compaction().send(CompactionEvent::Started {
-            source: source.to_string(),
-        });
+        let _ = self
+            .bus
+            .compaction()
+            .send(CompactionEvent::Started {
+                source: source.to_string(),
+            })
+            .await;
 
         let input = self.format_messages(evicted);
         // The in-process `carry_over` is empty after a restart, but the store
@@ -295,40 +243,32 @@ where
         // present here.
         let model = self.model.lock().expect("model mutex poisoned").clone();
 
-        let stream = model
+        let stream = match model
             .completion_request(&prompt_text)
             .messages(Vec::<Message>::new())
             .stream()
             .await
-            .map_err(|e| {
-                let _ = self.bus.compaction().send(CompactionEvent::Failed {
-                    source: source.to_string(),
-                    message: e.to_string(),
-                });
-                MemoryError::Backend(e.to_string().into())
-            })?;
+        {
+            Ok(stream) => stream,
+            Err(e) => {
+                let _ = self
+                    .bus
+                    .compaction()
+                    .send(CompactionEvent::Failed {
+                        source: source.to_string(),
+                        message: e.to_string(),
+                    })
+                    .await;
+                return Err(MemoryError::Backend(e.to_string().into()));
+            }
+        };
 
         let mut stream = std::pin::pin!(stream);
         let mut aggregated = String::new();
         let mut total_tokens: Option<u64> = None;
+        let mut cancel_rx = self.bus.cancel().subscribe();
 
         loop {
-            // Check for user cancellation.
-            if self
-                .ui
-                .lock()
-                .expect("ui mutex poisoned")
-                .take_cancel_requested()
-            {
-                let _ = self.bus.compaction().send(CompactionEvent::Failed {
-                    source: source.to_string(),
-                    message: "Compaction cancelled by user".to_string(),
-                });
-                return Err(MemoryError::Backend(
-                    "Compaction cancelled by user".to_string().into(),
-                ));
-            }
-
             tokio::select! {
                 item = stream.next() => {
                     match item {
@@ -339,7 +279,7 @@ where
                                     source: source.to_string(),
                                     delta: delta.text,
                                     aggregated: aggregated.clone(),
-                                });
+                                }).await;
                             }
                             rig::streaming::StreamedAssistantContent::Reasoning { .. }
                             | rig::streaming::StreamedAssistantContent::ReasoningDelta { .. } => {
@@ -356,7 +296,7 @@ where
                                 let _ = self.bus.compaction().send(CompactionEvent::Failed {
                                     source: source.to_string(),
                                     message: "Unexpected tool call during compaction".to_string(),
-                                });
+                                }).await;
                                 return Err(MemoryError::Backend(
                                     "Unexpected tool call during compaction".to_string().into(),
                                 ));
@@ -366,7 +306,7 @@ where
                                     source: source.to_string(),
                                     message: "Unexpected tool call delta during compaction"
                                         .to_string(),
-                                });
+                                }).await;
                                 return Err(MemoryError::Backend(
                                     "Unexpected tool call delta during compaction"
                                         .to_string()
@@ -377,7 +317,7 @@ where
                                 let _ = self.bus.compaction().send(CompactionEvent::Failed {
                                     source: source.to_string(),
                                     message: "Unexpected stream chunk: unknown".to_string(),
-                                });
+                                }).await;
                                 return Err(MemoryError::Backend(
                                     "Unexpected stream chunk: unknown".to_string().into(),
                                 ));
@@ -388,14 +328,20 @@ where
                             let _ = self.bus.compaction().send(CompactionEvent::Failed {
                                 source: source.to_string(),
                                 message: message.clone(),
-                            });
+                            }).await;
                             return Err(MemoryError::Backend(message.into()));
                         }
                         None => break,
                     }
                 }
-                _ = tokio::time::sleep(Duration::from_millis(80)) => {
-                    self.ui.lock().expect("ui mutex poisoned").emit(&UiEvent::Tick);
+                Ok(_) = cancel_rx.recv() => {
+                    let _ = self.bus.compaction().send(CompactionEvent::Failed {
+                        source: source.to_string(),
+                        message: "Compaction cancelled by user".to_string(),
+                    }).await;
+                    return Err(MemoryError::Backend(
+                        "Compaction cancelled by user".to_string().into(),
+                    ));
                 }
             }
         }
@@ -404,10 +350,14 @@ where
         // produced no text (e.g. the model emitted only reasoning) must not
         // persist an empty marker nor report completion.
         if aggregated.is_empty() {
-            let _ = self.bus.compaction().send(CompactionEvent::Failed {
-                source: source.to_string(),
-                message: "Compaction produced an empty summary".to_string(),
-            });
+            let _ = self
+                .bus
+                .compaction()
+                .send(CompactionEvent::Failed {
+                    source: source.to_string(),
+                    message: "Compaction produced an empty summary".to_string(),
+                })
+                .await;
             return Err(MemoryError::Backend(
                 "Compaction produced an empty summary".to_string().into(),
             ));
@@ -423,19 +373,23 @@ where
         // cache from the store instead of re-compacting the same prefix.
         if let Some(store) = &self.store {
             let marker = CompactionMarker::new(artifact.summary.clone(), Utc::now());
-            store
+            if let Err(e) = store
                 .append(conversation_id, &[StoreEntry::Marker(marker)])
                 .await
-                .map_err(|e| {
-                    let _ = self.bus.compaction().send(CompactionEvent::Failed {
+            {
+                let _ = self
+                    .bus
+                    .compaction()
+                    .send(CompactionEvent::Failed {
                         source: source.to_string(),
                         message: e.to_string(),
-                    });
-                    MemoryError::Backend(e.to_string().into())
-                })?;
+                    })
+                    .await;
+                return Err(MemoryError::Backend(e.to_string().into()));
+            }
         }
 
-        self.emit_completed(&artifact, source);
+        self.emit_completed(&artifact, source).await;
 
         Ok(artifact)
     }
@@ -452,14 +406,22 @@ where
         let Some(store) = &self.store else {
             return Ok(None);
         };
-        let Some((_, entries)) = store.load(conversation_id).await.map_err(|e| {
-            let _ = self.bus.compaction().send(CompactionEvent::Failed {
-                source: source.to_string(),
-                message: e.to_string(),
-            });
-            MemoryError::Backend(e.to_string().into())
-        })?
-        else {
+        let loaded = store.load(conversation_id).await;
+        let loaded = match loaded {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = self
+                    .bus
+                    .compaction()
+                    .send(CompactionEvent::Failed {
+                        source: source.to_string(),
+                        message: e.to_string(),
+                    })
+                    .await;
+                return Err(MemoryError::Backend(e.to_string().into()));
+            }
+        };
+        let Some((_, entries)) = loaded else {
             return Ok(None);
         };
         Ok(entries.iter().rev().find_map(|entry| match entry {
@@ -471,13 +433,17 @@ where
     /// Emit `CompactionEvent::Completed` for `artifact`. Used on both the LLM
     /// path and the cached-summary deduplication path so the TUI shows the
     /// restored summary and clears any spinner.
-    fn emit_completed(&self, artifact: &SummaryArtifact, source: &str) {
+    async fn emit_completed(&self, artifact: &SummaryArtifact, source: &str) {
         let preview: String = artifact.summary.chars().take(200).collect();
-        let _ = self.bus.compaction().send(CompactionEvent::Completed {
-            source: source.to_string(),
-            summary_preview: preview,
-            summary_body: artifact.summary.clone(),
-        });
+        let _ = self
+            .bus
+            .compaction()
+            .send(CompactionEvent::Completed {
+                source: source.to_string(),
+                summary_preview: preview,
+                summary_body: artifact.summary.clone(),
+            })
+            .await;
     }
 
     /// Format a message batch into the text fed to the summarizer prompt.

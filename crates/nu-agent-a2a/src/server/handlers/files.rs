@@ -20,7 +20,7 @@ pub async fn handle_file_upload(
     };
     let resp = json!({
         "id": file_id,
-        "url": format!("{}/files/{}", url, file_id),
+        "url": format!("{url}/files/{file_id}"),
     });
     a2a_json_response(resp)
 }
