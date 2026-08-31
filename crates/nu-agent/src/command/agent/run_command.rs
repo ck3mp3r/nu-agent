@@ -449,7 +449,7 @@ pub(super) fn run_command(
             discovery: a2a_handle.as_ref().map(|h| h.discovery_handle()),
             mesh_key: a2a_handle.as_ref().map(|h| h.mesh_key().to_string()),
         };
-
+        let was_tui = mode.is_tui();
         let result = match mode {
             AgentMode::Tui => {
                 run_tui_mode(
@@ -484,6 +484,17 @@ pub(super) fn run_command(
         if let Some(handle) = a2a_handle {
             log::info!("Shutting down A2A agent...");
             let _ = handle.shutdown().await;
+        }
+
+        // Force process exit after TUI mode. serve_plugin blocks forever
+        // waiting for the next plugin call because nushell's plugin GC does
+        // not send Goodbye. Without this, the plugin process stays alive as
+        // an orphan after the TUI quits.
+        if was_tui {
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                std::process::exit(0);
+            });
         }
 
         result
