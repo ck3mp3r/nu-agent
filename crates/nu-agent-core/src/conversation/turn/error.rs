@@ -184,6 +184,14 @@ fn classify_from_display(msg: &str) -> CompletionErrorKind {
         return CompletionErrorKind::ToolStructure;
     }
 
+    // OutputBudget — run before ContextOverflow; most-specific first
+    if lower.contains("finish_reason=length")
+        || lower.contains("ran out of output budget")
+        || lower.contains("raise max_tokens")
+    {
+        return CompletionErrorKind::OutputBudget;
+    }
+
     // ContextOverflow — key patterns from provider error messages
     if lower.contains("context_length_exceeded")
         || lower.contains("context length exceeded")

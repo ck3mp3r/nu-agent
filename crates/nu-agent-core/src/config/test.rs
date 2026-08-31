@@ -1101,6 +1101,81 @@ fn test_plugin_config_resolve_model_role_level_overrides() -> Result<()> {
     assert_eq!(cfg.temperature, Some(0.5));
     Ok(())
 }
+
+#[test]
+#[serial]
+fn test_resolve_model_role_max_output_tokens_overrides_model_limit() -> Result<()> {
+    // Role-level max_output_tokens must beat the model-level limit from the
+    // provider's models map (role config is highest priority within resolve_model).
+    let plugin_config = PluginConfig {
+        models: {
+            let mut m = HashMap::new();
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    max_output_tokens: Some(1024),
+                    ..ModelRoleConfig::default()
+                },
+            );
+            m
+        },
+        providers: {
+            let mut providers = HashMap::new();
+            providers.insert(
+                "openai".to_string(),
+                ProviderConfig {
+                    name: None,
+                    api_key: None,
+                    base_url: None,
+                    provider: None,
+                    preamble: None,
+                    models: {
+                        let mut models = HashMap::new();
+                        models.insert(
+                            "gpt-4".to_string(),
+                            ModelConfig {
+                                name: None,
+                                temperature: None,
+                                preamble: None,
+                                tool_call: None,
+                                limit: Some(ModelLimits {
+                                    context: Some(128000),
+                                    output: Some(8192),
+                                }),
+                            },
+                        );
+                        models
+                    },
+                },
+            );
+            providers
+        },
+        compaction: None,
+        agents: AgentsConfig::default(),
+        a2a_enabled: None,
+        session_store: None,
+        secret_store: None,
+        models_cache: None,
+        permissions: None,
+        mcp: None,
+    };
+
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        max_output_tokens: Some(1024),
+        ..ModelRoleConfig::default()
+    };
+    let config = plugin_config
+        .resolve_model(&role_config)
+        .map_err(|e| format!("should resolve: {e:?}"))?;
+
+    // Role-level 1024 must win over model-level 8192
+    assert_eq!(config.max_output_tokens, Some(1024));
+    // Context limit is not overridden by role, so model-level survives
+    assert_eq!(config.max_context_tokens, Some(128000));
+    Ok(())
+}
 // ============================================================================
 // 3-Part Format Tests (github-copilot/backend/model)
 // ============================================================================

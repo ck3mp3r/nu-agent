@@ -97,6 +97,23 @@ impl ProviderState {
         self.invalidate_cache();
         Ok(format!("{}/{}", self.config.provider, self.config.model))
     }
+
+    /// Canonical constructor for the shared `ModelHandle`.
+    ///
+    /// Ensures the client is cached for the current config, then erases the
+    /// completion model into a `ModelHandle` built from the **bare** model name
+    /// (`self.config.model`). This is the single production call site of
+    /// `CachedProviderClient::build_model_handle`; both startup and model
+    /// switching route through it so the bare-name extraction lives in exactly
+    /// one place.
+    pub fn build_shared_model_handle(&mut self) -> Result<rig::agent::ModelHandle, LabeledError> {
+        self.ensure_client_cached()?;
+        let client = self
+            .cached_client
+            .as_ref()
+            .ok_or_else(|| LabeledError::new("client must be cached after ensure_client_cached"))?;
+        client.build_model_handle(&self.config.model)
+    }
 }
 
 impl ProviderManager for ProviderState {
@@ -122,6 +139,10 @@ impl ProviderManager for ProviderState {
 
     fn switch_model(&mut self, model_spec: &str) -> Result<String, String> {
         self.switch_model(model_spec)
+    }
+
+    fn build_shared_model_handle(&mut self) -> Result<rig::agent::ModelHandle, LabeledError> {
+        self.build_shared_model_handle()
     }
 
     fn startup_plugin_config(&self) -> Option<&PluginConfig> {

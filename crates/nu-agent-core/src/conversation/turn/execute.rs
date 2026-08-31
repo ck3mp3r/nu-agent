@@ -180,7 +180,11 @@ where
         bus: bus.clone(),
         additional_params: ctx.config.additional_params.clone(),
         temperature: ctx.config.temperature,
-        max_tokens: ctx.config.max_tokens.map(|t| t as u64),
+        max_tokens: ctx
+            .config
+            .max_tokens
+            .or(ctx.config.max_output_tokens)
+            .map(|t| t as u64),
     };
 
     let prompt_future = Box::pin(build_agent_and_stream(config));

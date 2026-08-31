@@ -350,15 +350,11 @@ where
         // Erase the newly-cached concrete model into a `ModelHandle` and update
         // the shared handle. One write updates both the hook (`on_model_select`)
         // and the compactor (`NuCompactor::from_shared_model`) since they share
-        // this `Arc`.
-        self.provider
-            .ensure_client_cached()
-            .map_err(|e| e.to_string())?;
+        // this `Arc`. The handle is built from the bare model name via the
+        // canonical constructor.
         let new_model = self
             .provider
-            .cached_client()
-            .ok_or_else(|| "client must be cached after model switch".to_string())?
-            .build_model_handle(&identity)
+            .build_shared_model_handle()
             .map_err(|e| e.to_string())?;
         *self.shared_model.lock().expect("model mutex poisoned") = new_model;
         Ok((identity, max_tokens))
@@ -378,6 +374,11 @@ where
         // If persona specifies a model, attempt to switch (ignore errors)
         if let Some(model) = result.model {
             let _ = self.provider.switch_model(&model);
+            // Rebuild the shared ModelHandle from the bare model name so the
+            // persona's model serves the next turn (mirrors switch_model).
+            if let Ok(new_model) = self.provider.build_shared_model_handle() {
+                *self.shared_model.lock().expect("model mutex poisoned") = new_model;
+            }
         }
 
         // Apply persona config overrides for in-session switch.

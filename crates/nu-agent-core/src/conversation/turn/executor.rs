@@ -681,6 +681,8 @@ pub enum CompletionErrorKind {
     RequestTooLarge,
     /// 400 context_length_exceeded — conversation too long; permanent.
     ContextOverflow,
+    /// Output budget exhausted — response cut short at max_output_tokens; permanent.
+    OutputBudget,
     /// 400 with tool_use/tool_result — malformed tool sequence; permanent.
     ToolStructure,
     /// 401/403 — authentication or permission failure; permanent.
@@ -719,6 +721,10 @@ fn kind_to_user_msg(kind: &CompletionErrorKind, raw_msg: &str) -> String {
         }
         CompletionErrorKind::ContextOverflow => {
             "Turn failed: conversation too long. Run 'agent session compact' to summarise."
+                .to_string()
+        }
+        CompletionErrorKind::OutputBudget => {
+            "Turn failed: output budget exhausted. Increase max_output_tokens in config or pass --max-output-tokens."
                 .to_string()
         }
         CompletionErrorKind::RequestTooLarge => {

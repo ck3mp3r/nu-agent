@@ -1,8 +1,77 @@
 use std::collections::HashMap;
 
 use nu_agent_core::config::{Config, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
+use nu_plugin::EvaluatedCall;
+use nu_protocol::{Span, Spanned, Value};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+// ── apply_cli_flags max_output_tokens tests ────────────────────────────────
+
+fn call_with_flags(flags: Vec<(&str, Option<Value>)>) -> EvaluatedCall {
+    let head = Span::test_data();
+    let named = flags
+        .into_iter()
+        .map(|(name, value)| {
+            (
+                Spanned {
+                    item: name.to_string(),
+                    span: head,
+                },
+                value,
+            )
+        })
+        .collect();
+
+    EvaluatedCall {
+        head,
+        positional: vec![],
+        named,
+    }
+}
+
+#[test]
+fn apply_cli_flags_max_output_tokens_sets_config() {
+    let mut config = Config::default();
+    let call = call_with_flags(vec![("max-output-tokens", Some(Value::test_int(4096)))]);
+
+    super::apply_cli_flags(&mut config, &call);
+
+    assert_eq!(config.max_output_tokens, Some(4096));
+}
+
+#[test]
+fn apply_cli_flags_max_output_tokens_absent_leaves_none() {
+    let mut config = Config::default();
+    let call = call_with_flags(vec![]);
+
+    super::apply_cli_flags(&mut config, &call);
+
+    assert_eq!(config.max_output_tokens, None);
+}
+
+#[test]
+fn apply_persona_config_max_tokens_populates_config() {
+    let mut config = Config::default();
+    let persona = nu_agent_core::protocol::persona::ParsedPersona {
+        name: None,
+        description: None,
+        model: None,
+        permissions: None,
+        temperature: None,
+        max_tokens: Some(1024),
+        max_tool_turns: None,
+        max_tool_calls_per_subturn: None,
+        max_tool_result_bytes: None,
+        additional_params: None,
+        icon: None,
+        body: String::new(),
+    };
+
+    super::apply_persona_config(&mut config, &persona, false);
+
+    assert_eq!(config.max_tokens, Some(1024));
+}
 
 #[test]
 fn apply_persona_config_all_fields_when_config_empty() {

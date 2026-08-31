@@ -1402,6 +1402,31 @@ fn from_streaming_response_unknown_string_is_unknown() {
     assert!(!kind.is_retryable());
 }
 
+/// `"finish_reason=length"` via ResponseError must classify as `OutputBudget`.
+#[test]
+fn from_streaming_response_finish_reason_length_is_output_budget() {
+    let kind =
+        turn_error_from_response_error("FinishReasonError { message: finish_reason=length }");
+    assert_eq!(kind, CompletionErrorKind::OutputBudget);
+    assert!(!kind.is_retryable());
+}
+
+/// `"ran out of output budget"` via ResponseError must classify as `OutputBudget`.
+#[test]
+fn from_streaming_response_out_of_output_budget_is_output_budget() {
+    let kind = turn_error_from_response_error("The model ran out of output budget");
+    assert_eq!(kind, CompletionErrorKind::OutputBudget);
+    assert!(!kind.is_retryable());
+}
+
+/// `"raise max_tokens"` via ResponseError must classify as `OutputBudget`.
+#[test]
+fn from_streaming_response_raise_max_tokens_is_output_budget() {
+    let kind = turn_error_from_response_error("max_tokens too low, raise max_tokens");
+    assert_eq!(kind, CompletionErrorKind::OutputBudget);
+    assert!(!kind.is_retryable());
+}
+
 /// `PromptCancelled` via StreamingError must produce `Cancelled` variant.
 #[test]
 fn from_streaming_prompt_cancelled_produces_cancelled_variant() {
@@ -1462,6 +1487,10 @@ fn is_retryable_matches_spec() {
     assert!(
         !CompletionErrorKind::Refusal.is_retryable(),
         "Refusal must not be retryable"
+    );
+    assert!(
+        !CompletionErrorKind::OutputBudget.is_retryable(),
+        "OutputBudget must not be retryable"
     );
     assert!(
         !CompletionErrorKind::EndpointNotFound.is_retryable(),
@@ -2715,6 +2744,71 @@ async fn non_retryable_error_not_retried() {
     );
     // If the model had been called more than once, MockCompletionModel would panic
     // (it only has 1 turn configured). The test passing proves exactly 1 HTTP request.
+}
+
+/// An OutputBudget error must surface a user message naming `max_output_tokens` and
+/// `--max-output-tokens`.
+#[tokio::test]
+async fn output_budget_error_surfaces_user_message() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = test_config();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-output-budget";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let model = MockCompletionModel::from_stream_turns([vec![MockStreamEvent::error(
+        "The model ran out of output budget",
+    )]]);
+
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let closure_registry = ClosureRegistry::default();
+    let mcp_registry = McpToolRegistry::empty();
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    let err = result.expect_err("OutputBudget error must fail the turn");
+    assert!(
+        err.msg.contains("max_output_tokens"),
+        "user message must mention max_output_tokens; got: {}",
+        err.msg
+    );
+    assert!(
+        err.msg.contains("--max-output-tokens"),
+        "user message must mention --max-output-tokens; got: {}",
+        err.msg
+    );
+    Ok(())
 }
 
 /// When `max_retries` is `Some(0)`, no retry is attempted regardless of error type.

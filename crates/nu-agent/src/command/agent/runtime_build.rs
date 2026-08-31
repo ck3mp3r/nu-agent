@@ -404,13 +404,8 @@ pub(crate) fn build_runtime(
     // so it is ready for any operation (including `/compact` before the first
     // turn), and rewritten by every `switch_model()`.
     let mut provider = ProviderState::new(params.config, params.plugin_config);
-    provider
-        .ensure_client_cached()
-        .map_err(|e| LabeledError::new(format!("Failed to initialize model client: {e}")))?;
     let handle = provider
-        .client()
-        .ok_or_else(|| LabeledError::new("client must be cached after ensure_client_cached"))?
-        .build_model_handle(&provider.config().model)
+        .build_shared_model_handle()
         .map_err(|e| LabeledError::new(format!("Failed to build model handle: {e}")))?;
     let shared_model: Arc<Mutex<ModelHandle>> = Arc::new(Mutex::new(handle));
 

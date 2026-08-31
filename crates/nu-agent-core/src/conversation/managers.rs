@@ -38,6 +38,10 @@ pub trait ProviderManager {
     /// Returns the new `"provider/model"` identity on success.
     fn switch_model(&mut self, model_spec: &str) -> Result<String, String>;
 
+    /// Canonical constructor for the shared `ModelHandle`, built from the bare
+    /// model name. Ensures the client is cached for the current config first.
+    fn build_shared_model_handle(&mut self) -> Result<rig::agent::ModelHandle, LabeledError>;
+
     /// Return the startup plugin config snapshot (used for model-switch resolution).
     fn startup_plugin_config(&self) -> Option<&PluginConfig>;
 }

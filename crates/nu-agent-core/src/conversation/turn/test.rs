@@ -277,6 +277,98 @@ async fn execute_turn_with_additional_params_succeeds() -> Result<()> {
     Ok(())
 }
 
+/// When both `max_tokens` and `max_output_tokens` are set, the completion
+/// request SHALL carry `max_tokens` equal to `config.max_tokens`.
+#[tokio::test]
+async fn execute_turn_uses_config_max_tokens_when_set() -> Result<()> {
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("OK".to_string()),
+        MockStreamEvent::final_response_with_default_usage(),
+    ]]);
+    let spy = model.clone();
+
+    let config = Config {
+        max_tokens: Some(2000),
+        max_output_tokens: Some(5000),
+        ..Config::default()
+    };
+    let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
+    let resolver = MockResolver(PermissionDecision::Allow);
+
+    execute_turn(ctx, resolver)
+        .await
+        .map_err(|e| format!("execute_turn should succeed: {e:?}"))?;
+
+    let req = &spy.requests()[0];
+    assert_eq!(
+        req.max_tokens,
+        Some(2000),
+        "max_tokens should come from config.max_tokens"
+    );
+    Ok(())
+}
+
+/// When `max_tokens` is unset but `max_output_tokens` is set, the completion
+/// request SHALL carry `max_tokens` equal to `config.max_output_tokens`.
+#[tokio::test]
+async fn execute_turn_falls_back_to_max_output_tokens_when_max_tokens_unset() -> Result<()> {
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("OK".to_string()),
+        MockStreamEvent::final_response_with_default_usage(),
+    ]]);
+    let spy = model.clone();
+
+    let config = Config {
+        max_tokens: None,
+        max_output_tokens: Some(4000),
+        ..Config::default()
+    };
+    let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
+    let resolver = MockResolver(PermissionDecision::Allow);
+
+    execute_turn(ctx, resolver)
+        .await
+        .map_err(|e| format!("execute_turn should succeed: {e:?}"))?;
+
+    let req = &spy.requests()[0];
+    assert_eq!(
+        req.max_tokens,
+        Some(4000),
+        "max_tokens should fall back to config.max_output_tokens"
+    );
+    Ok(())
+}
+
+/// When both `max_tokens` and `max_output_tokens` are unset, the completion
+/// request SHALL carry no `max_tokens` value.
+#[tokio::test]
+async fn execute_turn_sends_no_max_tokens_when_both_unset() -> Result<()> {
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("OK".to_string()),
+        MockStreamEvent::final_response_with_default_usage(),
+    ]]);
+    let spy = model.clone();
+
+    let config = Config {
+        max_tokens: None,
+        max_output_tokens: None,
+        ..Config::default()
+    };
+    let ctx = make_turn_context(shared_handle(model), &config, crate::bus::create_bus());
+    let resolver = MockResolver(PermissionDecision::Allow);
+
+    execute_turn(ctx, resolver)
+        .await
+        .map_err(|e| format!("execute_turn should succeed: {e:?}"))?;
+
+    let req = &spy.requests()[0];
+    assert_eq!(
+        req.max_tokens, None,
+        "no max_tokens should be sent when both are unset"
+    );
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests: TurnResult / TurnError construction and field access
 // ---------------------------------------------------------------------------
