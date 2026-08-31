@@ -1427,6 +1427,17 @@ fn from_streaming_response_raise_max_tokens_is_output_budget() {
     assert!(!kind.is_retryable());
 }
 
+/// Provider "exceeds model's maximum output tokens" 400 via ResponseError must
+/// classify as `OutputBudget` (residual defense for wrong-cache failures).
+#[test]
+fn from_streaming_response_exceeds_max_output_tokens_is_output_budget() {
+    let kind = turn_error_from_response_error(
+        "status 400: max_tokens (1048576) exceeds model's maximum output tokens (65536)",
+    );
+    assert_eq!(kind, CompletionErrorKind::OutputBudget);
+    assert!(!kind.is_retryable());
+}
+
 /// `PromptCancelled` via StreamingError must produce `Cancelled` variant.
 #[test]
 fn from_streaming_prompt_cancelled_produces_cancelled_variant() {

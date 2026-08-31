@@ -148,6 +148,10 @@ impl PluginConfig {
             if config.model_context_tokens.is_none() {
                 config.model_context_tokens = Some(spec.limit.context as usize);
             }
+            // Clamp the final resolved max_output_tokens to the cache's known
+            // output cap. Unset → filled above (unchanged); explicit lower →
+            // preserved; explicit higher → clamped down to the cache limit.
+            config.max_output_tokens = config.max_output_tokens.map(|v| v.min(spec.limit.output));
         }
 
         // Forward global plugin config fields (not model-specific).

@@ -661,6 +661,158 @@ fn test_resolve_model_basic() -> Result<()> {
     Ok(())
 }
 
+// -- Test Support: build a PluginConfig with a models cache entry for openai/gpt-4
+// (cache limit.output = 4096, matching models_cache_test::make_test_cache).
+
+fn plugin_config_with_cache() -> PluginConfig {
+    let mut providers = HashMap::new();
+    providers.insert(
+        "openai".to_string(),
+        ProviderConfig {
+            name: None,
+            api_key: None,
+            base_url: None,
+            provider: None,
+            preamble: None,
+            models: HashMap::new(),
+        },
+    );
+    let mut models = HashMap::new();
+    models.insert(
+        "default".to_string(),
+        ModelRoleConfig {
+            model: "openai/gpt-4".to_string(),
+            ..ModelRoleConfig::default()
+        },
+    );
+    let mut cache_providers = HashMap::new();
+    cache_providers.insert(
+        "openai".to_string(),
+        crate::config::models_cache::ProviderSpec {
+            id: "openai".to_string(),
+            name: "OpenAI".to_string(),
+            env: vec![],
+            api: None,
+            models: HashMap::from([(
+                "gpt-4".to_string(),
+                crate::config::models_cache::ModelSpec {
+                    id: "gpt-4".to_string(),
+                    name: "GPT-4".to_string(),
+                    tool_call: true,
+                    limit: crate::config::models_cache::ModelLimit {
+                        context: 128000,
+                        output: 4096,
+                    },
+                    cost: None,
+                    modalities: None,
+                },
+            )]),
+        },
+    );
+    PluginConfig {
+        models,
+        providers,
+        compaction: None,
+        agents: AgentsConfig::default(),
+        a2a_enabled: None,
+        session_store: None,
+        secret_store: None,
+        models_cache: Some(ModelsCache {
+            providers: cache_providers,
+        }),
+        permissions: None,
+        mcp: None,
+    }
+}
+
+/// Unset `max_output_tokens` + cache entry → filled with cache `limit.output`.
+#[test]
+#[serial]
+fn test_resolve_model_cache_fills_unset_output_tokens() -> Result<()> {
+    // -- Setup & Fixtures
+    let plugin_config = plugin_config_with_cache();
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        ..ModelRoleConfig::default()
+    };
+
+    // -- Exec
+    let config = plugin_config
+        .resolve_model(&role_config)
+        .map_err(|e| format!("should resolve: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(config.max_output_tokens, Some(4096));
+    Ok(())
+}
+
+/// Explicit `max_output_tokens` lower than cache `limit.output` → preserved.
+#[test]
+#[serial]
+fn test_resolve_model_cache_preserves_explicit_lower_output_tokens() -> Result<()> {
+    // -- Setup & Fixtures
+    let plugin_config = plugin_config_with_cache();
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        max_output_tokens: Some(1024),
+        ..ModelRoleConfig::default()
+    };
+
+    // -- Exec
+    let config = plugin_config
+        .resolve_model(&role_config)
+        .map_err(|e| format!("should resolve: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(config.max_output_tokens, Some(1024));
+    Ok(())
+}
+
+/// Explicit `max_output_tokens` higher than cache `limit.output` → clamped to cache value.
+#[test]
+#[serial]
+fn test_resolve_model_cache_clamps_explicit_higher_output_tokens() -> Result<()> {
+    // -- Setup & Fixtures
+    let plugin_config = plugin_config_with_cache();
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        max_output_tokens: Some(65536),
+        ..ModelRoleConfig::default()
+    };
+
+    // -- Exec
+    let config = plugin_config
+        .resolve_model(&role_config)
+        .map_err(|e| format!("should resolve: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(config.max_output_tokens, Some(4096));
+    Ok(())
+}
+
+/// No cache entry → `max_output_tokens` unchanged (not set from cache).
+#[test]
+#[serial]
+fn test_resolve_model_no_cache_leaves_output_tokens_unchanged() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut plugin_config = plugin_config_with_cache();
+    plugin_config.models_cache = None;
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        max_output_tokens: Some(2048),
+        ..ModelRoleConfig::default()
+    };
+
+    // -- Exec
+    let config = plugin_config
+        .resolve_model(&role_config)
+        .map_err(|e| format!("should resolve: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(config.max_output_tokens, Some(2048));
+    Ok(())
+}
+
 #[test]
 #[serial]
 fn test_resolve_model_with_env_fallback() -> Result<()> {

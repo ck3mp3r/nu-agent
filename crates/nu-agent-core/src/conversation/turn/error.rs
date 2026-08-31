@@ -188,6 +188,8 @@ fn classify_from_display(msg: &str) -> CompletionErrorKind {
     if lower.contains("finish_reason=length")
         || lower.contains("ran out of output budget")
         || lower.contains("raise max_tokens")
+        || lower.contains("exceeds model's maximum output tokens")
+        || (lower.contains("exceeds") && lower.contains("output tokens"))
     {
         return CompletionErrorKind::OutputBudget;
     }
