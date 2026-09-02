@@ -211,12 +211,14 @@ pub(super) fn build_ollama_client(
 
     let http_client = build_http_client(config.read_timeout_secs)?;
 
-    rig::providers::ollama::Client::builder()
+    let builder = rig::providers::ollama::Client::builder()
         .http_client(http_client)
-        .base_url(base_url)
-        .api_key(Nothing)
-        .build()
-        .map_err(map_build_err)
+        .base_url(base_url);
+    let builder = match &config.api_key {
+        Some(key) => builder.api_key(key.clone()),
+        None => builder.api_key(Nothing),
+    };
+    builder.build().map_err(map_build_err)
 }
 
 /// Resolve which provider implementation to use.

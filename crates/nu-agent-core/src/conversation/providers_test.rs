@@ -203,6 +203,22 @@ fn build_ollama_client_with_base_url_succeeds() {
     assert!(result.is_ok());
 }
 
+#[test]
+fn build_ollama_client_with_api_key_succeeds() {
+    use crate::config::Config;
+
+    // Install crypto provider needed by reqwest+rustls
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let config = Config {
+        api_key: Some("test-api-key".to_string()),
+        base_url: Some("http://localhost:11434".to_string()),
+        ..Config::default()
+    };
+    let result = super::build_ollama_client(&config);
+    assert!(result.is_ok());
+}
+
 // ========================================================================
 // Phase 1b: CachedProviderClient, resolve_provider_type, ClientCacheKey
 // ========================================================================
