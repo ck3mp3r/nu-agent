@@ -31,6 +31,9 @@ pub use terminal::{TtyTerminalEvents, open_tty_reader};
 pub(super) mod test;
 
 #[cfg(test)]
+pub(super) mod test_driver;
+
+#[cfg(test)]
 mod panels_test;
 
 #[cfg(test)]

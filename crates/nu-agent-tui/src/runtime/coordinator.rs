@@ -898,9 +898,9 @@ impl RuntimeCoordinator {
         self.render_needed = true;
     }
 
-    pub(crate) fn render_if_needed(
+    pub(crate) fn render_if_needed<B: ratatui::backend::Backend>(
         &mut self,
-        live: &mut Option<crate::runtime::LiveTerminalUi>,
+        live: &mut Option<&mut ratatui::Terminal<B>>,
     ) -> Result<(), String> {
         if !self.render_needed {
             return Ok(());
@@ -939,9 +939,9 @@ impl RuntimeCoordinator {
         }
     }
 
-    pub(crate) fn render_frame(
+    pub(crate) fn render_frame<B: ratatui::backend::Backend>(
         &mut self,
-        live: &mut Option<crate::runtime::LiveTerminalUi>,
+        live: &mut Option<&mut ratatui::Terminal<B>>,
     ) -> Result<(), String> {
         let Some(live) = live.as_mut() else {
             return Ok(());
@@ -957,118 +957,116 @@ impl RuntimeCoordinator {
         // position — otherwise the first scroll-up would jump to offset 0.
         let mut rendered_scroll_offset: Option<usize> = None;
 
-        live.terminal
-            .draw(|frame| {
-                let area = frame.area();
-                let has_side = self.side_pane_visible.unwrap_or(false);
-                let horizontal = if has_side {
-                    Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-                        .split(area)
-                } else {
-                    Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Percentage(100)])
-                        .split(area)
-                };
+        live.draw(|frame| {
+            let area = frame.area();
+            let has_side = self.side_pane_visible.unwrap_or(false);
+            let horizontal = if has_side {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                    .split(area)
+            } else {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(100)])
+                    .split(area)
+            };
 
-                let main = horizontal[0];
-                let side_margin = if main.width >= 8 { MAIN_SIDE_MARGIN } else { 0 };
-                let content_main = main.inner(Margin {
-                    vertical: 0,
-                    horizontal: side_margin,
-                });
-                let queue_count = self.state.pending_prompt_count() as u16;
-                let queue_h = queue_count + if queue_count > 0 { 1 } else { 0 };
-                let available_inner_w = content_main.width.saturating_sub(4) as usize;
-                let pre_right_width = {
-                    let rc = status_right_content(
-                        self.repo_branch(),
-                        self.repo_branch_tracker
-                            .as_ref()
-                            .and_then(|t| t.caller_cwd()),
-                        &self.theme,
-                    );
-                    rc.map(|line| {
-                        line.spans
-                            .iter()
-                            .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
-                            .sum::<usize>()
-                    })
-                    .unwrap_or(0)
-                };
-                let pre_left_width = {
-                    let probe =
-                        status_left_content(None, &self.state, &self.theme, available_inner_w);
-                    probe
-                        .spans
+            let main = horizontal[0];
+            let side_margin = if main.width >= 8 { MAIN_SIDE_MARGIN } else { 0 };
+            let content_main = main.inner(Margin {
+                vertical: 0,
+                horizontal: side_margin,
+            });
+            let queue_count = self.state.pending_prompt_count() as u16;
+            let queue_h = queue_count + if queue_count > 0 { 1 } else { 0 };
+            let available_inner_w = content_main.width.saturating_sub(4) as usize;
+            let pre_right_width = {
+                let rc = status_right_content(
+                    self.repo_branch(),
+                    self.repo_branch_tracker
+                        .as_ref()
+                        .and_then(|t| t.caller_cwd()),
+                    &self.theme,
+                );
+                rc.map(|line| {
+                    line.spans
                         .iter()
                         .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                         .sum::<usize>()
-                };
-                let status_h = compute_status_h(available_inner_w, pre_left_width, pre_right_width);
-                let bottom_box_h = compute_bottom_box_height(queue_h, self.input_height, status_h);
-                let vertical = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(0),
-                        Constraint::Fill(1),
-                        Constraint::Length(bottom_box_h),
-                    ])
-                    .split(content_main);
-                // vertical[0]=unused [1]=transcript [2]=entire bottom box
+                })
+                .unwrap_or(0)
+            };
+            let pre_left_width = {
+                let probe = status_left_content(None, &self.state, &self.theme, available_inner_w);
+                probe
+                    .spans
+                    .iter()
+                    .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                    .sum::<usize>()
+            };
+            let status_h = compute_status_h(available_inner_w, pre_left_width, pre_right_width);
+            let bottom_box_h = compute_bottom_box_height(queue_h, self.input_height, status_h);
+            let vertical = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(0),
+                    Constraint::Fill(1),
+                    Constraint::Length(bottom_box_h),
+                ])
+                .split(content_main);
+            // vertical[0]=unused [1]=transcript [2]=entire bottom box
 
-                let transcript_content_area = vertical[1];
-                let transcript_list_area = Rect {
-                    width: transcript_content_area.width.saturating_sub(2),
-                    ..transcript_content_area
-                };
+            let transcript_content_area = vertical[1];
+            let transcript_list_area = Rect {
+                width: transcript_content_area.width.saturating_sub(2),
+                ..transcript_content_area
+            };
 
-                if vertical[1].height > 0 {
-                    self.render_transcript_pane(
-                        frame,
-                        transcript_content_area,
-                        transcript_list_area,
-                        transcript_following_tail,
-                        transcript_scroll_offset,
-                        &mut rendered_scroll_offset,
-                    );
-                }
-
-                let now_millis = current_time_millis();
-                self.render_bottom_box(
+            if vertical[1].height > 0 {
+                self.render_transcript_pane(
                     frame,
-                    vertical[2],
-                    queue_h,
-                    self.input_height,
-                    status_h,
-                    now_millis,
+                    transcript_content_area,
+                    transcript_list_area,
+                    transcript_following_tail,
+                    transcript_scroll_offset,
+                    &mut rendered_scroll_offset,
                 );
+            }
 
-                if has_side {
-                    let side = horizontal[1];
-                    let side_widget = Paragraph::new(Line::from("Events pane reserved"))
-                        .block(Block::default().borders(Borders::ALL).title("Events"));
-                    frame.render_widget(side_widget, side);
-                }
+            let now_millis = current_time_millis();
+            self.render_bottom_box(
+                frame,
+                vertical[2],
+                queue_h,
+                self.input_height,
+                status_h,
+                now_millis,
+            );
 
-                match self.state.picker.render_kind() {
-                    Some(PickerRenderKind::CommandPalette) => {
-                        self.render_command_palette(frame, area);
-                    }
-                    Some(PickerRenderKind::Model) => self.render_model_picker(frame, area),
-                    Some(PickerRenderKind::Agent) => self.render_agent_picker(frame, area),
-                    Some(PickerRenderKind::Session) => self.render_session_picker(frame, area),
-                    Some(PickerRenderKind::Theme) => self.render_theme_picker(frame, area),
-                    Some(PickerRenderKind::InlineSlash) | None => {}
-                }
+            if has_side {
+                let side = horizontal[1];
+                let side_widget = Paragraph::new(Line::from("Events pane reserved"))
+                    .block(Block::default().borders(Borders::ALL).title("Events"));
+                frame.render_widget(side_widget, side);
+            }
 
-                if self.state.info_panel.is_some() {
-                    self.render_info_panel(frame, area);
+            match self.state.picker.render_kind() {
+                Some(PickerRenderKind::CommandPalette) => {
+                    self.render_command_palette(frame, area);
                 }
-            })
-            .map_err(|err| format!("TUI render failed: {err}"))?;
+                Some(PickerRenderKind::Model) => self.render_model_picker(frame, area),
+                Some(PickerRenderKind::Agent) => self.render_agent_picker(frame, area),
+                Some(PickerRenderKind::Session) => self.render_session_picker(frame, area),
+                Some(PickerRenderKind::Theme) => self.render_theme_picker(frame, area),
+                Some(PickerRenderKind::InlineSlash) | None => {}
+            }
+
+            if self.state.info_panel.is_some() {
+                self.render_info_panel(frame, area);
+            }
+        })
+        .map_err(|err| format!("TUI render failed: {err}"))?;
 
         // Write back the resolved scroll offset so that scroll_offset always
         // reflects the actual rendered position. Without this, when following_tail is true

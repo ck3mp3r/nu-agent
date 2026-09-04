@@ -85,14 +85,6 @@ where
         self.coordinator.set_repo_branch_caller_cwd(caller_cwd);
     }
 
-    pub fn pump_terminal_once(&mut self) {
-        self.coordinator.poll_terminal_event(&mut self.event_source);
-        self.coordinator.drain_transport();
-        if let Err(error) = self.coordinator.render_if_needed(&mut self.live_terminal) {
-            self.mark_render_failure(error);
-        }
-    }
-
     pub fn emit_batch(&mut self, events: &[UiEvent]) {
         // Enqueue all events first
         for event in events {
@@ -101,7 +93,8 @@ where
         // Then do ONE poll + drain + render cycle
         self.coordinator.poll_terminal_event(&mut self.event_source);
         self.coordinator.drain_transport();
-        if let Err(error) = self.coordinator.render_if_needed(&mut self.live_terminal) {
+        let mut live = self.live_terminal.as_mut().map(|l| &mut l.terminal);
+        if let Err(error) = self.coordinator.render_if_needed(&mut live) {
             self.mark_render_failure(error);
         }
         // If TUI is not active, forward to inner renderer
@@ -136,7 +129,8 @@ where
         self.coordinator.poll_terminal_event(&mut self.event_source);
         self.coordinator.enqueue_ui_event(event.clone());
         self.coordinator.drain_transport();
-        if let Err(error) = self.coordinator.render_if_needed(&mut self.live_terminal) {
+        let mut live = self.live_terminal.as_mut().map(|l| &mut l.terminal);
+        if let Err(error) = self.coordinator.render_if_needed(&mut live) {
             self.mark_render_failure(error);
         }
         if !self.tui_active {

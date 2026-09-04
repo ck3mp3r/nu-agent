@@ -9,6 +9,7 @@ use std::{
 use crate::rendering::layout::wrapped_input_rows;
 use crate::runtime::renderer_test::{CapturingRenderer, FakeRenderer};
 use crate::runtime::status::test::{init_repo_with_branch, run_git};
+use crate::runtime::test_driver::{DriveEvent, RenderLoopDriver};
 use crate::test_support::{markdown_fixture, open_command_palette_for_test};
 use crate::{
     interaction::input::{TerminalEvent, TerminalKey},
@@ -33,9 +34,7 @@ use crate::{
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use nu_agent_core::bus::WarningEvent;
 use nu_agent_core::orchestrator::{OrchestratorEvent, UiStateEvent};
-use nu_agent_core::protocol::contracts::{
-    SharedUiAction, UiMessageSnapshot, UiMessageUsageSnapshot,
-};
+use nu_agent_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
 use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::renderer::UiRenderer;
 use nu_agent_core::transcript::ir::Role;
@@ -88,11 +87,6 @@ impl RuntimeCoordinator {
     ) {
         crate::runtime::render::frame_test::main_pane_rects_for_height(main_height)
     }
-
-    pub(crate) fn pump_once(&mut self, event_source: &mut impl TerminalEventSource) {
-        self.poll_terminal_event(event_source);
-        self.drain_transport();
-    }
 }
 
 pub(crate) fn modal_open_state_applies_dimmed_backdrop_for_test(state: &AppState) -> bool {
@@ -108,6 +102,15 @@ pub(crate) fn inline_model_picker_modal_respects_border_and_backdrop_policy_for_
 pub(crate) fn input_pane_content_width_for_test(inner_width: u16) -> usize {
     inner_width.saturating_sub(2) as usize
 }
+
+// region:    --- Test Support
+
+/// Wraps a [`TerminalKey`] as a scripted driver event for the real render loop.
+fn key(key: TerminalKey) -> DriveEvent {
+    DriveEvent::Key(TerminalEvent::Key(key))
+}
+
+// endregion: --- Test Support
 
 #[test]
 fn idle_startup_does_not_show_spinner() {
@@ -175,94 +178,127 @@ impl TerminalEventSource for DiagnosticsOnlyEventSource {
     }
 }
 
-#[test]
-fn coordinator_submit_handoff_keeps_input_editable_and_preserves_transcript_preview() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    let mut source = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::Char('x'))),
-    };
+#[tokio::test]
+async fn coordinator_submit_handoff_keeps_input_editable_and_preserves_transcript_preview()
+-> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    coordinator.pump_once(&mut source);
+    // -- Exec
+    driver
+        .advance(&[key(TerminalKey::Char('x')), key(TerminalKey::Enter)])
+        .await?;
 
-    let mut source = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::Enter)),
-    };
-    coordinator.pump_once(&mut source);
-
-    assert_eq!(coordinator.state().phase, UiPhase::Busy);
-    assert!(!coordinator.state().input_locked);
-    assert_eq!(
-        coordinator.state.take_next_prompt_for_execution(),
-        Some("x".to_string())
+    // -- Check
+    assert_eq!(driver.state().phase, UiPhase::Busy);
+    assert!(!driver.state().input_locked);
+    // The real loop drained the pending prompt into a PromptSubmitted event
+    // for the orchestrator; the poll-style queue is empty afterwards.
+    assert!(
+        driver.orchestrator_events().iter().any(
+            |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "x")
+        ),
+        "loop must hand the prompt to the orchestrator channel"
     );
-    assert_eq!(coordinator.state.take_next_prompt_for_execution(), None);
+    assert_eq!(
+        driver
+            .coordinator_mut()
+            .state
+            .take_next_prompt_for_execution(),
+        None
+    );
     // starting spacer + user + closing spacer
-    assert_eq!(coordinator.state().transcript.entries.len(), 3);
-    assert_eq!(coordinator.state().transcript.entries[1].role(), Role::User);
-    assert_eq!(coordinator.state().transcript.entries[1].text(), "x");
+    assert_eq!(driver.state().transcript.entries.len(), 3);
+    assert_eq!(driver.state().transcript.entries[1].role(), Role::User);
+    assert_eq!(driver.state().transcript.entries[1].text(), "x");
+    Ok(())
 }
 
-#[test]
-fn slash_commands_do_not_append_command_text_to_transcript() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+#[tokio::test]
+async fn slash_commands_do_not_append_command_text_to_transcript() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
     // In the TextArea architecture, char keys are routed to TextArea by
     // handle_insert_mode_key. Set the textarea content directly to simulate
     // the coordinator flow for slash command submission.
-    coordinator.textarea = ratatui_textarea::TextArea::new(vec!["/help".to_string()]);
-    let mut source = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::Enter)),
-    };
-    coordinator.pump_once(&mut source);
+    driver.coordinator_mut().textarea = ratatui_textarea::TextArea::new(vec!["/help".to_string()]);
 
-    assert_eq!(
-        coordinator.state.take_next_prompt_for_execution(),
-        Some("/help".to_string())
+    // -- Exec
+    driver.advance(&[key(TerminalKey::Enter)]).await?;
+
+    // -- Check
+    // The real loop drained the submitted command into a PromptSubmitted
+    // event; the poll-style queue is empty afterwards.
+    assert!(
+        driver.orchestrator_events().iter().any(
+            |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "/help")
+        ),
+        "loop must hand the slash command to the orchestrator channel"
     );
-    assert_eq!(coordinator.state().phase, UiPhase::Idle);
-    assert_eq!(coordinator.state().pending_prompt_count(), 0);
-    assert!(coordinator.state().prompt_items().is_empty());
-    assert!(coordinator.state().transcript.entries.is_empty());
+    assert_eq!(
+        driver
+            .coordinator_mut()
+            .state
+            .take_next_prompt_for_execution(),
+        None
+    );
+    assert_eq!(driver.state().phase, UiPhase::Idle);
+    assert_eq!(driver.state().pending_prompt_count(), 0);
+    assert!(driver.state().prompt_items().is_empty());
+    assert!(driver.state().transcript.entries.is_empty());
+    Ok(())
 }
 
-#[test]
-fn compact_result_artifact_is_visible_without_slash_command_echo() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+#[tokio::test]
+async fn compact_result_artifact_is_visible_without_slash_command_echo() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    for event in [
-        TerminalEvent::Key(TerminalKey::Char('/')),
-        TerminalEvent::Key(TerminalKey::Char('c')),
-        TerminalEvent::Key(TerminalKey::Char('o')),
-        TerminalEvent::Key(TerminalKey::Char('m')),
-        TerminalEvent::Key(TerminalKey::Char('p')),
-        TerminalEvent::Key(TerminalKey::Char('a')),
-        TerminalEvent::Key(TerminalKey::Char('c')),
-        TerminalEvent::Key(TerminalKey::Char('t')),
-        TerminalEvent::Key(TerminalKey::Enter),
-    ] {
-        let mut source = StubEventSource { next: Some(event) };
-        coordinator.pump_once(&mut source);
-    }
+    // -- Exec: type and submit /compact through the real terminal arm.
+    let script: Vec<DriveEvent> = "/compact"
+        .chars()
+        .map(|c| key(TerminalKey::Char(c)))
+        .chain(std::iter::once(key(TerminalKey::Enter)))
+        .collect();
+    driver.advance(&script).await?;
 
-    assert_eq!(
-        coordinator.state.take_next_prompt_for_execution(),
-        Some("/compact".to_string())
+    // -- Check
+    // The real loop drained the submitted command into a PromptSubmitted
+    // event; the poll-style queue is empty afterwards.
+    assert!(
+        driver
+            .orchestrator_events()
+            .iter()
+            .any(|event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "/compact")),
+        "loop must hand the slash command to the orchestrator channel"
     );
-    assert!(coordinator.state().transcript.entries.is_empty());
+    assert_eq!(
+        driver
+            .coordinator_mut()
+            .state
+            .take_next_prompt_for_execution(),
+        None
+    );
+    assert!(driver.state().transcript.entries.is_empty());
 
-    coordinator.enqueue_ui_event(UiEvent::CompactionStarted {
-        source: "slash_compact".to_string(),
-    });
-    coordinator.drain_transport();
+    driver
+        .coordinator_mut()
+        .enqueue_ui_event(UiEvent::CompactionStarted {
+            source: "slash_compact".to_string(),
+        });
+    driver.coordinator_mut().drain_transport();
 
-    coordinator.enqueue_ui_event(UiEvent::CompactionCompleted {
-        source: "slash_compact".to_string(),
-        summary_preview: "preview".to_string(),
-        summary_body: "summary body".to_string(),
-    });
-    coordinator.drain_transport();
+    driver
+        .coordinator_mut()
+        .enqueue_ui_event(UiEvent::CompactionCompleted {
+            source: "slash_compact".to_string(),
+            summary_preview: "preview".to_string(),
+            summary_body: "summary body".to_string(),
+        });
+    driver.coordinator_mut().drain_transport();
 
-    let lines = coordinator
+    let lines = driver
         .state()
         .transcript
         .entries
@@ -274,81 +310,116 @@ fn compact_result_artifact_is_visible_without_slash_command_echo() {
     assert!(!lines.iter().any(|line| line.contains("source=")));
     assert!(!lines.iter().any(|line| line.contains("status=running")));
     assert!(!lines.iter().any(|line| line.starts_with("/compact")));
+    Ok(())
 }
 
-#[test]
-fn slash_prefix_filters_suggestions_and_enter_submits_matching_command() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+// Regression test for the slash char-drop defect: the keystrokes must be
+// routed through the REAL render-loop terminal arm (mpsc channel +
+// tokio::select!), not a synthetic poll harness.
+#[tokio::test]
+async fn slash_prefix_filters_suggestions_and_enter_submits_matching_command() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    for event in [
-        TerminalEvent::Key(TerminalKey::Char('/')),
-        TerminalEvent::Key(TerminalKey::Char('t')),
-        TerminalEvent::Key(TerminalKey::Char('h')),
-        TerminalEvent::Key(TerminalKey::Char('e')),
-        TerminalEvent::Key(TerminalKey::Enter),
-    ] {
-        let mut source = StubEventSource { next: Some(event) };
-        coordinator.pump_once(&mut source);
-    }
+    // -- Exec: type /theme and submit through the real terminal arm.
+    let script: Vec<DriveEvent> = "/theme"
+        .chars()
+        .map(|c| key(TerminalKey::Char(c)))
+        .chain(std::iter::once(key(TerminalKey::Enter)))
+        .collect();
+    driver.advance(&script).await?;
 
+    // -- Check
+    // The real loop drained the launch request via the pending ui-state
+    // events, published it on the bus, and re-reduced it: the theme picker is
+    // now open, and the launch queue is empty.
     assert_eq!(
-        coordinator.state.take_next_launch_request(),
-        Some(SharedUiAction::Themes)
+        driver.state().picker.render_kind(),
+        Some(PickerRenderKind::Theme),
+        "loop must execute the theme launch request through the ui_state arm"
     );
-    assert_eq!(coordinator.state.take_next_prompt_for_execution(), None);
+    assert_eq!(
+        driver.coordinator_mut().state.take_next_launch_request(),
+        None
+    );
+    assert_eq!(
+        driver
+            .coordinator_mut()
+            .state
+            .take_next_prompt_for_execution(),
+        None
+    );
+    Ok(())
 }
 
-#[test]
-fn immediate_slash_commands_do_not_set_busy_or_spinner() {
+#[tokio::test]
+async fn immediate_slash_commands_do_not_set_busy_or_spinner() -> Result<()> {
     for command in ["/compact", "/mcp", "/help", "/status"] {
-        let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+        // -- Setup & Fixtures
+        let mut driver = RenderLoopDriver::new(120, 30);
 
         // In the TextArea architecture, char keys are routed to TextArea by
         // handle_insert_mode_key. Set the textarea content directly to simulate
         // the coordinator flow for slash command submission.
-        coordinator.textarea = ratatui_textarea::TextArea::new(vec![command.to_string()]);
-        let mut submit = StubEventSource {
-            next: Some(TerminalEvent::Key(TerminalKey::Enter)),
-        };
-        coordinator.pump_once(&mut submit);
+        driver.coordinator_mut().textarea =
+            ratatui_textarea::TextArea::new(vec![command.to_string()]);
 
-        assert_eq!(
-            coordinator.state.take_next_prompt_for_execution(),
-            Some(command.to_string()),
-            "expected immediate slash command handoff"
+        // -- Exec
+        driver.advance(&[key(TerminalKey::Enter)]).await?;
+
+        // -- Check
+        // The real loop drained the submitted command into a PromptSubmitted
+        // event; the poll-style queue is empty afterwards.
+        assert!(
+            driver.orchestrator_events().iter().any(|event| matches!(
+                event,
+                OrchestratorEvent::PromptSubmitted { text } if text == command
+            )),
+            "loop must hand the slash command to the orchestrator channel"
         );
         assert_eq!(
-            coordinator.state().phase,
+            driver
+                .coordinator_mut()
+                .state
+                .take_next_prompt_for_execution(),
+            None
+        );
+        assert_eq!(
+            driver.state().phase,
             UiPhase::Idle,
             "immediate command must not transition into Busy"
         );
         assert!(
-            !coordinator.state().is_active_cycle(),
+            !driver.state().is_active_cycle(),
             "immediate command must not activate prompt lifecycle"
         );
         assert!(
-            coordinator.state().status.status_line != "Thinking...",
+            driver.state().status.status_line != "Thinking...",
             "spinner lane status must not be set for immediate slash commands"
         );
     }
+    Ok(())
 }
 
-#[test]
-fn coordinator_esc_then_esc_requests_cancel_signal() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+#[tokio::test]
+async fn coordinator_esc_then_esc_requests_cancel_signal() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    for event in [
-        TerminalEvent::Key(TerminalKey::Char('q')),
-        TerminalEvent::Key(TerminalKey::Enter),
-        TerminalEvent::Key(TerminalKey::Esc),
-        TerminalEvent::Key(TerminalKey::Esc),
-    ] {
-        let mut source = StubEventSource { next: Some(event) };
-        coordinator.pump_once(&mut source);
-    }
+    // -- Exec
+    driver
+        .advance(&[
+            key(TerminalKey::Char('q')),
+            key(TerminalKey::Enter),
+            key(TerminalKey::Esc),
+            key(TerminalKey::Esc),
+        ])
+        .await?;
 
-    assert_eq!(coordinator.state().status.status_line, "Abort requested.");
-    assert!(coordinator.take_cancel_requested());
+    // -- Check
+    assert_eq!(driver.state().status.status_line, "Abort requested.");
+    assert!(driver.coordinator().take_cancel_requested());
+    Ok(())
 }
 
 #[test]
@@ -368,120 +439,108 @@ fn runtime_renderer_reuses_eventing_and_preserves_emit_passthrough() {
     assert_eq!(state.phase, UiPhase::Busy);
 }
 
-#[test]
-fn runtime_renderer_pump_and_take_submitted_prompt_supports_interactive_turn_handoff() {
-    let inner = FakeRenderer::default();
-    let scripted = ScriptedTerminalEvents::from_script("char:h,char:i,enter");
-    let mut runtime_renderer = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
+#[tokio::test]
+async fn render_loop_driver_take_submitted_prompt_supports_interactive_turn_handoff() -> Result<()>
+{
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    runtime_renderer.pump_terminal_once();
-    runtime_renderer.pump_terminal_once();
-    runtime_renderer.pump_terminal_once();
+    // -- Exec: type and submit "hi" through the real terminal arm.
+    driver
+        .advance(&[
+            key(TerminalKey::Char('h')),
+            key(TerminalKey::Char('i')),
+            key(TerminalKey::Enter),
+        ])
+        .await?;
 
-    assert_eq!(
-        runtime_renderer
-            .coordinator
-            .state
-            .take_next_prompt_for_execution(),
-        Some("hi".to_string())
+    // -- Check
+    // The real loop drained the submitted prompt into a PromptSubmitted event
+    // for the orchestrator; the poll-style queue is empty afterwards.
+    assert!(
+        driver.orchestrator_events().iter().any(
+            |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "hi")
+        ),
+        "loop must hand the prompt to the orchestrator channel"
     );
     assert_eq!(
-        runtime_renderer
-            .coordinator
+        driver
+            .coordinator_mut()
             .state
             .take_next_prompt_for_execution(),
         None
     );
+    Ok(())
 }
 
-#[test]
-fn runtime_renderer_quit_requested_reflects_ctrlc_terminal_event() {
-    let inner = FakeRenderer::default();
-    let scripted = ScriptedTerminalEvents::from_script("ctrlc");
-    let mut runtime_renderer = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
+#[tokio::test]
+async fn render_loop_driver_quit_requested_reflects_ctrlc_terminal_event() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    runtime_renderer.pump_terminal_once();
+    // -- Exec
+    driver.advance(&[key(TerminalKey::CtrlC)]).await?;
 
-    assert!(runtime_renderer.quit_requested());
-}
-
-#[test]
-fn submit_reaches_orchestrator_channel_through_render_loop_path_only() {
-    let inner = FakeRenderer::default();
-    let scripted = ScriptedTerminalEvents::from_script("char:h,char:i,enter");
-    let mut runtime_renderer = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
-
-    // Replace the channel before pumping so we can read exactly what the render
-    // loop path pushes.
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<OrchestratorEvent>(256);
-    runtime_renderer.coordinator.state.event_tx = tx;
-
-    runtime_renderer.pump_terminal_once();
-    runtime_renderer.pump_terminal_once();
-    runtime_renderer.pump_terminal_once();
-
-    // Drain the transport so that any queued reducer events (including the
-    // Submit user action produced by the Enter key) are applied to AppState.
-    runtime_renderer.coordinator.drain_transport();
-
-    // Now replicate the render loop's terminal-event path: reduce the event,
-    // take pending orchestrator events, and forward them to the channel.
-    runtime_renderer.coordinator.state.reduce_terminal_event(
-        &TerminalEvent::Key(TerminalKey::Enter),
-        Some(&runtime_renderer.coordinator.cancel_controller),
-    );
-    let pending = runtime_renderer
-        .coordinator
-        .state
-        .take_pending_events(&runtime_renderer.coordinator.cancel_controller);
-    assert_eq!(
-        pending.len(),
-        1,
-        "render loop must produce one pending event"
-    );
+    // -- Check: the loop must send the orchestrator Quit event before exiting.
     assert!(
-        matches!(
-            pending[0],
-            OrchestratorEvent::PromptSubmitted { ref text } if text == "hi"
-        ),
-        "pending event must be the submitted prompt"
+        driver
+            .orchestrator_events()
+            .iter()
+            .any(|event| matches!(event, OrchestratorEvent::Quit)),
+        "loop must forward Quit to the orchestrator on Ctrl+C"
     );
-    for event in pending {
-        let _ = runtime_renderer.coordinator.state.event_tx.try_send(event);
-    }
+    assert!(driver.coordinator().quit_requested());
+    Ok(())
+}
 
-    // The bridge future in the orchestrator must NOT consume the prompt queue;
-    // the render-loop path must produce exactly one PromptSubmitted event.
-    let mut found = 0;
-    while let Ok(event) = rx.try_recv() {
-        if matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "hi") {
-            found += 1;
-        }
-    }
+#[tokio::test]
+async fn submit_reaches_orchestrator_channel_through_render_loop_terminal_arm() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
+
+    // -- Exec: type and submit "hi" through the real terminal arm; the loop
+    // itself takes the pending events and forwards them on the orchestrator
+    // channel, exactly as production runs it.
+    driver
+        .advance(&[
+            key(TerminalKey::Char('h')),
+            key(TerminalKey::Char('i')),
+            key(TerminalKey::Enter),
+        ])
+        .await?;
+
+    // -- Check
+    let events = driver.orchestrator_events();
+    let submitted = events
+        .iter()
+        .filter(
+            |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "hi"),
+        )
+        .count();
     assert_eq!(
-        found, 1,
-        "exactly one PromptSubmitted must reach the channel"
+        submitted, 1,
+        "exactly one PromptSubmitted must reach the orchestrator channel"
     );
 
-    // After the channel event is taken, the poll-style queue is empty because
-    // the render loop already drained it.
+    // After the channel event is produced, the poll-style queue is empty
+    // because the real loop already drained it.
     assert_eq!(
-        runtime_renderer
-            .coordinator
+        driver
+            .coordinator_mut()
             .state
             .take_next_prompt_for_execution(),
         None
     );
     // And the transcript shows the user turn was started.
     assert!(
-        runtime_renderer
-            .coordinator
-            .state
+        driver
+            .state()
             .transcript
             .entries
             .iter()
             .any(|entry| entry.role() == Role::User && entry.text() == "hi")
     );
+    Ok(())
 }
 
 #[test]
@@ -598,28 +657,31 @@ fn assistant_markdown_message_preserves_inline_span_styles_in_transcript_state()
     // Previously tested that assistant markdown was rendered with bold formatting
 }
 
-#[test]
-fn user_then_assistant_flows_without_turn_separator() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    let mut source = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::Char('h'))),
-    };
-    coordinator.pump_once(&mut source);
+#[tokio::test]
+async fn user_then_assistant_flows_without_turn_separator() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    let mut source = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::Enter)),
-    };
-    coordinator.pump_once(&mut source);
+    // -- Exec: type and submit "h" through the real terminal arm.
+    driver
+        .advance(&[key(TerminalKey::Char('h')), key(TerminalKey::Enter)])
+        .await?;
     // Activate the queued prompt so the User transcript entry is written
-    let _ = coordinator.state.take_next_prompt_for_execution();
+    let _ = driver
+        .coordinator_mut()
+        .state
+        .take_next_prompt_for_execution();
 
-    coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
-        text: "world".to_string(),
-    });
-    coordinator.drain_transport();
+    driver
+        .coordinator_mut()
+        .enqueue_ui_event(UiEvent::AssistantMessage {
+            text: "world".to_string(),
+        });
+    driver.coordinator_mut().drain_transport();
 
+    // -- Check
     assert_eq!(
-        coordinator
+        driver
             .state()
             .transcript
             .entries
@@ -645,6 +707,7 @@ fn user_then_assistant_flows_without_turn_separator() {
             (TranscriptRole::Assistant, "world".to_string()),
         ]
     );
+    Ok(())
 }
 
 #[test]
@@ -686,55 +749,69 @@ fn tui_active_mode_does_not_forward_payload_like_events_to_inner_renderer() {
     assert!(events.lock().expect("events").is_empty());
 }
 
-#[test]
-fn tick_and_completed_events_update_status_only_without_touching_input_buffer() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    let mut source = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::Char('x'))),
-    };
-    coordinator.pump_once(&mut source);
+#[tokio::test]
+async fn tick_and_completed_events_update_status_only_without_touching_input_buffer() -> Result<()>
+{
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    coordinator.enqueue_ui_event(UiEvent::Tick);
-    coordinator.drain_transport();
-    assert_eq!(coordinator.state().status.status_line, "Thinking...");
+    // -- Exec
+    driver.advance(&[key(TerminalKey::Char('x'))]).await?;
 
-    coordinator.enqueue_ui_event(UiEvent::Completed { tool_calls: 0 });
-    coordinator.drain_transport();
-    assert!(coordinator.state().status.status_line.is_empty());
+    driver.coordinator_mut().enqueue_ui_event(UiEvent::Tick);
+    driver.coordinator_mut().drain_transport();
+
+    // -- Check
+    assert_eq!(driver.state().status.status_line, "Thinking...");
+
+    // -- Exec
+    driver
+        .coordinator_mut()
+        .enqueue_ui_event(UiEvent::Completed { tool_calls: 0 });
+    driver.coordinator_mut().drain_transport();
+
+    // -- Check
+    assert!(driver.state().status.status_line.is_empty());
+    Ok(())
 }
 
-#[test]
-fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    let mut source = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::Char('k'))),
-    };
-    coordinator.pump_once(&mut source);
-    let mut source = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::Char('9'))),
-    };
-    coordinator.pump_once(&mut source);
+#[tokio::test]
+async fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    coordinator.enqueue_ui_event(UiEvent::Tick);
-    coordinator.drain_transport();
+    // -- Exec: type k and 9 through the real terminal arm.
+    driver
+        .advance(&[key(TerminalKey::Char('k')), key(TerminalKey::Char('9'))])
+        .await?;
+
+    driver.coordinator_mut().enqueue_ui_event(UiEvent::Tick);
+    driver.coordinator_mut().drain_transport();
 
     let status_lines =
-        crate::runtime::status_lines_for_test(&mut coordinator.state, "openai/gpt-4");
+        crate::runtime::status_lines_for_test(&mut driver.coordinator_mut().state, "openai/gpt-4");
     let joined = status_lines.join("\n");
 
+    // -- Check
     assert!(joined.contains("(busy)"));
 
-    coordinator.enqueue_ui_event(UiEvent::Completed { tool_calls: 0 });
-    coordinator.drain_transport();
+    // -- Exec
+    driver
+        .coordinator_mut()
+        .enqueue_ui_event(UiEvent::Completed { tool_calls: 0 });
+    driver.coordinator_mut().drain_transport();
 
     let status_lines =
-        crate::runtime::status_lines_for_test(&mut coordinator.state, "openai/gpt-4");
+        crate::runtime::status_lines_for_test(&mut driver.coordinator_mut().state, "openai/gpt-4");
+
+    // -- Check
     assert!(status_lines[0].contains("(idle)"));
     assert!(
         !status_lines
             .iter()
             .any(|line| line.starts_with("Input mode:"))
     );
+    Ok(())
 }
 
 #[test]
@@ -1098,12 +1175,17 @@ fn cursor_style_maps_insert_to_bar_and_normal_visual_to_block() {
     ));
 }
 
+// Sync-path coverage: the input-error handling lives in `poll_terminal_event`,
+// which the async render loop's healthy mpsc channel cannot produce. These
+// tests call the production poll + drain primitives directly (the same calls
+// `TuiRuntimeRenderer` makes).
 #[test]
 fn coordinator_terminal_input_error_surfaces_status_and_requests_quit() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     let mut source = ErrorEventSource;
 
-    coordinator.pump_once(&mut source);
+    coordinator.poll_terminal_event(&mut source);
+    coordinator.drain_transport();
 
     assert!(coordinator.quit_requested());
     assert!(coordinator.take_cancel_requested());
@@ -1118,7 +1200,9 @@ fn runtime_renderer_reports_fatal_error_on_event_source_failure() {
     let inner = FakeRenderer::default();
     let mut runtime_renderer = TuiRuntimeRenderer::new(inner, ErrorEventSource, 120, 30);
 
-    runtime_renderer.pump_terminal_once();
+    // emit() runs the production poll + drain + render cycle, which surfaces
+    // the event source failure.
+    runtime_renderer.emit(&UiEvent::Tick);
 
     assert!(runtime_renderer.quit_requested());
     assert_eq!(
@@ -1127,55 +1211,57 @@ fn runtime_renderer_reports_fatal_error_on_event_source_failure() {
     );
 }
 
-#[test]
-fn idle_q_is_regular_input_and_never_requests_quit() {
-    let inner = FakeRenderer::default();
-    let scripted = ScriptedTerminalEvents::from_script("char:q");
-    let mut runtime_renderer = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
+#[tokio::test]
+async fn idle_q_is_regular_input_and_never_requests_quit() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    runtime_renderer.pump_terminal_once();
-    assert!(!runtime_renderer.quit_requested());
-    assert!(!runtime_renderer.coordinator().state().input_locked);
+    // -- Exec & Check: a single idle 'q' never requests quit.
+    driver.advance(&[key(TerminalKey::Char('q'))]).await?;
+    assert!(!driver.coordinator().quit_requested());
+    assert!(!driver.state().input_locked);
 
-    let inner = FakeRenderer::default();
-    let scripted = ScriptedTerminalEvents::from_script("char:a,char:q");
-    let mut runtime_renderer = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
-    runtime_renderer.pump_terminal_once();
-    runtime_renderer.pump_terminal_once();
-    assert!(!runtime_renderer.quit_requested());
+    // -- Exec & Check: typing 'a' then 'q' still never requests quit.
+    driver
+        .advance(&[key(TerminalKey::Char('a')), key(TerminalKey::Char('q'))])
+        .await?;
+    assert!(!driver.coordinator().quit_requested());
+    Ok(())
 }
 
-#[test]
-fn idle_q_does_not_quit_through_dispatch_path() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    let mut source = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::Char('q'))),
-    };
+#[tokio::test]
+async fn idle_q_does_not_quit_through_dispatch_path() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    coordinator.pump_once(&mut source);
+    // -- Exec
+    driver.advance(&[key(TerminalKey::Char('q'))]).await?;
 
-    assert!(!coordinator.quit_requested());
+    // -- Check
+    assert!(!driver.coordinator().quit_requested());
+    Ok(())
 }
 
-#[test]
-fn idle_escape_status_copy_mentions_ctrlc_only_not_q() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    let mut source = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::Esc)),
-    };
+#[tokio::test]
+async fn idle_escape_status_copy_mentions_ctrlc_only_not_q() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    coordinator.pump_once(&mut source);
+    // -- Exec
+    driver.advance(&[key(TerminalKey::Esc)]).await?;
 
-    assert!(coordinator.state().status.status_line.contains("Ctrl+C"));
+    // -- Check
+    assert!(driver.state().status.status_line.contains("Ctrl+C"));
     assert!(
-        !coordinator
+        !driver
             .state()
             .status
             .status_line
             .to_ascii_lowercase()
             .contains("press q")
     );
-    assert!(!coordinator.state().status.status_line.contains("q to quit"));
+    assert!(!driver.state().status.status_line.contains("q to quit"));
+    Ok(())
 }
 
 #[test]
@@ -1197,7 +1283,8 @@ fn watchdog_fails_fast_when_no_input_backend_available() -> Result<()> {
         },
     };
 
-    coordinator.pump_once(&mut source);
+    coordinator.poll_terminal_event(&mut source);
+    coordinator.drain_transport();
 
     let fatal = coordinator
         .fatal_error()
@@ -1224,7 +1311,8 @@ fn diagnostics_snapshot_reports_active_backend_last_poll_and_last_error() {
         },
     };
 
-    coordinator.pump_once(&mut source);
+    coordinator.poll_terminal_event(&mut source);
+    coordinator.drain_transport();
 
     let (backend, last_poll, last_error) = coordinator.input_diagnostics_snapshot();
     assert_eq!(
@@ -1251,7 +1339,8 @@ fn immediate_poll_error_fails_fast_with_actionable_message_when_no_backends_avai
         error: "crossterm poll failed: not a terminal".to_string(),
     };
 
-    coordinator.pump_once(&mut source);
+    coordinator.poll_terminal_event(&mut source);
+    coordinator.drain_transport();
 
     let fatal = coordinator
         .fatal_error()
@@ -1486,26 +1575,29 @@ fn assistant_markdown_projection_is_memoized_across_repeated_messages() {
     // Both messages are processed; the second replaces the first via streaming truncation
 }
 
-#[test]
-fn resize_and_redraw_paths_do_not_retokenize_assistant_projection_cache() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+#[tokio::test]
+async fn resize_and_redraw_paths_do_not_retokenize_assistant_projection_cache() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
     let markdown = markdown_fixture("fenced_code_blocks.md");
 
-    coordinator.enqueue_ui_event(UiEvent::AssistantMessage { text: markdown });
-    coordinator.drain_transport();
+    driver
+        .coordinator_mut()
+        .enqueue_ui_event(UiEvent::AssistantMessage { text: markdown });
+    driver.coordinator_mut().drain_transport();
 
     for (columns, rows) in [(100, 28), (140, 42), (80, 24)] {
-        let mut source = StubEventSource {
-            next: Some(TerminalEvent::Resize(
+        driver
+            .advance(&[DriveEvent::Key(TerminalEvent::Resize(
                 crate::interaction::input::TerminalResize { columns, rows },
-            )),
-        };
-        coordinator.pump_once(&mut source);
+            ))])
+            .await?;
     }
 
     // Resize clears the projection cache so width-aware re-projection occurs
     // on the next render pass. No assertion on cache misses — the counter was
     // removed when caching was moved to render_cached.
+    Ok(())
 }
 
 #[test]
@@ -1662,25 +1754,44 @@ fn coordinator_hydrate_with_empty_message_snapshot_leaves_empty_session_behavior
     assert!(!state.input_locked);
 }
 
-#[test]
-fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+#[tokio::test]
+async fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
 
-    for event in [
-        TerminalEvent::Key(TerminalKey::Char('a')),
-        TerminalEvent::Key(TerminalKey::Enter),
-        TerminalEvent::Key(TerminalKey::Char('b')),
-        TerminalEvent::Key(TerminalKey::Enter),
-        TerminalEvent::Key(TerminalKey::Esc),
-        TerminalEvent::Key(TerminalKey::Esc),
-    ] {
-        let mut source = StubEventSource { next: Some(event) };
-        coordinator.pump_once(&mut source);
-    }
+    // -- Exec: submit two prompts, then abort with Esc-Esc through the real
+    // terminal arm.
+    driver
+        .advance(&[
+            key(TerminalKey::Char('a')),
+            key(TerminalKey::Enter),
+            key(TerminalKey::Char('b')),
+            key(TerminalKey::Enter),
+            key(TerminalKey::Esc),
+            key(TerminalKey::Esc),
+        ])
+        .await?;
 
-    assert_eq!(coordinator.state.take_next_prompt_for_execution(), None);
+    // -- Check
+    assert_eq!(
+        driver
+            .coordinator_mut()
+            .state
+            .take_next_prompt_for_execution(),
+        None
+    );
 
-    let statuses = coordinator
+    // The real loop handed each submitted prompt to the orchestrator as a
+    // PromptSubmitted event before the abort.
+    let submitted = driver.take_orchestrator_events();
+    assert!(
+        submitted.iter().any(
+            |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "a")
+        ),
+        "first prompt must reach the orchestrator before the abort"
+    );
+
+    let statuses = driver
         .state()
         .prompt_items()
         .iter()
@@ -1691,21 +1802,26 @@ fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() {
         vec![PromptStatus::Cancelled, PromptStatus::Cancelled]
     );
 
-    // After abort, the restored text from cancelled prompts is available
-    // on the state. The coordinator picks it up on the next pump cycle
-    // and sets it on the textarea.
-
-    for event in [
-        TerminalEvent::Key(TerminalKey::Char('c')),
-        TerminalEvent::Key(TerminalKey::Enter),
-    ] {
-        let mut source = StubEventSource { next: Some(event) };
-        coordinator.pump_once(&mut source);
+    // After abort, the restored text from the cancelled prompt is available
+    // on the state. Applying it to the textarea is sync-poll behavior
+    // (`poll_terminal_event`), not a render-loop arm, so exercise the
+    // production sync primitives directly. In the real loop the first prompt
+    // was already handed to the orchestrator, so only "b" is restored.
+    for event in [TerminalKey::Char('c'), TerminalKey::Enter] {
+        let mut source = StubEventSource {
+            next: Some(TerminalEvent::Key(event)),
+        };
+        driver.coordinator_mut().poll_terminal_event(&mut source);
+        driver.coordinator_mut().drain_transport();
     }
     assert_eq!(
-        coordinator.state.take_next_prompt_for_execution(),
-        Some("a\n\nbc".to_string())
+        driver
+            .coordinator_mut()
+            .state
+            .take_next_prompt_for_execution(),
+        Some("bc".to_string())
     );
+    Ok(())
 }
 
 #[test]
@@ -2103,27 +2219,25 @@ fn help_panel_shows_overflow_position_cue_when_content_exceeds_viewport() -> Res
     Ok(())
 }
 
-#[test]
-fn help_panel_escape_closes_panel_after_scroll() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator
+#[tokio::test]
+async fn help_panel_escape_closes_panel_after_scroll() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
+    driver
+        .coordinator_mut()
         .state
         .open_info_panel(crate::state::InfoPanel::Help);
     // AppState.info_panel_scroll is a public field — no setter method exists.
-    coordinator.state.info_panel_scroll = 5;
+    driver.coordinator_mut().state.info_panel_scroll = 5;
 
-    let mut down = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::Down)),
-    };
-    coordinator.pump_once(&mut down);
-    assert!(coordinator.state().info_panel_scroll >= 5);
+    // -- Exec & Check: Down scrolls (or holds) the panel through the real arm.
+    driver.advance(&[key(TerminalKey::Down)]).await?;
+    assert!(driver.state().info_panel_scroll >= 5);
 
-    let mut esc = StubEventSource {
-        next: Some(TerminalEvent::Key(TerminalKey::Esc)),
-    };
-    coordinator.pump_once(&mut esc);
-
-    assert_eq!(coordinator.state().info_panel, None);
+    // -- Exec & Check: Esc closes the panel through the real arm.
+    driver.advance(&[key(TerminalKey::Esc)]).await?;
+    assert_eq!(driver.state().info_panel, None);
+    Ok(())
 }
 
 #[test]
@@ -4147,7 +4261,10 @@ fn render_if_needed_skips_when_not_dirty() {
     coord.set_render_needed(false);
     coord.set_last_render_at(Instant::now() - Duration::from_secs(1));
 
-    let result = coord.render_if_needed(&mut None);
+    let mut live: Option<
+        &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stderr>>,
+    > = None;
+    let result = coord.render_if_needed(&mut live);
 
     assert!(result.is_ok());
     assert!(
@@ -4162,7 +4279,10 @@ fn render_if_needed_skips_when_too_soon() {
     coord.set_render_needed(true);
     coord.set_last_render_at(Instant::now());
 
-    let result = coord.render_if_needed(&mut None);
+    let mut live: Option<
+        &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stderr>>,
+    > = None;
+    let result = coord.render_if_needed(&mut live);
 
     assert!(result.is_ok());
     assert!(
@@ -4177,7 +4297,10 @@ fn render_if_needed_fires_when_dirty_and_elapsed() {
     coord.set_render_needed(true);
     coord.set_last_render_at(Instant::now() - Duration::from_secs(1));
 
-    let result = coord.render_if_needed(&mut None);
+    let mut live: Option<
+        &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stderr>>,
+    > = None;
+    let result = coord.render_if_needed(&mut live);
 
     assert!(result.is_ok());
     assert!(

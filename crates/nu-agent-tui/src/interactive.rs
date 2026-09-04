@@ -10,9 +10,7 @@ use tokio::sync::mpsc;
 use crate::interaction::cancel::CancelController;
 use crate::interaction::input::TerminalEvent;
 use crate::runtime::map_crossterm_event;
-use crate::runtime::{
-    HybridTerminalEvents, LiveTerminalUi, RuntimeCoordinator, TuiRuntimeRenderer,
-};
+use crate::runtime::{HybridTerminalEvents, RuntimeCoordinator, TuiRuntimeRenderer};
 use crate::state::{ActivePicker, PickerOption};
 
 #[cfg(test)]
@@ -135,6 +133,7 @@ where
             tokio::spawn(async move {
                 let mut coordinator = coordinator;
                 let mut live = live_terminal;
+                let mut live_ref = live.as_mut().map(|l| &mut l.terminal);
                 let _branch_watcher = branch_watcher;
                 run_render_loop(
                     &mut coordinator,
@@ -142,7 +141,7 @@ where
                     &cancel_controller,
                     event_tx,
                     terminal_rx,
-                    &mut live,
+                    &mut live_ref,
                     branch_rx,
                 )
                 .await;
@@ -207,13 +206,13 @@ pub fn spawn_terminal_input(
 /// Render loop driving `RuntimeCoordinator` from terminal events, bus
 /// channels, and a periodic tick. Owns `&mut RuntimeCoordinator` and calls
 /// `AppState` methods directly.
-pub(crate) async fn run_render_loop(
+pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
     coordinator: &mut RuntimeCoordinator,
     bus: &nu_agent_core::bus::Bus,
     cancel_controller: &CancelController,
     event_tx: mpsc::Sender<OrchestratorEvent>,
     mut terminal_event_rx: mpsc::Receiver<TerminalEvent>,
-    live_terminal: &mut Option<LiveTerminalUi>,
+    live_terminal: &mut Option<&mut ratatui::Terminal<B>>,
     mut branch_rx: mpsc::Receiver<()>,
 ) {
     let mut tool_rx = bus.tool().subscribe();

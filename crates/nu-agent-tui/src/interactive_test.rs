@@ -94,7 +94,9 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
     let (event_tx, mut event_rx) = mpsc::channel::<OrchestratorEvent>(64);
     let (terminal_tx, terminal_rx) = mpsc::channel::<TerminalEvent>(64);
     let (_branch_tx, branch_rx) = mpsc::channel::<()>(8);
-    let mut live = None;
+    let mut live: Option<
+        &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stderr>>,
+    > = None;
 
     let loop_handle = tokio::spawn(async move {
         run_render_loop(
