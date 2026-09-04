@@ -9,7 +9,7 @@ use crate::{
         cancel::CancelController,
         reducer::{ReducerInput, UserAction, reduce_with_cancel_controller},
     },
-    state::AppState,
+    state::{AppState, InputState},
 };
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -68,7 +68,7 @@ fn cross_thread_request_is_visible_to_consumer() -> Result<()> {
 fn reducer_second_escape_triggers_cancel_request() {
     let cancel_controller = CancelController::default();
     let mut state = AppState {
-        pending_submit_text: Some("work".to_string()),
+        input: InputState::default().with_pending_submit_text("work".to_string()),
         ..Default::default()
     };
 

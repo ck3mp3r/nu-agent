@@ -1,5 +1,6 @@
-use crate::state::AppState;
 use ratatui::text::Line;
+
+use crate::state::{AppState, PickerPayload};
 
 pub(super) const SESSION_PICKER_EMPTY_STATE_MESSAGE: &str =
     "No sessions found. Start a new session with /new.";
@@ -15,7 +16,8 @@ pub(super) fn session_picker_table_model(
         .saturating_sub(query_height)
         .saturating_sub(header_height);
 
-    let options = state.session_picker_filtered_options();
+    let picker_state = state.picker.active_state().expect("session picker open");
+    let options = picker_state.filtered();
     let total = options.len();
     let overflow_cue = if total > available_rows {
         Some(format!("{available_rows} of {total}"))
@@ -26,19 +28,25 @@ pub(super) fn session_picker_table_model(
     let now = chrono::Utc::now();
     let rows: Vec<Vec<String>> = options
         .iter()
-        .map(|option| {
-            let relative = relative_timestamp(option.created_at, now);
-            let title = option.title.as_deref().unwrap_or("(untitled)").to_string();
+        .map(|opt| {
+            let (created_at, title) = match &opt.payload {
+                PickerPayload::Session {
+                    created_at, title, ..
+                } => (created_at, title),
+                _ => unreachable!(),
+            };
+            let relative = relative_timestamp(*created_at, now);
+            let title = title.as_deref().unwrap_or("(untitled)").to_string();
             vec![relative, title]
         })
         .collect();
 
-    let query_line = Line::from(format!("Query: {}", state.session_picker_query));
+    let query_line = Line::from(format!("Query: {}", picker_state.query));
 
     SessionPickerTableModel {
         query_line,
         rows,
-        selected: Some(state.session_picker_selection),
+        selected: Some(picker_state.selection),
         overflow_cue,
     }
 }

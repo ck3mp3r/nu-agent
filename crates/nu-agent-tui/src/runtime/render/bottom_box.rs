@@ -8,7 +8,7 @@ use ratatui::{
 use crate::runtime::panels::render_permission_controls;
 use crate::{
     runtime::inline_slash_lines_for_render,
-    state::{InputMode, PromptStatus},
+    state::{InputMode, PickerRenderKind, PromptStatus},
 };
 
 use crate::runtime::RuntimeCoordinator;
@@ -26,7 +26,7 @@ impl RuntimeCoordinator {
         // ── Unified bottom box ──────────────────────────────────────────────
         // Combine queue, input, and status into one rounded box with ├─┤
         // dividers.
-        let box_border_style = if self.state.pane_focus == crate::state::PaneFocus::Input {
+        let box_border_style = if self.state.scroll.pane_focus == crate::state::PaneFocus::Input {
             self.theme.focus
         } else {
             self.theme.subtle_meta
@@ -133,12 +133,12 @@ impl RuntimeCoordinator {
             .saturating_add(input_inner_h);
         draw_divider(frame, input_div_y);
 
-        if self.state.permission_prompt.is_some() {
+        if self.state.permission.has_prompt() {
             render_permission_controls(frame, input_inner, &self.theme);
         } else {
             // Render mode indicator
             if mode_indicator_width > 0 && textarea_rect.height > 0 {
-                let indicator_char = match self.state.input_mode {
+                let indicator_char = match self.state.input.mode {
                     InputMode::Insert => "❯ ",
                     InputMode::Normal | InputMode::Visual => "❮ ",
                 };
@@ -163,7 +163,7 @@ impl RuntimeCoordinator {
                 frame.render_widget(&self.textarea, textarea_rect);
             }
             // Render inline slash suggestions above TextArea
-            if self.state.inline_slash_open {
+            if self.state.picker.render_kind() == Some(PickerRenderKind::InlineSlash) {
                 let slash_lines = inline_slash_lines_for_render(&self.state, &self.theme);
                 if !slash_lines.is_empty() {
                     let content_height = slash_lines.len() as u16;
@@ -187,7 +187,7 @@ impl RuntimeCoordinator {
             }
             // Set cursor position in insert mode
             if !self.state.input_locked
-                && !self.state.command_palette_open
+                && self.state.picker.active().is_none()
                 && self.state.info_panel.is_none()
                 && bottom_box_rect.height >= 4
             {
@@ -246,7 +246,6 @@ impl RuntimeCoordinator {
 
         let left_width_needed = {
             let probe = crate::runtime::status::status_left_content(
-                &self.active_model_identity,
                 busy_millis,
                 &self.state,
                 &self.theme,
@@ -264,7 +263,6 @@ impl RuntimeCoordinator {
 
         let left_content = if fits_on_one_line {
             crate::runtime::status::status_left_content(
-                &self.active_model_identity,
                 busy_millis,
                 &self.state,
                 &self.theme,
@@ -272,7 +270,6 @@ impl RuntimeCoordinator {
             )
         } else {
             crate::runtime::status::status_left_content(
-                &self.active_model_identity,
                 busy_millis,
                 &self.state,
                 &self.theme,

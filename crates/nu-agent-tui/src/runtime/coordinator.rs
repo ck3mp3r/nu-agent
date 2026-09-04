@@ -18,7 +18,7 @@ use crate::interaction::{
 use crate::platform::transport::{TransportItem, TuiTransport};
 use crate::rendering::{
     layout::{INPUT_MAX_HEIGHT, INPUT_MIN_HEIGHT, MAIN_SIDE_MARGIN},
-    theme::{ThemeName, TuiTheme},
+    theme::TuiTheme,
 };
 use crate::runtime::layout::{compute_bottom_box_height, compute_status_h};
 use crate::runtime::render::frame::current_time_millis;
@@ -26,8 +26,9 @@ use crate::runtime::status::{
     RepoBranchTracker, availability_label, status_left_content, status_right_content,
 };
 use crate::state::{
-    AppState, InputMode, McpServerState, McpServerUsabilityState, ModelPickerOption,
+    AppState, InputMode, McpServerState, McpServerUsabilityState, PickerRenderKind, SubmitAction,
 };
+use nu_agent_core::bus::{CompactionEvent, LlmEvent, ToolEvent, TurnEvent, WarningEvent};
 use nu_agent_core::orchestrator::UiStateEvent;
 use nu_agent_core::protocol::contracts::UiMessageSnapshot;
 use nu_agent_core::protocol::event::UiEvent;
@@ -45,7 +46,6 @@ pub struct RuntimeCoordinator {
     side_pane_visible: Option<bool>,
     pub(crate) quit_requested: bool,
     pub(crate) fatal_error: Option<String>,
-    pub(crate) active_model_identity: String,
     pub(crate) input_backend_status: String,
     pub(crate) last_input_poll_status: String,
     pub(crate) last_input_error: Option<String>,
@@ -53,7 +53,6 @@ pub struct RuntimeCoordinator {
     input_watchdog_timeout: Duration,
     pub(crate) repo_branch_tracker: Option<RepoBranchTracker>,
     pub(crate) theme: TuiTheme,
-    pub(crate) theme_name: ThemeName,
     pub(crate) render_needed: bool,
     pub(crate) last_render_at: Instant,
     pub(crate) textarea: ratatui_textarea::TextArea<'static>,
@@ -77,8 +76,13 @@ impl RuntimeCoordinator {
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
         last_total_tokens: Option<u64>,
     ) {
-        self.state
-            .hydrate_transcript_from_messages(messages, last_total_tokens);
+        self.state.transcript.hydrate_from_messages(
+            messages,
+            last_total_tokens,
+            &mut self.state.status,
+            &mut self.state.tool,
+            &mut self.state.compaction,
+        );
     }
 
     pub(crate) fn new_with_watchdog(
@@ -99,7 +103,6 @@ impl RuntimeCoordinator {
             side_pane_visible,
             quit_requested: false,
             fatal_error: None,
-            active_model_identity: "unknown".to_string(),
             input_backend_status: "unknown".to_string(),
             last_input_poll_status: "waiting for input poll".to_string(),
             last_input_error: None,
@@ -107,7 +110,6 @@ impl RuntimeCoordinator {
             input_watchdog_timeout,
             repo_branch_tracker: None,
             theme: theme.clone(),
-            theme_name: ThemeName::default(),
             render_needed: true,
             last_render_at: Instant::now() - Duration::from_millis(100),
             textarea: ratatui_textarea::TextArea::default(),
@@ -116,22 +118,56 @@ impl RuntimeCoordinator {
         coordinator.sync_transcript_viewport_lines_with_layout();
         coordinator
     }
-    pub(crate) fn take_next_theme_switch_request(&mut self) -> Option<String> {
-        self.state.take_next_theme_switch_request()
-    }
 
-    pub fn set_active_model_identity(&mut self, active_model_identity: String) {
-        self.active_model_identity = active_model_identity;
-    }
-
-    /// Consume a UI-state event from the bus. Keeps the coordinator's own
-    /// rendering fields (e.g. `active_model_identity`) in sync with the event
-    /// and forwards the rest to `AppState`.
+    /// Consume a UI-state event from the bus. Status-owned events are handled
+    /// by `StatusState` first; the rest fall through to `AppState`.
     pub fn reduce_ui_state_event(&mut self, event: UiStateEvent) {
-        if let UiStateEvent::SetActiveModelIdentity(identity) = &event {
-            self.active_model_identity = identity.clone();
+        if self.state.status.reduce_ui_state_event(event.clone()) {
+            return;
         }
         self.state.reduce_ui_state_event(event);
+    }
+
+    /// Consume a tool lifecycle event from the bus.
+    pub fn reduce_tool_event(&mut self, event: ToolEvent) -> bool {
+        crate::state::dispatch_tool_event(&mut self.state, event)
+    }
+
+    /// Consume an LLM lifecycle event from the bus.
+    pub fn reduce_llm_event(&mut self, event: LlmEvent) -> bool {
+        crate::state::dispatch_llm_event(&mut self.state, event)
+    }
+
+    /// Consume a compaction lifecycle event from the bus. Returns false for
+    /// events the TUI does not render (`CompactionEvent::Requested`).
+    pub fn reduce_compaction_event(&mut self, event: CompactionEvent) -> bool {
+        crate::state::dispatch_compaction_event(&mut self.state, event)
+    }
+
+    /// Consume a turn lifecycle event from the bus. Returns false for events
+    /// the TUI does not render (`TurnEvent::Started` / `TaskCompleted`).
+    pub fn reduce_turn_event(&mut self, event: TurnEvent) -> bool {
+        crate::state::dispatch_turn_event(&mut self.state, event)
+    }
+
+    /// Dispatch a protocol `UiEvent` to the domain reducers. Both transport
+    /// event paths (`drain_transport` and the warning fallback) converge here.
+    pub(crate) fn reduce_ui_event(&mut self, event: UiEvent) -> bool {
+        crate::interaction::reducer::dispatch_ui_event(&mut self.state, event)
+    }
+
+    /// Consume a warning event from the bus. `StatusState` handles plain
+    /// messages (status line only); everything else falls through to the
+    /// domain dispatch via the existing `WarningEvent -> UiEvent` conversion
+    /// (TurnError keeps its spacer + error line + finalize behavior).
+    pub fn reduce_warning_event(&mut self, event: WarningEvent) -> bool {
+        if self.state.status.reduce_warning_event(event.clone()) {
+            return true;
+        }
+        match Option::<UiEvent>::from(event) {
+            Some(ui_event) => self.reduce_ui_event(ui_event),
+            None => false,
+        }
     }
 
     pub(crate) fn set_mcp_lifecycle_projection(&mut self, projection: Vec<McpServerLifecycle>) {
@@ -139,7 +175,7 @@ impl RuntimeCoordinator {
             .into_iter()
             .map(|server| {
                 let name = server.name;
-                self.state.set_mcp_visible_tool_count_by_server_name(
+                self.state.status.set_mcp_visible_tool_count_by_server_name(
                     name.as_str(),
                     server.visible_tool_count,
                 );
@@ -153,7 +189,7 @@ impl RuntimeCoordinator {
                 }
             })
             .collect();
-        self.state.set_mcp_servers(servers);
+        self.state.status.set_mcp_servers(servers);
     }
 
     pub(crate) fn set_skills_projection(&mut self, skills: Vec<ProtocolDiscoverableSkill>) {
@@ -165,19 +201,20 @@ impl RuntimeCoordinator {
                 name: skill.name,
             })
             .collect();
-        self.state.set_discoverable_skills(mapped);
+        self.state.status.set_discoverable_skills(mapped);
     }
 
     pub(crate) fn mark_skills_discovery_failed(&mut self) {
-        self.state.mark_skills_discovery_failed();
+        self.state.status.mark_skills_discovery_failed();
     }
 
     pub(crate) fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
-        self.state.set_llm_visible_mcp_tool_count(count);
+        self.state.status.set_llm_visible_mcp_tool_count(count);
     }
 
     pub fn set_mcp_visible_tool_count_by_server_name(&mut self, server_name: &str, count: usize) {
         self.state
+            .status
             .set_mcp_visible_tool_count_by_server_name(server_name, count);
     }
 
@@ -187,26 +224,12 @@ impl RuntimeCoordinator {
         names: Vec<String>,
     ) {
         self.state
+            .status
             .set_mcp_visible_tool_names_by_server_name(server_name, names);
     }
 
     pub fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
-        self.state.set_context_window_max_tokens(max_tokens);
-    }
-
-    pub fn set_model_picker_options(&mut self, options: Vec<ModelPickerOption>) {
-        self.state.set_model_picker_options(options);
-    }
-
-    pub fn set_agent_picker_options(
-        &mut self,
-        options: Vec<nu_agent_core::protocol::picker::AgentPickerOption>,
-    ) {
-        self.state.set_agent_picker_options(options);
-    }
-
-    pub fn set_session_picker_options(&mut self, options: Vec<crate::state::SessionPickerOption>) {
-        self.state.set_session_picker_options(options);
+        self.state.status.set_context_window_max_tokens(max_tokens);
     }
 
     pub fn set_active_agent_identity(&mut self, name: &str) {
@@ -214,11 +237,11 @@ impl RuntimeCoordinator {
     }
 
     pub fn set_active_persona_icon(&mut self, icon: Option<String>) {
-        self.state.active_persona_icon = icon;
+        self.state.status.active_persona_icon = icon;
     }
 
     pub fn set_agent_cycle_names(&mut self, names: Vec<String>) {
-        self.state.agent_cycle_names = names;
+        self.state.status.agent_cycle_names = names;
     }
 
     pub(crate) fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<std::path::PathBuf>) {
@@ -276,7 +299,7 @@ impl RuntimeCoordinator {
     ) {
         // Pick up any restored input text from cancelled prompts before
         // processing the next event.
-        if let Some(text) = self.state.restored_input_text.take() {
+        if let Some(text) = self.state.input.restored_input_text.take() {
             let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
             let last_line = lines.len().saturating_sub(1) as u16;
             let last_col = lines.last().map(|l| l.len()).unwrap_or(0) as u16;
@@ -305,8 +328,8 @@ impl RuntimeCoordinator {
                     self.trigger_no_interactive_backend_fail_fast(Some(error));
                     return;
                 }
-                self.state.status_line = format!("Terminal input error: {error}");
-                self.fatal_error = Some(self.state.status_line.clone());
+                self.state.status.status_line = format!("Terminal input error: {error}");
+                self.fatal_error = Some(self.state.status.status_line.clone());
                 self.quit_requested = true;
                 self.cancel_controller.request_cancel();
                 return;
@@ -324,21 +347,22 @@ impl RuntimeCoordinator {
     pub fn handle_terminal_event(&mut self, event: TerminalEvent) {
         if let TerminalEvent::Key(TerminalKey::Esc) = event
             && self.state.phase == crate::state::UiPhase::Idle
-            && !self.state.command_palette_open
+            && self.state.picker.active().is_none()
             && self.state.info_panel.is_none()
         {
-            self.state.status_line = "Esc pressed. Press Ctrl+C to quit.".to_string();
+            self.state.status.status_line = "Esc pressed. Press Ctrl+C to quit.".to_string();
         }
 
         if let TerminalEvent::Resize(_) = event {
-            self.state.clear_assistant_projection_cache();
-            self.state.entry_visual_info_dirty = true;
+            self.state.transcript.clear_assistant_projection_cache();
+            self.state.transcript.visual_info_dirty = true;
             self.recompute_layout_for_current_input();
         }
 
         if let TerminalEvent::Paste(text) = &event
-            && self.state.input_mode == InputMode::Insert
-            && !self.state.command_palette_open
+            && self.state.input.mode == InputMode::Insert
+            && (self.state.picker.active().is_none()
+                || self.state.picker.render_kind() == Some(PickerRenderKind::InlineSlash))
             && self.state.info_panel.is_none()
         {
             self.textarea.insert_str(text.as_str());
@@ -354,8 +378,9 @@ impl RuntimeCoordinator {
         }
 
         let changed = if let TerminalEvent::Key(key) = event
-            && self.state.input_mode == InputMode::Insert
-            && !self.state.command_palette_open
+            && self.state.input.mode == InputMode::Insert
+            && (self.state.picker.active().is_none()
+                || self.state.picker.render_kind() == Some(PickerRenderKind::InlineSlash))
             && self.state.info_panel.is_none()
         {
             let handled = self.handle_insert_mode_key(key);
@@ -394,23 +419,6 @@ impl RuntimeCoordinator {
     /// Returns `true` if the event was consumed, `false` if it should fall through
     /// to the normal dispatch path.
     fn handle_insert_mode_key(&mut self, key: TerminalKey) -> bool {
-        // Command palette open? Route to palette, not TextArea.
-        if self.state.command_palette_open {
-            return false;
-        }
-
-        // Picker open? Route to dispatch so rewrite_action handles picker keys
-        // (query filtering, navigation, selection, close).
-        if self.state.model_picker_open {
-            return false;
-        }
-        if self.state.agent_picker_open {
-            return false;
-        }
-        if self.state.session_picker_open {
-            return false;
-        }
-
         // Info panel open? Route to dispatch so rewrite_action handles
         // info panel keys (j/k scrolling, Esc to close, etc.).
         if self.state.info_panel.is_some() {
@@ -418,12 +426,12 @@ impl RuntimeCoordinator {
         }
 
         // Permission prompt active? Don't mutate textarea.
-        if self.state.has_permission_prompt() {
+        if self.state.permission.has_prompt() {
             return false;
         }
 
         // Inline slash open? Handle keys directly (navigation, accept, close).
-        if self.state.inline_slash_open {
+        if self.state.picker.render_kind() == Some(PickerRenderKind::InlineSlash) {
             return self.handle_inline_slash_key(key);
         }
 
@@ -432,7 +440,7 @@ impl RuntimeCoordinator {
             TerminalKey::Enter => {
                 let text = self.textarea.lines().join("\n");
                 self.textarea = ratatui_textarea::TextArea::default();
-                self.state.pending_submit_text = Some(text);
+                self.state.input.pending_submit_text = Some(text);
                 let changed = dispatch_terminal_event(
                     &mut self.state,
                     &TerminalEvent::Key(TerminalKey::Enter),
@@ -616,7 +624,8 @@ impl RuntimeCoordinator {
                         true
                     }
                     UserAction::Noop => {
-                        // rewrite_action modified state (e.g. insert_exit_pending_j set)
+                        // rewrite_action modified input chord state (e.g. the
+                        // insert-exit chord armed)
                         if force_changed {
                             self.mark_render_needed();
                         }
@@ -651,18 +660,13 @@ impl RuntimeCoordinator {
                         self.mark_render_needed();
                         true
                     }
-                    UserAction::InlineSlashAccept => {
+                    UserAction::PickerSubmit(SubmitAction::SlashAccept) => {
                         let _changed = reduce_with_cancel_controller(
                             &mut self.state,
-                            ReducerInput::User(UserAction::InlineSlashAccept),
+                            ReducerInput::User(UserAction::PickerSubmit(SubmitAction::SlashAccept)),
                             Some(&self.cancel_controller),
                         );
                         self.textarea = ratatui_textarea::TextArea::default();
-                        self.state.check_inline_slash("");
-                        self.mark_render_needed();
-                        true
-                    }
-                    UserAction::InlineSlashClose => {
                         self.state.check_inline_slash("");
                         self.mark_render_needed();
                         true
@@ -671,19 +675,23 @@ impl RuntimeCoordinator {
                 }
             }
             TerminalKey::Up | TerminalKey::BackTab => {
-                self.state.inline_slash_move_up();
+                if let Some(s) = self.state.picker.active_state_mut() {
+                    s.move_up();
+                }
                 self.mark_render_needed();
                 true
             }
             TerminalKey::Down => {
-                self.state.inline_slash_move_down();
+                if let Some(s) = self.state.picker.active_state_mut() {
+                    s.move_down();
+                }
                 self.mark_render_needed();
                 true
             }
             TerminalKey::Tab | TerminalKey::Enter => {
                 let changed = reduce_with_cancel_controller(
                     &mut self.state,
-                    ReducerInput::User(UserAction::InlineSlashAccept),
+                    ReducerInput::User(UserAction::PickerSubmit(SubmitAction::SlashAccept)),
                     Some(&self.cancel_controller),
                 );
                 self.textarea = ratatui_textarea::TextArea::default();
@@ -714,9 +722,15 @@ impl RuntimeCoordinator {
 
     /// Navigate up in input history.
     /// Saves current textarea content, then loads history item into textarea.
+    /// History navigation only applies while idle; the phase is
+    /// orchestrator-owned, so the gate lives here, not in InputState.
     fn handle_history_up(&mut self) -> bool {
+        if self.state.phase != crate::state::UiPhase::Idle {
+            return true;
+        }
         let current = self.textarea.lines().join("\n");
-        if let Some(text) = self.state.history_up(&current) {
+        let submitted = self.state.submitted_prompt_texts();
+        if let Some(text) = self.state.input.history_up(&submitted, &current) {
             let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
             self.textarea = ratatui_textarea::TextArea::new(lines);
             self.mark_render_needed();
@@ -727,7 +741,11 @@ impl RuntimeCoordinator {
     /// Navigate down in input history.
     /// Loads next history item or restores saved draft into textarea.
     fn handle_history_down(&mut self) -> bool {
-        if let Some(text) = self.state.history_down() {
+        if self.state.phase != crate::state::UiPhase::Idle {
+            return true;
+        }
+        let submitted = self.state.submitted_prompt_texts();
+        if let Some(text) = self.state.input.history_down(&submitted) {
             let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
             self.textarea = ratatui_textarea::TextArea::new(lines);
             self.mark_render_needed();
@@ -741,16 +759,16 @@ impl RuntimeCoordinator {
     }
 
     fn flush_clipboard_request(&mut self) {
-        let Some(text) = self.state.take_clipboard_request() else {
+        let Some(text) = self.state.input.take_clipboard_request() else {
             return;
         };
 
         match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(text)) {
             Ok(()) => {
-                self.state.status_line = "Copied selection to clipboard.".to_string();
+                self.state.status.status_line = "Copied selection to clipboard.".to_string();
             }
             Err(error) => {
-                self.state.status_line = format!("Clipboard copy failed: {error}");
+                self.state.status.status_line = format!("Clipboard copy failed: {error}");
             }
         }
     }
@@ -806,7 +824,7 @@ impl RuntimeCoordinator {
         }
         message.push_str(" Run `agent` in an interactive terminal and verify TTY access.");
 
-        self.state.status_line = message.clone();
+        self.state.status.status_line = message.clone();
         self.fatal_error = Some(message);
         self.quit_requested = true;
         self.cancel_controller.request_cancel();
@@ -844,53 +862,33 @@ impl RuntimeCoordinator {
             // Flush any pending coalesced events before processing a different event type
             // (preserves ordering: assistant text before tool events, etc.)
             if let Some(event) = pending_assistant.take() {
-                reduce_with_cancel_controller(
-                    &mut self.state,
-                    ReducerInput::Event(Box::new(event)),
-                    Some(&self.cancel_controller),
-                );
+                self.reduce_ui_event(event);
             }
             if let Some(event) = pending_compaction.take() {
-                reduce_with_cancel_controller(
-                    &mut self.state,
-                    ReducerInput::Event(Box::new(event)),
-                    Some(&self.cancel_controller),
-                );
+                self.reduce_ui_event(event);
             }
 
             // Process the current non-coalesceable event
-            reduce_with_cancel_controller(
-                &mut self.state,
-                ReducerInput::from(item),
-                Some(&self.cancel_controller),
-            );
+            match item {
+                TransportItem::User(action) => {
+                    reduce_with_cancel_controller(
+                        &mut self.state,
+                        ReducerInput::User(action),
+                        Some(&self.cancel_controller),
+                    );
+                }
+                TransportItem::Event(event) => {
+                    self.reduce_ui_event(*event);
+                }
+            }
         }
 
         // Flush remaining pending events
         if let Some(event) = pending_assistant.take() {
-            reduce_with_cancel_controller(
-                &mut self.state,
-                ReducerInput::Event(Box::new(event)),
-                Some(&self.cancel_controller),
-            );
+            self.reduce_ui_event(event);
         }
         if let Some(event) = pending_compaction.take() {
-            reduce_with_cancel_controller(
-                &mut self.state,
-                ReducerInput::Event(Box::new(event)),
-                Some(&self.cancel_controller),
-            );
-        }
-
-        // Apply any queued theme switch requests
-        while let Some(name) = self.take_next_theme_switch_request() {
-            if let Some(theme_name) = ThemeName::from_name(&name) {
-                self.theme_name = theme_name;
-                self.theme = theme_name.resolve();
-                self.state.theme = self.theme.clone();
-                self.state.clear_assistant_projection_cache();
-                self.state.entry_visual_info_dirty = true;
-            }
+            self.reduce_ui_event(event);
         }
 
         self.mark_render_needed();
@@ -912,6 +910,7 @@ impl RuntimeCoordinator {
         }
         self.render_needed = false;
         self.last_render_at = Instant::now();
+        self.theme = self.state.theme.clone();
         self.render_frame(live)
     }
 
@@ -949,8 +948,8 @@ impl RuntimeCoordinator {
         };
 
         // Capture values needed inside the FnOnce draw closure (avoid borrowing self mutably)
-        let transcript_following_tail = self.state.transcript_following_tail;
-        let transcript_scroll_offset = self.state.transcript_scroll_offset;
+        let transcript_following_tail = self.state.scroll.following_tail;
+        let transcript_scroll_offset = self.state.scroll.scroll_offset;
 
         // Smuggle the resolved effective_offset out of the FnOnce draw closure so we can
         // write it back to transcript_scroll_offset after draw() returns. This ensures that
@@ -1000,13 +999,8 @@ impl RuntimeCoordinator {
                     .unwrap_or(0)
                 };
                 let pre_left_width = {
-                    let probe = status_left_content(
-                        &self.active_model_identity,
-                        None,
-                        &self.state,
-                        &self.theme,
-                        available_inner_w,
-                    );
+                    let probe =
+                        status_left_content(None, &self.state, &self.theme, available_inner_w);
                     probe
                         .spans
                         .iter()
@@ -1059,40 +1053,31 @@ impl RuntimeCoordinator {
                     frame.render_widget(side_widget, side);
                 }
 
-                if self.state.command_palette_open {
-                    self.render_command_palette(frame, area);
+                match self.state.picker.render_kind() {
+                    Some(PickerRenderKind::CommandPalette) => {
+                        self.render_command_palette(frame, area);
+                    }
+                    Some(PickerRenderKind::Model) => self.render_model_picker(frame, area),
+                    Some(PickerRenderKind::Agent) => self.render_agent_picker(frame, area),
+                    Some(PickerRenderKind::Session) => self.render_session_picker(frame, area),
+                    Some(PickerRenderKind::Theme) => self.render_theme_picker(frame, area),
+                    Some(PickerRenderKind::InlineSlash) | None => {}
                 }
 
                 if self.state.info_panel.is_some() {
                     self.render_info_panel(frame, area);
                 }
-
-                if self.state.model_picker_open {
-                    self.render_model_picker(frame, area);
-                }
-
-                if self.state.agent_picker_open {
-                    self.render_agent_picker(frame, area);
-                }
-
-                if self.state.session_picker_open {
-                    self.render_session_picker(frame, area);
-                }
-
-                if self.state.theme_picker_open {
-                    self.render_theme_picker(frame, area);
-                }
             })
             .map_err(|err| format!("TUI render failed: {err}"))?;
 
-        // Write back the resolved scroll offset so that transcript_scroll_offset always
+        // Write back the resolved scroll offset so that scroll_offset always
         // reflects the actual rendered position. Without this, when following_tail is true
-        // transcript_scroll_offset stays at 0 and the first scroll-up key jumps to the top.
+        // scroll_offset stays at 0 and the first scroll-up key jumps to the top.
         if let Some(offset) = rendered_scroll_offset {
-            self.state.transcript_scroll_offset = offset;
+            self.state.scroll.scroll_offset = offset;
         }
 
-        let cursor_style = self.state.input_mode.cursor_style();
+        let cursor_style = self.state.input.mode.cursor_style();
         let _ = crossterm::execute!(std::io::stdout(), cursor_style);
 
         Ok(())

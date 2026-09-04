@@ -65,17 +65,21 @@ pub(crate) fn lane_2_status_line(
     available_width: usize,
     theme: &TuiTheme,
 ) -> Line<'static> {
-    let current = state.latest_total_tokens.unwrap_or(0);
-    let token_str = match state.context_window_max_tokens() {
+    let current = state.status.latest_total_tokens.unwrap_or(0);
+    let token_str = match state.status.context_window_max_tokens() {
         Some(max) if max > 0 => {
             let pct = ((current as u128).saturating_mul(100) / (max as u128)).min(100) as u64;
             format!("{} ({pct}%)", compact_token_count(current))
         }
         _ => compact_token_count(current),
     };
-    match state.active_agent_identity().filter(|a| !a.is_empty()) {
+    match state
+        .status
+        .active_agent_identity()
+        .filter(|a| !a.is_empty())
+    {
         Some(agent) => {
-            let left = if let Some(ref icon) = state.active_persona_icon {
+            let left = if let Some(ref icon) = state.status.active_persona_icon {
                 format!("{icon} {agent}")
             } else {
                 agent.to_string()
@@ -218,17 +222,15 @@ pub(crate) fn status_indicator_for_test(now_millis: Option<u128>) -> &'static st
 #[test]
 fn status_bar_uses_persona_icon_when_set() {
     let mut state = AppState {
-        active_persona_icon: Some("🧠".to_string()),
+        status: crate::state::StatusState {
+            active_persona_icon: Some("🧠".to_string()),
+            ..Default::default()
+        },
         ..Default::default()
     };
     state.set_active_agent_identity("test-agent");
-    let line = super::status_left_content(
-        "openai/gpt-4o-mini",
-        None,
-        &state,
-        &TuiTheme::default(),
-        120,
-    );
+    state.status.active_model_identity = "openai/gpt-4o-mini".to_string();
+    let line = super::status_left_content(None, &state, &TuiTheme::default(), 120);
     let joined: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(
         joined.contains("🧠"),
@@ -243,17 +245,15 @@ fn status_bar_uses_persona_icon_when_set() {
 #[test]
 fn status_bar_no_icon_when_persona_icon_none() {
     let mut state = AppState {
-        active_persona_icon: None,
+        status: crate::state::StatusState {
+            active_persona_icon: None,
+            ..Default::default()
+        },
         ..Default::default()
     };
     state.set_active_agent_identity("test-agent");
-    let line = super::status_left_content(
-        "openai/gpt-4o-mini",
-        None,
-        &state,
-        &TuiTheme::default(),
-        120,
-    );
+    state.status.active_model_identity = "openai/gpt-4o-mini".to_string();
+    let line = super::status_left_content(None, &state, &TuiTheme::default(), 120);
     let joined: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(
         !joined.contains("🧠"),

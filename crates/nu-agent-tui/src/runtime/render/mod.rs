@@ -92,6 +92,6 @@ mod transcript_test;
 
 /// Returns true when the buffer should be scanned for yank text.
 /// Only needed in Visual mode; avoids per-frame O(width*height) cost otherwise.
-pub(crate) fn should_scan_for_yank(input_mode: InputMode) -> bool {
-    input_mode == InputMode::Visual
+pub(crate) fn should_scan_for_yank(mode: InputMode) -> bool {
+    mode == InputMode::Visual
 }

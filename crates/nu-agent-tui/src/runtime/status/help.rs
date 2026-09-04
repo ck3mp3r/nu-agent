@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use nu_agent_core::transcript::ir::{ContentLine, StyleHint};
 
 use crate::rendering::theme::TuiTheme;
-use crate::state::AppState;
+use crate::state::{AppState, PickerPayload, PickerRenderKind};
 
 use super::content::build_status_lines;
 
@@ -61,11 +61,8 @@ pub(super) fn help_panel_markdown_source() -> &'static str {
     include_str!("../help/help.md")
 }
 
-pub(crate) fn status_panel_lines(
-    state: &AppState,
-    active_model_identity: &str,
-) -> (&'static str, Vec<Line<'static>>) {
-    let lines = build_status_lines(state, active_model_identity)
+pub(crate) fn status_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
+    let lines = build_status_lines(state)
         .into_iter()
         .map(Line::from)
         .collect();
@@ -76,23 +73,30 @@ pub(crate) fn inline_slash_lines_for_render(
     state: &AppState,
     theme: &TuiTheme,
 ) -> Vec<Line<'static>> {
-    if !state.inline_slash_open {
+    if state.picker.render_kind() != Some(PickerRenderKind::InlineSlash) {
         return Vec::new();
     }
+    let Some(picker_state) = state.picker.active_state() else {
+        return Vec::new();
+    };
 
-    state
-        .inline_slash_suggestions()
+    picker_state
+        .options
         .iter()
         .enumerate()
-        .map(|(idx, command)| {
-            let marker = if idx == state.inline_slash_selection {
+        .map(|(idx, opt)| {
+            let command = match &opt.payload {
+                PickerPayload::Slash(c) => *c,
+                _ => unreachable!(),
+            };
+            let marker = if idx == picker_state.selection {
                 "❯"
             } else {
                 " "
             };
             let label = command.label();
             let summary = command.summary();
-            let marker_span = if idx == state.inline_slash_selection {
+            let marker_span = if idx == picker_state.selection {
                 Span::styled(marker, theme.focus)
             } else {
                 Span::raw(marker)

@@ -1,22 +1,18 @@
 use crate::{
     interaction::cancel::CancelController,
     state::{
-        AppState, CompactionStatus, InputMode, PaneFocus, TranscriptRole, UiPhase,
-        selection::TranscriptSelection,
+        ActivePicker, AppState, CommandPaletteAction, InputMode, PickerOption, PickerPayload,
+        PickerRenderKind, ScrollAction, SubmitAction, SwitchRequest, TranscriptRole, UiPhase,
     },
 };
-use nu_agent_core::protocol::event::{
-    PermissionDecision, PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
-};
+use nu_agent_core::protocol::contracts::SharedUiAction;
+use nu_agent_core::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
 use nu_agent_core::protocol::slash::{SlashParseResult, extract_session_id, parse_slash_command};
-use nu_agent_core::transcript::ir::{ContentLine, Role};
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
 
 pub const ESC_ABORT_CONFIRM_STATUS: &str = "Hit escape again to abort.";
 const ABORT_REQUESTED_STATUS: &str = "Abort requested.";
 pub(crate) const VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS: &str =
     "Visual mode requires transcript focus (Tab/h/l).";
-const TRANSCRIPT_PAGE_LINES: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserAction {
@@ -37,14 +33,7 @@ pub enum UserAction {
     CompleteBackward,
     QueryNext,
     ToggleCommandPalette,
-    CommandPaletteMoveUp,
-    CommandPaletteMoveDown,
-    CommandPaletteSelect,
-    CommandPaletteClose,
-    InlineSlashMoveUp,
-    InlineSlashMoveDown,
-    InlineSlashAccept,
-    InlineSlashClose,
+    PickerSubmit(SubmitAction),
     Resize { columns: u16, rows: u16 },
     Quit,
     Esc,
@@ -78,7 +67,7 @@ pub fn reduce_with_cancel_controller(
 ) -> bool {
     match input {
         ReducerInput::User(action) => reduce_user_action(state, action, cancel_controller),
-        ReducerInput::Event(event) => reduce_ui_event_impl(state, *event),
+        ReducerInput::Event(event) => dispatch_ui_event(state, *event),
     }
 }
 
@@ -87,82 +76,82 @@ fn reduce_user_action(
     action: UserAction,
     cancel_controller: Option<&CancelController>,
 ) -> bool {
+    // Selection-extension flag for scroll actions: derived from the input mode
+    // (input domain) and carried into the scroll action.
+    let select = state.input.mode == InputMode::Visual;
     match action {
-        UserAction::InsertChar(ch) => handle_insert_char(state, ch),
         UserAction::InsertNewline => handle_insert_newline(state),
-        UserAction::Backspace => handle_backspace(state),
-        UserAction::Delete => handle_delete(state),
         UserAction::Submit => handle_submit(state),
-        UserAction::MoveCursorLeft => handle_move_cursor_left(state),
-        UserAction::MoveCursorRight => handle_move_cursor_right(state),
-        UserAction::MoveCursorHome => handle_move_cursor_home(state),
-        UserAction::MoveCursorEnd => handle_move_cursor_end(state),
+        // Input editing is handled by the coordinator's TextArea; these
+        // actions are no-ops at the reducer boundary.
+        UserAction::InsertChar(_) | UserAction::Backspace | UserAction::Delete => false,
+        UserAction::MoveCursorLeft
+        | UserAction::MoveCursorRight
+        | UserAction::MoveCursorHome
+        | UserAction::MoveCursorEnd => false,
         UserAction::Noop => false,
         UserAction::EnterInsertMode => handle_enter_insert_mode(state),
         UserAction::EnterVisualMode => handle_enter_visual_mode(state),
         UserAction::EnterNormalModeFromChord => handle_enter_normal_mode_from_chord(state),
-        UserAction::ScrollLineUp => handle_scroll_line_up(state),
-        UserAction::ScrollLineDown => handle_scroll_line_down(state),
-        UserAction::ScrollToTop => handle_scroll_to_top(state),
-        UserAction::ScrollToBottom => handle_scroll_to_bottom(state),
-        UserAction::FocusPaneLeft => handle_focus_pane_left(state),
-        UserAction::FocusPaneRight => handle_focus_pane_right(state),
+        UserAction::ScrollLineUp => state
+            .scroll
+            .reduce_scroll_action(ScrollAction::LineUp { select }),
+        UserAction::ScrollLineDown => state
+            .scroll
+            .reduce_scroll_action(ScrollAction::LineDown { select }),
+        UserAction::ScrollToTop => state
+            .scroll
+            .reduce_scroll_action(ScrollAction::ToTop { select }),
+        UserAction::ScrollToBottom => state
+            .scroll
+            .reduce_scroll_action(ScrollAction::ToBottom { select }),
+        UserAction::FocusPaneLeft => state
+            .scroll
+            .reduce_scroll_action(ScrollAction::FocusPaneLeft),
+        UserAction::FocusPaneRight => state
+            .scroll
+            .reduce_scroll_action(ScrollAction::FocusPaneRight),
         UserAction::YankSelection => handle_yank_selection(state),
         UserAction::PermissionAllowOnce => {
-            let _ = state.submit_permission_decision(PermissionDecision::AllowOnce);
+            if state
+                .permission
+                .submit_decision(PermissionDecision::AllowOnce)
+            {
+                state.ensure_invariants();
+            }
             true
         }
         UserAction::PermissionAllowAlways => {
-            let _ = state.submit_permission_decision(PermissionDecision::AllowAlways);
+            if state
+                .permission
+                .submit_decision(PermissionDecision::AllowAlways)
+            {
+                state.ensure_invariants();
+            }
             true
         }
         UserAction::PermissionDeny => {
-            let _ = state.submit_permission_decision(PermissionDecision::Deny);
+            if state.permission.submit_decision(PermissionDecision::Deny) {
+                state.ensure_invariants();
+            }
             true
         }
         UserAction::Resize { .. } => false,
         UserAction::ToggleCommandPalette => handle_toggle_command_palette(state),
-        UserAction::CommandPaletteMoveUp => {
-            state.command_palette_move_up();
-            true
-        }
-        UserAction::CommandPaletteMoveDown => {
-            state.command_palette_move_down();
-            true
-        }
-        UserAction::CommandPaletteSelect => handle_command_palette_select(state),
-        UserAction::CommandPaletteClose => {
-            state.close_command_palette();
-            true
-        }
-        UserAction::InlineSlashMoveUp => {
-            state.inline_slash_move_up();
-            true
-        }
-        UserAction::InlineSlashMoveDown => {
-            state.inline_slash_move_down();
-            true
-        }
-        UserAction::InlineSlashAccept => handle_inline_slash_accept(state),
-        UserAction::InlineSlashClose => {
-            state.close_inline_slash_suggestions();
-            true
-        }
+        UserAction::PickerSubmit(submit) => handle_picker_submit(state, submit),
         UserAction::HistoryUp => false,
         UserAction::HistoryDown => false,
         UserAction::QueryNext | UserAction::CompleteForward | UserAction::CompleteBackward => false,
-        UserAction::ScrollPageUp => handle_scroll_page_up(state),
-        UserAction::ScrollPageDown => handle_scroll_page_down(state),
+        UserAction::ScrollPageUp => state
+            .scroll
+            .reduce_scroll_action(ScrollAction::PageUp { select }),
+        UserAction::ScrollPageDown => state
+            .scroll
+            .reduce_scroll_action(ScrollAction::PageDown { select }),
         UserAction::Quit => handle_quit(state, cancel_controller),
         UserAction::Esc => handle_escape(state),
         UserAction::EscConfirm => handle_escape_confirm(state, cancel_controller),
     }
-}
-
-fn handle_insert_char(state: &mut AppState, ch: char) -> bool {
-    let _ = state;
-    let _ = ch;
-    false
 }
 
 fn handle_insert_newline(state: &mut AppState) -> bool {
@@ -170,44 +159,34 @@ fn handle_insert_newline(state: &mut AppState) -> bool {
     false
 }
 
-fn handle_backspace(state: &mut AppState) -> bool {
-    let _ = state;
-    false
-}
-
-fn handle_delete(state: &mut AppState) -> bool {
-    let _ = state;
-    false
-}
-
 fn handle_submit(state: &mut AppState) -> bool {
     // handle_submit is only called from non-insert-mode paths (normal mode, etc.)
-    // where there's no textarea. The caller must set pending_submit_text on AppState
-    // before dispatching Submit.
-    let submitted_text = state.pending_submit_text.take().unwrap_or_default();
+    // where there's no textarea. The caller must set pending_submit_text on
+    // state.input before dispatching Submit.
+    let submitted_text = state.input.pending_submit_text.take().unwrap_or_default();
     if submitted_text.trim().is_empty() {
         return false;
     }
 
     match parse_slash_command(&submitted_text) {
         SlashParseResult::Command(nu_agent_core::protocol::slash::SlashCommand::Models) => {
-            state.queue_model_picker_launch_request();
+            state.queue_launch_request(SharedUiAction::Models);
             return true;
         }
         SlashParseResult::Command(nu_agent_core::protocol::slash::SlashCommand::Agent) => {
-            state.queue_agent_picker_launch_request();
+            state.queue_launch_request(SharedUiAction::Agents);
             return true;
         }
         SlashParseResult::Command(nu_agent_core::protocol::slash::SlashCommand::Session) => {
             if let Some(session_id) = extract_session_id(&submitted_text) {
-                state.queue_session_switch_request(session_id.to_string());
+                state.queue_switch_request(SwitchRequest::Session(session_id.to_string()));
             } else {
-                state.queue_session_picker_launch_request();
+                state.queue_launch_request(SharedUiAction::Sessions);
             }
             return true;
         }
         SlashParseResult::Command(nu_agent_core::protocol::slash::SlashCommand::Theme) => {
-            state.queue_theme_picker_launch_request();
+            state.queue_launch_request(SharedUiAction::Themes);
             return true;
         }
         SlashParseResult::Command(_) | SlashParseResult::Unknown(_) => {
@@ -219,26 +198,6 @@ fn handle_submit(state: &mut AppState) -> bool {
 
     state.enqueue_prompt(submitted_text);
     true
-}
-
-fn handle_move_cursor_left(state: &mut AppState) -> bool {
-    let _ = state;
-    false
-}
-
-fn handle_move_cursor_right(state: &mut AppState) -> bool {
-    let _ = state;
-    false
-}
-
-fn handle_move_cursor_home(state: &mut AppState) -> bool {
-    let _ = state;
-    false
-}
-
-fn handle_move_cursor_end(state: &mut AppState) -> bool {
-    let _ = state;
-    false
 }
 
 fn handle_enter_insert_mode(state: &mut AppState) -> bool {
@@ -253,13 +212,12 @@ fn handle_enter_visual_mode(state: &mut AppState) -> bool {
     if state.phase != UiPhase::Idle {
         return false;
     }
-    if state.pane_focus != PaneFocus::Transcript {
-        state.status_line = VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS.to_string();
-        return true;
+    // Scroll domain: focus guard, selection start, status lines. The input
+    // mode transition stays here (input domain).
+    let entered = state.scroll.enter_visual_mode(&mut state.status);
+    if entered {
+        state.input.mode = InputMode::Visual;
     }
-    state.transcript_selection = Some(TranscriptSelection::new(state.cursor_visual_row));
-    state.input_mode = InputMode::Visual;
-    state.status_line = "-- VISUAL --".to_string();
     true
 }
 
@@ -271,216 +229,106 @@ fn handle_enter_normal_mode_from_chord(state: &mut AppState) -> bool {
     false
 }
 
-fn handle_scroll_line_up(state: &mut AppState) -> bool {
-    if state.transcript_following_tail {
-        state.transcript_scroll_offset = state.max_scroll;
-        state.transcript_following_tail = false;
-    }
-    state.cursor_visual_row = state.cursor_visual_row.saturating_sub(1);
-    if state.input_mode == InputMode::Visual
-        && let Some(sel) = &mut state.transcript_selection
-    {
-        sel.set_cursor(state.cursor_visual_row);
-    }
-    let scroll_margin = (state.viewport_height / 3).max(1);
-    if state.cursor_visual_row < state.transcript_scroll_offset + scroll_margin {
-        state.transcript_scroll_offset = state.transcript_scroll_offset.saturating_sub(1);
-    }
-    true
-}
-
-fn handle_scroll_line_down(state: &mut AppState) -> bool {
-    if state.transcript_following_tail {
-        state.transcript_scroll_offset = state.max_scroll;
-        state.transcript_following_tail = false;
-    }
-    let max_visual_row = state.total_visual_rows.saturating_sub(1);
-    state.cursor_visual_row = state
-        .cursor_visual_row
-        .saturating_add(1)
-        .min(max_visual_row);
-    if state.input_mode == InputMode::Visual
-        && let Some(sel) = &mut state.transcript_selection
-    {
-        sel.set_cursor(state.cursor_visual_row);
-    }
-    let scroll_margin = (state.viewport_height / 3).max(1);
-    let viewport_bottom = state
-        .transcript_scroll_offset
-        .saturating_add(state.viewport_height)
-        .saturating_sub(scroll_margin);
-    if state.cursor_visual_row >= viewport_bottom {
-        state.transcript_scroll_offset = state.transcript_scroll_offset.saturating_add(1);
-    }
-    true
-}
-
-fn handle_scroll_to_top(state: &mut AppState) -> bool {
-    if state.transcript_following_tail {
-        state.transcript_scroll_offset = state.max_scroll;
-        state.transcript_following_tail = false;
-    }
-    state.cursor_visual_row = 0;
-    state.transcript_scroll_offset = 0;
-    if state.input_mode == InputMode::Visual
-        && let Some(sel) = &mut state.transcript_selection
-    {
-        sel.move_cursor_to_top();
-    }
-    true
-}
-
-fn handle_scroll_to_bottom(state: &mut AppState) -> bool {
-    state.cursor_visual_row = state.total_visual_rows.saturating_sub(1);
-    if state.input_mode == InputMode::Visual
-        && let Some(sel) = &mut state.transcript_selection
-    {
-        sel.move_cursor_to_bottom(state.total_visual_rows.saturating_sub(1));
-    }
-    state.scroll_transcript_to_bottom();
-    true
-}
-
-fn handle_focus_pane_left(state: &mut AppState) -> bool {
-    state.focus_prev_pane();
-    true
-}
-
-fn handle_focus_pane_right(state: &mut AppState) -> bool {
-    state.focus_next_pane();
-    true
-}
-
 fn handle_yank_selection(state: &mut AppState) -> bool {
-    if state.input_mode != InputMode::Visual {
+    if state.input.mode != InputMode::Visual {
         return false;
     }
-    if let Some(sel) = &state.transcript_selection {
-        let (start_row, end_row) = sel.normalized_range();
-        let offset = state.rendered_line_start_row;
-        let payload: String = state
-            .rendered_line_text
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| {
-                let abs_row = offset + i;
-                abs_row >= start_row && abs_row <= end_row
-            })
-            .map(|(_, text)| text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        if !payload.is_empty() {
-            state.set_clipboard_request(payload);
-            state.status_line = "Yanked selection to clipboard".to_string();
+    // Scroll domain: payload extraction from the rendered viewport. The
+    // clipboard request and status line stay here (input/status domains).
+    if state.scroll.selection.is_some() {
+        let payload = state.scroll.yank_selection();
+        if let Some(payload) = payload {
+            state.input.set_clipboard_request(payload);
+            state.status.status_line = "Yanked selection to clipboard".to_string();
         } else {
-            state.status_line = "Nothing to yank".to_string();
+            state.status.status_line = "Nothing to yank".to_string();
         }
     }
-    state.transcript_selection = None;
     state.enter_normal_mode();
     true
 }
 
 fn handle_toggle_command_palette(state: &mut AppState) -> bool {
-    if state.command_palette_open {
-        state.close_command_palette();
+    if state.picker.render_kind() == Some(PickerRenderKind::CommandPalette) {
+        state.picker.close();
     } else {
-        state.open_command_palette();
+        state.info_panel = None;
+        let entry = state.picker.open(ActivePicker::CommandPalette);
+        entry.state.options = CommandPaletteAction::PALETTE_ACTIONS
+            .iter()
+            .map(|a| PickerOption {
+                id: a.label().to_string(),
+                display: a.label().to_string(),
+                search_text: a.label().to_string(),
+                payload: PickerPayload::Command(*a),
+            })
+            .collect();
     }
     true
 }
 
-fn handle_command_palette_select(state: &mut AppState) -> bool {
-    if let Some(action) = state.command_palette_selected_action() {
-        if action == crate::state::CommandPaletteAction::Models {
-            state.close_command_palette();
-            state.queue_model_picker_launch_request();
-            return true;
+fn handle_picker_submit(state: &mut AppState, submit: SubmitAction) -> bool {
+    match submit {
+        SubmitAction::Switch(req) => {
+            state.queue_switch_request(req);
+            state.picker.close();
+            true
         }
-
-        if action == crate::state::CommandPaletteAction::Agents {
-            state.close_command_palette();
-            state.queue_agent_picker_launch_request();
-            return true;
+        SubmitAction::Launch(kind) => {
+            let action = match kind {
+                ActivePicker::Model => SharedUiAction::Models,
+                ActivePicker::Agent => SharedUiAction::Agents,
+                ActivePicker::Session => SharedUiAction::Sessions,
+                ActivePicker::Theme => SharedUiAction::Themes,
+                _ => return false,
+            };
+            state.picker.close();
+            state.queue_launch_request(action);
+            true
         }
-
-        if action == crate::state::CommandPaletteAction::Sessions {
-            state.close_command_palette();
-            state.queue_session_picker_launch_request();
-            return true;
+        SubmitAction::Command(action) => {
+            if action == crate::state::CommandPaletteAction::Models {
+                state.picker.close();
+                state.queue_launch_request(SharedUiAction::Models);
+                return true;
+            }
+            if action == crate::state::CommandPaletteAction::Agents {
+                state.picker.close();
+                state.queue_launch_request(SharedUiAction::Agents);
+                return true;
+            }
+            if action == crate::state::CommandPaletteAction::Sessions {
+                state.picker.close();
+                state.queue_launch_request(SharedUiAction::Sessions);
+                return true;
+            }
+            if action == crate::state::CommandPaletteAction::Theme {
+                state.picker.close();
+                state.queue_launch_request(SharedUiAction::Themes);
+                return true;
+            }
+            if let Some(panel) = action.info_panel() {
+                state.open_info_panel(panel);
+            } else {
+                state.picker.close();
+            }
+            true
         }
-
-        if action == crate::state::CommandPaletteAction::Theme {
-            state.close_command_palette();
-            state.queue_theme_picker_launch_request();
-            return true;
+        SubmitAction::SlashAccept => {
+            let Some(opt) = state.picker.active_state().and_then(|s| s.selected()) else {
+                return false;
+            };
+            let command = match &opt.payload {
+                PickerPayload::Slash(c) => *c,
+                _ => return false,
+            };
+            let selected = command.label().to_string();
+            state.input.pending_submit_text = Some(selected);
+            state.ensure_invariants();
+            handle_submit(state);
+            true
         }
-
-        if let Some(panel) = action.info_panel() {
-            state.open_info_panel(panel);
-        } else {
-            state.close_command_palette();
-        }
-        return true;
     }
-    false
-}
-
-fn handle_inline_slash_accept(state: &mut AppState) -> bool {
-    let Some(command) = state.inline_slash_selected_command() else {
-        return false;
-    };
-    let selected = command.label().to_string();
-    state.pending_submit_text = Some(selected);
-    state.ensure_invariants();
-    handle_submit(state);
-    true
-}
-
-fn handle_scroll_page_up(state: &mut AppState) -> bool {
-    if state.transcript_following_tail {
-        state.transcript_scroll_offset = state.max_scroll;
-        state.transcript_following_tail = false;
-    }
-    let page = TRANSCRIPT_PAGE_LINES.max(1);
-    state.cursor_visual_row = state.cursor_visual_row.saturating_sub(page);
-    if state.input_mode == InputMode::Visual
-        && let Some(sel) = &mut state.transcript_selection
-    {
-        sel.set_cursor(state.cursor_visual_row);
-    }
-    let scroll_margin = (state.viewport_height / 3).max(1);
-    if state.cursor_visual_row < state.transcript_scroll_offset + scroll_margin {
-        state.transcript_scroll_offset = state.transcript_scroll_offset.saturating_sub(page);
-    }
-    true
-}
-
-fn handle_scroll_page_down(state: &mut AppState) -> bool {
-    if state.transcript_following_tail {
-        state.transcript_scroll_offset = state.max_scroll;
-        state.transcript_following_tail = false;
-    }
-    let page = TRANSCRIPT_PAGE_LINES.max(1);
-    let max_visual_row = state.total_visual_rows.saturating_sub(1);
-    state.cursor_visual_row = state
-        .cursor_visual_row
-        .saturating_add(page)
-        .min(max_visual_row);
-    if state.input_mode == InputMode::Visual
-        && let Some(sel) = &mut state.transcript_selection
-    {
-        sel.set_cursor(state.cursor_visual_row);
-    }
-    let scroll_margin = (state.viewport_height / 3).max(1);
-    let viewport_bottom = state
-        .transcript_scroll_offset
-        .saturating_add(state.viewport_height)
-        .saturating_sub(scroll_margin);
-    if state.cursor_visual_row >= viewport_bottom {
-        state.transcript_scroll_offset = state.transcript_scroll_offset.saturating_add(page);
-    }
-    true
 }
 
 fn handle_quit(state: &mut AppState, cancel_controller: Option<&CancelController>) -> bool {
@@ -498,8 +346,10 @@ fn handle_quit(state: &mut AppState, cancel_controller: Option<&CancelController
 }
 
 fn handle_escape(state: &mut AppState) -> bool {
-    if state.has_permission_prompt() {
-        let _ = state.submit_permission_decision(PermissionDecision::Deny);
+    if state.permission.has_prompt() {
+        if state.permission.submit_decision(PermissionDecision::Deny) {
+            state.ensure_invariants();
+        }
         return true;
     }
 
@@ -508,17 +358,17 @@ fn handle_escape(state: &mut AppState) -> bool {
         return true;
     }
 
-    if state.phase == UiPhase::Idle && state.input_mode == InputMode::Insert {
+    if state.phase == UiPhase::Idle && state.input.mode == InputMode::Insert {
         state.enter_normal_mode();
         return true;
     }
-    if state.phase == UiPhase::Idle && state.input_mode == InputMode::Visual {
-        state.transcript_selection = None;
+    if state.phase == UiPhase::Idle && state.input.mode == InputMode::Visual {
+        state.scroll.selection = None;
         state.enter_normal_mode();
         return true;
     }
     if state.request_abort_confirmation() {
-        state.status_line = ESC_ABORT_CONFIRM_STATUS.to_string();
+        state.status.status_line = ESC_ABORT_CONFIRM_STATUS.to_string();
         return true;
     }
     false
@@ -533,585 +383,138 @@ fn handle_escape_confirm(
             controller.request_cancel();
         }
         state.cancel_and_restore_pending_to_input();
-        state.push_spacer();
-        state.status_line = ABORT_REQUESTED_STATUS.to_string();
+        state.transcript.push_spacer();
+        state.status.status_line = ABORT_REQUESTED_STATUS.to_string();
         return true;
     }
     false
 }
 
-pub(crate) fn reduce_ui_event_impl(state: &mut AppState, event: UiEvent) -> bool {
+/// Dispatch a protocol `UiEvent` to the domain reducers. This is the single
+/// `UiEvent` → domain mapping; both event paths (bus receivers via
+/// `RuntimeCoordinator::reduce_*_event` and the transport drain) converge
+/// here or on the same domain reducers.
+pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
+    use nu_agent_core::bus::{CompactionEvent, LlmEvent, ToolEvent, TurnEvent};
+
     match event {
-        UiEvent::LlmStarted => handle_llm_start(state),
-        UiEvent::Tick => handle_tick(state),
-        UiEvent::ToolStarted {
-            name, arguments, ..
-        } => handle_tool_start(state, &name, &arguments),
-        UiEvent::ToolCompleted {
-            name,
-            arguments,
-            success,
-            display,
-            ..
-        } => handle_tool_end(state, &name, &arguments, success, display),
-        UiEvent::PermissionRequested {
-            request_id,
-            context,
-        } => handle_permission_requested(state, request_id, context),
-        UiEvent::PermissionDecisionSubmitted { .. }
-        | UiEvent::PermissionDecisionTimedOut { .. }
-        | UiEvent::PermissionDecisionIgnored { .. } => false,
+        UiEvent::LlmStarted => crate::state::dispatch_llm_event(state, LlmEvent::Started),
         UiEvent::LlmCompleted {
             response_chars,
+            tool_calls,
             input_tokens,
             output_tokens,
             total_tokens,
-            ..
-        } => handle_llm_end(
+        } => crate::state::dispatch_llm_event(
             state,
-            response_chars,
-            input_tokens,
-            output_tokens,
-            total_tokens,
+            LlmEvent::Completed {
+                response_chars,
+                tool_calls,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+            },
         ),
-        UiEvent::Warning { message } => handle_warning(state, message),
-        UiEvent::TurnError { message } => {
-            let prev_is_spacer = state
-                .transcript_preview
-                .last()
-                .is_some_and(|last| matches!(last.kind, TranscriptEntryKind::Spacer(_)));
-            if !prev_is_spacer && !state.transcript_preview.is_empty() {
-                state.push_spacer();
-            }
-            state.push_spacer();
-            state.push_transcript_line(TranscriptRole::System, format!("Error: {message}"));
-            state.status_line = message.clone();
-            finalize(state);
-            true
+        UiEvent::AssistantMessage { text } => {
+            crate::state::dispatch_llm_event(state, LlmEvent::AssistantMessage { text })
         }
+        UiEvent::ToolStarted {
+            name,
+            source,
+            arguments,
+        } => crate::state::dispatch_tool_event(
+            state,
+            ToolEvent::Started {
+                name,
+                source,
+                arguments,
+            },
+        ),
+        UiEvent::ToolCompleted {
+            name,
+            source,
+            arguments,
+            success,
+            result,
+            display,
+            error_kind,
+            message,
+        } => crate::state::dispatch_tool_event(
+            state,
+            ToolEvent::Completed {
+                name,
+                source,
+                arguments,
+                success,
+                result,
+                display,
+                error_kind,
+                message,
+            },
+        ),
         UiEvent::CompactionStarted { source } => {
-            state.start_compaction_block(&source);
-            true
+            crate::state::dispatch_compaction_event(state, CompactionEvent::Started { source })
         }
         UiEvent::CompactionSummaryChunk {
-            source, aggregated, ..
-        } => handle_compaction_summary_chunk(state, &source, aggregated),
+            source,
+            delta,
+            aggregated,
+        } => crate::state::dispatch_compaction_event(
+            state,
+            CompactionEvent::SummaryChunk {
+                source,
+                delta,
+                aggregated,
+            },
+        ),
         UiEvent::CompactionCompleted {
             source,
-            summary_preview: _,
+            summary_preview,
             summary_body,
-        } => {
-            state.start_compaction_block(&source);
-            state.finish_compaction_block(&source, CompactionStatus::Done);
-            let body = if summary_body.trim().is_empty() {
-                "(empty summary)".to_string()
-            } else {
-                summary_body
-            };
-
-            // Clear streaming state before final render pass
-            if let Some(start) = state.compaction_streaming_start {
-                state.transcript_preview.truncate(start);
+        } => crate::state::dispatch_compaction_event(
+            state,
+            CompactionEvent::Completed {
+                source,
+                summary_preview,
+                summary_body,
+            },
+        ),
+        UiEvent::CompactionFailed { source, message } => crate::state::dispatch_compaction_event(
+            state,
+            CompactionEvent::Failed { source, message },
+        ),
+        UiEvent::Completed { tool_calls } => {
+            crate::state::dispatch_turn_event(state, TurnEvent::Completed { tool_calls })
+        }
+        UiEvent::Tick => {
+            if state.status.status_line.is_empty() {
+                state.status.status_line = "Thinking...".to_string();
             }
-
-            if !body.trim().is_empty() {
-                state.push_transcript_item(TranscriptEntry {
-                    id: 0,
-                    kind: TranscriptEntryKind::Assistant(ProseMessage {
-                        markdown: crate::markdown::unwrap_single_fenced_block(&body),
-                    }),
-                    status: None,
-                });
-            }
-            state.compaction_streaming_start = None;
-            state.push_spacer();
-            state.status_line.clear();
-            // Reset displayed token % — context was freed; wait for next LlmCompleted to update.
-            state.latest_total_tokens = None;
             true
         }
-        UiEvent::CompactionFailed { source, message } => {
-            state.start_compaction_block(&source);
-            state.finish_compaction_block(&source, CompactionStatus::Failed);
-            state.push_transcript_line(
-                TranscriptRole::System,
-                format!("Compaction failed deterministically: {message}"),
-            );
-            state.status_line.clear();
+        UiEvent::TurnError { message } => {
+            if !state.transcript.last_is_spacer() && !state.transcript.is_empty() {
+                state.transcript.push_spacer();
+            }
+            state.transcript.push_spacer();
+            state
+                .transcript
+                .push_transcript_line(TranscriptRole::System, format!("Error: {message}"));
+            state.status.status_line = message.clone();
+            crate::state::dispatch_turn_event(state, TurnEvent::Completed { tool_calls: 0 });
             true
         }
-        UiEvent::AssistantMessage { text } => {
-            log::trace!("reducer: AssistantMessage text_len={}", text.len());
-            handle_assistant_message(state, text)
-        }
-        UiEvent::Completed { .. } => {
-            finalize(state);
-            true
-        }
+        UiEvent::PermissionRequested { .. }
+        | UiEvent::PermissionDecisionSubmitted { .. }
+        | UiEvent::PermissionDecisionTimedOut { .. }
+        | UiEvent::PermissionDecisionIgnored { .. }
+        | UiEvent::Warning { .. } => false,
     }
 }
 
-fn handle_llm_start(state: &mut AppState) -> bool {
-    if state.phase == UiPhase::Idle {
-        state.phase = UiPhase::Busy;
-        state.input_locked = true;
-        state.ensure_invariants();
-    }
-    // Reset streaming state at the start of a new LLM response
-    state.streaming_message_start = None;
-    true
-}
-
-fn handle_tick(state: &mut AppState) -> bool {
-    if state.status_line.is_empty() {
-        state.status_line = "Thinking...".to_string();
-    }
-    true
-}
-
-fn handle_tool_start(state: &mut AppState, name: &str, arguments: &str) -> bool {
-    // Push closing spacer for previous block (if not already a Spacer) + starting
-    // spacer, but only when starting a new tool block (not continuing from a
-    // previous tool call in the same block). Tool calls within a block have no
-    // spacers between them.
-    let is_continuing_tool_block = state.transcript_preview.last().is_some_and(|last| {
-        matches!(
-            &last.kind,
-            TranscriptEntryKind::Tool(_) | TranscriptEntryKind::ToolResult(_)
-        )
-    });
-    if !is_continuing_tool_block {
-        let last_content = state
-            .transcript_preview
-            .iter()
-            .rev()
-            .find(|e| !matches!(&e.kind, TranscriptEntryKind::Spacer(_)))
-            .map(|e| e.role());
-        let prev_is_assistant = matches!(last_content, Some(Role::Assistant));
-
-        if prev_is_assistant {
-            // Only ONE spacer between assistant and tool block
-            // If finalize() already pushed a closing spacer, don't add another
-            let prev_is_spacer = state
-                .transcript_preview
-                .last()
-                .is_some_and(|last| matches!(&last.kind, TranscriptEntryKind::Spacer(_)));
-            if !prev_is_spacer {
-                state.push_spacer();
-            }
-        } else {
-            // Two spacers (closing + starting) for all other transitions
-            let prev_is_spacer = state
-                .transcript_preview
-                .last()
-                .is_some_and(|last| matches!(&last.kind, TranscriptEntryKind::Spacer(_)));
-            // Only push a closing spacer if there is a previous block to close.
-            if !state.transcript_preview.is_empty() && !prev_is_spacer {
-                state.push_spacer(); // closing spacer for previous block
-            }
-            state.push_spacer(); // starting spacer for tool block
-        }
-    }
-    state.start_tool_call(name, arguments);
-    state.status_line = format!("Tool: {name}");
-    true
-}
-
-fn handle_permission_requested(
+pub(crate) fn apply_permission_request_display(
     state: &mut AppState,
-    request_id: String,
-    context: PermissionRequestContext,
-) -> bool {
-    if let Some(display) = &context.pre_authorize_display {
-        append_direct_tool_display(state, display.clone());
-
-        if let Some(tool_key) = state.latest_in_progress_tool_key_for_tool(&context.tool) {
-            state.pre_displayed_tool_keys.insert(tool_key);
-        }
-    }
-
-    state.open_permission_prompt(crate::state::PermissionPrompt {
-        request_id,
-        matched_rule_identity: context.matched_rule_identity,
-        tool: context.tool,
-        source: context.source,
-        mode: context.mode,
-        scope: context.scope,
-        pattern: context.pattern,
-        target_field: context.target_field,
-        summary: context.summary,
-    });
-    true
-}
-
-pub(crate) fn append_direct_tool_display(state: &mut AppState, display: ToolDisplay) -> bool {
-    let suppress_title = should_suppress_redundant_edit_title(&display);
-    let suppress_single_section_stats = suppress_title && display.sections.len() == 1;
-
-    if !suppress_title {
-        state.push_transcript_line(TranscriptRole::ToolDisplay, display.title);
-    }
-
-    for section in display.sections {
-        append_direct_tool_display_section(state, section, suppress_single_section_stats);
-    }
-
-    true
-}
-
-fn should_suppress_redundant_edit_title(display: &ToolDisplay) -> bool {
-    display.title.starts_with("edit ")
-        && display.sections.len() == 1
-        && display.sections[0].language == "diff"
-}
-
-fn append_direct_tool_display_section(
-    state: &mut AppState,
-    section: ToolDisplaySection,
-    suppress_stats_line: bool,
+    context: &PermissionRequestContext,
 ) {
-    state.push_transcript_line(
-        TranscriptRole::ToolDisplay,
-        format!("{} ({})", section.label, section.language),
-    );
-
-    if !suppress_stats_line && let Some(stats) = section.stats {
-        let mut stat_parts = Vec::new();
-        if let Some(files_changed) = stats.files_changed {
-            stat_parts.push(format!("files={files_changed}"));
-        }
-        if let Some(insertions) = stats.insertions {
-            stat_parts.push(format!("+{insertions}"));
-        }
-        if let Some(deletions) = stats.deletions {
-            stat_parts.push(format!("-{deletions}"));
-        }
-        if let Some(true) = stats.diff_truncated {
-            stat_parts.push("truncated=true".to_string());
-        }
-        if !stat_parts.is_empty() {
-            state.push_transcript_line(TranscriptRole::ToolDisplay, stat_parts.join(" "));
-        }
-    }
-
-    let section_content = if section.language == "diff" {
-        add_diff_line_number_readability(&section.content)
-    } else {
-        section.content
-    };
-
-    let markdown = format!("```{}\n{}\n```", section.language, section_content);
-    for rendered_line in state.project_assistant_markdown_lines(&markdown) {
-        let text: String = rendered_line
-            .spans
-            .iter()
-            .map(|s| s.text.as_str())
-            .collect();
-        if text.trim().is_empty() {
-            continue;
-        }
-        state.push_transcript_line(TranscriptRole::ToolDisplay, text);
-    }
-}
-
-fn handle_tool_end(
-    state: &mut AppState,
-    name: &str,
-    arguments: &str,
-    success: bool,
-    display: Option<ToolDisplay>,
-) -> bool {
-    state.finish_tool_call(name, arguments, success);
-
-    let tool_key = format!("{name}\n{arguments}");
-    if state.pre_displayed_tool_keys.remove(&tool_key) {
-        // Display was already pushed during permission request - skip
-    } else if let Some(display) = display {
-        append_direct_tool_display(state, display);
-    }
-
-    // NO push_spacer() here — tool calls within the same block have no spacers between them
-    state.status_line = "Thinking...".to_string();
-    true
-}
-
-fn parse_hunk_start(line: &str, prefix: char) -> Option<usize> {
-    let mut chars = line.chars();
-    while let Some(ch) = chars.next() {
-        if ch == prefix {
-            let remainder = chars.as_str();
-            let digits: String = remainder
-                .chars()
-                .take_while(|ch| ch.is_ascii_digit())
-                .collect();
-            if digits.is_empty() {
-                return None;
-            }
-            return digits.parse::<usize>().ok();
-        }
-    }
-    None
-}
-
-fn add_diff_line_number_readability(diff: &str) -> String {
-    let mut old_line: Option<usize> = None;
-    let mut new_line: Option<usize> = None;
-    let mut out = String::new();
-
-    for segment in diff.split_inclusive('\n') {
-        let (line, newline) = if let Some(stripped) = segment.strip_suffix('\n') {
-            (stripped, "\n")
-        } else {
-            (segment, "")
-        };
-
-        if line.starts_with("@@") {
-            old_line = parse_hunk_start(line, '-');
-            new_line = parse_hunk_start(line, '+');
-            out.push_str(line);
-            out.push_str(newline);
-            continue;
-        }
-
-        if line.starts_with("--- ") || line.starts_with("+++ ") || line.starts_with("\\ ") {
-            out.push_str(line);
-            out.push_str(newline);
-            continue;
-        }
-
-        let mut chars = line.chars();
-        let prefix = chars.next();
-        let body = chars.as_str();
-
-        match (prefix, old_line, new_line) {
-            (Some(' '), Some(old), Some(new)) => {
-                out.push_str(&format!(" {old:>4} {new:>4} │{body}{newline}"));
-                old_line = Some(old.saturating_add(1));
-                new_line = Some(new.saturating_add(1));
-            }
-            (Some('-'), Some(old), _) => {
-                out.push_str(&format!("-{old:>4}      │{body}{newline}"));
-                old_line = Some(old.saturating_add(1));
-            }
-            (Some('+'), _, Some(new)) => {
-                out.push_str(&format!("+     {new:>4} │{body}{newline}"));
-                new_line = Some(new.saturating_add(1));
-            }
-            _ => {
-                out.push_str(line);
-                out.push_str(newline);
-            }
-        }
-    }
-
-    out
-}
-
-fn handle_llm_end(
-    state: &mut AppState,
-    response_chars: usize,
-    input_tokens: u64,
-    output_tokens: u64,
-    total_tokens: u64,
-) -> bool {
-    state.record_token_usage(input_tokens, output_tokens, total_tokens);
-    state.status_line = format!("Response ready ({response_chars} chars)");
-    true
-}
-
-fn handle_warning(state: &mut AppState, message: String) -> bool {
-    state.status_line = message;
-    true
-}
-
-fn handle_assistant_message(state: &mut AppState, text: String) -> bool {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    // If this is the first delta, push closing spacer for previous block (if not
-    // already a Spacer) + starting spacer, and record where the message starts.
-    if state.streaming_message_start.is_none() {
-        // Check if previous block was a tool block (skip spacers to find last content)
-        let last_content = state
-            .transcript_preview
-            .iter()
-            .rev()
-            .find(|e| !matches!(&e.kind, TranscriptEntryKind::Spacer(_)))
-            .map(|e| e.role());
-        let prev_is_tool_block = matches!(last_content, Some(Role::Tool) | Some(Role::ToolDisplay));
-
-        if prev_is_tool_block {
-            // Only ONE spacer between tool block and assistant
-            state.push_spacer();
-        } else {
-            // Two spacers (closing + starting) for all other transitions
-            let prev_is_spacer = state
-                .transcript_preview
-                .last()
-                .is_some_and(|last| matches!(&last.kind, TranscriptEntryKind::Spacer(_)));
-            // Only push a closing spacer if there is a previous block to close.
-            if !state.transcript_preview.is_empty() && !prev_is_spacer {
-                state.push_spacer(); // closing spacer for previous block
-            }
-            state.push_spacer(); // starting spacer for assistant block
-        }
-        state.streaming_message_start = Some(state.transcript_preview.len());
-    }
-
-    // Remove previous rendering of this message
-    if let Some(start) = state.streaming_message_start {
-        state.transcript_preview.truncate(start);
-        state.clear_assistant_projection_cache();
-    }
-
-    // Project the full accumulated text through markdown
-    let projected_for_dedup = state.project_assistant_markdown_lines(trimmed);
-    if assistant_diff_regurgitation_is_redundant(state, &projected_for_dedup) {
-        return false;
-    }
-
-    // Always follow tail with ListState
-    state.scroll_transcript_to_bottom();
-    state.push_transcript_item(TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::Assistant(ProseMessage {
-            markdown: trimmed.to_string(),
-        }),
-        status: None,
-    });
-    true
-}
-
-fn handle_compaction_summary_chunk(state: &mut AppState, source: &str, text: String) -> bool {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    // Ensure compaction block is started (idempotent)
-    state.start_compaction_block(source);
-
-    // Track streaming start position
-    if state.compaction_streaming_start.is_none() {
-        state.compaction_streaming_start = Some(state.transcript_preview.len());
-    }
-
-    // Remove previous rendering of this streaming message
-    if let Some(start) = state.compaction_streaming_start {
-        state.transcript_preview.truncate(start);
-        state.clear_assistant_projection_cache();
-    }
-
-    // Store raw markdown — projected at render time with canvas width
-    state.scroll_transcript_to_bottom();
-    state.push_transcript_item(TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::Assistant(ProseMessage {
-            markdown: crate::markdown::unwrap_single_fenced_block(trimmed),
-        }),
-        status: None,
-    });
-    true
-}
-
-fn assistant_diff_regurgitation_is_redundant(
-    state: &AppState,
-    assistant_lines: &[ContentLine],
-) -> bool {
-    let latest_tool_display_diff = latest_tool_display_diff_lines(state);
-    let Some(latest_tool_display_diff) = latest_tool_display_diff else {
-        return false;
-    };
-
-    let candidate = assistant_lines
-        .iter()
-        .map(|cl| cl.spans.iter().map(|s| s.text.as_str()).collect::<String>())
-        .map(|line| normalize_diff_line_for_comparison(line.trim()))
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
-
-    if candidate.is_empty() {
-        return false;
-    }
-
-    let contains_diff_signature = candidate.iter().any(|line| {
-        line.starts_with("--- ") || line.starts_with("+++ ") || line.starts_with("@@ ")
-    });
-    if !contains_diff_signature {
-        return false;
-    }
-
-    let diff_lines = latest_tool_display_diff
-        .iter()
-        .map(|line| normalize_diff_line_for_comparison(line.trim()))
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
-
-    candidate.iter().all(|line| {
-        diff_lines.contains(line)
-            || line.eq_ignore_ascii_case("dry-run diff")
-            || line.eq_ignore_ascii_case("dry run diff")
-            || line.ends_with(':')
-    })
-}
-
-fn normalize_diff_line_for_comparison(line: &str) -> String {
-    if let Some((_, rhs)) = line.split_once('│') {
-        let rhs = rhs.trim_start();
-        if line.starts_with('+') {
-            return format!("+{rhs}");
-        }
-        if line.starts_with('-') {
-            return format!("-{rhs}");
-        }
-        return format!(" {rhs}");
-    }
-
-    line.to_string()
-}
-
-fn latest_tool_display_diff_lines(state: &AppState) -> Option<Vec<String>> {
-    let mut lines = Vec::new();
-    for entry in state.transcript_preview.iter().rev() {
-        if entry.role() == nu_agent_core::transcript::ir::Role::ToolDisplay {
-            lines.push(entry.text());
-            continue;
-        }
-
-        if !lines.is_empty() {
-            break;
-        }
-    }
-
-    if lines.is_empty() {
-        return None;
-    }
-
-    lines.reverse();
-    Some(
-        lines
-            .into_iter()
-            .filter(|line| {
-                line.starts_with("--- ")
-                    || line.starts_with("+++ ")
-                    || line.starts_with("@@ ")
-                    || line.starts_with(' ')
-                    || line.starts_with('-')
-                    || line.starts_with('+')
-                    || line.starts_with('\\')
-            })
-            .collect(),
-    )
-}
-
-fn finalize(state: &mut AppState) -> bool {
-    state.finalize_cycle();
-    state.push_spacer();
-    state.input_locked = false;
-    state.status_line.clear();
-    // Reset streaming state when the LLM response is complete
-    state.streaming_message_start = None;
-    true
+    crate::state::note_permission_request_display(&mut state.tool, &mut state.transcript, context);
 }

@@ -1,5 +1,5 @@
 use crate::runtime::session_picker::{relative_timestamp, session_picker_table_model};
-use crate::state::{AppState, SessionPickerOption};
+use crate::state::{ActivePicker, AppState, PickerOption, PickerPayload};
 
 #[test]
 fn relative_timestamp_seconds() {
@@ -52,7 +52,8 @@ fn relative_timestamp_years() {
 
 #[test]
 fn session_picker_table_model_empty() {
-    let state = AppState::default();
+    let mut state = AppState::default();
+    state.picker.open(ActivePicker::Session);
     let model = session_picker_table_model(&state, 20);
     assert!(model.rows.is_empty());
     assert_eq!(model.query_line.to_string(), "Query: ");
@@ -62,21 +63,32 @@ fn session_picker_table_model_empty() {
 fn session_picker_table_model_with_options() {
     let mut state = AppState::default();
     let now = chrono::Utc::now();
-    state.set_session_picker_options(vec![
-        SessionPickerOption {
-            id: "abc123def456789".to_string(),
-            title: Some("My Session".to_string()),
-            created_at: now - chrono::Duration::hours(2),
-            display: "My Session (abc123def456789)".to_string(),
-        },
-        SessionPickerOption {
-            id: "xyz789".to_string(),
-            title: None,
-            created_at: now - chrono::Duration::days(1),
-            display: "(untitled) (xyz789)".to_string(),
-        },
-    ]);
-    state.open_session_picker();
+    state.set_picker_options(
+        ActivePicker::Session,
+        vec![
+            PickerOption {
+                id: "abc123def456789".to_string(),
+                display: "My Session (abc123def456789)".to_string(),
+                search_text: "My Session (abc123def456789)".to_string(),
+                payload: PickerPayload::Session {
+                    session_id: "abc123def456789".to_string(),
+                    title: Some("My Session".to_string()),
+                    created_at: now - chrono::Duration::hours(2),
+                },
+            },
+            PickerOption {
+                id: "xyz789".to_string(),
+                display: "(untitled) (xyz789)".to_string(),
+                search_text: "(untitled) (xyz789)".to_string(),
+                payload: PickerPayload::Session {
+                    session_id: "xyz789".to_string(),
+                    title: None,
+                    created_at: now - chrono::Duration::days(1),
+                },
+            },
+        ],
+    );
+    state.picker.open(ActivePicker::Session);
 
     let model = session_picker_table_model(&state, 20);
     assert_eq!(model.rows.len(), 2);
@@ -90,16 +102,20 @@ fn session_picker_table_model_with_options() {
 fn session_picker_table_model_overflow_cue() {
     let mut state = AppState::default();
     let now = chrono::Utc::now();
-    let options: Vec<SessionPickerOption> = (0..5)
-        .map(|i| SessionPickerOption {
+    let options: Vec<PickerOption> = (0..5)
+        .map(|i| PickerOption {
             id: format!("id{i}"),
-            title: Some(format!("Session {i}")),
-            created_at: now - chrono::Duration::hours(i),
             display: format!("Session {i} (id{i})"),
+            search_text: format!("Session {i} (id{i})"),
+            payload: PickerPayload::Session {
+                session_id: format!("id{i}"),
+                title: Some(format!("Session {i}")),
+                created_at: now - chrono::Duration::hours(i),
+            },
         })
         .collect();
-    state.set_session_picker_options(options);
-    state.open_session_picker();
+    state.set_picker_options(ActivePicker::Session, options);
+    state.picker.open(ActivePicker::Session);
 
     // popup_height=5 → inner_height=3 → query=1, header=1 → available_rows=1
     let model = session_picker_table_model(&state, 5);

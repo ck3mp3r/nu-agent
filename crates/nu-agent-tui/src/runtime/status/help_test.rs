@@ -1,6 +1,6 @@
 use ratatui::text::Line;
 
-use crate::state::AppState;
+use crate::state::{AppState, PickerPayload};
 pub(crate) fn help_panel_max_scroll_for_test(lines: &[Line<'_>], viewport_height: u16) -> usize {
     crate::runtime::panels::help_panel_max_scroll(lines, viewport_height, 80)
 }
@@ -52,13 +52,11 @@ pub(crate) fn help_panel_scroll_offset_for_test(
 
 pub(crate) fn status_panel_scroll_offset_for_test(
     state: &AppState,
-    active_model_identity: &str,
     viewport_height: u16,
     viewport_width: u16,
     requested_scroll: usize,
 ) -> usize {
-    let (_title, lines) =
-        crate::runtime::status::help::status_panel_lines(state, active_model_identity);
+    let (_title, lines) = crate::runtime::status::help::status_panel_lines(state);
     requested_scroll.min(crate::runtime::panels::help_panel_max_scroll(
         &lines,
         viewport_height,
@@ -188,11 +186,11 @@ pub(crate) fn lane_2_status_line_for_test(state: &AppState, width: usize) -> Lin
 pub(crate) fn status_left_content_for_test(
     model: &str,
     busy_millis: Option<u128>,
-    state: &AppState,
+    state: &mut AppState,
     width: usize,
 ) -> Line<'static> {
+    state.status.active_model_identity = model.to_string();
     crate::runtime::status::status_left_content(
-        model,
         busy_millis,
         state,
         &crate::rendering::theme::TuiTheme::default(),
@@ -211,8 +209,12 @@ pub(crate) fn status_right_content_for_test(
     )
 }
 
-pub(crate) fn status_lines_for_test(state: &AppState, active_model_identity: &str) -> Vec<String> {
-    crate::runtime::status::build_status_lines(state, active_model_identity)
+pub(crate) fn status_lines_for_test(
+    state: &mut AppState,
+    active_model_identity: &str,
+) -> Vec<String> {
+    state.status.active_model_identity = active_model_identity.to_string();
+    crate::runtime::status::build_status_lines(state)
 }
 
 pub(crate) fn cursor_style_for_test(
@@ -249,7 +251,7 @@ pub(crate) fn input_rows_with_prompt_for_test(state: &AppState, pane_width: u16)
         crate::rendering::layout::wrapped_input_rows("", pane_width.saturating_sub(2) as usize);
 
     let mut lines = Vec::new();
-    let prompt_prefix = input_prompt_prefix(state.input_mode);
+    let prompt_prefix = input_prompt_prefix(state.input.mode);
     if let Some((first, rest)) = rows.split_first() {
         lines.push(format!("{prompt_prefix}{first}"));
         for row in rest {
@@ -261,24 +263,37 @@ pub(crate) fn input_rows_with_prompt_for_test(state: &AppState, pane_width: u16)
 }
 
 pub(crate) fn model_picker_row_cells_for_test(state: &AppState) -> Vec<Vec<String>> {
-    state
-        .model_picker_filtered_options()
+    let Some(picker_state) = state.picker.active_state() else {
+        return Vec::new();
+    };
+    picker_state
+        .filtered()
         .iter()
-        .map(|option| {
-            let active = if option.active { "*" } else { "" };
-            vec![option.identity.clone(), active.to_string()]
+        .map(|opt| {
+            let (identity, active) = match &opt.payload {
+                PickerPayload::Model { identity, .. } => (identity.clone(), false),
+                _ => (String::new(), false),
+            };
+            let active = if active { "*" } else { "" };
+            vec![identity, active.to_string()]
         })
         .collect()
 }
 
 pub(crate) fn agent_picker_row_cells_for_test(state: &AppState) -> Vec<Vec<String>> {
-    state
-        .agent_picker_filtered_options()
+    let Some(picker_state) = state.picker.active_state() else {
+        return Vec::new();
+    };
+    picker_state
+        .filtered()
         .iter()
-        .map(|option| {
-            let active = if option.active { "*" } else { "" };
-            let desc = option.description.as_deref().unwrap_or("");
-            vec![option.name.clone(), desc.to_string(), active.to_string()]
+        .map(|opt| {
+            let (name, active) = match &opt.payload {
+                PickerPayload::Agent { name, active } => (name.clone(), *active),
+                _ => (String::new(), false),
+            };
+            let active = if active { "*" } else { "" };
+            vec![name, String::new(), active.to_string()]
         })
         .collect()
 }

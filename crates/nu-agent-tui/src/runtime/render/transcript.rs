@@ -38,9 +38,13 @@ impl RuntimeCoordinator {
             let viewport_height = transcript_list_area.height as usize;
 
             // Recompute entry visual info when dirty (entries added, evicted, or resize)
-            if self.state.entry_visual_info_dirty || self.state.entry_visual_info.is_empty() {
-                self.state.recompute_entry_visual_info(width);
-                self.state.entry_visual_info_dirty = false;
+            if self.state.transcript.visual_info_dirty
+                || self.state.scroll.entry_visual_info.is_empty()
+            {
+                self.state
+                    .transcript
+                    .recompute_entry_visual_info(&mut self.state.scroll, width);
+                self.state.transcript.visual_info_dirty = false;
             }
 
             let entries_for_render = transcript_entries_for_render(&self.state).to_vec();
@@ -48,35 +52,32 @@ impl RuntimeCoordinator {
             // Compute total visual rows from entry_visual_info
             let total_visual_rows = self
                 .state
+                .scroll
                 .entry_visual_info
                 .last()
                 .map(|i| i.start_visual_row + i.visual_row_count)
                 .unwrap_or(0);
 
-            self.state.viewport_height = viewport_height;
-            self.state.total_visual_rows = total_visual_rows;
-            let max_scroll: usize = total_visual_rows.saturating_sub(viewport_height);
-            self.state.max_scroll = max_scroll;
+            self.state.scroll.viewport_height = viewport_height;
+            let max_scroll = self.state.scroll.sync_after_render(total_visual_rows);
             let effective_offset: usize = if transcript_following_tail {
                 max_scroll
             } else {
                 transcript_scroll_offset.min(max_scroll)
             };
             *rendered_scroll_offset = Some(effective_offset);
-            // When following tail, keep cursor at the last visual row
-            if transcript_following_tail {
-                self.state.cursor_visual_row = total_visual_rows.saturating_sub(1);
-            }
-            // When not tailing, cursor_visual_row is user-controlled — don't touch it
+            // When following tail, sync_after_render keeps the cursor at the
+            // last visual row; when not tailing, cursor_visual_row is
+            // user-controlled — untouched.
 
             // Binary search for visible entries
-            let first_visible = self.state.entry_visual_info.partition_point(|info| {
+            let first_visible = self.state.scroll.entry_visual_info.partition_point(|info| {
                 info.start_visual_row + info.visual_row_count <= effective_offset
             });
-            let last_visible = self
-                .state
-                .entry_visual_info
-                .partition_point(|info| info.start_visual_row < effective_offset + viewport_height);
+            let last_visible =
+                self.state.scroll.entry_visual_info.partition_point(|info| {
+                    info.start_visual_row < effective_offset + viewport_height
+                });
 
             // Only render visible entries
             let mut all_lines: Vec<Line<'static>> = Vec::new();
@@ -100,7 +101,7 @@ impl RuntimeCoordinator {
                 let entry_lines = renderer.render_cached(
                     &block,
                     &ctx,
-                    self.state.assistant_projection_cache_mut(),
+                    self.state.transcript.assistant_projection_cache_mut(),
                 );
                 for _ in 0..entry_lines.len() {
                     entry_indices.push(idx);
@@ -133,10 +134,11 @@ impl RuntimeCoordinator {
 
             // Expand entry_indices to visual rows for cursor/selection mapping
             let expanded_entry_indices = expand_to_visual_rows(entry_indices, &all_lines, width);
-            self.state.entry_indices = expanded_entry_indices;
+            self.state.scroll.entry_indices = expanded_entry_indices;
 
             let partial_offset = effective_offset.saturating_sub(
                 self.state
+                    .scroll
                     .entry_visual_info
                     .get(first_visible)
                     .map(|i| i.start_visual_row)
@@ -150,7 +152,7 @@ impl RuntimeCoordinator {
             // Fill user prompt rows (and adjacent spacers) with full-width background
             let user_bg = self.theme.row_user_bg;
             for row in 0..viewport_height {
-                if let Some(&entry_idx) = self.state.entry_indices.get(partial_offset + row)
+                if let Some(&entry_idx) = self.state.scroll.entry_indices.get(partial_offset + row)
                     && row_needs_user_bg(&entries_for_render, entry_idx)
                 {
                     let row_screen_y = transcript_list_area.y + row as u16;
@@ -170,7 +172,7 @@ impl RuntimeCoordinator {
 
             // Store rendered text per visible viewport row for yank support
             // Only scan the buffer in Visual mode to avoid per-frame O(width*height) cost.
-            if super::should_scan_for_yank(self.state.input_mode) {
+            if super::should_scan_for_yank(self.state.input.mode) {
                 let mut rendered_text: Vec<String> = Vec::with_capacity(viewport_height);
                 for row in 0..viewport_height {
                     let row_screen_y = transcript_list_area.y + row as u16;
@@ -185,13 +187,13 @@ impl RuntimeCoordinator {
                     }
                     rendered_text.push(row_text.trim_end().to_string());
                 }
-                self.state.rendered_line_text = rendered_text;
-                self.state.rendered_line_start_row = effective_offset;
+                self.state.scroll.rendered_line_text = rendered_text;
+                self.state.scroll.rendered_line_start_row = effective_offset;
             }
 
             // Post-render buffer manipulation: apply selection highlight to visual rows
-            if self.state.input_mode == InputMode::Visual
-                && let Some(sel) = &self.state.transcript_selection
+            if self.state.input.mode == InputMode::Visual
+                && let Some(sel) = &self.state.scroll.selection
             {
                 let (sel_start, sel_end) = sel.normalized_range();
                 Self::apply_selection_highlight(
@@ -206,13 +208,13 @@ impl RuntimeCoordinator {
             }
 
             // Overlay > cursor indicator at the correct screen position
-            if self.state.pane_focus == PaneFocus::Transcript
-                && self.state.cursor_visual_row >= effective_offset
-                && self.state.cursor_visual_row < effective_offset + viewport_height
-                && (self.state.input_mode == InputMode::Normal
-                    || self.state.input_mode == InputMode::Visual)
+            if self.state.scroll.pane_focus == PaneFocus::Transcript
+                && self.state.scroll.cursor_visual_row >= effective_offset
+                && self.state.scroll.cursor_visual_row < effective_offset + viewport_height
+                && (self.state.input.mode == InputMode::Normal
+                    || self.state.input.mode == InputMode::Visual)
             {
-                let cursor_y = (self.state.cursor_visual_row - effective_offset) as u16;
+                let cursor_y = (self.state.scroll.cursor_visual_row - effective_offset) as u16;
                 let cursor_screen_y = transcript_list_area.y + cursor_y;
                 frame.render_widget(
                     Paragraph::new(Line::from(Span::styled("> ", self.theme.focus))),

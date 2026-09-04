@@ -34,7 +34,12 @@ fn set_active_persona_icon_updates_state() {
     ui.set_active_persona_icon(Some("icon".to_string()));
 
     assert_eq!(
-        ui.renderer.coordinator.state.active_persona_icon.as_deref(),
+        ui.renderer
+            .coordinator
+            .state
+            .status
+            .active_persona_icon
+            .as_deref(),
         Some("icon")
     );
 }
@@ -46,7 +51,10 @@ fn set_active_persona_icon_clears_state_when_none() {
     ui.set_active_persona_icon(Some("icon".to_string()));
     ui.set_active_persona_icon(None);
 
-    assert_eq!(ui.renderer.coordinator.state.active_persona_icon, None);
+    assert_eq!(
+        ui.renderer.coordinator.state.status.active_persona_icon,
+        None
+    );
 }
 
 #[test]
@@ -66,10 +74,14 @@ fn permission_event_requested_opens_permission_prompt() -> Result<()> {
             pre_authorize_display: None,
         }),
     };
-    let ui_event =
-        Option::<UiEvent>::from(event).ok_or("PermissionEvent should convert to UiEvent")?;
-    ui.renderer.coordinator.state.reduce_ui_event(ui_event);
-    assert!(ui.renderer.coordinator.state.has_permission_prompt());
+    assert!(
+        ui.renderer
+            .coordinator
+            .state
+            .permission
+            .reduce_permission_event(event)
+    );
+    assert!(ui.renderer.coordinator.state.permission.has_prompt());
     Ok(())
 }
 

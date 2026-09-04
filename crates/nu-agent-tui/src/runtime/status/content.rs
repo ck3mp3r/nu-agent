@@ -6,13 +6,14 @@ use crate::{rendering::theme::TuiTheme, state::AppState};
 
 use super::format::{compact_token_count, ellipsize, format_pwd, status_indicator, tail_ellipsize};
 
-pub(crate) fn build_status_lines(state: &AppState, active_model_identity: &str) -> Vec<String> {
-    let (configured, enabled, disabled, failed) = state.mcp_counts();
+pub(crate) fn build_status_lines(state: &AppState) -> Vec<String> {
+    let (configured, enabled, disabled, failed) = state.status.mcp_counts();
     let model_phase = model_activity_label(state);
+    let active_model_identity = state.status.active_model_identity.as_str();
 
     let failure_line = format_mcp_failure_line(state, 64, 48, 100);
 
-    let model_line = match state.active_agent_identity() {
+    let model_line = match state.status.active_agent_identity() {
         Some(agent) => format!(
             "Model: {} ({model_phase}) | agent: {agent}",
             ellipsize(active_model_identity, 60)
@@ -30,15 +31,15 @@ pub(crate) fn build_status_lines(state: &AppState, active_model_identity: &str) 
         ),
         format!(
             "LLM-visible MCP tools: {}",
-            state.llm_visible_mcp_tool_count()
+            state.status.llm_visible_mcp_tool_count()
         ),
         failure_line,
     ]
 }
 
 fn token_string_for_state(state: &AppState) -> Option<String> {
-    let current = state.latest_total_tokens.unwrap_or(0);
-    let s = match state.context_window_max_tokens() {
+    let current = state.status.latest_total_tokens.unwrap_or(0);
+    let s = match state.status.context_window_max_tokens() {
         Some(max) if max > 0 => {
             let pct = ((current as u128).saturating_mul(100) / (max as u128)).min(100) as u64;
             format!("{} ({pct}%)", compact_token_count(current))
@@ -49,12 +50,12 @@ fn token_string_for_state(state: &AppState) -> Option<String> {
 }
 
 pub(crate) fn status_left_content(
-    model: &str,
     busy_millis: Option<u128>,
     state: &AppState,
     theme: &TuiTheme,
     available_width: usize,
 ) -> Line<'static> {
+    let model = state.status.active_model_identity.as_str();
     const SEP: &str = " ┃ ";
     const SEP_WIDTH: usize = 3;
 
@@ -68,9 +69,12 @@ pub(crate) fn status_left_content(
     let prefix_width = 2usize;
     let budget = available_width.saturating_sub(prefix_width);
 
-    let agent_opt = state.active_agent_identity().filter(|a| !a.is_empty());
+    let agent_opt = state
+        .status
+        .active_agent_identity()
+        .filter(|a| !a.is_empty());
     let agent_str: Option<String> = agent_opt.map(|agent| {
-        if let Some(icon) = &state.active_persona_icon {
+        if let Some(icon) = &state.status.active_persona_icon {
             format!("{icon} {agent}")
         } else {
             agent.to_string()
@@ -152,9 +156,9 @@ pub(crate) fn model_activity_label(state: &AppState) -> &'static str {
     match state.phase {
         crate::state::UiPhase::Busy | crate::state::UiPhase::AbortPending => "busy",
         crate::state::UiPhase::Idle => {
-            if state.status_line == "Thinking..."
-                || state.status_line.starts_with("Tool: ")
-                || state.compaction_in_progress()
+            if state.status.status_line == "Thinking..."
+                || state.status.status_line.starts_with("Tool: ")
+                || state.compaction.in_progress()
             {
                 "busy"
             } else {
@@ -170,7 +174,7 @@ fn format_mcp_failure_line(
     max_reason_chars: usize,
     max_line_chars: usize,
 ) -> String {
-    let failures = state.failed_mcp_servers_with_reasons();
+    let failures = state.status.failed_mcp_servers_with_reasons();
     if failures.is_empty() {
         return "Failures: none (healthy)".to_string();
     }

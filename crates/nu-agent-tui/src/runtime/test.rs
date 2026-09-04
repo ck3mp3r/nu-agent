@@ -9,7 +9,7 @@ use std::{
 use crate::rendering::layout::wrapped_input_rows;
 use crate::runtime::renderer_test::{CapturingRenderer, FakeRenderer};
 use crate::runtime::status::test::{init_repo_with_branch, run_git};
-use crate::test_support::markdown_fixture;
+use crate::test_support::{markdown_fixture, open_command_palette_for_test};
 use crate::{
     interaction::input::{TerminalEvent, TerminalKey},
     platform::safety::RestoreRunError,
@@ -25,11 +25,17 @@ use crate::{
         input_rows_with_prompt_for_test, mcp_table_model_for_test, run_with_terminal_restore_sync,
         status_panel_lines,
     },
-    state::{AppState, InputMode, McpServerUsabilityState, PromptStatus, TranscriptRole, UiPhase},
+    state::{
+        ActivePicker, AppState, InputMode, InputState, McpServerUsabilityState, PickerRenderKind,
+        PromptStatus, TranscriptRole, UiPhase,
+    },
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use nu_agent_core::orchestrator::OrchestratorEvent;
-use nu_agent_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
+use nu_agent_core::bus::WarningEvent;
+use nu_agent_core::orchestrator::{OrchestratorEvent, UiStateEvent};
+use nu_agent_core::protocol::contracts::{
+    SharedUiAction, UiMessageSnapshot, UiMessageUsageSnapshot,
+};
 use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::renderer::UiRenderer;
 use nu_agent_core::transcript::ir::Role;
@@ -90,17 +96,13 @@ impl RuntimeCoordinator {
 }
 
 pub(crate) fn modal_open_state_applies_dimmed_backdrop_for_test(state: &AppState) -> bool {
-    state.command_palette_open
-        || state.info_panel.is_some()
-        || state.model_picker_open
-        || state.agent_picker_open
-        || state.session_picker_open
+    state.picker.active().is_some() || state.info_panel.is_some()
 }
 
 pub(crate) fn inline_model_picker_modal_respects_border_and_backdrop_policy_for_test(
     state: &AppState,
 ) -> bool {
-    state.model_picker_open
+    state.picker.render_kind() == Some(PickerRenderKind::Model)
 }
 
 pub(crate) fn input_pane_content_width_for_test(inner_width: u16) -> usize {
@@ -110,7 +112,7 @@ pub(crate) fn input_pane_content_width_for_test(inner_width: u16) -> usize {
 #[test]
 fn idle_startup_does_not_show_spinner() {
     let coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    assert_ne!(coordinator.state().status_line, "Thinking...");
+    assert_ne!(coordinator.state().status.status_line, "Thinking...");
     assert!(!coordinator.state().input_locked);
     let line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
         "mymodel", None, None, 40,
@@ -195,9 +197,9 @@ fn coordinator_submit_handoff_keeps_input_editable_and_preserves_transcript_prev
     );
     assert_eq!(coordinator.state.take_next_prompt_for_execution(), None);
     // starting spacer + user + closing spacer
-    assert_eq!(coordinator.state().transcript_preview.len(), 3);
-    assert_eq!(coordinator.state().transcript_preview[1].role(), Role::User);
-    assert_eq!(coordinator.state().transcript_preview[1].text(), "x");
+    assert_eq!(coordinator.state().transcript.entries.len(), 3);
+    assert_eq!(coordinator.state().transcript.entries[1].role(), Role::User);
+    assert_eq!(coordinator.state().transcript.entries[1].text(), "x");
 }
 
 #[test]
@@ -220,7 +222,7 @@ fn slash_commands_do_not_append_command_text_to_transcript() {
     assert_eq!(coordinator.state().phase, UiPhase::Idle);
     assert_eq!(coordinator.state().pending_prompt_count(), 0);
     assert!(coordinator.state().prompt_items().is_empty());
-    assert!(coordinator.state().transcript_preview.is_empty());
+    assert!(coordinator.state().transcript.entries.is_empty());
 }
 
 #[test]
@@ -246,7 +248,7 @@ fn compact_result_artifact_is_visible_without_slash_command_echo() {
         coordinator.state.take_next_prompt_for_execution(),
         Some("/compact".to_string())
     );
-    assert!(coordinator.state().transcript_preview.is_empty());
+    assert!(coordinator.state().transcript.entries.is_empty());
 
     coordinator.enqueue_ui_event(UiEvent::CompactionStarted {
         source: "slash_compact".to_string(),
@@ -262,7 +264,8 @@ fn compact_result_artifact_is_visible_without_slash_command_echo() {
 
     let lines = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .map(|line| line.text())
         .collect::<Vec<_>>();
@@ -271,6 +274,28 @@ fn compact_result_artifact_is_visible_without_slash_command_echo() {
     assert!(!lines.iter().any(|line| line.contains("source=")));
     assert!(!lines.iter().any(|line| line.contains("status=running")));
     assert!(!lines.iter().any(|line| line.starts_with("/compact")));
+}
+
+#[test]
+fn slash_prefix_filters_suggestions_and_enter_submits_matching_command() {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+
+    for event in [
+        TerminalEvent::Key(TerminalKey::Char('/')),
+        TerminalEvent::Key(TerminalKey::Char('t')),
+        TerminalEvent::Key(TerminalKey::Char('h')),
+        TerminalEvent::Key(TerminalKey::Char('e')),
+        TerminalEvent::Key(TerminalKey::Enter),
+    ] {
+        let mut source = StubEventSource { next: Some(event) };
+        coordinator.pump_once(&mut source);
+    }
+
+    assert_eq!(
+        coordinator.state.take_next_launch_request(),
+        Some(SharedUiAction::Themes)
+    );
+    assert_eq!(coordinator.state.take_next_prompt_for_execution(), None);
 }
 
 #[test]
@@ -302,7 +327,7 @@ fn immediate_slash_commands_do_not_set_busy_or_spinner() {
             "immediate command must not activate prompt lifecycle"
         );
         assert!(
-            coordinator.state().status_line != "Thinking...",
+            coordinator.state().status.status_line != "Thinking...",
             "spinner lane status must not be set for immediate slash commands"
         );
     }
@@ -322,7 +347,7 @@ fn coordinator_esc_then_esc_requests_cancel_signal() {
         coordinator.pump_once(&mut source);
     }
 
-    assert_eq!(coordinator.state().status_line, "Abort requested.");
+    assert_eq!(coordinator.state().status.status_line, "Abort requested.");
     assert!(coordinator.take_cancel_requested());
 }
 
@@ -452,7 +477,8 @@ fn submit_reaches_orchestrator_channel_through_render_loop_path_only() {
         runtime_renderer
             .coordinator
             .state
-            .transcript_preview
+            .transcript
+            .entries
             .iter()
             .any(|entry| entry.role() == Role::User && entry.text() == "hi")
     );
@@ -501,7 +527,8 @@ fn assistant_message_event_is_appended_to_tui_transcript() {
     // exactly one ProseMessage entry (the entire text is stored as raw markdown).
     let assistant_entries: Vec<_> = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .filter(|e| e.role() == Role::Assistant)
         .collect();
@@ -532,7 +559,8 @@ fn assistant_markdown_message_is_projected_before_transcript_append() {
     // produces the expected rendered output when projected.
     let raw_texts: Vec<String> = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .map(|entry| entry.text())
         .collect();
@@ -593,7 +621,8 @@ fn user_then_assistant_flows_without_turn_separator() {
     assert_eq!(
         coordinator
             .state()
-            .transcript_preview
+            .transcript
+            .entries
             .iter()
             .map(|line| {
                 let role = match line.role() {
@@ -667,11 +696,11 @@ fn tick_and_completed_events_update_status_only_without_touching_input_buffer() 
 
     coordinator.enqueue_ui_event(UiEvent::Tick);
     coordinator.drain_transport();
-    assert_eq!(coordinator.state().status_line, "Thinking...");
+    assert_eq!(coordinator.state().status.status_line, "Thinking...");
 
     coordinator.enqueue_ui_event(UiEvent::Completed { tool_calls: 0 });
     coordinator.drain_transport();
-    assert!(coordinator.state().status_line.is_empty());
+    assert!(coordinator.state().status.status_line.is_empty());
 }
 
 #[test]
@@ -689,7 +718,8 @@ fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() {
     coordinator.enqueue_ui_event(UiEvent::Tick);
     coordinator.drain_transport();
 
-    let status_lines = crate::runtime::status_lines_for_test(coordinator.state(), "openai/gpt-4");
+    let status_lines =
+        crate::runtime::status_lines_for_test(&mut coordinator.state, "openai/gpt-4");
     let joined = status_lines.join("\n");
 
     assert!(joined.contains("(busy)"));
@@ -697,7 +727,8 @@ fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() {
     coordinator.enqueue_ui_event(UiEvent::Completed { tool_calls: 0 });
     coordinator.drain_transport();
 
-    let status_lines = crate::runtime::status_lines_for_test(coordinator.state(), "openai/gpt-4");
+    let status_lines =
+        crate::runtime::status_lines_for_test(&mut coordinator.state, "openai/gpt-4");
     assert!(status_lines[0].contains("(idle)"));
     assert!(
         !status_lines
@@ -708,9 +739,9 @@ fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() {
 
 #[test]
 fn status_lines_do_not_report_input_mode() {
-    let state = AppState::default();
+    let mut state = AppState::default();
 
-    let lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4");
+    let lines = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4");
     assert!(!lines.iter().any(|line| line.starts_with("Input mode:")));
 }
 
@@ -1135,15 +1166,16 @@ fn idle_escape_status_copy_mentions_ctrlc_only_not_q() {
 
     coordinator.pump_once(&mut source);
 
-    assert!(coordinator.state().status_line.contains("Ctrl+C"));
+    assert!(coordinator.state().status.status_line.contains("Ctrl+C"));
     assert!(
         !coordinator
             .state()
+            .status
             .status_line
             .to_ascii_lowercase()
             .contains("press q")
     );
-    assert!(!coordinator.state().status_line.contains("q to quit"));
+    assert!(!coordinator.state().status.status_line.contains("q to quit"));
 }
 
 #[test]
@@ -1284,7 +1316,7 @@ fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
         None,
     );
 
-    let lines = coordinator.state().transcript_preview.clone();
+    let lines = coordinator.state().transcript.entries.clone();
     assert_eq!(
         lines
             .iter()
@@ -1334,14 +1366,14 @@ fn hydrated_tool_history_matches_live_tool_row_shape() {
     );
 
     // Tool block: starting spacer + tool + closing spacer (block is open at end)
-    assert_eq!(coordinator.state().transcript_preview.len(), 3);
-    assert_eq!(coordinator.state().transcript_preview[1].role(), Role::Tool);
+    assert_eq!(coordinator.state().transcript.entries.len(), 3);
+    assert_eq!(coordinator.state().transcript.entries[1].role(), Role::Tool);
     assert_eq!(
-        coordinator.state().transcript_preview[1].text(),
+        coordinator.state().transcript.entries[1].text(),
         "k8s__list_pods"
     );
     assert_eq!(
-        coordinator.state().transcript_preview[1].status,
+        coordinator.state().transcript.entries[1].status,
         Some(ItemStatus::Done)
     );
 }
@@ -1380,7 +1412,8 @@ fn coordinator_hydration_projects_both_user_and_assistant_markdown() {
     // Project to verify the rendered content.
     let raw_lines: Vec<(TranscriptRole, String)> = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .map(|line| {
             let role = match line.role() {
@@ -1488,7 +1521,8 @@ fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transc
     // Project it to verify the rendered content is readable.
     let projected_lines: Vec<String> = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
         .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
@@ -1528,7 +1562,8 @@ fn coordinator_hydration_handles_malformed_assistant_markdown_without_dropping_m
 
     let assistant_entries = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
         .collect::<Vec<_>>();
@@ -1560,7 +1595,8 @@ fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_tra
     // Sanitization happens at projection time (render_markdown_lines). Verify by projecting.
     let projected_lines: Vec<String> = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
         .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
@@ -1598,13 +1634,15 @@ fn coordinator_hydration_regression_no_duplicate_lines_on_single_call() {
 
     let user_count = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .filter(|line| line.text() == "dup-check")
         .count();
     let assistant_count = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .filter(|line| line.text() == "dup-check-reply")
         .count();
@@ -1619,7 +1657,7 @@ fn coordinator_hydrate_with_empty_message_snapshot_leaves_empty_session_behavior
     coordinator.hydrate_transcript_from_messages(Vec::<UiMessageSnapshot>::new(), None);
 
     let state = coordinator.state();
-    assert!(state.transcript_preview.is_empty());
+    assert!(state.transcript.entries.is_empty());
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
 }
@@ -1692,7 +1730,7 @@ fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
 #[test]
 fn multiline_input_prompt_icon_appears_only_on_first_visual_row() {
     let state = AppState {
-        input_mode: InputMode::Insert,
+        input: InputState::default().with_mode(InputMode::Insert),
         ..Default::default()
     };
 
@@ -1703,17 +1741,17 @@ fn multiline_input_prompt_icon_appears_only_on_first_visual_row() {
 #[test]
 fn prompt_prefix_uses_mode_indicator_insert_vs_normal_visual() {
     let insert = AppState {
-        input_mode: InputMode::Insert,
+        input: InputState::default().with_mode(InputMode::Insert),
         ..Default::default()
     };
 
     let normal = AppState {
-        input_mode: InputMode::Normal,
+        input: InputState::default().with_mode(InputMode::Normal),
         ..Default::default()
     };
 
     let visual = AppState {
-        input_mode: InputMode::Visual,
+        input: InputState::default().with_mode(InputMode::Visual),
         ..Default::default()
     };
 
@@ -1725,13 +1763,13 @@ fn prompt_prefix_uses_mode_indicator_insert_vs_normal_visual() {
 #[test]
 fn prompt_prefix_switches_immediately_when_mode_changes() {
     let mut state = AppState {
-        input_mode: InputMode::Insert,
+        input: InputState::default().with_mode(InputMode::Insert),
         ..Default::default()
     };
 
     assert_eq!(input_rows_with_prompt_for_test(&state, 20), vec!["❯ "]);
 
-    state.input_mode = InputMode::Normal;
+    state.input.mode = InputMode::Normal;
     assert_eq!(input_rows_with_prompt_for_test(&state, 20), vec!["❮ "]);
 }
 
@@ -1739,7 +1777,7 @@ fn prompt_prefix_switches_immediately_when_mode_changes() {
 fn status_contract_a_model_line_reports_identity_and_busy_idle() {
     let mut state = AppState::default();
 
-    let idle_lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
+    let idle_lines = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
     assert!(
         idle_lines
             .iter()
@@ -1747,7 +1785,7 @@ fn status_contract_a_model_line_reports_identity_and_busy_idle() {
     );
 
     state.phase = UiPhase::Busy;
-    let busy_lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
+    let busy_lines = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
     assert!(
         busy_lines
             .iter()
@@ -1757,9 +1795,9 @@ fn status_contract_a_model_line_reports_identity_and_busy_idle() {
 
 #[test]
 fn status_contract_b_excludes_input_mode_backend_poll_and_hint_lines() {
-    let state = AppState::default();
+    let mut state = AppState::default();
 
-    let lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
+    let lines = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
     assert!(!lines.iter().any(|line| line.starts_with("Input mode:")));
     assert!(!lines.iter().any(|line| line.starts_with("Input backend:")));
     assert!(!lines.iter().any(|line| line.starts_with("Input poll:")));
@@ -1770,7 +1808,7 @@ fn status_contract_b_excludes_input_mode_backend_poll_and_hint_lines() {
 #[test]
 fn status_contract_c_mcp_counts_include_configured_enabled_disabled_failed() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![
+    state.status.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -1785,7 +1823,7 @@ fn status_contract_c_mcp_counts_include_configured_enabled_disabled_failed() {
         },
     ]);
 
-    let lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
+    let lines = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
     assert!(
         lines
             .iter()
@@ -1796,20 +1834,20 @@ fn status_contract_c_mcp_counts_include_configured_enabled_disabled_failed() {
 #[test]
 fn status_contract_d_visible_mcp_tool_count_uses_runtime_truth_and_updates() {
     let mut state = AppState::default();
-    state.set_llm_visible_mcp_tool_count(5);
+    state.status.set_llm_visible_mcp_tool_count(5);
 
-    let before = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
+    let before = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
     assert!(before.iter().any(|line| line == "LLM-visible MCP tools: 5"));
 
-    state.set_llm_visible_mcp_tool_count(2);
-    let after = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
+    state.status.set_llm_visible_mcp_tool_count(2);
+    let after = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
     assert!(after.iter().any(|line| line == "LLM-visible MCP tools: 2"));
 }
 
 #[test]
 fn status_contract_e_failures_show_names_and_reasons_and_healthy_none_when_clear() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![
+    state.status.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Failed,
@@ -1819,32 +1857,32 @@ fn status_contract_e_failures_show_names_and_reasons_and_healthy_none_when_clear
             state: McpServerUsabilityState::Failed,
         },
     ]);
-    assert!(state.set_mcp_server_state_by_name_with_reason(
+    assert!(state.status.set_mcp_server_state_by_name_with_reason(
         "gh",
         McpServerUsabilityState::Failed,
         Some("timeout".to_string())
     ));
-    assert!(state.set_mcp_server_state_by_name_with_reason(
+    assert!(state.status.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
         None
     ));
 
-    let failed_lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
+    let failed_lines = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
     let failed_rendered = failed_lines.join("\n");
     assert!(failed_rendered.contains("Failures: gh (timeout), k8s"));
 
-    assert!(state.set_mcp_server_state_by_name_with_reason(
+    assert!(state.status.set_mcp_server_state_by_name_with_reason(
         "gh",
         McpServerUsabilityState::Enabled,
         None
     ));
-    assert!(state.set_mcp_server_state_by_name_with_reason(
+    assert!(state.status.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Enabled,
         None
     ));
-    let healthy_lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
+    let healthy_lines = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
     assert!(
         healthy_lines
             .iter()
@@ -1858,20 +1896,22 @@ fn status_contract_f_narrow_layout_is_compact_and_ellipsizes_deterministically()
         phase: UiPhase::Busy,
         ..Default::default()
     };
-    state.set_mcp_servers(vec![crate::state::McpServerState {
-        name: "very-long-mcp-server-name-that-must-be-truncated".to_string(),
-        state: McpServerUsabilityState::Failed,
-    }]);
-    assert!(state.set_mcp_server_state_by_name_with_reason(
+    state
+        .status
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "very-long-mcp-server-name-that-must-be-truncated".to_string(),
+            state: McpServerUsabilityState::Failed,
+        }]);
+    assert!(state.status.set_mcp_server_state_by_name_with_reason(
         "very-long-mcp-server-name-that-must-be-truncated",
         McpServerUsabilityState::Failed,
         Some("very long failure reason that should be truncated to keep the status line readable"
             .to_string())
     ));
-    state.set_llm_visible_mcp_tool_count(42);
+    state.status.set_llm_visible_mcp_tool_count(42);
 
     let lines = crate::runtime::status_lines_for_test(
-        &state,
+        &mut state,
         "provider/super-long-model-name-that-needs-truncation",
     );
     let rendered = lines.join("\n");
@@ -1903,7 +1943,7 @@ fn status_contract_f_narrow_layout_is_compact_and_ellipsizes_deterministically()
 #[test]
 fn status_lines_include_stable_active_model_identity_line() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![
+    state.status.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -1913,7 +1953,7 @@ fn status_lines_include_stable_active_model_identity_line() {
             state: McpServerUsabilityState::Disabled,
         },
     ]);
-    let status_lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
+    let status_lines = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
 
     assert!(
         status_lines
@@ -2089,7 +2129,8 @@ fn help_panel_escape_closes_panel_after_scroll() {
 #[test]
 fn status_panel_exposes_model_and_mcp_backend_status_lines() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![
+    state.status.active_model_identity = "openai/gpt-4o-mini".to_string();
+    state.status.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2100,7 +2141,7 @@ fn status_panel_exposes_model_and_mcp_backend_status_lines() {
         },
     ]);
 
-    let (title, lines) = status_panel_lines(&state, "openai/gpt-4o-mini");
+    let (title, lines) = status_panel_lines(&state);
     assert_eq!(title, "Status");
     let rendered = lines
         .iter()
@@ -2123,7 +2164,7 @@ fn status_panel_exposes_model_and_mcp_backend_status_lines() {
 #[test]
 fn mcp_panel_renders_columns_selection_and_compact_table_contract() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![
+    state.status.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2133,15 +2174,19 @@ fn mcp_panel_renders_columns_selection_and_compact_table_contract() {
             state: McpServerUsabilityState::Failed,
         },
     ]);
-    state.mcp_panel_selection = 1;
+    state.status.mcp_panel_selection = 1;
 
-    state.set_mcp_server_state_by_name_with_reason(
+    state.status.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
         Some("connect timeout".to_string()),
     );
-    state.set_mcp_visible_tool_count_by_server_name("gh", 3);
-    state.set_mcp_visible_tool_count_by_server_name("k8s", 9);
+    state
+        .status
+        .set_mcp_visible_tool_count_by_server_name("gh", 3);
+    state
+        .status
+        .set_mcp_visible_tool_count_by_server_name("k8s", 9);
 
     let model = mcp_table_model_for_test(&state, 80, 10);
     assert_eq!(model.columns, vec!["Name", "Visible tools", "Status"]);
@@ -2158,7 +2203,7 @@ fn mcp_panel_renders_columns_selection_and_compact_table_contract() {
 #[test]
 fn mcp_table_status_icon_mapping_is_deterministic() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![
+    state.status.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "enabled-srv".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2182,7 +2227,7 @@ fn mcp_table_status_icon_mapping_is_deterministic() {
 #[test]
 fn mcp_table_emoji_status_rows_use_safe_status_column_width_contract() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![
+    state.status.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "enabled-srv".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2255,7 +2300,7 @@ fn mcp_details_height_formula_matches_step_table() {
 #[test]
 fn mcp_panel_layout_keeps_table_primary_with_multiple_visible_rows_in_common_height() {
     let mut state = AppState::default();
-    state.set_mcp_servers(
+    state.status.set_mcp_servers(
         (0..8)
             .map(|idx| crate::state::McpServerState {
                 name: format!("srv-{idx}"),
@@ -2296,7 +2341,7 @@ fn mcp_panel_controls_line_removes_status_legend_and_keeps_toggle_hint_compact()
 #[test]
 fn mcp_table_visible_tool_count_uses_live_per_server_mapping_without_state_gating() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![
+    state.status.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2306,8 +2351,12 @@ fn mcp_table_visible_tool_count_uses_live_per_server_mapping_without_state_gatin
             state: McpServerUsabilityState::Failed,
         },
     ]);
-    state.set_mcp_visible_tool_count_by_server_name("gh", 4);
-    state.set_mcp_visible_tool_count_by_server_name("k8s", 2);
+    state
+        .status
+        .set_mcp_visible_tool_count_by_server_name("gh", 4);
+    state
+        .status
+        .set_mcp_visible_tool_count_by_server_name("k8s", 2);
 
     let model = mcp_table_model_for_test(&state, 80, 10);
     assert_eq!(model.rows[0][1], "4");
@@ -2317,7 +2366,7 @@ fn mcp_table_visible_tool_count_uses_live_per_server_mapping_without_state_gatin
 #[test]
 fn mcp_selected_details_model_shows_full_error_text_tools_list_and_fallback() -> Result<()> {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![
+    state.status.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2328,24 +2377,24 @@ fn mcp_selected_details_model_shows_full_error_text_tools_list_and_fallback() ->
         },
     ]);
     let reason = "connection timeout while dialing 10.0.0.1:443".to_string();
-    state.set_mcp_server_state_by_name_with_reason(
+    state.status.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
         Some(reason.clone()),
     );
-    state.set_mcp_visible_tool_names_by_server_name(
+    state.status.set_mcp_visible_tool_names_by_server_name(
         "k8s",
         vec!["k8s__z_last".to_string(), "k8s__a_first".to_string()],
     );
 
-    state.mcp_panel_selection = 1;
+    state.status.mcp_panel_selection = 1;
     let failed =
         super::mcp_selected_details_for_test(&state).ok_or("should have selected MCP details")?;
     assert_eq!(failed.server_line, "Server: k8s (failed)");
     assert_eq!(failed.error_line, format!("Error: {reason}"));
     assert_eq!(failed.tools_line, "Tools: k8s__a_first, k8s__z_last");
 
-    state.mcp_panel_selection = 0;
+    state.status.mcp_panel_selection = 0;
     let healthy =
         super::mcp_selected_details_for_test(&state).ok_or("should have selected MCP details")?;
     assert_eq!(healthy.server_line, "Server: gh (enabled)");
@@ -2357,7 +2406,7 @@ fn mcp_selected_details_model_shows_full_error_text_tools_list_and_fallback() ->
 #[test]
 fn mcp_table_visible_tool_count_respects_live_updates_after_selection_changes() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![
+    state.status.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2371,9 +2420,15 @@ fn mcp_table_visible_tool_count_respects_live_updates_after_selection_changes() 
             state: McpServerUsabilityState::Failed,
         },
     ]);
-    state.set_mcp_visible_tool_count_by_server_name("gh", 4);
-    state.set_mcp_visible_tool_count_by_server_name("k8s", 2);
-    state.set_mcp_visible_tool_count_by_server_name("docs", 7);
+    state
+        .status
+        .set_mcp_visible_tool_count_by_server_name("gh", 4);
+    state
+        .status
+        .set_mcp_visible_tool_count_by_server_name("k8s", 2);
+    state
+        .status
+        .set_mcp_visible_tool_count_by_server_name("docs", 7);
 
     let model = mcp_table_model_for_test(&state, 80, 10);
     assert_eq!(model.rows[0][1], "4");
@@ -2384,11 +2439,13 @@ fn mcp_table_visible_tool_count_respects_live_updates_after_selection_changes() 
 #[test]
 fn mcp_selected_details_height_zero_and_one_rows_preserve_error_presence() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![crate::state::McpServerState {
-        name: "k8s".to_string(),
-        state: McpServerUsabilityState::Failed,
-    }]);
-    state.set_mcp_server_state_by_name_with_reason(
+    state
+        .status
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Failed,
+        }]);
+    state.status.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
         Some("connection timeout while dialing 10.0.0.1:443".to_string()),
@@ -2406,11 +2463,13 @@ fn mcp_selected_details_height_zero_and_one_rows_preserve_error_presence() {
 #[test]
 fn mcp_selected_details_constrained_two_rows_preserve_full_error_line() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![crate::state::McpServerState {
-        name: "k8s".to_string(),
-        state: McpServerUsabilityState::Failed,
-    }]);
-    state.set_mcp_server_state_by_name_with_reason(
+    state
+        .status
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Failed,
+        }]);
+    state.status.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
         Some("connection timeout while dialing 10.0.0.1:443 after many retries and additional context".to_string()),
@@ -2428,13 +2487,15 @@ fn mcp_selected_details_constrained_two_rows_preserve_full_error_line() {
 #[test]
 fn mcp_selected_details_normal_height_preserves_full_error_line() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![crate::state::McpServerState {
-        name: "k8s".to_string(),
-        state: McpServerUsabilityState::Failed,
-    }]);
+    state
+        .status
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Failed,
+        }]);
     let reason =
         "connection timeout while dialing 10.0.0.1:443 after many retries and additional context";
-    state.set_mcp_server_state_by_name_with_reason(
+    state.status.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
         Some(reason.to_string()),
@@ -2450,11 +2511,13 @@ fn mcp_selected_details_normal_height_preserves_full_error_line() {
 #[test]
 fn mcp_selected_details_packs_multiple_tools_per_line_with_comma_separators() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![crate::state::McpServerState {
-        name: "gh".to_string(),
-        state: McpServerUsabilityState::Enabled,
-    }]);
-    state.set_mcp_visible_tool_names_by_server_name(
+    state
+        .status
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        }]);
+    state.status.set_mcp_visible_tool_names_by_server_name(
         "gh",
         vec![
             "gh__z_last".to_string(),
@@ -2478,11 +2541,13 @@ fn mcp_selected_details_packs_multiple_tools_per_line_with_comma_separators() {
 #[test]
 fn mcp_selected_details_clipped_tool_list_shows_deterministic_plus_n_more_cue() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![crate::state::McpServerState {
-        name: "gh".to_string(),
-        state: McpServerUsabilityState::Enabled,
-    }]);
-    state.set_mcp_visible_tool_names_by_server_name(
+    state
+        .status
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        }]);
+    state.status.set_mcp_visible_tool_names_by_server_name(
         "gh",
         vec![
             "gh__a_first".to_string(),
@@ -2510,11 +2575,13 @@ fn mcp_selected_details_clipped_tool_list_shows_deterministic_plus_n_more_cue() 
 #[test]
 fn mcp_selected_details_single_tool_row_budget_prefers_truncation_cue_visibility() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![crate::state::McpServerState {
-        name: "gh".to_string(),
-        state: McpServerUsabilityState::Enabled,
-    }]);
-    state.set_mcp_visible_tool_names_by_server_name(
+    state
+        .status
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        }]);
+    state.status.set_mcp_visible_tool_names_by_server_name(
         "gh",
         vec![
             "gh__a_first".to_string(),
@@ -2538,11 +2605,13 @@ fn mcp_selected_details_single_tool_row_budget_prefers_truncation_cue_visibility
 #[test]
 fn mcp_selected_details_continuation_rows_align_and_use_tools_prefix_once() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![crate::state::McpServerState {
-        name: "gh".to_string(),
-        state: McpServerUsabilityState::Enabled,
-    }]);
-    state.set_mcp_visible_tool_names_by_server_name(
+    state
+        .status
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        }]);
+    state.status.set_mcp_visible_tool_names_by_server_name(
         "gh",
         vec![
             "gh__a_first".to_string(),
@@ -2563,11 +2632,13 @@ fn mcp_selected_details_continuation_rows_align_and_use_tools_prefix_once() {
 #[test]
 fn mcp_selected_details_wrapping_uses_actual_details_width() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![crate::state::McpServerState {
-        name: "gh".to_string(),
-        state: McpServerUsabilityState::Enabled,
-    }]);
-    state.set_mcp_visible_tool_names_by_server_name(
+    state
+        .status
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        }]);
+    state.status.set_mcp_visible_tool_names_by_server_name(
         "gh",
         vec![
             "gh__a_first".to_string(),
@@ -2590,10 +2661,12 @@ fn mcp_selected_details_wrapping_uses_actual_details_width() {
 #[test]
 fn mcp_table_model_narrow_width_keeps_required_columns() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![crate::state::McpServerState {
-        name: "gh".to_string(),
-        state: McpServerUsabilityState::Enabled,
-    }]);
+    state
+        .status
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        }]);
 
     let model = mcp_table_model_for_test(&state, 32, 8);
     assert_eq!(model.columns, vec!["Name", "Visible tools", "Status"]);
@@ -2603,7 +2676,7 @@ fn mcp_table_model_narrow_width_keeps_required_columns() {
 #[test]
 fn mcp_table_model_overflow_top_window_locks_exact_cue_and_selected_mapping() -> Result<()> {
     let mut state = AppState::default();
-    state.set_mcp_servers(
+    state.status.set_mcp_servers(
         (0..8)
             .map(|idx| crate::state::McpServerState {
                 name: format!("srv-{idx}"),
@@ -2615,7 +2688,7 @@ fn mcp_table_model_overflow_top_window_locks_exact_cue_and_selected_mapping() ->
             })
             .collect(),
     );
-    state.mcp_panel_selection = 0;
+    state.status.mcp_panel_selection = 0;
 
     let model = mcp_table_model_for_test(&state, 80, 7);
     assert_eq!(model.selected, Some(0));
@@ -2631,7 +2704,7 @@ fn mcp_table_model_overflow_top_window_locks_exact_cue_and_selected_mapping() ->
 #[test]
 fn mcp_table_model_overflow_middle_window_locks_exact_cue_and_selected_mapping() -> Result<()> {
     let mut state = AppState::default();
-    state.set_mcp_servers(
+    state.status.set_mcp_servers(
         (0..8)
             .map(|idx| crate::state::McpServerState {
                 name: format!("srv-{idx}"),
@@ -2643,7 +2716,7 @@ fn mcp_table_model_overflow_middle_window_locks_exact_cue_and_selected_mapping()
             })
             .collect(),
     );
-    state.mcp_panel_selection = 5;
+    state.status.mcp_panel_selection = 5;
 
     let model = mcp_table_model_for_test(&state, 80, 7);
     assert_eq!(model.selected, Some(4));
@@ -2659,7 +2732,7 @@ fn mcp_table_model_overflow_middle_window_locks_exact_cue_and_selected_mapping()
 #[test]
 fn mcp_table_model_overflow_bottom_window_locks_exact_cue_and_selected_mapping() -> Result<()> {
     let mut state = AppState::default();
-    state.set_mcp_servers(
+    state.status.set_mcp_servers(
         (0..8)
             .map(|idx| crate::state::McpServerState {
                 name: format!("srv-{idx}"),
@@ -2671,7 +2744,7 @@ fn mcp_table_model_overflow_bottom_window_locks_exact_cue_and_selected_mapping()
             })
             .collect(),
     );
-    state.mcp_panel_selection = 7;
+    state.status.mcp_panel_selection = 7;
 
     let model = mcp_table_model_for_test(&state, 80, 7);
     assert_eq!(model.selected, Some(4));
@@ -2687,7 +2760,7 @@ fn mcp_table_model_overflow_bottom_window_locks_exact_cue_and_selected_mapping()
 #[test]
 fn command_palette_table_renders_required_columns_and_rows() {
     let mut state = AppState::default();
-    state.open_command_palette();
+    open_command_palette_for_test(&mut state);
 
     let model = command_palette_table_model_for_test(&state, 80, 10);
 
@@ -2708,7 +2781,7 @@ fn command_palette_table_renders_required_columns_and_rows() {
 #[test]
 fn command_palette_table_renders_skills_action_row() {
     let mut state = AppState::default();
-    state.open_command_palette();
+    open_command_palette_for_test(&mut state);
 
     let model = command_palette_table_model_for_test(&state, 80, 10);
     let actions = model
@@ -2738,7 +2811,7 @@ fn skills_panel_renders_empty_state_when_no_skills_available() {
 #[test]
 fn skills_panel_lists_skills_in_deterministic_order() -> Result<()> {
     let mut state = AppState::default();
-    state.set_discoverable_skills(vec![
+    state.status.set_discoverable_skills(vec![
         crate::state::DiscoverableSkill {
             source_priority: 1,
             source: "home".to_string(),
@@ -2804,25 +2877,21 @@ fn status_panel_scroll_offset_applied() {
     // any requested offset is clamped to 0. With a very small viewport the
     // offset should be clamped correctly.
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![crate::state::McpServerState {
-        name: "gh".to_string(),
-        state: crate::state::McpServerUsabilityState::Enabled,
-    }]);
+    state
+        .status
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "gh".to_string(),
+            state: crate::state::McpServerUsabilityState::Enabled,
+        }]);
 
     let viewport_height = 3u16; // smaller than status content
     let viewport_width = 80u16;
-    let model = "openai/gpt-4o";
 
-    let small_scroll = super::status_panel_scroll_offset_for_test(
-        &state,
-        model,
-        viewport_height,
-        viewport_width,
-        1,
-    );
+    let small_scroll =
+        super::status_panel_scroll_offset_for_test(&state, viewport_height, viewport_width, 1);
     // 1 is within content so it should pass through (or be clamped if content
     // is ≤ 3 lines — either outcome is correct as long as it's ≤ max).
-    let (_title, lines) = super::status_panel_lines(&state, model);
+    let (_title, lines) = super::status_panel_lines(&state);
     let max = super::help_panel_max_scroll_for_test(&lines, viewport_height);
     assert!(
         small_scroll <= max,
@@ -2831,7 +2900,6 @@ fn status_panel_scroll_offset_applied() {
 
     let huge_scroll = super::status_panel_scroll_offset_for_test(
         &state,
-        model,
         viewport_height,
         viewport_width,
         usize::MAX,
@@ -2845,7 +2913,7 @@ fn status_panel_scroll_offset_applied() {
 #[test]
 fn skills_panel_scroll_offset_applied() {
     let mut state = AppState::default();
-    state.set_discoverable_skills(vec![
+    state.status.set_discoverable_skills(vec![
         crate::state::DiscoverableSkill {
             source_priority: 0,
             source: "repo".to_string(),
@@ -2897,7 +2965,7 @@ fn inline_slash_suggestions_render_inline_with_single_hint_contract() {
 #[test]
 fn command_palette_table_emits_overflow_position_cue_when_viewport_is_small() -> Result<()> {
     let mut state = AppState::default();
-    state.open_command_palette();
+    open_command_palette_for_test(&mut state);
 
     let model = command_palette_table_model_for_test(&state, 80, 5);
     let cue = model
@@ -2988,7 +3056,7 @@ fn themes_modal_uses_layout_policy_defaults() {
 #[test]
 fn modal_open_state_applies_dimmed_backdrop() {
     let mut state = AppState::default();
-    state.open_command_palette();
+    open_command_palette_for_test(&mut state);
 
     assert!(modal_open_state_applies_dimmed_backdrop_for_test(&state));
 }
@@ -2996,43 +3064,46 @@ fn modal_open_state_applies_dimmed_backdrop() {
 #[test]
 fn inline_model_picker_modal_respects_border_and_backdrop_policy() {
     let mut state = AppState::default();
-    state.open_model_picker();
+    state.picker.open(ActivePicker::Model);
 
     assert!(inline_model_picker_modal_respects_border_and_backdrop_policy_for_test(&state));
 }
 
 #[test]
-fn permission_prompt_does_not_open_global_dimmed_modal_backdrop() {
+fn permission_does_not_open_global_dimmed_modal_backdrop() {
     let mut state = AppState::default();
-    state.open_permission_prompt(crate::state::PermissionPrompt {
-        request_id: "ask-0000000000000001".to_string(),
-        matched_rule_identity: "nested:nu.command:*".to_string(),
-        tool: "nu".to_string(),
-        source: "closure".to_string(),
-        mode: Some("apply".to_string()),
-        scope: "nested".to_string(),
-        pattern: "*".to_string(),
-        target_field: Some("command".to_string()),
-        summary: "→ {\"command\":\"echo hi\"}".to_string(),
-    });
+    state
+        .permission
+        .open_prompt(crate::state::PermissionPrompt {
+            request_id: "ask-0000000000000001".to_string(),
+            matched_rule_identity: "nested:nu.command:*".to_string(),
+            tool: "nu".to_string(),
+            source: "closure".to_string(),
+            mode: Some("apply".to_string()),
+            scope: "nested".to_string(),
+            pattern: "*".to_string(),
+            target_field: Some("command".to_string()),
+            summary: "→ {\"command\":\"echo hi\"}".to_string(),
+        });
 
     assert!(!modal_open_state_applies_dimmed_backdrop_for_test(&state));
 }
 
 #[test]
 fn model_picker_empty_catalog_shows_deterministic_empty_state() {
-    let state = AppState::default();
+    let mut state = AppState::default();
     assert_eq!(
         crate::runtime::panels::MODEL_PICKER_EMPTY_STATE_MESSAGE,
         "No models available in cached startup config."
     );
-    assert!(state.model_picker_filtered_options().is_empty());
+    state.picker.open(ActivePicker::Model);
+    assert!(state.picker.active_state().unwrap().filtered().is_empty());
 }
 
 #[test]
 fn status_lines_report_failed_state_count_when_present() {
     let mut state = AppState::default();
-    state.set_mcp_servers(vec![
+    state.status.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -3043,7 +3114,7 @@ fn status_lines_report_failed_state_count_when_present() {
         },
     ]);
 
-    let status_lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
+    let status_lines = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
 
     assert!(
         status_lines
@@ -3054,8 +3125,8 @@ fn status_lines_report_failed_state_count_when_present() {
 
 #[test]
 fn status_lines_include_tokens_line_with_na_before_any_llm_end() {
-    let state = AppState::default();
-    let status_lines = crate::runtime::status_lines_for_test(&state, "openai/gpt-4o-mini");
+    let mut state = AppState::default();
+    let status_lines = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
 
     assert!(
         status_lines
@@ -3087,7 +3158,7 @@ fn status_lines_include_latest_and_rolling_tokens_after_llm_end_events() {
     coordinator.drain_transport();
 
     let status_lines =
-        crate::runtime::status_lines_for_test(coordinator.state(), "openai/gpt-4o-mini");
+        crate::runtime::status_lines_for_test(&mut coordinator.state, "openai/gpt-4o-mini");
 
     assert!(
         status_lines
@@ -3117,10 +3188,13 @@ fn compact_status_line_reports_lane_1_only() {
 #[test]
 fn lane_2_context_line_uses_exact_usage_format_without_extra_text() {
     let mut state = AppState {
-        latest_total_tokens: Some(250),
+        status: crate::state::StatusState {
+            latest_total_tokens: Some(250),
+            ..Default::default()
+        },
         ..Default::default()
     };
-    state.set_context_window_max_tokens(Some(1000));
+    state.status.set_context_window_max_tokens(Some(1000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 120);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -3137,10 +3211,13 @@ fn lane_2_context_line_uses_exact_usage_format_without_extra_text() {
 #[test]
 fn lane_2_context_line_falls_back_to_used_only_when_max_unavailable() {
     let mut state = AppState {
-        latest_total_tokens: Some(42),
+        status: crate::state::StatusState {
+            latest_total_tokens: Some(42),
+            ..Default::default()
+        },
         ..Default::default()
     };
-    state.set_context_window_max_tokens(None);
+    state.status.set_context_window_max_tokens(None);
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 120);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -3157,10 +3234,13 @@ fn lane_2_context_line_falls_back_to_used_only_when_max_unavailable() {
 #[test]
 fn footer_two_lane_contract_exposes_lane_1_and_lane_2_simultaneously() {
     let mut state = AppState {
-        latest_total_tokens: Some(250),
+        status: crate::state::StatusState {
+            latest_total_tokens: Some(250),
+            ..Default::default()
+        },
         ..Default::default()
     };
-    state.set_context_window_max_tokens(Some(1000));
+    state.status.set_context_window_max_tokens(Some(1000));
 
     let lane_1 = crate::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
     let lane_1_text: String = lane_1.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -3177,6 +3257,7 @@ fn configured_path_resolves_context_max_without_fallback_format() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator
         .state
+        .status
         .set_context_window_max_tokens(Some(128_000));
     coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
         response_chars: 40,
@@ -3197,7 +3278,10 @@ fn configured_path_resolves_context_max_without_fallback_format() {
 #[test]
 fn lane_2_context_line_updates_after_each_turn_and_does_not_stale() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.state.set_context_window_max_tokens(Some(100));
+    coordinator
+        .state
+        .status
+        .set_context_window_max_tokens(Some(100));
 
     coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
         response_chars: 12,
@@ -3227,10 +3311,13 @@ fn lane_2_context_line_updates_after_each_turn_and_does_not_stale() {
 #[test]
 fn lane_2_context_line_truncation_removes_any_extra_labels_or_hints() {
     let mut state = AppState {
-        latest_total_tokens: Some(12345),
+        status: crate::state::StatusState {
+            latest_total_tokens: Some(12345),
+            ..Default::default()
+        },
         ..Default::default()
     };
-    state.set_context_window_max_tokens(Some(128000));
+    state.status.set_context_window_max_tokens(Some(128000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 30);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -3266,7 +3353,10 @@ fn lane_2_rehydrates_used_tokens_from_hydrated_history_metadata() {
 #[test]
 fn lane_2_rehydrate_with_known_max_shows_ratio_immediately() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.state.set_context_window_max_tokens(Some(1000));
+    coordinator
+        .state
+        .status
+        .set_context_window_max_tokens(Some(1000));
     coordinator.hydrate_transcript_from_messages(
         vec![{
             let mut s = UiMessageSnapshot::new("assistant", "history");
@@ -3302,7 +3392,10 @@ fn lane_2_rehydrate_without_usage_metadata_and_without_max_uses_fallback() {
 #[test]
 fn lane_2_rehydrate_without_usage_metadata_with_known_max_shows_ratio_not_fallback() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.state.set_context_window_max_tokens(Some(100));
+    coordinator
+        .state
+        .status
+        .set_context_window_max_tokens(Some(100));
     coordinator.hydrate_transcript_from_messages(
         vec![UiMessageSnapshot::new("assistant", "history")],
         None,
@@ -3316,7 +3409,10 @@ fn lane_2_rehydrate_without_usage_metadata_with_known_max_shows_ratio_not_fallba
 #[test]
 fn lane_2_rehydrate_is_replaced_by_live_turn_usage() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.state.set_context_window_max_tokens(Some(100));
+    coordinator
+        .state
+        .status
+        .set_context_window_max_tokens(Some(100));
     coordinator.hydrate_transcript_from_messages(
         vec![{
             let mut s = UiMessageSnapshot::new("assistant", "history");
@@ -3351,9 +3447,9 @@ fn lane_2_rehydrate_is_replaced_by_live_turn_usage() {
 #[test]
 fn lane_2_threshold_formatting_contract_100_and_1000_and_11657() {
     let mut state = AppState::default();
-    state.set_context_window_max_tokens(Some(200_000));
+    state.status.set_context_window_max_tokens(Some(200_000));
 
-    state.latest_total_tokens = Some(100);
+    state.status.latest_total_tokens = Some(100);
     let one_hundred = crate::runtime::lane_2_status_line_for_test(&state, 40);
     let one_hundred_text: String = one_hundred
         .spans
@@ -3362,7 +3458,7 @@ fn lane_2_threshold_formatting_contract_100_and_1000_and_11657() {
         .collect();
     assert!(one_hundred_text.ends_with("100 (0%)"));
 
-    state.latest_total_tokens = Some(1_000);
+    state.status.latest_total_tokens = Some(1_000);
     let one_thousand = crate::runtime::lane_2_status_line_for_test(&state, 40);
     let one_thousand_text: String = one_thousand
         .spans
@@ -3371,7 +3467,7 @@ fn lane_2_threshold_formatting_contract_100_and_1000_and_11657() {
         .collect();
     assert!(one_thousand_text.ends_with("1k (0%)"));
 
-    state.latest_total_tokens = Some(11_657);
+    state.status.latest_total_tokens = Some(11_657);
     let eleven_point_six = crate::runtime::lane_2_status_line_for_test(&state, 40);
     let eleven_text: String = eleven_point_six
         .spans
@@ -3384,10 +3480,13 @@ fn lane_2_threshold_formatting_contract_100_and_1000_and_11657() {
 #[test]
 fn lane_2_is_right_aligned_in_wide_layout() {
     let mut state = AppState {
-        latest_total_tokens: Some(11_657),
+        status: crate::state::StatusState {
+            latest_total_tokens: Some(11_657),
+            ..Default::default()
+        },
         ..Default::default()
     };
-    state.set_context_window_max_tokens(Some(200_000));
+    state.status.set_context_window_max_tokens(Some(200_000));
 
     let width = 40usize;
     let line = crate::runtime::lane_2_status_line_for_test(&state, width);
@@ -3401,10 +3500,13 @@ fn lane_2_is_right_aligned_in_wide_layout() {
 #[test]
 fn lane_2_narrow_width_uses_deterministic_right_anchored_truncation() {
     let mut state = AppState {
-        latest_total_tokens: Some(11_657),
+        status: crate::state::StatusState {
+            latest_total_tokens: Some(11_657),
+            ..Default::default()
+        },
         ..Default::default()
     };
-    state.set_context_window_max_tokens(Some(200_000));
+    state.status.set_context_window_max_tokens(Some(200_000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 8);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -3835,7 +3937,8 @@ fn hydration_compaction_creates_block_structure() {
     // The compaction block header ("Compaction") should be present in transcript
     let has_compaction_header = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .any(|line| line.text() == "Compaction");
     assert!(
@@ -3860,7 +3963,8 @@ fn hydration_compaction_renders_markdown_body() {
     // Test by projecting the stored markdown and checking the output.
     let projected_texts: Vec<String> = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
@@ -3899,7 +4003,8 @@ fn hydration_compaction_fenced_body_renders_markdown_not_raw() {
 
     let projected_texts: Vec<String> = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
@@ -3927,7 +4032,8 @@ fn hydration_compaction_empty_summary_shows_block_only() {
 
     let texts: Vec<String> = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .map(|line| line.text())
         .collect();
@@ -3941,7 +4047,8 @@ fn hydration_compaction_empty_summary_shows_block_only() {
     // Only the header line should be present — no body content lines
     let compaction_lines: Vec<_> = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .filter(|line| line.role() == Role::Compaction)
         .collect();
@@ -3977,13 +4084,15 @@ fn hydration_compaction_matches_live_rendering() {
 
     let live_texts: Vec<String> = live
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .map(|line| line.text())
         .collect();
     let hydrated_texts: Vec<String> = hydrated
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .map(|line| line.text())
         .collect();
@@ -3995,13 +4104,15 @@ fn hydration_compaction_matches_live_rendering() {
 
     let live_roles: Vec<Role> = live
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .map(|line| line.role())
         .collect();
     let hydrated_roles: Vec<Role> = hydrated
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .map(|line| line.role())
         .collect();
@@ -4090,7 +4201,8 @@ fn drain_transport_coalesces_consecutive_assistant_messages() {
 
     let texts: Vec<String> = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .map(|line| line.text())
         .collect();
@@ -4123,7 +4235,8 @@ fn drain_transport_preserves_order_with_mixed_events() {
     // Final transcript shows "world" (the second AssistantMessage replaces the first)
     let texts: Vec<String> = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .filter(|line| line.role() == Role::Assistant)
         .map(|line| line.text())
@@ -4142,7 +4255,8 @@ fn drain_transport_single_assistant_message_not_affected() {
 
     let texts: Vec<String> = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .filter(|line| line.role() == Role::Assistant)
         .map(|line| line.text())
@@ -4153,10 +4267,13 @@ fn drain_transport_single_assistant_message_not_affected() {
 #[test]
 fn lane_2_shows_agent_when_active() {
     let mut state = AppState {
-        latest_total_tokens: Some(42_300),
+        status: crate::state::StatusState {
+            latest_total_tokens: Some(42_300),
+            ..Default::default()
+        },
         ..Default::default()
     };
-    state.set_context_window_max_tokens(Some(128_000));
+    state.status.set_context_window_max_tokens(Some(128_000));
     state.set_active_agent_identity("coder");
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 60);
@@ -4170,10 +4287,13 @@ fn lane_2_shows_agent_when_active() {
 #[test]
 fn lane_2_shows_only_tokens_when_no_agent() {
     let mut state = AppState {
-        latest_total_tokens: Some(250),
+        status: crate::state::StatusState {
+            latest_total_tokens: Some(250),
+            ..Default::default()
+        },
         ..Default::default()
     };
-    state.set_context_window_max_tokens(Some(1000));
+    state.status.set_context_window_max_tokens(Some(1000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 40);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -4201,7 +4321,7 @@ fn hydrate_transcript_sets_latest_total_tokens() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.hydrate_transcript_from_messages(Vec::<UiMessageSnapshot>::new(), Some(14000));
 
-    assert_eq!(coordinator.state().latest_total_tokens, Some(14000));
+    assert_eq!(coordinator.state().status.latest_total_tokens, Some(14000));
 }
 
 #[test]
@@ -4209,7 +4329,7 @@ fn hydrate_transcript_leaves_latest_total_tokens_none_when_no_value() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.hydrate_transcript_from_messages(Vec::<UiMessageSnapshot>::new(), None);
 
-    assert_eq!(coordinator.state().latest_total_tokens, None);
+    assert_eq!(coordinator.state().status.latest_total_tokens, None);
 }
 
 #[test]
@@ -4221,7 +4341,8 @@ fn hydrate_assistant_message_with_bold_emits_md_bold_span() {
     );
     let has_bold = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .filter_map(|e| {
             if let nu_agent_core::transcript::items::TranscriptEntryKind::Assistant(
@@ -4250,7 +4371,8 @@ fn hydrate_compaction_message_with_italic_emits_md_italic_span() {
     );
     let has_italic = coordinator
         .state()
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .filter_map(|e| {
             if let nu_agent_core::transcript::items::TranscriptEntryKind::Assistant(
@@ -4341,8 +4463,8 @@ fn status_target_height_is_three() {
 
 #[test]
 fn status_left_content_contains_model() {
-    let state = AppState::default();
-    let line = crate::runtime::status_left_content_for_test("openai/gpt-4", None, &state, 80);
+    let mut state = AppState::default();
+    let line = crate::runtime::status_left_content_for_test("openai/gpt-4", None, &mut state, 80);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(text.contains("openai/gpt-4"));
 }
@@ -4375,11 +4497,14 @@ fn status_right_content_shows_cwd_when_given() -> Result<()> {
 #[test]
 fn status_left_content_contains_tokens() {
     let mut state = AppState {
-        latest_total_tokens: Some(250),
+        status: crate::state::StatusState {
+            latest_total_tokens: Some(250),
+            ..Default::default()
+        },
         ..Default::default()
     };
-    state.set_context_window_max_tokens(Some(1000));
-    let line = crate::runtime::status_left_content_for_test("openai/gpt-4", None, &state, 80);
+    state.status.set_context_window_max_tokens(Some(1000));
+    let line = crate::runtime::status_left_content_for_test("openai/gpt-4", None, &mut state, 80);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(text.contains("250"));
     assert!(text.contains("25%"));
@@ -4406,42 +4531,48 @@ fn transcript_list_area_is_two_columns_narrower_than_content_area() {
 #[test]
 fn model_picker_rows_do_not_contain_selection_prefix() {
     let mut state = AppState::default();
-    state.set_model_picker_options(vec![
-        crate::state::ModelPickerOption {
-            provider: "openai".to_string(),
-            model: "gpt-4o".to_string(),
-            identity: "openai/gpt-4o".to_string(),
-            display: "openai/gpt-4o".to_string(),
-            active: true,
-            context_window: None,
-            max_output: None,
-            configured: false,
-            provider_display_name: String::new(),
-        },
-        crate::state::ModelPickerOption {
-            provider: "anthropic".to_string(),
-            model: "claude-3-5-sonnet".to_string(),
-            identity: "anthropic/claude-3-5-sonnet".to_string(),
-            display: "anthropic/claude-3-5-sonnet".to_string(),
-            active: false,
-            context_window: None,
-            max_output: None,
-            configured: false,
-            provider_display_name: String::new(),
-        },
-        crate::state::ModelPickerOption {
-            provider: "openai".to_string(),
-            model: "gpt-4o-mini".to_string(),
-            identity: "openai/gpt-4o-mini".to_string(),
-            display: "openai/gpt-4o-mini".to_string(),
-            active: false,
-            context_window: None,
-            max_output: None,
-            configured: false,
-            provider_display_name: String::new(),
-        },
-    ]);
-    state.model_picker_selection = 1;
+    state.set_picker_options(
+        ActivePicker::Model,
+        vec![
+            nu_agent_core::protocol::picker::ModelPickerOption {
+                provider: "openai".to_string(),
+                model: "gpt-4o".to_string(),
+                identity: "openai/gpt-4o".to_string(),
+                display: "openai/gpt-4o".to_string(),
+                active: true,
+                context_window: None,
+                max_output: None,
+                configured: false,
+                provider_display_name: String::new(),
+            },
+            nu_agent_core::protocol::picker::ModelPickerOption {
+                provider: "anthropic".to_string(),
+                model: "claude-3-5-sonnet".to_string(),
+                identity: "anthropic/claude-3-5-sonnet".to_string(),
+                display: "anthropic/claude-3-5-sonnet".to_string(),
+                active: false,
+                context_window: None,
+                max_output: None,
+                configured: false,
+                provider_display_name: String::new(),
+            },
+            nu_agent_core::protocol::picker::ModelPickerOption {
+                provider: "openai".to_string(),
+                model: "gpt-4o-mini".to_string(),
+                identity: "openai/gpt-4o-mini".to_string(),
+                display: "openai/gpt-4o-mini".to_string(),
+                active: false,
+                context_window: None,
+                max_output: None,
+                configured: false,
+                provider_display_name: String::new(),
+            },
+        ],
+    );
+    state.picker.open(ActivePicker::Model);
+    if let Some(s) = state.picker.active_state_mut() {
+        s.selection = 1;
+    }
 
     let rows = super::model_picker_row_cells_for_test(&state);
     assert!(!rows.is_empty(), "expected at least one row");
@@ -4462,30 +4593,36 @@ fn model_picker_rows_do_not_contain_selection_prefix() {
 #[test]
 fn agent_picker_rows_do_not_contain_selection_prefix() {
     let mut state = AppState::default();
-    state.set_agent_picker_options(vec![
-        crate::state::AgentPickerOption {
-            name: "default".to_string(),
-            description: Some("Default agent".to_string()),
-            display: "default".to_string(),
-            active: true,
-            builtin: true,
-        },
-        crate::state::AgentPickerOption {
-            name: "coder".to_string(),
-            description: Some("Coding assistant".to_string()),
-            display: "coder".to_string(),
-            active: false,
-            builtin: false,
-        },
-        crate::state::AgentPickerOption {
-            name: "reviewer".to_string(),
-            description: None,
-            display: "reviewer".to_string(),
-            active: false,
-            builtin: false,
-        },
-    ]);
-    state.agent_picker_selection = 1;
+    state.set_picker_options(
+        ActivePicker::Agent,
+        vec![
+            nu_agent_core::protocol::picker::AgentPickerOption {
+                name: "default".to_string(),
+                description: Some("Default agent".to_string()),
+                display: "default".to_string(),
+                active: true,
+                builtin: true,
+            },
+            nu_agent_core::protocol::picker::AgentPickerOption {
+                name: "coder".to_string(),
+                description: Some("Coding assistant".to_string()),
+                display: "coder".to_string(),
+                active: false,
+                builtin: false,
+            },
+            nu_agent_core::protocol::picker::AgentPickerOption {
+                name: "reviewer".to_string(),
+                description: None,
+                display: "reviewer".to_string(),
+                active: false,
+                builtin: false,
+            },
+        ],
+    );
+    state.picker.open(ActivePicker::Agent);
+    if let Some(s) = state.picker.active_state_mut() {
+        s.selection = 1;
+    }
 
     let rows = super::agent_picker_row_cells_for_test(&state);
     assert!(!rows.is_empty(), "expected at least one row");
@@ -4586,30 +4723,41 @@ fn should_scan_for_yank_visual_mode_returns_true() {
 #[test]
 fn entry_visual_info_computed_on_new_entry() {
     let mut state = crate::state::AppState::default();
-    state.push_transcript_line(crate::state::TranscriptRole::User, "hello".to_string());
-    state.recompute_entry_visual_info(80);
-    assert_eq!(state.entry_visual_info.len(), 1);
-    assert_eq!(state.entry_visual_info[0].start_visual_row, 0);
-    assert!(state.entry_visual_info[0].visual_row_count >= 1);
+    state
+        .transcript
+        .push_transcript_line(crate::state::TranscriptRole::User, "hello".to_string());
+    state
+        .transcript
+        .recompute_entry_visual_info(&mut state.scroll, 80);
+    assert_eq!(state.scroll.entry_visual_info.len(), 1);
+    assert_eq!(state.scroll.entry_visual_info[0].start_visual_row, 0);
+    assert!(state.scroll.entry_visual_info[0].visual_row_count >= 1);
 }
 
 #[test]
 fn total_visual_rows_from_entry_visual_info() {
     let mut state = crate::state::AppState::default();
-    state.push_transcript_line(crate::state::TranscriptRole::User, "a".to_string());
-    state.push_transcript_line(
+    state
+        .transcript
+        .push_transcript_line(crate::state::TranscriptRole::User, "a".to_string());
+    state.transcript.push_transcript_line(
         crate::state::TranscriptRole::Assistant,
         "b\nc\nd".to_string(),
     );
-    state.push_transcript_line(crate::state::TranscriptRole::User, "e".to_string());
-    state.recompute_entry_visual_info(80);
+    state
+        .transcript
+        .push_transcript_line(crate::state::TranscriptRole::User, "e".to_string());
+    state
+        .transcript
+        .recompute_entry_visual_info(&mut state.scroll, 80);
     // No reactive spacers — just the 3 entries
-    assert_eq!(state.entry_visual_info.len(), 3);
-    assert_eq!(state.entry_visual_info[0].visual_row_count, 1); // User "a"
+    assert_eq!(state.scroll.entry_visual_info.len(), 3);
+    assert_eq!(state.scroll.entry_visual_info[0].visual_row_count, 1); // User "a"
     // "b\nc\nd" projects to 3 ContentLines (one per line)
-    assert_eq!(state.entry_visual_info[1].visual_row_count, 3); // Assistant
-    assert_eq!(state.entry_visual_info[2].visual_row_count, 1); // User "e"
+    assert_eq!(state.scroll.entry_visual_info[1].visual_row_count, 3); // Assistant
+    assert_eq!(state.scroll.entry_visual_info[2].visual_row_count, 1); // User "e"
     let total = state
+        .scroll
         .entry_visual_info
         .last()
         .map(|i| i.start_visual_row + i.visual_row_count)
@@ -4620,18 +4768,22 @@ fn total_visual_rows_from_entry_visual_info() {
 #[test]
 fn entry_visual_info_cleared_on_clear_transcript() {
     let mut state = crate::state::AppState::default();
-    state.push_transcript_line(crate::state::TranscriptRole::User, "hello".to_string());
-    state.recompute_entry_visual_info(80);
-    assert!(!state.entry_visual_info.is_empty());
+    state
+        .transcript
+        .push_transcript_line(crate::state::TranscriptRole::User, "hello".to_string());
+    state
+        .transcript
+        .recompute_entry_visual_info(&mut state.scroll, 80);
+    assert!(!state.scroll.entry_visual_info.is_empty());
     state.clear_transcript();
-    assert!(state.entry_visual_info.is_empty());
+    assert!(state.scroll.entry_visual_info.is_empty());
 }
 
 #[test]
 fn push_startup_logo_adds_logo_entry_to_transcript() {
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
     coordinator.state.push_startup_logo();
-    let entries = &coordinator.state.transcript_preview;
+    let entries = &coordinator.state.transcript.entries;
     assert_eq!(entries.len(), 1);
     assert!(matches!(entries[0].kind, TranscriptEntryKind::Logo(_)));
 }
@@ -4643,7 +4795,8 @@ fn startup_logo_not_pushed_during_hydration() {
     coordinator.hydrate_transcript_from_messages(messages, None);
     let has_logo = coordinator
         .state
-        .transcript_preview
+        .transcript
+        .entries
         .iter()
         .any(|e| matches!(e.kind, TranscriptEntryKind::Logo(_)));
     assert!(!has_logo, "hydration must not push a logo");
@@ -4660,16 +4813,157 @@ fn bottom_align_pads_content_when_shorter_than_viewport() {
     coordinator.state.push_startup_logo();
     // AppState.entry_visual_info_dirty is a public field — no setter method exists.
     // Force a render to trigger the bottom-align logic.
-    coordinator.state.entry_visual_info_dirty = true;
+    coordinator.state.transcript.visual_info_dirty = true;
     // The actual padding happens in render_transcript_pane which we can't easily unit-test
     // without a full Frame. Instead, verify the state is set up correctly for bottom-align:
     // viewport_height > total_visual_rows should be true for a single logo on a 40-row terminal.
-    coordinator.state.recompute_entry_visual_info(120);
-    let total = coordinator.state.total_visual_rows;
-    let vp = coordinator.state.viewport_height;
+    coordinator
+        .state
+        .transcript
+        .recompute_entry_visual_info(&mut coordinator.state.scroll, 120);
+    let total = coordinator.state.scroll.total_visual_rows;
+    let vp = coordinator.state.scroll.viewport_height;
     // On a 40-row terminal, a single logo entry should be much shorter
     assert!(
         total < vp || vp == 0,
         "expected total_visual_rows ({total}) < viewport_height ({vp}) for single logo"
+    );
+}
+
+#[test]
+fn reduce_warning_event_message_sets_status_line_and_marks_render_needed() {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
+    coordinator.set_render_needed(false);
+
+    // -- Exec
+    // Mirrors the interactive loop's warning_rx arm: reduce, then mark on true.
+    let handled = coordinator.reduce_warning_event(WarningEvent::Message {
+        message: "warned".to_string(),
+    });
+    if handled {
+        coordinator.mark_render_needed();
+    }
+
+    // -- Check
+    assert!(handled, "StatusState must claim plain warning messages");
+    assert_eq!(coordinator.state.status.status_line, "warned");
+    assert!(
+        coordinator.render_needed(),
+        "handled warnings must mark the frame dirty"
+    );
+}
+
+#[test]
+fn reduce_warning_event_turn_error_falls_through_to_transcript_and_finalize() {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
+    coordinator.state.phase = UiPhase::Busy;
+    coordinator.state.input_locked = true;
+
+    // -- Exec
+    let handled = coordinator.reduce_warning_event(WarningEvent::TurnError {
+        message: "boom".to_string(),
+    });
+
+    // -- Check
+    assert!(handled, "TurnError must fall through and be handled");
+    let error_line = coordinator
+        .state
+        .transcript
+        .entries
+        .iter()
+        .any(|entry| entry.role() == Role::System && entry.text().contains("Error: boom"));
+    assert!(error_line, "TurnError must land on the transcript");
+    assert_eq!(
+        coordinator.state.phase,
+        UiPhase::Idle,
+        "TurnError finalize must return to Idle"
+    );
+    assert!(!coordinator.state.input_locked);
+}
+
+#[test]
+fn reduce_ui_state_event_status_variants_route_through_status_state() {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
+
+    // -- Exec & Check
+    coordinator.reduce_ui_state_event(UiStateEvent::SetActiveModelIdentity(
+        "openai/gpt-4o".to_string(),
+    ));
+    coordinator.mark_render_needed();
+    assert_eq!(
+        coordinator.state.status.active_model_identity,
+        "openai/gpt-4o"
+    );
+    assert!(coordinator.render_needed());
+
+    coordinator.reduce_ui_state_event(UiStateEvent::SetActivePersonaIcon(Some("icon".to_string())));
+    assert_eq!(
+        coordinator.state.status.active_persona_icon,
+        Some("icon".to_string())
+    );
+
+    coordinator.reduce_ui_state_event(UiStateEvent::SetContextWindowMaxTokens(Some(128_000)));
+    assert_eq!(
+        coordinator.state.status.context_window_max_tokens,
+        Some(128_000)
+    );
+
+    coordinator.reduce_ui_state_event(UiStateEvent::SetMcpServerState {
+        server: "gh".to_string(),
+        state: nu_agent_core::protocol::contracts::McpUsabilityState::Failed,
+        error: Some("boom".to_string()),
+        total: 3,
+    });
+    assert_eq!(coordinator.state.status.llm_visible_mcp_tool_count, 3);
+
+    coordinator.reduce_ui_state_event(UiStateEvent::SetMcpVisibleToolCount {
+        server: "gh".to_string(),
+        count: 5,
+    });
+    assert_eq!(
+        coordinator
+            .state
+            .status
+            .mcp_visible_tool_count_for_server_name("gh"),
+        5
+    );
+
+    coordinator.reduce_ui_state_event(UiStateEvent::SetMcpVisibleToolNames {
+        server: "gh".to_string(),
+        names: vec!["z_tool".to_string(), "a_tool".to_string()],
+    });
+    assert_eq!(
+        coordinator
+            .state
+            .status
+            .mcp_visible_tool_names_for_server_name("gh"),
+        vec!["a_tool".to_string(), "z_tool".to_string()]
+    );
+}
+
+#[test]
+fn reduce_ui_state_event_non_status_variants_fall_back_to_app_state() {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
+    assert!(coordinator.state.transcript.entries.is_empty());
+
+    // -- Exec
+    // PushStartupLogo is not status-owned: StatusState returns false and
+    // AppState handles it (mirrors the ui_state_rx caller seam).
+    coordinator.reduce_ui_state_event(UiStateEvent::PushStartupLogo);
+
+    // -- Check
+    let has_logo = coordinator
+        .state
+        .transcript
+        .entries
+        .iter()
+        .any(|e| matches!(e.kind, TranscriptEntryKind::Logo(_)));
+    assert!(
+        has_logo,
+        "non-status UiStateEvent must fall through to AppState"
     );
 }

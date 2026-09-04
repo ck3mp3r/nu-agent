@@ -149,17 +149,17 @@ fn global_abort_cancels_active_and_all_pending_prompts() {
 fn record_token_usage_tracks_latest_and_accumulates_session_total() {
     let mut state = AppState::default();
 
-    state.record_token_usage(7, 5, 12);
-    assert_eq!(state.latest_input_tokens, Some(7));
-    assert_eq!(state.latest_output_tokens, Some(5));
-    assert_eq!(state.latest_total_tokens, Some(12));
-    assert_eq!(state.session_total_tokens, 12);
+    state.status.record_token_usage(7, 5, 12);
+    assert_eq!(state.status.latest_input_tokens, Some(7));
+    assert_eq!(state.status.latest_output_tokens, Some(5));
+    assert_eq!(state.status.latest_total_tokens, Some(12));
+    assert_eq!(state.status.session_total_tokens, 12);
 
-    state.record_token_usage(2, 3, 5);
-    assert_eq!(state.latest_input_tokens, Some(2));
-    assert_eq!(state.latest_output_tokens, Some(3));
-    assert_eq!(state.latest_total_tokens, Some(5));
-    assert_eq!(state.session_total_tokens, 17);
+    state.status.record_token_usage(2, 3, 5);
+    assert_eq!(state.status.latest_input_tokens, Some(2));
+    assert_eq!(state.status.latest_output_tokens, Some(3));
+    assert_eq!(state.status.latest_total_tokens, Some(5));
+    assert_eq!(state.status.session_total_tokens, 17);
 }
 
 #[test]
@@ -187,14 +187,15 @@ fn enqueue_external_prompt_adds_user_transcript_line() -> Result<()> {
     state.enqueue_external_prompt("hello from parent".to_string());
 
     // starting spacer + user + closing spacer
-    assert!(!state.transcript_preview.is_empty());
+    assert!(!state.transcript.entries.is_empty());
     assert!(matches!(
-        state.transcript_preview[0].kind,
+        state.transcript.entries[0].kind,
         TranscriptEntryKind::Spacer(_)
     ));
-    assert_eq!(state.transcript_preview[1].role(), Role::User);
+    assert_eq!(state.transcript.entries[1].role(), Role::User);
     let last = state
-        .transcript_preview
+        .transcript
+        .entries
         .last()
         .ok_or("should have last transcript entry")?;
     assert!(matches!(last.kind, TranscriptEntryKind::Spacer(_)));
@@ -232,23 +233,26 @@ fn enqueue_external_prompt_not_returned_by_take_submitted_prompt() {
 fn enqueue_prompt_does_not_add_transcript_entry() {
     let mut state = AppState::default();
     state.enqueue_external_prompt("first".to_string());
-    let before = state.transcript_preview.len();
+    let before = state.transcript.entries.len();
     state.enqueue_prompt("second".to_string());
-    assert_eq!(state.transcript_preview.len(), before);
+    assert_eq!(state.transcript.entries.len(), before);
 }
 
 #[test]
 fn clear_transcript_resets_token_fields() {
     let mut state = AppState {
-        latest_input_tokens: Some(100),
-        latest_output_tokens: Some(200),
-        latest_total_tokens: Some(300),
+        status: StatusState {
+            latest_input_tokens: Some(100),
+            latest_output_tokens: Some(200),
+            latest_total_tokens: Some(300),
+            ..Default::default()
+        },
         ..AppState::default()
     };
     state.clear_transcript();
-    assert!(state.latest_input_tokens.is_none());
-    assert!(state.latest_output_tokens.is_none());
-    assert!(state.latest_total_tokens.is_none());
+    assert!(state.status.latest_input_tokens.is_none());
+    assert!(state.status.latest_output_tokens.is_none());
+    assert!(state.status.latest_total_tokens.is_none());
 }
 
 #[test]
@@ -257,20 +261,21 @@ fn activate_next_prompt_adds_user_entry_to_transcript() -> Result<()> {
     state.enqueue_external_prompt("first".to_string());
     state.enqueue_prompt("second".to_string());
     state.complete_active_prompt();
-    let before = state.transcript_preview.len();
+    let before = state.transcript.entries.len();
     state.activate_next_prompt();
     // starting spacer + user + closing spacer
-    assert_eq!(state.transcript_preview.len(), before + 3);
+    assert_eq!(state.transcript.entries.len(), before + 3);
     assert!(matches!(
-        state.transcript_preview.get(before).map(|e| &e.kind),
+        state.transcript.entries.get(before).map(|e| &e.kind),
         Some(TranscriptEntryKind::Spacer(_))
     ));
     assert!(matches!(
-        state.transcript_preview.get(before + 1).map(|e| &e.kind),
+        state.transcript.entries.get(before + 1).map(|e| &e.kind),
         Some(TranscriptEntryKind::User(_))
     ));
     let last = state
-        .transcript_preview
+        .transcript
+        .entries
         .last()
         .ok_or("should have last transcript entry")?;
     assert!(matches!(last.kind, TranscriptEntryKind::Spacer(_)));
@@ -355,7 +360,8 @@ fn history_up_on_first_use_loads_last_submitted() {
     state.enqueue_prompt("p1".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
-    let result = state.history_up("");
+    let submitted = state.submitted_prompt_texts();
+    let result = state.input.history_up(&submitted, "");
     assert_eq!(result, Some("p1".to_string()));
 }
 
@@ -367,13 +373,14 @@ fn history_up_cycles_newest_first_and_clamps_at_oldest() {
         let _ = state.activate_next_prompt();
         state.complete_active_prompt();
     }
-    let r1 = state.history_up("");
+    let submitted = state.submitted_prompt_texts();
+    let r1 = state.input.history_up(&submitted, "");
     assert_eq!(r1, Some("c".to_string()));
-    let r2 = state.history_up("");
+    let r2 = state.input.history_up(&submitted, "");
     assert_eq!(r2, Some("b".to_string()));
-    let r3 = state.history_up("");
+    let r3 = state.input.history_up(&submitted, "");
     assert_eq!(r3, Some("a".to_string()));
-    let r4 = state.history_up("");
+    let r4 = state.input.history_up(&submitted, "");
     assert_eq!(r4, Some("a".to_string())); // clamp
 }
 
@@ -383,8 +390,14 @@ fn history_down_past_newest_restores_draft() {
     state.enqueue_prompt("p1".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
-    let _ = state.history_up("draft");
-    assert_eq!(state.history_down(), Some("draft".to_string()));
+    let _ = state
+        .input
+        .history_up(&state.submitted_prompt_texts(), "draft");
+    let submitted = state.submitted_prompt_texts();
+    assert_eq!(
+        state.input.history_down(&submitted),
+        Some("draft".to_string())
+    );
 }
 
 #[test]
@@ -395,7 +408,8 @@ fn history_up_moves_cursor_up_in_multiline_buffer() {
     state.enqueue_prompt("prev".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
-    let result = state.history_up("line1\nline2");
+    let submitted = state.submitted_prompt_texts();
+    let result = state.input.history_up(&submitted, "line1\nline2");
     assert_eq!(result, Some("prev".to_string()));
 }
 
@@ -406,7 +420,8 @@ fn history_up_clamps_column_to_shorter_prev_line() {
     state.enqueue_prompt("prev".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
-    let result = state.history_up("ab\nxyz");
+    let submitted = state.submitted_prompt_texts();
+    let result = state.input.history_up(&submitted, "ab\nxyz");
     assert_eq!(result, Some("prev".to_string()));
 }
 
@@ -416,14 +431,17 @@ fn history_up_on_first_line_of_multiline_enters_history() {
     state.enqueue_prompt("prev".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
-    let result = state.history_up("line1\nline2");
+    let submitted = state.submitted_prompt_texts();
+    let result = state.input.history_up(&submitted, "line1\nline2");
     assert_eq!(result, Some("prev".to_string()));
 }
 
 #[test]
 fn history_down_moves_cursor_down_in_multiline() {
     // History navigation now returns text; cursor is managed by TextArea.
-    let result = AppState::default().history_down();
+    let mut state = AppState::default();
+    let submitted = state.submitted_prompt_texts();
+    let result = state.input.history_down(&submitted);
     assert_eq!(result, None);
 }
 
@@ -433,59 +451,63 @@ fn typing_resets_history_navigation() {
     state.enqueue_prompt("p1".to_string());
     let _ = state.activate_next_prompt();
     state.complete_active_prompt();
-    let _ = state.history_up("");
-    assert_eq!(state.history_up(""), Some("p1".to_string()));
+    let submitted = state.submitted_prompt_texts();
+    let _ = state.input.history_up(&submitted, "");
+    assert_eq!(
+        state.input.history_up(&submitted, ""),
+        Some("p1".to_string())
+    );
     // After typing, history navigation is reset
-    state.reset_history_navigation();
-    assert_eq!(state.history_down(), None);
-    state.reset_history_navigation();
-    assert_eq!(state.history_down(), None);
+    state.input.reset_history_navigation();
+    assert_eq!(state.input.history_down(&submitted), None);
+    state.input.reset_history_navigation();
+    assert_eq!(state.input.history_down(&submitted), None);
 }
 
 #[test]
 fn insert_exit_pending_j_is_true_within_timeout() {
     let mut state = AppState::default();
-    assert!(!state.insert_exit_pending_j());
+    assert!(!state.input.insert_exit_pending_j());
 
-    state.set_insert_exit_pending_j();
-    assert!(state.insert_exit_pending_j());
+    state.input.set_insert_exit_pending_j();
+    assert!(state.input.insert_exit_pending_j());
 }
 
 #[test]
 fn insert_exit_pending_j_is_false_after_timeout() {
     let mut state = AppState::default();
-    state.set_insert_exit_pending_j();
+    state.input.set_insert_exit_pending_j();
 
     std::thread::sleep(std::time::Duration::from_millis(600));
-    assert!(!state.insert_exit_pending_j());
+    assert!(!state.input.insert_exit_pending_j());
 }
 
 #[test]
 fn clear_insert_exit_pending_j_resets_to_false() {
     let mut state = AppState::default();
-    state.set_insert_exit_pending_j();
-    assert!(state.insert_exit_pending_j());
+    state.input.set_insert_exit_pending_j();
+    assert!(state.input.insert_exit_pending_j());
 
-    state.clear_insert_exit_pending_j();
-    assert!(!state.insert_exit_pending_j());
-    state.clear_insert_exit_pending_j();
-    assert!(!state.insert_exit_pending_j());
+    state.input.clear_insert_exit_pending_j();
+    assert!(!state.input.insert_exit_pending_j());
+    state.input.clear_insert_exit_pending_j();
+    assert!(!state.input.insert_exit_pending_j());
 }
 
 #[test]
 fn push_spacer_adds_spacer_when_last_is_not_spacer() {
     let mut state = AppState::default();
-    state.push_transcript_item(TranscriptEntry {
+    state.transcript.push_transcript_item(TranscriptEntry {
         id: 0,
         kind: TranscriptEntryKind::User(ProseMessage {
             markdown: "hi".into(),
         }),
         status: None,
     });
-    state.push_spacer();
-    assert_eq!(state.transcript_preview.len(), 2);
+    state.transcript.push_spacer();
+    assert_eq!(state.transcript.entries.len(), 2);
     assert!(matches!(
-        state.transcript_preview[1].kind,
+        state.transcript.entries[1].kind,
         TranscriptEntryKind::Spacer(_)
     ));
 }

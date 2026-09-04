@@ -1,6 +1,6 @@
 use super::*;
 
-impl AppState {
+impl StatusState {
     pub fn set_mcp_servers(&mut self, servers: Vec<McpServerState>) {
         self.mcp_servers = servers;
         self.mcp_visible_tool_count_by_server

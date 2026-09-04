@@ -4,7 +4,10 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use crate::{rendering::theme::TuiTheme, state::AppState};
+use crate::{
+    rendering::theme::TuiTheme,
+    state::{AppState, PickerPayload},
+};
 use nu_agent_core::transcript::items::TranscriptEntry;
 
 pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect, theme: &TuiTheme) {
@@ -21,7 +24,7 @@ pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect,
 }
 
 pub(super) fn transcript_entries_for_render(state: &AppState) -> &[TranscriptEntry] {
-    &state.transcript_preview
+    state.transcript.entries()
 }
 
 pub(super) fn wrapped_visual_rows_for_rendered_line(
@@ -96,7 +99,7 @@ pub(super) const AGENT_PICKER_EMPTY_STATE_MESSAGE: &str =
     "No agent personas found. Create .agents/<name>.md files.";
 
 pub(crate) fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
-    if state.skills_discovery_failed() {
+    if state.status.skills_discovery_failed() {
         return (
             "Skills",
             vec![Line::from(
@@ -105,7 +108,7 @@ pub(crate) fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'s
         );
     }
 
-    if state.discoverable_skills().is_empty() {
+    if state.status.discoverable_skills().is_empty() {
         return (
             "Skills",
             vec![Line::from("No discoverable skills available.")],
@@ -115,6 +118,7 @@ pub(crate) fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'s
     let mut lines = vec![Line::from("Discoverable skills")];
     lines.extend(
         state
+            .status
             .discoverable_skills()
             .iter()
             .map(|skill| Line::from(format!("- {} ({})", skill.name, skill.source))),
@@ -151,15 +155,21 @@ pub(super) struct McpSelectedDetails {
 pub(crate) const MCP_STATUS_COLUMN_WIDTH: u16 = 6;
 
 pub(super) fn mcp_selected_details(state: &AppState) -> Option<McpSelectedDetails> {
-    let server = state.mcp_servers.get(state.mcp_panel_selection)?;
+    let server = state
+        .status
+        .mcp_servers
+        .get(state.status.mcp_panel_selection)?;
     let reason = state
+        .status
         .failed_mcp_servers_with_reasons()
         .into_iter()
         .find(|(name, _)| *name == server.name.as_str())
         .and_then(|(_, reason)| reason)
         .map(str::trim)
         .filter(|reason| !reason.is_empty());
-    let mut tool_names = state.mcp_visible_tool_names_for_server_name(server.name.as_str());
+    let mut tool_names = state
+        .status
+        .mcp_visible_tool_names_for_server_name(server.name.as_str());
     tool_names.sort();
     tool_names.dedup();
     let tools_line = if tool_names.is_empty() {
@@ -344,10 +354,12 @@ pub(super) fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableMo
         "Status".to_string(),
     ];
     let all_rows = state
+        .status
         .mcp_servers
         .iter()
         .map(|server| {
             let visible_tools = state
+                .status
                 .mcp_visible_tool_count_for_server_name(server.name.as_str())
                 .to_string();
             [
@@ -363,6 +375,7 @@ pub(super) fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableMo
     } else {
         Some(
             state
+                .status
                 .mcp_panel_selection
                 .min(all_rows.len().saturating_sub(1)),
         )
@@ -422,13 +435,18 @@ pub(super) fn command_palette_table_model(
     popup_width: u16,
     popup_height: u16,
 ) -> CommandPaletteTableModel {
-    let actions = state.command_palette_actions();
+    let picker_state = state.picker.active_state().expect("palette open");
+    let actions = picker_state.filtered();
     let _ = popup_width;
     let columns = vec!["Action".to_string(), "Summary".to_string()];
 
     let all_rows = actions
         .iter()
-        .map(|action| {
+        .map(|opt| {
+            let action = match &opt.payload {
+                PickerPayload::Command(a) => *a,
+                _ => unreachable!(),
+            };
             [
                 action.label().to_string(),
                 action.summary().to_string(),
@@ -440,11 +458,7 @@ pub(super) fn command_palette_table_model(
     let selected_global = if all_rows.is_empty() {
         None
     } else {
-        Some(
-            state
-                .command_palette_selection
-                .min(all_rows.len().saturating_sub(1)),
-        )
+        Some(picker_state.selection.min(all_rows.len().saturating_sub(1)))
     };
 
     let table_view_rows = popup_height.saturating_sub(3) as usize;
@@ -489,7 +503,7 @@ pub(super) fn command_palette_table_model(
     };
 
     CommandPaletteTableModel {
-        query_line: format!("Query: {}", state.command_palette_query),
+        query_line: format!("Query: {}", picker_state.query),
         columns,
         rows,
         selected,

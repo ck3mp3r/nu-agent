@@ -18,7 +18,7 @@ use crate::{
         render::frame::{ModalPanelKind, modal_rect_for_panel},
         render::{render_modal_frame, render_scroll_text_panel},
     },
-    state::InfoPanel,
+    state::{InfoPanel, PickerPayload},
 };
 
 use crate::runtime::RuntimeCoordinator;
@@ -146,9 +146,7 @@ impl RuntimeCoordinator {
             _ => {
                 let (title, lines) = match panel {
                     InfoPanel::Help => help_panel_lines(&self.theme),
-                    InfoPanel::Status => {
-                        status_panel_lines(&self.state, &self.active_model_identity)
-                    }
+                    InfoPanel::Status => status_panel_lines(&self.state),
                     InfoPanel::Skills => skills_panel_lines(&self.state),
                     InfoPanel::Mcps => (
                         "MCPs",
@@ -204,16 +202,14 @@ impl RuntimeCoordinator {
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(0)])
             .split(inner);
+        let picker_state = self.state.picker.active_state().expect("model picker open");
         frame.render_widget(
-            Paragraph::new(Line::from(format!(
-                "Query: {}",
-                self.state.model_picker_query
-            )))
-            .style(self.theme.subtle_meta),
+            Paragraph::new(Line::from(format!("Query: {}", picker_state.query)))
+                .style(self.theme.subtle_meta),
             rows[0],
         );
 
-        let options = self.state.model_picker_filtered_options();
+        let options = picker_state.filtered();
         if options.is_empty() {
             frame.render_widget(
                 Paragraph::new(Line::from(MODEL_PICKER_EMPTY_STATE_MESSAGE))
@@ -222,53 +218,33 @@ impl RuntimeCoordinator {
             );
         } else {
             // Build rows with provider headers
-            use nu_agent_core::protocol::picker::ModelPickerRow;
-            let mut picker_rows: Vec<ModelPickerRow> = Vec::new();
-            let mut current_provider: Option<String> = None;
-            for option in &options {
-                if current_provider.as_deref() != Some(&option.provider) {
-                    picker_rows.push(ModelPickerRow::ProviderHeader {
-                        name: option.provider.clone(),
-                        display_name: option.provider_display_name.clone(),
-                    });
-                    current_provider = Some(option.provider.clone());
-                }
-                picker_rows.push(ModelPickerRow::Model {
-                    option: option.clone(),
-                });
-            }
-
-            // Render rows — provider headers are styled, not selectable
-            // Map selection index to row position by counting only Model rows
             let mut table_rows: Vec<Row> = Vec::new();
-            let mut model_idx = 0;
+            let mut current_provider: Option<String> = None;
             let mut selected_row = 0;
-            for row in &picker_rows {
-                match row {
-                    ModelPickerRow::ProviderHeader { display_name, .. } => {
-                        table_rows.push(
-                            Row::new(vec![Cell::from(format!("  {display_name}"))])
-                                .style(self.theme.subtle_meta),
-                        );
-                    }
-                    ModelPickerRow::Model { option } => {
-                        let active = if option.active { "*" } else { "" };
-                        let configured = if option.configured { "◆" } else { "" };
-                        let ctx = option
-                            .context_window
-                            .map(|c| format!("{}k", c / 1000))
-                            .unwrap_or_default();
-                        table_rows.push(Row::new(vec![
-                            Cell::from(format!("  {}", option.identity)),
-                            Cell::from(ctx),
-                            Cell::from(active.to_string()),
-                            Cell::from(configured.to_string()),
-                        ]));
-                        if model_idx == self.state.model_picker_selection {
-                            selected_row = table_rows.len() - 1;
-                        }
-                        model_idx += 1;
-                    }
+            for (model_idx, opt) in options.iter().enumerate() {
+                let (provider, provider_display_name, identity) = match &opt.payload {
+                    PickerPayload::Model {
+                        provider,
+                        provider_display_name,
+                        identity,
+                    } => (provider, provider_display_name, identity),
+                    _ => unreachable!(),
+                };
+                if current_provider.as_deref() != Some(provider.as_str()) {
+                    table_rows.push(
+                        Row::new(vec![Cell::from(format!("  {provider_display_name}"))])
+                            .style(self.theme.subtle_meta),
+                    );
+                    current_provider = Some(provider.clone());
+                }
+                table_rows.push(Row::new(vec![
+                    Cell::from(format!("  {identity}")),
+                    Cell::from(String::new()),
+                    Cell::from(String::new()),
+                    Cell::from(String::new()),
+                ]));
+                if model_idx == picker_state.selection {
+                    selected_row = table_rows.len() - 1;
                 }
             }
 
@@ -297,16 +273,14 @@ impl RuntimeCoordinator {
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(0)])
             .split(inner);
+        let picker_state = self.state.picker.active_state().expect("agent picker open");
         frame.render_widget(
-            Paragraph::new(Line::from(format!(
-                "Query: {}",
-                self.state.agent_picker_query
-            )))
-            .style(self.theme.subtle_meta),
+            Paragraph::new(Line::from(format!("Query: {}", picker_state.query)))
+                .style(self.theme.subtle_meta),
             rows[0],
         );
 
-        let options = self.state.agent_picker_filtered_options();
+        let options = picker_state.filtered();
         if options.is_empty() {
             frame.render_widget(
                 Paragraph::new(Line::from(AGENT_PICKER_EMPTY_STATE_MESSAGE))
@@ -316,12 +290,15 @@ impl RuntimeCoordinator {
         } else {
             let table_rows: Vec<Row> = options
                 .iter()
-                .map(|option| {
-                    let active = if option.active { "*" } else { "" };
-                    let desc = option.description.as_deref().unwrap_or("");
+                .map(|opt| {
+                    let (name, active) = match &opt.payload {
+                        PickerPayload::Agent { name, active } => (name, *active),
+                        _ => unreachable!(),
+                    };
+                    let active = if active { "*" } else { "" };
                     Row::new(vec![
-                        Cell::from(option.name.clone()),
-                        Cell::from(desc.to_string()),
+                        Cell::from(name.clone()),
+                        Cell::from(String::new()),
                         Cell::from(active.to_string()),
                     ])
                 })
@@ -339,7 +316,7 @@ impl RuntimeCoordinator {
             .highlight_symbol("❯ ")
             .row_highlight_style(self.theme.focus);
             let mut table_state = TableState::default();
-            table_state.select(Some(self.state.agent_picker_selection));
+            table_state.select(Some(picker_state.selection));
             frame.render_stateful_widget(table, rows[1], &mut table_state);
         }
     }
@@ -400,18 +377,18 @@ impl RuntimeCoordinator {
             rows[0],
         );
 
-        let options = &self.state.theme_picker_options;
+        let picker_state = self.state.picker.active_state().expect("theme picker open");
+        let options = &picker_state.options;
         if options.is_empty() {
             frame.render_widget(
                 Paragraph::new(Line::from("No themes available")).style(self.theme.tool_meta),
                 rows[1],
             );
         } else {
-            let table_rows = options.iter().map(|option| {
-                let active = if option.active { "*" } else { "" };
+            let table_rows = options.iter().map(|opt| {
                 Row::new(vec![
-                    Cell::from(option.display_name.clone()),
-                    Cell::from(active.to_string()),
+                    Cell::from(opt.display.clone()),
+                    Cell::from(String::new()),
                 ])
             });
             let table = Table::new(table_rows, [Constraint::Min(12), Constraint::Length(1)])
@@ -420,7 +397,7 @@ impl RuntimeCoordinator {
                 .highlight_symbol("❯ ")
                 .row_highlight_style(self.theme.focus);
             let mut table_state = TableState::default();
-            table_state.select(Some(self.state.theme_picker_selection));
+            table_state.select(Some(picker_state.selection));
             frame.render_stateful_widget(table, rows[1], &mut table_state);
         }
     }

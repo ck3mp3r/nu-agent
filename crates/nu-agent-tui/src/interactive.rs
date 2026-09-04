@@ -2,7 +2,6 @@ use nu_agent_core::orchestrator::OrchestratorEvent;
 use nu_agent_core::protocol::{
     contracts::{ProgressUi, UserInputUi},
     event::UiEvent,
-    picker::ModelPickerOption,
 };
 use nu_agent_core::renderer::UiRenderer;
 use nu_protocol::LabeledError;
@@ -14,7 +13,7 @@ use crate::runtime::map_crossterm_event;
 use crate::runtime::{
     HybridTerminalEvents, LiveTerminalUi, RuntimeCoordinator, TuiRuntimeRenderer,
 };
-use crate::state::SessionPickerOption;
+use crate::state::{ActivePicker, PickerOption};
 
 #[cfg(test)]
 #[path = "interactive_test.rs"]
@@ -36,11 +35,11 @@ where
     }
 
     pub fn set_active_model_identity(&mut self, active_model_identity: String) {
-        self.renderer.coordinator.active_model_identity = active_model_identity;
+        self.renderer.coordinator.state.status.active_model_identity = active_model_identity;
     }
 
     pub fn set_active_persona_icon(&mut self, icon: Option<String>) {
-        self.renderer.coordinator.state.active_persona_icon = icon;
+        self.renderer.coordinator.state.status.active_persona_icon = icon;
     }
 
     pub fn set_mcp_lifecycle_projection(
@@ -71,31 +70,19 @@ where
         self.renderer
             .coordinator
             .state
+            .status
             .set_context_window_max_tokens(max_tokens);
     }
 
-    pub fn set_model_picker_options(&mut self, options: Vec<ModelPickerOption>) {
-        self.renderer
-            .coordinator
-            .state
-            .set_model_picker_options(options);
-    }
-
-    pub fn set_agent_picker_options(
+    pub fn set_picker_options<T: Into<PickerOption>>(
         &mut self,
-        options: Vec<nu_agent_core::protocol::picker::AgentPickerOption>,
+        kind: ActivePicker,
+        options: Vec<T>,
     ) {
         self.renderer
             .coordinator
             .state
-            .set_agent_picker_options(options);
-    }
-
-    pub fn set_session_picker_options(&mut self, options: Vec<SessionPickerOption>) {
-        self.renderer
-            .coordinator
-            .state
-            .set_session_picker_options(options);
+            .set_picker_options(kind, options);
     }
 
     pub fn set_active_agent_identity(&mut self, name: &str) {
@@ -106,7 +93,7 @@ where
     }
 
     pub fn set_agent_cycle_names(&mut self, names: Vec<String>) {
-        self.renderer.coordinator.state.agent_cycle_names = names;
+        self.renderer.coordinator.state.status.agent_cycle_names = names;
     }
 
     pub fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<std::path::PathBuf>) {
@@ -270,46 +257,39 @@ pub(crate) async fn run_render_loop(
                 let _ = coordinator.render_if_needed(live_terminal);
             }
             ok = tool_rx.recv() => {
-                if let Ok(event) = ok
-                    && let Some(ui_event) = Option::<UiEvent>::from(event)
-                {
-                    coordinator.state.reduce_ui_event(ui_event);
+                if let Ok(event) = ok {
+                    coordinator.reduce_tool_event(event);
                     coordinator.mark_render_needed();
                     let _ = coordinator.render_if_needed(live_terminal);
                 }
             }
             ok = llm_rx.recv() => {
-                if let Ok(event) = ok
-                    && let Some(ui_event) = Option::<UiEvent>::from(event)
-                {
-                    coordinator.state.reduce_ui_event(ui_event);
+                if let Ok(event) = ok {
+                    coordinator.reduce_llm_event(event);
                     coordinator.mark_render_needed();
                     let _ = coordinator.render_if_needed(live_terminal);
                 }
             }
             ok = warning_rx.recv() => {
                 if let Ok(event) = ok
-                    && let Some(ui_event) = Option::<UiEvent>::from(event)
+                    && coordinator.reduce_warning_event(event)
                 {
-                    coordinator.state.reduce_ui_event(ui_event);
                     coordinator.mark_render_needed();
                     let _ = coordinator.render_if_needed(live_terminal);
                 }
             }
             ok = compaction_rx.recv() => {
                 if let Ok(event) = ok
-                    && let Some(ui_event) = Option::<UiEvent>::from(event)
+                    && coordinator.reduce_compaction_event(event)
                 {
-                    coordinator.state.reduce_ui_event(ui_event);
                     coordinator.mark_render_needed();
                     let _ = coordinator.render_if_needed(live_terminal);
                 }
             }
             ok = turn_rx.recv() => {
                 if let Ok(event) = ok
-                    && let Some(ui_event) = Option::<UiEvent>::from(event)
+                    && coordinator.reduce_turn_event(event)
                 {
-                    coordinator.state.reduce_ui_event(ui_event);
                     // A turn completion (or failure) clears the active prompt. Drain
                     // any prompts stacked during the turn into PromptSubmitted events
                     // now, without waiting for the next terminal input.
@@ -328,13 +308,8 @@ pub(crate) async fn run_render_loop(
                 }
             }
             ok = session_rx.recv() => {
-                if let Ok(event) = ok
-                    && let Some(ui_event) = Option::<UiEvent>::from(event)
-                {
-                    coordinator.state.reduce_ui_event(ui_event);
-                    coordinator.mark_render_needed();
-                    let _ = coordinator.render_if_needed(live_terminal);
-                }
+                // Session lifecycle events are not rendered in the TUI; drain only.
+                let _ = ok;
             }
             ok = ui_state_rx.recv() => {
                 if let Ok(event) = ok {
@@ -344,12 +319,20 @@ pub(crate) async fn run_render_loop(
                 }
             }
             ok = permission_rx.recv() => {
-                if let Ok(event) = ok
-                    && let Some(ui_event) = Option::<UiEvent>::from(event)
-                {
-                    coordinator.state.reduce_ui_event(ui_event);
-                    coordinator.mark_render_needed();
-                    let _ = coordinator.render_if_needed(live_terminal);
+                if let Ok(event) = ok {
+                    if let nu_agent_core::bus::PermissionEvent::Requested { context, .. } = &event {
+                        crate::interaction::reducer::apply_permission_request_display(
+                            &mut coordinator.state,
+                            context,
+                        );
+                    }
+                    if coordinator.state.permission.reduce_permission_event(event) {
+                        coordinator.state.status.status_line = "Permission required".to_string();
+                        coordinator.state.scroll.scroll_transcript_to_bottom();
+                        coordinator.state.ensure_invariants();
+                        coordinator.mark_render_needed();
+                        let _ = coordinator.render_if_needed(live_terminal);
+                    }
                 }
             }
             _ = branch_rx.recv() => {

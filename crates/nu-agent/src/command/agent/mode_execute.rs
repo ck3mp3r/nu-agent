@@ -30,6 +30,7 @@ use nu_agent_tui::runtime::{
     AnsiTerminalBackend, HybridTerminalEvents, TtyTerminalEvents, TuiRuntimeRenderer,
     open_tty_reader,
 };
+use nu_agent_tui::state::ActivePicker;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentMode {
@@ -142,12 +143,12 @@ pub(crate) async fn run_tui_mode(
             runtime_impl.startup_plugin_config(),
             active_model_identity.as_str(),
         );
-    tui_ui.set_model_picker_options(model_picker_catalog);
+    tui_ui.set_picker_options(ActivePicker::Model, model_picker_catalog);
     let agent_picker_catalog = super::picker::build_agent_picker_catalog(
         runtime_impl.available_agent_summaries(),
         runtime_impl.agent_identity(),
     );
-    tui_ui.set_agent_picker_options(agent_picker_catalog);
+    tui_ui.set_picker_options(ActivePicker::Agent, agent_picker_catalog);
     // Populate session picker from session store
     {
         let cwd = runtime_impl
@@ -156,22 +157,24 @@ pub(crate) async fn run_tui_mode(
         let sessions = runtime_impl.list_sessions(cwd).await;
         match sessions {
             Ok(sessions) => {
-                let options: Vec<nu_agent_tui::state::SessionPickerOption> = sessions
+                let options: Vec<nu_agent_tui::state::PickerOption> = sessions
                     .into_iter()
                     .map(|info| {
-                        let display = info
-                            .title
-                            .clone()
-                            .unwrap_or_else(|| "(untitled)".to_string());
-                        nu_agent_tui::state::SessionPickerOption {
-                            id: info.id,
-                            title: info.title,
-                            created_at: info.last_active,
-                            display,
+                        let title = info.title.clone();
+                        let display = title.clone().unwrap_or_else(|| "(untitled)".to_string());
+                        nu_agent_tui::state::PickerOption {
+                            id: info.id.clone(),
+                            display: display.clone(),
+                            search_text: display.clone(),
+                            payload: nu_agent_tui::state::PickerPayload::Session {
+                                session_id: info.id,
+                                title,
+                                created_at: info.last_active,
+                            },
                         }
                     })
                     .collect();
-                tui_ui.set_session_picker_options(options);
+                tui_ui.set_picker_options(ActivePicker::Session, options);
             }
             Err(e) => {
                 log::warn!("Failed to list sessions for picker: {e}");
