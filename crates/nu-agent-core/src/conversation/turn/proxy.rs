@@ -3,7 +3,7 @@
 
 use crate::bus::Bus;
 use crate::types::ToolDefinition;
-use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
+use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput, ToolResult};
 
 /// A proxy tool that forwards `call` to an existing `ToolServerHandle`
 /// while providing a pre-filtered `ToolDefinition`.
@@ -38,14 +38,7 @@ impl FilteredToolProxy {
                 let mut cancel_rx = bus.cancel().subscribe();
                 tokio::select! {
                     result = handle.execute(&tool_name, &args_str, context) => {
-                        if result.is_success() {
-                            Ok(result.output().clone())
-                        } else if let Some(error) = result.error() {
-                            Err(error.clone())
-                        } else {
-                            // Refusal or skipped — no output available
-                            Ok(ToolOutput::text(String::new()))
-                        }
+                        map_tool_result(&result)
                     }
                     Ok(_) = cancel_rx.recv() => {
                         Err(ToolExecutionError::cancelled("tool call cancelled"))
@@ -55,3 +48,27 @@ impl FilteredToolProxy {
         })
     }
 }
+
+// region:    --- Support
+
+/// Map a canonical `ToolResult` to the dynamic-tool call outcome.
+///
+/// Successful results pass their output through unchanged, failed results
+/// surface the structured execution error, and refusals or skips become the
+/// exact model-facing marker `"[refused]"` instead of an empty text block, so
+/// intentional refusals stay distinguishable from missing output.
+fn map_tool_result(result: &ToolResult) -> Result<ToolOutput, ToolExecutionError> {
+    if result.is_success() {
+        Ok(result.output().clone())
+    } else if let Some(error) = result.error() {
+        Err(error.clone())
+    } else {
+        Ok(ToolOutput::text("[refused]"))
+    }
+}
+
+// endregion: --- Support
+
+#[cfg(test)]
+#[path = "proxy_test.rs"]
+mod proxy_test;

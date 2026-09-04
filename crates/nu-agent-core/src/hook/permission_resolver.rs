@@ -44,10 +44,18 @@ pub(crate) fn resolve_tool_source(
 }
 
 /// Permission decision returned by the async resolver (and from driver to hook).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Deny` carries the model-facing denial reason. The reason always starts
+/// with `"Permission denied"` and identifies the matched rule by identity and
+/// scope, so session rehydration and hook consumers can recognise a denial by
+/// its prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionDecision {
     Allow,
-    Deny,
+    Deny {
+        /// Model-facing denial reason; starts with `"Permission denied"`.
+        reason: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +174,7 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
                 ask_context: AskContext::default(),
             };
 
-            let denied = enforce_authorization_for_tool_call(
+            let deny_reason = enforce_authorization_for_tool_call(
                 &tool_call,
                 source,
                 &permissions,
@@ -176,10 +184,9 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
             )
             .await;
 
-            if denied {
-                PermissionDecision::Deny
-            } else {
-                PermissionDecision::Allow
+            match deny_reason {
+                Some(reason) => PermissionDecision::Deny { reason },
+                None => PermissionDecision::Allow,
             }
         }
     }
@@ -330,7 +337,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 captured_auth_decision: None,
             };
 
-            let denied = {
+            let deny_reason = {
                 enforce_authorization_for_tool_call(
                     &tool_call,
                     source.clone(),
@@ -344,10 +351,9 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
 
             if !capture_hook.was_called {
                 // Policy had an explicit Allow or Deny — no user interaction needed.
-                if denied {
-                    PermissionDecision::Deny
-                } else {
-                    PermissionDecision::Allow
+                match deny_reason {
+                    Some(reason) => PermissionDecision::Deny { reason },
+                    None => PermissionDecision::Allow,
                 }
             } else {
                 // Policy said Ask — publish event on the bus and await user decision.
@@ -398,7 +404,17 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 }
 
                 match ask_choice {
-                    AskChoice::Deny => PermissionDecision::Deny,
+                    // The sentinel run's capture hook always answers Deny, so the
+                    // authz gate already built the reason from the rule that
+                    // triggered the permission prompt — reuse it verbatim.
+                    AskChoice::Deny => match deny_reason {
+                        Some(reason) => PermissionDecision::Deny { reason },
+                        // Unreachable in practice (a prompt implies a rule match);
+                        // fall back to the legacy bare denial text.
+                        None => PermissionDecision::Deny {
+                            reason: "Permission denied".to_string(),
+                        },
+                    },
                     _ => PermissionDecision::Allow,
                 }
             }

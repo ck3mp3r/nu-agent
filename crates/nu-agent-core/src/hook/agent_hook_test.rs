@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 #[test]
 fn is_tool_failure_detects_all_failure_variants() {
     assert!(is_tool_failure("Toolset error: something went wrong"));
-    assert!(is_tool_failure("Permission denied"));
+    assert!(is_tool_failure(
+        "Permission denied by rule 'r1' (scope: bash)"
+    ));
     assert!(is_tool_failure("Doom loop detected: 'nu' called 3 times"));
     assert!(is_tool_failure("Tool 'nonexistent' is not available."));
 }
@@ -27,6 +29,18 @@ fn is_tool_failure_detects_tool_call_limit() {
         "Sub-turn tool call limit reached (5). No further tools will be called in this response. \
          Please summarise what you have accomplished so far and continue in the next turn if needed."
     ));
+}
+
+#[test]
+fn is_tool_failure_matches_permission_denial_prefix_variants() {
+    // Bare legacy denial text (persisted by older sessions).
+    assert!(is_tool_failure("Permission denied"));
+    // Enriched denial text carrying the matched rule identity and scope.
+    assert!(is_tool_failure(
+        "Permission denied by rule 'global:*' (scope: global)"
+    ));
+    // Texts that merely start with "Permission" must not match.
+    assert!(!is_tool_failure("Permission granted"));
 }
 
 // ---------------------------------------------------------------------------

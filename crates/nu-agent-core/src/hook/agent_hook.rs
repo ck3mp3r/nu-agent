@@ -18,13 +18,13 @@ pub use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDe
 ///
 /// The following strings are failure indicators:
 /// - `"Toolset error: "` — rig toolset execution errors
-/// - `"Permission denied"` — permission denial from `on_tool_call`
+/// - `"Permission denied"` (prefix) — permission denial from `on_tool_call`
 /// - `"Doom loop detected: "` — doom loop guard in `on_tool_call`
 /// - `"Tool '"` — invalid/unavailable tool skip from `on_invalid_tool_call`
 /// - `"Sub-turn tool call limit reached"` — per-sub-turn cap from `on_tool_call`
 pub(crate) fn is_tool_failure(result_text: &str) -> bool {
     result_text.starts_with("Toolset error: ")
-        || result_text == "Permission denied"
+        || result_text.starts_with("Permission denied")
         || result_text.starts_with("Doom loop detected: ")
         || result_text.starts_with("Tool '")
         || result_text.starts_with("Sub-turn tool call limit reached")

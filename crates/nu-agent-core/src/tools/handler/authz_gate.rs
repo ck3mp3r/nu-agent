@@ -21,7 +21,7 @@ pub async fn enforce_authorization_for_tool_call(
     grant_cache: Arc<Mutex<SessionGrantCache>>,
     flow_context: &AuthorizationFlowContext,
     ask_hook: &mut impl AskApprovalHook,
-) -> bool {
+) -> Option<String> {
     let mut auth_decision =
         permissions.evaluate(&tool_call.function.name, &tool_call.function.arguments);
     log::debug!(
@@ -82,9 +82,12 @@ pub async fn enforce_authorization_for_tool_call(
             auth_decision.matched_rule.scope,
             auth_decision.matched_rule.pattern
         );
-        return true;
+        return Some(format!(
+            "Permission denied by rule '{}' (scope: {})",
+            auth_decision.matched_rule.identity, auth_decision.matched_rule.scope
+        ));
     }
-    false
+    None
 }
 
 #[cfg(test)]

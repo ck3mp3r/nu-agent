@@ -56,7 +56,7 @@ async fn config_allow_tools_pass_permission_flow() {
         )
         .await;
         assert!(
-            !result,
+            result.is_none(),
             "tool '{}' configured as allow should pass the permission flow",
             tool_name,
         );
@@ -86,7 +86,7 @@ async fn config_ask_tools_prompt_through_permission_flow() {
         )
         .await;
         assert!(
-            result,
+            result.is_some(),
             "tool '{}' not configured as allow should be denied by the hook",
             tool_name,
         );
@@ -114,7 +114,7 @@ async fn non_builtin_tools_go_through_permission_flow() {
     )
     .await;
     assert!(
-        result,
+        result.is_some(),
         "non-builtin tool should go through permission flow and be denied",
     );
 }

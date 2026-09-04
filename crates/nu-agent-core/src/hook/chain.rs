@@ -312,7 +312,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                 .await;
             match decision {
                 PermissionDecision::Allow => ToolCallAction::run(),
-                PermissionDecision::Deny => {
+                PermissionDecision::Deny { reason } => {
                     let _ = bus
                         .tool()
                         .send(ToolEvent::Completed {
@@ -323,10 +323,10 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                             result: String::new(),
                             display: None,
                             error_kind: None,
-                            message: Some("Permission denied".to_string()),
+                            message: Some(reason.clone()),
                         })
                         .await;
-                    ToolCallAction::skip("Permission denied")
+                    ToolCallAction::skip(reason)
                 }
             }
         }
