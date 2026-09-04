@@ -188,7 +188,9 @@ pub(super) fn build_anthropic_client(
 
 /// Build an Ollama client.
 ///
-/// Ollama doesn't require an API key. If `config.base_url` is set, uses that URL.
+/// `config.api_key` is optional: when set, it is passed to the client and sent
+/// as a Bearer auth header for secured deployments (e.g. ollama-cloud); when
+/// absent, no auth header is sent. If `config.base_url` is set, uses that URL.
 /// Otherwise reads `OLLAMA_API_BASE_URL` from the environment (defaults to
 /// `http://localhost:11434`).
 pub(super) fn build_ollama_client(
