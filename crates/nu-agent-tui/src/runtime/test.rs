@@ -40,7 +40,7 @@ use nu_agent_core::protocol::event::{
 };
 use nu_agent_core::renderer::UiRenderer;
 use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::TranscriptEntryKind;
+use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
 use nu_agent_core::transcript::renderer::ItemStatus;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -4382,6 +4382,105 @@ fn render_if_needed_fires_when_dirty_and_elapsed() {
         !coord.render_needed(),
         "render_needed should be false after render_if_needed fires"
     );
+}
+
+// ── has_active_animation tests ──
+
+fn push_entry(coord: &mut RuntimeCoordinator, status: Option<ItemStatus>) {
+    coord
+        .state
+        .transcript
+        .push_transcript_item(TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::Assistant(ProseMessage {
+                markdown: "hi".to_string(),
+            }),
+            status,
+        });
+}
+
+#[test]
+fn has_active_animation_true_when_busy() {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(80, 24, None);
+    coord.state.phase = UiPhase::Busy;
+
+    // -- Exec & Check
+    assert!(coord.has_active_animation());
+}
+
+#[test]
+fn has_active_animation_true_when_abort_pending() {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(80, 24, None);
+    coord.state.phase = UiPhase::AbortPending;
+
+    // -- Exec & Check
+    assert!(coord.has_active_animation());
+}
+
+#[test]
+fn has_active_animation_true_when_thinking_status_line() {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(80, 24, None);
+    coord.state.status.message.status_line = "Thinking...".to_string();
+
+    // -- Exec & Check
+    assert!(coord.has_active_animation());
+}
+
+#[test]
+fn has_active_animation_true_when_tool_status_line() {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(80, 24, None);
+    coord.state.status.message.status_line = "Tool: grep".to_string();
+
+    // -- Exec & Check
+    assert!(coord.has_active_animation());
+}
+
+#[test]
+fn has_active_animation_true_when_compaction_in_progress() {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(80, 24, None);
+    coord
+        .state
+        .compaction
+        .start_block(&mut coord.state.transcript, "test");
+
+    // -- Exec & Check
+    assert!(coord.has_active_animation());
+}
+
+#[test]
+fn has_active_animation_true_when_in_progress_entry() {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(80, 24, None);
+    push_entry(&mut coord, Some(ItemStatus::InProgress));
+
+    // -- Exec & Check
+    assert!(coord.has_active_animation());
+}
+
+#[test]
+fn has_active_animation_false_when_only_finished_entries() {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(80, 24, None);
+    push_entry(&mut coord, Some(ItemStatus::Done));
+    push_entry(&mut coord, Some(ItemStatus::Failed));
+    push_entry(&mut coord, Some(ItemStatus::Queued));
+
+    // -- Exec & Check
+    assert!(!coord.has_active_animation());
+}
+
+#[test]
+fn has_active_animation_false_when_fully_idle() {
+    // -- Setup & Fixtures
+    let coord = RuntimeCoordinator::new(80, 24, None);
+
+    // -- Exec & Check
+    assert!(!coord.has_active_animation());
 }
 
 #[test]

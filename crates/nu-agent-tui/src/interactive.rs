@@ -355,7 +355,9 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
                 let _ = coordinator.render_if_needed(live_terminal);
             }
             _ = render_timer.tick() => {
-                coordinator.mark_render_needed();
+                if coordinator.has_active_animation() {
+                    coordinator.mark_render_needed();
+                }
                 let _ = coordinator.render_if_needed(live_terminal);
             }
         }

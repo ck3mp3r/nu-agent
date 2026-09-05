@@ -34,6 +34,7 @@ use nu_agent_core::protocol::contracts::UiMessageSnapshot;
 use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use nu_agent_core::tools::mcp::runtime::McpServerLifecycle;
+use nu_agent_core::transcript::renderer::ItemStatus;
 
 /// The runtime coordinator that owns the TUI application state, the input
 /// transport, and render bookkeeping for the interactive render loop.
@@ -906,6 +907,16 @@ impl RuntimeCoordinator {
 
     pub(crate) fn mark_render_needed(&mut self) {
         self.render_needed = true;
+    }
+
+    pub(crate) fn has_active_animation(&self) -> bool {
+        crate::runtime::status::model_activity_label(&self.state) == "busy"
+            || self
+                .state
+                .transcript
+                .entries
+                .iter()
+                .any(|e| e.status == Some(ItemStatus::InProgress))
     }
 
     pub(crate) fn render_if_needed<B: ratatui::backend::Backend>(
