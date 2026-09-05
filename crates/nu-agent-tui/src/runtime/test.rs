@@ -133,17 +133,6 @@ fn idle_startup_does_not_show_spinner() {
 }
 
 #[derive(Default)]
-pub(super) struct StubEventSource {
-    next: Option<TerminalEvent>,
-}
-
-impl TerminalEventSource for StubEventSource {
-    fn poll_event(&mut self) -> core::result::Result<Option<TerminalEvent>, String> {
-        Ok(self.next.take())
-    }
-}
-
-#[derive(Default)]
 pub(super) struct ErrorEventSource;
 
 impl TerminalEventSource for ErrorEventSource {
@@ -1818,24 +1807,27 @@ async fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() -
         vec![PromptStatus::Cancelled, PromptStatus::Cancelled]
     );
 
-    // After abort, the restored text from the cancelled prompt is available
-    // on the state. Applying it to the textarea is sync-poll behavior
-    // (`poll_terminal_event`), not a render-loop arm, so exercise the
-    // production sync primitives directly. In the real loop the first prompt
-    // was already handed to the orchestrator, so only "b" is restored.
-    for event in [TerminalKey::Char('c'), TerminalKey::Enter] {
-        let mut source = StubEventSource {
-            next: Some(TerminalEvent::Key(event)),
-        };
-        driver.coordinator_mut().poll_terminal_event(&mut source);
-        driver.coordinator_mut().drain_transport();
-    }
+    // After abort, the restored text from the cancelled prompt is applied to
+    // the textarea by the render loop's terminal arm on the next terminal
+    // event. In the real loop the first prompt was already handed to the
+    // orchestrator, so only "b" is restored.
+    driver.advance(&[key(TerminalKey::Char('c'))]).await?;
     assert_eq!(
-        driver
-            .coordinator_mut()
-            .state
-            .take_next_prompt_for_execution(),
-        Some("bc".to_string())
+        driver.coordinator_mut().textarea.lines().join("\n"),
+        "bc",
+        "restored cancelled prompt text must be applied to the textarea by the loop"
+    );
+
+    // Submitting through the real terminal arm continues from the restored
+    // text; the loop hands the prompt to the orchestrator as a
+    // PromptSubmitted event.
+    driver.advance(&[key(TerminalKey::Enter)]).await?;
+    let submitted = driver.take_orchestrator_events();
+    assert!(
+        submitted.iter().any(
+            |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "bc")
+        ),
+        "restored text must be submitted to the orchestrator after the abort"
     );
     Ok(())
 }

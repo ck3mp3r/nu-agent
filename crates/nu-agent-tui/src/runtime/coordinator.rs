@@ -308,15 +308,7 @@ impl RuntimeCoordinator {
     ) {
         // Pick up any restored input text from cancelled prompts before
         // processing the next event.
-        if let Some(text) = self.state.input.restored_input_text.take() {
-            let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
-            let last_line = lines.len().saturating_sub(1) as u16;
-            let last_col = lines.last().map(|l| l.len()).unwrap_or(0) as u16;
-            self.textarea = ratatui_textarea::TextArea::new(lines);
-            self.textarea
-                .move_cursor(ratatui_textarea::CursorMove::Jump(last_line, last_col));
-            self.mark_render_needed();
-        }
+        self.pickup_restored_input_text();
 
         if let Some(tracker) = self.repo_branch_tracker.as_mut() {
             tracker.refresh();
@@ -354,6 +346,10 @@ impl RuntimeCoordinator {
     /// else (submit, quit, navigation, pickers) through the reducer. Shared by
     /// the blocking terminal poll path and the async render loop.
     pub fn handle_terminal_event(&mut self, event: TerminalEvent) {
+        // Pick up any restored input text from cancelled prompts before
+        // processing the next event.
+        self.pickup_restored_input_text();
+
         if let TerminalEvent::Key(TerminalKey::Esc) = event
             && self.state.phase == crate::state::UiPhase::Idle
             && self.state.picker.active().is_none()
@@ -418,6 +414,21 @@ impl RuntimeCoordinator {
 
         self.sync_transcript_viewport_lines_with_layout();
         self.mark_render_needed();
+    }
+
+    /// Apply any restored input text from cancelled prompts to the textarea.
+    /// Idempotent via `take()`: safe to call from both the sync poll path and
+    /// the async render loop's terminal arm.
+    fn pickup_restored_input_text(&mut self) {
+        if let Some(text) = self.state.input.restored_input_text.take() {
+            let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+            let last_line = lines.len().saturating_sub(1) as u16;
+            let last_col = lines.last().map(|l| l.len()).unwrap_or(0) as u16;
+            self.textarea = ratatui_textarea::TextArea::new(lines);
+            self.textarea
+                .move_cursor(ratatui_textarea::CursorMove::Jump(last_line, last_col));
+            self.mark_render_needed();
+        }
     }
 
     fn sync_transcript_viewport_lines_with_layout(&mut self) {
