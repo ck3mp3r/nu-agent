@@ -165,7 +165,7 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
 fn tool_start_sets_status_line() {
     let mut state = AppState::default();
     reduce_tool(&mut state, started("k8s__list_pods", "{}"));
-    assert_eq!(state.status.status_line, "Tool: k8s__list_pods");
+    assert_eq!(state.status.message.status_line, "Tool: k8s__list_pods");
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn tool_end_sets_thinking_status_line() {
             message: None,
         },
     );
-    assert_eq!(state.status.status_line, "Thinking...");
+    assert_eq!(state.status.message.status_line, "Thinking...");
 }
 
 #[test]

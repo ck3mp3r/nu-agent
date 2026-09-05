@@ -262,7 +262,7 @@ async fn render_loop_driver_routes_tool_event_through_bus_tool_arm() -> Result<(
     // -- Check: the loop's tool arm reduced the event (status line set by
     // dispatch_tool_event).
     assert_eq!(
-        driver.state().status.status_line,
+        driver.state().status.message.status_line,
         "Tool: sentinel_tool",
         "tool event must reach the coordinator through the real bus arm"
     );

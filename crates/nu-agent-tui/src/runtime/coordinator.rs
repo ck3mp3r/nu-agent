@@ -336,8 +336,8 @@ impl RuntimeCoordinator {
                     self.trigger_no_interactive_backend_fail_fast(Some(error));
                     return;
                 }
-                self.state.status.status_line = format!("Terminal input error: {error}");
-                self.fatal_error = Some(self.state.status.status_line.clone());
+                self.state.status.message.status_line = format!("Terminal input error: {error}");
+                self.fatal_error = Some(self.state.status.message.status_line.clone());
                 self.quit_requested = true;
                 self.cancel_controller.request_cancel();
                 return;
@@ -358,7 +358,8 @@ impl RuntimeCoordinator {
             && self.state.picker.active().is_none()
             && self.state.info_panel.is_none()
         {
-            self.state.status.status_line = "Esc pressed. Press Ctrl+C to quit.".to_string();
+            self.state.status.message.status_line =
+                "Esc pressed. Press Ctrl+C to quit.".to_string();
         }
 
         if let TerminalEvent::Resize(_) = event {
@@ -773,10 +774,11 @@ impl RuntimeCoordinator {
 
         match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(text)) {
             Ok(()) => {
-                self.state.status.status_line = "Copied selection to clipboard.".to_string();
+                self.state.status.message.status_line =
+                    "Copied selection to clipboard.".to_string();
             }
             Err(error) => {
-                self.state.status.status_line = format!("Clipboard copy failed: {error}");
+                self.state.status.message.status_line = format!("Clipboard copy failed: {error}");
             }
         }
     }
@@ -832,7 +834,7 @@ impl RuntimeCoordinator {
         }
         message.push_str(" Run `agent` in an interactive terminal and verify TTY access.");
 
-        self.state.status.status_line = message.clone();
+        self.state.status.message.status_line = message.clone();
         self.fatal_error = Some(message);
         self.quit_requested = true;
         self.cancel_controller.request_cancel();

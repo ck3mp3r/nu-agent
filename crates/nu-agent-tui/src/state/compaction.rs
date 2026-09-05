@@ -167,7 +167,7 @@ impl CompactionState {
         }
         store.summary_stream_start = None;
         store.push_spacer();
-        status.status_line.clear();
+        status.message.status_line.clear();
         // Reset displayed token % — context was freed; wait for next LlmCompleted to update.
         status.tokens.latest_total_tokens = None;
         true
@@ -186,7 +186,7 @@ impl CompactionState {
             TranscriptRole::System,
             format!("Compaction failed deterministically: {message}"),
         );
-        status.status_line.clear();
+        status.message.status_line.clear();
         true
     }
 }

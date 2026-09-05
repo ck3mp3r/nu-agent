@@ -37,7 +37,7 @@ impl TurnState {
     ) -> bool {
         store.push_spacer();
         *input_locked = false;
-        status.status_line.clear();
+        status.message.status_line.clear();
         // Reset streaming state when the LLM response is complete
         store.assistant_stream_start = None;
         true

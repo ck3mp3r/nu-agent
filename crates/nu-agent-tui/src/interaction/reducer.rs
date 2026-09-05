@@ -239,9 +239,9 @@ fn handle_yank_selection(state: &mut AppState) -> bool {
         let payload = state.scroll.yank_selection();
         if let Some(payload) = payload {
             state.input.set_clipboard_request(payload);
-            state.status.status_line = "Yanked selection to clipboard".to_string();
+            state.status.message.status_line = "Yanked selection to clipboard".to_string();
         } else {
-            state.status.status_line = "Nothing to yank".to_string();
+            state.status.message.status_line = "Nothing to yank".to_string();
         }
     }
     state.enter_normal_mode();
@@ -368,7 +368,7 @@ fn handle_escape(state: &mut AppState) -> bool {
         return true;
     }
     if state.request_abort_confirmation() {
-        state.status.status_line = ESC_ABORT_CONFIRM_STATUS.to_string();
+        state.status.message.status_line = ESC_ABORT_CONFIRM_STATUS.to_string();
         return true;
     }
     false
@@ -384,7 +384,7 @@ fn handle_escape_confirm(
         }
         state.cancel_and_restore_pending_to_input();
         state.transcript.push_spacer();
-        state.status.status_line = ABORT_REQUESTED_STATUS.to_string();
+        state.status.message.status_line = ABORT_REQUESTED_STATUS.to_string();
         return true;
     }
     false
@@ -487,8 +487,8 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
             crate::state::dispatch_turn_event(state, TurnEvent::Completed { tool_calls })
         }
         UiEvent::Tick => {
-            if state.status.status_line.is_empty() {
-                state.status.status_line = "Thinking...".to_string();
+            if state.status.message.status_line.is_empty() {
+                state.status.message.status_line = "Thinking...".to_string();
             }
             true
         }
@@ -500,7 +500,7 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
             state
                 .transcript
                 .push_transcript_line(TranscriptRole::System, format!("Error: {message}"));
-            state.status.status_line = message.clone();
+            state.status.message.status_line = message.clone();
             crate::state::dispatch_turn_event(state, TurnEvent::Completed { tool_calls: 0 });
             true
         }

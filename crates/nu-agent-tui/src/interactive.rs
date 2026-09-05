@@ -342,7 +342,7 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
                         );
                     }
                     if coordinator.state.permission.reduce_permission_event(event) {
-                        coordinator.state.status.status_line = "Permission required".to_string();
+                        coordinator.state.status.message.status_line = "Permission required".to_string();
                         coordinator.state.scroll.scroll_transcript_to_bottom();
                         coordinator.state.ensure_invariants();
                         coordinator.mark_render_needed();

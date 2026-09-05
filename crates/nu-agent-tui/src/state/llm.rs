@@ -133,7 +133,7 @@ fn handle_llm_end(
     status
         .tokens
         .record_token_usage(input_tokens, output_tokens, total_tokens);
-    status.status_line = format!("Response ready ({response_chars} chars)");
+    status.message.status_line = format!("Response ready ({response_chars} chars)");
     true
 }
 

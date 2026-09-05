@@ -157,8 +157,8 @@ pub(crate) fn model_activity_label(state: &AppState) -> &'static str {
     match state.phase {
         crate::state::UiPhase::Busy | crate::state::UiPhase::AbortPending => "busy",
         crate::state::UiPhase::Idle => {
-            if state.status.status_line == "Thinking..."
-                || state.status.status_line.starts_with("Tool: ")
+            if state.status.message.status_line == "Thinking..."
+                || state.status.message.status_line.starts_with("Tool: ")
                 || state.compaction.in_progress()
             {
                 "busy"

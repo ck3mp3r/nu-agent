@@ -53,12 +53,12 @@ fn llm_start_from_idle_moves_busy_and_locks_input() {
 #[test]
 fn llm_start_when_busy_is_noop_for_phase() {
     let mut state = busy_state_with_clean_transcript();
-    state.status.status_line = "Tool: prior".to_string();
+    state.status.message.status_line = "Tool: prior".to_string();
 
     reduce_llm(&mut state, LlmEvent::Started);
 
     assert_eq!(state.phase, UiPhase::Busy);
-    assert_eq!(state.status.status_line, "Tool: prior");
+    assert_eq!(state.status.message.status_line, "Tool: prior");
     assert!(state.input_locked);
 }
 
@@ -118,7 +118,10 @@ fn llm_end_records_tokens_and_sets_ready_status() {
     assert_eq!(state.status.tokens.latest_output_tokens, Some(8));
     assert_eq!(state.status.tokens.latest_total_tokens, Some(12));
     assert_eq!(state.status.tokens.session_total_tokens, 12);
-    assert_eq!(state.status.status_line, "Response ready (12 chars)");
+    assert_eq!(
+        state.status.message.status_line,
+        "Response ready (12 chars)"
+    );
 }
 
 #[test]

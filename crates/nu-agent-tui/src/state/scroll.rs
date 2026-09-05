@@ -209,11 +209,11 @@ impl ScrollState {
     /// mode transition stay with the reducer (orchestrator/input domains).
     pub fn enter_visual_mode(&mut self, status: &mut StatusState) -> bool {
         if self.pane_focus != PaneFocus::Transcript {
-            status.status_line = VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS.to_string();
+            status.message.status_line = VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS.to_string();
             return false;
         }
         self.selection = Some(TranscriptSelection::new(self.cursor_visual_row));
-        status.status_line = "-- VISUAL --".to_string();
+        status.message.status_line = "-- VISUAL --".to_string();
         true
     }
 

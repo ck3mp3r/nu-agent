@@ -92,7 +92,7 @@ impl ToolState {
             }
         }
         self.start_tool_call(store, name, arguments);
-        status.status_line = format!("Tool: {name}");
+        status.message.status_line = format!("Tool: {name}");
         true
     }
 
@@ -115,7 +115,7 @@ impl ToolState {
         }
 
         // NO push_spacer() here — tool calls within the same block have no spacers between them
-        status.status_line = "Thinking...".to_string();
+        status.message.status_line = "Thinking...".to_string();
         true
     }
 

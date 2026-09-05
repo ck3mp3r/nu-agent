@@ -117,7 +117,10 @@ fn key(key: TerminalKey) -> DriveEvent {
 #[test]
 fn idle_startup_does_not_show_spinner() {
     let coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    assert_ne!(coordinator.state().status.status_line, "Thinking...");
+    assert_ne!(
+        coordinator.state().status.message.status_line,
+        "Thinking..."
+    );
     assert!(!coordinator.state().input_locked);
     let line = crate::runtime::status::test::compact_status_line_with_branch_for_test(
         "mymodel", None, None, 40,
@@ -396,7 +399,7 @@ async fn immediate_slash_commands_do_not_set_busy_or_spinner() -> Result<()> {
             "immediate command must not activate prompt lifecycle"
         );
         assert!(
-            driver.state().status.status_line != "Thinking...",
+            driver.state().status.message.status_line != "Thinking...",
             "spinner lane status must not be set for immediate slash commands"
         );
     }
@@ -419,7 +422,10 @@ async fn coordinator_esc_then_esc_requests_cancel_signal() -> Result<()> {
         .await?;
 
     // -- Check
-    assert_eq!(driver.state().status.status_line, "Abort requested.");
+    assert_eq!(
+        driver.state().status.message.status_line,
+        "Abort requested."
+    );
     assert!(driver.coordinator().take_cancel_requested());
     Ok(())
 }
@@ -764,7 +770,7 @@ async fn tick_and_completed_events_update_status_only_without_touching_input_buf
     driver.coordinator_mut().drain_transport();
 
     // -- Check
-    assert_eq!(driver.state().status.status_line, "Thinking...");
+    assert_eq!(driver.state().status.message.status_line, "Thinking...");
 
     // -- Exec
     driver
@@ -773,7 +779,7 @@ async fn tick_and_completed_events_update_status_only_without_touching_input_buf
     driver.coordinator_mut().drain_transport();
 
     // -- Check
-    assert!(driver.state().status.status_line.is_empty());
+    assert!(driver.state().status.message.status_line.is_empty());
     Ok(())
 }
 
@@ -1253,16 +1259,24 @@ async fn idle_escape_status_copy_mentions_ctrlc_only_not_q() -> Result<()> {
     driver.advance(&[key(TerminalKey::Esc)]).await?;
 
     // -- Check
-    assert!(driver.state().status.status_line.contains("Ctrl+C"));
+    assert!(driver.state().status.message.status_line.contains("Ctrl+C"));
     assert!(
         !driver
             .state()
             .status
+            .message
             .status_line
             .to_ascii_lowercase()
             .contains("press q")
     );
-    assert!(!driver.state().status.status_line.contains("q to quit"));
+    assert!(
+        !driver
+            .state()
+            .status
+            .message
+            .status_line
+            .contains("q to quit")
+    );
     Ok(())
 }
 
@@ -5052,7 +5066,7 @@ fn reduce_warning_event_message_sets_status_line_and_marks_render_needed() {
 
     // -- Check
     assert!(handled, "StatusState must claim plain warning messages");
-    assert_eq!(coordinator.state.status.status_line, "warned");
+    assert_eq!(coordinator.state.status.message.status_line, "warned");
     assert!(
         coordinator.render_needed(),
         "handled warnings must mark the frame dirty"
@@ -5180,7 +5194,7 @@ fn permission_rx_caller_requested_applies_all_effects() {
     // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
     coordinator.set_render_needed(false);
-    coordinator.state.status.status_line = "idle".to_string();
+    coordinator.state.status.message.status_line = "idle".to_string();
     coordinator.state.scroll.following_tail = false;
 
     let event = PermissionEvent::Requested {
@@ -5209,7 +5223,7 @@ fn permission_rx_caller_requested_applies_all_effects() {
     }
     let handled = coordinator.state.permission.reduce_permission_event(event);
     if handled {
-        coordinator.state.status.status_line = "Permission required".to_string();
+        coordinator.state.status.message.status_line = "Permission required".to_string();
         coordinator.state.scroll.scroll_transcript_to_bottom();
         coordinator.state.ensure_invariants();
         coordinator.mark_render_needed();
@@ -5217,7 +5231,10 @@ fn permission_rx_caller_requested_applies_all_effects() {
 
     // -- Check
     assert!(handled, "Requested must reduce to true");
-    assert_eq!(coordinator.state.status.status_line, "Permission required");
+    assert_eq!(
+        coordinator.state.status.message.status_line,
+        "Permission required"
+    );
     assert!(
         coordinator.state.scroll.following_tail,
         "Requested must scroll the transcript to the bottom"
@@ -5251,13 +5268,13 @@ fn permission_rx_caller_decision_variants_skip_effects() {
         // -- Setup & Fixtures
         let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
         coordinator.set_render_needed(false);
-        coordinator.state.status.status_line = "idle".to_string();
+        coordinator.state.status.message.status_line = "idle".to_string();
         coordinator.state.scroll.following_tail = false;
 
         // -- Exec
         let handled = coordinator.state.permission.reduce_permission_event(event);
         if handled {
-            coordinator.state.status.status_line = "Permission required".to_string();
+            coordinator.state.status.message.status_line = "Permission required".to_string();
             coordinator.state.scroll.scroll_transcript_to_bottom();
             coordinator.state.ensure_invariants();
             coordinator.mark_render_needed();
@@ -5266,7 +5283,7 @@ fn permission_rx_caller_decision_variants_skip_effects() {
         // -- Check
         assert!(!handled, "decision variants must reduce to false");
         assert_eq!(
-            coordinator.state.status.status_line, "idle",
+            coordinator.state.status.message.status_line, "idle",
             "decision variants must leave status_line unchanged"
         );
         assert!(

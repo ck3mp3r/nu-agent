@@ -119,7 +119,7 @@ fn reduce_warning_event_message_sets_status_line() {
     assert!(state.status.reduce_warning_event(WarningEvent::Message {
         message: "hello".to_string()
     }));
-    assert_eq!(state.status.status_line, "hello");
+    assert_eq!(state.status.message.status_line, "hello");
 }
 
 #[test]

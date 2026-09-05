@@ -67,7 +67,7 @@ fn first_escape_in_busy_normal_sets_abort_pending_with_exact_status_text() {
     assert!(changed);
     assert_eq!(state.phase, UiPhase::AbortPending);
     assert!(state.abort.pending);
-    assert_eq!(state.status.status_line, ESC_ABORT_CONFIRM_STATUS);
+    assert_eq!(state.status.message.status_line, ESC_ABORT_CONFIRM_STATUS);
     assert!(!cancel_controller.is_cancel_requested());
 }
 
@@ -89,7 +89,7 @@ fn second_escape_in_abort_pending_after_busy_normal_toggles_cancel_requested() {
 
     assert!(changed);
     assert!(cancel_controller.is_cancel_requested());
-    assert_eq!(state.status.status_line, "Abort requested.");
+    assert_eq!(state.status.message.status_line, "Abort requested.");
 }
 
 #[test]
@@ -1244,7 +1244,7 @@ fn immediate_slash_commands_do_not_set_busy_or_spinner() {
         assert!(!state.is_active_cycle());
         assert_eq!(state.pending_prompt_count(), 0);
         assert!(state.prompt_items().is_empty());
-        assert!(state.status.status_line != "Thinking...");
+        assert!(state.status.message.status_line != "Thinking...");
     }
 }
 

@@ -6,10 +6,15 @@ use super::*;
 
 #[derive(Debug, Clone, Default)]
 pub struct StatusState {
-    pub(crate) status_line: String,
+    pub(crate) message: StatusMessage,
     pub(crate) tokens: TokenUsage,
     pub(crate) identity: IdentityState,
     pub(crate) mcp: McpSkillsState,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StatusMessage {
+    pub(crate) status_line: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -131,7 +136,7 @@ impl StatusState {
     pub fn reduce_warning_event(&mut self, event: WarningEvent) -> bool {
         match event {
             WarningEvent::Message { message } => {
-                self.status_line = message;
+                self.message.status_line = message;
                 true
             }
             WarningEvent::TurnError { .. } => false,
