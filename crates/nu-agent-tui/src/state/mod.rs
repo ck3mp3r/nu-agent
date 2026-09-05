@@ -21,6 +21,7 @@ pub use app_state::*;
 pub use compaction::*;
 pub use input::*;
 pub use llm::*;
+pub use mcp::*;
 pub use permission::*;
 pub use picker::*;
 pub use scroll::*;

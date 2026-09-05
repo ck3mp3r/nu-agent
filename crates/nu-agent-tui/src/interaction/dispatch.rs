@@ -21,17 +21,17 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
                     UserAction::ScrollLineUp
                     | UserAction::HistoryUp
                     | UserAction::ToggleCommandPalette => {
-                        state.status.mcp_panel_move_up();
+                        state.status.mcp.mcp_panel_move_up();
                         UserAction::Noop
                     }
                     UserAction::ScrollLineDown
                     | UserAction::HistoryDown
                     | UserAction::QueryNext => {
-                        state.status.mcp_panel_move_down();
+                        state.status.mcp.mcp_panel_move_down();
                         UserAction::Noop
                     }
                     UserAction::Submit | UserAction::InsertChar(' ') => {
-                        let _ = state.status.queue_selected_mcp_toggle_request();
+                        let _ = state.status.mcp.queue_selected_mcp_toggle_request();
                         UserAction::Noop
                     }
                     _ => UserAction::Noop,

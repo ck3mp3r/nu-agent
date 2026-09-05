@@ -175,10 +175,13 @@ impl RuntimeCoordinator {
             .into_iter()
             .map(|server| {
                 let name = server.name;
-                self.state.status.set_mcp_visible_tool_count_by_server_name(
-                    name.as_str(),
-                    server.visible_tool_count,
-                );
+                self.state
+                    .status
+                    .mcp
+                    .set_mcp_visible_tool_count_by_server_name(
+                        name.as_str(),
+                        server.visible_tool_count,
+                    );
                 McpServerState {
                     name,
                     state: match (server.enabled, server.connected) {
@@ -189,7 +192,7 @@ impl RuntimeCoordinator {
                 }
             })
             .collect();
-        self.state.status.set_mcp_servers(servers);
+        self.state.status.mcp.set_mcp_servers(servers);
     }
 
     pub(crate) fn set_skills_projection(&mut self, skills: Vec<ProtocolDiscoverableSkill>) {
@@ -201,20 +204,21 @@ impl RuntimeCoordinator {
                 name: skill.name,
             })
             .collect();
-        self.state.status.set_discoverable_skills(mapped);
+        self.state.status.mcp.set_discoverable_skills(mapped);
     }
 
     pub(crate) fn mark_skills_discovery_failed(&mut self) {
-        self.state.status.mark_skills_discovery_failed();
+        self.state.status.mcp.mark_skills_discovery_failed();
     }
 
     pub(crate) fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
-        self.state.status.set_llm_visible_mcp_tool_count(count);
+        self.state.status.mcp.set_llm_visible_mcp_tool_count(count);
     }
 
     pub fn set_mcp_visible_tool_count_by_server_name(&mut self, server_name: &str, count: usize) {
         self.state
             .status
+            .mcp
             .set_mcp_visible_tool_count_by_server_name(server_name, count);
     }
 
@@ -225,6 +229,7 @@ impl RuntimeCoordinator {
     ) {
         self.state
             .status
+            .mcp
             .set_mcp_visible_tool_names_by_server_name(server_name, names);
     }
 

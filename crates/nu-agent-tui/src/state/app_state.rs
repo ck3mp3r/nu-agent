@@ -327,7 +327,7 @@ impl AppState {
                 }
             }
         }
-        while let Some(req) = self.status.take_next_mcp_toggle_request() {
+        while let Some(req) = self.status.mcp.take_next_mcp_toggle_request() {
             events.push(OrchestratorEvent::UiRequest(UiRequest::ToggleMcp {
                 server: req.server_name,
                 enable: req.enable,

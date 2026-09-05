@@ -1926,7 +1926,7 @@ fn status_contract_b_excludes_input_mode_backend_poll_and_hint_lines() {
 #[test]
 fn status_contract_c_mcp_counts_include_configured_enabled_disabled_failed() {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(vec![
+    state.status.mcp.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -1952,12 +1952,12 @@ fn status_contract_c_mcp_counts_include_configured_enabled_disabled_failed() {
 #[test]
 fn status_contract_d_visible_mcp_tool_count_uses_runtime_truth_and_updates() {
     let mut state = AppState::default();
-    state.status.set_llm_visible_mcp_tool_count(5);
+    state.status.mcp.set_llm_visible_mcp_tool_count(5);
 
     let before = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
     assert!(before.iter().any(|line| line == "LLM-visible MCP tools: 5"));
 
-    state.status.set_llm_visible_mcp_tool_count(2);
+    state.status.mcp.set_llm_visible_mcp_tool_count(2);
     let after = crate::runtime::status_lines_for_test(&mut state, "openai/gpt-4o-mini");
     assert!(after.iter().any(|line| line == "LLM-visible MCP tools: 2"));
 }
@@ -1965,7 +1965,7 @@ fn status_contract_d_visible_mcp_tool_count_uses_runtime_truth_and_updates() {
 #[test]
 fn status_contract_e_failures_show_names_and_reasons_and_healthy_none_when_clear() {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(vec![
+    state.status.mcp.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Failed,
@@ -1975,12 +1975,12 @@ fn status_contract_e_failures_show_names_and_reasons_and_healthy_none_when_clear
             state: McpServerUsabilityState::Failed,
         },
     ]);
-    assert!(state.status.set_mcp_server_state_by_name_with_reason(
+    assert!(state.status.mcp.set_mcp_server_state_by_name_with_reason(
         "gh",
         McpServerUsabilityState::Failed,
         Some("timeout".to_string())
     ));
-    assert!(state.status.set_mcp_server_state_by_name_with_reason(
+    assert!(state.status.mcp.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
         None
@@ -1990,12 +1990,12 @@ fn status_contract_e_failures_show_names_and_reasons_and_healthy_none_when_clear
     let failed_rendered = failed_lines.join("\n");
     assert!(failed_rendered.contains("Failures: gh (timeout), k8s"));
 
-    assert!(state.status.set_mcp_server_state_by_name_with_reason(
+    assert!(state.status.mcp.set_mcp_server_state_by_name_with_reason(
         "gh",
         McpServerUsabilityState::Enabled,
         None
     ));
-    assert!(state.status.set_mcp_server_state_by_name_with_reason(
+    assert!(state.status.mcp.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Enabled,
         None
@@ -2016,17 +2016,18 @@ fn status_contract_f_narrow_layout_is_compact_and_ellipsizes_deterministically()
     };
     state
         .status
+        .mcp
         .set_mcp_servers(vec![crate::state::McpServerState {
             name: "very-long-mcp-server-name-that-must-be-truncated".to_string(),
             state: McpServerUsabilityState::Failed,
         }]);
-    assert!(state.status.set_mcp_server_state_by_name_with_reason(
+    assert!(state.status.mcp.set_mcp_server_state_by_name_with_reason(
         "very-long-mcp-server-name-that-must-be-truncated",
         McpServerUsabilityState::Failed,
         Some("very long failure reason that should be truncated to keep the status line readable"
             .to_string())
     ));
-    state.status.set_llm_visible_mcp_tool_count(42);
+    state.status.mcp.set_llm_visible_mcp_tool_count(42);
 
     let lines = crate::runtime::status_lines_for_test(
         &mut state,
@@ -2061,7 +2062,7 @@ fn status_contract_f_narrow_layout_is_compact_and_ellipsizes_deterministically()
 #[test]
 fn status_lines_include_stable_active_model_identity_line() {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(vec![
+    state.status.mcp.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2246,7 +2247,7 @@ async fn help_panel_escape_closes_panel_after_scroll() -> Result<()> {
 fn status_panel_exposes_model_and_mcp_backend_status_lines() {
     let mut state = AppState::default();
     state.status.active_model_identity = "openai/gpt-4o-mini".to_string();
-    state.status.set_mcp_servers(vec![
+    state.status.mcp.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2280,7 +2281,7 @@ fn status_panel_exposes_model_and_mcp_backend_status_lines() {
 #[test]
 fn mcp_panel_renders_columns_selection_and_compact_table_contract() {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(vec![
+    state.status.mcp.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2290,18 +2291,20 @@ fn mcp_panel_renders_columns_selection_and_compact_table_contract() {
             state: McpServerUsabilityState::Failed,
         },
     ]);
-    state.status.mcp_panel_selection = 1;
+    state.status.mcp.mcp_panel_selection = 1;
 
-    state.status.set_mcp_server_state_by_name_with_reason(
+    state.status.mcp.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
         Some("connect timeout".to_string()),
     );
     state
         .status
+        .mcp
         .set_mcp_visible_tool_count_by_server_name("gh", 3);
     state
         .status
+        .mcp
         .set_mcp_visible_tool_count_by_server_name("k8s", 9);
 
     let model = mcp_table_model_for_test(&state, 80, 10);
@@ -2319,7 +2322,7 @@ fn mcp_panel_renders_columns_selection_and_compact_table_contract() {
 #[test]
 fn mcp_table_status_icon_mapping_is_deterministic() {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(vec![
+    state.status.mcp.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "enabled-srv".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2343,7 +2346,7 @@ fn mcp_table_status_icon_mapping_is_deterministic() {
 #[test]
 fn mcp_table_emoji_status_rows_use_safe_status_column_width_contract() {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(vec![
+    state.status.mcp.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "enabled-srv".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2416,7 +2419,7 @@ fn mcp_details_height_formula_matches_step_table() {
 #[test]
 fn mcp_panel_layout_keeps_table_primary_with_multiple_visible_rows_in_common_height() {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(
+    state.status.mcp.set_mcp_servers(
         (0..8)
             .map(|idx| crate::state::McpServerState {
                 name: format!("srv-{idx}"),
@@ -2457,7 +2460,7 @@ fn mcp_panel_controls_line_removes_status_legend_and_keeps_toggle_hint_compact()
 #[test]
 fn mcp_table_visible_tool_count_uses_live_per_server_mapping_without_state_gating() {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(vec![
+    state.status.mcp.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2469,9 +2472,11 @@ fn mcp_table_visible_tool_count_uses_live_per_server_mapping_without_state_gatin
     ]);
     state
         .status
+        .mcp
         .set_mcp_visible_tool_count_by_server_name("gh", 4);
     state
         .status
+        .mcp
         .set_mcp_visible_tool_count_by_server_name("k8s", 2);
 
     let model = mcp_table_model_for_test(&state, 80, 10);
@@ -2482,7 +2487,7 @@ fn mcp_table_visible_tool_count_uses_live_per_server_mapping_without_state_gatin
 #[test]
 fn mcp_selected_details_model_shows_full_error_text_tools_list_and_fallback() -> Result<()> {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(vec![
+    state.status.mcp.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2493,24 +2498,24 @@ fn mcp_selected_details_model_shows_full_error_text_tools_list_and_fallback() ->
         },
     ]);
     let reason = "connection timeout while dialing 10.0.0.1:443".to_string();
-    state.status.set_mcp_server_state_by_name_with_reason(
+    state.status.mcp.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
         Some(reason.clone()),
     );
-    state.status.set_mcp_visible_tool_names_by_server_name(
+    state.status.mcp.set_mcp_visible_tool_names_by_server_name(
         "k8s",
         vec!["k8s__z_last".to_string(), "k8s__a_first".to_string()],
     );
 
-    state.status.mcp_panel_selection = 1;
+    state.status.mcp.mcp_panel_selection = 1;
     let failed =
         super::mcp_selected_details_for_test(&state).ok_or("should have selected MCP details")?;
     assert_eq!(failed.server_line, "Server: k8s (failed)");
     assert_eq!(failed.error_line, format!("Error: {reason}"));
     assert_eq!(failed.tools_line, "Tools: k8s__a_first, k8s__z_last");
 
-    state.status.mcp_panel_selection = 0;
+    state.status.mcp.mcp_panel_selection = 0;
     let healthy =
         super::mcp_selected_details_for_test(&state).ok_or("should have selected MCP details")?;
     assert_eq!(healthy.server_line, "Server: gh (enabled)");
@@ -2522,7 +2527,7 @@ fn mcp_selected_details_model_shows_full_error_text_tools_list_and_fallback() ->
 #[test]
 fn mcp_table_visible_tool_count_respects_live_updates_after_selection_changes() {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(vec![
+    state.status.mcp.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2538,12 +2543,15 @@ fn mcp_table_visible_tool_count_respects_live_updates_after_selection_changes() 
     ]);
     state
         .status
+        .mcp
         .set_mcp_visible_tool_count_by_server_name("gh", 4);
     state
         .status
+        .mcp
         .set_mcp_visible_tool_count_by_server_name("k8s", 2);
     state
         .status
+        .mcp
         .set_mcp_visible_tool_count_by_server_name("docs", 7);
 
     let model = mcp_table_model_for_test(&state, 80, 10);
@@ -2557,11 +2565,12 @@ fn mcp_selected_details_height_zero_and_one_rows_preserve_error_presence() {
     let mut state = AppState::default();
     state
         .status
+        .mcp
         .set_mcp_servers(vec![crate::state::McpServerState {
             name: "k8s".to_string(),
             state: McpServerUsabilityState::Failed,
         }]);
-    state.status.set_mcp_server_state_by_name_with_reason(
+    state.status.mcp.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
         Some("connection timeout while dialing 10.0.0.1:443".to_string()),
@@ -2581,11 +2590,12 @@ fn mcp_selected_details_constrained_two_rows_preserve_full_error_line() {
     let mut state = AppState::default();
     state
         .status
+        .mcp
         .set_mcp_servers(vec![crate::state::McpServerState {
             name: "k8s".to_string(),
             state: McpServerUsabilityState::Failed,
         }]);
-    state.status.set_mcp_server_state_by_name_with_reason(
+    state.status.mcp.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
         Some("connection timeout while dialing 10.0.0.1:443 after many retries and additional context".to_string()),
@@ -2605,13 +2615,14 @@ fn mcp_selected_details_normal_height_preserves_full_error_line() {
     let mut state = AppState::default();
     state
         .status
+        .mcp
         .set_mcp_servers(vec![crate::state::McpServerState {
             name: "k8s".to_string(),
             state: McpServerUsabilityState::Failed,
         }]);
     let reason =
         "connection timeout while dialing 10.0.0.1:443 after many retries and additional context";
-    state.status.set_mcp_server_state_by_name_with_reason(
+    state.status.mcp.set_mcp_server_state_by_name_with_reason(
         "k8s",
         McpServerUsabilityState::Failed,
         Some(reason.to_string()),
@@ -2629,11 +2640,12 @@ fn mcp_selected_details_packs_multiple_tools_per_line_with_comma_separators() {
     let mut state = AppState::default();
     state
         .status
+        .mcp
         .set_mcp_servers(vec![crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
         }]);
-    state.status.set_mcp_visible_tool_names_by_server_name(
+    state.status.mcp.set_mcp_visible_tool_names_by_server_name(
         "gh",
         vec![
             "gh__z_last".to_string(),
@@ -2659,11 +2671,12 @@ fn mcp_selected_details_clipped_tool_list_shows_deterministic_plus_n_more_cue() 
     let mut state = AppState::default();
     state
         .status
+        .mcp
         .set_mcp_servers(vec![crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
         }]);
-    state.status.set_mcp_visible_tool_names_by_server_name(
+    state.status.mcp.set_mcp_visible_tool_names_by_server_name(
         "gh",
         vec![
             "gh__a_first".to_string(),
@@ -2693,11 +2706,12 @@ fn mcp_selected_details_single_tool_row_budget_prefers_truncation_cue_visibility
     let mut state = AppState::default();
     state
         .status
+        .mcp
         .set_mcp_servers(vec![crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
         }]);
-    state.status.set_mcp_visible_tool_names_by_server_name(
+    state.status.mcp.set_mcp_visible_tool_names_by_server_name(
         "gh",
         vec![
             "gh__a_first".to_string(),
@@ -2723,11 +2737,12 @@ fn mcp_selected_details_continuation_rows_align_and_use_tools_prefix_once() {
     let mut state = AppState::default();
     state
         .status
+        .mcp
         .set_mcp_servers(vec![crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
         }]);
-    state.status.set_mcp_visible_tool_names_by_server_name(
+    state.status.mcp.set_mcp_visible_tool_names_by_server_name(
         "gh",
         vec![
             "gh__a_first".to_string(),
@@ -2750,11 +2765,12 @@ fn mcp_selected_details_wrapping_uses_actual_details_width() {
     let mut state = AppState::default();
     state
         .status
+        .mcp
         .set_mcp_servers(vec![crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
         }]);
-    state.status.set_mcp_visible_tool_names_by_server_name(
+    state.status.mcp.set_mcp_visible_tool_names_by_server_name(
         "gh",
         vec![
             "gh__a_first".to_string(),
@@ -2779,6 +2795,7 @@ fn mcp_table_model_narrow_width_keeps_required_columns() {
     let mut state = AppState::default();
     state
         .status
+        .mcp
         .set_mcp_servers(vec![crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -2792,7 +2809,7 @@ fn mcp_table_model_narrow_width_keeps_required_columns() {
 #[test]
 fn mcp_table_model_overflow_top_window_locks_exact_cue_and_selected_mapping() -> Result<()> {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(
+    state.status.mcp.set_mcp_servers(
         (0..8)
             .map(|idx| crate::state::McpServerState {
                 name: format!("srv-{idx}"),
@@ -2804,7 +2821,7 @@ fn mcp_table_model_overflow_top_window_locks_exact_cue_and_selected_mapping() ->
             })
             .collect(),
     );
-    state.status.mcp_panel_selection = 0;
+    state.status.mcp.mcp_panel_selection = 0;
 
     let model = mcp_table_model_for_test(&state, 80, 7);
     assert_eq!(model.selected, Some(0));
@@ -2820,7 +2837,7 @@ fn mcp_table_model_overflow_top_window_locks_exact_cue_and_selected_mapping() ->
 #[test]
 fn mcp_table_model_overflow_middle_window_locks_exact_cue_and_selected_mapping() -> Result<()> {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(
+    state.status.mcp.set_mcp_servers(
         (0..8)
             .map(|idx| crate::state::McpServerState {
                 name: format!("srv-{idx}"),
@@ -2832,7 +2849,7 @@ fn mcp_table_model_overflow_middle_window_locks_exact_cue_and_selected_mapping()
             })
             .collect(),
     );
-    state.status.mcp_panel_selection = 5;
+    state.status.mcp.mcp_panel_selection = 5;
 
     let model = mcp_table_model_for_test(&state, 80, 7);
     assert_eq!(model.selected, Some(4));
@@ -2848,7 +2865,7 @@ fn mcp_table_model_overflow_middle_window_locks_exact_cue_and_selected_mapping()
 #[test]
 fn mcp_table_model_overflow_bottom_window_locks_exact_cue_and_selected_mapping() -> Result<()> {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(
+    state.status.mcp.set_mcp_servers(
         (0..8)
             .map(|idx| crate::state::McpServerState {
                 name: format!("srv-{idx}"),
@@ -2860,7 +2877,7 @@ fn mcp_table_model_overflow_bottom_window_locks_exact_cue_and_selected_mapping()
             })
             .collect(),
     );
-    state.status.mcp_panel_selection = 7;
+    state.status.mcp.mcp_panel_selection = 7;
 
     let model = mcp_table_model_for_test(&state, 80, 7);
     assert_eq!(model.selected, Some(4));
@@ -2927,7 +2944,7 @@ fn skills_panel_renders_empty_state_when_no_skills_available() {
 #[test]
 fn skills_panel_lists_skills_in_deterministic_order() -> Result<()> {
     let mut state = AppState::default();
-    state.status.set_discoverable_skills(vec![
+    state.status.mcp.set_discoverable_skills(vec![
         crate::state::DiscoverableSkill {
             source_priority: 1,
             source: "home".to_string(),
@@ -2995,6 +3012,7 @@ fn status_panel_scroll_offset_applied() {
     let mut state = AppState::default();
     state
         .status
+        .mcp
         .set_mcp_servers(vec![crate::state::McpServerState {
             name: "gh".to_string(),
             state: crate::state::McpServerUsabilityState::Enabled,
@@ -3029,7 +3047,7 @@ fn status_panel_scroll_offset_applied() {
 #[test]
 fn skills_panel_scroll_offset_applied() {
     let mut state = AppState::default();
-    state.status.set_discoverable_skills(vec![
+    state.status.mcp.set_discoverable_skills(vec![
         crate::state::DiscoverableSkill {
             source_priority: 0,
             source: "repo".to_string(),
@@ -3219,7 +3237,7 @@ fn model_picker_empty_catalog_shows_deterministic_empty_state() {
 #[test]
 fn status_lines_report_failed_state_count_when_present() {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(vec![
+    state.status.mcp.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
             state: McpServerUsabilityState::Enabled,
@@ -5042,7 +5060,7 @@ fn reduce_ui_state_event_status_variants_route_through_status_state() {
         error: Some("boom".to_string()),
         total: 3,
     });
-    assert_eq!(coordinator.state.status.llm_visible_mcp_tool_count, 3);
+    assert_eq!(coordinator.state.status.mcp.llm_visible_mcp_tool_count, 3);
 
     coordinator.reduce_ui_state_event(UiStateEvent::SetMcpVisibleToolCount {
         server: "gh".to_string(),
@@ -5052,6 +5070,7 @@ fn reduce_ui_state_event_status_variants_route_through_status_state() {
         coordinator
             .state
             .status
+            .mcp
             .mcp_visible_tool_count_for_server_name("gh"),
         5
     );
@@ -5064,6 +5083,7 @@ fn reduce_ui_state_event_status_variants_route_through_status_state() {
         coordinator
             .state
             .status
+            .mcp
             .mcp_visible_tool_names_for_server_name("gh"),
         vec!["a_tool".to_string(), "z_tool".to_string()]
     );

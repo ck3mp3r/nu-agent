@@ -99,7 +99,7 @@ pub(super) const AGENT_PICKER_EMPTY_STATE_MESSAGE: &str =
     "No agent personas found. Create .agents/<name>.md files.";
 
 pub(crate) fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
-    if state.status.skills_discovery_failed() {
+    if state.status.mcp.skills_discovery_failed() {
         return (
             "Skills",
             vec![Line::from(
@@ -108,7 +108,7 @@ pub(crate) fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'s
         );
     }
 
-    if state.status.discoverable_skills().is_empty() {
+    if state.status.mcp.discoverable_skills().is_empty() {
         return (
             "Skills",
             vec![Line::from("No discoverable skills available.")],
@@ -119,6 +119,7 @@ pub(crate) fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'s
     lines.extend(
         state
             .status
+            .mcp
             .discoverable_skills()
             .iter()
             .map(|skill| Line::from(format!("- {} ({})", skill.name, skill.source))),
@@ -157,10 +158,12 @@ pub(crate) const MCP_STATUS_COLUMN_WIDTH: u16 = 6;
 pub(super) fn mcp_selected_details(state: &AppState) -> Option<McpSelectedDetails> {
     let server = state
         .status
+        .mcp
         .mcp_servers
-        .get(state.status.mcp_panel_selection)?;
+        .get(state.status.mcp.mcp_panel_selection)?;
     let reason = state
         .status
+        .mcp
         .failed_mcp_servers_with_reasons()
         .into_iter()
         .find(|(name, _)| *name == server.name.as_str())
@@ -169,6 +172,7 @@ pub(super) fn mcp_selected_details(state: &AppState) -> Option<McpSelectedDetail
         .filter(|reason| !reason.is_empty());
     let mut tool_names = state
         .status
+        .mcp
         .mcp_visible_tool_names_for_server_name(server.name.as_str());
     tool_names.sort();
     tool_names.dedup();
@@ -355,11 +359,13 @@ pub(super) fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableMo
     ];
     let all_rows = state
         .status
+        .mcp
         .mcp_servers
         .iter()
         .map(|server| {
             let visible_tools = state
                 .status
+                .mcp
                 .mcp_visible_tool_count_for_server_name(server.name.as_str())
                 .to_string();
             [
@@ -376,6 +382,7 @@ pub(super) fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableMo
         Some(
             state
                 .status
+                .mcp
                 .mcp_panel_selection
                 .min(all_rows.len().saturating_sub(1)),
         )

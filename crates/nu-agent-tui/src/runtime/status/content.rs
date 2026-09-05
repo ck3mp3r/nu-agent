@@ -7,7 +7,7 @@ use crate::{rendering::theme::TuiTheme, state::AppState};
 use super::format::{compact_token_count, ellipsize, format_pwd, status_indicator, tail_ellipsize};
 
 pub(crate) fn build_status_lines(state: &AppState) -> Vec<String> {
-    let (configured, enabled, disabled, failed) = state.status.mcp_counts();
+    let (configured, enabled, disabled, failed) = state.status.mcp.mcp_counts();
     let model_phase = model_activity_label(state);
     let active_model_identity = state.status.active_model_identity.as_str();
 
@@ -31,7 +31,7 @@ pub(crate) fn build_status_lines(state: &AppState) -> Vec<String> {
         ),
         format!(
             "LLM-visible MCP tools: {}",
-            state.status.llm_visible_mcp_tool_count()
+            state.status.mcp.llm_visible_mcp_tool_count()
         ),
         failure_line,
     ]
@@ -174,7 +174,7 @@ fn format_mcp_failure_line(
     max_reason_chars: usize,
     max_line_chars: usize,
 ) -> String {
-    let failures = state.status.failed_mcp_servers_with_reasons();
+    let failures = state.status.mcp.failed_mcp_servers_with_reasons();
     if failures.is_empty() {
         return "Failures: none (healthy)".to_string();
     }

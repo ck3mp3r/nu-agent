@@ -1,6 +1,21 @@
+use std::collections::{HashMap, VecDeque};
+
 use super::*;
 
-impl StatusState {
+#[derive(Debug, Clone, Default)]
+pub struct McpSkillsState {
+    pub(crate) mcp_servers: Vec<McpServerState>,
+    pub(crate) mcp_panel_selection: usize,
+    pub(crate) discoverable_skills: Vec<DiscoverableSkill>,
+    pub(crate) skills_discovery_failed: bool,
+    pub(crate) llm_visible_mcp_tool_count: usize,
+    pub(crate) mcp_visible_tool_count_by_server: HashMap<String, usize>,
+    pub(crate) mcp_visible_tool_names_by_server: HashMap<String, Vec<String>>,
+    pub(crate) mcp_failure_reasons: HashMap<String, String>,
+    pub(crate) pending_mcp_toggle_requests: VecDeque<McpToggleRequest>,
+}
+
+impl McpSkillsState {
     pub fn set_mcp_servers(&mut self, servers: Vec<McpServerState>) {
         self.mcp_servers = servers;
         self.mcp_visible_tool_count_by_server
@@ -233,5 +248,16 @@ impl StatusState {
             .filter(|s| s.state == McpServerUsabilityState::Failed)
             .count();
         (configured, enabled, disabled, failed)
+    }
+
+    pub(crate) fn set_mcp_server_state_with_details(
+        &mut self,
+        server_name: &str,
+        state: McpServerUsabilityState,
+        reason: Option<String>,
+        llm_visible_mcp_tool_count: usize,
+    ) {
+        self.set_llm_visible_mcp_tool_count(llm_visible_mcp_tool_count);
+        self.set_mcp_server_state_by_name_with_reason(server_name, state, reason);
     }
 }

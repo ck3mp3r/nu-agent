@@ -39,7 +39,7 @@ fn reduce_ui_state_event_sets_context_window_max_tokens() {
 #[test]
 fn reduce_ui_state_event_sets_mcp_server_state() {
     let mut state = AppState::default();
-    state.status.set_mcp_servers(vec![McpServerState {
+    state.status.mcp.set_mcp_servers(vec![McpServerState {
         name: "server-a".to_string(),
         state: McpServerUsabilityState::Disabled,
     }]);
@@ -54,10 +54,10 @@ fn reduce_ui_state_event_sets_mcp_server_state() {
             })
     );
     assert_eq!(
-        state.status.mcp_servers[0].state,
+        state.status.mcp.mcp_servers[0].state,
         McpServerUsabilityState::Enabled
     );
-    assert_eq!(state.status.llm_visible_mcp_tool_count, 3);
+    assert_eq!(state.status.mcp.llm_visible_mcp_tool_count, 3);
 }
 
 #[test]
@@ -74,6 +74,7 @@ fn reduce_ui_state_event_sets_mcp_visible_tool_count() {
     assert_eq!(
         state
             .status
+            .mcp
             .mcp_visible_tool_count_for_server_name("server-a"),
         5
     );
@@ -93,6 +94,7 @@ fn reduce_ui_state_event_sets_mcp_visible_tool_names() {
     assert_eq!(
         state
             .status
+            .mcp
             .mcp_visible_tool_names_for_server_name("server-a"),
         vec!["a".to_string(), "b".to_string()]
     );
