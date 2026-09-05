@@ -1177,6 +1177,71 @@ fn cursor_style_maps_insert_to_bar_and_normal_visual_to_block() {
 // tests call the production poll + drain primitives directly (the same calls
 // `TuiRuntimeRenderer` makes).
 #[test]
+fn coordinator_poll_terminal_event_pickup_restored_input_text_some() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.state.input.restored_input_text = Some("restored".to_string());
+    let mut source = DiagnosticsOnlyEventSource {
+        diagnostics: InputSourceDiagnostics {
+            active_backend: "crossterm",
+            primary_available: Some(true),
+            fallback_available: Some(false),
+            last_poll_state: "idle".to_string(),
+            last_error: None,
+        },
+    };
+
+    // -- Exec
+    coordinator.poll_terminal_event(&mut source);
+    coordinator.drain_transport();
+
+    // -- Check
+    assert_eq!(
+        coordinator.textarea.lines().join("\n"),
+        "restored",
+        "restored_input_text must replace the textarea content"
+    );
+    assert_eq!(
+        coordinator.textarea.cursor(),
+        ratatui_textarea::DataCursor(0, 8),
+        "cursor must jump to the end of the restored single-line value"
+    );
+    assert!(
+        coordinator.render_needed,
+        "pickup must mark a render as needed"
+    );
+    Ok(())
+}
+
+#[test]
+fn coordinator_poll_terminal_event_pickup_restored_input_text_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.textarea.insert_str("seeded");
+    let mut source = DiagnosticsOnlyEventSource {
+        diagnostics: InputSourceDiagnostics {
+            active_backend: "crossterm",
+            primary_available: Some(true),
+            fallback_available: Some(false),
+            last_poll_state: "idle".to_string(),
+            last_error: None,
+        },
+    };
+
+    // -- Exec
+    coordinator.poll_terminal_event(&mut source);
+    coordinator.drain_transport();
+
+    // -- Check
+    assert_eq!(
+        coordinator.textarea.lines().join("\n"),
+        "seeded",
+        "textarea must be unchanged when restored_input_text is None"
+    );
+    Ok(())
+}
+
+#[test]
 fn coordinator_terminal_input_error_surfaces_status_and_requests_quit() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     let mut source = ErrorEventSource;
