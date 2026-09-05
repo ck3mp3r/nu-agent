@@ -6,7 +6,6 @@ use tokio::sync::Mutex;
 use crate::config::defaults;
 use crate::tools::mcp::{
     MCP_TOOL_NAMESPACE_DELIMITER,
-    auth_error::McpAuthError,
     client::McpToolDefinition,
     config::{McpAuthConfig, McpServerConfig, McpTransportType},
     credentials::{FileCredentialStore, FileStateStore, McpCredentialsStore},
@@ -539,45 +538,6 @@ fn build_tool_definitions(
         });
     }
     Ok(discovered_tools)
-}
-
-/// Classify an MCP tool call error as either a transport error or an auth error.
-///
-/// Returns `Some(McpAuthError)` if the error is auth-related, `None` otherwise.
-/// Auth errors are user-actionable (re-login, scope grant) rather than
-/// transport-level failures.
-///
-/// Uses specific phrase matching to avoid false positives from transport errors
-/// that happen to contain the word "auth" (e.g. "failed to connect to auth server").
-pub fn classify_mcp_error(error: &str, server_name: &str) -> Option<McpAuthError> {
-    let lower = error.to_lowercase();
-
-    if lower.contains("insufficient scope") || lower.contains("insufficientscope") {
-        return Some(McpAuthError::InsufficientScope {
-            server: server_name.to_string(),
-            required: "see server documentation".to_string(),
-        });
-    }
-
-    if lower.contains("token refresh failed") || lower.contains("refreshfailed") {
-        return Some(McpAuthError::RefreshFailed {
-            server: server_name.to_string(),
-        });
-    }
-
-    if lower.contains("auth required") || lower.contains("authrequired") {
-        return Some(McpAuthError::AuthRequired {
-            server: server_name.to_string(),
-        });
-    }
-
-    if lower.contains("not authenticated") || lower.contains("notauthenticated") {
-        return Some(McpAuthError::NotAuthenticated {
-            server: server_name.to_string(),
-        });
-    }
-
-    None
 }
 
 #[cfg(test)]

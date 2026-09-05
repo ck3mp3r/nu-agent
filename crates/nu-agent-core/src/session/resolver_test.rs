@@ -1,8 +1,8 @@
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::{CompactionMarker, SessionStore as _, StoreEntry};
 use crate::types::{
-    AssistantContent, Message, Text, ToolCall, ToolCallId, ToolFunction, ToolResult,
-    ToolResultContent, UserContent,
+    AdditionalParams, AssistantContent, Message, Text, ToolCall, ToolCallId, ToolFunction,
+    ToolResult, ToolResultContent, UserContent,
 };
 use chrono::Utc;
 use serde_json::json;
@@ -75,7 +75,11 @@ fn test_convert_assistant_tool_call() {
     assert!(snapshots[0].content().starts_with("→ "));
     assert_eq!(snapshots[0].tool_name(), Some("read_file"));
     assert!(snapshots[0].tool_arguments().is_some());
-    assert_eq!(snapshots[0].tool_success(), Some(true));
+    assert_eq!(
+        snapshots[0].tool_success(),
+        None,
+        "no persisted verdict flag for the call id — tool_success stays None"
+    );
 }
 
 #[test]
@@ -223,8 +227,8 @@ fn test_tool_call_format_matches_live_rendering() {
     assert!(args.contains("namespace"));
     assert!(args.contains("prod"));
 
-    // Tool success should be set to true for reloaded sessions
-    assert_eq!(snapshots[0].tool_success(), Some(true));
+    // Tool success is None without a persisted verdict flag for the call id
+    assert_eq!(snapshots[0].tool_success(), None);
 }
 
 #[test]
@@ -621,10 +625,10 @@ fn hydrate_store_entries_marker_shows_summary_body() {
 
 // --- tool_success rehydration tests ---
 
-/// A failed tool call (result text starts with "Toolset error: ") must rehydrate
-/// as tool_success == Some(false).
+/// A row whose failure-shaped text ("Toolset error: ...") carries NO persisted
+/// flag rehydrates as tool_success == None — output text is never consulted.
 #[test]
-fn hydrate_tool_call_failure_rehydrates_as_false() {
+fn hydrate_unflagged_toolset_error_text_rehydrates_as_none() {
     let entries = vec![
         StoreEntry::Message(Message::Assistant {
             id: None,
@@ -659,15 +663,15 @@ fn hydrate_tool_call_failure_rehydrates_as_false() {
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
         snapshots[0].tool_success(),
-        Some(false),
-        "Failed tool call (Toolset error: ...) must rehydrate as tool_success=false"
+        None,
+        "unflagged Toolset error text must rehydrate as None — no text sniffing"
     );
 }
 
-/// A successful tool call (result text does NOT start with "Toolset error: ") must
-/// rehydrate as tool_success == Some(true).
+/// A plain success-shaped row without a persisted flag rehydrates as
+/// tool_success == None — output text is never consulted, no default.
 #[test]
-fn hydrate_tool_call_success_rehydrates_as_true() {
+fn hydrate_unflagged_plain_text_rehydrates_as_none() {
     let entries = vec![
         StoreEntry::Message(Message::Assistant {
             id: None,
@@ -701,8 +705,8 @@ fn hydrate_tool_call_success_rehydrates_as_true() {
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
         snapshots[0].tool_success(),
-        Some(true),
-        "Successful tool call must rehydrate as tool_success=true"
+        None,
+        "unflagged plain text must rehydrate as None — no default-to-success"
     );
 }
 
@@ -749,9 +753,10 @@ fn hydrate_store_entries_marker_body_contains_summary() {
     );
 }
 
-/// A failed tool call with "Permission denied" result must rehydrate as tool_success == Some(false).
+/// A row with legacy bare denial text ("Permission denied") and no persisted
+/// flag rehydrates as tool_success == None — text is never consulted.
 #[test]
-fn hydrate_permission_denied_rehydrates_as_false() {
+fn hydrate_unflagged_permission_denied_text_rehydrates_as_none() {
     let entries = vec![
         StoreEntry::Message(Message::Assistant {
             id: None,
@@ -786,14 +791,15 @@ fn hydrate_permission_denied_rehydrates_as_false() {
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
         snapshots[0].tool_success(),
-        Some(false),
-        "Permission denied result must rehydrate as tool_success=false"
+        None,
+        "unflagged permission denial text must rehydrate as None — no text sniffing"
     );
 }
 
-/// A failed tool call with "Doom loop detected: ..." result must rehydrate as tool_success == Some(false).
+/// A row with legacy doom-loop text ("Doom loop detected: ...") and no
+/// persisted flag rehydrates as tool_success == None — text is never consulted.
 #[test]
-fn hydrate_doom_loop_rehydrates_as_false() {
+fn hydrate_unflagged_doom_loop_text_rehydrates_as_none() {
     let entries = vec![
         StoreEntry::Message(Message::Assistant {
             id: None,
@@ -829,9 +835,198 @@ fn hydrate_doom_loop_rehydrates_as_false() {
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
         snapshots[0].tool_success(),
-        Some(false),
-        "Doom loop result must rehydrate as tool_success=false"
+        None,
+        "unflagged doom loop text must rehydrate as None — no text sniffing"
     );
+}
+
+// --- persisted success-verdict flag (nu_agent_success) ---
+
+/// A persisted `nu_agent_success=true` verdict must win over output-text
+/// sniffing: a successful tool whose output starts with `Tool '` rehydrates
+/// as tool_success == Some(true). One snapshot per tool call is preserved.
+#[test]
+fn hydrate_flagged_tool_quote_text_rehydrates_as_true() {
+    let entries = tool_call_entries(
+        "call_flag_ok_1",
+        "Tool 'nonexistent' is not available.",
+        Some(true),
+    );
+
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+
+    assert_eq!(snapshots.len(), 1, "flag must not change snapshot count");
+    assert_eq!(snapshots[0].role(), "tool");
+    assert_eq!(
+        snapshots[0].tool_success(),
+        Some(true),
+        "persisted nu_agent_success=true must win over the `Tool '` text sniff"
+    );
+}
+
+/// The same `Tool '` text without a persisted flag rehydrates as
+/// tool_success == None — the false-positive sniff class is dead.
+#[test]
+fn hydrate_unflagged_tool_quote_text_rehydrates_as_none() {
+    let entries = tool_call_entries(
+        "call_legacy_quote_1",
+        "Tool 'nonexistent' is not available.",
+        None,
+    );
+
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "tool");
+    assert_eq!(
+        snapshots[0].tool_success(),
+        None,
+        "unflagged `Tool '` text must rehydrate as None — no text sniffing"
+    );
+}
+
+/// A genuine failure persisted with nu_agent_success=false rehydrates as
+/// Some(false) — the flag, not the output text, decides.
+#[test]
+fn hydrate_flagged_failure_rehydrates_as_false() {
+    let entries = tool_call_entries(
+        "call_flag_fail_1",
+        "read failed: No such file or directory (os error 2)",
+        Some(false),
+    );
+
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "tool");
+    assert_eq!(
+        snapshots[0].tool_success(),
+        Some(false),
+        "persisted nu_agent_success=false must rehydrate as failure"
+    );
+}
+
+/// A legacy row (no flag) with the enriched permission-denial text rehydrates
+/// as tool_success == None — the flag is the only verdict source.
+#[test]
+fn hydrate_legacy_enriched_denial_rehydrates_as_none() {
+    let entries = tool_call_entries(
+        "call_legacy_denial_1",
+        "Permission denied by rule 'global:*' (scope: global)",
+        None,
+    );
+
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "tool");
+    assert_eq!(
+        snapshots[0].tool_success(),
+        None,
+        "legacy enriched denial text without a flag must rehydrate as None"
+    );
+}
+
+/// A legacy row (no flag) whose text matches no failure class rehydrates as
+/// tool_success == None — unknown is honest; no default-to-success guess.
+#[test]
+fn hydrate_legacy_unmatched_text_rehydrates_as_none() {
+    let entries = tool_call_entries(
+        "call_legacy_unmatched_1",
+        "read failed: No such file or directory (os error 2)",
+        None,
+    );
+
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "tool");
+    assert_eq!(
+        snapshots[0].tool_success(),
+        None,
+        "legacy rows with no flag must rehydrate as None"
+    );
+}
+
+/// A first Text block whose `nu_agent_success` value is NOT a boolean (e.g. a
+/// string) must not be trusted: the row rehydrates as tool_success == None.
+#[test]
+fn hydrate_non_boolean_flag_value_rehydrates_as_none() {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_flag_bad_1"),
+                provider: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "read_file".to_string(),
+                    arguments: json!({"path": "/tmp/test.txt"}),
+                },
+            })],
+        }),
+        StoreEntry::Message(Message::User {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_flag_bad_1"),
+                provider: None,
+                name: "read_file".into(),
+                content: vec![ToolResultContent::Text(Text {
+                    text: "file contents here".to_string(),
+                    additional_params: AdditionalParams::from_entries([(
+                        "nu_agent_success",
+                        json!("yes"),
+                    )]),
+                })],
+            })],
+        }),
+    ];
+
+    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].role(), "tool");
+    assert_eq!(
+        snapshots[0].tool_success(),
+        None,
+        "non-boolean nu_agent_success values must rehydrate as None"
+    );
+}
+
+// -- Test Support
+
+/// Build [assistant ToolCall, user ToolResult] store entries for one call
+/// whose result text is `text` and whose persisted verdict flag is `flag`
+/// (`None` = no flag — legacy row).
+fn tool_call_entries(call_id: &str, text: &str, flag: Option<bool>) -> Vec<StoreEntry> {
+    vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint(call_id),
+                provider: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "read_file".to_string(),
+                    arguments: json!({"path": "/tmp/test.txt"}),
+                },
+            })],
+        }),
+        StoreEntry::Message(Message::User {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint(call_id),
+                provider: None,
+                name: "read_file".into(),
+                content: vec![ToolResultContent::Text(Text {
+                    text: text.to_string(),
+                    additional_params: flag.and_then(|f| {
+                        AdditionalParams::from_entries([("nu_agent_success", json!(f))])
+                    }),
+                })],
+            })],
+        }),
+    ]
 }
 
 #[tokio::test]

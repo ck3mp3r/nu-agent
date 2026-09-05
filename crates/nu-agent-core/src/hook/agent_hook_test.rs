@@ -1,47 +1,5 @@
-use super::*;
 use crate::hook::agent_hook::DoomLoopState;
 use std::sync::{Arc, Mutex};
-
-// ---------------------------------------------------------------------------
-// is_tool_failure — pure function, no HookContext needed
-// ---------------------------------------------------------------------------
-
-#[test]
-fn is_tool_failure_detects_all_failure_variants() {
-    assert!(is_tool_failure("Toolset error: something went wrong"));
-    assert!(is_tool_failure(
-        "Permission denied by rule 'r1' (scope: bash)"
-    ));
-    assert!(is_tool_failure("Doom loop detected: 'nu' called 3 times"));
-    assert!(is_tool_failure("Tool 'nonexistent' is not available."));
-}
-
-#[test]
-fn is_tool_failure_does_not_flag_success() {
-    assert!(!is_tool_failure("ok"));
-    assert!(!is_tool_failure(""));
-    assert!(!is_tool_failure("ls output here"));
-}
-
-#[test]
-fn is_tool_failure_detects_tool_call_limit() {
-    assert!(is_tool_failure(
-        "Sub-turn tool call limit reached (5). No further tools will be called in this response. \
-         Please summarise what you have accomplished so far and continue in the next turn if needed."
-    ));
-}
-
-#[test]
-fn is_tool_failure_matches_permission_denial_prefix_variants() {
-    // Bare legacy denial text (persisted by older sessions).
-    assert!(is_tool_failure("Permission denied"));
-    // Enriched denial text carrying the matched rule identity and scope.
-    assert!(is_tool_failure(
-        "Permission denied by rule 'global:*' (scope: global)"
-    ));
-    // Texts that merely start with "Permission" must not match.
-    assert!(!is_tool_failure("Permission granted"));
-}
 
 // ---------------------------------------------------------------------------
 // DoomLoopState — direct test (no HookContext needed)

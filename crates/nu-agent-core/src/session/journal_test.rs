@@ -1,13 +1,14 @@
 use super::journal::CachedMemory;
 use super::store::{CompactionMarker, FsSessionStore, SessionStore as _, StoreEntry};
 use super::store_test::{assert_msg_eq, assert_msgs_eq};
-use crate::types::Message;
+use crate::types::{Message, Text, ToolCallId, ToolResult, ToolResultContent, UserContent};
 use chrono::Utc;
 use rig::memory::ConversationMemory;
 use std::sync::Arc;
 use tempfile::TempDir;
 
 type TestMemory = CachedMemory<FsSessionStore>;
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // ---------------------------------------------------------------------------
 // Fix 1 tests: repair runs on cache-hit load
@@ -370,4 +371,242 @@ async fn no_duplication_when_appending_deltas_sequentially() {
         "no message content should appear twice; got: {:?}",
         texts
     );
+}
+
+// ---------------------------------------------------------------------------
+// Tool-verdict stamping: record → append stamps → consume-once
+// ---------------------------------------------------------------------------
+
+/// A recorded verdict must be stamped as `nu_agent_success` onto the first
+/// Text block of the matching persisted ToolResult.
+#[tokio::test]
+async fn append_stamps_recorded_true_verdict() -> Result<()> {
+    // -- Setup & Fixtures
+    let tmp = TempDir::new().map_err(|e| format!("tempdir: {e:?}"))?;
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
+    mem.record_tool_verdict("tc1", true);
+
+    // -- Exec
+    mem.append(
+        "conv-verdict-true",
+        vec![tool_result_message("tc1", "all good")],
+    )
+    .await
+    .map_err(|e| format!("append: {e:?}"))?;
+    let entries = mem
+        .load_all("conv-verdict-true")
+        .await
+        .map_err(|e| format!("load_all: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(entries.len(), 1, "one appended message expected");
+    assert_eq!(
+        tool_result_flag(&entries[0]),
+        Some(true),
+        "recorded verdict must be stamped onto the persisted ToolResult"
+    );
+    Ok(())
+}
+
+/// A recorded `false` verdict must stamp `nu_agent_success` = false.
+#[tokio::test]
+async fn append_stamps_recorded_false_verdict() -> Result<()> {
+    // -- Setup & Fixtures
+    let tmp = TempDir::new().map_err(|e| format!("tempdir: {e:?}"))?;
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
+    mem.record_tool_verdict("tc1", false);
+
+    // -- Exec
+    mem.append(
+        "conv-verdict-false",
+        vec![tool_result_message("tc1", "the tool failed")],
+    )
+    .await
+    .map_err(|e| format!("append: {e:?}"))?;
+    let entries = mem
+        .load_all("conv-verdict-false")
+        .await
+        .map_err(|e| format!("load_all: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(entries.len(), 1, "one appended message expected");
+    assert_eq!(
+        tool_result_flag(&entries[0]),
+        Some(false),
+        "recorded false verdict must be stamped onto the persisted ToolResult"
+    );
+    Ok(())
+}
+
+/// A verdict is consumed on stamp: a later append of another ToolResult with
+/// the same call id must NOT be stamped again.
+#[tokio::test]
+async fn append_consumes_verdict_after_first_stamp() -> Result<()> {
+    // -- Setup & Fixtures
+    let tmp = TempDir::new().map_err(|e| format!("tempdir: {e:?}"))?;
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
+    mem.record_tool_verdict("tc1", true);
+
+    // -- Exec
+    mem.append(
+        "conv-consume-once",
+        vec![tool_result_message("tc1", "first")],
+    )
+    .await
+    .map_err(|e| format!("append 1: {e:?}"))?;
+    mem.append(
+        "conv-consume-once",
+        vec![tool_result_message("tc1", "second")],
+    )
+    .await
+    .map_err(|e| format!("append 2: {e:?}"))?;
+    let entries = mem
+        .load_all("conv-consume-once")
+        .await
+        .map_err(|e| format!("load_all: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(entries.len(), 2, "two appended messages expected");
+    assert_eq!(
+        tool_result_flag(&entries[0]),
+        Some(true),
+        "first append must carry the stamped verdict"
+    );
+    assert_eq!(
+        tool_result_flag(&entries[1]),
+        None,
+        "verdict must be consumed — the second append must stay unstamped"
+    );
+    Ok(())
+}
+
+/// A ToolResult appended without a recorded verdict must stay unstamped.
+#[tokio::test]
+async fn append_without_recorded_verdict_leaves_tool_result_unstamped() -> Result<()> {
+    // -- Setup & Fixtures
+    let tmp = TempDir::new().map_err(|e| format!("tempdir: {e:?}"))?;
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
+
+    // -- Exec
+    mem.append(
+        "conv-unstamped",
+        vec![tool_result_message("tc1", "plain output")],
+    )
+    .await
+    .map_err(|e| format!("append: {e:?}"))?;
+    let entries = mem
+        .load_all("conv-unstamped")
+        .await
+        .map_err(|e| format!("load_all: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(entries.len(), 1, "one appended message expected");
+    assert_eq!(
+        tool_result_flag(&entries[0]),
+        None,
+        "no recorded verdict — the persisted ToolResult must carry no flag"
+    );
+    Ok(())
+}
+
+/// One batched append — a single User message carrying TWO ToolResults with
+/// two recorded verdicts — must stamp each ToolResult per its own call id.
+#[tokio::test]
+async fn append_stamps_batched_tool_results_per_call_id() -> Result<()> {
+    // -- Setup & Fixtures
+    let tmp = TempDir::new().map_err(|e| format!("tempdir: {e:?}"))?;
+    let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
+    mem.record_tool_verdict("tc1", true);
+    mem.record_tool_verdict("tc2", false);
+
+    // -- Exec
+    let batched = Message::User {
+        content: vec![
+            tool_result("tc1", "first ok"),
+            tool_result("tc2", "second failed"),
+        ],
+    };
+    mem.append("conv-batched", vec![batched])
+        .await
+        .map_err(|e| format!("append: {e:?}"))?;
+    let entries = mem
+        .load_all("conv-batched")
+        .await
+        .map_err(|e| format!("load_all: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(entries.len(), 1, "one batched message expected");
+    assert_eq!(
+        tool_result_flags(&entries[0]),
+        vec![Some(true), Some(false)],
+        "each ToolResult in the batch must carry its own verdict"
+    );
+    Ok(())
+}
+
+// -- Test Support
+
+/// Build a ToolResult for `call_id` with one Text block holding `text` (no
+/// additional params).
+fn tool_result(call_id: &str, text: &str) -> UserContent {
+    UserContent::ToolResult(ToolResult {
+        call: ToolCallId::new_or_mint(call_id),
+        provider: None,
+        name: "test_tool".into(),
+        content: vec![ToolResultContent::Text(Text {
+            text: text.to_string(),
+            additional_params: None,
+        })],
+    })
+}
+
+/// Build a User message carrying one ToolResult for `call_id` with one Text
+/// block holding `text` (no additional params).
+fn tool_result_message(call_id: &str, text: &str) -> Message {
+    Message::User {
+        content: vec![tool_result(call_id, text)],
+    }
+}
+
+/// Read the `nu_agent_success` boolean from the first Text block of the
+/// first ToolResult in a store entry. `None` when absent or not a boolean.
+fn tool_result_flag(entry: &StoreEntry) -> Option<bool> {
+    let StoreEntry::Message(Message::User { content }) = entry else {
+        return None;
+    };
+    let Some(UserContent::ToolResult(tr)) = content.first() else {
+        return None;
+    };
+    let Some(ToolResultContent::Text(text)) = tr.content.first() else {
+        return None;
+    };
+    text.additional_params
+        .as_ref()
+        .and_then(|params| params.get("nu_agent_success"))
+        .and_then(serde_json::Value::as_bool)
+}
+
+/// Read the `nu_agent_success` boolean from the first Text block of EACH
+/// ToolResult in a store entry, in order. `None` when absent or not a boolean.
+fn tool_result_flags(entry: &StoreEntry) -> Vec<Option<bool>> {
+    let StoreEntry::Message(Message::User { content }) = entry else {
+        return Vec::new();
+    };
+    content
+        .iter()
+        .filter_map(|c| {
+            let UserContent::ToolResult(tr) = c else {
+                return None;
+            };
+            let Some(ToolResultContent::Text(text)) = tr.content.first() else {
+                return None;
+            };
+            Some(
+                text.additional_params
+                    .as_ref()
+                    .and_then(|params| params.get("nu_agent_success"))
+                    .and_then(serde_json::Value::as_bool),
+            )
+        })
+        .collect()
 }

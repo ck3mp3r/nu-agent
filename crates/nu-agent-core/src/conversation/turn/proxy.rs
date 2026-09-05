@@ -54,16 +54,20 @@ impl FilteredToolProxy {
 /// Map a canonical `ToolResult` to the dynamic-tool call outcome.
 ///
 /// Successful results pass their output through unchanged, failed results
-/// surface the structured execution error, and refusals or skips become the
-/// exact model-facing marker `"[refused]"` instead of an empty text block, so
-/// intentional refusals stay distinguishable from missing output.
+/// surface the structured execution error, refusals surface the structured
+/// refusal error, and skipped results synthesize a refusal-classified error
+/// whose model feedback is the exact marker `"[refused]"`. Every non-success
+/// disposition stays failure-shaped, so downstream structural checks (e.g.
+/// the hook's `is_success()`) never classify a refusal as success.
 fn map_tool_result(result: &ToolResult) -> Result<ToolOutput, ToolExecutionError> {
     if result.is_success() {
         Ok(result.output().clone())
     } else if let Some(error) = result.error() {
         Err(error.clone())
+    } else if let Some(refusal) = result.refusal() {
+        Err(refusal.clone())
     } else {
-        Ok(ToolOutput::text("[refused]"))
+        Err(ToolExecutionError::refused("[refused]"))
     }
 }
 

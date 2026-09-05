@@ -27,15 +27,25 @@ async fn nu_executes_simple_command() -> Result<()> {
 #[ignore]
 async fn nu_captures_stdout_and_stderr() -> Result<()> {
     let bus = Bus::default();
-    let result = NuTool::execute(
+    // The command exits non-zero (`error make`), so the captured streams
+    // arrive in the failure details payload instead of an Ok payload.
+    let err = NuTool::execute(
         &serde_json::json!({"command": "print \"out\"; error make {msg: \"err\"}"}),
         Path::new("/tmp"),
         &bus,
     )
     .await
-    .map_err(|e| format!("{e:?}"))?;
-    assert!(!result["stdout"].as_str().unwrap().is_empty());
-    assert!(!result["stderr"].as_str().unwrap().is_empty());
+    .err()
+    .ok_or("non-zero exit must map to Err")?;
+    let details = err.details.ok_or("failure must carry output details")?;
+    assert!(
+        !details["stdout"].as_str().unwrap_or("").is_empty(),
+        "stdout must be captured, got: {details}"
+    );
+    assert!(
+        !details["stderr"].as_str().unwrap_or("").is_empty(),
+        "stderr must be captured, got: {details}"
+    );
     Ok(())
 }
 
@@ -57,18 +67,33 @@ async fn nu_non_string_command_returns_validation_error() {
     assert_eq!(err.kind, ToolErrorKind::Validation);
 }
 
+/// A non-zero nu exit must return a failure-shaped error: kind Runtime,
+/// message carrying the exit code, and details carrying stdout/stderr and
+/// exit_code — the producer owns the failure state, no text sniffing.
 #[tokio::test]
 #[ignore]
 async fn nu_nonzero_exit_preserved() -> Result<()> {
     let bus = Bus::default();
-    let result = NuTool::execute(
+    let err = NuTool::execute(
         &serde_json::json!({"command": "exit 3"}),
         Path::new("/tmp"),
         &bus,
     )
     .await
-    .map_err(|e| format!("{e:?}"))?;
-    assert_ne!(result["exit_code"], 0);
+    .err()
+    .ok_or("non-zero exit must map to Err")?;
+    assert_eq!(err.kind, ToolErrorKind::Runtime);
+    assert!(
+        err.message.contains("exited with code"),
+        "message must carry the exit status, got: {}",
+        err.message
+    );
+    let details = err.details.ok_or("error must carry details payload")?;
+    assert_eq!(details["exit_code"], 3);
+    assert!(
+        details["stdout"].is_string() && details["stderr"].is_string(),
+        "details must carry stdout and stderr, got: {details}"
+    );
     Ok(())
 }
 

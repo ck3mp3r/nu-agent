@@ -65,6 +65,7 @@ pub enum ToolCallStatus {
     InProgress,
     Done,
     Failed,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

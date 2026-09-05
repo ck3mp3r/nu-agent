@@ -514,19 +514,67 @@ fn assert_tool_result_in_msg(
     let Message::User { content } = msg else {
         panic!("expected User message for tool result, got: {msg:?}");
     };
-    let tr = content.iter().find_map(|c| {
-        if let rig::message::UserContent::ToolResult(tr) = c {
-            Some(tr)
-        } else {
-            None
-        }
-    });
-    let tr = tr.ok_or("no ToolResult content in User message")?;
-    assert_eq!(tr.call.as_str(), expected_id, "tool result id mismatch");
+    let tr = content
+        .iter()
+        .find_map(|c| {
+            if let rig::message::UserContent::ToolResult(tr) = c {
+                (tr.call.as_str() == expected_id).then_some(tr)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            Box::<dyn std::error::Error>::from(format!(
+                "no ToolResult for call id {expected_id} in User message"
+            ))
+        })?;
     let content_str = format!("{:?}", tr.content);
     assert!(
         content_str.contains(content_contains),
         "ToolResult content {content_str:?} does not contain {content_contains:?}"
+    );
+    Ok(())
+}
+
+/// Assert the first Text block of the ToolResult whose call id is
+/// `expected_id` carries `expected` under the persisted `nu_agent_success` key.
+fn assert_tool_result_flag(msg: &Message, expected_id: &str, expected: Option<bool>) -> Result<()> {
+    let Message::User { content } = msg else {
+        panic!("expected User message for tool result, got: {msg:?}");
+    };
+    let tr = content
+        .iter()
+        .find_map(|c| {
+            if let rig::message::UserContent::ToolResult(tr) = c {
+                (tr.call.as_str() == expected_id).then_some(tr)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            Box::<dyn std::error::Error>::from(format!(
+                "no ToolResult for call id {expected_id} in User message"
+            ))
+        })?;
+    let block = tr
+        .content
+        .iter()
+        .find_map(|c| {
+            if let rig::message::ToolResultContent::Text(t) = c {
+                Some(t)
+            } else {
+                None
+            }
+        })
+        .ok_or("no Text block in ToolResult")?;
+    let flag = block
+        .additional_params
+        .as_ref()
+        .and_then(|params| params.get("nu_agent_success"))
+        .and_then(serde_json::Value::as_bool);
+    assert_eq!(
+        flag, expected,
+        "persisted nu_agent_success mismatch for {expected_id}"
     );
     Ok(())
 }
@@ -751,6 +799,150 @@ async fn journey_three_batched_tool_calls_in_one_response() -> Result<()> {
             "ToolResult {id} missing from batched user message; content: {content:?}"
         );
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 3b: persisted tool-result success verdict (nu_agent_success)
+// ---------------------------------------------------------------------------
+
+/// A tool that always fails with a real execution error (io::Error). The
+/// persisted failure text is rig's redacted model feedback for a source
+/// error (`"the tool failed"`), which legacy text sniffing classifies as
+/// SUCCESS — the persisted verdict flag is what fixes rehydration.
+struct TestFailingTool;
+
+impl rig::tool::Tool for TestFailingTool {
+    const NAME: &'static str = "test_fail";
+    type Error = std::io::Error;
+    type Args = serde_json::Value;
+    type Output = String;
+
+    fn description(&self) -> String {
+        "Test tool that always fails".to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}, "required": []})
+    }
+
+    async fn call(
+        &self,
+        _context: &mut rig::tool::ToolContext,
+        _args: Self::Args,
+    ) -> std::result::Result<Self::Output, Self::Error> {
+        Err(std::io::Error::other(
+            "read failed: No such file or directory (os error 2)",
+        ))
+    }
+}
+
+/// Register one always-failing tool (test_fail).
+fn failing_tool() -> ToolInfra {
+    let handle = rig::tool::server::ToolServer::new()
+        .tool(TestFailingTool)
+        .run();
+    default_tool_infra(
+        handle,
+        vec![rig::completion::ToolDefinition {
+            name: "test_fail".to_string(),
+            description: "Test tool that always fails".to_string(),
+            parameters: serde_json::json!({"type": "object", "properties": {}, "required": []}),
+        }],
+    )
+}
+
+/// A successful tool call must persist `nu_agent_success` = true on the
+/// ToolResult's first Text block.
+#[tokio::test]
+async fn journey_successful_tool_call_persists_success_flag() -> Result<()> {
+    let mut h = JourneyHarness::new("journey-verdict-success");
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "test_echo", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::Text("done".into()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let (r, _) = h.turn("run it", model, echo_tool("result_42")).await;
+    assert!(r.is_ok(), "turn must succeed: {r:?}");
+
+    let msgs = h.raw_messages().await?;
+    // Shape: [User(prompt), Assistant(tc1), User(tr1), Assistant(text)]
+    assert_eq!(msgs.len(), 4, "expected 4 messages, got: {msgs:?}");
+    assert_tool_result_in_msg(&msgs[2], "tc1", "result_42")?;
+    assert_tool_result_flag(&msgs[2], "tc1", Some(true))?;
+    Ok(())
+}
+
+/// A failing tool call (real execution error) must persist
+/// `nu_agent_success` = false — the verdict, not the output text, decides
+/// rehydration.
+#[tokio::test]
+async fn journey_failed_tool_call_persists_failure_flag() -> Result<()> {
+    let mut h = JourneyHarness::new("journey-verdict-failure");
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "test_fail", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::Text("recovered".into()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let (r, _) = h.turn("run it", model, failing_tool()).await;
+    assert!(r.is_ok(), "tool failure must not fail the turn: {r:?}");
+
+    let msgs = h.raw_messages().await?;
+    // Shape: [User(prompt), Assistant(tc1), User(tr1), Assistant(text)]
+    assert_eq!(msgs.len(), 4, "expected 4 messages, got: {msgs:?}");
+    assert_tool_result_in_msg(&msgs[2], "tc1", "the tool failed")?;
+    assert_tool_result_flag(&msgs[2], "tc1", Some(false))?;
+    Ok(())
+}
+
+/// A sub-turn cap (max 1) skips the second tool call of the sub-turn: the
+/// skipped call's persisted ToolResult must carry `nu_agent_success` = false
+/// (Skipped disposition), while the executed first call carries true.
+#[tokio::test]
+async fn journey_subturn_cap_skipped_tool_call_persists_failure_flag() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut config = test_config();
+    config.max_tool_calls_per_subturn = Some(1);
+    let mut h = JourneyHarness::new_with_config("journey-verdict-subturn-skip", config);
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "test_echo", serde_json::json!({})),
+            MockStreamEvent::tool_call("tc2", "test_echo", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::Text("done".into()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+
+    // -- Exec
+    let (r, _) = h.turn("run both", model, echo_tool("result_42")).await;
+    assert!(r.is_ok(), "turn must succeed: {r:?}");
+
+    // -- Check
+    let msgs = h.raw_messages().await?;
+    // Shape: [User(prompt), Assistant([tc1,tc2]), User([tr_tc1, tr_tc2]), Assistant(text)]
+    assert_eq!(msgs.len(), 4, "expected 4 messages, got: {msgs:?}");
+    assert_tool_result_in_msg(&msgs[2], "tc1", "result_42")?;
+    assert_tool_result_flag(&msgs[2], "tc1", Some(true))?;
+    // tc2 was skipped by the sub-turn cap — its persisted ToolResult carries
+    // the skip reason and a false verdict.
+    assert_tool_result_in_msg(&msgs[2], "tc2", "Sub-turn tool call limit reached")?;
+    assert_tool_result_flag(&msgs[2], "tc2", Some(false))?;
     Ok(())
 }
 

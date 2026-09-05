@@ -45,15 +45,31 @@ pub fn make_dynamic_tool<T: BuiltinTool>(
         let cwd = cwd.clone();
         let bus = bus.clone();
         Box::pin(async move {
-            let result = T::execute(&args, &cwd, &bus).await.map_err(|e| {
-                ToolExecutionError::provider(format!(
-                    "{}: {}",
-                    e.message,
-                    e.details
-                        .map(|d| d.to_string())
-                        .unwrap_or_else(|| "no details".to_string())
-                ))
-            })?;
+            let result = match T::execute(&args, &cwd, &bus).await {
+                Ok(result) => result,
+                Err(e) => {
+                    // Handler failures keep the failure shape: the details
+                    // payload is serialized once, truncated like a success
+                    // payload, embedded in the message, and attached as the
+                    // model output so the model sees the same JSON it saw
+                    // before the payload became an error.
+                    let message = e.message.clone();
+                    let mapped = match e.details {
+                        Some(details) => {
+                            let json_str = serde_json::to_string(&details).map_err(|err| {
+                                ToolExecutionError::other(format!(
+                                    "JSON serialization failed: {err}"
+                                ))
+                            })?;
+                            let truncated = truncate_tool_output(json_str, max_bytes);
+                            ToolExecutionError::provider(format!("{message}: {truncated}"))
+                                .with_model_output(ToolOutput::text(truncated))
+                        }
+                        None => ToolExecutionError::provider(format!("{message}: no details")),
+                    };
+                    return Err(mapped);
+                }
+            };
             let json_str = serde_json::to_string(&result).map_err(|e| {
                 ToolExecutionError::other(format!("JSON serialization failed: {e}"))
             })?;

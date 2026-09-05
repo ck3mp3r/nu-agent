@@ -1,6 +1,8 @@
 use super::SqliteSessionStore;
 use crate::session::store::{CompactionMarker, SessionStore, StoreEntry};
-use crate::types::Message;
+use crate::types::{
+    AdditionalParams, Message, Text, ToolCallId, ToolResult, ToolResultContent, UserContent,
+};
 use chrono::Utc;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -704,4 +706,64 @@ async fn memory_store_persists_sessions_table_across_queries() {
     let sessions = store.list().await.expect("list");
     assert_eq!(sessions.len(), 1, "session should persist across queries");
     assert_eq!(sessions[0].id, "persist-test");
+}
+
+// ================================================================
+// Tool-verdict flag carrier round-trip
+// ================================================================
+
+/// A ToolResult text block carrying `nu_agent_success` in
+/// `additional_params` must survive the SQLite Message serde round trip
+/// unchanged — the store needs no schema change to carry the flag.
+#[tokio::test]
+async fn sqlite_round_trips_tool_verdict_flag() -> Result<()> {
+    // -- Setup & Fixtures
+    let store = SqliteSessionStore::new(":memory:")
+        .await
+        .map_err(|e| format!("create store: {e:?}"))?;
+    let stamped = Message::User {
+        content: vec![UserContent::ToolResult(ToolResult {
+            call: ToolCallId::new_or_mint("tc1"),
+            provider: None,
+            name: "test_tool".into(),
+            content: vec![ToolResultContent::Text(Text {
+                text: "the tool failed".to_string(),
+                additional_params: AdditionalParams::from_entries([(
+                    "nu_agent_success",
+                    serde_json::json!(false),
+                )]),
+            })],
+        })],
+    };
+
+    // -- Exec
+    store
+        .create("verdict-session", &[stamped])
+        .await
+        .map_err(|e| format!("create: {e:?}"))?;
+    let (_, entries) = store
+        .load("verdict-session")
+        .await
+        .map_err(|e| format!("load: {e:?}"))?
+        .ok_or("session should load")?;
+
+    // -- Check
+    let StoreEntry::Message(Message::User { content }) = &entries[0] else {
+        panic!("expected User message entry, got: {:?}", entries[0]);
+    };
+    let Some(UserContent::ToolResult(tr)) = content.first() else {
+        panic!("expected ToolResult content, got: {content:?}");
+    };
+    let Some(ToolResultContent::Text(text)) = tr.content.first() else {
+        panic!("expected Text block, got: {:?}", tr.content);
+    };
+    assert_eq!(
+        text.additional_params
+            .as_ref()
+            .and_then(|params| params.get("nu_agent_success"))
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "persisted flag must survive the SQLite serde round trip"
+    );
+    Ok(())
 }

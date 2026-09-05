@@ -785,9 +785,30 @@ fn bookkeeping_start_finish_tracks_row_status() {
         &mut state.transcript,
         "k8s__list_pods",
         r#"{"namespace":"prod"}"#,
-        true,
+        Some(true),
     );
     assert_eq!(state.transcript.entries[0].status, Some(ItemStatus::Done));
+}
+
+#[test]
+fn bookkeeping_start_finish_unknown_renders_unknown_status() {
+    let mut state = AppState::default();
+    state.tool.start_tool_call(
+        &mut state.transcript,
+        "k8s__list_pods",
+        r#"{"namespace":"prod"}"#,
+    );
+    state.tool.finish_tool_call(
+        &mut state.transcript,
+        "k8s__list_pods",
+        r#"{"namespace":"prod"}"#,
+        None,
+    );
+    assert_eq!(
+        state.transcript.entries[0].status,
+        Some(ItemStatus::Unknown),
+        "flag-absent tool rows must render unknown, not guessed success"
+    );
 }
 
 #[test]
@@ -818,13 +839,13 @@ fn concurrent_same_name_tool_calls_get_correct_statuses() {
         &mut state.transcript,
         "k8s__get_pod",
         r#"{"name":"api-1"}"#,
-        true,
+        Some(true),
     );
     state.tool.finish_tool_call(
         &mut state.transcript,
         "k8s__get_pod",
         r#"{"name":"api-0"}"#,
-        false,
+        Some(false),
     );
 
     // Each should get the correct status

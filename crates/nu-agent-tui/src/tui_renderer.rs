@@ -191,6 +191,7 @@ impl TuiRenderer {
             ItemStatus::Failed => "✕",
             ItemStatus::Queued => "•",
             ItemStatus::Cancelled => "✕",
+            ItemStatus::Unknown => "?",
         }
     }
 
@@ -201,6 +202,7 @@ impl TuiRenderer {
             ItemStatus::Failed => self.theme.status_failed,
             ItemStatus::Queued => self.theme.status_queued,
             ItemStatus::Cancelled => self.theme.status_cancelled,
+            ItemStatus::Unknown => self.theme.status_queued,
         }
     }
 

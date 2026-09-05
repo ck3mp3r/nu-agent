@@ -2,7 +2,7 @@ use nu_protocol::LabeledError;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::hook::agent_hook::is_tool_failure;
+use super::journal::TOOL_SUCCESS_PARAM;
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::{CompactionMarker, Session, SessionStore, StoreEntry};
 use crate::types::{AssistantContent, Message, ToolCallId, ToolResultContent, UserContent};
@@ -213,7 +213,9 @@ pub(crate) fn hydrate_transcript_from_store_entries(
     entries: &[StoreEntry],
 ) -> Vec<UiMessageSnapshot> {
     // Pass 1: collect call_id → tool_name from all ToolCalls and
-    //         call_id → success from all ToolResults (failure = is_tool_failure())
+    //         call_id → success from all ToolResults. Success comes ONLY
+    //         from the persisted verdict flag on the first Text block
+    //         (TOOL_SUCCESS_PARAM); rows without the flag stay unknown.
     let mut tool_names: HashMap<ToolCallId, String> = HashMap::new();
     let mut tool_success_map: HashMap<ToolCallId, bool> = HashMap::new();
     for entry in entries {
@@ -230,8 +232,14 @@ pub(crate) fn hydrate_transcript_from_store_entries(
                     if let UserContent::ToolResult(tr) = item {
                         for c in tr.content.iter() {
                             if let ToolResultContent::Text(t) = c {
-                                let success = !is_tool_failure(&t.text);
-                                tool_success_map.insert(tr.call.clone(), success);
+                                if let Some(success) = t
+                                    .additional_params
+                                    .as_ref()
+                                    .and_then(|p| p.get(TOOL_SUCCESS_PARAM))
+                                    .and_then(serde_json::Value::as_bool)
+                                {
+                                    tool_success_map.insert(tr.call.clone(), success);
+                                }
                                 break;
                             }
                         }
@@ -337,7 +345,7 @@ pub(crate) fn hydrate_single_message(
                                 .with_tool_details(
                                     Some(args_json),
                                     None,
-                                    Some(*tool_success_map.get(&tool_call.id).unwrap_or(&true)),
+                                    tool_success_map.get(&tool_call.id).copied(),
                                 ),
                         );
                     }

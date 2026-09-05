@@ -198,6 +198,32 @@ fn tool_failed_shows_cross() {
 }
 
 #[test]
+fn tool_unknown_shows_question_mark_with_queued_style() -> Result<()> {
+    let r = make_renderer();
+    let block = ToolInvocation {
+        name: "test".to_string(),
+        source: "".to_string(),
+        args: "".to_string(),
+    }
+    .to_render_block();
+    let mut ctx = default_ctx(80);
+    ctx.status = Some(ItemStatus::Unknown);
+    let lines = r.render(&block, &ctx);
+    let span = lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .find(|s| s.content.contains("?"))
+        .ok_or("should have unknown indicator span")?;
+    assert_eq!(span.content.as_ref(), "? ", "unknown indicator must be '?'");
+    assert_eq!(
+        span.style.fg,
+        TuiTheme::default().status_queued.fg,
+        "unknown indicator must use the status_queued style"
+    );
+    Ok(())
+}
+
+#[test]
 fn diff_add_line_uses_done_fg_color() -> Result<()> {
     let r = make_renderer();
     let block = RenderBlock {

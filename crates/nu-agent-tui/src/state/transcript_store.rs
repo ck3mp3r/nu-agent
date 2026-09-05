@@ -332,13 +332,12 @@ impl TranscriptStore {
             if role == TranscriptRole::Tool {
                 let persisted = message_content.trim();
                 if let Some(arguments) = message.tool_arguments() {
-                    let success = message.tool_success().unwrap_or(true);
                     let name = message
                         .tool_name()
                         .unwrap_or_else(|| extract_tool_name(persisted));
                     self.push_hydrate_tool_block_start_spacers();
                     tool.start_tool_call(self, name, arguments);
-                    tool.finish_tool_call(self, name, arguments, success);
+                    tool.finish_tool_call(self, name, arguments, message.tool_success());
                     continue;
                 }
                 if let Some((name, arguments, success)) =
@@ -346,7 +345,7 @@ impl TranscriptStore {
                 {
                     self.push_hydrate_tool_block_start_spacers();
                     tool.start_tool_call(self, name, arguments);
-                    tool.finish_tool_call(self, name, arguments, success);
+                    tool.finish_tool_call(self, name, arguments, Some(success));
                     continue;
                 }
                 continue;

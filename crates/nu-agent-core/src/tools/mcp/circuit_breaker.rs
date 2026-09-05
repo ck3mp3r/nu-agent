@@ -63,27 +63,6 @@ impl Default for McpCircuitBreaker {
     }
 }
 
-/// Returns `true` if the text looks like an MCP transport failure.
-///
-/// Matches (case-insensitive):
-/// - "Transport closed"
-/// - "transport error"
-/// - "connection refused"
-/// - "broken pipe"
-/// - "connection reset"
-/// - "unexpected eof"
-/// - "early eof"
-pub fn is_transport_error(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    lower.contains("transport closed")
-        || lower.contains("transport error")
-        || lower.contains("connection refused")
-        || lower.contains("broken pipe")
-        || lower.contains("connection reset")
-        || lower.contains("unexpected eof")
-        || lower.contains("early eof")
-}
-
 #[cfg(test)]
 #[path = "circuit_breaker_test.rs"]
 mod circuit_breaker_test;

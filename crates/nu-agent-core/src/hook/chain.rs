@@ -32,7 +32,7 @@ use crate::conversation::compaction::compactor::{NuCompactor, SummaryArtifact};
 use crate::conversation::turn::token_estimate::estimate_token_count;
 use crate::session::SessionStore;
 use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::{McpToolRegistry, builtin_kinds::BuiltinKind};
+use crate::tools::handler::McpToolRegistry;
 
 use super::agent_hook::HookState;
 use super::circuit_breaker_guard::CircuitBreakerGuard;
@@ -42,27 +42,6 @@ use super::permission_resolver::{
     AsyncPermissionResolver, PermissionDecision, resolve_tool_source,
 };
 use super::subturn_cap::SubTurnCap;
-
-/// Resolve the success flag for a tool result.
-///
-/// For the `nu` tool, the result is JSON with an `exit_code` field. A non-zero
-/// exit code means the command failed, so `success` must be `false` even though
-/// the tool itself returned `Ok`. Parse failures fall back to the base success.
-fn resolve_success(tool_name: &str, base_success: bool, result_text: &str) -> bool {
-    if base_success
-        && tool_name
-            .parse::<BuiltinKind>()
-            .is_ok_and(|k| k == BuiltinKind::Nu)
-    {
-        serde_json::from_str::<serde_json::Value>(result_text)
-            .ok()
-            .and_then(|v| v.get("exit_code").and_then(|c| c.as_i64()))
-            .map(|code| code == 0)
-            .unwrap_or(true)
-    } else {
-        base_success
-    }
-}
 
 /// Composable hook that delegates to named concern structs in explicit order.
 ///
@@ -342,9 +321,21 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         let result = event.presentation;
         let result_text = result.render();
 
+        // Structural success: the canonical result disposition decides. A
+        // non-zero `nu` exit arrives as an Error disposition (producers are
+        // honest), and Refused/Skipped never count as success — no result-text
+        // sniffing.
+        let success = event.raw_result.is_success();
+
+        // Record the verdict for persistence: `CachedMemory::append` stamps it
+        // onto the ToolResult with the matching call id when the turn is
+        // written to the session store.
+        if let Some(id) = event.tool_call_id {
+            self.memory.record_tool_verdict(id, success);
+        }
+
         log::trace!(
-            "on_tool_result: tool={tool_name} success={} result_len={}",
-            !super::agent_hook::is_tool_failure(&result_text),
+            "on_tool_result: tool={tool_name} success={success} result_len={}",
             result_text.len(),
         );
         if log::log_enabled!(log::Level::Trace) {
@@ -376,13 +367,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             .error()
             .map(|e| e.kind().as_str().to_string());
 
-        // 4. Emit ToolCompleted
-        let success = resolve_success(
-            tool_name,
-            event.raw_result.error().is_none() && !super::agent_hook::is_tool_failure(&result_text),
-            &result_text,
-        );
-
+        // 4. Emit ToolCompleted (success was computed structurally above)
         let tool_name_owned = tool_name.to_string();
         let args_owned = args.to_string();
         let result_text_owned = result_text.to_string();
@@ -412,7 +397,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             circuit
                 .record_result(
                     &tool_name_owned,
-                    &result_text_owned,
+                    event.raw_result,
                     success,
                     &mcp_registry,
                     &bus,

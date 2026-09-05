@@ -102,6 +102,21 @@ fn done_status_shows_checkmark() {
 }
 
 #[test]
+fn unknown_status_shows_question_mark() {
+    let r = plain();
+    let block = ToolInvocation {
+        name: "t".to_string(),
+        source: "".to_string(),
+        args: "".to_string(),
+    }
+    .to_render_block();
+    let mut c = ctx();
+    c.status = Some(ItemStatus::Unknown);
+    let out = r.render(&block, &c);
+    assert!(out.contains("? "), "got: {out}");
+}
+
+#[test]
 fn no_ansi_when_color_false() {
     let r = plain();
     let block = RenderBlock {

@@ -7,6 +7,7 @@ pub enum ItemStatus {
     Failed,
     Queued,
     Cancelled,
+    Unknown,
 }
 
 #[derive(Debug, Clone)]

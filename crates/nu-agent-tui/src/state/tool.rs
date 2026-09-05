@@ -105,7 +105,7 @@ impl ToolState {
         success: bool,
         display: Option<ToolDisplay>,
     ) -> bool {
-        self.finish_tool_call(store, name, arguments, success);
+        self.finish_tool_call(store, name, arguments, Some(success));
 
         let tool_key = format!("{name}\n{arguments}");
         if self.pre_displayed_keys.remove(&tool_key) {
@@ -150,12 +150,12 @@ impl ToolState {
         store: &mut TranscriptStore,
         name: &str,
         arguments: &str,
-        success: bool,
+        success: Option<bool>,
     ) {
-        let item_status = if success {
-            ItemStatus::Done
-        } else {
-            ItemStatus::Failed
+        let item_status = match success {
+            Some(true) => ItemStatus::Done,
+            Some(false) => ItemStatus::Failed,
+            None => ItemStatus::Unknown,
         };
         super::tool_calls::ToolCallBookkeeping::new(
             &mut self.calls,

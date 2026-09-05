@@ -32,6 +32,7 @@ impl BlockRenderer for TtyRenderer {
             Some(ItemStatus::InProgress) => "… ",
             Some(ItemStatus::Queued) => "• ",
             Some(ItemStatus::Cancelled) => "✕ ",
+            Some(ItemStatus::Unknown) => "? ",
             None => "",
         };
 

@@ -20,31 +20,60 @@ fn map_tool_result_success_returns_output_unchanged() -> Result<()> {
     Ok(())
 }
 
-/// A refused tool result maps to the exact `[refused]` marker text.
+/// A refused tool result maps to `Err` carrying the original refusal error —
+/// refusals stay failure-shaped instead of re-entering the pipeline
+/// success-shaped behind the `[refused]` marker.
 #[test]
-fn map_tool_result_refusal_returns_refused_marker() -> Result<()> {
+fn map_tool_result_refusal_returns_error() -> Result<()> {
     // -- Setup & Fixtures
     let result = ToolResult::failed(ToolExecutionError::refused("user declined the call"));
 
     // -- Exec
-    let output = map_tool_result(&result).map_err(|_| "refusal must not map to Err")?;
+    let error = map_tool_result(&result)
+        .err()
+        .ok_or("refusal must map to Err")?;
 
     // -- Check
-    assert_eq!(output.as_text(), Some("[refused]"));
+    assert!(
+        error.is_refusal(),
+        "refusal disposition must survive the mapping"
+    );
+    assert!(
+        error.message().contains("user declined the call"),
+        "refusal must preserve the original refusal message, got: {}",
+        error.message()
+    );
     Ok(())
 }
 
-/// A skipped tool result also maps to the exact `[refused]` marker text.
+/// A skipped tool result maps to `Err` with a refusal-classified error whose
+/// model feedback is the exact `[refused]` marker — the state is structural,
+/// the marker survives as model feedback only.
 #[test]
-fn map_tool_result_skipped_returns_refused_marker() -> Result<()> {
+fn map_tool_result_skipped_returns_refusal_classified_error() -> Result<()> {
     // -- Setup & Fixtures
     let result = ToolResult::skipped("skipped by runtime policy");
 
     // -- Exec
-    let output = map_tool_result(&result).map_err(|_| "skip must not map to Err")?;
+    let error = map_tool_result(&result)
+        .err()
+        .ok_or("skip must map to Err")?;
 
     // -- Check
-    assert_eq!(output.as_text(), Some("[refused]"));
+    assert_eq!(
+        error.kind(),
+        rig::tool::ToolErrorKind::PermissionDenied,
+        "synthesized skip error must be refusal-classified"
+    );
+    assert!(
+        error.is_refusal(),
+        "synthesized skip error must carry the refusal disposition"
+    );
+    assert_eq!(
+        error.model_feedback(),
+        Some("[refused]"),
+        "model feedback must remain the exact [refused] marker"
+    );
     Ok(())
 }
 

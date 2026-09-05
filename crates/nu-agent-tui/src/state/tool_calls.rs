@@ -40,7 +40,7 @@ impl<'a> ToolCallBookkeeping<'a> {
         &mut self,
         name: &str,
         arguments: &str,
-        success: bool,
+        success: Option<bool>,
         entries: &mut [TranscriptEntry],
         status: ItemStatus,
     ) {
@@ -60,10 +60,10 @@ impl<'a> ToolCallBookkeeping<'a> {
         if let Some(id) = maybe_id
             && let Some(tool) = self.calls.iter_mut().find(|tool| tool.id == id)
         {
-            tool.status = if success {
-                ToolCallStatus::Done
-            } else {
-                ToolCallStatus::Failed
+            tool.status = match success {
+                Some(true) => ToolCallStatus::Done,
+                Some(false) => ToolCallStatus::Failed,
+                None => ToolCallStatus::Unknown,
             };
             if let Some(entry_id) = tool.entry_id
                 && let Some(entry) = entries.iter_mut().rev().find(|entry| entry.id == entry_id)

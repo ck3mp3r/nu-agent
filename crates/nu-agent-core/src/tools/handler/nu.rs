@@ -86,10 +86,25 @@ impl BuiltinTool for NuTool {
             }
         };
 
+        let exit_code = status.code().unwrap_or(-1);
+        if exit_code != 0 {
+            // Non-zero exits are failures: the producer carries the state
+            // structurally (kind + details) instead of a success-shaped
+            // payload the hook has to re-derive from output text.
+            return Err(
+                ToolHandlerError::runtime(format!("command exited with code {exit_code}"))
+                    .with_details(serde_json::json!({
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "exit_code": exit_code,
+                    })),
+            );
+        }
+
         Ok(serde_json::json!({
             "stdout": stdout,
             "stderr": stderr,
-            "exit_code": status.code().unwrap_or(-1),
+            "exit_code": exit_code,
         }))
     }
 }

@@ -1,9 +1,15 @@
 use super::store::{CompactionMarker, SessionStore, StoreEntry};
-use crate::types::Message;
+use crate::types::{AdditionalParams, Message, ToolResult, ToolResultContent, UserContent};
 use rig::memory::{ConversationMemory, MemoryError};
 use rig::wasm_compat::WasmBoxedFuture;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+
+/// Key under `ToolResultContent::Text::additional_params` carrying the
+/// persisted success verdict for a tool result. Written by the
+/// `CachedMemory::append` stamp from verdicts recorded by the hook, read by
+/// the session resolver at rehydration (`session/resolver.rs`).
+pub(crate) const TOOL_SUCCESS_PARAM: &str = "nu_agent_success";
 
 /// A `ConversationMemory` implementation backed by any `S: SessionStore`.
 ///
@@ -23,6 +29,10 @@ pub struct CachedMemory<S: SessionStore + Clone + Send + Sync> {
     cache: Arc<Mutex<HashMap<String, Vec<Message>>>>,
     /// Track which conversation_ids have been persisted (for create vs append).
     persisted: Arc<Mutex<HashSet<String>>>,
+    /// Tool-success verdicts recorded by the hook, keyed by provider call id.
+    /// Consumed by `append`: the verdict is stamped as `TOOL_SUCCESS_PARAM`
+    /// on the persisted ToolResult with the matching call id, then removed.
+    tool_verdicts: Arc<Mutex<HashMap<String, bool>>>,
     /// The backing session store.
     store: Arc<S>,
 }
@@ -32,6 +42,7 @@ impl<S: SessionStore + Clone + Send + Sync> Clone for CachedMemory<S> {
         Self {
             cache: Arc::clone(&self.cache),
             persisted: Arc::clone(&self.persisted),
+            tool_verdicts: Arc::clone(&self.tool_verdicts),
             store: Arc::clone(&self.store),
         }
     }
@@ -49,8 +60,21 @@ impl<S: SessionStore + Clone + Send + Sync> CachedMemory<S> {
         Self {
             cache: Arc::new(Mutex::new(HashMap::new())),
             persisted: Arc::new(Mutex::new(HashSet::new())),
+            tool_verdicts: Arc::new(Mutex::new(HashMap::new())),
             store,
         }
+    }
+
+    /// Record the success verdict for a tool call id.
+    ///
+    /// Called by the hook at tool completion. `append` stamps the verdict as
+    /// `TOOL_SUCCESS_PARAM` onto the persisted ToolResult with the matching
+    /// call id and consumes it — one verdict per call id.
+    pub fn record_tool_verdict(&self, call_id: &str, success: bool) {
+        self.tool_verdicts
+            .lock()
+            .expect("tool verdicts mutex poisoned")
+            .insert(call_id.to_string(), success);
     }
 
     /// Write a compaction marker to the store — does not update the in-memory cache.
@@ -217,6 +241,20 @@ impl<S: SessionStore + Clone + Send + Sync> ConversationMemory for CachedMemory<
                 messages.len()
             );
 
+            // Stamp tool-success verdicts before the messages are cached or
+            // written: each recorded verdict is applied to the ToolResult
+            // with the matching call id and consumed — one shot per verdict.
+            let mut messages = messages;
+            {
+                let mut verdicts = self
+                    .tool_verdicts
+                    .lock()
+                    .expect("tool verdicts mutex poisoned");
+                for message in &mut messages {
+                    stamp_tool_verdicts(message, &mut verdicts);
+                }
+            }
+
             // Append to in-memory cache
             {
                 let mut cache = self.lock_cache()?;
@@ -262,3 +300,46 @@ impl<S: SessionStore + Clone + Send + Sync> ConversationMemory for CachedMemory<
         })
     }
 }
+
+// region:    --- Support
+
+/// Stamp recorded verdicts onto the ToolResults of `message`.
+///
+/// For each `UserContent::ToolResult` whose call id has a recorded verdict,
+/// the verdict is written as `TOOL_SUCCESS_PARAM` on the first
+/// `ToolResultContent::Text` block (merging into existing params) and the
+/// verdict is removed from `verdicts` — one shot per recorded verdict.
+fn stamp_tool_verdicts(message: &mut Message, verdicts: &mut HashMap<String, bool>) {
+    let Message::User { content } = message else {
+        return;
+    };
+    for item in content.iter_mut() {
+        let UserContent::ToolResult(result) = item else {
+            continue;
+        };
+        let Some(success) = verdicts.remove(result.call.as_str()) else {
+            continue;
+        };
+        stamp_tool_success(result, success);
+    }
+}
+
+/// Write `TOOL_SUCCESS_PARAM = success` on the first Text block of `result`,
+/// merging into existing additional params when present.
+fn stamp_tool_success(result: &mut ToolResult, success: bool) {
+    for block in result.content.iter_mut() {
+        if let ToolResultContent::Text(text) = block {
+            if let Some(verdict) =
+                AdditionalParams::from_entries([(TOOL_SUCCESS_PARAM, serde_json::json!(success))])
+            {
+                match text.additional_params.as_mut() {
+                    Some(params) => params.merge(verdict),
+                    None => text.additional_params = Some(verdict),
+                }
+            }
+            break;
+        }
+    }
+}
+
+// endregion: --- Support
