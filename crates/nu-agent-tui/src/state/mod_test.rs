@@ -10,10 +10,10 @@ fn defaults_start_idle_with_unlocked_input_and_no_abort_pending() {
     assert_eq!(state.abort.confirmation_marker, 0);
     assert!(state.transcript.entries.is_empty());
     assert!(state.status.status_line.is_empty());
-    assert_eq!(state.status.latest_input_tokens, None);
-    assert_eq!(state.status.latest_output_tokens, None);
-    assert_eq!(state.status.latest_total_tokens, None);
-    assert_eq!(state.status.session_total_tokens, 0);
+    assert_eq!(state.status.tokens.latest_input_tokens, None);
+    assert_eq!(state.status.tokens.latest_output_tokens, None);
+    assert_eq!(state.status.tokens.latest_total_tokens, None);
+    assert_eq!(state.status.tokens.session_total_tokens, 0);
 }
 
 #[test]

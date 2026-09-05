@@ -65,8 +65,8 @@ pub(crate) fn lane_2_status_line(
     available_width: usize,
     theme: &TuiTheme,
 ) -> Line<'static> {
-    let current = state.status.latest_total_tokens.unwrap_or(0);
-    let token_str = match state.status.context_window_max_tokens() {
+    let current = state.status.tokens.latest_total_tokens.unwrap_or(0);
+    let token_str = match state.status.tokens.context_window_max_tokens() {
         Some(max) if max > 0 => {
             let pct = ((current as u128).saturating_mul(100) / (max as u128)).min(100) as u64;
             format!("{} ({pct}%)", compact_token_count(current))

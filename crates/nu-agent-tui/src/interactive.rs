@@ -69,6 +69,7 @@ where
             .coordinator
             .state
             .status
+            .tokens
             .set_context_window_max_tokens(max_tokens);
     }
 

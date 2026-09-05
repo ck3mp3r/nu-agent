@@ -130,7 +130,9 @@ fn handle_llm_end(
     output_tokens: u64,
     total_tokens: u64,
 ) -> bool {
-    status.record_token_usage(input_tokens, output_tokens, total_tokens);
+    status
+        .tokens
+        .record_token_usage(input_tokens, output_tokens, total_tokens);
     status.status_line = format!("Response ready ({response_chars} chars)");
     true
 }

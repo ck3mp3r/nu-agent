@@ -277,7 +277,7 @@ impl TranscriptStore {
     ) {
         for mut message in messages {
             if let Some(usage) = message.usage() {
-                status.hydrate_usage(
+                status.tokens.hydrate_usage(
                     usage.input_tokens(),
                     usage.output_tokens(),
                     usage.total_tokens(),
@@ -365,7 +365,7 @@ impl TranscriptStore {
         }
 
         if let Some(tokens) = last_total_tokens {
-            status.hydrate_latest_total_tokens(tokens);
+            status.tokens.hydrate_latest_total_tokens(tokens);
         }
     }
 

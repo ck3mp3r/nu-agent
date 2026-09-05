@@ -234,7 +234,10 @@ impl RuntimeCoordinator {
     }
 
     pub fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
-        self.state.status.set_context_window_max_tokens(max_tokens);
+        self.state
+            .status
+            .tokens
+            .set_context_window_max_tokens(max_tokens);
     }
 
     pub fn set_active_agent_identity(&mut self, name: &str) {

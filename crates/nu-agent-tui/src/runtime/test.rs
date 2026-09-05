@@ -3323,12 +3323,18 @@ fn compact_status_line_reports_lane_1_only() {
 fn lane_2_context_line_uses_exact_usage_format_without_extra_text() {
     let mut state = AppState {
         status: crate::state::StatusState {
-            latest_total_tokens: Some(250),
+            tokens: crate::state::TokenUsage {
+                latest_total_tokens: Some(250),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
     };
-    state.status.set_context_window_max_tokens(Some(1000));
+    state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(1000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 120);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -3346,12 +3352,15 @@ fn lane_2_context_line_uses_exact_usage_format_without_extra_text() {
 fn lane_2_context_line_falls_back_to_used_only_when_max_unavailable() {
     let mut state = AppState {
         status: crate::state::StatusState {
-            latest_total_tokens: Some(42),
+            tokens: crate::state::TokenUsage {
+                latest_total_tokens: Some(42),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
     };
-    state.status.set_context_window_max_tokens(None);
+    state.status.tokens.set_context_window_max_tokens(None);
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 120);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -3369,12 +3378,18 @@ fn lane_2_context_line_falls_back_to_used_only_when_max_unavailable() {
 fn footer_two_lane_contract_exposes_lane_1_and_lane_2_simultaneously() {
     let mut state = AppState {
         status: crate::state::StatusState {
-            latest_total_tokens: Some(250),
+            tokens: crate::state::TokenUsage {
+                latest_total_tokens: Some(250),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
     };
-    state.status.set_context_window_max_tokens(Some(1000));
+    state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(1000));
 
     let lane_1 = crate::runtime::compact_status_line_for_test("openai/gpt-4o-mini", None);
     let lane_1_text: String = lane_1.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -3392,6 +3407,7 @@ fn configured_path_resolves_context_max_without_fallback_format() {
     coordinator
         .state
         .status
+        .tokens
         .set_context_window_max_tokens(Some(128_000));
     coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
         response_chars: 40,
@@ -3415,6 +3431,7 @@ fn lane_2_context_line_updates_after_each_turn_and_does_not_stale() {
     coordinator
         .state
         .status
+        .tokens
         .set_context_window_max_tokens(Some(100));
 
     coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
@@ -3446,12 +3463,18 @@ fn lane_2_context_line_updates_after_each_turn_and_does_not_stale() {
 fn lane_2_context_line_truncation_removes_any_extra_labels_or_hints() {
     let mut state = AppState {
         status: crate::state::StatusState {
-            latest_total_tokens: Some(12345),
+            tokens: crate::state::TokenUsage {
+                latest_total_tokens: Some(12345),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
     };
-    state.status.set_context_window_max_tokens(Some(128000));
+    state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(128000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 30);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -3490,6 +3513,7 @@ fn lane_2_rehydrate_with_known_max_shows_ratio_immediately() {
     coordinator
         .state
         .status
+        .tokens
         .set_context_window_max_tokens(Some(1000));
     coordinator.hydrate_transcript_from_messages(
         vec![{
@@ -3529,6 +3553,7 @@ fn lane_2_rehydrate_without_usage_metadata_with_known_max_shows_ratio_not_fallba
     coordinator
         .state
         .status
+        .tokens
         .set_context_window_max_tokens(Some(100));
     coordinator.hydrate_transcript_from_messages(
         vec![UiMessageSnapshot::new("assistant", "history")],
@@ -3546,6 +3571,7 @@ fn lane_2_rehydrate_is_replaced_by_live_turn_usage() {
     coordinator
         .state
         .status
+        .tokens
         .set_context_window_max_tokens(Some(100));
     coordinator.hydrate_transcript_from_messages(
         vec![{
@@ -3581,9 +3607,12 @@ fn lane_2_rehydrate_is_replaced_by_live_turn_usage() {
 #[test]
 fn lane_2_threshold_formatting_contract_100_and_1000_and_11657() {
     let mut state = AppState::default();
-    state.status.set_context_window_max_tokens(Some(200_000));
+    state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(200_000));
 
-    state.status.latest_total_tokens = Some(100);
+    state.status.tokens.latest_total_tokens = Some(100);
     let one_hundred = crate::runtime::lane_2_status_line_for_test(&state, 40);
     let one_hundred_text: String = one_hundred
         .spans
@@ -3592,7 +3621,7 @@ fn lane_2_threshold_formatting_contract_100_and_1000_and_11657() {
         .collect();
     assert!(one_hundred_text.ends_with("100 (0%)"));
 
-    state.status.latest_total_tokens = Some(1_000);
+    state.status.tokens.latest_total_tokens = Some(1_000);
     let one_thousand = crate::runtime::lane_2_status_line_for_test(&state, 40);
     let one_thousand_text: String = one_thousand
         .spans
@@ -3601,7 +3630,7 @@ fn lane_2_threshold_formatting_contract_100_and_1000_and_11657() {
         .collect();
     assert!(one_thousand_text.ends_with("1k (0%)"));
 
-    state.status.latest_total_tokens = Some(11_657);
+    state.status.tokens.latest_total_tokens = Some(11_657);
     let eleven_point_six = crate::runtime::lane_2_status_line_for_test(&state, 40);
     let eleven_text: String = eleven_point_six
         .spans
@@ -3615,12 +3644,18 @@ fn lane_2_threshold_formatting_contract_100_and_1000_and_11657() {
 fn lane_2_is_right_aligned_in_wide_layout() {
     let mut state = AppState {
         status: crate::state::StatusState {
-            latest_total_tokens: Some(11_657),
+            tokens: crate::state::TokenUsage {
+                latest_total_tokens: Some(11_657),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
     };
-    state.status.set_context_window_max_tokens(Some(200_000));
+    state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(200_000));
 
     let width = 40usize;
     let line = crate::runtime::lane_2_status_line_for_test(&state, width);
@@ -3635,12 +3670,18 @@ fn lane_2_is_right_aligned_in_wide_layout() {
 fn lane_2_narrow_width_uses_deterministic_right_anchored_truncation() {
     let mut state = AppState {
         status: crate::state::StatusState {
-            latest_total_tokens: Some(11_657),
+            tokens: crate::state::TokenUsage {
+                latest_total_tokens: Some(11_657),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
     };
-    state.status.set_context_window_max_tokens(Some(200_000));
+    state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(200_000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 8);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -4411,12 +4452,18 @@ fn drain_transport_single_assistant_message_not_affected() {
 fn lane_2_shows_agent_when_active() {
     let mut state = AppState {
         status: crate::state::StatusState {
-            latest_total_tokens: Some(42_300),
+            tokens: crate::state::TokenUsage {
+                latest_total_tokens: Some(42_300),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
     };
-    state.status.set_context_window_max_tokens(Some(128_000));
+    state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(128_000));
     state.set_active_agent_identity("coder");
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 60);
@@ -4431,12 +4478,18 @@ fn lane_2_shows_agent_when_active() {
 fn lane_2_shows_only_tokens_when_no_agent() {
     let mut state = AppState {
         status: crate::state::StatusState {
-            latest_total_tokens: Some(250),
+            tokens: crate::state::TokenUsage {
+                latest_total_tokens: Some(250),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
     };
-    state.status.set_context_window_max_tokens(Some(1000));
+    state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(1000));
 
     let line = crate::runtime::lane_2_status_line_for_test(&state, 40);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -4464,7 +4517,10 @@ fn hydrate_transcript_sets_latest_total_tokens() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.hydrate_transcript_from_messages(Vec::<UiMessageSnapshot>::new(), Some(14000));
 
-    assert_eq!(coordinator.state().status.latest_total_tokens, Some(14000));
+    assert_eq!(
+        coordinator.state().status.tokens.latest_total_tokens,
+        Some(14000)
+    );
 }
 
 #[test]
@@ -4472,7 +4528,7 @@ fn hydrate_transcript_leaves_latest_total_tokens_none_when_no_value() {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.hydrate_transcript_from_messages(Vec::<UiMessageSnapshot>::new(), None);
 
-    assert_eq!(coordinator.state().status.latest_total_tokens, None);
+    assert_eq!(coordinator.state().status.tokens.latest_total_tokens, None);
 }
 
 #[test]
@@ -4641,12 +4697,18 @@ fn status_right_content_shows_cwd_when_given() -> Result<()> {
 fn status_left_content_contains_tokens() {
     let mut state = AppState {
         status: crate::state::StatusState {
-            latest_total_tokens: Some(250),
+            tokens: crate::state::TokenUsage {
+                latest_total_tokens: Some(250),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
     };
-    state.status.set_context_window_max_tokens(Some(1000));
+    state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(1000));
     let line = crate::runtime::status_left_content_for_test("openai/gpt-4", None, &mut state, 80);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(text.contains("250"));
@@ -5050,7 +5112,7 @@ fn reduce_ui_state_event_status_variants_route_through_status_state() {
 
     coordinator.reduce_ui_state_event(UiStateEvent::SetContextWindowMaxTokens(Some(128_000)));
     assert_eq!(
-        coordinator.state.status.context_window_max_tokens,
+        coordinator.state.status.tokens.context_window_max_tokens,
         Some(128_000)
     );
 

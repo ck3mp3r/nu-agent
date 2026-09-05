@@ -77,10 +77,10 @@ fn llm_end_event_updates_latest_and_rolling_token_usage() {
         },
     );
 
-    assert_eq!(state.status.latest_input_tokens, Some(20));
-    assert_eq!(state.status.latest_output_tokens, Some(10));
-    assert_eq!(state.status.latest_total_tokens, Some(30));
-    assert_eq!(state.status.session_total_tokens, 30);
+    assert_eq!(state.status.tokens.latest_input_tokens, Some(20));
+    assert_eq!(state.status.tokens.latest_output_tokens, Some(10));
+    assert_eq!(state.status.tokens.latest_total_tokens, Some(30));
+    assert_eq!(state.status.tokens.session_total_tokens, 30);
 
     reduce_llm(
         &mut state,
@@ -93,10 +93,10 @@ fn llm_end_event_updates_latest_and_rolling_token_usage() {
         },
     );
 
-    assert_eq!(state.status.latest_input_tokens, Some(5));
-    assert_eq!(state.status.latest_output_tokens, Some(7));
-    assert_eq!(state.status.latest_total_tokens, Some(12));
-    assert_eq!(state.status.session_total_tokens, 42);
+    assert_eq!(state.status.tokens.latest_input_tokens, Some(5));
+    assert_eq!(state.status.tokens.latest_output_tokens, Some(7));
+    assert_eq!(state.status.tokens.latest_total_tokens, Some(12));
+    assert_eq!(state.status.tokens.session_total_tokens, 42);
 }
 
 #[test]
@@ -114,10 +114,10 @@ fn llm_end_records_tokens_and_sets_ready_status() {
         },
     );
 
-    assert_eq!(state.status.latest_input_tokens, Some(4));
-    assert_eq!(state.status.latest_output_tokens, Some(8));
-    assert_eq!(state.status.latest_total_tokens, Some(12));
-    assert_eq!(state.status.session_total_tokens, 12);
+    assert_eq!(state.status.tokens.latest_input_tokens, Some(4));
+    assert_eq!(state.status.tokens.latest_output_tokens, Some(8));
+    assert_eq!(state.status.tokens.latest_total_tokens, Some(12));
+    assert_eq!(state.status.tokens.session_total_tokens, 12);
     assert_eq!(state.status.status_line, "Response ready (12 chars)");
 }
 

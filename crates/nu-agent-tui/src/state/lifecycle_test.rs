@@ -149,17 +149,17 @@ fn global_abort_cancels_active_and_all_pending_prompts() {
 fn record_token_usage_tracks_latest_and_accumulates_session_total() {
     let mut state = AppState::default();
 
-    state.status.record_token_usage(7, 5, 12);
-    assert_eq!(state.status.latest_input_tokens, Some(7));
-    assert_eq!(state.status.latest_output_tokens, Some(5));
-    assert_eq!(state.status.latest_total_tokens, Some(12));
-    assert_eq!(state.status.session_total_tokens, 12);
+    state.status.tokens.record_token_usage(7, 5, 12);
+    assert_eq!(state.status.tokens.latest_input_tokens, Some(7));
+    assert_eq!(state.status.tokens.latest_output_tokens, Some(5));
+    assert_eq!(state.status.tokens.latest_total_tokens, Some(12));
+    assert_eq!(state.status.tokens.session_total_tokens, 12);
 
-    state.status.record_token_usage(2, 3, 5);
-    assert_eq!(state.status.latest_input_tokens, Some(2));
-    assert_eq!(state.status.latest_output_tokens, Some(3));
-    assert_eq!(state.status.latest_total_tokens, Some(5));
-    assert_eq!(state.status.session_total_tokens, 17);
+    state.status.tokens.record_token_usage(2, 3, 5);
+    assert_eq!(state.status.tokens.latest_input_tokens, Some(2));
+    assert_eq!(state.status.tokens.latest_output_tokens, Some(3));
+    assert_eq!(state.status.tokens.latest_total_tokens, Some(5));
+    assert_eq!(state.status.tokens.session_total_tokens, 17);
 }
 
 #[test]
@@ -242,17 +242,20 @@ fn enqueue_prompt_does_not_add_transcript_entry() {
 fn clear_transcript_resets_token_fields() {
     let mut state = AppState {
         status: StatusState {
-            latest_input_tokens: Some(100),
-            latest_output_tokens: Some(200),
-            latest_total_tokens: Some(300),
+            tokens: TokenUsage {
+                latest_input_tokens: Some(100),
+                latest_output_tokens: Some(200),
+                latest_total_tokens: Some(300),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..AppState::default()
     };
     state.clear_transcript();
-    assert!(state.status.latest_input_tokens.is_none());
-    assert!(state.status.latest_output_tokens.is_none());
-    assert!(state.status.latest_total_tokens.is_none());
+    assert!(state.status.tokens.latest_input_tokens.is_none());
+    assert!(state.status.tokens.latest_output_tokens.is_none());
+    assert!(state.status.tokens.latest_total_tokens.is_none());
 }
 
 #[test]

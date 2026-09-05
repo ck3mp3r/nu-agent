@@ -508,10 +508,10 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 assert_eq!(state.status.status_line, "Thinking...");
             }
             "llm_end_records_tokens_and_sets_ready_status" => {
-                assert_eq!(state.status.latest_input_tokens, Some(4));
-                assert_eq!(state.status.latest_output_tokens, Some(8));
-                assert_eq!(state.status.latest_total_tokens, Some(12));
-                assert_eq!(state.status.session_total_tokens, 12);
+                assert_eq!(state.status.tokens.latest_input_tokens, Some(4));
+                assert_eq!(state.status.tokens.latest_output_tokens, Some(8));
+                assert_eq!(state.status.tokens.latest_total_tokens, Some(12));
+                assert_eq!(state.status.tokens.session_total_tokens, 12);
                 assert_eq!(state.status.status_line, "Response ready (12 chars)");
             }
             "warning_is_reducer_noop" => {

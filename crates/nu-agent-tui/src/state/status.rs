@@ -7,11 +7,7 @@ use super::*;
 #[derive(Debug, Clone, Default)]
 pub struct StatusState {
     pub(crate) status_line: String,
-    pub(crate) latest_input_tokens: Option<u64>,
-    pub(crate) latest_output_tokens: Option<u64>,
-    pub(crate) latest_total_tokens: Option<u64>,
-    pub(crate) session_total_tokens: u64,
-    pub(crate) context_window_max_tokens: Option<u64>,
+    pub(crate) tokens: TokenUsage,
     pub(crate) active_agent_identity: Option<String>,
     pub(crate) active_model_identity: String,
     pub(crate) active_persona_icon: Option<String>,
@@ -19,7 +15,16 @@ pub struct StatusState {
     pub(crate) mcp: McpSkillsState,
 }
 
-impl StatusState {
+#[derive(Debug, Clone, Default)]
+pub struct TokenUsage {
+    pub(crate) latest_input_tokens: Option<u64>,
+    pub(crate) latest_output_tokens: Option<u64>,
+    pub(crate) latest_total_tokens: Option<u64>,
+    pub(crate) session_total_tokens: u64,
+    pub(crate) context_window_max_tokens: Option<u64>,
+}
+
+impl TokenUsage {
     pub fn record_token_usage(&mut self, input_tokens: u64, output_tokens: u64, total_tokens: u64) {
         self.latest_input_tokens = Some(input_tokens);
         self.latest_output_tokens = Some(output_tokens);
@@ -58,7 +63,9 @@ impl StatusState {
     pub fn context_window_max_tokens(&self) -> Option<u64> {
         self.context_window_max_tokens
     }
+}
 
+impl StatusState {
     pub fn active_agent_identity(&self) -> Option<&str> {
         self.active_agent_identity.as_deref()
     }
@@ -82,7 +89,7 @@ impl StatusState {
                 true
             }
             UiStateEvent::SetContextWindowMaxTokens(tokens) => {
-                self.set_context_window_max_tokens(tokens);
+                self.tokens.set_context_window_max_tokens(tokens);
                 true
             }
             UiStateEvent::SetMcpServerState {

@@ -169,7 +169,7 @@ impl CompactionState {
         store.push_spacer();
         status.status_line.clear();
         // Reset displayed token % — context was freed; wait for next LlmCompleted to update.
-        status.latest_total_tokens = None;
+        status.tokens.latest_total_tokens = None;
         true
     }
 

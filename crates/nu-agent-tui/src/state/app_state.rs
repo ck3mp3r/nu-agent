@@ -506,9 +506,9 @@ impl AppState {
         self.transcript.clear();
         self.scroll.scroll_offset = 0;
         self.scroll.following_tail = true;
-        self.status.latest_input_tokens = None;
-        self.status.latest_output_tokens = None;
-        self.status.latest_total_tokens = None;
+        self.status.tokens.latest_input_tokens = None;
+        self.status.tokens.latest_output_tokens = None;
+        self.status.tokens.latest_total_tokens = None;
         self.scroll.entry_visual_info.clear();
         self.transcript.visual_info_dirty = true;
     }

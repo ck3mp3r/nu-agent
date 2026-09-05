@@ -367,12 +367,12 @@ fn compaction_completed_clears_status_line() {
 fn compaction_completed_resets_latest_total_tokens() {
     let mut state = busy_state_with_clean_transcript();
     // Simulate pre-compaction state: token usage is known
-    state.status.latest_total_tokens = Some(50_000);
+    state.status.tokens.latest_total_tokens = Some(50_000);
 
     reduce_compaction(&mut state, completed("test", "...", "summary"));
 
     assert_eq!(
-        state.status.latest_total_tokens, None,
+        state.status.tokens.latest_total_tokens, None,
         "latest_total_tokens should be reset to None after CompactionCompleted"
     );
 }

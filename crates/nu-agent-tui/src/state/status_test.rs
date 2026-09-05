@@ -33,7 +33,7 @@ fn reduce_ui_state_event_sets_context_window_max_tokens() {
             .status
             .reduce_ui_state_event(UiStateEvent::SetContextWindowMaxTokens(Some(128_000)))
     );
-    assert_eq!(state.status.context_window_max_tokens, Some(128_000));
+    assert_eq!(state.status.tokens.context_window_max_tokens, Some(128_000));
 }
 
 #[test]
