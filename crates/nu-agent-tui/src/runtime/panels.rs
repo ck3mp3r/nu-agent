@@ -435,7 +435,15 @@ pub(super) fn command_palette_table_model(
     popup_width: u16,
     popup_height: u16,
 ) -> CommandPaletteTableModel {
-    let picker_state = state.picker.active_state().expect("palette open");
+    let Some(picker_state) = state.picker.active_state() else {
+        return CommandPaletteTableModel {
+            query_line: String::new(),
+            columns: Vec::new(),
+            rows: Vec::new(),
+            selected: None,
+            overflow_cue: None,
+        };
+    };
     let actions = picker_state.filtered();
     let _ = popup_width;
     let columns = vec!["Action".to_string(), "Summary".to_string()];

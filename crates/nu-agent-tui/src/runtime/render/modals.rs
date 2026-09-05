@@ -202,7 +202,9 @@ impl RuntimeCoordinator {
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(0)])
             .split(inner);
-        let picker_state = self.state.picker.active_state().expect("model picker open");
+        let Some(picker_state) = self.state.picker.active_state() else {
+            return;
+        };
         frame.render_widget(
             Paragraph::new(Line::from(format!("Query: {}", picker_state.query)))
                 .style(self.theme.subtle_meta),
@@ -273,7 +275,9 @@ impl RuntimeCoordinator {
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(0)])
             .split(inner);
-        let picker_state = self.state.picker.active_state().expect("agent picker open");
+        let Some(picker_state) = self.state.picker.active_state() else {
+            return;
+        };
         frame.render_widget(
             Paragraph::new(Line::from(format!("Query: {}", picker_state.query)))
                 .style(self.theme.subtle_meta),
@@ -377,7 +381,9 @@ impl RuntimeCoordinator {
             rows[0],
         );
 
-        let picker_state = self.state.picker.active_state().expect("theme picker open");
+        let Some(picker_state) = self.state.picker.active_state() else {
+            return;
+        };
         let options = &picker_state.options;
         if options.is_empty() {
             frame.render_widget(

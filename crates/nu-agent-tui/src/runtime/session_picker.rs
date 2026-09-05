@@ -16,7 +16,14 @@ pub(super) fn session_picker_table_model(
         .saturating_sub(query_height)
         .saturating_sub(header_height);
 
-    let picker_state = state.picker.active_state().expect("session picker open");
+    let Some(picker_state) = state.picker.active_state() else {
+        return SessionPickerTableModel {
+            query_line: Line::from(String::new()),
+            rows: Vec::new(),
+            selected: None,
+            overflow_cue: None,
+        };
+    };
     let options = picker_state.filtered();
     let total = options.len();
     let overflow_cue = if total > available_rows {
