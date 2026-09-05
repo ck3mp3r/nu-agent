@@ -2246,7 +2246,7 @@ async fn help_panel_escape_closes_panel_after_scroll() -> Result<()> {
 #[test]
 fn status_panel_exposes_model_and_mcp_backend_status_lines() {
     let mut state = AppState::default();
-    state.status.active_model_identity = "openai/gpt-4o-mini".to_string();
+    state.status.identity.active_model_identity = "openai/gpt-4o-mini".to_string();
     state.status.mcp.set_mcp_servers(vec![
         crate::state::McpServerState {
             name: "gh".to_string(),
@@ -5099,14 +5099,14 @@ fn reduce_ui_state_event_status_variants_route_through_status_state() {
     ));
     coordinator.mark_render_needed();
     assert_eq!(
-        coordinator.state.status.active_model_identity,
+        coordinator.state.status.identity.active_model_identity,
         "openai/gpt-4o"
     );
     assert!(coordinator.render_needed());
 
     coordinator.reduce_ui_state_event(UiStateEvent::SetActivePersonaIcon(Some("icon".to_string())));
     assert_eq!(
-        coordinator.state.status.active_persona_icon,
+        coordinator.state.status.identity.active_persona_icon,
         Some("icon".to_string())
     );
 

@@ -495,7 +495,7 @@ impl AppState {
     }
 
     pub fn set_active_agent_identity(&mut self, name: &str) {
-        self.status.active_agent_identity = Some(name.to_string());
+        self.status.identity.active_agent_identity = Some(name.to_string());
         for opt in &mut self.picker.entries[2].state.options {
             if let PickerPayload::Agent { name: n, active } = &mut opt.payload {
                 *active = n == name;
@@ -504,22 +504,28 @@ impl AppState {
     }
 
     pub fn has_agents_to_cycle(&self) -> bool {
-        self.status.agent_cycle_names.len() >= 2
+        self.status.identity.agent_cycle_names.len() >= 2
     }
 
     pub fn next_agent_cycle_name(&self) -> Option<String> {
         if !self.has_agents_to_cycle() {
             return None;
         }
-        let current = self.status.active_agent_identity.as_deref().unwrap_or("");
+        let current = self
+            .status
+            .identity
+            .active_agent_identity
+            .as_deref()
+            .unwrap_or("");
         let current_idx = self
             .status
+            .identity
             .agent_cycle_names
             .iter()
             .position(|n| n == current)
             .unwrap_or(0);
-        let next_idx = (current_idx + 1) % self.status.agent_cycle_names.len();
-        Some(self.status.agent_cycle_names[next_idx].clone())
+        let next_idx = (current_idx + 1) % self.status.identity.agent_cycle_names.len();
+        Some(self.status.identity.agent_cycle_names[next_idx].clone())
     }
 
     pub fn queue_cycle_agent_request(&mut self) {

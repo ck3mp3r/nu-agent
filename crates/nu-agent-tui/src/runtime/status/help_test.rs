@@ -189,7 +189,7 @@ pub(crate) fn status_left_content_for_test(
     state: &mut AppState,
     width: usize,
 ) -> Line<'static> {
-    state.status.active_model_identity = model.to_string();
+    state.status.identity.active_model_identity = model.to_string();
     crate::runtime::status::status_left_content(
         busy_millis,
         state,
@@ -213,7 +213,7 @@ pub(crate) fn status_lines_for_test(
     state: &mut AppState,
     active_model_identity: &str,
 ) -> Vec<String> {
-    state.status.active_model_identity = active_model_identity.to_string();
+    state.status.identity.active_model_identity = active_model_identity.to_string();
     crate::runtime::status::build_status_lines(state)
 }
 

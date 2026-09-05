@@ -1470,7 +1470,7 @@ fn test_tab_cycles_agent_in_insert_mode() {
     // Insert mode is default
     assert_eq!(state.input.mode, InputMode::Insert);
     // Set up 2+ builtin cycle names
-    state.status.agent_cycle_names = vec!["planner".to_string(), "maker".to_string()];
+    state.status.identity.agent_cycle_names = vec!["planner".to_string(), "maker".to_string()];
     state.set_active_agent_identity("planner");
     // No modals open (default)
     assert_ne!(state.picker.render_kind(), Some(PickerRenderKind::Agent));
@@ -1488,7 +1488,7 @@ fn test_tab_cycles_agent_in_insert_mode() {
 fn test_tab_does_not_cycle_in_normal_mode() {
     let mut state = AppState::default();
     state.enter_normal_mode();
-    state.status.agent_cycle_names = vec!["planner".to_string(), "maker".to_string()];
+    state.status.identity.agent_cycle_names = vec!["planner".to_string(), "maker".to_string()];
     state.set_active_agent_identity("planner");
 
     let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Tab), None);
@@ -1506,7 +1506,7 @@ fn test_tab_does_not_cycle_when_no_builtins() {
     let mut state = AppState::default();
     assert_eq!(state.input.mode, InputMode::Insert);
     // Empty cycle names
-    state.status.agent_cycle_names = Vec::new();
+    state.status.identity.agent_cycle_names = Vec::new();
 
     let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Tab), None);
 

@@ -75,11 +75,12 @@ pub(crate) fn lane_2_status_line(
     };
     match state
         .status
+        .identity
         .active_agent_identity()
         .filter(|a| !a.is_empty())
     {
         Some(agent) => {
-            let left = if let Some(ref icon) = state.status.active_persona_icon {
+            let left = if let Some(ref icon) = state.status.identity.active_persona_icon {
                 format!("{icon} {agent}")
             } else {
                 agent.to_string()
@@ -223,13 +224,16 @@ pub(crate) fn status_indicator_for_test(now_millis: Option<u128>) -> &'static st
 fn status_bar_uses_persona_icon_when_set() {
     let mut state = AppState {
         status: crate::state::StatusState {
-            active_persona_icon: Some("🧠".to_string()),
+            identity: crate::state::IdentityState {
+                active_persona_icon: Some("🧠".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
     };
     state.set_active_agent_identity("test-agent");
-    state.status.active_model_identity = "openai/gpt-4o-mini".to_string();
+    state.status.identity.active_model_identity = "openai/gpt-4o-mini".to_string();
     let line = super::status_left_content(None, &state, &TuiTheme::default(), 120);
     let joined: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(
@@ -246,13 +250,16 @@ fn status_bar_uses_persona_icon_when_set() {
 fn status_bar_no_icon_when_persona_icon_none() {
     let mut state = AppState {
         status: crate::state::StatusState {
-            active_persona_icon: None,
+            identity: crate::state::IdentityState {
+                active_persona_icon: None,
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..Default::default()
     };
     state.set_active_agent_identity("test-agent");
-    state.status.active_model_identity = "openai/gpt-4o-mini".to_string();
+    state.status.identity.active_model_identity = "openai/gpt-4o-mini".to_string();
     let line = super::status_left_content(None, &state, &TuiTheme::default(), 120);
     let joined: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(

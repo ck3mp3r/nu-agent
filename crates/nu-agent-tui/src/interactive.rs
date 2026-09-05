@@ -33,11 +33,21 @@ where
     }
 
     pub fn set_active_model_identity(&mut self, active_model_identity: String) {
-        self.renderer.coordinator.state.status.active_model_identity = active_model_identity;
+        self.renderer
+            .coordinator
+            .state
+            .status
+            .identity
+            .active_model_identity = active_model_identity;
     }
 
     pub fn set_active_persona_icon(&mut self, icon: Option<String>) {
-        self.renderer.coordinator.state.status.active_persona_icon = icon;
+        self.renderer
+            .coordinator
+            .state
+            .status
+            .identity
+            .active_persona_icon = icon;
     }
 
     pub fn set_mcp_lifecycle_projection(
@@ -92,7 +102,12 @@ where
     }
 
     pub fn set_agent_cycle_names(&mut self, names: Vec<String>) {
-        self.renderer.coordinator.state.status.agent_cycle_names = names;
+        self.renderer
+            .coordinator
+            .state
+            .status
+            .identity
+            .agent_cycle_names = names;
     }
 
     pub fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<std::path::PathBuf>) {

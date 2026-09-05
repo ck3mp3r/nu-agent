@@ -595,7 +595,7 @@ fn test_set_active_agent_identity() {
             assert!(!active, "{} should not be active", name);
         }
     }
-    assert_eq!(state.status.active_agent_identity(), Some("beta"));
+    assert_eq!(state.status.identity.active_agent_identity(), Some("beta"));
 }
 
 #[test]
@@ -627,7 +627,7 @@ fn test_agent_picker_move_down_wraps() {
 #[test]
 fn test_has_agents_to_cycle_empty() {
     let state = AppState::default();
-    assert!(state.status.agent_cycle_names.is_empty());
+    assert!(state.status.identity.agent_cycle_names.is_empty());
     assert!(!state.has_agents_to_cycle());
 }
 
@@ -635,7 +635,10 @@ fn test_has_agents_to_cycle_empty() {
 fn test_has_agents_to_cycle_one() {
     let state = AppState {
         status: StatusState {
-            agent_cycle_names: vec!["planner".to_string()],
+            identity: IdentityState {
+                agent_cycle_names: vec!["planner".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..AppState::default()
@@ -647,7 +650,10 @@ fn test_has_agents_to_cycle_one() {
 fn test_has_agents_to_cycle_two() {
     let state = AppState {
         status: StatusState {
-            agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
+            identity: IdentityState {
+                agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..AppState::default()
@@ -659,7 +665,10 @@ fn test_has_agents_to_cycle_two() {
 fn test_next_agent_cycle_name_cycles() {
     let mut state = AppState {
         status: StatusState {
-            agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
+            identity: IdentityState {
+                agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..AppState::default()
@@ -676,7 +685,10 @@ fn test_next_agent_cycle_name_cycles() {
 fn test_next_agent_cycle_name_no_current() {
     let state = AppState {
         status: StatusState {
-            agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
+            identity: IdentityState {
+                agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..AppState::default()
@@ -688,7 +700,10 @@ fn test_next_agent_cycle_name_no_current() {
 fn test_queue_cycle_agent_request() {
     let mut state = AppState {
         status: StatusState {
-            agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
+            identity: IdentityState {
+                agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
+                ..Default::default()
+            },
             ..Default::default()
         },
         ..AppState::default()

@@ -245,11 +245,11 @@ impl RuntimeCoordinator {
     }
 
     pub fn set_active_persona_icon(&mut self, icon: Option<String>) {
-        self.state.status.active_persona_icon = icon;
+        self.state.status.identity.active_persona_icon = icon;
     }
 
     pub fn set_agent_cycle_names(&mut self, names: Vec<String>) {
-        self.state.status.agent_cycle_names = names;
+        self.state.status.identity.agent_cycle_names = names;
     }
 
     pub(crate) fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<std::path::PathBuf>) {

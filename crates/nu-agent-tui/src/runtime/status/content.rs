@@ -9,11 +9,11 @@ use super::format::{compact_token_count, ellipsize, format_pwd, status_indicator
 pub(crate) fn build_status_lines(state: &AppState) -> Vec<String> {
     let (configured, enabled, disabled, failed) = state.status.mcp.mcp_counts();
     let model_phase = model_activity_label(state);
-    let active_model_identity = state.status.active_model_identity.as_str();
+    let active_model_identity = state.status.identity.active_model_identity.as_str();
 
     let failure_line = format_mcp_failure_line(state, 64, 48, 100);
 
-    let model_line = match state.status.active_agent_identity() {
+    let model_line = match state.status.identity.active_agent_identity() {
         Some(agent) => format!(
             "Model: {} ({model_phase}) | agent: {agent}",
             ellipsize(active_model_identity, 60)
@@ -55,7 +55,7 @@ pub(crate) fn status_left_content(
     theme: &TuiTheme,
     available_width: usize,
 ) -> Line<'static> {
-    let model = state.status.active_model_identity.as_str();
+    let model = state.status.identity.active_model_identity.as_str();
     const SEP: &str = " ┃ ";
     const SEP_WIDTH: usize = 3;
 
@@ -71,10 +71,11 @@ pub(crate) fn status_left_content(
 
     let agent_opt = state
         .status
+        .identity
         .active_agent_identity()
         .filter(|a| !a.is_empty());
     let agent_str: Option<String> = agent_opt.map(|agent| {
-        if let Some(icon) = &state.status.active_persona_icon {
+        if let Some(icon) = &state.status.identity.active_persona_icon {
             format!("{icon} {agent}")
         } else {
             agent.to_string()

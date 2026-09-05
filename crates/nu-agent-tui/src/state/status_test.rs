@@ -11,7 +11,7 @@ fn reduce_ui_state_event_sets_active_model_identity() {
             .status
             .reduce_ui_state_event(UiStateEvent::SetActiveModelIdentity("gpt-4".to_string()))
     );
-    assert_eq!(state.status.active_model_identity, "gpt-4");
+    assert_eq!(state.status.identity.active_model_identity, "gpt-4");
 }
 
 #[test]
@@ -22,7 +22,10 @@ fn reduce_ui_state_event_sets_active_persona_icon() {
             .status
             .reduce_ui_state_event(UiStateEvent::SetActivePersonaIcon(Some("🦀".to_string())))
     );
-    assert_eq!(state.status.active_persona_icon.as_deref(), Some("🦀"));
+    assert_eq!(
+        state.status.identity.active_persona_icon.as_deref(),
+        Some("🦀")
+    );
 }
 
 #[test]

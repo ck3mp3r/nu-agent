@@ -38,6 +38,7 @@ fn set_active_persona_icon_updates_state() {
             .coordinator
             .state
             .status
+            .identity
             .active_persona_icon
             .as_deref(),
         Some("icon")
@@ -52,7 +53,12 @@ fn set_active_persona_icon_clears_state_when_none() {
     ui.set_active_persona_icon(None);
 
     assert_eq!(
-        ui.renderer.coordinator.state.status.active_persona_icon,
+        ui.renderer
+            .coordinator
+            .state
+            .status
+            .identity
+            .active_persona_icon,
         None
     );
 }

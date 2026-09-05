@@ -8,11 +8,16 @@ use super::*;
 pub struct StatusState {
     pub(crate) status_line: String,
     pub(crate) tokens: TokenUsage,
+    pub(crate) identity: IdentityState,
+    pub(crate) mcp: McpSkillsState,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct IdentityState {
     pub(crate) active_agent_identity: Option<String>,
     pub(crate) active_model_identity: String,
     pub(crate) active_persona_icon: Option<String>,
     pub(crate) agent_cycle_names: Vec<String>,
-    pub(crate) mcp: McpSkillsState,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -65,7 +70,7 @@ impl TokenUsage {
     }
 }
 
-impl StatusState {
+impl IdentityState {
     pub fn active_agent_identity(&self) -> Option<&str> {
         self.active_agent_identity.as_deref()
     }
@@ -77,15 +82,17 @@ impl StatusState {
     fn set_active_persona_icon(&mut self, icon: Option<String>) {
         self.active_persona_icon = icon;
     }
+}
 
+impl StatusState {
     pub fn reduce_ui_state_event(&mut self, event: UiStateEvent) -> bool {
         match event {
             UiStateEvent::SetActiveModelIdentity(s) => {
-                self.set_active_model_identity(&s);
+                self.identity.set_active_model_identity(&s);
                 true
             }
             UiStateEvent::SetActivePersonaIcon(icon) => {
-                self.set_active_persona_icon(icon);
+                self.identity.set_active_persona_icon(icon);
                 true
             }
             UiStateEvent::SetContextWindowMaxTokens(tokens) => {
