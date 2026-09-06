@@ -47,6 +47,9 @@ pub struct TurnResult {
     pub deltas_emitted: bool,
     /// Whether the turn was cancelled via cancel_token
     pub cancelled: bool,
+    /// The cancellation reason when the turn was cancelled by a hook stop
+    /// (e.g. doom-loop stop). `None` for bus-cancel and normal completion.
+    pub cancel_reason: Option<String>,
     /// Last sub-call's total_tokens from the hook.
     /// This is the per-sub-call value representing actual context window usage,
     /// NOT the aggregated total across all sub-calls in this turn.
@@ -271,6 +274,7 @@ where
         tool_call_count: response.tool_call_count,
         deltas_emitted: response.deltas_emitted,
         cancelled: response.cancelled,
+        cancel_reason: response.cancel_reason,
         last_total_tokens: response.last_total_tokens,
         pre_turn_message_count: pre_turn_count,
         last_known_history: last_known_history_arc.lock().unwrap().clone(),
@@ -310,6 +314,9 @@ struct StreamingTurnResult {
     messages: Option<Vec<Message>>,
     /// Whether the stream was cancelled via the bus cancel channel.
     cancelled: bool,
+    /// The cancellation reason when the stream was cancelled by a hook stop
+    /// (e.g. doom-loop stop). `None` for bus-cancel and normal completion.
+    cancel_reason: Option<String>,
     /// Number of complete tool calls seen in the stream
     tool_call_count: usize,
     /// Whether any text deltas were emitted (i.e. streaming was active)
@@ -413,6 +420,7 @@ where
     let mut tool_call_count: usize = 0;
     let mut last_total_tokens: u64 = 0;
     let mut cancelled = false;
+    let mut cancel_reason: Option<String> = None;
     let mut deltas_emitted = false;
     let mut cancel_rx = bus.cancel().subscribe();
 
@@ -482,13 +490,17 @@ where
                 // Check whether rig cancelled the agent loop via the hook's Terminate action.
                 match e {
                     rig::agent::StreamingError::Prompt(boxed) => match *boxed {
-                        rig::completion::PromptError::PromptCancelled { chat_history, .. } => {
+                        rig::completion::PromptError::PromptCancelled {
+                            reason,
+                            chat_history,
+                        } => {
                             log::trace!(
                                 "Stream PromptCancelled: history_len={}",
                                 chat_history.len()
                             );
                             messages = Some(chat_history);
                             cancelled = true;
+                            cancel_reason = Some(reason);
                             break;
                         }
                         other => {
@@ -510,6 +522,7 @@ where
         usage,
         messages,
         cancelled,
+        cancel_reason,
         tool_call_count,
         deltas_emitted,
         last_total_tokens,

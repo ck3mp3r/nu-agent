@@ -106,6 +106,11 @@ max_context_tokens = 32768
 | `read_timeout_secs` | int | HTTP read timeout in seconds; 0 = disable | 120 |
 | `max_retries` | int | Retry attempts for transient errors | 3 |
 | `retry_base_delay_ms` | int | Base backoff in ms, doubles each attempt, capped at 30s | 1,000 |
+| `output_budget_empty_remedy` | string | Custom empty-output OutputBudget remedy text shown to the model on feedback retry | built-in default |
+| `output_budget_remedy_mode` | string | OutputBudget remedy mode: `empty_output` or `shorter_response` | `empty_output` |
+| `output_budget_raise_enabled` | bool | Opt-in auto-raise of max_tokens on OutputBudget feedback retries | `false` |
+| `output_budget_raise_multiplier` | float | Multiplier applied to the effective max_tokens for a raised retry | `2.0` |
+| `output_budget_raise_cap` | int | Absolute ceiling for the raised max_tokens | `32768` |
 
 All fields except `model` are optional. When omitted, the value is inherited from the next level in the [resolution priority](#resolution-priority).
 
@@ -603,6 +608,11 @@ Environment variables still work as a lowest-priority fallback when `config.toml
 - `AGENT_CONTEXT_WARNING_THRESHOLD` — fraction at which to warn, `0.0`–`1.0` (default `0.6`)
 - `AGENT_MAX_RETRIES` — retry attempts (default 3)
 - `AGENT_RETRY_BASE_DELAY_MS` — base backoff in ms, doubles each attempt, capped at 30s (default 1000)
+- `AGENT_OUTPUT_BUDGET_EMPTY_REMEDY` — custom empty-output OutputBudget remedy text (default: built-in empty-output steering)
+- `AGENT_OUTPUT_BUDGET_REMEDY_MODE` — OutputBudget remedy mode: `empty_output` or `shorter_response` (default `empty_output`)
+- `AGENT_OUTPUT_BUDGET_RAISE_ENABLED` — opt-in auto-raise of max_tokens on OutputBudget feedback retries (default `false`)
+- `AGENT_OUTPUT_BUDGET_RAISE_MULTIPLIER` — multiplier applied to the effective max_tokens for a raised retry (default `2.0`)
+- `AGENT_OUTPUT_BUDGET_RAISE_CAP` — absolute ceiling for the raised max_tokens (default `32768`)
 - `AGENT_READ_TIMEOUT_SECS` — HTTP read timeout in seconds (default 120). 0 disables.
 - `AGENT_A2A_ENABLED` — enable A2A (default `false`)
 - `AGENT_A2A_PORT` — A2A port (0 = random, >0 = fixed)
@@ -610,6 +620,15 @@ Environment variables still work as a lowest-priority fallback when `config.toml
 - `{PROVIDER}_API_KEY` — e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` (for providers with direct env naming)
 
 There is no `AGENT_MODEL` env override at runtime; set the default model in `config.toml`. (`agent config init` reads `AGENT_PROVIDER`/`AGENT_MODEL` when generating a starter config.)
+
+## Fixed retry caps
+
+Two turn-executor retry budgets are fixed defaults in `crates/nu-agent-core/src/config/defaults.rs`. They have no `config.toml` key, CLI flag, or environment-variable override.
+
+| Constant | Default | Behavior |
+|----------|---------|----------|
+| `MAX_PROVIDER_FEEDBACK_RETRIES` | 2 | Provider feedback retries per user turn for model-correctable failures. Each retry appends one model-facing feedback message to the session memory and re-runs the turn once. |
+| `MAX_TURNS_FEEDBACK_RETRIES` | 1 | Max-turns steering retries per user turn. On tool-call budget exhaustion, the executor appends a steering message and re-runs the turn once with a fresh budget before returning the hard error. |
 
 ## CLI commands reference
 

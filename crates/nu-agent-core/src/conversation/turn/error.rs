@@ -136,11 +136,68 @@ impl From<rig::completion::PromptError> for TurnError {
                 tool_name,
                 messages: *chat_history,
             },
+            rig::completion::PromptError::CompletionError(e) => completion_error_to_turn_error(e),
             other => Self::CompletionFailed {
                 msg: other.to_string(),
                 kind: CompletionErrorKind::Unknown,
             },
         }
+    }
+}
+
+/// Classify a `rig::completion::CompletionError` into a `TurnError::CompletionFailed`.
+///
+/// Shared by the `From<StreamingError>` and `From<PromptError>` boundaries so
+/// provider failures wrapped as `PromptError::CompletionError` reach the same
+/// classification as the direct `StreamingError::Completion` path.
+fn completion_error_to_turn_error(err: rig::completion::CompletionError) -> TurnError {
+    use rig::completion::CompletionError;
+    use rig::http_client;
+
+    let msg = err.to_string();
+    match err {
+        CompletionError::HttpError(http_err) => {
+            let kind = match http_err {
+                http_client::Error::InvalidStatusCode(s) => classify_by_status(s.as_u16()),
+                http_client::Error::InvalidStatusCodeWithMessage(s, _) => {
+                    classify_by_status(s.as_u16())
+                }
+                http_client::Error::StreamEnded => CompletionErrorKind::Network,
+                http_client::Error::Instance(_) => {
+                    // reqwest::Error erased to Box<dyn Error> — use Display
+                    classify_from_display(&http_err.to_string())
+                }
+                _ => CompletionErrorKind::Unknown,
+            };
+            TurnError::CompletionFailed { msg, kind }
+        }
+        CompletionError::ResponseError(s) => TurnError::CompletionFailed {
+            kind: classify_from_display(&s),
+            msg,
+        },
+        CompletionError::ProviderError(s) => TurnError::CompletionFailed {
+            kind: classify_from_display(&s),
+            msg,
+        },
+        CompletionError::RequestError(s) => TurnError::CompletionFailed {
+            kind: classify_from_display(&s.to_string()),
+            msg,
+        },
+        // rig 0.42.0 surfaces a failed streaming handshake (connect-time
+        // non-success, e.g. a 500) as `ProviderResponse` carrying the
+        // status and body, instead of `HttpError(InvalidStatusCodeWithMessage)`.
+        // Classify by status when present so a 500/503/429 stays retryable.
+        CompletionError::ProviderResponse(e) => {
+            let kind = match e.status {
+                Some(status) => classify_by_status(status.as_u16()),
+                None => classify_from_display(&e.body),
+            };
+            TurnError::CompletionFailed { msg, kind }
+        }
+        _ => TurnError::CompletionFailed {
+            msg,
+            kind: CompletionErrorKind::Unknown,
+        },
     }
 }
 
@@ -328,9 +385,6 @@ fn contains_status_token(msg: &str, code: &str) -> bool {
 
 impl From<rig::agent::StreamingError> for TurnError {
     fn from(e: rig::agent::StreamingError) -> Self {
-        use rig::completion::CompletionError;
-        use rig::http_client;
-
         match e {
             rig::agent::StreamingError::Prompt(boxed) => match *boxed {
                 rig::completion::PromptError::PromptCancelled {
@@ -358,6 +412,9 @@ impl From<rig::agent::StreamingError> for TurnError {
                     tool_name,
                     messages: *chat_history,
                 },
+                rig::completion::PromptError::CompletionError(e) => {
+                    completion_error_to_turn_error(e)
+                }
                 other => Self::CompletionFailed {
                     msg: other.to_string(),
                     kind: CompletionErrorKind::Unknown,
@@ -365,53 +422,7 @@ impl From<rig::agent::StreamingError> for TurnError {
             },
 
             rig::agent::StreamingError::Completion(completion_err) => {
-                let msg = completion_err.to_string();
-                match completion_err {
-                    CompletionError::HttpError(http_err) => {
-                        let kind = match http_err {
-                            http_client::Error::InvalidStatusCode(s) => {
-                                classify_by_status(s.as_u16())
-                            }
-                            http_client::Error::InvalidStatusCodeWithMessage(s, _) => {
-                                classify_by_status(s.as_u16())
-                            }
-                            http_client::Error::StreamEnded => CompletionErrorKind::Network,
-                            http_client::Error::Instance(_) => {
-                                // reqwest::Error erased to Box<dyn Error> — use Display
-                                classify_from_display(&http_err.to_string())
-                            }
-                            _ => CompletionErrorKind::Unknown,
-                        };
-                        Self::CompletionFailed { msg, kind }
-                    }
-                    CompletionError::ResponseError(s) => Self::CompletionFailed {
-                        kind: classify_from_display(&s),
-                        msg,
-                    },
-                    CompletionError::ProviderError(s) => Self::CompletionFailed {
-                        kind: classify_from_display(&s),
-                        msg,
-                    },
-                    CompletionError::RequestError(s) => Self::CompletionFailed {
-                        kind: classify_from_display(&s.to_string()),
-                        msg,
-                    },
-                    // rig 0.42.0 surfaces a failed streaming handshake (connect-time
-                    // non-success, e.g. a 500) as `ProviderResponse` carrying the
-                    // status and body, instead of `HttpError(InvalidStatusCodeWithMessage)`.
-                    // Classify by status when present so a 500/503/429 stays retryable.
-                    CompletionError::ProviderResponse(e) => {
-                        let kind = match e.status {
-                            Some(status) => classify_by_status(status.as_u16()),
-                            None => classify_from_display(&e.body),
-                        };
-                        Self::CompletionFailed { msg, kind }
-                    }
-                    _ => Self::CompletionFailed {
-                        msg,
-                        kind: CompletionErrorKind::Unknown,
-                    },
-                }
+                completion_error_to_turn_error(completion_err)
             }
         }
     }

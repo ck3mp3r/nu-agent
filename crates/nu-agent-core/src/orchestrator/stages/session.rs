@@ -45,9 +45,7 @@ impl SessionHandler for SessionStage {
                 let _ = ctx
                     .bus
                     .warning()
-                    .send(WarningEvent::TurnError {
-                        message: format!("Turn failed: {}", error.msg),
-                    })
+                    .send(WarningEvent::TurnError { message: error.msg })
                     .await;
                 // Clear pending external prompt — the turn didn't complete.
                 let _ = ctx.active_external_prompt.take();

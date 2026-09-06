@@ -161,6 +161,128 @@ fn test_from_env_max_retries_and_delay() {
 
 #[test]
 #[serial]
+fn test_from_env_output_budget_remedy_mode() {
+    with_env_vars(
+        vec![("AGENT_OUTPUT_BUDGET_REMEDY_MODE", "shorter_response")],
+        || {
+            let config = Config::from_env("openai", "gpt-4");
+            assert_eq!(
+                config.output_budget_remedy_mode,
+                Some("shorter_response".to_string())
+            );
+        },
+    );
+}
+
+#[test]
+#[serial]
+fn test_from_env_output_budget_empty_remedy() {
+    with_env_vars(
+        vec![("AGENT_OUTPUT_BUDGET_EMPTY_REMEDY", "custom remedy text")],
+        || {
+            let config = Config::from_env("openai", "gpt-4");
+            assert_eq!(
+                config.output_budget_empty_remedy,
+                Some("custom remedy text".to_string())
+            );
+        },
+    );
+}
+
+#[test]
+#[serial]
+fn test_from_env_output_budget_raise_enabled() {
+    with_env_vars(vec![("AGENT_OUTPUT_BUDGET_RAISE_ENABLED", "true")], || {
+        let config = Config::from_env("openai", "gpt-4");
+        assert_eq!(config.output_budget_raise_enabled, Some(true));
+    });
+}
+
+#[test]
+#[serial]
+fn test_from_env_output_budget_raise_multiplier() {
+    with_env_vars(
+        vec![("AGENT_OUTPUT_BUDGET_RAISE_MULTIPLIER", "3.5")],
+        || {
+            let config = Config::from_env("openai", "gpt-4");
+            assert_eq!(config.output_budget_raise_multiplier, Some(3.5f64));
+        },
+    );
+}
+
+#[test]
+#[serial]
+fn test_from_env_output_budget_raise_cap() {
+    with_env_vars(vec![("AGENT_OUTPUT_BUDGET_RAISE_CAP", "65536")], || {
+        let config = Config::from_env("openai", "gpt-4");
+        assert_eq!(config.output_budget_raise_cap, Some(65536u32));
+    });
+}
+
+#[test]
+fn test_validate_output_budget_raise_multiplier_invalid() -> Result<()> {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        output_budget_raise_multiplier: Some(1.0),
+        ..Config::default()
+    };
+    let err = match config.validate() {
+        Ok(_) => return Err("multiplier <= 1.0 should fail validation".into()),
+        Err(e) => e,
+    };
+    assert!(err.contains("output_budget_raise_multiplier"));
+    Ok(())
+}
+
+#[test]
+fn test_validate_output_budget_raise_cap_invalid() -> Result<()> {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        output_budget_raise_cap: Some(0),
+        ..Config::default()
+    };
+    let err = match config.validate() {
+        Ok(_) => return Err("cap 0 should fail validation".into()),
+        Err(e) => e,
+    };
+    assert!(err.contains("output_budget_raise_cap"));
+    Ok(())
+}
+
+#[test]
+fn test_validate_output_budget_remedy_mode_invalid() -> Result<()> {
+    let config = Config {
+        provider: "openai".to_string(),
+        model: "gpt-4".to_string(),
+        output_budget_remedy_mode: Some("bogus".to_string()),
+        ..Config::default()
+    };
+    let err = match config.validate() {
+        Ok(_) => return Err("invalid remedy mode should fail validation".into()),
+        Err(e) => e,
+    };
+    assert!(err.contains("output_budget_remedy_mode"));
+    Ok(())
+}
+
+#[test]
+fn test_validate_output_budget_remedy_mode_valid() -> Result<()> {
+    for mode in ["empty_output", "shorter_response"] {
+        let config = Config {
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            output_budget_remedy_mode: Some(mode.to_string()),
+            ..Config::default()
+        };
+        assert!(config.validate().is_ok(), "mode {mode} must validate");
+    }
+    Ok(())
+}
+
+#[test]
+#[serial]
 fn test_from_env_read_timeout_secs() {
     with_env_vars(vec![("AGENT_READ_TIMEOUT_SECS", "60")], || {
         let config = Config::from_env("openai", "gpt-4");
@@ -190,6 +312,11 @@ fn test_validate_valid_config() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        output_budget_empty_remedy: None,
+        output_budget_remedy_mode: None,
+        output_budget_raise_enabled: None,
+        output_budget_raise_multiplier: None,
+        output_budget_raise_cap: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -221,6 +348,11 @@ fn test_validate_minimal_config() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        output_budget_empty_remedy: None,
+        output_budget_remedy_mode: None,
+        output_budget_raise_enabled: None,
+        output_budget_raise_multiplier: None,
+        output_budget_raise_cap: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -252,6 +384,11 @@ fn test_validate_empty_provider() -> Result<()> {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        output_budget_empty_remedy: None,
+        output_budget_remedy_mode: None,
+        output_budget_raise_enabled: None,
+        output_budget_raise_multiplier: None,
+        output_budget_raise_cap: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -288,6 +425,11 @@ fn test_validate_empty_model() -> Result<()> {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        output_budget_empty_remedy: None,
+        output_budget_remedy_mode: None,
+        output_budget_raise_enabled: None,
+        output_budget_raise_multiplier: None,
+        output_budget_raise_cap: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -324,6 +466,11 @@ fn test_validate_max_output_exceeds_context() -> Result<()> {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        output_budget_empty_remedy: None,
+        output_budget_remedy_mode: None,
+        output_budget_raise_enabled: None,
+        output_budget_raise_multiplier: None,
+        output_budget_raise_cap: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -361,6 +508,11 @@ fn test_validate_max_output_equals_context() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        output_budget_empty_remedy: None,
+        output_budget_remedy_mode: None,
+        output_budget_raise_enabled: None,
+        output_budget_raise_multiplier: None,
+        output_budget_raise_cap: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -392,6 +544,11 @@ fn test_validate_zero_max_tool_turns() -> Result<()> {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        output_budget_empty_remedy: None,
+        output_budget_remedy_mode: None,
+        output_budget_raise_enabled: None,
+        output_budget_raise_multiplier: None,
+        output_budget_raise_cap: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -429,6 +586,11 @@ fn test_validate_only_context_tokens_set() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        output_budget_empty_remedy: None,
+        output_budget_remedy_mode: None,
+        output_budget_raise_enabled: None,
+        output_budget_raise_multiplier: None,
+        output_budget_raise_cap: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -460,6 +622,11 @@ fn test_validate_only_output_tokens_set() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        output_budget_empty_remedy: None,
+        output_budget_remedy_mode: None,
+        output_budget_raise_enabled: None,
+        output_budget_raise_multiplier: None,
+        output_budget_raise_cap: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -1255,6 +1422,97 @@ fn test_plugin_config_resolve_model_role_level_overrides() -> Result<()> {
 }
 
 #[test]
+fn test_resolve_model_output_budget_remedy_fields() -> Result<()> {
+    // Role config sets both remedy fields; resolve_model must copy them into Config.
+    let plugin_config = PluginConfig {
+        models: {
+            let mut m = HashMap::new();
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    output_budget_empty_remedy: Some("custom remedy".to_string()),
+                    output_budget_remedy_mode: Some("shorter_response".to_string()),
+                    ..ModelRoleConfig::default()
+                },
+            );
+            m
+        },
+        providers: HashMap::new(),
+        compaction: None,
+        agents: AgentsConfig::default(),
+        a2a_enabled: None,
+        session_store: None,
+        secret_store: None,
+        models_cache: None,
+        permissions: None,
+        mcp: None,
+    };
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        output_budget_empty_remedy: Some("custom remedy".to_string()),
+        output_budget_remedy_mode: Some("shorter_response".to_string()),
+        ..ModelRoleConfig::default()
+    };
+    let config = plugin_config
+        .resolve_model(&role_config)
+        .map_err(|e| format!("should resolve: {e:?}"))?;
+    assert_eq!(
+        config.output_budget_empty_remedy,
+        Some("custom remedy".to_string())
+    );
+    assert_eq!(
+        config.output_budget_remedy_mode,
+        Some("shorter_response".to_string())
+    );
+    Ok(())
+}
+
+#[test]
+fn test_resolve_model_output_budget_raise_fields() -> Result<()> {
+    // Role config sets the three raise fields; resolve_model must copy them into Config.
+    let plugin_config = PluginConfig {
+        models: {
+            let mut m = HashMap::new();
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    output_budget_raise_enabled: Some(true),
+                    output_budget_raise_multiplier: Some(3.0),
+                    output_budget_raise_cap: Some(65536),
+                    ..ModelRoleConfig::default()
+                },
+            );
+            m
+        },
+        providers: HashMap::new(),
+        compaction: None,
+        agents: AgentsConfig::default(),
+        a2a_enabled: None,
+        session_store: None,
+        secret_store: None,
+        models_cache: None,
+        permissions: None,
+        mcp: None,
+    };
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        output_budget_raise_enabled: Some(true),
+        output_budget_raise_multiplier: Some(3.0),
+        output_budget_raise_cap: Some(65536),
+        ..ModelRoleConfig::default()
+    };
+    let config = plugin_config
+        .resolve_model(&role_config)
+        .map_err(|e| format!("should resolve: {e:?}"))?;
+    assert_eq!(config.output_budget_raise_enabled, Some(true));
+    assert_eq!(config.output_budget_raise_multiplier, Some(3.0));
+    assert_eq!(config.output_budget_raise_cap, Some(65536));
+    Ok(())
+}
+
+#[test]
 #[serial]
 fn test_resolve_model_role_max_output_tokens_overrides_model_limit() -> Result<()> {
     // Role-level max_output_tokens must beat the model-level limit from the
@@ -1675,6 +1933,11 @@ fn test_validate_none_max_tool_turns_is_valid() {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        output_budget_empty_remedy: None,
+        output_budget_remedy_mode: None,
+        output_budget_raise_enabled: None,
+        output_budget_raise_multiplier: None,
+        output_budget_raise_cap: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -1706,6 +1969,11 @@ fn test_validate_zero_max_tool_turns_still_invalid() -> Result<()> {
         context_warning_threshold: None,
         max_retries: None,
         retry_base_delay_ms: None,
+        output_budget_empty_remedy: None,
+        output_budget_remedy_mode: None,
+        output_budget_raise_enabled: None,
+        output_budget_raise_multiplier: None,
+        output_budget_raise_cap: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,

@@ -14,10 +14,12 @@ use super::super::test::{default_circuit_breaker, default_doom_state, default_la
 use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
 use crate::conversation::state::memory::MemoryState;
+use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
 use crate::protocol::event::UiEvent;
 use crate::session::{FsSessionStore, SessionStore, StoreEntry};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::utils::value_ext::extract_response_text_from_value;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -1276,6 +1278,107 @@ fn turn_error_from_response_error(msg: &str) -> CompletionErrorKind {
         crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => kind,
         other => panic!("expected CompletionFailed, got: {other:?}"),
     }
+}
+
+/// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
+/// a `PromptError::CompletionError` wrapping a `CompletionError`.
+fn turn_error_from_prompt_wrapped(
+    completion_err: rig::completion::CompletionError,
+) -> crate::conversation::turn::TurnError {
+    let prompt_err = rig::completion::PromptError::CompletionError(completion_err);
+    let streaming_err = rig::agent::StreamingError::Prompt(Box::new(prompt_err));
+    crate::conversation::turn::TurnError::from(streaming_err)
+}
+
+// ---------------------------------------------------------------------------
+// Prompt-wrapped provider error classification tests
+// ---------------------------------------------------------------------------
+
+/// A `PromptError::CompletionError(ResponseError(s))` must classify like the
+/// direct `StreamingError::Completion` path: kind from `classify_from_display`,
+/// msg equal to the inner `CompletionError` Display ("ResponseError: {s}").
+#[test]
+fn prompt_wrapped_response_error_classifies_and_strips_completion_prefix() -> Result<()> {
+    let s = "the model produced no answer and stopped with finish_reason=Length; \
+             the turn ran out of output budget before producing one — raise max_tokens for this request";
+    let turn_err = turn_error_from_prompt_wrapped(rig::completion::CompletionError::ResponseError(
+        s.to_string(),
+    ));
+    match turn_err {
+        crate::conversation::turn::TurnError::CompletionFailed { kind, msg } => {
+            assert_eq!(kind, CompletionErrorKind::OutputBudget);
+            assert_eq!(msg, format!("ResponseError: {s}"));
+        }
+        other => panic!("expected CompletionFailed, got: {other:?}"),
+    }
+    Ok(())
+}
+
+/// A `PromptError::CompletionError(ResponseError("finish_reason=length"))` must
+/// classify as `OutputBudget`.
+#[test]
+fn prompt_wrapped_finish_reason_length_is_output_budget() -> Result<()> {
+    let turn_err = turn_error_from_prompt_wrapped(rig::completion::CompletionError::ResponseError(
+        "FinishReasonError { message: finish_reason=length }".to_string(),
+    ));
+    match turn_err {
+        crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => {
+            assert_eq!(kind, CompletionErrorKind::OutputBudget);
+        }
+        other => panic!("expected CompletionFailed, got: {other:?}"),
+    }
+    Ok(())
+}
+
+/// A `PromptError::CompletionError(HttpError(InvalidStatusCode(429)))` must
+/// classify as `RateLimit`.
+#[test]
+fn prompt_wrapped_http_429_is_rate_limit() -> Result<()> {
+    use rig::http_client;
+    let http_err = http_client::Error::InvalidStatusCode(reqwest::StatusCode::from_u16(429)?);
+    let turn_err =
+        turn_error_from_prompt_wrapped(rig::completion::CompletionError::HttpError(http_err));
+    match turn_err {
+        crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => {
+            assert_eq!(kind, CompletionErrorKind::RateLimit);
+        }
+        other => panic!("expected CompletionFailed, got: {other:?}"),
+    }
+    Ok(())
+}
+
+/// A `PromptError::MemoryError` must continue to classify as `Unknown`.
+#[test]
+fn prompt_wrapped_memory_error_is_unknown() -> Result<()> {
+    let memory_err = rig::memory::MemoryError::Internal("boom".to_string());
+    let prompt_err = rig::completion::PromptError::MemoryError(memory_err);
+    let streaming_err = rig::agent::StreamingError::Prompt(Box::new(prompt_err));
+    let turn_err = crate::conversation::turn::TurnError::from(streaming_err);
+    match turn_err {
+        crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => {
+            assert_eq!(kind, CompletionErrorKind::Unknown);
+        }
+        other => panic!("expected CompletionFailed, got: {other:?}"),
+    }
+    Ok(())
+}
+
+/// `From<PromptError>` must route `PromptError::CompletionError` through the
+/// same helper, producing the same kind and msg as the StreamingError path.
+#[test]
+fn from_prompt_error_completion_error_matches_streaming_path() -> Result<()> {
+    let s = "provider exploded";
+    let completion_err = rig::completion::CompletionError::ResponseError(s.to_string());
+    let prompt_err = rig::completion::PromptError::CompletionError(completion_err);
+    let turn_err = crate::conversation::turn::TurnError::from(prompt_err);
+    match turn_err {
+        crate::conversation::turn::TurnError::CompletionFailed { kind, msg } => {
+            assert_eq!(kind, CompletionErrorKind::Unknown);
+            assert_eq!(msg, format!("ResponseError: {s}"));
+        }
+        other => panic!("expected CompletionFailed, got: {other:?}"),
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -2831,6 +2934,532 @@ async fn output_budget_error_surfaces_user_message() -> Result<()> {
     Ok(())
 }
 
+/// When raise is enabled and the effective max_tokens is below the cap, the
+/// OutputBudget feedback retry runs the next attempt with max_tokens = base * multiplier.
+#[tokio::test]
+async fn output_budget_raise_applies_multiplier_on_retry() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_tokens: Some(1000),
+        output_budget_raise_enabled: Some(true),
+        output_budget_raise_multiplier: Some(2.0),
+        output_budget_raise_cap: Some(32768),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-output-budget-raise";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    // Attempt 1 fails with OutputBudget; attempt 2 succeeds.
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![
+            MockStreamEvent::Text("recovered".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let spy = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let closure_registry = ClosureRegistry::default();
+    let mcp_registry = McpToolRegistry::empty();
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    assert!(result.is_ok(), "turn must succeed after the raised retry");
+    let requests = spy.requests();
+    assert_eq!(requests.len(), 2, "expected 2 model calls");
+    assert_eq!(
+        requests[0].max_tokens,
+        Some(1000),
+        "first attempt keeps base"
+    );
+    assert_eq!(
+        requests[1].max_tokens,
+        Some(2000),
+        "second attempt must carry raised max_tokens = 1000 * 2.0"
+    );
+    Ok(())
+}
+
+/// Two consecutive OutputBudget failures must compound the raise: the second
+/// retry raises from the first raised value, not from the base config.
+#[tokio::test]
+async fn output_budget_raise_compounds_on_consecutive_failures() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_tokens: Some(1000),
+        output_budget_raise_enabled: Some(true),
+        output_budget_raise_multiplier: Some(2.0),
+        output_budget_raise_cap: Some(32768),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-output-budget-raise-compound";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    // Attempts 1 and 2 fail with OutputBudget; attempt 3 succeeds.
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![
+            MockStreamEvent::Text("recovered".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let spy = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let closure_registry = ClosureRegistry::default();
+    let mcp_registry = McpToolRegistry::empty();
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    assert!(result.is_ok(), "turn must succeed after the raised retries");
+    let requests = spy.requests();
+    assert_eq!(requests.len(), 3, "expected 3 model calls");
+    assert_eq!(
+        requests[0].max_tokens,
+        Some(1000),
+        "first attempt keeps base"
+    );
+    assert_eq!(
+        requests[1].max_tokens,
+        Some(2000),
+        "second attempt must carry raised max_tokens = 1000 * 2.0"
+    );
+    assert_eq!(
+        requests[2].max_tokens,
+        Some(4000),
+        "third attempt must compound the raise = 2000 * 2.0"
+    );
+    Ok(())
+}
+
+/// When raise is disabled (default), the OutputBudget feedback retry keeps the
+/// unchanged effective max_tokens.
+#[tokio::test]
+async fn output_budget_raise_disabled_keeps_max_tokens_unchanged() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_tokens: Some(1000),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-output-budget-raise-disabled";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![
+            MockStreamEvent::Text("recovered".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let spy = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let closure_registry = ClosureRegistry::default();
+    let mcp_registry = McpToolRegistry::empty();
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    assert!(result.is_ok(), "turn must succeed after the retry");
+    let requests = spy.requests();
+    assert_eq!(requests.len(), 2, "expected 2 model calls");
+    assert_eq!(requests[0].max_tokens, Some(1000));
+    assert_eq!(
+        requests[1].max_tokens,
+        Some(1000),
+        "disabled raise must keep max_tokens unchanged"
+    );
+    Ok(())
+}
+
+/// When raise is enabled but the effective max_tokens is None, no raise applies.
+#[tokio::test]
+async fn output_budget_raise_no_base_max_tokens_no_raise() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        output_budget_raise_enabled: Some(true),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-output-budget-raise-no-base";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![
+            MockStreamEvent::Text("recovered".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let spy = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let closure_registry = ClosureRegistry::default();
+    let mcp_registry = McpToolRegistry::empty();
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    assert!(result.is_ok(), "turn must succeed after the retry");
+    let requests = spy.requests();
+    assert_eq!(requests.len(), 2, "expected 2 model calls");
+    assert_eq!(requests[0].max_tokens, None);
+    assert_eq!(
+        requests[1].max_tokens, None,
+        "no base max_tokens means no raise"
+    );
+    Ok(())
+}
+
+/// When raise is enabled and the base max_tokens is at or above the cap, no
+/// raise applies.
+#[tokio::test]
+async fn output_budget_raise_base_at_cap_no_raise() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_tokens: Some(32768),
+        output_budget_raise_enabled: Some(true),
+        output_budget_raise_cap: Some(32768),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-output-budget-raise-at-cap";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![
+            MockStreamEvent::Text("recovered".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let spy = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let closure_registry = ClosureRegistry::default();
+    let mcp_registry = McpToolRegistry::empty();
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    assert!(result.is_ok(), "turn must succeed after the retry");
+    let requests = spy.requests();
+    assert_eq!(requests.len(), 2, "expected 2 model calls");
+    assert_eq!(requests[0].max_tokens, Some(32768));
+    assert_eq!(
+        requests[1].max_tokens,
+        Some(32768),
+        "base at cap means no raise"
+    );
+    Ok(())
+}
+
+/// When raise is enabled but the kind is not OutputBudget (e.g. ContextOverflow),
+/// the feedback retry keeps max_tokens unchanged.
+#[tokio::test]
+async fn output_budget_raise_non_output_budget_kind_no_raise() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_tokens: Some(1000),
+        output_budget_raise_enabled: Some(true),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-output-budget-raise-non-ob";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("context_length_exceeded in prompt")],
+        vec![
+            MockStreamEvent::Text("recovered".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let spy = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let closure_registry = ClosureRegistry::default();
+    let mcp_registry = McpToolRegistry::empty();
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    assert!(result.is_ok(), "turn must succeed after the retry");
+    let requests = spy.requests();
+    assert_eq!(requests.len(), 2, "expected 2 model calls");
+    assert_eq!(requests[0].max_tokens, Some(1000));
+    assert_eq!(
+        requests[1].max_tokens,
+        Some(1000),
+        "non-OutputBudget kind must not raise"
+    );
+    Ok(())
+}
+
+/// A mock turn that streams reasoning-only content then a final response with
+/// `FinishReason::Length` must reach rig's empty-truncation check and surface as
+/// a Prompt-wrapped `CompletionError::ResponseError` (the defect shape). The
+/// executor must classify it as OutputBudget and run the feedback-retry path.
+#[tokio::test]
+async fn prompt_wrapped_empty_output_length_reaches_feedback_retry() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = test_config();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let session_id = "test-prompt-wrapped-length";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    // Reasoning-only + truncating Length final: rig's `turn_delivered_no_answer`
+    // returns true (reasoning is not an answer) and `truncating_finish_reason`
+    // returns Length, so the run errors with the ResponseError message.
+    let length_final = rig::streaming::StreamFinal::new("mock", rig::completion::Usage::new())
+        .with_finish_reason(rig::completion::FinishReason::Length);
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::reasoning("thinking..."),
+            MockStreamEvent::FinalResponse(length_final.clone()),
+        ],
+        vec![
+            MockStreamEvent::reasoning("thinking..."),
+            MockStreamEvent::FinalResponse(length_final.clone()),
+        ],
+        vec![
+            MockStreamEvent::reasoning("thinking..."),
+            MockStreamEvent::FinalResponse(length_final),
+        ],
+    ]);
+
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let closure_registry = ClosureRegistry::default();
+    let mcp_registry = McpToolRegistry::empty();
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(closure_registry),
+            mcp_registry: Arc::new(mcp_registry),
+            tool_server_handle,
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    let err = result.expect_err("empty-output Length must fail the turn");
+    assert!(
+        err.msg.contains("max_output_tokens"),
+        "user message must mention max_output_tokens; got: {}",
+        err.msg
+    );
+    assert!(
+        err.msg.contains("--max-output-tokens"),
+        "user message must mention --max-output-tokens; got: {}",
+        err.msg
+    );
+    Ok(())
+}
+
 /// When `max_retries` is `Some(0)`, no retry is attempted regardless of error type.
 ///
 /// Tests the most direct way to disable retries: setting max_retries=0 ensures
@@ -4219,6 +4848,500 @@ async fn feedback_retries_do_not_consume_backoff_budget() -> Result<()> {
     Ok(())
 }
 
+/// A MaxTurnsExceeded failure on a session turn must append exactly one
+/// user-role steering message and re-run the turn with a fresh budget —
+/// proven by a second scripted turn completing — and must persist the
+/// exhausted turn's delta (with its tool result) before the retry decision.
+#[tokio::test]
+async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_tool_turns: Some(1),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir()?;
+    let session_id = "test-max-turns-steering-rerun";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+    tool_server_handle
+        .add_dynamic_tool(rig::tool::DynamicTool::new(
+            "echo_tool",
+            "echoes a fixed result",
+            serde_json::json!({"type": "object", "properties": {}}),
+            |_context, _args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
+        ))
+        .await;
+
+    // Turn 1: the tool call exhausts the 1-turn budget (rig rejects the next
+    // model call). Turn 2: success — only reached if the steering retry
+    // re-ran the turn.
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "echo_tool", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::Text("recovered".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let probe = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle,
+            visible_tool_definitions: vec![crate::types::ToolDefinition {
+                name: "echo_tool".to_string(),
+                description: "echoes a fixed result".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            }],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    let outcome = result.map_err(|e| format!("steering retry should recover the turn: {e:?}"))?;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed),
+        "steering retry must complete the turn"
+    );
+    assert_eq!(
+        probe.request_count(),
+        2,
+        "max-turns steering must re-run the turn exactly once"
+    );
+
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        max_turns_steering_message_count(&persisted),
+        1,
+        "exactly one steering message must be appended; got {persisted:?}"
+    );
+    let steering_msg = persisted
+        .iter()
+        .find(|m| {
+            message_text(m).is_some_and(|t| {
+                t.starts_with(crate::conversation::turn::feedback::MAX_TURNS_FEEDBACK_PREFIX)
+            })
+        })
+        .ok_or("should have the appended steering message in the session history")?;
+    assert!(
+        matches!(steering_msg, crate::types::Message::User { .. }),
+        "appended steering message must have User role; got {steering_msg:?}"
+    );
+    let has_tool_result = persisted.iter().any(|m| {
+        matches!(
+            m,
+            crate::types::Message::User { content }
+                if content.iter().any(|c| matches!(c, crate::types::UserContent::ToolResult(_)))
+        )
+    });
+    assert!(
+        has_tool_result,
+        "the exhausted turn's delta (with tool result) must be persisted before the retry; got {persisted:?}"
+    );
+
+    Ok(())
+}
+
+/// Two consecutive MaxTurnsExceeded failures with a cap of
+/// MAX_TURNS_FEEDBACK_RETRIES (1) must produce exactly one steering message
+/// and then fall through to the hard-error path.
+#[tokio::test]
+async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_tool_turns: Some(1),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir()?;
+    let session_id = "test-max-turns-steering-cap";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+    tool_server_handle
+        .add_dynamic_tool(rig::tool::DynamicTool::new(
+            "echo_tool",
+            "echoes a fixed result",
+            serde_json::json!({"type": "object", "properties": {}}),
+            |_context, _args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
+        ))
+        .await;
+
+    // Both scripted turns emit a tool call: every attempt exhausts the
+    // 1-turn budget, so the second failure hits the cap.
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "echo_tool", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::tool_call("tc2", "echo_tool", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let probe = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle,
+            visible_tool_definitions: vec![crate::types::ToolDefinition {
+                name: "echo_tool".to_string(),
+                description: "echoes a fixed result".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            }],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    let err = result
+        .err()
+        .ok_or("capped max-turns failures must fall through to the hard error")?;
+    assert_eq!(
+        probe.request_count(),
+        2,
+        "one steering retry plus the capped final attempt = 2 model calls"
+    );
+    assert!(
+        err.msg.contains("Max turns (1) exceeded"),
+        "hard-error message must be the existing max-turns failure; got: {}",
+        err.msg
+    );
+
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        max_turns_steering_message_count(&persisted),
+        1,
+        "cap 1 must produce exactly one steering message; got {persisted:?}"
+    );
+
+    Ok(())
+}
+
+/// A MaxTurnsExceeded turn with no session (final_session_id None) must
+/// return Err without appending a steering message and without re-running:
+/// the second scripted turn stays unconsumed.
+#[tokio::test]
+async fn no_session_max_turns_failure_returns_err_without_steering() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_tool_turns: Some(1),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir()?;
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+    tool_server_handle
+        .add_dynamic_tool(rig::tool::DynamicTool::new(
+            "echo_tool",
+            "echoes a fixed result",
+            serde_json::json!({"type": "object", "properties": {}}),
+            |_context, _args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
+        ))
+        .await;
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "echo_tool", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::Text("unreachable".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let probe = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle,
+            visible_tool_definitions: vec![crate::types::ToolDefinition {
+                name: "echo_tool".to_string(),
+                description: "echoes a fixed result".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            }],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            None,
+        )
+        .await;
+
+    // -- Check
+    let err = result
+        .err()
+        .ok_or("session-less max-turns failure must return Err")?;
+    assert_eq!(
+        probe.request_count(),
+        1,
+        "session-less turns must not re-run via steering"
+    );
+    assert!(
+        err.msg.contains("Max turns (1) exceeded"),
+        "hard-error message must be the existing max-turns failure; got: {}",
+        err.msg
+    );
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Doom-loop stop surfacing (Path C)
+// ---------------------------------------------------------------------------
+
+/// A doom-loop stop (detection 4, the 8th identical tool call) must surface
+/// the stop reason in the response text, emit a Warning, and emit an
+/// AssistantMessage on the bus.
+#[tokio::test]
+async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = test_config();
+    let temp_dir = tempfile::tempdir()?;
+    let session_id = "test-doom-stop-surface";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let tool_server_handle = rig::tool::server::ToolServer::new().run();
+    tool_server_handle
+        .add_dynamic_tool(rig::tool::DynamicTool::new(
+            "echo_tool",
+            "echoes a fixed result",
+            serde_json::json!({"type": "object", "properties": {}}),
+            |_context, _args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
+        ))
+        .await;
+
+    // 8 identical tool calls: 5 threshold + 1 first + 2 backoff + 1 stop.
+    let turns: Vec<Vec<MockStreamEvent>> = (0..8)
+        .map(|i| {
+            vec![
+                MockStreamEvent::tool_call(format!("tc{i}"), "echo_tool", serde_json::json!({})),
+                MockStreamEvent::final_response_with_default_usage(),
+            ]
+        })
+        .collect();
+    let model = MockCompletionModel::from_stream_turns(turns);
+    let shared_model = super::test_utils::shared_model_handle(model);
+    let bus = crate::bus::create_bus();
+    let mut event_collector = super::test_utils::BusEventCollector::subscribe(&bus);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle,
+            visible_tool_definitions: vec![crate::types::ToolDefinition {
+                name: "echo_tool".to_string(),
+                description: "echoes a fixed result".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            }],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus,
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    let outcome = result.map_err(|e| format!("doom stop must be Ok: {e:?}"))?;
+    let TurnOutcome::EarlyReturn(value) = outcome else {
+        return Err("doom stop must return EarlyReturn".into());
+    };
+    let response_text = extract_response_text_from_value(&value);
+    assert!(
+        response_text.starts_with(DOOM_LOOP_STOP_PREFIX),
+        "response text must start with DOOM_LOOP_STOP_PREFIX, got: {response_text}"
+    );
+    assert!(
+        response_text.contains("echo_tool"),
+        "response text must name the looping tool, got: {response_text}"
+    );
+
+    let events = event_collector.drain();
+    assert!(
+        events.iter().any(|e| matches!(e, UiEvent::Warning { message } if message.starts_with(DOOM_LOOP_STOP_PREFIX))),
+        "must emit a Warning starting with DOOM_LOOP_STOP_PREFIX; got: {events:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(e, UiEvent::AssistantMessage { text } if text.starts_with(DOOM_LOOP_STOP_PREFIX))),
+        "must emit an AssistantMessage starting with DOOM_LOOP_STOP_PREFIX; got: {events:?}"
+    );
+
+    Ok(())
+}
+
+/// A user cancel via the bus cancel channel must keep today's behavior:
+/// empty response text, no Warning, no AssistantMessage.
+#[tokio::test]
+async fn user_cancel_stays_silent_with_empty_response() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = test_config();
+    let temp_dir = tempfile::tempdir()?;
+    let session_id = "test-user-cancel-silent";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "test_cancel_tool", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::Text("unreachable".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let shared_model = super::test_utils::shared_model_handle(model);
+    let bus = crate::bus::create_bus();
+    let handle = rig::tool::server::ToolServer::new()
+        .tool(super::test_utils::CancellingTool::new(bus.clone()))
+        .run();
+    let mut event_collector = super::test_utils::BusEventCollector::subscribe(&bus);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle: handle,
+            visible_tool_definitions: vec![crate::types::ToolDefinition {
+                name: "test_cancel_tool".to_string(),
+                description: "cancels the turn".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            }],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus,
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    let outcome = result.map_err(|e| format!("user cancel must be Ok: {e:?}"))?;
+    let TurnOutcome::EarlyReturn(value) = outcome else {
+        return Err("user cancel must return EarlyReturn".into());
+    };
+    let response_text = extract_response_text_from_value(&value);
+    assert!(
+        response_text.is_empty(),
+        "user cancel must keep empty response text, got: {response_text}"
+    );
+
+    let events = event_collector.drain();
+    assert!(
+        !events.iter().any(|e| matches!(e, UiEvent::Warning { .. })),
+        "user cancel must not emit a Warning; got: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, UiEvent::AssistantMessage { .. })),
+        "user cancel must not emit an AssistantMessage; got: {events:?}"
+    );
+
+    Ok(())
+}
+
 // -- Test Support
 
 /// Load all persisted messages for a session from the store.
@@ -4269,6 +5392,19 @@ fn feedback_message_count(messages: &[crate::types::Message]) -> usize {
         .filter(|m| {
             message_text(m).is_some_and(|t| {
                 t.starts_with(crate::conversation::turn::feedback::FEEDBACK_PREFIX)
+            })
+        })
+        .count()
+}
+
+/// Count messages whose first text content starts with the max-turns steering
+/// prefix.
+fn max_turns_steering_message_count(messages: &[crate::types::Message]) -> usize {
+    messages
+        .iter()
+        .filter(|m| {
+            message_text(m).is_some_and(|t| {
+                t.starts_with(crate::conversation::turn::feedback::MAX_TURNS_FEEDBACK_PREFIX)
             })
         })
         .count()

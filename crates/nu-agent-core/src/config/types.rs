@@ -95,6 +95,16 @@ pub struct ModelRoleConfig {
     pub max_retries: Option<u8>,
     /// Base backoff in ms, doubles each attempt, capped at 30_000ms. None = 1000.
     pub retry_base_delay_ms: Option<u64>,
+    /// Empty-output OutputBudget remedy text. None = built-in default ON.
+    pub output_budget_empty_remedy: Option<String>,
+    /// OutputBudget remedy mode: "empty_output" | "shorter_response". None = "empty_output".
+    pub output_budget_remedy_mode: Option<String>,
+    /// Opt-in auto-raise of max_tokens on OutputBudget feedback retries. None = false.
+    pub output_budget_raise_enabled: Option<bool>,
+    /// Multiplier applied to the effective max_tokens for a raised retry. None = 2.0.
+    pub output_budget_raise_multiplier: Option<f64>,
+    /// Absolute ceiling for the raised max_tokens. None = 32768.
+    pub output_budget_raise_cap: Option<u32>,
 }
 
 /// Top-level plugin configuration (provider-centric)
@@ -275,6 +285,24 @@ pub struct Config {
     /// Base backoff in ms, doubles each attempt, capped at 30_000ms. None = use default (1000).
     pub retry_base_delay_ms: Option<u64>,
 
+    /// Empty-output OutputBudget remedy text. None = built-in default ON.
+    pub output_budget_empty_remedy: Option<String>,
+
+    /// OutputBudget remedy mode: "empty_output" | "shorter_response".
+    /// None = use default ("empty_output").
+    pub output_budget_remedy_mode: Option<String>,
+
+    /// Opt-in auto-raise of max_tokens on OutputBudget feedback retries.
+    /// None = use default (false).
+    pub output_budget_raise_enabled: Option<bool>,
+
+    /// Multiplier applied to the effective max_tokens for a raised retry.
+    /// None = use default (2.0).
+    pub output_budget_raise_multiplier: Option<f64>,
+
+    /// Absolute ceiling for the raised max_tokens. None = use default (32768).
+    pub output_budget_raise_cap: Option<u32>,
+
     /// Maximum tool calls allowed per sub-turn (single LLM response).
     /// Defense against models that ignore `parallel_tool_calls: false` and emit
     /// many tool calls in one response, causing oversized follow-up requests.
@@ -357,6 +385,32 @@ impl Config {
             && limit == 0
         {
             return Err("model_context_tokens must be greater than 0".to_string());
+        }
+
+        // Rule 7: output_budget_remedy_mode must be "empty_output" or "shorter_response"
+        if let Some(mode) = &self.output_budget_remedy_mode
+            && mode != "empty_output"
+            && mode != "shorter_response"
+        {
+            return Err(format!(
+                "output_budget_remedy_mode must be \"empty_output\" or \"shorter_response\", got {mode}"
+            ));
+        }
+
+        // Rule 8: output_budget_raise_multiplier must be > 1.0 when set
+        if let Some(multiplier) = self.output_budget_raise_multiplier
+            && multiplier <= 1.0
+        {
+            return Err(format!(
+                "output_budget_raise_multiplier must be greater than 1.0, got {multiplier}"
+            ));
+        }
+
+        // Rule 9: output_budget_raise_cap must be > 0 when set
+        if let Some(cap) = self.output_budget_raise_cap
+            && cap == 0
+        {
+            return Err("output_budget_raise_cap must be greater than 0".to_string());
         }
 
         Ok(())

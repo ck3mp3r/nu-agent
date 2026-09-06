@@ -9,13 +9,16 @@ use std::sync::{Arc, Mutex};
 use nu_protocol::{LabeledError, Span, Value};
 use rig::memory::ConversationMemory;
 
-use super::feedback::{build_feedback_message, is_model_correctable};
+use super::feedback::{
+    build_feedback_message, build_max_turns_feedback_message, is_model_correctable,
+};
 use crate::bus::{Bus, LlmEvent, TurnEvent, WarningEvent};
 use crate::config::{Config, defaults};
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::managers::SessionManager;
 use crate::conversation::turn::{TurnContext, error, execute_turn};
 use crate::hook::agent_hook::DoomLoopState;
+use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::session::repair::inject_missing_tool_results;
 use crate::session::{CachedMemory, SessionStore};
@@ -152,10 +155,20 @@ where
         // independent of the backoff `attempt` counter: feedback retries never
         // consume the backoff budget and vice versa.
         let mut feedback_retries = 0u8;
+        // Per-turn steering budget for MaxTurnsExceeded failures, independent
+        // of the backoff `attempt` and provider `feedback_retries` counters:
+        // each steering retry appends one user-role message and re-runs the
+        // turn with a fresh tool-call budget.
+        let mut max_turns_feedback_retries = 0u8;
+        // Per-attempt Config override for the OutputBudget max_tokens auto-raise.
+        // When set, this clone (with a raised max_tokens) is used for the next
+        // attempt instead of `self.config`. Cleared implicitly by being replaced
+        // each time a raise is applied; None means use the base config.
+        let mut attempt_config: Option<Config> = None;
         let visitor_result = loop {
             // Restore tool definitions on retry attempts (backoff or feedback:
             // the previous attempt consumed them via std::mem::take)
-            if attempt > 0 || feedback_retries > 0 {
+            if attempt > 0 || feedback_retries > 0 || max_turns_feedback_retries > 0 {
                 self.tool_infra.visible_tool_definitions = saved_tool_definitions.clone();
             }
 
@@ -166,6 +179,7 @@ where
                 .expect("doom loop mutex poisoned")
                 .reset();
 
+            let attempt_cfg = attempt_config.as_ref();
             let turn_ctx = TurnContext::new(
                 super::TurnConversation {
                     memory: Arc::clone(self.memory_state.memory()),
@@ -191,7 +205,7 @@ where
                     last_total_tokens: self.tool_infra.last_total_tokens.clone(),
                     bus: self.tool_infra.bus.clone(),
                 },
-                self.config,
+                attempt_cfg.unwrap_or(self.config),
             );
 
             // Retries and the initial attempt both run the same turn future.
@@ -220,11 +234,59 @@ where
                         && let Some(session_id) = final_session_id
                     {
                         feedback_retries += 1;
-                        let feedback = build_feedback_message(kind, msg);
+                        let feedback = build_feedback_message(
+                            kind,
+                            msg,
+                            self.config.output_budget_empty_remedy.as_deref(),
+                            self.config.output_budget_remedy_mode.as_deref(),
+                        );
                         log::warn!(
                             "Model-correctable error ({kind:?}), feedback retry {feedback_retries}/{}.",
                             defaults::MAX_PROVIDER_FEEDBACK_RETRIES
                         );
+                        // Opt-in max_tokens auto-raise for OutputBudget retries:
+                        // compute the raised value for the NEXT attempt only and
+                        // stash it in `attempt_config`. The raise applies only
+                        // when enabled, the kind is OutputBudget, the effective
+                        // max_tokens is set, and the base is below the cap. The
+                        // base is read from the attempt's effective config (the
+                        // raised value from a prior retry), so consecutive
+                        // OutputBudget failures compound the raise.
+                        let effective = attempt_config.as_ref().unwrap_or(self.config);
+                        if *kind == CompletionErrorKind::OutputBudget
+                            && self
+                                .config
+                                .output_budget_raise_enabled
+                                .unwrap_or(defaults::OUTPUT_BUDGET_RAISE_ENABLED)
+                            && let Some(base) = effective.max_tokens.or(effective.max_output_tokens)
+                            && base
+                                < self
+                                    .config
+                                    .output_budget_raise_cap
+                                    .unwrap_or(defaults::OUTPUT_BUDGET_RAISE_CAP)
+                        {
+                            let multiplier = self
+                                .config
+                                .output_budget_raise_multiplier
+                                .unwrap_or(defaults::OUTPUT_BUDGET_RAISE_MULTIPLIER);
+                            let cap = self
+                                .config
+                                .output_budget_raise_cap
+                                .unwrap_or(defaults::OUTPUT_BUDGET_RAISE_CAP);
+                            let raised = ((base as f64 * multiplier) as u64).min(cap as u64);
+                            let mut cfg = self.config.clone();
+                            cfg.max_tokens = Some(raised as u32);
+                            attempt_config = Some(cfg);
+                            log::warn!(
+                                "OutputBudget retry: raising max_tokens {base} -> {raised} (cap {cap})"
+                            );
+                        } else {
+                            // The raise does not apply to this retry — clear any
+                            // prior raised override so a later non-OutputBudget
+                            // feedback retry in the same turn runs with the base
+                            // config, not the inherited raised max_tokens.
+                            attempt_config = None;
+                        }
                         self.append_to_memory_or_warn(
                             session_id,
                             vec![Message::user(feedback)],
@@ -276,51 +338,90 @@ where
                     }
                     break result;
                 }
+                Err((
+                    crate::conversation::turn::TurnError::MaxTurnsExceeded {
+                        msg,
+                        messages,
+                        max_turns,
+                    },
+                    ctx,
+                )) => {
+                    // Path A (non-cancelled): MaxTurnsError carries full chat_history.
+                    // Persist only the delta (new messages from this turn) so the session
+                    // remembers the failed turn without re-appending messages already in
+                    // persistent storage. This runs on every MaxTurnsExceeded, before the
+                    // retry decision, so completed sub-turns survive either outcome.
+                    if let Some(session_id) = final_session_id {
+                        // messages for MaxTurnsError is rig's full accumulated
+                        // chat_history (from AgentRun::full_history()), which DOES include the
+                        // current-turn user prompt and any tool call exchanges from this turn.
+                        // This is unlike last_known_history (from on_completion_call's `history`
+                        // parameter), which contains only prior messages. skip(pre_turn_message_count)
+                        // correctly yields [user_prompt, assistant_tool_calls...] — the new messages.
+                        let delta: Vec<Message> = messages
+                            .iter()
+                            .skip(ctx.pre_turn_message_count)
+                            .cloned()
+                            .collect();
+                        log::debug!(
+                            "Path A non-cancelled: delta_count={} pre_turn={}",
+                            delta.len(),
+                            ctx.pre_turn_message_count
+                        );
+                        if !delta.is_empty() {
+                            let patched = inject_missing_tool_results(delta);
+                            self.append_to_memory_or_warn(
+                                session_id,
+                                patched,
+                                "recovered history for failed turn (path A)",
+                            )
+                            .await;
+                        }
+                    }
+                    // Steering retry: exhaustion is a steering opportunity, not a
+                    // hard stop. Append the model-facing steering message and
+                    // re-run the turn once with a fresh tool-call budget, capped
+                    // per turn by MAX_TURNS_FEEDBACK_RETRIES. Session-less turns
+                    // cannot append feedback, so they fall through to the
+                    // hard-error path.
+                    if max_turns_feedback_retries < defaults::MAX_TURNS_FEEDBACK_RETRIES
+                        && let Some(session_id) = final_session_id
+                    {
+                        max_turns_feedback_retries += 1;
+                        let steering = build_max_turns_feedback_message(*max_turns);
+                        log::warn!(
+                            "Max turns exceeded, steering retry {max_turns_feedback_retries}/{}.",
+                            defaults::MAX_TURNS_FEEDBACK_RETRIES
+                        );
+                        self.append_to_memory_or_warn(
+                            session_id,
+                            vec![Message::user(steering)],
+                            "max-turns steering retry",
+                        )
+                        .await;
+                        continue;
+                    }
+                    let msg_preview = &msg[..msg.len().min(200)];
+                    log::error!("Turn error (path A non-cancelled): {msg_preview}");
+                    let user_msg = format!("Turn failed: {msg}");
+                    break Err((
+                        crate::conversation::turn::TurnError::MaxTurnsExceeded {
+                            msg: user_msg,
+                            max_turns: *max_turns,
+                            messages: messages.clone(),
+                        },
+                        error::TurnContext {
+                            last_known_history: ctx.last_known_history.clone(),
+                            pre_turn_message_count: ctx.pre_turn_message_count,
+                        },
+                    ));
+                }
                 _ => break result,
             }
         };
 
         let turn_result = match visitor_result {
             Ok(result) => result,
-            Err((
-                crate::conversation::turn::TurnError::MaxTurnsExceeded { msg, messages, .. },
-                ctx,
-            )) => {
-                // Path A (non-cancelled): MaxTurnsError carries full chat_history.
-                // Persist only the delta (new messages from this turn) so the session remembers
-                // the failed turn without re-appending messages already in persistent storage.
-                if let Some(session_id) = final_session_id {
-                    // messages for MaxTurnsError is rig's full accumulated
-                    // chat_history (from AgentRun::full_history()), which DOES include the
-                    // current-turn user prompt and any tool call exchanges from this turn.
-                    // This is unlike last_known_history (from on_completion_call's `history`
-                    // parameter), which contains only prior messages. skip(pre_turn_message_count)
-                    // correctly yields [user_prompt, assistant_tool_calls...] — the new messages.
-                    let delta: Vec<Message> = messages
-                        .iter()
-                        .skip(ctx.pre_turn_message_count)
-                        .cloned()
-                        .collect();
-                    log::debug!(
-                        "Path A non-cancelled: delta_count={} pre_turn={}",
-                        delta.len(),
-                        ctx.pre_turn_message_count
-                    );
-                    if !delta.is_empty() {
-                        let patched = inject_missing_tool_results(delta);
-                        self.append_to_memory_or_warn(
-                            session_id,
-                            patched,
-                            "recovered history for failed turn (path A)",
-                        )
-                        .await;
-                    }
-                }
-                let msg_preview = &msg[..msg.len().min(200)];
-                log::error!("Turn error (path A non-cancelled): {msg_preview}");
-                let user_msg = msg.clone();
-                return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
-            }
             Err((crate::conversation::turn::TurnError::UnknownTool { msg, messages, .. }, ctx)) => {
                 if let Some(session_id) = final_session_id {
                     let delta: Vec<Message> = messages
@@ -345,12 +446,12 @@ where
                 }
                 log::warn!("Unknown tool call (retries exhausted): {msg}");
                 let user_msg =
-                    "The model attempted to call an unknown tool and could not recover. \
+                    "Turn failed: The model attempted to call an unknown tool and could not recover. \
                          The session has been saved — try rephrasing your request."
                         .to_string();
                 return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
             }
-            Err((crate::conversation::turn::TurnError::Cancelled { messages, .. }, ctx)) => {
+            Err((crate::conversation::turn::TurnError::Cancelled { msg, messages }, ctx)) => {
                 // Path A: rig hook cancelled — persist chat_history delta if available.
                 // messages for PromptCancelled is rig's full_history() — it DOES include
                 // the current-turn user prompt and any tool exchanges. skip(pre_turn_message_count)
@@ -378,9 +479,29 @@ where
                         .await;
                     }
                 }
+                // Surface the doom-loop stop reason if this cancellation was a doom stop.
+                let response_text = if msg.starts_with(DOOM_LOOP_STOP_PREFIX) {
+                    let _ = self
+                        .tool_infra
+                        .bus
+                        .warning()
+                        .send(WarningEvent::Message {
+                            message: msg.clone(),
+                        })
+                        .await;
+                    let _ = self
+                        .tool_infra
+                        .bus
+                        .llm()
+                        .send(LlmEvent::AssistantMessage { text: msg.clone() })
+                        .await;
+                    msg
+                } else {
+                    String::new()
+                };
                 // Return a minimal cancelled response (not an error)
                 let llm_response = crate::llm::LlmResponse {
-                    text: String::new(),
+                    text: response_text,
                     usage: crate::llm::LlmUsage {
                         input_tokens: 0,
                         output_tokens: 0,
@@ -566,9 +687,32 @@ where
                     tool_calls: turn_result.tool_call_count,
                 })
                 .await;
+            // Surface the doom-loop stop reason if this cancellation was a doom stop.
+            let response_text = match &turn_result.cancel_reason {
+                Some(reason) if reason.starts_with(DOOM_LOOP_STOP_PREFIX) => {
+                    let _ = self
+                        .tool_infra
+                        .bus
+                        .warning()
+                        .send(WarningEvent::Message {
+                            message: reason.clone(),
+                        })
+                        .await;
+                    let _ = self
+                        .tool_infra
+                        .bus
+                        .llm()
+                        .send(LlmEvent::AssistantMessage {
+                            text: reason.clone(),
+                        })
+                        .await;
+                    reason.clone()
+                }
+                _ => String::new(),
+            };
             return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
                 &crate::llm::LlmResponse {
-                    text: String::new(),
+                    text: response_text,
                     usage: crate::llm::LlmUsage {
                         input_tokens: 0,
                         output_tokens: 0,

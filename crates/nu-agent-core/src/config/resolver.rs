@@ -126,6 +126,21 @@ impl PluginConfig {
         if let Some(r) = role_config.retry_base_delay_ms {
             config.retry_base_delay_ms = Some(r);
         }
+        if let Some(r) = &role_config.output_budget_empty_remedy {
+            config.output_budget_empty_remedy = Some(r.clone());
+        }
+        if let Some(r) = &role_config.output_budget_remedy_mode {
+            config.output_budget_remedy_mode = Some(r.clone());
+        }
+        if let Some(r) = role_config.output_budget_raise_enabled {
+            config.output_budget_raise_enabled = Some(r);
+        }
+        if let Some(r) = role_config.output_budget_raise_multiplier {
+            config.output_budget_raise_multiplier = Some(r);
+        }
+        if let Some(r) = role_config.output_budget_raise_cap {
+            config.output_budget_raise_cap = Some(r);
+        }
 
         // Resolve secret store references (e.g. "store:openai" → actual key)
         if let Some(store) = &self.secret_store

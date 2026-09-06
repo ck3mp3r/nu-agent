@@ -798,7 +798,7 @@ async fn worker_result_processed_before_model_switch_result() -> Result<()> {
     let warnings = take_warnings(warning_rx);
     let session_idx = warnings
         .iter()
-        .position(|w| w.starts_with("Turn failed:"))
+        .position(|w| w == "turn failed")
         .ok_or("session turn error warning should be present")?;
     let model_idx = warnings
         .iter()
@@ -807,6 +807,45 @@ async fn worker_result_processed_before_model_switch_result() -> Result<()> {
     assert!(
         session_idx < model_idx,
         "session result must be processed before model result, got {warnings:?}"
+    );
+    Ok(())
+}
+
+/// The stage must pass the LabeledError message through verbatim — it adds no
+/// "Turn failed: " prefix (the executor owns the prefix).
+#[tokio::test]
+async fn turn_error_warning_passes_message_verbatim() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut h = Harness::new();
+    let HarnessParts {
+        stage: _,
+        worker_tx,
+        blocking_tx,
+        concurrent_tx,
+        bus,
+        worker_rx: _,
+        warning_rx,
+        ui_state_rx: _,
+        session_rx: _,
+        state,
+    } = h.parts();
+    let mut session = SessionStage;
+    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+
+    // -- Exec
+    session
+        .handle_outcome(
+            TurnOutcome::Error(LabeledError::new("Turn failed: output budget exhausted")),
+            &mut ctx,
+        )
+        .await;
+
+    // -- Check
+    let warnings = take_warnings(warning_rx);
+    assert_eq!(
+        warnings,
+        vec!["Turn failed: output budget exhausted".to_string()],
+        "stage must pass the LabeledError message verbatim, no prefix added"
     );
     Ok(())
 }

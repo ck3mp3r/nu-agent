@@ -47,6 +47,13 @@ impl Config {
         let max_tool_calls_per_subturn = parse_env_var("AGENT_MAX_TOOL_CALLS_PER_SUBTURN");
         let max_retries: Option<u8> = parse_env_var("AGENT_MAX_RETRIES");
         let retry_base_delay_ms: Option<u64> = parse_env_var("AGENT_RETRY_BASE_DELAY_MS");
+        let output_budget_empty_remedy = env::var("AGENT_OUTPUT_BUDGET_EMPTY_REMEDY").ok();
+        let output_budget_remedy_mode = env::var("AGENT_OUTPUT_BUDGET_REMEDY_MODE").ok();
+        let output_budget_raise_enabled: Option<bool> =
+            parse_env_var("AGENT_OUTPUT_BUDGET_RAISE_ENABLED");
+        let output_budget_raise_multiplier: Option<f64> =
+            parse_env_var("AGENT_OUTPUT_BUDGET_RAISE_MULTIPLIER");
+        let output_budget_raise_cap: Option<u32> = parse_env_var("AGENT_OUTPUT_BUDGET_RAISE_CAP");
         let read_timeout_secs: Option<u64> = parse_env_var("AGENT_READ_TIMEOUT_SECS");
         let a2a_enabled: Option<bool> = parse_env_var("AGENT_A2A_ENABLED");
 
@@ -79,6 +86,11 @@ impl Config {
             context_warning_threshold,
             max_retries,
             retry_base_delay_ms,
+            output_budget_empty_remedy,
+            output_budget_remedy_mode,
+            output_budget_raise_enabled,
+            output_budget_raise_multiplier,
+            output_budget_raise_cap,
             max_tool_calls_per_subturn,
             additional_params: None,
             a2a_enabled,
