@@ -106,15 +106,7 @@ impl UiRequestHandler for UiRequestStage {
                 if *ctx.worker_active || self.pending_blocking.is_some() {
                     self.queued
                         .retain(|r| !matches!(r, UiRequest::SwitchModel { .. }));
-                    self.queued
-                        .push_back(UiRequest::SwitchModel { spec: spec.clone() });
-                    let _ = ctx
-                        .bus
-                        .warning()
-                        .send(WarningEvent::Message {
-                            message: format!("Model switch queued for next turn: {spec}"),
-                        })
-                        .await;
+                    self.queued.push_back(UiRequest::SwitchModel { spec });
                 } else {
                     self.dispatch_blocking(UiRequest::SwitchModel { spec }, ctx)
                         .await;
@@ -124,15 +116,7 @@ impl UiRequestHandler for UiRequestStage {
                 if *ctx.worker_active || self.pending_blocking.is_some() {
                     self.queued
                         .retain(|r| !matches!(r, UiRequest::SwitchAgent { .. }));
-                    self.queued
-                        .push_back(UiRequest::SwitchAgent { name: name.clone() });
-                    let _ = ctx
-                        .bus
-                        .warning()
-                        .send(WarningEvent::Message {
-                            message: format!("Agent switch queued for next turn: {name}"),
-                        })
-                        .await;
+                    self.queued.push_back(UiRequest::SwitchAgent { name });
                 } else {
                     self.dispatch_blocking(UiRequest::SwitchAgent { name }, ctx)
                         .await;
@@ -188,13 +172,6 @@ impl UiRequestHandler for UiRequestStage {
                     .ui_state()
                     .send(UiStateEvent::SetContextWindowMaxTokens(max_tokens))
                     .await;
-                let _ = ctx
-                    .bus
-                    .warning()
-                    .send(WarningEvent::Message {
-                        message: format!("Model switched: {identity}"),
-                    })
-                    .await;
             }
             UiRequestResponse::ModelSwitch(Err(msg)) => {
                 let _ = ctx
@@ -229,13 +206,6 @@ impl UiRequestHandler for UiRequestStage {
                     .ui_state()
                     .send(UiStateEvent::SetContextWindowMaxTokens(max_tokens))
                     .await;
-                let _ = ctx
-                    .bus
-                    .warning()
-                    .send(WarningEvent::Message {
-                        message: format!("Agent switched to: {agent_identity}"),
-                    })
-                    .await;
             }
             UiRequestResponse::AgentSwitch(Err(msg)) => {
                 let _ = ctx
@@ -255,13 +225,6 @@ impl UiRequestHandler for UiRequestStage {
                     .send(UiStateEvent::HydrateTranscript {
                         messages: snapshots,
                         last_total_tokens: None,
-                    })
-                    .await;
-                let _ = ctx
-                    .bus
-                    .warning()
-                    .send(WarningEvent::Message {
-                        message: "Session switched".to_string(),
                     })
                     .await;
                 let _ = ctx

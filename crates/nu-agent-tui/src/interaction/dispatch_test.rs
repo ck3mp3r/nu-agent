@@ -67,7 +67,7 @@ fn first_escape_in_busy_normal_sets_abort_pending_with_exact_status_text() {
     assert!(changed);
     assert_eq!(state.phase, UiPhase::AbortPending);
     assert!(state.abort.pending);
-    assert_eq!(state.status.message.status_line, ESC_ABORT_CONFIRM_STATUS);
+    assert_eq!(state.status.message.status_line(), ESC_ABORT_CONFIRM_STATUS);
     assert!(!cancel_controller.is_cancel_requested());
 }
 
@@ -89,7 +89,7 @@ fn second_escape_in_abort_pending_after_busy_normal_toggles_cancel_requested() {
 
     assert!(changed);
     assert!(cancel_controller.is_cancel_requested());
-    assert_eq!(state.status.message.status_line, "Abort requested.");
+    assert!(state.status.message.status_line().is_empty());
 }
 
 #[test]
@@ -186,23 +186,70 @@ fn esc_in_idle_insert_mode_switches_to_normal_mode() {
 }
 
 #[test]
-fn esc_in_busy_insert_mode_switches_to_normal_without_abort_side_effect() {
+fn esc_in_busy_insert_mode_switches_to_normal_and_arms_abort_confirmation() -> Result<()> {
+    // -- Setup & Fixtures
     let (mut state, cancel_controller) = busy_state_with_controller();
 
     assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.input.mode, InputMode::Insert);
 
+    // -- Exec
     let changed = dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Esc),
         Some(&cancel_controller),
     );
 
+    // -- Check
     assert!(changed);
-    assert_eq!(state.phase, UiPhase::Busy);
     assert_eq!(state.input.mode, InputMode::Normal);
-    assert!(!state.abort.pending);
+    assert_eq!(state.phase, UiPhase::AbortPending);
+    assert!(state.abort.pending);
+    assert_eq!(state.status.message.status_line(), ESC_ABORT_CONFIRM_STATUS);
     assert!(!cancel_controller.is_cancel_requested());
+    Ok(())
+}
+
+#[test]
+fn test_dispatch_terminal_event_second_esc_from_busy_insert_aborts() -> Result<()> {
+    // -- Setup & Fixtures
+    let (mut state, cancel_controller) = busy_state_with_controller();
+
+    // -- Exec
+    dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Esc),
+        Some(&cancel_controller),
+    );
+    assert_eq!(state.status.message.status_line(), ESC_ABORT_CONFIRM_STATUS);
+    let changed = dispatch_terminal_event(
+        &mut state,
+        &TerminalEvent::Key(TerminalKey::Esc),
+        Some(&cancel_controller),
+    );
+
+    // -- Check
+    assert!(changed);
+    assert!(cancel_controller.is_cancel_requested());
+    assert!(state.status.message.status_line().is_empty());
+    Ok(())
+}
+
+#[test]
+fn test_dispatch_terminal_event_idle_normal_esc_returns_false() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState {
+        input: InputState::default().with_mode(InputMode::Normal),
+        ..Default::default()
+    };
+
+    // -- Exec
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
+
+    // -- Check
+    assert!(!changed);
+    assert!(!state.abort.pending);
+    Ok(())
 }
 
 #[test]
@@ -264,7 +311,7 @@ fn busy_normal_mode_blocks_plain_typing_until_explicit_i() {
     let esc = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
     assert!(esc);
     assert_eq!(state.input.mode, InputMode::Normal);
-    assert_eq!(state.phase, UiPhase::Busy);
+    assert_eq!(state.phase, UiPhase::AbortPending);
 
     let typed_while_normal = dispatch_terminal_event(
         &mut state,
@@ -1244,7 +1291,7 @@ fn immediate_slash_commands_do_not_set_busy_or_spinner() {
         assert!(!state.is_active_cycle());
         assert_eq!(state.pending_prompt_count(), 0);
         assert!(state.prompt_items().is_empty());
-        assert!(state.status.message.status_line != "Thinking...");
+        assert!(state.status.message.status_line() != "Thinking...");
     }
 }
 

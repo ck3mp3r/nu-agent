@@ -149,13 +149,13 @@ fn esc_then_esc_confirm_moves_into_abort_requested_without_unlocking() {
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
     assert_eq!(state.phase, UiPhase::AbortPending);
     assert!(state.abort.pending);
-    assert_eq!(state.status.message.status_line, ESC_ABORT_CONFIRM_STATUS);
+    assert_eq!(state.status.message.status_line(), ESC_ABORT_CONFIRM_STATUS);
 
     let before_markers = state.transcript.entries.len();
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
-    assert_eq!(state.status.message.status_line, "Abort requested.");
+    assert!(state.status.message.status_line().is_empty());
     // cancel pushes a closing spacer
     assert_eq!(state.transcript.entries.len(), before_markers + 1);
 }
@@ -179,7 +179,7 @@ fn completed_event_clears_pending_and_unlocks_input() {
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
     assert!(!state.input_locked);
-    assert!(state.status.message.status_line.is_empty());
+    assert!(state.status.message.status_line().is_empty());
 }
 
 #[test]
@@ -266,7 +266,7 @@ fn completed_event_unlocks_and_clears_abort_pending() {
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
     assert!(!state.abort.pending);
-    assert!(state.status.message.status_line.is_empty());
+    assert!(state.status.message.status_line().is_empty());
 }
 
 #[test]
@@ -373,13 +373,13 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
 
     fn busy_empty_status() -> AppState {
         let mut state = busy_state_with_clean_transcript();
-        state.status.message.status_line.clear();
+        state.status.message.clear();
         state
     }
 
     fn busy_with_status() -> AppState {
         let mut state = busy_state_with_clean_transcript();
-        state.status.message.status_line = "Tool: prior".to_string();
+        state.status.message.set_message("Tool: prior");
         state
     }
 
@@ -409,7 +409,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             pre: busy_with_status,
         },
         Case {
-            name: "tick_sets_thinking_when_empty",
+            name: "tick_leaves_empty_status_empty",
             event: UiEvent::Tick,
             pre: busy_empty_status,
         },
@@ -419,7 +419,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             pre: busy_with_status,
         },
         Case {
-            name: "tool_start_sets_status",
+            name: "tool_start_leaves_status_empty",
             event: UiEvent::ToolStarted {
                 name: "k8s__list_pods".to_string(),
                 source: "mcp".to_string(),
@@ -428,7 +428,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             pre: busy_empty_status,
         },
         Case {
-            name: "tool_end_updates_existing_tool_line_and_thinking",
+            name: "tool_end_updates_tool_line_without_status",
             event: UiEvent::ToolCompleted {
                 name: "k8s__list_pods".to_string(),
                 source: "mcp".to_string(),
@@ -442,7 +442,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             pre: busy_with_running_tool_line,
         },
         Case {
-            name: "llm_end_records_tokens_and_sets_ready_status",
+            name: "llm_end_records_tokens_without_status_message",
             event: UiEvent::LlmCompleted {
                 response_chars: 12,
                 tool_calls: 0,
@@ -484,19 +484,19 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             }
             "llm_start_when_busy_is_noop" => {
                 assert_eq!(state.phase, UiPhase::Busy);
-                assert_eq!(state.status.message.status_line, "Tool: prior");
+                assert_eq!(state.status.message.status_line(), "Tool: prior");
                 assert!(state.input_locked);
             }
-            "tick_sets_thinking_when_empty" => {
-                assert_eq!(state.status.message.status_line, "Thinking...");
+            "tick_leaves_empty_status_empty" => {
+                assert!(state.status.message.status_line().is_empty());
             }
             "tick_preserves_existing_status" => {
-                assert_eq!(state.status.message.status_line, "Tool: prior");
+                assert_eq!(state.status.message.status_line(), "Tool: prior");
             }
-            "tool_start_sets_status" => {
-                assert_eq!(state.status.message.status_line, "Tool: k8s__list_pods");
+            "tool_start_leaves_status_empty" => {
+                assert!(state.status.message.status_line().is_empty());
             }
-            "tool_end_updates_existing_tool_line_and_thinking" => {
+            "tool_end_updates_tool_line_without_status" => {
                 // [Spacer, Tool] — starting spacer then the tool, no closing spacer
                 assert_eq!(state.transcript.entries.len(), 2);
                 assert!(matches!(
@@ -505,23 +505,20 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 ));
                 assert_eq!(state.transcript.entries[1].role(), Role::Tool);
                 assert_eq!(state.transcript.entries[1].text(), "k8s__list_pods");
-                assert_eq!(state.status.message.status_line, "Thinking...");
+                assert!(state.status.message.status_line().is_empty());
             }
-            "llm_end_records_tokens_and_sets_ready_status" => {
+            "llm_end_records_tokens_without_status_message" => {
                 assert_eq!(state.status.tokens.latest_input_tokens, Some(4));
                 assert_eq!(state.status.tokens.latest_output_tokens, Some(8));
                 assert_eq!(state.status.tokens.latest_total_tokens, Some(12));
                 assert_eq!(state.status.tokens.session_total_tokens, 12);
-                assert_eq!(
-                    state.status.message.status_line,
-                    "Response ready (12 chars)"
-                );
+                assert!(state.status.message.status_line().is_empty());
             }
             "warning_is_reducer_noop" => {
                 // Warning is handled by StatusState via warning_rx, not the
                 // transcript reducer — the reducer no-ops and the status line
                 // set by the `pre` fixture stays untouched.
-                assert!(state.status.message.status_line.is_empty());
+                assert!(state.status.message.status_line().is_empty());
             }
             "assistant_message_trims_and_appends" => {
                 // After the raw-markdown refactor, a single AssistantMessage
@@ -543,7 +540,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 assert_eq!(state.phase, UiPhase::Idle);
                 assert!(!state.input_locked);
                 assert!(!state.abort.pending);
-                assert!(state.status.message.status_line.is_empty());
+                assert!(state.status.message.status_line().is_empty());
             }
             _ => unreachable!("unknown case: {}", case.name),
         }
@@ -817,7 +814,7 @@ mod visual_selection_tests {
         assert_eq!(sel.anchor(), 5);
         assert_eq!(sel.cursor(), 5);
         assert_eq!(state.input.mode, InputMode::Visual);
-        assert_eq!(state.status.message.status_line, "-- VISUAL --");
+        assert!(state.status.message.status_line().is_empty());
     }
 
     #[test]
@@ -835,7 +832,7 @@ mod visual_selection_tests {
             None,
         );
         assert_eq!(
-            state.status.message.status_line,
+            state.status.message.status_line(),
             VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS
         );
         assert!(state.scroll.selection.is_none());
@@ -1005,7 +1002,7 @@ mod visual_selection_tests {
     }
 
     #[test]
-    fn visual_yank_nothing_to_yank_shows_status() {
+    fn visual_yank_nothing_to_yank_leaves_status_empty() {
         let mut state = AppState {
             input: InputState::default().with_mode(InputMode::Visual),
             scroll: ScrollState {
@@ -1022,7 +1019,7 @@ mod visual_selection_tests {
             None,
         );
         assert!(state.input.take_clipboard_request().is_none());
-        assert_eq!(state.status.message.status_line, "Nothing to yank");
+        assert!(state.status.message.status_line().is_empty());
         assert!(state.scroll.selection.is_none());
         assert_eq!(state.input.mode, InputMode::Normal);
     }

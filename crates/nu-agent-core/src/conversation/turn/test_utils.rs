@@ -12,6 +12,7 @@ use crate::compaction::CompactionParams;
 use crate::config::Config;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use crate::protocol::event::UiEvent;
+use crate::session::SessionStore;
 use rig::agent::ModelHandle;
 use rig::test_utils::MockCompletionModel;
 
@@ -137,11 +138,12 @@ impl rig::tool::Tool for CancellingTool {
 // Compaction test defaults
 // ---------------------------------------------------------------------------
 
-/// A `NuCompactor<FsSessionStore>` (no marker store) with a deterministic
-/// streaming mock model so compaction never invokes a real LLM.
-pub(super) fn test_compactor(
+/// A `NuCompactor<S>` (no marker store) with a deterministic
+/// streaming mock model so compaction never invokes a real LLM. Generic over
+/// the session store so tests with custom store backends can reuse it.
+pub(super) fn test_compactor<S: SessionStore + Clone + Send + Sync>(
     bus: Bus,
-) -> crate::conversation::compaction::compactor::NuCompactor<crate::session::FsSessionStore> {
+) -> crate::conversation::compaction::compactor::NuCompactor<S> {
     use crate::conversation::compaction::compactor::NuCompactor;
     let turns: Vec<Vec<rig::test_utils::MockStreamEvent>> = (0..8)
         .map(|_| {
@@ -159,11 +161,12 @@ pub(super) fn test_compactor(
     )
 }
 
-/// A `CompactionConfig<FsSessionStore>` with deterministic defaults (no LLM
-/// invoked) used by tests that are not exercising compaction.
-pub(super) fn test_compaction_config(
+/// A `CompactionConfig<S>` with deterministic defaults (no LLM
+/// invoked) used by tests that are not exercising compaction. Generic over
+/// the session store to match the executor's store type parameter.
+pub(super) fn test_compaction_config<S: SessionStore + Clone + Send + Sync>(
     bus: Bus,
-) -> crate::conversation::compaction::CompactionConfig<crate::session::FsSessionStore> {
+) -> crate::conversation::compaction::CompactionConfig<S> {
     crate::conversation::compaction::CompactionConfig {
         compactor: test_compactor(bus.clone()),
         params: CompactionParams::default(),

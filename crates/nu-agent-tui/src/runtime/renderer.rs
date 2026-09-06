@@ -40,7 +40,11 @@ where
     }
 
     fn mark_render_failure(&mut self, error: String) {
-        self.coordinator.state.status.message.status_line = error.clone();
+        self.coordinator
+            .state
+            .status
+            .message
+            .set_message(error.clone());
         self.coordinator.fatal_error = Some(error);
         self.coordinator.quit_requested = true;
     }

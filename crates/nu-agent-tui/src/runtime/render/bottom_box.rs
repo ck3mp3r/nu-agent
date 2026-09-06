@@ -20,7 +20,6 @@ impl RuntimeCoordinator {
         bottom_box_rect: Rect,
         queue_h: u16,
         input_h: u16,
-        status_h: u16,
         now_millis: u128,
     ) {
         // ── Unified bottom box ──────────────────────────────────────────────
@@ -233,16 +232,37 @@ impl RuntimeCoordinator {
             })
             .unwrap_or(0) as u16;
 
+        let has_message = !self.state.status.message.status_line().is_empty();
+        let message_rect = if has_message {
+            Some(Rect {
+                x: inner.x.saturating_add(1),
+                y: input_div_y.saturating_add(1),
+                width: inner.width.saturating_sub(2),
+                height: 1,
+            })
+        } else {
+            None
+        };
         let status_inner = Rect {
             x: inner.x.saturating_add(1),
-            y: input_div_y.saturating_add(1),
+            y: input_div_y.saturating_add(if has_message { 2 } else { 1 }),
             width: inner.width.saturating_sub(2),
-            height: status_h,
+            height: 1,
         };
         let status_inner_2 = Rect {
             y: status_inner.y.saturating_add(1),
             ..status_inner
         };
+
+        if let Some(message_rect) = message_rect
+            && let Some(message_line) = crate::runtime::status::status_message_line(
+                &self.state,
+                &self.theme,
+                message_rect.width as usize,
+            )
+        {
+            frame.render_widget(Paragraph::new(message_line), message_rect);
+        }
 
         let left_width_needed = {
             let probe = crate::runtime::status::status_left_content(

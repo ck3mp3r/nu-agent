@@ -329,8 +329,11 @@ impl RuntimeCoordinator {
                     self.trigger_no_interactive_backend_fail_fast(Some(error));
                     return;
                 }
-                self.state.status.message.status_line = format!("Terminal input error: {error}");
-                self.fatal_error = Some(self.state.status.message.status_line.clone());
+                self.state
+                    .status
+                    .message
+                    .set_message(format!("Terminal input error: {error}"));
+                self.fatal_error = Some(self.state.status.message.status_line().to_string());
                 self.quit_requested = true;
                 self.cancel_controller.request_cancel();
                 return;
@@ -349,15 +352,6 @@ impl RuntimeCoordinator {
         // Pick up any restored input text from cancelled prompts before
         // processing the next event.
         self.pickup_restored_input_text();
-
-        if let TerminalEvent::Key(TerminalKey::Esc) = event
-            && self.state.phase == crate::state::UiPhase::Idle
-            && self.state.picker.active().is_none()
-            && self.state.info_panel.is_none()
-        {
-            self.state.status.message.status_line =
-                "Esc pressed. Press Ctrl+C to quit.".to_string();
-        }
 
         if let TerminalEvent::Resize(_) = event {
             self.state.transcript.clear_assistant_projection_cache();
@@ -785,12 +779,12 @@ impl RuntimeCoordinator {
         };
 
         match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(text)) {
-            Ok(()) => {
-                self.state.status.message.status_line =
-                    "Copied selection to clipboard.".to_string();
-            }
+            Ok(()) => {}
             Err(error) => {
-                self.state.status.message.status_line = format!("Clipboard copy failed: {error}");
+                self.state
+                    .status
+                    .message
+                    .set_message(format!("Clipboard copy failed: {error}"));
             }
         }
     }
@@ -846,7 +840,7 @@ impl RuntimeCoordinator {
         }
         message.push_str(" Run `agent` in an interactive terminal and verify TTY access.");
 
-        self.state.status.message.status_line = message.clone();
+        self.state.status.message.set_message(message.clone());
         self.fatal_error = Some(message);
         self.quit_requested = true;
         self.cancel_controller.request_cancel();
@@ -928,6 +922,19 @@ impl RuntimeCoordinator {
                 .entries
                 .iter()
                 .any(|e| e.status == Some(ItemStatus::InProgress))
+    }
+
+    pub(crate) fn expire_status_message_if_due(&mut self, now: Instant) -> bool {
+        if self.state.status.message.expired(now) {
+            self.state.status.message.clear();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn has_pending_status_message(&self) -> bool {
+        self.state.status.message.is_pending()
     }
 
     pub(crate) fn render_if_needed<B: ratatui::backend::Backend>(
@@ -1037,7 +1044,13 @@ impl RuntimeCoordinator {
                     .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                     .sum::<usize>()
             };
-            let status_h = compute_status_h(available_inner_w, pre_left_width, pre_right_width);
+            let has_message = !self.state.status.message.status_line().is_empty();
+            let status_h = compute_status_h(
+                available_inner_w,
+                pre_left_width,
+                pre_right_width,
+                has_message,
+            );
             let bottom_box_h = compute_bottom_box_height(queue_h, self.input_height, status_h);
             let vertical = Layout::default()
                 .direction(Direction::Vertical)
@@ -1067,14 +1080,7 @@ impl RuntimeCoordinator {
             }
 
             let now_millis = current_time_millis();
-            self.render_bottom_box(
-                frame,
-                vertical[2],
-                queue_h,
-                self.input_height,
-                status_h,
-                now_millis,
-            );
+            self.render_bottom_box(frame, vertical[2], queue_h, self.input_height, now_millis);
 
             if has_side {
                 let side = horizontal[1];

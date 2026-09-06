@@ -153,14 +153,30 @@ pub(crate) fn status_right_content(
     Some(Line::from(spans))
 }
 
+pub(crate) fn status_message_line(
+    state: &AppState,
+    theme: &TuiTheme,
+    available_width: usize,
+) -> Option<Line<'static>> {
+    let status_line = state.status.message.status_line();
+    if status_line.is_empty() {
+        return None;
+    }
+    let style = match state.status.message.kind() {
+        crate::state::StatusMessageKind::Warning => theme.status_failed,
+        crate::state::StatusMessageKind::Neutral => theme.subtle_meta,
+    };
+    Some(Line::from(Span::styled(
+        ellipsize(status_line, available_width),
+        style,
+    )))
+}
+
 pub(crate) fn model_activity_label(state: &AppState) -> &'static str {
     match state.phase {
         crate::state::UiPhase::Busy | crate::state::UiPhase::AbortPending => "busy",
         crate::state::UiPhase::Idle => {
-            if state.status.message.status_line == "Thinking..."
-                || state.status.message.status_line.starts_with("Tool: ")
-                || state.compaction.in_progress()
-            {
+            if state.compaction.in_progress() {
                 "busy"
             } else {
                 "idle"

@@ -1,6 +1,5 @@
 use std::sync::{Arc, Mutex};
 
-use crate::bus::{Bus, WarningEvent};
 use crate::tools::authz::{PermissionsConfig, PermissionsOverlay, SessionGrantCache};
 
 /// Tracks effective permissions state, the base config (without persona overlays),
@@ -97,14 +96,9 @@ impl PermissionState {
             .clear_for_server(server_name);
     }
 
-    pub async fn emit_startup_summary_once(&mut self, bus: &Bus) {
+    pub fn emit_startup_summary_once(&mut self) {
         if !self.startup_emitted {
-            let _ = bus
-                .warning()
-                .send(WarningEvent::Message {
-                    message: self.startup_summary.clone(),
-                })
-                .await;
+            log::info!("{}", self.startup_summary);
             self.startup_emitted = true;
         }
     }

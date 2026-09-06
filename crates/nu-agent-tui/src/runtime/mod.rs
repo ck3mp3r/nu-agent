@@ -34,6 +34,9 @@ pub(super) mod test;
 pub(super) mod test_driver;
 
 #[cfg(test)]
+mod layout_test;
+
+#[cfg(test)]
 mod panels_test;
 
 #[cfg(test)]

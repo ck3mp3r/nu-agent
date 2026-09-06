@@ -9,8 +9,8 @@ use nu_agent_core::protocol::contracts::SharedUiAction;
 use nu_agent_core::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
 use nu_agent_core::protocol::slash::{SlashParseResult, extract_session_id, parse_slash_command};
 
-pub const ESC_ABORT_CONFIRM_STATUS: &str = "Hit escape again to abort.";
-const ABORT_REQUESTED_STATUS: &str = "Abort requested.";
+pub(crate) const ESC_ABORT_CONFIRM_STATUS: &str = "Esc again to cancel";
+
 pub(crate) const VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS: &str =
     "Visual mode requires transcript focus (Tab/h/l).";
 
@@ -234,14 +234,11 @@ fn handle_yank_selection(state: &mut AppState) -> bool {
         return false;
     }
     // Scroll domain: payload extraction from the rendered viewport. The
-    // clipboard request and status line stay here (input/status domains).
+    // clipboard request stays here (input domain).
     if state.scroll.selection.is_some() {
         let payload = state.scroll.yank_selection();
         if let Some(payload) = payload {
             state.input.set_clipboard_request(payload);
-            state.status.message.status_line = "Yanked selection to clipboard".to_string();
-        } else {
-            state.status.message.status_line = "Nothing to yank".to_string();
         }
     }
     state.enter_normal_mode();
@@ -368,7 +365,7 @@ fn handle_escape(state: &mut AppState) -> bool {
         return true;
     }
     if state.request_abort_confirmation() {
-        state.status.message.status_line = ESC_ABORT_CONFIRM_STATUS.to_string();
+        state.status.message.set_message(ESC_ABORT_CONFIRM_STATUS);
         return true;
     }
     false
@@ -384,7 +381,7 @@ fn handle_escape_confirm(
         }
         state.cancel_and_restore_pending_to_input();
         state.transcript.push_spacer();
-        state.status.message.status_line = ABORT_REQUESTED_STATUS.to_string();
+        state.status.message.clear();
         return true;
     }
     false
@@ -486,12 +483,7 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
         UiEvent::Completed { tool_calls } => {
             crate::state::dispatch_turn_event(state, TurnEvent::Completed { tool_calls })
         }
-        UiEvent::Tick => {
-            if state.status.message.status_line.is_empty() {
-                state.status.message.status_line = "Thinking...".to_string();
-            }
-            true
-        }
+        UiEvent::Tick => true,
         UiEvent::TurnError { message } => {
             if !state.transcript.last_is_spacer() && !state.transcript.is_empty() {
                 state.transcript.push_spacer();
@@ -500,7 +492,6 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
             state
                 .transcript
                 .push_transcript_line(TranscriptRole::System, format!("Error: {message}"));
-            state.status.message.status_line = message.clone();
             crate::state::dispatch_turn_event(state, TurnEvent::Completed { tool_calls: 0 });
             true
         }

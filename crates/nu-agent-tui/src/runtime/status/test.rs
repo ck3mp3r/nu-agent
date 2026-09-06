@@ -6,6 +6,8 @@ use crate::{rendering::theme::TuiTheme, state::AppState};
 
 use super::format::{compact_token_count, status_indicator, tail_ellipsize};
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 pub(crate) fn run_git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .current_dir(dir)
@@ -270,4 +272,84 @@ fn status_bar_no_icon_when_persona_icon_none() {
         !joined.contains("🪸"),
         "status bar must not use hardcoded emoji pool"
     );
+}
+
+#[test]
+fn status_message_line_empty_returns_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let state = AppState::default();
+
+    // -- Exec
+    let line = super::status_message_line(&state, &TuiTheme::default(), 100);
+
+    // -- Check
+    assert!(line.is_none());
+    Ok(())
+}
+
+#[test]
+fn status_message_line_returns_ellipsized_text() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state
+        .status
+        .message
+        .set_message("This is a long status message");
+
+    // -- Exec
+    let line = super::status_message_line(&state, &TuiTheme::default(), 20)
+        .ok_or("should return a line")?;
+
+    // -- Check
+    let joined: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(joined, "This is a long stat…");
+    Ok(())
+}
+
+#[test]
+fn status_message_line_returns_full_text_when_fits() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.status.message.set_message("Response ready");
+
+    // -- Exec
+    let line = super::status_message_line(&state, &TuiTheme::default(), 100)
+        .ok_or("should return a line")?;
+
+    // -- Check
+    let joined: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(joined, "Response ready");
+    Ok(())
+}
+
+#[test]
+fn status_message_line_neutral_uses_subtle_meta_style() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.status.message.set_message("Response ready");
+
+    // -- Exec
+    let line = super::status_message_line(&state, &TuiTheme::default(), 100)
+        .ok_or("should return a line")?;
+
+    // -- Check
+    let span = line.spans.first().ok_or("should have a span")?;
+    assert_eq!(span.style, TuiTheme::default().subtle_meta);
+    Ok(())
+}
+
+#[test]
+fn status_message_line_warning_uses_status_failed_style() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.status.message.set_warning("Memory append failed");
+
+    // -- Exec
+    let line = super::status_message_line(&state, &TuiTheme::default(), 100)
+        .ok_or("should return a line")?;
+
+    // -- Check
+    let span = line.spans.first().ok_or("should have a span")?;
+    assert_eq!(span.style, TuiTheme::default().status_failed);
+    Ok(())
 }

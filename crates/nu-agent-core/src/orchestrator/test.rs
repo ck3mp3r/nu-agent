@@ -2994,11 +2994,11 @@ async fn model_switch_result_artifact_is_rendered() -> TResult {
 
     assert!(value.is_nothing());
     assert!(
-        ui.warnings
+        !ui.warnings
             .lock()
             .unwrap()
             .iter()
-            .any(|w| w == "Model switched: openai/gpt-4o-mini")
+            .any(|w| w.starts_with("Model switched"))
     );
     Ok(())
 }
@@ -3081,13 +3081,6 @@ async fn model_switch_while_worker_active_is_queued_for_next_turn() -> TResult {
             .expect("switched models lock")
             .as_slice(),
         ["openai/gpt-4o-mini"]
-    );
-    assert!(
-        ui.warnings
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|w| w == "Model switch queued for next turn: openai/gpt-4o-mini")
     );
     Ok(())
 }

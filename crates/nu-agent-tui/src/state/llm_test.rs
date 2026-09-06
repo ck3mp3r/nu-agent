@@ -53,12 +53,12 @@ fn llm_start_from_idle_moves_busy_and_locks_input() {
 #[test]
 fn llm_start_when_busy_is_noop_for_phase() {
     let mut state = busy_state_with_clean_transcript();
-    state.status.message.status_line = "Tool: prior".to_string();
+    state.status.message.set_message("Tool: prior");
 
     reduce_llm(&mut state, LlmEvent::Started);
 
     assert_eq!(state.phase, UiPhase::Busy);
-    assert_eq!(state.status.message.status_line, "Tool: prior");
+    assert_eq!(state.status.message.status_line(), "Tool: prior");
     assert!(state.input_locked);
 }
 
@@ -100,7 +100,7 @@ fn llm_end_event_updates_latest_and_rolling_token_usage() {
 }
 
 #[test]
-fn llm_end_records_tokens_and_sets_ready_status() {
+fn llm_end_records_tokens_without_status_message() {
     let mut state = busy_state_with_clean_transcript();
 
     reduce_llm(
@@ -118,10 +118,7 @@ fn llm_end_records_tokens_and_sets_ready_status() {
     assert_eq!(state.status.tokens.latest_output_tokens, Some(8));
     assert_eq!(state.status.tokens.latest_total_tokens, Some(12));
     assert_eq!(state.status.tokens.session_total_tokens, 12);
-    assert_eq!(
-        state.status.message.status_line,
-        "Response ready (12 chars)"
-    );
+    assert!(state.status.message.status_line().is_empty());
 }
 
 #[test]
@@ -292,7 +289,6 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
     // Direct tool display via the tool domain
     state.tool.reduce_tool_event(
         &mut state.transcript,
-        &mut state.status,
         nu_agent_core::bus::ToolEvent::Started {
             name: "edit".to_string(),
             source: "closure".to_string(),
@@ -301,7 +297,6 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
     );
     state.tool.reduce_tool_event(
         &mut state.transcript,
-        &mut state.status,
         nu_agent_core::bus::ToolEvent::Completed {
             name: "edit".to_string(),
             source: "closure".to_string(),

@@ -192,7 +192,7 @@ async fn dynamic_tool_error_with_details_truncates_and_sets_model_output() -> Te
 
     // -- Check
     let error = result.error().ok_or("handler error must surface as Err")?;
-    assert_eq!(error.kind(), rig::tool::ToolErrorKind::Provider);
+    assert_eq!(error.kind(), rig::tool::ToolErrorKind::Other);
     let message = error.message();
     assert!(
         message.contains("[output truncated:"),
@@ -215,8 +215,8 @@ async fn dynamic_tool_error_with_details_truncates_and_sets_model_output() -> Te
     Ok(())
 }
 
-/// A builtin handler error without details keeps the current mapping:
-/// ToolExecutionError::provider with the message only, no model-output
+/// A builtin handler error without details maps the handler kind to the
+/// rig kind (Runtime → Other) with the message only, no model-output
 /// override.
 #[tokio::test]
 async fn dynamic_tool_error_without_details_keeps_message_only() -> TestResult<()> {
@@ -247,11 +247,205 @@ async fn dynamic_tool_error_without_details_keeps_message_only() -> TestResult<(
 
     // -- Check
     let error = result.error().ok_or("handler error must surface as Err")?;
-    assert_eq!(error.kind(), rig::tool::ToolErrorKind::Provider);
+    assert_eq!(error.kind(), rig::tool::ToolErrorKind::Other);
     assert_eq!(
         error.message(),
         "boom: no details",
         "no-details mapping must stay unchanged"
     );
     Ok(())
+}
+
+// ================================================================
+// Handler-error kind mapping: ToolErrorKind → rig ToolErrorKind
+// ================================================================
+
+/// Define a builtin handler that always fails with the given
+/// `ToolHandlerError` expression.
+macro_rules! failing_kind_tool {
+    ($struct_name:ident, $tool_name:literal, $error:expr) => {
+        struct $struct_name;
+
+        impl super::BuiltinTool for $struct_name {
+            const NAME: &'static str = $tool_name;
+
+            async fn execute(
+                _args: &serde_json::Value,
+                _cwd: &Path,
+                _bus: &crate::bus::Bus,
+            ) -> core::result::Result<serde_json::Value, super::super::ToolHandlerError> {
+                Err($error)
+            }
+        }
+    };
+}
+
+failing_kind_tool!(
+    FailingValidationTool,
+    "fail_validation",
+    super::super::ToolHandlerError::validation("boom")
+);
+failing_kind_tool!(
+    FailingTimeoutTool,
+    "fail_timeout",
+    super::super::ToolHandlerError {
+        kind: super::super::ToolErrorKind::Timeout,
+        message: "boom".to_string(),
+        details: None,
+    }
+);
+failing_kind_tool!(
+    FailingAuthorizationTool,
+    "fail_authorization",
+    super::super::ToolHandlerError {
+        kind: super::super::ToolErrorKind::Authorization,
+        message: "boom".to_string(),
+        details: None,
+    }
+);
+failing_kind_tool!(
+    FailingTransportTool,
+    "fail_transport",
+    super::super::ToolHandlerError {
+        kind: super::super::ToolErrorKind::Transport,
+        message: "boom".to_string(),
+        details: None,
+    }
+);
+failing_kind_tool!(
+    FailingRuntimeTool,
+    "fail_runtime",
+    super::super::ToolHandlerError::runtime("boom")
+);
+failing_kind_tool!(
+    FailingUnknownTool,
+    "fail_unknown",
+    super::super::ToolHandlerError {
+        kind: super::super::ToolErrorKind::Unknown,
+        message: "boom".to_string(),
+        details: None,
+    }
+);
+failing_kind_tool!(
+    FailingValidationDetailsTool,
+    "fail_validation_details",
+    super::super::ToolHandlerError::validation("boom")
+        .with_details(serde_json::json!({ "stdout": "x".repeat(4000) }))
+);
+
+/// Every handler error kind maps to the matching rig error kind on the
+/// details-less error path.
+#[tokio::test]
+async fn dynamic_tool_error_kind_maps_to_rig_kind_without_details() -> TestResult<()> {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, rig::tool::ToolErrorKind)> = vec![
+        ("fail_validation", rig::tool::ToolErrorKind::InvalidArgs),
+        ("fail_timeout", rig::tool::ToolErrorKind::Timeout),
+        (
+            "fail_authorization",
+            rig::tool::ToolErrorKind::PermissionDenied,
+        ),
+        ("fail_transport", rig::tool::ToolErrorKind::Network),
+        ("fail_runtime", rig::tool::ToolErrorKind::Other),
+        ("fail_unknown", rig::tool::ToolErrorKind::Other),
+    ];
+    let mut toolset = rig::tool::ToolSet::default();
+    add_failing_tool::<FailingValidationTool>(&mut toolset, "fail_validation");
+    add_failing_tool::<FailingTimeoutTool>(&mut toolset, "fail_timeout");
+    add_failing_tool::<FailingAuthorizationTool>(&mut toolset, "fail_authorization");
+    add_failing_tool::<FailingTransportTool>(&mut toolset, "fail_transport");
+    add_failing_tool::<FailingRuntimeTool>(&mut toolset, "fail_runtime");
+    add_failing_tool::<FailingUnknownTool>(&mut toolset, "fail_unknown");
+
+    // -- Exec & Check
+    for (tool_name, expected_kind) in &cases {
+        let mut context = rig::tool::ToolContext::new();
+        let result = toolset
+            .execute(tool_name, &serde_json::json!({}).to_string(), &mut context)
+            .await;
+
+        let error = result.error().ok_or("handler error must surface as Err")?;
+        assert_eq!(
+            error.kind(),
+            *expected_kind,
+            "handler error kind for {tool_name} must map to the matching rig kind"
+        );
+        assert!(
+            error.message().starts_with("boom"),
+            "message must keep the handler message, got: {}",
+            error.message()
+        );
+    }
+    Ok(())
+}
+
+/// A details-carrying error keeps the kind mapping in the details branch:
+/// the rig kind comes from the handler kind and the truncated details
+/// stay embedded in the message and attached as model output.
+#[tokio::test]
+async fn dynamic_tool_error_kind_maps_to_rig_kind_with_details() -> TestResult<()> {
+    // -- Setup & Fixtures
+    let tool_def = ToolDefinition {
+        name: "fail_validation_details".to_string(),
+        description: "Always fails with details".to_string(),
+        parameters: serde_json::json!({"type": "object", "properties": {}}),
+    };
+    let dynamic_tool = super::make_dynamic_tool::<FailingValidationDetailsTool>(
+        tool_def,
+        std::env::temp_dir(),
+        100,
+        crate::bus::Bus::default(),
+    );
+    let mut toolset = rig::tool::ToolSet::default();
+    toolset.add_dynamic_tool(dynamic_tool);
+
+    // -- Exec
+    let mut context = rig::tool::ToolContext::new();
+    let result = toolset
+        .execute(
+            "fail_validation_details",
+            &serde_json::json!({}).to_string(),
+            &mut context,
+        )
+        .await;
+
+    // -- Check
+    let error = result.error().ok_or("handler error must surface as Err")?;
+    assert_eq!(error.kind(), rig::tool::ToolErrorKind::InvalidArgs);
+    let message = error.message();
+    assert!(
+        message.starts_with("boom: {"),
+        "details message must embed the truncated JSON, got: {message}"
+    );
+    assert!(
+        message.contains("[output truncated:"),
+        "details embedded in the message must be truncated, got: {message}"
+    );
+    let feedback = error
+        .model_feedback()
+        .ok_or("model output must be attached for details-carrying errors")?;
+    let embedded = message
+        .strip_prefix("boom: ")
+        .ok_or("message must prefix the handler message")?;
+    assert_eq!(
+        feedback, embedded,
+        "model output must equal the truncated details embedded in the message"
+    );
+    Ok(())
+}
+
+// -- Test Support
+
+fn add_failing_tool<T: super::BuiltinTool>(toolset: &mut rig::tool::ToolSet, tool_name: &str) {
+    let tool_def = ToolDefinition {
+        name: tool_name.to_string(),
+        description: "Always fails".to_string(),
+        parameters: serde_json::json!({"type": "object", "properties": {}}),
+    };
+    toolset.add_dynamic_tool(super::make_dynamic_tool::<T>(
+        tool_def,
+        std::env::temp_dir(),
+        100,
+        crate::bus::Bus::default(),
+    ));
 }

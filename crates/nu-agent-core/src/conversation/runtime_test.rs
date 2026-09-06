@@ -15,8 +15,8 @@ fn test_memory_state() -> super::super::state::memory::MemoryState<crate::sessio
     super::super::state::memory::MemoryState::new(store)
 }
 
-#[tokio::test]
-async fn permissions_startup_summary_emits_once_before_first_turn() {
+#[test]
+fn permissions_startup_summary_does_not_emit_warning() {
     use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
 
     let bus = crate::bus::create_bus();
@@ -32,28 +32,23 @@ async fn permissions_startup_summary_emits_once_before_first_turn() {
         summary.to_string(),
     );
 
-    state.emit_startup_summary_once(&bus).await;
-    state.emit_startup_summary_once(&bus).await;
+    state.emit_startup_summary_once();
+    state.emit_startup_summary_once();
 
-    // Only the first call should publish a WarningEvent::Message.
     let mut count = 0usize;
-    let mut first_message: Option<String> = None;
     loop {
         match warning_rx.try_recv() {
-            Ok(crate::bus::WarningEvent::Message { message }) => {
-                count += 1;
-                if first_message.is_none() {
-                    first_message = Some(message);
-                }
-            }
+            Ok(crate::bus::WarningEvent::Message { .. }) => count += 1,
             Ok(_) => {}
             Err(crate::bus::TryRecvError::Empty) => break,
             Err(crate::bus::TryRecvError::Lagged(_)) => continue,
             Err(crate::bus::TryRecvError::Closed) => break,
         }
     }
-    assert_eq!(count, 1);
-    assert_eq!(first_message.as_deref(), Some(summary));
+    assert_eq!(
+        count, 0,
+        "policy summary goes to the log, not the warning channel"
+    );
 }
 
 // ========================================================================
@@ -621,82 +616,6 @@ fn active_model_identity_returns_provider_slash_model() {
 }
 
 // ========================================================================
-// Phase E: PermissionState characterisation tests
-// ========================================================================
-
-#[tokio::test]
-async fn permission_state_startup_not_emitted_on_construction() {
-    // After construction, startup_emitted must be false even when
-    // startup_summary is non-empty — emission only happens during
-    // execute_turn, not at construction time.
-    // We verify by calling emit_startup_summary_once on a freshly
-    // constructed PermissionState and confirming it does emit (proving
-    // the flag was false).
-    use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
-
-    let bus = crate::bus::create_bus();
-    let mut warning_rx = bus.warning().subscribe();
-    let mut state = super::super::state::permission::PermissionState::new(
-        PermissionsConfig::safe_defaults(true),
-        PermissionsConfig::safe_defaults(true),
-        None,
-        SessionGrantCache::default(),
-        "non-empty summary".to_string(),
-    );
-
-    state.emit_startup_summary_once(&bus).await;
-
-    let mut count = 0usize;
-    loop {
-        match warning_rx.try_recv() {
-            Ok(crate::bus::WarningEvent::Message { .. }) => count += 1,
-            Ok(_) => {}
-            Err(crate::bus::TryRecvError::Empty) => break,
-            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
-            Err(crate::bus::TryRecvError::Closed) => break,
-        }
-    }
-    assert_eq!(
-        count, 1,
-        "fresh PermissionState must have startup_emitted=false, so first call emits"
-    );
-}
-
-#[tokio::test]
-async fn permission_state_emit_startup_summary_emits_once() {
-    // emit_startup_summary_once must emit exactly one Warning event, even
-    // when called twice.
-    use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
-
-    let bus = crate::bus::create_bus();
-    let mut warning_rx = bus.warning().subscribe();
-    let summary = "test permissions summary";
-
-    let mut state = super::super::state::permission::PermissionState::new(
-        PermissionsConfig::safe_defaults(true),
-        PermissionsConfig::safe_defaults(true),
-        None,
-        SessionGrantCache::default(),
-        summary.to_string(),
-    );
-
-    state.emit_startup_summary_once(&bus).await;
-    state.emit_startup_summary_once(&bus).await;
-
-    let mut count = 0usize;
-    loop {
-        match warning_rx.try_recv() {
-            Ok(crate::bus::WarningEvent::Message { .. }) => count += 1,
-            Ok(_) => {}
-            Err(crate::bus::TryRecvError::Empty) => break,
-            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
-            Err(crate::bus::TryRecvError::Closed) => break,
-        }
-    }
-    assert_eq!(count, 1, "must emit exactly 1 warning, not 2");
-}
-
-// ========================================================================
 // Phase F: ProviderState characterisation tests
 // ========================================================================
 
@@ -1152,8 +1071,8 @@ fn mcp_state_lifecycle_projection_empty_by_default() {
     assert!(projection.is_empty());
 }
 
-#[tokio::test]
-async fn set_permissions_replaces_config_and_resets_startup() -> Result<()> {
+#[test]
+fn set_permissions_replaces_config_and_does_not_emit_warning() -> Result<()> {
     use crate::tools::authz::{PermissionAction, PermissionsConfig, SessionGrantCache};
 
     let initial = PermissionsConfig::safe_defaults(true);
@@ -1187,22 +1106,15 @@ async fn set_permissions_replaces_config_and_resets_startup() -> Result<()> {
     // Config is replaced
     assert_eq!(state.permissions().summary().global, PermissionAction::Deny);
 
-    // startup_emitted is reset to false so the next execute_turn naturally
-    // emits the summary via emit_startup_summary_once.
     let bus = crate::bus::create_bus();
     let mut warning_rx = bus.warning().subscribe();
-    state.emit_startup_summary_once(&bus).await;
-    // SHOULD emit because set_permissions sets startup_emitted = false
+    state.emit_startup_summary_once();
+    state.emit_startup_summary_once();
+
     let mut count = 0usize;
-    let mut first_message: Option<String> = None;
     loop {
         match warning_rx.try_recv() {
-            Ok(crate::bus::WarningEvent::Message { message }) => {
-                count += 1;
-                if first_message.is_none() {
-                    first_message = Some(message);
-                }
-            }
+            Ok(crate::bus::WarningEvent::Message { .. }) => count += 1,
             Ok(_) => {}
             Err(crate::bus::TryRecvError::Empty) => break,
             Err(crate::bus::TryRecvError::Lagged(_)) => continue,
@@ -1210,12 +1122,9 @@ async fn set_permissions_replaces_config_and_resets_startup() -> Result<()> {
         }
     }
     assert_eq!(
-        count, 1,
-        "set_permissions sets startup_emitted=false, so emit should fire"
+        count, 0,
+        "policy summary goes to the log, not the warning channel"
     );
-
-    // Verify the summary content matches what was passed to set_permissions
-    assert_eq!(first_message.as_deref(), Some(summary.as_str()));
     Ok(())
 }
 

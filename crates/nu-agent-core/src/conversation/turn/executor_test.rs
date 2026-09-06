@@ -15,7 +15,7 @@ use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
 use crate::conversation::state::memory::MemoryState;
 use crate::protocol::event::UiEvent;
-use crate::session::{FsSessionStore, StoreEntry};
+use crate::session::{FsSessionStore, SessionStore, StoreEntry};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 
@@ -2694,8 +2694,10 @@ async fn retry_exhausted_surfaces_attempt_count() -> Result<()> {
     Ok(())
 }
 
-/// Non-retryable errors (e.g., context_length_exceeded) must NOT be retried.
-/// Exactly 1 attempt should be made.
+/// Non-retryable errors (e.g., a ServerError-style outage) must NOT get the
+/// backoff retry. Model-correctable errors (e.g., context_length_exceeded)
+/// now get feedback retries instead, so a single scripted turn ends after
+/// one model call plus one feedback re-run — still no backoff retries.
 #[tokio::test]
 async fn non_retryable_error_not_retried() {
     let config = Config {
@@ -2707,7 +2709,9 @@ async fn non_retryable_error_not_retried() {
     let session_id = "test-non-retryable";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    // Only 1 turn — if retried, MockCompletionModel would panic (no more turns).
+    // Only 1 turn — the second attempt fails with the mock's out-of-turns
+    // error, which is neither retryable nor model-correctable, so the loop
+    // exits with no backoff retries (no "Turn failed after N retries" wrap).
     // A 400 context_length_exceeded is NOT retryable.
     let model = MockCompletionModel::from_stream_turns([vec![MockStreamEvent::error(
         "context_length_exceeded in prompt",
@@ -2767,9 +2771,14 @@ async fn output_budget_error_surfaces_user_message() -> Result<()> {
     let session_id = "test-output-budget";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    let model = MockCompletionModel::from_stream_turns([vec![MockStreamEvent::error(
-        "The model ran out of output budget",
-    )]]);
+    // Three failing turns: attempts 1-2 each get one feedback retry (cap 2);
+    // attempt 3 exceeds the cap, so the final break carries the OutputBudget
+    // kind and the hard-error path surfaces the max_output_tokens message.
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![MockStreamEvent::error("The model ran out of output budget")],
+    ]);
 
     let shared_model = super::test_utils::shared_model_handle(model);
 
@@ -3489,4 +3498,778 @@ async fn on_stream_response_finish_stores_total_tokens() -> Result<()> {
     );
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Memory-append failure surfacing
+// ---------------------------------------------------------------------------
+
+/// A `SessionStore` whose `append` always fails, used to verify that failed
+/// session-memory appends on turn error paths are surfaced (not silently
+/// dropped). `create` succeeds so pre-population (the first write, which
+/// routes to `create`) works and the turn's later append routes to the
+/// failing `append`.
+#[derive(Clone)]
+struct FailingAppendStore;
+
+#[derive(Debug)]
+struct AppendError;
+
+impl std::fmt::Display for AppendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "append exploded")
+    }
+}
+
+impl std::error::Error for AppendError {}
+
+impl SessionStore for FailingAppendStore {
+    type Error = AppendError;
+
+    async fn create(
+        &self,
+        _id: &str,
+        _first_messages: &[Message],
+    ) -> core::result::Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn load(
+        &self,
+        _id: &str,
+    ) -> core::result::Result<Option<(crate::session::SessionMetadata, Vec<StoreEntry>)>, Self::Error>
+    {
+        Ok(None)
+    }
+
+    async fn append(
+        &self,
+        _id: &str,
+        _entries: &[StoreEntry],
+    ) -> core::result::Result<(), Self::Error> {
+        Err(AppendError)
+    }
+
+    async fn replace_entries(
+        &self,
+        _id: &str,
+        _entries: &[StoreEntry],
+    ) -> core::result::Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn list(&self) -> core::result::Result<Vec<crate::session::SessionInfo>, Self::Error> {
+        Ok(Vec::new())
+    }
+
+    async fn delete(&self, _id: &str) -> core::result::Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+/// A failed session-memory append on the hard-error path must be surfaced as
+/// `WarningEvent::Message` on the bus warning channel (not silently dropped).
+#[tokio::test]
+async fn hard_error_with_failing_append_store_emits_warning_event() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = test_config();
+    let session_id = "test-failing-append-hard-error";
+    let mut memory_state = MemoryState::new(Arc::new(FailingAppendStore));
+
+    // First write routes to store.create (succeeds) and marks the session as
+    // persisted, so the turn's later append routes to the failing store.append.
+    {
+        use rig::memory::ConversationMemory;
+        memory_state
+            .inner_memory()
+            .append(session_id, vec![user_with_text("prior work")])
+            .await
+            .map_err(|e| format!("pre-populate append should succeed: {e:?}"))?;
+    }
+
+    let bus = crate::bus::create_bus();
+    let mut warning_rx = bus.warning().subscribe();
+
+    let model =
+        MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
+
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle: rig::tool::server::ToolServer::new().run(),
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus,
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "new prompt".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    assert!(result.is_err(), "hard error must propagate as Err");
+
+    let event = warning_rx
+        .try_recv()
+        .map_err(|e| format!("warning event should arrive after failed append: {e:?}"))?;
+    match event {
+        crate::bus::WarningEvent::Message { message } => {
+            assert!(
+                message.contains("hard error"),
+                "warning must name the append site; got: {message}"
+            );
+        }
+        other => {
+            return Err(format!("expected WarningEvent::Message; got {other:?}").into());
+        }
+    }
+
+    Ok(())
+}
+
+/// A succeeding session-memory append on the hard-error path must NOT emit a
+/// warning event.
+#[tokio::test]
+async fn hard_error_with_working_store_emits_no_warning_event() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = test_config();
+    let temp_dir = tempfile::tempdir()?;
+    let session_id = "test-working-append-hard-error";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    // Pre-populate so the turn's append is a second write (routes to
+    // store.append) and succeeds against the working store.
+    {
+        use rig::memory::ConversationMemory;
+        memory_state
+            .inner_memory()
+            .append(session_id, vec![user_with_text("prior work")])
+            .await
+            .map_err(|e| format!("pre-populate append should succeed: {e:?}"))?;
+    }
+
+    let bus = crate::bus::create_bus();
+    let mut warning_rx = bus.warning().subscribe();
+
+    let model =
+        MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
+
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle: rig::tool::server::ToolServer::new().run(),
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus,
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "new prompt".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    assert!(result.is_err(), "hard error must propagate as Err");
+
+    match warning_rx.try_recv() {
+        Err(crate::bus::TryRecvError::Empty) => {} // no warning emitted — correct
+        Err(other) => {
+            return Err(format!("warning channel should stay open: {other:?}").into());
+        }
+        Ok(event) => {
+            return Err(
+                format!("successful append must not emit a warning event; got {event:?}").into(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Provider feedback retry (model-correctable completion errors)
+// ---------------------------------------------------------------------------
+
+/// A model-correctable provider failure classified by HTTP status (413 →
+/// RequestTooLarge via `classify_by_status`) must append exactly one user-role
+/// feedback message to the session memory and re-run the turn — proven by a
+/// second scripted turn succeeding.
+#[tokio::test]
+async fn model_correctable_failure_appends_feedback_and_reruns_turn() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_retries: Some(3),
+        retry_base_delay_ms: Some(1),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir()?;
+    let session_id = "test-feedback-retry-rerun";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    // Turn 1: 413 classified by status to RequestTooLarge (model-correctable).
+    // Turn 2: success — only reached if the feedback retry re-ran the turn.
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::Error(
+            rig::test_utils::MockError::ProviderResponse(rig::ProviderResponseError::new(
+                http::StatusCode::PAYLOAD_TOO_LARGE,
+                "request_too_large",
+            )),
+        )],
+        vec![
+            MockStreamEvent::Text("recovered".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let probe = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle: rig::tool::server::ToolServer::new().run(),
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    let outcome = result.map_err(|e| format!("feedback retry should recover the turn: {e:?}"))?;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed),
+        "feedback retry must complete the turn"
+    );
+    assert_eq!(
+        probe.request_count(),
+        2,
+        "model-correctable failure must re-run the turn exactly once"
+    );
+
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        feedback_message_count(&persisted),
+        1,
+        "exactly one feedback message must be appended; got {persisted:?}"
+    );
+    let feedback_msg = persisted
+        .iter()
+        .find(|m| {
+            message_text(m).is_some_and(|t| {
+                t.starts_with(crate::conversation::turn::feedback::FEEDBACK_PREFIX)
+            })
+        })
+        .ok_or("should have the appended feedback message in the session history")?;
+    assert!(
+        matches!(feedback_msg, crate::types::Message::User { .. }),
+        "appended feedback message must have User role; got {feedback_msg:?}"
+    );
+
+    Ok(())
+}
+
+/// Three consecutive model-correctable failures with a cap of
+/// MAX_PROVIDER_FEEDBACK_RETRIES (2) must produce exactly two feedback
+/// messages and then fall through to the hard-error path.
+#[tokio::test]
+async fn feedback_cap_two_produces_two_messages_then_hard_error() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_retries: Some(3),
+        retry_base_delay_ms: Some(1),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir()?;
+    let session_id = "test-feedback-cap";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let overflow = || MockStreamEvent::error("context_length_exceeded in prompt");
+    let model = MockCompletionModel::from_stream_turns([
+        vec![overflow()],
+        vec![overflow()],
+        vec![overflow()],
+    ]);
+    let probe = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle: rig::tool::server::ToolServer::new().run(),
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    let err = result
+        .err()
+        .ok_or("capped model-correctable failures must fall through to the hard error")?;
+    assert_eq!(
+        probe.request_count(),
+        3,
+        "two feedback retries plus the capped final attempt = 3 model calls"
+    );
+    assert!(
+        !err.msg.contains("Turn failed after"),
+        "feedback retries must not increment the backoff attempt counter; got: {}",
+        err.msg
+    );
+    assert!(
+        err.msg.contains("conversation too long"),
+        "hard-error message must describe the final ContextOverflow failure; got: {}",
+        err.msg
+    );
+
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        feedback_message_count(&persisted),
+        2,
+        "cap 2 must produce exactly two feedback messages; got {persisted:?}"
+    );
+
+    Ok(())
+}
+
+/// A retryable-kind failure (429 RateLimit) must append no feedback message
+/// and must not consume the feedback budget.
+#[tokio::test]
+async fn retryable_kind_failure_appends_no_feedback_message() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_retries: Some(0),
+        retry_base_delay_ms: Some(1),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir()?;
+    let session_id = "test-retryable-no-feedback";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let model = MockCompletionModel::from_stream_turns([vec![MockStreamEvent::error(
+        "429 rate_limit_error",
+    )]]);
+    let probe = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle: rig::tool::server::ToolServer::new().run(),
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    assert!(
+        result.is_err(),
+        "retryable error with max_retries=0 must fail the turn"
+    );
+    assert_eq!(
+        probe.request_count(),
+        1,
+        "retryable kinds must not trigger a feedback retry"
+    );
+
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        feedback_message_count(&persisted),
+        0,
+        "retryable kinds must not append feedback messages; got {persisted:?}"
+    );
+
+    Ok(())
+}
+
+/// After a successful feedback retry, the session store must contain the
+/// feedback message exactly once and the turn's exchange exactly once.
+#[tokio::test]
+async fn successful_feedback_retry_persists_feedback_exactly_once() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_retries: Some(3),
+        retry_base_delay_ms: Some(1),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir()?;
+    let session_id = "test-feedback-exactly-once";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("context_length_exceeded in prompt")],
+        vec![
+            MockStreamEvent::Text("recovered".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle: rig::tool::server::ToolServer::new().run(),
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    let outcome = result.map_err(|e| format!("feedback retry should recover the turn: {e:?}"))?;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed),
+        "feedback retry must complete the turn"
+    );
+
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        persisted.len(),
+        3,
+        "store must hold feedback + user prompt + assistant response; got {persisted:?}"
+    );
+    assert_eq!(
+        feedback_message_count(&persisted),
+        1,
+        "feedback message must be persisted exactly once; got {persisted:?}"
+    );
+    let prompt_count = persisted
+        .iter()
+        .filter(|m| message_text(m).as_deref() == Some("hello"))
+        .count();
+    assert_eq!(
+        prompt_count, 1,
+        "user prompt must be persisted exactly once"
+    );
+    let reply_count = persisted
+        .iter()
+        .filter(|m| message_text(m).as_deref() == Some("recovered"))
+        .count();
+    assert_eq!(
+        reply_count, 1,
+        "assistant response must be persisted exactly once"
+    );
+
+    Ok(())
+}
+
+/// A turn with no session (final_session_id None) must not append feedback
+/// messages: the second scripted turn stays unconsumed, proving the feedback
+/// branch never fired.
+#[tokio::test]
+async fn no_session_turn_appends_no_feedback_message() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_retries: Some(3),
+        retry_base_delay_ms: Some(1),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir()?;
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("context_length_exceeded in prompt")],
+        vec![
+            MockStreamEvent::Text("unreachable".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let probe = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle: rig::tool::server::ToolServer::new().run(),
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            None,
+        )
+        .await;
+
+    // -- Check
+    let err = result
+        .err()
+        .ok_or("session-less model-correctable failure must return Err")?;
+    assert_eq!(
+        probe.request_count(),
+        1,
+        "session-less turns must not re-run via feedback"
+    );
+    assert!(
+        err.msg.contains("conversation too long"),
+        "hard-error message must describe the ContextOverflow failure; got: {}",
+        err.msg
+    );
+
+    Ok(())
+}
+
+/// Two feedback retries followed by a 429 failure must still get the backoff
+/// retry: the feedback budget and the backoff budget are independent.
+#[tokio::test]
+async fn feedback_retries_do_not_consume_backoff_budget() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = Config {
+        max_retries: Some(3),
+        retry_base_delay_ms: Some(1),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir()?;
+    let session_id = "test-feedback-then-backoff";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("context_length_exceeded in prompt")],
+        vec![MockStreamEvent::error("context_length_exceeded in prompt")],
+        vec![MockStreamEvent::error("429 rate_limit_error")],
+    ]);
+    let probe = model.clone();
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle: rig::tool::server::ToolServer::new().run(),
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "hello".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+
+    // -- Check
+    let err = result
+        .err()
+        .ok_or("turn must fail after the mock runs out of scripted turns")?;
+    assert_eq!(
+        probe.request_count(),
+        4,
+        "2 feedback retries + 429 backoff retry + final failed attempt = 4 model calls"
+    );
+    assert!(
+        err.msg.contains("after 1 retries"),
+        "the 429 must consume the backoff budget (attempt 1), not the feedback budget; got: {}",
+        err.msg
+    );
+
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        feedback_message_count(&persisted),
+        2,
+        "only the two model-correctable failures append feedback; got {persisted:?}"
+    );
+
+    Ok(())
+}
+
+// -- Test Support
+
+/// Load all persisted messages for a session from the store.
+async fn load_persisted_messages(
+    memory_state: &MemoryState<FsSessionStore>,
+    session_id: &str,
+) -> Result<Vec<crate::types::Message>> {
+    let entries = memory_state
+        .inner_memory()
+        .load_all(session_id)
+        .await
+        .map_err(|e| format!("store load should succeed: {e:?}"))?;
+    Ok(entries
+        .iter()
+        .filter_map(|e| match e {
+            StoreEntry::Message(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect())
+}
+
+/// Extract the first Text content string from a User or Assistant message.
+fn message_text(msg: &crate::types::Message) -> Option<String> {
+    match msg {
+        crate::types::Message::User { content } => content.iter().find_map(|c| {
+            if let crate::types::UserContent::Text(t) = c {
+                Some(t.text.clone())
+            } else {
+                None
+            }
+        }),
+        crate::types::Message::Assistant { content, .. } => content.iter().find_map(|c| {
+            if let crate::types::AssistantContent::Text(t) = c {
+                Some(t.text.clone())
+            } else {
+                None
+            }
+        }),
+        crate::types::Message::System { .. } => None,
+    }
+}
+
+/// Count messages whose first text content starts with the provider-feedback
+/// prefix.
+fn feedback_message_count(messages: &[crate::types::Message]) -> usize {
+    messages
+        .iter()
+        .filter(|m| {
+            message_text(m).is_some_and(|t| {
+                t.starts_with(crate::conversation::turn::feedback::FEEDBACK_PREFIX)
+            })
+        })
+        .count()
 }

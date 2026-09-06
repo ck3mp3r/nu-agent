@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 use nu_protocol::{LabeledError, Span, Value};
 use rig::memory::ConversationMemory;
 
-use crate::bus::{Bus, LlmEvent, TurnEvent};
+use super::feedback::{build_feedback_message, is_model_correctable};
+use crate::bus::{Bus, LlmEvent, TurnEvent, WarningEvent};
 use crate::config::{Config, defaults};
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::managers::SessionManager;
@@ -147,9 +148,14 @@ where
         let saved_tool_definitions = self.tool_infra.visible_tool_definitions.clone();
 
         let mut attempt = 0u8;
+        // Per-turn feedback budget for model-correctable provider failures,
+        // independent of the backoff `attempt` counter: feedback retries never
+        // consume the backoff budget and vice versa.
+        let mut feedback_retries = 0u8;
         let visitor_result = loop {
-            // Restore tool definitions on retry attempts
-            if attempt > 0 {
+            // Restore tool definitions on retry attempts (backoff or feedback:
+            // the previous attempt consumed them via std::mem::take)
+            if attempt > 0 || feedback_retries > 0 {
                 self.tool_infra.visible_tool_definitions = saved_tool_definitions.clone();
             }
 
@@ -203,6 +209,30 @@ where
                         kind.is_retryable(),
                         ctx.last_known_history.len()
                     );
+                    // Feedback retry: model-correctable provider failures get
+                    // one re-run per feedback message, capped per turn by
+                    // MAX_PROVIDER_FEEDBACK_RETRIES. The kinds are disjoint
+                    // from the backoff branch's retryable kinds, so the two
+                    // budgets never interact.
+                    if is_model_correctable(kind)
+                        && feedback_retries < defaults::MAX_PROVIDER_FEEDBACK_RETRIES
+                        && has_partial_history
+                        && let Some(session_id) = final_session_id
+                    {
+                        feedback_retries += 1;
+                        let feedback = build_feedback_message(kind, msg);
+                        log::warn!(
+                            "Model-correctable error ({kind:?}), feedback retry {feedback_retries}/{}.",
+                            defaults::MAX_PROVIDER_FEEDBACK_RETRIES
+                        );
+                        self.append_to_memory_or_warn(
+                            session_id,
+                            vec![Message::user(feedback)],
+                            "provider feedback retry",
+                        )
+                        .await;
+                        continue;
+                    }
                     if kind.is_retryable()
                         && attempt < self.config.max_retries.unwrap_or(defaults::MAX_RETRIES)
                         && has_partial_history
@@ -278,17 +308,12 @@ where
                     );
                     if !delta.is_empty() {
                         let patched = inject_missing_tool_results(delta);
-                        if let Err(mem_err) = self
-                            .memory_state
-                            .memory_mut()
-                            .append(session_id, patched)
-                            .await
-                        {
-                            log::warn!(
-                                "Failed to update context for failed turn (path A history): {}",
-                                mem_err
-                            );
-                        }
+                        self.append_to_memory_or_warn(
+                            session_id,
+                            patched,
+                            "recovered history for failed turn (path A)",
+                        )
+                        .await;
                     }
                 }
                 let msg_preview = &msg[..msg.len().min(200)];
@@ -310,17 +335,12 @@ where
                     );
                     if !delta.is_empty() {
                         let patched = inject_missing_tool_results(delta);
-                        if let Err(mem_err) = self
-                            .memory_state
-                            .memory_mut()
-                            .append(session_id, patched)
-                            .await
-                        {
-                            log::warn!(
-                                "Failed to update context for unknown tool turn: {}",
-                                mem_err
-                            );
-                        }
+                        self.append_to_memory_or_warn(
+                            session_id,
+                            patched,
+                            "recovered history for unknown tool turn",
+                        )
+                        .await;
                     }
                 }
                 log::warn!("Unknown tool call (retries exhausted): {msg}");
@@ -350,17 +370,12 @@ where
                     if !delta.is_empty() {
                         let patched = inject_missing_tool_results(delta);
                         let patched = close_open_tool_result_block(patched, "[cancelled]");
-                        if let Err(mem_err) = self
-                            .memory_state
-                            .memory_mut()
-                            .append(session_id, patched)
-                            .await
-                        {
-                            log::warn!(
-                                "Failed to update context for cancelled turn (path A): {}",
-                                mem_err
-                            );
-                        }
+                        self.append_to_memory_or_warn(
+                            session_id,
+                            patched,
+                            "recovered history for cancelled turn (path A)",
+                        )
+                        .await;
                     }
                 }
                 // Return a minimal cancelled response (not an error)
@@ -438,17 +453,12 @@ where
                     if !delta.is_empty() {
                         let patched = inject_missing_tool_results(delta);
                         let patched = close_open_tool_result_block(patched, msg);
-                        if let Err(mem_err) = self
-                            .memory_state
-                            .memory_mut()
-                            .append(session_id, patched)
-                            .await
-                        {
-                            log::warn!(
-                                "Failed to persist recovered history on hard error: {}",
-                                mem_err
-                            );
-                        }
+                        self.append_to_memory_or_warn(
+                            session_id,
+                            patched,
+                            "recovered history on hard error",
+                        )
+                        .await;
                     } else {
                         // delta is empty: hook never fired OR error before any new messages
                         // were added. Synthesise a placeholder to maintain the alternating
@@ -458,17 +468,12 @@ where
                             Message::user(prompt.clone()),
                             Message::assistant(format!("[Turn failed: {msg}]")),
                         ];
-                        if let Err(mem_err) = self
-                            .memory_state
-                            .memory_mut()
-                            .append(session_id, fallback)
-                            .await
-                        {
-                            log::warn!(
-                                "Failed to persist error placeholder on hard error: {}",
-                                mem_err
-                            );
-                        }
+                        self.append_to_memory_or_warn(
+                            session_id,
+                            fallback,
+                            "error placeholder on hard error",
+                        )
+                        .await;
                     }
                 }
                 return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
@@ -504,17 +509,12 @@ where
                     if !delta.is_empty() {
                         let patched = inject_missing_tool_results(delta);
                         let patched = close_open_tool_result_block(patched, "[cancelled]");
-                        if let Err(e) = self
-                            .memory_state
-                            .memory_mut()
-                            .append(session_id, patched)
-                            .await
-                        {
-                            log::warn!(
-                                "Failed to update context for cancelled turn (path C): {}",
-                                e
-                            );
-                        }
+                        self.append_to_memory_or_warn(
+                            session_id,
+                            patched,
+                            "recovered history for cancelled turn (path C)",
+                        )
+                        .await;
                     }
                 } else {
                     // Path B: tokio::select cancelled before rig yielded PromptCancelled.
@@ -535,17 +535,12 @@ where
                         if !delta.is_empty() {
                             let patched = inject_missing_tool_results(delta);
                             let patched = close_open_tool_result_block(patched, "[cancelled]");
-                            if let Err(e) = self
-                                .memory_state
-                                .memory_mut()
-                                .append(session_id, patched)
-                                .await
-                            {
-                                log::warn!(
-                                    "Failed to persist cancel path B with last_known_history: {}",
-                                    e
-                                );
-                            }
+                            self.append_to_memory_or_warn(
+                                session_id,
+                                patched,
+                                "recovered history for cancel path B (last known history)",
+                            )
+                            .await;
                         }
                     } else {
                         // True fallback: hook never fired, synthesize minimal placeholder
@@ -554,14 +549,12 @@ where
                         if !turn_result.text.is_empty() {
                             cancelled_messages.push(Message::assistant(turn_result.text.clone()));
                         }
-                        if let Err(e) = self
-                            .memory_state
-                            .memory_mut()
-                            .append(session_id, cancelled_messages)
-                            .await
-                        {
-                            log::warn!("Failed to persist cancel path B fallback: {}", e);
-                        }
+                        self.append_to_memory_or_warn(
+                            session_id,
+                            cancelled_messages,
+                            "cancel path B fallback",
+                        )
+                        .await;
                     }
                 }
             }
@@ -635,6 +628,37 @@ where
         });
 
         Ok(TurnOutcome::Completed)
+    }
+
+    /// Append messages to the session memory, surfacing failures instead of
+    /// dropping them silently. A failed append means this turn's messages are
+    /// NOT in the session store, so the failure is logged at error level and
+    /// surfaced to the user as a `WarningEvent::Message` on the bus warning
+    /// channel. `label` names the append site for the log and the warning.
+    async fn append_to_memory_or_warn(
+        &mut self,
+        session_id: &str,
+        messages: Vec<Message>,
+        label: &str,
+    ) {
+        if let Err(mem_err) = self
+            .memory_state
+            .memory_mut()
+            .append(session_id, messages)
+            .await
+        {
+            log::error!("Failed to append session memory ({label}): {mem_err}");
+            let _ = self
+                .tool_infra
+                .bus
+                .warning()
+                .send(WarningEvent::Message {
+                    message: format!(
+                        "Session memory update failed: {label} — this turn may not be saved."
+                    ),
+                })
+                .await;
+        }
     }
 }
 

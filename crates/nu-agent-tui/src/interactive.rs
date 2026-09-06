@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use nu_agent_core::orchestrator::OrchestratorEvent;
 use nu_agent_core::protocol::{
     contracts::{ProgressUi, UserInputUi},
@@ -342,7 +344,6 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
                         );
                     }
                     if coordinator.state.permission.reduce_permission_event(event) {
-                        coordinator.state.status.message.status_line = "Permission required".to_string();
                         coordinator.state.scroll.scroll_transcript_to_bottom();
                         coordinator.state.ensure_invariants();
                         coordinator.mark_render_needed();
@@ -355,6 +356,11 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
                 let _ = coordinator.render_if_needed(live_terminal);
             }
             _ = render_timer.tick() => {
+                if coordinator.has_pending_status_message()
+                    && coordinator.expire_status_message_if_due(Instant::now())
+                {
+                    coordinator.mark_render_needed();
+                }
                 if coordinator.has_active_animation() {
                     coordinator.mark_render_needed();
                 }

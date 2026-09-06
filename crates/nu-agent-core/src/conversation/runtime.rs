@@ -159,7 +159,7 @@ where
 {
     async fn execute_turn(
         &mut self,
-        bus: &Bus,
+        _bus: &Bus,
         prompt: String,
         context: Option<String>,
         span: Span,
@@ -169,7 +169,7 @@ where
         };
         use crate::hook::{InteractivePermissionResolver, PolicyPermissionResolver};
 
-        self.permission_state.emit_startup_summary_once(bus).await;
+        self.permission_state.emit_startup_summary_once();
 
         // Build system preamble from cached components
         let cwd_str = self.cwd.to_str().map(|s| format!("Working directory: {s}"));

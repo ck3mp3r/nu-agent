@@ -56,7 +56,7 @@ fn completed_event_finalizes_cycle_and_unlocks_input() {
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
     assert!(!state.abort.pending);
-    assert!(state.status.message.status_line.is_empty());
+    assert!(state.status.message.status_line().is_empty());
 }
 
 #[test]

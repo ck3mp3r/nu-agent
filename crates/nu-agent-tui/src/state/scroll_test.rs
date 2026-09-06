@@ -287,7 +287,7 @@ fn test_scroll_state_enter_visual_mode_requires_transcript_focus() {
     // -- Check
     assert!(!entered);
     assert_eq!(
-        status.message.status_line,
+        status.message.status_line(),
         VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS
     );
     assert!(scroll.selection.is_none());
@@ -308,7 +308,7 @@ fn test_scroll_state_enter_visual_mode_starts_selection_at_cursor() {
 
     // -- Check
     assert!(entered);
-    assert_eq!(status.message.status_line, "-- VISUAL --");
+    assert!(status.message.status_line().is_empty());
     let sel = scroll
         .selection
         .as_ref()

@@ -2,7 +2,6 @@ use serde_json::Value as JsonValue;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use super::ToolHandlerError;
 use super::builtin_kinds::BuiltinKind;
 use super::edit::EditTool;
 use super::glob::GlobTool;
@@ -17,6 +16,7 @@ use super::tmux_pane::TmuxPaneTool;
 use super::tmux_session::TmuxSessionTool;
 use super::tmux_window::TmuxWindowTool;
 use super::tree_sitter::{AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool};
+use super::{ToolErrorKind, ToolHandlerError};
 use crate::bus::Bus;
 use crate::tools::limits::truncate_tool_output;
 use crate::types::ToolDefinition;
@@ -52,7 +52,10 @@ pub fn make_dynamic_tool<T: BuiltinTool>(
                     // payload is serialized once, truncated like a success
                     // payload, embedded in the message, and attached as the
                     // model output so the model sees the same JSON it saw
-                    // before the payload became an error.
+                    // before the payload became an error. The handler's
+                    // error kind selects the rig error kind so downstream
+                    // retry and refusal policy sees the real classification.
+                    let kind = e.kind;
                     let message = e.message.clone();
                     let mapped = match e.details {
                         Some(details) => {
@@ -62,10 +65,10 @@ pub fn make_dynamic_tool<T: BuiltinTool>(
                                 ))
                             })?;
                             let truncated = truncate_tool_output(json_str, max_bytes);
-                            ToolExecutionError::provider(format!("{message}: {truncated}"))
+                            execution_error_for_kind(kind, format!("{message}: {truncated}"))
                                 .with_model_output(ToolOutput::text(truncated))
                         }
-                        None => ToolExecutionError::provider(format!("{message}: no details")),
+                        None => execution_error_for_kind(kind, format!("{message}: no details")),
                     };
                     return Err(mapped);
                 }
@@ -110,6 +113,23 @@ pub async fn register_builtin(
     };
     tool_server.add_dynamic_tool(tool).await;
 }
+
+// region:    --- Support
+
+/// Map a handler error kind to the matching rig `ToolExecutionError`
+/// constructor so downstream retry and refusal policy sees the real
+/// classification instead of a flat provider failure.
+fn execution_error_for_kind(kind: ToolErrorKind, message: String) -> ToolExecutionError {
+    match kind {
+        ToolErrorKind::Validation => ToolExecutionError::invalid_args(message),
+        ToolErrorKind::Timeout => ToolExecutionError::timeout(message),
+        ToolErrorKind::Authorization => ToolExecutionError::permission_denied(message),
+        ToolErrorKind::Transport => ToolExecutionError::network(message),
+        ToolErrorKind::Runtime | ToolErrorKind::Unknown => ToolExecutionError::other(message),
+    }
+}
+
+// endregion: --- Support
 
 #[cfg(test)]
 #[path = "builtin_tool_test.rs"]

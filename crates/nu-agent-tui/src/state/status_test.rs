@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crate::state::*;
 use nu_agent_core::bus::WarningEvent;
 use nu_agent_core::orchestrator::UiStateEvent;
@@ -114,12 +116,34 @@ fn reduce_ui_state_event_returns_false_for_unhandled() {
 }
 
 #[test]
-fn reduce_warning_event_message_sets_status_line() {
+fn reduce_warning_event_message_sets_status_line_and_warning_kind() {
     let mut state = AppState::default();
     assert!(state.status.reduce_warning_event(WarningEvent::Message {
         message: "hello".to_string()
     }));
-    assert_eq!(state.status.message.status_line, "hello");
+    assert_eq!(state.status.message.status_line(), "hello");
+    assert_eq!(state.status.message.kind(), StatusMessageKind::Warning);
+}
+
+#[test]
+fn set_message_resets_kind_to_neutral() {
+    let mut state = AppState::default();
+    state.status.message.set_warning("warned");
+    assert_eq!(state.status.message.kind(), StatusMessageKind::Warning);
+
+    state.status.message.set_message("info");
+    assert_eq!(state.status.message.kind(), StatusMessageKind::Neutral);
+}
+
+#[test]
+fn clear_empties_status_line_and_resets_kind_to_neutral() {
+    let mut state = AppState::default();
+    state.status.message.set_warning("warned");
+
+    state.status.message.clear();
+
+    assert!(state.status.message.status_line().is_empty());
+    assert_eq!(state.status.message.kind(), StatusMessageKind::Neutral);
 }
 
 #[test]
@@ -128,4 +152,140 @@ fn reduce_warning_event_turn_error_returns_false() {
     assert!(!state.status.reduce_warning_event(WarningEvent::TurnError {
         message: "boom".to_string()
     }));
+}
+
+#[test]
+fn expired_false_when_written_at_is_none_by_default() {
+    // -- Setup & Fixtures
+    let state = AppState::default();
+
+    // -- Exec & Check
+    // A far-future now proves the None guard: a stamped message would expire.
+    assert!(
+        !state
+            .status
+            .message
+            .expired(Instant::now() + Duration::from_secs(3600))
+    );
+}
+
+#[test]
+fn set_message_stamps_written_at_and_expires_after_neutral_ttl() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+
+    // -- Exec
+    state.status.message.set_message("info");
+
+    // -- Check
+    assert!(!state.status.message.expired(Instant::now()));
+    assert!(
+        state
+            .status
+            .message
+            .expired(Instant::now() + Duration::from_secs(5))
+    );
+}
+
+#[test]
+fn set_warning_stamps_written_at_and_expires_after_warning_ttl() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+
+    // -- Exec
+    state.status.message.set_warning("warned");
+
+    // -- Check
+    assert!(
+        !state
+            .status
+            .message
+            .expired(Instant::now() + Duration::from_secs(5))
+    );
+    assert!(
+        state
+            .status
+            .message
+            .expired(Instant::now() + Duration::from_secs(15))
+    );
+}
+
+#[test]
+fn clear_resets_written_at_so_message_never_expires() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.status.message.set_message("info");
+
+    // -- Exec
+    state.status.message.clear();
+
+    // -- Check
+    // A far-future now proves written_at is None: a stamped message would expire.
+    assert!(
+        !state
+            .status
+            .message
+            .expired(Instant::now() + Duration::from_secs(3600))
+    );
+}
+
+#[test]
+fn expired_false_when_now_is_not_after_written_at() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    let past = Instant::now() - Duration::from_secs(1);
+
+    // -- Exec
+    state.status.message.set_message("info");
+
+    // -- Check
+    // set_message stamps after `past` was captured, so `past` is not after
+    // written_at and the age check must report false, not panic.
+    assert!(!state.status.message.expired(past));
+}
+
+#[test]
+fn test_status_message_is_pending_false_by_default() {
+    // -- Setup & Fixtures
+    let state = AppState::default();
+
+    // -- Exec & Check
+    assert!(!state.status.message.is_pending());
+}
+
+#[test]
+fn test_status_message_is_pending_true_after_set_message() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+
+    // -- Exec
+    state.status.message.set_message("info");
+
+    // -- Check
+    assert!(state.status.message.is_pending());
+}
+
+#[test]
+fn test_status_message_is_pending_true_after_set_warning() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+
+    // -- Exec
+    state.status.message.set_warning("warned");
+
+    // -- Check
+    assert!(state.status.message.is_pending());
+}
+
+#[test]
+fn test_status_message_is_pending_false_after_clear() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.status.message.set_message("info");
+
+    // -- Exec
+    state.status.message.clear();
+
+    // -- Check
+    assert!(!state.status.message.is_pending());
 }

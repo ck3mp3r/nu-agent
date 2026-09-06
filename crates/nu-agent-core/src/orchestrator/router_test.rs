@@ -594,13 +594,6 @@ async fn agent_switch_while_worker_active_is_queued_for_next_turn()
             .as_slice(),
         ["research-agent"]
     );
-    assert!(
-        ui.warnings
-            .lock()
-            .expect("warnings lock")
-            .iter()
-            .any(|w| w == "Agent switch queued for next turn: research-agent")
-    );
     assert_eq!(
         *ui.active_agent_identity
             .lock()

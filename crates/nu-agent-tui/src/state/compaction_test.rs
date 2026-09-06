@@ -352,14 +352,14 @@ fn compaction_block_renders_for_slash_and_auto_triggers() {
 #[test]
 fn compaction_completed_clears_status_line() {
     let mut state = busy_state_with_clean_transcript();
-    state.status.message.status_line = "Thinking...".to_string();
+    state.status.message.set_message("Thinking...");
 
     reduce_compaction(&mut state, completed("test", "...", "summary"));
 
     assert!(
-        state.status.message.status_line.is_empty(),
+        state.status.message.status_line().is_empty(),
         "status_line should be cleared after CompactionCompleted, got: {:?}",
-        state.status.message.status_line
+        state.status.message.status_line()
     );
 }
 
@@ -380,7 +380,7 @@ fn compaction_completed_resets_latest_total_tokens() {
 #[test]
 fn compaction_failed_clears_status_line() {
     let mut state = busy_state_with_clean_transcript();
-    state.status.message.status_line = "Thinking...".to_string();
+    state.status.message.set_message("Thinking...");
 
     reduce_compaction(
         &mut state,
@@ -391,9 +391,9 @@ fn compaction_failed_clears_status_line() {
     );
 
     assert!(
-        state.status.message.status_line.is_empty(),
+        state.status.message.status_line().is_empty(),
         "status_line should be cleared after CompactionFailed, got: {:?}",
-        state.status.message.status_line
+        state.status.message.status_line()
     );
 }
 

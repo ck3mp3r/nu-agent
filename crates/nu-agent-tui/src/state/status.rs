@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use nu_agent_core::bus::WarningEvent;
 use nu_agent_core::orchestrator::UiStateEvent;
 use nu_agent_core::protocol::contracts::McpUsabilityState;
@@ -12,9 +14,64 @@ pub struct StatusState {
     pub(crate) mcp: McpSkillsState,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StatusMessageKind {
+    #[default]
+    Neutral,
+    Warning,
+}
+
+const NEUTRAL_MESSAGE_TTL: Duration = Duration::from_secs(5);
+const WARNING_MESSAGE_TTL: Duration = Duration::from_secs(15);
+
 #[derive(Debug, Clone, Default)]
 pub struct StatusMessage {
-    pub(crate) status_line: String,
+    status_line: String,
+    kind: StatusMessageKind,
+    written_at: Option<Instant>,
+}
+
+impl StatusMessage {
+    pub(crate) fn status_line(&self) -> &str {
+        &self.status_line
+    }
+
+    pub(crate) fn kind(&self) -> StatusMessageKind {
+        self.kind
+    }
+
+    pub(crate) fn is_pending(&self) -> bool {
+        self.written_at.is_some()
+    }
+
+    pub(crate) fn expired(&self, now: Instant) -> bool {
+        let Some(written_at) = self.written_at else {
+            return false;
+        };
+        let ttl = match self.kind {
+            StatusMessageKind::Neutral => NEUTRAL_MESSAGE_TTL,
+            StatusMessageKind::Warning => WARNING_MESSAGE_TTL,
+        };
+        now.duration_since(written_at) >= ttl
+    }
+
+    pub(crate) fn set_message(&mut self, message: impl Into<String>) {
+        self.status_line = message.into();
+        self.kind = StatusMessageKind::Neutral;
+        self.written_at = Some(Instant::now());
+    }
+
+    pub(crate) fn set_warning(&mut self, message: impl Into<String>) {
+        self.status_line = message.into();
+        self.kind = StatusMessageKind::Warning;
+        self.written_at = Some(Instant::now());
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.status_line.clear();
+        self.kind = StatusMessageKind::Neutral;
+        self.written_at = None;
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -136,7 +193,7 @@ impl StatusState {
     pub fn reduce_warning_event(&mut self, event: WarningEvent) -> bool {
         match event {
             WarningEvent::Message { message } => {
-                self.message.status_line = message;
+                self.message.set_warning(message);
                 true
             }
             WarningEvent::TurnError { .. } => false,

@@ -421,7 +421,7 @@ async fn session_switch_success_clears_and_hydrates_transcript() {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx,
+        warning_rx: _,
         ui_state_rx,
         session_rx,
         state,
@@ -462,8 +462,6 @@ async fn session_switch_success_clears_and_hydrates_transcript() {
         }),
         "transcript must be re-hydrated"
     );
-    let warnings = take_warnings(warning_rx);
-    assert!(warnings.iter().any(|w| w == "Session switched"));
     let session_events = take_session_events(session_rx);
     assert!(
         session_events.iter().any(|e| {

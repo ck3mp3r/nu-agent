@@ -106,26 +106,18 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
         return (UserAction::Noop, true);
     }
 
-    // Busy-mode Esc escalation: the insert-exit chord arms a fast-confirm
-    // abort, and AbortPending escalates Esc to EscConfirm. This couples input
-    // chords with the orchestrator phase/abort state (lifecycle-owned, not
-    // input state), so it is resolved here; InputState handles all remaining
-    // mode-specific rewriting below.
+    // Busy-mode Esc escalation: AbortPending escalates Esc to EscConfirm. This
+    // couples the orchestrator phase/abort state (lifecycle-owned, not input
+    // state) with the reducer, so it is resolved here; InputState handles all
+    // remaining mode-specific rewriting below.
     if state.phase != UiPhase::Idle
         && matches!(action, UserAction::Esc)
         && state.input.mode != InputMode::Insert
     {
-        let fast_confirm_after_mode_switch = state.input.insert_exit_pending_j();
         state.input.clear_normal_pending_key();
         if state.phase == UiPhase::AbortPending && state.abort.pending {
             state.input.clear_insert_exit_pending_j();
             return (UserAction::EscConfirm, false);
-        }
-        if state.phase == UiPhase::Busy && fast_confirm_after_mode_switch {
-            state.input.clear_insert_exit_pending_j();
-            state.enter_insert_mode();
-            state.request_abort_confirmation();
-            return (UserAction::EscConfirm, true);
         }
         state.input.clear_insert_exit_pending_j();
         return (UserAction::Esc, false);

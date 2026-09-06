@@ -16,6 +16,11 @@ pub const MAX_TOOL_RESULT_BYTES: usize = 20_000;
 /// Default maximum retry attempts for transient errors.
 pub const MAX_RETRIES: u8 = 3;
 
+/// Default maximum provider-feedback retries per user turn for
+/// model-correctable errors. Each retry appends one model-facing feedback
+/// message to the session memory and re-runs the turn once.
+pub const MAX_PROVIDER_FEEDBACK_RETRIES: u8 = 2;
+
 /// Default base backoff in ms, doubles each attempt, capped at 30_000ms.
 pub const RETRY_BASE_DELAY_MS: u64 = 1000;
 

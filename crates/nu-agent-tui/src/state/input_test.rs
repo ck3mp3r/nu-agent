@@ -104,7 +104,7 @@ fn test_input_state_handle_action_idle_visual_y_maps_to_yank() {
 }
 
 #[test]
-fn test_input_state_handle_action_busy_insert_esc_exits_to_normal_and_arms_chord() {
+fn test_input_state_handle_action_busy_insert_esc_exits_to_normal_and_returns_esc() {
     // -- Setup & Fixtures
     let mut input = InputState::default();
 
@@ -112,10 +112,10 @@ fn test_input_state_handle_action_busy_insert_esc_exits_to_normal_and_arms_chord
     let (action, changed) = input.handle_action(UserAction::Esc, false);
 
     // -- Check
-    assert_eq!(action, UserAction::Noop);
+    assert_eq!(action, UserAction::Esc);
     assert!(changed);
     assert_eq!(input.mode, InputMode::Normal);
-    assert!(input.insert_exit_pending_j());
+    assert!(!input.insert_exit_pending_j());
 }
 
 #[test]

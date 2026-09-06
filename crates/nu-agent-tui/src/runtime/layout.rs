@@ -2,12 +2,18 @@
 
 /// Compute the status bar height based on whether left and right content fit
 /// within the available inner width.
-pub fn compute_status_h(available_inner_w: usize, left_width: usize, right_width: usize) -> u16 {
-    if right_width == 0 || left_width + right_width <= available_inner_w {
+pub fn compute_status_h(
+    available_inner_w: usize,
+    left_width: usize,
+    right_width: usize,
+    has_message: bool,
+) -> u16 {
+    let base = if right_width == 0 || left_width + right_width <= available_inner_w {
         1
     } else {
         2
-    }
+    };
+    base + u16::from(has_message)
 }
 
 /// Compute the bottom box height from its queue, input, and status contents.

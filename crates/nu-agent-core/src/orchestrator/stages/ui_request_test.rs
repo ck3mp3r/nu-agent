@@ -213,12 +213,6 @@ async fn switch_model_queues_when_worker_active() {
         "no command should be dispatched"
     );
     assert!(!p.stage.has_blocking_pending());
-    let warnings = take_warnings(p.warning_rx);
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w == "Model switch queued for next turn: test-model")
-    );
 }
 
 #[tokio::test]
@@ -276,12 +270,6 @@ async fn switch_agent_queues_when_worker_active() {
     assert!(
         recv_command(p.worker_rx).is_none(),
         "no command should be dispatched"
-    );
-    let warnings = take_warnings(p.warning_rx);
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w == "Agent switch queued for next turn: research-agent")
     );
 }
 
@@ -571,8 +559,6 @@ async fn blocking_response_model_switch_success() {
             .iter()
             .any(|e| matches!(e, UiStateEvent::SetContextWindowMaxTokens(Some(128000))))
     );
-    let warnings = take_warnings(p.warning_rx);
-    assert!(warnings.iter().any(|w| w == "Model switched: test-model"));
     assert!(!p.stage.has_blocking_pending());
 }
 
@@ -677,12 +663,6 @@ async fn blocking_response_agent_switch_success() {
             .iter()
             .any(|e| matches!(e, UiStateEvent::SetContextWindowMaxTokens(Some(200000))))
     );
-    let warnings = take_warnings(p.warning_rx);
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w == "Agent switched to: research-agent")
-    );
     assert!(!p.stage.has_blocking_pending());
 }
 
@@ -774,8 +754,6 @@ async fn blocking_response_session_switch_success() {
     assert!(ui_events.iter().any(
         |e| matches!(e, UiStateEvent::HydrateTranscript { messages, .. } if messages.len() == 1)
     ));
-    let warnings = take_warnings(p.warning_rx);
-    assert!(warnings.iter().any(|w| w == "Session switched"));
     let session_events = take_session_events(p.session_rx);
     assert!(session_events.iter().any(|e| matches!(e, SessionEvent::Switched { to_session_id, .. } if to_session_id == "session-1")));
     assert!(!p.stage.has_blocking_pending());
@@ -1035,13 +1013,6 @@ async fn switch_model_queue_last_write_wins() -> Result<()> {
     assert!(recv_command(p.worker_rx).is_none());
     assert!(!p.stage.has_blocking_pending());
 
-    let warnings = take_warnings(p.warning_rx);
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w == "Model switch queued for next turn: second-model")
-    );
-
     p.ctx_state.worker_active = false;
     let mut ctx = make_ctx(
         p.worker_tx,
@@ -1097,13 +1068,6 @@ async fn switch_agent_queue_last_write_wins() -> Result<()> {
 
     assert!(recv_command(p.worker_rx).is_none());
     assert!(!p.stage.has_blocking_pending());
-
-    let warnings = take_warnings(p.warning_rx);
-    assert!(
-        warnings
-            .iter()
-            .any(|w| w == "Agent switch queued for next turn: agent-b")
-    );
 
     p.ctx_state.worker_active = false;
     let mut ctx = make_ctx(

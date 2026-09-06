@@ -10,7 +10,7 @@ use nu_agent_core::transcript::items::{ToolInvocation, TranscriptEntryKind};
 use nu_agent_core::transcript::renderer::ItemStatus;
 
 use super::transcript_store::TranscriptStore;
-use super::{AppState, StatusState, ToolCallLine, ToolCallStatus, TranscriptRole};
+use super::{AppState, ToolCallLine, ToolCallStatus, TranscriptRole};
 
 /// Tool-domain state extracted from `AppState`: the tool-call rows tracked by
 /// key, the active (in-progress) call ids per key, the next call id, and the
@@ -36,33 +36,22 @@ impl Default for ToolState {
 
 impl ToolState {
     /// Reduce a tool lifecycle event. Returns whether the TUI changed.
-    pub fn reduce_tool_event(
-        &mut self,
-        store: &mut TranscriptStore,
-        status: &mut StatusState,
-        event: ToolEvent,
-    ) -> bool {
+    pub fn reduce_tool_event(&mut self, store: &mut TranscriptStore, event: ToolEvent) -> bool {
         match event {
             ToolEvent::Started {
                 name, arguments, ..
-            } => self.tool_started(store, status, &name, &arguments),
+            } => self.tool_started(store, &name, &arguments),
             ToolEvent::Completed {
                 name,
                 arguments,
                 success,
                 display,
                 ..
-            } => self.tool_completed(store, status, &name, &arguments, success, display),
+            } => self.tool_completed(store, &name, &arguments, success, display),
         }
     }
 
-    fn tool_started(
-        &mut self,
-        store: &mut TranscriptStore,
-        status: &mut StatusState,
-        name: &str,
-        arguments: &str,
-    ) -> bool {
+    fn tool_started(&mut self, store: &mut TranscriptStore, name: &str, arguments: &str) -> bool {
         // Push closing spacer for previous block (if not already a Spacer) + starting
         // spacer, but only when starting a new tool block (not continuing from a
         // previous tool call in the same block). Tool calls within a block have no
@@ -92,14 +81,12 @@ impl ToolState {
             }
         }
         self.start_tool_call(store, name, arguments);
-        status.message.status_line = format!("Tool: {name}");
         true
     }
 
     fn tool_completed(
         &mut self,
         store: &mut TranscriptStore,
-        status: &mut StatusState,
         name: &str,
         arguments: &str,
         success: bool,
@@ -115,7 +102,6 @@ impl ToolState {
         }
 
         // NO push_spacer() here — tool calls within the same block have no spacers between them
-        status.message.status_line = "Thinking...".to_string();
         true
     }
 
@@ -200,12 +186,10 @@ pub(crate) fn note_permission_request_display(
 }
 
 /// Single dispatch seam for the tool domain: owns the
-/// (`ToolState`, `TranscriptStore`, `StatusState`) borrow split so both event
-/// paths (bus receivers and the protocol `UiEvent` dispatch) share it.
+/// (`ToolState`, `TranscriptStore`) borrow split so both event paths (bus
+/// receivers and the protocol `UiEvent` dispatch) share it.
 pub(crate) fn dispatch_tool_event(state: &mut AppState, event: ToolEvent) -> bool {
-    state
-        .tool
-        .reduce_tool_event(&mut state.transcript, &mut state.status, event)
+    state.tool.reduce_tool_event(&mut state.transcript, event)
 }
 
 pub(crate) fn append_direct_tool_display(

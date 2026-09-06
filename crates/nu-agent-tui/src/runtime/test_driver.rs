@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use nu_agent_core::bus::{Bus, ToolEvent};
 use nu_agent_core::orchestrator::OrchestratorEvent;
+use nu_agent_core::transcript::items::TranscriptEntryKind;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tokio::sync::mpsc;
@@ -259,11 +260,16 @@ async fn render_loop_driver_routes_tool_event_through_bus_tool_arm() -> Result<(
         })])
         .await?;
 
-    // -- Check: the loop's tool arm reduced the event (status line set by
-    // dispatch_tool_event).
-    assert_eq!(
-        driver.state().status.message.status_line,
-        "Tool: sentinel_tool",
+    // -- Check: the loop's tool arm reduced the event (the transcript records
+    // the tool).
+    assert!(
+        driver
+            .state()
+            .transcript
+            .entries
+            .iter()
+            .any(|entry| matches!(entry.kind, TranscriptEntryKind::Tool(_))
+                && entry.text().contains("sentinel_tool")),
         "tool event must reach the coordinator through the real bus arm"
     );
     Ok(())

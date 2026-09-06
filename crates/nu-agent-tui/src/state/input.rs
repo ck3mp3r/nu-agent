@@ -328,7 +328,8 @@ impl InputState {
 
     /// Busy insert-mode rewriting: j/k exit chords transition to normal mode
     /// directly (the reducer's chord arm only acts while idle), and Esc exits
-    /// to normal mode while arming the fast-confirm chord.
+    /// to normal mode and is escalated to the caller (abort-confirmation
+    /// coupling).
     fn handle_busy_insert_action(&mut self, action: UserAction) -> (UserAction, bool) {
         match action {
             UserAction::ToggleCommandPalette => {
@@ -360,8 +361,7 @@ impl InputState {
                 self.clear_insert_exit_pending_j();
                 self.clear_normal_pending_key();
                 self.enter_normal_mode();
-                self.set_insert_exit_pending_j();
-                (UserAction::Noop, true)
+                (UserAction::Esc, true)
             }
             other => {
                 self.clear_insert_exit_pending_j();

@@ -118,7 +118,7 @@ fn key(key: TerminalKey) -> DriveEvent {
 fn idle_startup_does_not_show_spinner() {
     let coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     assert_ne!(
-        coordinator.state().status.message.status_line,
+        coordinator.state().status.message.status_line(),
         "Thinking..."
     );
     assert!(!coordinator.state().input_locked);
@@ -388,7 +388,7 @@ async fn immediate_slash_commands_do_not_set_busy_or_spinner() -> Result<()> {
             "immediate command must not activate prompt lifecycle"
         );
         assert!(
-            driver.state().status.message.status_line != "Thinking...",
+            driver.state().status.message.status_line() != "Thinking...",
             "spinner lane status must not be set for immediate slash commands"
         );
     }
@@ -411,10 +411,7 @@ async fn coordinator_esc_then_esc_requests_cancel_signal() -> Result<()> {
         .await?;
 
     // -- Check
-    assert_eq!(
-        driver.state().status.message.status_line,
-        "Abort requested."
-    );
+    assert!(driver.state().status.message.status_line().is_empty());
     assert!(driver.coordinator().take_cancel_requested());
     Ok(())
 }
@@ -759,7 +756,7 @@ async fn tick_and_completed_events_update_status_only_without_touching_input_buf
     driver.coordinator_mut().drain_transport();
 
     // -- Check
-    assert_eq!(driver.state().status.message.status_line, "Thinking...");
+    assert!(driver.state().status.message.status_line().is_empty());
 
     // -- Exec
     driver
@@ -768,7 +765,7 @@ async fn tick_and_completed_events_update_status_only_without_touching_input_buf
     driver.coordinator_mut().drain_transport();
 
     // -- Check
-    assert!(driver.state().status.message.status_line.is_empty());
+    assert!(driver.state().status.message.status_line().is_empty());
     Ok(())
 }
 
@@ -782,6 +779,8 @@ async fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() -> R
         .advance(&[key(TerminalKey::Char('k')), key(TerminalKey::Char('9'))])
         .await?;
 
+    // -- Exec: mark the turn busy so the model activity label reports it.
+    driver.coordinator_mut().state.phase = UiPhase::Busy;
     driver.coordinator_mut().enqueue_ui_event(UiEvent::Tick);
     driver.coordinator_mut().drain_transport();
 
@@ -1301,36 +1300,6 @@ async fn idle_q_does_not_quit_through_dispatch_path() -> Result<()> {
 
     // -- Check
     assert!(!driver.coordinator().quit_requested());
-    Ok(())
-}
-
-#[tokio::test]
-async fn idle_escape_status_copy_mentions_ctrlc_only_not_q() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut driver = RenderLoopDriver::new(120, 30);
-
-    // -- Exec
-    driver.advance(&[key(TerminalKey::Esc)]).await?;
-
-    // -- Check
-    assert!(driver.state().status.message.status_line.contains("Ctrl+C"));
-    assert!(
-        !driver
-            .state()
-            .status
-            .message
-            .status_line
-            .to_ascii_lowercase()
-            .contains("press q")
-    );
-    assert!(
-        !driver
-            .state()
-            .status
-            .message
-            .status_line
-            .contains("q to quit")
-    );
     Ok(())
 }
 
@@ -1875,8 +1844,12 @@ async fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() -
     // After abort, the restored text from the cancelled prompt is applied to
     // the textarea by the render loop's terminal arm on the next terminal
     // event. In the real loop the first prompt was already handed to the
-    // orchestrator, so only "b" is restored.
-    driver.advance(&[key(TerminalKey::Char('c'))]).await?;
+    // orchestrator, so only "b" is restored. The Esc-Esc abort leaves the
+    // input in Normal mode, so the loop re-enters Insert mode with 'i' before
+    // typing resumes.
+    driver
+        .advance(&[key(TerminalKey::Char('i')), key(TerminalKey::Char('c'))])
+        .await?;
     assert_eq!(
         driver.coordinator_mut().textarea.lines().join("\n"),
         "bc",
@@ -4477,26 +4450,6 @@ fn has_active_animation_true_when_abort_pending() {
 }
 
 #[test]
-fn has_active_animation_true_when_thinking_status_line() {
-    // -- Setup & Fixtures
-    let mut coord = RuntimeCoordinator::new(80, 24, None);
-    coord.state.status.message.status_line = "Thinking...".to_string();
-
-    // -- Exec & Check
-    assert!(coord.has_active_animation());
-}
-
-#[test]
-fn has_active_animation_true_when_tool_status_line() {
-    // -- Setup & Fixtures
-    let mut coord = RuntimeCoordinator::new(80, 24, None);
-    coord.state.status.message.status_line = "Tool: grep".to_string();
-
-    // -- Exec & Check
-    assert!(coord.has_active_animation());
-}
-
-#[test]
 fn has_active_animation_true_when_compaction_in_progress() {
     // -- Setup & Fixtures
     let mut coord = RuntimeCoordinator::new(80, 24, None);
@@ -4538,6 +4491,74 @@ fn has_active_animation_false_when_fully_idle() {
 
     // -- Exec & Check
     assert!(!coord.has_active_animation());
+}
+
+#[test]
+fn expire_status_message_if_due_clears_expired_message() {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(80, 24, None);
+    coord.state.status.message.set_message("stale");
+
+    // -- Exec & Check
+    assert!(coord.expire_status_message_if_due(Instant::now() + Duration::from_secs(5)));
+    assert!(coord.state.status.message.status_line().is_empty());
+}
+
+#[test]
+fn expire_status_message_if_due_keeps_fresh_message() {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(80, 24, None);
+    coord.state.status.message.set_message("fresh");
+
+    // -- Exec & Check
+    assert!(!coord.expire_status_message_if_due(Instant::now()));
+    assert_eq!(coord.state.status.message.status_line(), "fresh");
+}
+
+#[test]
+fn expire_status_message_if_due_keeps_warning_within_ttl() {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(80, 24, None);
+    coord.state.status.message.set_warning("warned");
+
+    // -- Exec & Check
+    assert!(!coord.expire_status_message_if_due(Instant::now() + Duration::from_secs(5)));
+    assert_eq!(coord.state.status.message.status_line(), "warned");
+}
+
+#[test]
+fn test_coordinator_has_pending_status_message_false_when_fresh() {
+    // -- Setup & Fixtures
+    let coord = RuntimeCoordinator::new(80, 24, None);
+
+    // -- Exec & Check
+    assert!(!coord.has_pending_status_message());
+}
+
+#[test]
+fn test_coordinator_has_pending_status_message_true_after_set_message() {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(80, 24, None);
+
+    // -- Exec
+    coord.state.status.message.set_message("info");
+
+    // -- Check
+    assert!(coord.has_pending_status_message());
+}
+
+#[test]
+fn test_coordinator_has_pending_status_message_false_after_expiry_clears() {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(80, 24, None);
+    coord.state.status.message.set_message("stale");
+
+    // -- Exec
+    let expired = coord.expire_status_message_if_due(Instant::now() + Duration::from_secs(5));
+
+    // -- Check
+    assert!(expired);
+    assert!(!coord.has_pending_status_message());
 }
 
 #[test]
@@ -5222,7 +5243,7 @@ fn reduce_warning_event_message_sets_status_line_and_marks_render_needed() {
 
     // -- Check
     assert!(handled, "StatusState must claim plain warning messages");
-    assert_eq!(coordinator.state.status.message.status_line, "warned");
+    assert_eq!(coordinator.state.status.message.status_line(), "warned");
     assert!(
         coordinator.render_needed(),
         "handled warnings must mark the frame dirty"
@@ -5350,7 +5371,7 @@ fn permission_rx_caller_requested_applies_all_effects() {
     // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
     coordinator.set_render_needed(false);
-    coordinator.state.status.message.status_line = "idle".to_string();
+    coordinator.state.status.message.set_message("idle");
     coordinator.state.scroll.following_tail = false;
 
     let event = PermissionEvent::Requested {
@@ -5379,7 +5400,6 @@ fn permission_rx_caller_requested_applies_all_effects() {
     }
     let handled = coordinator.state.permission.reduce_permission_event(event);
     if handled {
-        coordinator.state.status.message.status_line = "Permission required".to_string();
         coordinator.state.scroll.scroll_transcript_to_bottom();
         coordinator.state.ensure_invariants();
         coordinator.mark_render_needed();
@@ -5387,10 +5407,7 @@ fn permission_rx_caller_requested_applies_all_effects() {
 
     // -- Check
     assert!(handled, "Requested must reduce to true");
-    assert_eq!(
-        coordinator.state.status.message.status_line,
-        "Permission required"
-    );
+    assert_eq!(coordinator.state.status.message.status_line(), "idle");
     assert!(
         coordinator.state.scroll.following_tail,
         "Requested must scroll the transcript to the bottom"
@@ -5424,13 +5441,12 @@ fn permission_rx_caller_decision_variants_skip_effects() {
         // -- Setup & Fixtures
         let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
         coordinator.set_render_needed(false);
-        coordinator.state.status.message.status_line = "idle".to_string();
+        coordinator.state.status.message.set_message("idle");
         coordinator.state.scroll.following_tail = false;
 
         // -- Exec
         let handled = coordinator.state.permission.reduce_permission_event(event);
         if handled {
-            coordinator.state.status.message.status_line = "Permission required".to_string();
             coordinator.state.scroll.scroll_transcript_to_bottom();
             coordinator.state.ensure_invariants();
             coordinator.mark_render_needed();
@@ -5439,7 +5455,8 @@ fn permission_rx_caller_decision_variants_skip_effects() {
         // -- Check
         assert!(!handled, "decision variants must reduce to false");
         assert_eq!(
-            coordinator.state.status.message.status_line, "idle",
+            coordinator.state.status.message.status_line(),
+            "idle",
             "decision variants must leave status_line unchanged"
         );
         assert!(
@@ -5505,4 +5522,209 @@ fn permission_rx_caller_pre_authorize_display_applied_before_reduce() {
         coordinator.state.permission.has_prompt(),
         "reduce must still open the prompt after the display is applied"
     );
+}
+
+#[tokio::test]
+async fn status_section_wrap_message_renders_rows_in_strictly_increasing_order() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let repo = temp_dir.path().join("repo");
+    fs::create_dir_all(&repo).expect("repo dir");
+    init_repo_with_branch(&repo, "feature/status-lane-wrap");
+
+    let mut driver = RenderLoopDriver::new(60, 30);
+    driver
+        .coordinator_mut()
+        .set_repo_branch_caller_cwd(Some(repo));
+    driver
+        .coordinator_mut()
+        .state
+        .status
+        .identity
+        .active_model_identity =
+        "openai/gpt-5-ultra-long-model-identity-that-forces-wrap-0123456789".to_string();
+    driver
+        .coordinator_mut()
+        .state
+        .status
+        .message
+        .set_message("status-message-sentinel");
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check
+    let buffer = driver.buffer_text();
+    let lines: Vec<&str> = buffer.lines().collect();
+    let msg_row = lines
+        .iter()
+        .position(|l| l.contains("status-message-sentinel"))
+        .ok_or("should find message row")?;
+    let left_row = lines
+        .iter()
+        .position(|l| l.contains("0123456789"))
+        .ok_or("should find left lane row")?;
+    let right_row = lines
+        .iter()
+        .position(|l| l.contains("feature/status-lane-wrap"))
+        .ok_or("should find right lane row")?;
+    assert!(
+        msg_row < left_row && left_row < right_row,
+        "wrap+message must paint message < left < right, got msg={msg_row} left={left_row} right={right_row}\n{buffer}",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn status_section_fit_message_renders_message_above_single_lane_row() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let repo = temp_dir.path().join("repo");
+    fs::create_dir_all(&repo).expect("repo dir");
+    init_repo_with_branch(&repo, "feature/status-lane-wrap");
+
+    let mut driver = RenderLoopDriver::new(120, 30);
+    driver
+        .coordinator_mut()
+        .set_repo_branch_caller_cwd(Some(repo));
+    driver
+        .coordinator_mut()
+        .state
+        .status
+        .identity
+        .active_model_identity = "gpt-5".to_string();
+    driver
+        .coordinator_mut()
+        .state
+        .status
+        .message
+        .set_message("status-message-sentinel");
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check
+    let buffer = driver.buffer_text();
+    let lines: Vec<&str> = buffer.lines().collect();
+    let msg_row = lines
+        .iter()
+        .position(|l| l.contains("status-message-sentinel"))
+        .ok_or("should find message row")?;
+    let lane_row = lines
+        .iter()
+        .position(|l| l.contains("gpt-5"))
+        .ok_or("should find lane row")?;
+    let right_row = lines
+        .iter()
+        .position(|l| l.contains("feature/status-lane-wrap"))
+        .ok_or("should find right lane row")?;
+    assert!(
+        msg_row < lane_row,
+        "fit+message must paint message above the lane, got msg={msg_row} lane={lane_row}\n{buffer}",
+    );
+    assert_eq!(
+        lane_row, right_row,
+        "fit+message must paint left and right fragments on the same row\n{buffer}",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn status_section_wrap_no_message_renders_lanes_below_input_divider() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let repo = temp_dir.path().join("repo");
+    fs::create_dir_all(&repo).expect("repo dir");
+    init_repo_with_branch(&repo, "feature/status-lane-wrap");
+
+    let mut driver = RenderLoopDriver::new(60, 30);
+    driver
+        .coordinator_mut()
+        .set_repo_branch_caller_cwd(Some(repo));
+    driver
+        .coordinator_mut()
+        .state
+        .status
+        .identity
+        .active_model_identity =
+        "openai/gpt-5-ultra-long-model-identity-that-forces-wrap-0123456789".to_string();
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check
+    let buffer = driver.buffer_text();
+    let lines: Vec<&str> = buffer.lines().collect();
+    let div_row = lines
+        .iter()
+        .position(|l| l.contains("├"))
+        .ok_or("should find input divider row")?;
+    let left_row = lines
+        .iter()
+        .position(|l| l.contains("0123456789"))
+        .ok_or("should find left lane row")?;
+    let right_row = lines
+        .iter()
+        .position(|l| l.contains("feature/status-lane-wrap"))
+        .ok_or("should find right lane row")?;
+    assert_eq!(
+        left_row,
+        div_row + 1,
+        "wrap+no-message must paint left lane immediately below the input divider\n{buffer}",
+    );
+    assert_eq!(
+        right_row,
+        left_row + 1,
+        "wrap+no-message must paint right lane immediately below the left lane\n{buffer}",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn status_section_fit_no_message_renders_single_lane_below_input_divider() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let repo = temp_dir.path().join("repo");
+    fs::create_dir_all(&repo).expect("repo dir");
+    init_repo_with_branch(&repo, "feature/status-lane-wrap");
+
+    let mut driver = RenderLoopDriver::new(120, 30);
+    driver
+        .coordinator_mut()
+        .set_repo_branch_caller_cwd(Some(repo));
+    driver
+        .coordinator_mut()
+        .state
+        .status
+        .identity
+        .active_model_identity = "gpt-5".to_string();
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check
+    let buffer = driver.buffer_text();
+    let lines: Vec<&str> = buffer.lines().collect();
+    let div_row = lines
+        .iter()
+        .position(|l| l.contains("├"))
+        .ok_or("should find input divider row")?;
+    let lane_row = lines
+        .iter()
+        .position(|l| l.contains("gpt-5"))
+        .ok_or("should find lane row")?;
+    let right_row = lines
+        .iter()
+        .position(|l| l.contains("feature/status-lane-wrap"))
+        .ok_or("should find right lane row")?;
+    assert_eq!(
+        lane_row,
+        div_row + 1,
+        "fit+no-message must paint the lane immediately below the input divider\n{buffer}",
+    );
+    assert_eq!(
+        lane_row, right_row,
+        "fit+no-message must paint left and right fragments on the same row\n{buffer}",
+    );
+    Ok(())
 }
