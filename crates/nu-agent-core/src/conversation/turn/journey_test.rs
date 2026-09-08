@@ -598,6 +598,62 @@ fn assert_no_interrupted(msgs: &[Message]) {
 }
 
 // ---------------------------------------------------------------------------
+// Trace-logging fixture
+// ---------------------------------------------------------------------------
+
+/// A no-op `log::Log` used to enable trace logging in tests so the
+/// `log_enabled!` gate in `HookChain::on_tool_result` actually runs the
+/// preview construction (the code under test).
+struct TraceNoopLogger;
+
+impl log::Log for TraceNoopLogger {
+    fn enabled(&self, _metadata: &log::Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, _record: &log::Record) {}
+
+    fn flush(&self) {}
+}
+
+static TRACE_LOGGER_INSTALL: std::sync::Once = std::sync::Once::new();
+
+/// Install the no-op trace logger exactly once per test binary. Without a
+/// logger, `log::max_level()` is Off and `log_enabled!` skips the preview
+/// construction in `on_tool_result`, so the byte-slice defect is latent.
+fn install_trace_logger() {
+    TRACE_LOGGER_INSTALL.call_once(|| {
+        log::set_boxed_logger(Box::new(TraceNoopLogger)).ok();
+        log::set_max_level(log::LevelFilter::Trace);
+    });
+}
+
+/// A `nu__shell` mock tool that returns a multi-byte UTF-8 result whose byte
+/// 2000 falls inside a 2-byte char — the exact shape that panicked the
+/// trace-log preview in `HookChain::on_tool_result` before the fix.
+async fn nu_shell_multibyte_tool() -> ToolInfra {
+    let handle = rig::tool::server::ToolServer::new().run();
+    let tool = rig::tool::DynamicTool::new(
+        "nu__shell",
+        "Execute a Nushell command",
+        serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
+        move |_context, _args| {
+            let output = format!("{}é rest of the output", "a".repeat(1999));
+            Box::pin(async move { Ok(rig::tool::ToolOutput::text(output)) })
+        },
+    );
+    handle.add_dynamic_tool(tool).await;
+    default_tool_infra(
+        handle,
+        vec![rig::completion::ToolDefinition {
+            name: "nu__shell".to_string(),
+            description: "Execute a Nushell command".to_string(),
+            parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
+        }],
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Smoke test
 // ---------------------------------------------------------------------------
 
@@ -2288,5 +2344,49 @@ async fn journey_doom_loop_stop_surfaces_reason() -> Result<()> {
         "persisted history must contain the skip-result ToolResults; got: {msgs:?}"
     );
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Scenario: multi-byte UTF-8 tool output through the trace-log preview
+// ---------------------------------------------------------------------------
+
+/// Regression: `HookChain::on_tool_result` builds a trace-log preview via
+/// `&result_text[..2000]`. When byte 2000 falls inside a multi-byte UTF-8 char
+/// and trace logging is enabled, the slice panicked and killed the turn. The
+/// full-turn path is the only way to reach that code: `log` macros skip
+/// argument evaluation without an installed logger, and `HookContext` has no
+/// public constructor, so the preview can only execute inside a real rig run.
+#[tokio::test]
+async fn journey_tool_result_with_multibyte_utf8_at_byte_2000_does_not_panic() -> Result<()> {
+    // -- Setup & Fixtures
+    install_trace_logger();
+    let mut h = JourneyHarness::new("journey-trace-preview-multibyte");
+
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "nu__shell", serde_json::json!({})),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::Text("done".into()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+
+    // -- Exec & Check
+    // Byte 2000 of the tool result lands inside the 2-byte 'é'; before the
+    // fix the trace preview sliced &result_text[..2000] and panicked here.
+    let (r, _) = h
+        .turn("run it", model, nu_shell_multibyte_tool().await)
+        .await;
+    assert!(
+        r.is_ok(),
+        "turn with multi-byte tool output must not panic: {r:?}"
+    );
+
+    let msgs = h.raw_messages().await?;
+    assert_eq!(msgs.len(), 4, "expected 4 messages, got: {msgs:?}");
+    assert_tool_result_in_msg(&msgs[2], "tc1", "\u{e9} rest of the output")?;
     Ok(())
 }

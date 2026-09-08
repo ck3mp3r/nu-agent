@@ -340,9 +340,10 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         );
         if log::log_enabled!(log::Level::Trace) {
             let preview = if result_text.len() > 2000 {
+                let boundary = result_text.floor_char_boundary(2000);
                 format!(
                     "{}...<truncated {} bytes>",
-                    &result_text[..2000],
+                    &result_text[..boundary],
                     result_text.len()
                 )
             } else {
