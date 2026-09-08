@@ -76,29 +76,3 @@ pub fn input_pane_height_for_content(input: &str, pane_width: u16) -> u16 {
     let content_rows = input_content_row_count(input, content_width);
     content_rows.clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT)
 }
-
-pub fn input_cursor_row_col(input: &str, cursor: usize, content_width: usize) -> (u16, u16) {
-    let width = content_width.max(1);
-    let cursor = cursor.min(input.len());
-    let mut row = 0usize;
-    let mut col = 0usize;
-
-    for ch in input[..cursor].chars() {
-        if ch == '\n' {
-            row += 1;
-            col = 0;
-            continue;
-        }
-
-        col += 1;
-        if col >= width {
-            row += 1;
-            col = 0;
-        }
-    }
-
-    (
-        row.min(u16::MAX as usize) as u16,
-        col.min(u16::MAX as usize) as u16,
-    )
-}

@@ -4827,8 +4827,7 @@ fn input_content_width_accounts_for_borders() {
     // The input area sits inside the outer unified rounded box. The outer box
     // already provides the enclosing border, so only the 2-char prompt prefix
     // ("❯ ") is subtracted from the inner width. The call site must therefore
-    // pass `inner_width - 2` (not `pane_width - 4`) to wrapped_input_rows and
-    // input_cursor_row_col.
+    // pass `inner_width - 2` (not `pane_width - 4`) to wrapped_input_rows.
     let inner_width: u16 = 10;
     assert_eq!(
         input_pane_content_width_for_test(inner_width),
