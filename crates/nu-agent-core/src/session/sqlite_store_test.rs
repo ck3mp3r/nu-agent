@@ -689,7 +689,7 @@ async fn title_multibyte_utf8_straddling_byte_80_sqlite() -> Result<()> {
     // -- Setup & Fixtures
     let store = SqliteSessionStore::new(":memory:")
         .await
-        .expect("create store");
+        .map_err(|e| format!("create store should succeed: {e:?}"))?;
 
     // 79 ASCII bytes + a 2-byte char whose first byte lands at offset 80,
     // then more text to push the message past 80 bytes total.
@@ -700,15 +700,18 @@ async fn title_multibyte_utf8_straddling_byte_80_sqlite() -> Result<()> {
     store
         .create("utf8-title-sqlite", &messages)
         .await
-        .expect("create");
+        .map_err(|e| format!("create should succeed: {e:?}"))?;
 
     // -- Check
     let expected = "a".repeat(79);
-    let sessions = store.list().await.expect("list");
+    let sessions = store
+        .list()
+        .await
+        .map_err(|e| format!("list should succeed: {e:?}"))?;
     let session = sessions
         .iter()
         .find(|s| s.id == "utf8-title-sqlite")
-        .unwrap();
+        .ok_or("session utf8-title-sqlite should be in list")?;
     assert_eq!(session.title, Some(expected.clone()));
 
     let (metadata, _entries) = store

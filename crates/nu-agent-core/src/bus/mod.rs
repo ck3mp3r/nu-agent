@@ -1,8 +1,4 @@
-mod bus_impl;
 mod channel;
-mod domain;
-mod events;
-
 #[cfg(test)]
 #[path = "channel_test.rs"]
 mod channel_test;
@@ -15,7 +11,10 @@ mod event_from_test;
 #[cfg(test)]
 mod test;
 
-pub use bus_impl::{Bus, create_bus};
+mod domain;
+mod events;
+mod hub;
+
 pub use channel::{
     BroadcastRx, BroadcastTx, CancelRx, CancelTx, ChannelError, ChannelResult, CompactionRx,
     CompactionTx, ExternalRx, ExternalTx, LlmRx, LlmTx, MpscRx, MpscTx, OneshotRx, OneshotTx,
@@ -26,3 +25,4 @@ pub use events::{
     CancelEvent, CompactionEvent, ExternalEvent, LlmEvent, PermissionEvent, SessionEvent,
     ToolEvent, TurnEvent, WarningEvent,
 };
+pub use hub::{Bus, create_bus};

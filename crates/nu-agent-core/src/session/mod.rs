@@ -1,10 +1,10 @@
 pub mod factory;
 mod info;
 pub mod journal;
+mod model;
 pub mod prefix;
 pub(crate) mod repair;
 pub mod resolver;
-mod session_impl;
 pub mod sqlite_store;
 mod store;
 
@@ -35,7 +35,7 @@ mod resolver_test;
 pub use factory::{SessionStoreBackend, StoreError, StoreType, create_store};
 pub use info::SessionInfo;
 pub use journal::CachedMemory;
-pub use session_impl::{Session, SessionMetadata, extract_title};
+pub use model::{Session, SessionMetadata, extract_title};
 pub use store::{CompactionMarker, FsSessionStore, SessionStore, StoreEntry, extract_llm_context};
 
 #[cfg(test)]

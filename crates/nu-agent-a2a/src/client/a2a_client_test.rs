@@ -331,7 +331,7 @@ async fn test_subscribe_task_sse_chunk_split_mid_utf8_char_no_data_loss() -> Res
     });
 
     let url = format!("http://127.0.0.1:{}", addr.port());
-    let client = A2aClient::new().unwrap();
+    let client = A2aClient::new().map_err(|e| format!("client should build: {e:?}"))?;
 
     // -- Exec
     let task = client
