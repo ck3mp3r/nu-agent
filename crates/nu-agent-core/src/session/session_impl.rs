@@ -94,7 +94,8 @@ pub fn extract_title(messages: &[crate::types::Message]) -> Option<String> {
     }
 
     // Find last space within the first 80 chars
-    let truncated = &trimmed[..max_len];
+    let boundary = trimmed.floor_char_boundary(max_len);
+    let truncated = &trimmed[..boundary];
     if let Some(last_space) = truncated.rfind(' ') {
         Some(truncated[..last_space].to_string())
     } else {

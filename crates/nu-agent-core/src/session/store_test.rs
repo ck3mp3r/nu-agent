@@ -1097,6 +1097,26 @@ fn title_truncated_at_word_boundary() {
 }
 
 #[test]
+fn title_truncated_at_char_boundary() {
+    // 78 ASCII bytes + a 3-byte '─' (U+2500) straddling byte 80.
+    let long_text = "a".repeat(78) + "─" + &"b".repeat(10);
+    let messages = vec![Message::user(long_text)];
+    let title = extract_title(&messages);
+    // Title must end at a char boundary at or before byte 80 (byte 78).
+    assert_eq!(title, Some("a".repeat(78)));
+}
+
+#[test]
+fn title_truncated_at_word_boundary_with_multibyte() {
+    // "hello world " (12 bytes) + 66 a's (78 bytes total) + a 3-byte '─'
+    // straddling byte 80. Last space at index 11 → "hello world".
+    let long_text = "hello world ".to_string() + &"a".repeat(66) + "─" + &"b".repeat(10);
+    let messages = vec![Message::user(long_text)];
+    let title = extract_title(&messages);
+    assert_eq!(title, Some("hello world".to_string()));
+}
+
+#[test]
 fn title_none_when_empty_user_message() {
     let messages = vec![Message::user("   ")];
     let title = extract_title(&messages);
