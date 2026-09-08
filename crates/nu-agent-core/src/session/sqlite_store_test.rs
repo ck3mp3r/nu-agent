@@ -684,6 +684,42 @@ async fn title_survives_round_trip_sqlite() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn title_multibyte_utf8_straddling_byte_80_sqlite() -> Result<()> {
+    // -- Setup & Fixtures
+    let store = SqliteSessionStore::new(":memory:")
+        .await
+        .expect("create store");
+
+    // 79 ASCII bytes + a 2-byte char whose first byte lands at offset 80,
+    // then more text to push the message past 80 bytes total.
+    let long = format!("{}é rest of the message", "a".repeat(79));
+    let messages = vec![Message::user(long), Message::assistant("Hi")];
+
+    // -- Exec
+    store
+        .create("utf8-title-sqlite", &messages)
+        .await
+        .expect("create");
+
+    // -- Check
+    let expected = "a".repeat(79);
+    let sessions = store.list().await.expect("list");
+    let session = sessions
+        .iter()
+        .find(|s| s.id == "utf8-title-sqlite")
+        .unwrap();
+    assert_eq!(session.title, Some(expected.clone()));
+
+    let (metadata, _entries) = store
+        .load("utf8-title-sqlite")
+        .await
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("should be some")?;
+    assert_eq!(metadata.title, Some(expected));
+    Ok(())
+}
+
 // ================================================================
 // Pool connection persistence
 // ================================================================
