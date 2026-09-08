@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::io::{AsyncWriteExt, BufWriter as TokioBufWriter};
+
 use crate::{
     A2aError, AgentCapabilities, AgentCard, Message, Part, Peer, PeerCache, Role, TaskState,
 };
@@ -236,5 +238,121 @@ async fn test_client_sends_a2a_version_header() -> Result<()> {
         .map_err(|e| format!("timeout waiting for echo server: {e:?}"))?
         .ok_or("echo server closed channel")?;
     assert_eq!(captured, "1.0", "client should send A2A-Version: 1.0");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// SSE chunk UTF-8 boundary (raw TCP mini-server)
+// ---------------------------------------------------------------------------
+
+/// Regression: the SSE chunk loop dropped whole TCP chunks whose bytes ended
+/// mid-multi-byte-UTF-8-char (`if let Ok(s) = std::str::from_utf8(&bytes)`),
+/// silently losing event data. The fix buffers raw bytes and decodes complete
+/// events only.
+///
+/// A raw TCP mini-server writes one SSE event in two `write_all` calls with a
+/// 2-byte char straddling the TCP write boundary. Chunk 1 is intentionally
+/// invalid UTF-8 on its own; only joining both chunks yields a valid event.
+#[tokio::test]
+async fn test_subscribe_task_sse_chunk_split_mid_utf8_char_no_data_loss() -> Result<()> {
+    ensure_crypto_provider();
+
+    // The full event body. `é` (2 bytes in UTF-8) straddles the boundary:
+    // chunk 1 ends with its first byte, chunk 2 starts with its second byte.
+    let artifact_text = format!("{}é-tail", "a".repeat(8));
+    let task_json = serde_json::json!({
+        "task": {
+            "id": "sse-split-utf8",
+            "status": {
+                "state": "COMPLETED",
+                "timestamp": "2026-01-01T00:00:00Z"
+            },
+            "artifacts": [
+                {
+                    "artifactId": "art-split",
+                    "parts": [{"text": artifact_text}]
+                }
+            ]
+        }
+    });
+    let event_body = format!("data: {task_json}\n\n", task_json = task_json);
+    let event_bytes = event_body.into_bytes();
+
+    // Find the `é` inside the JSON string: its first byte must not be the
+    // last byte of the chunk (it needs a continuation byte in chunk 2).
+    let e_pos = event_bytes
+        .windows(2)
+        .position(|w| w == [0xC3, 0xA9])
+        .ok_or("event must contain U+00E9")?;
+    // Split so chunk 1 ends with é's first byte (0xC3).
+    let split = e_pos + 1;
+    assert_eq!(event_bytes[split - 1], 0xC3, "split must be mid-char");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+
+    // Mini-server: accept one connection, upgrade to chunked SSE, then write
+    // the event in two separate writes with the multi-byte char straddling
+    // the write boundary.
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        let mut stream = TokioBufWriter::new(stream);
+
+        let head = b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+        stream.write_all(head).await?;
+        stream.flush().await?;
+
+        let (c1, c2) = event_bytes.split_at(split);
+        // Chunk 1: mid-char (0xC3 as the final byte)
+        stream
+            .write_all(format!("{:x}\r\n", c1.len()).as_bytes())
+            .await?;
+        stream.write_all(c1).await?;
+        stream.write_all(b"\r\n").await?;
+        stream.flush().await?;
+
+        // Let the client consume chunk 1 before writing chunk 2, so the two
+        // writes cannot coalesce into one TCP segment (which would mask the
+        // split boundary).
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Chunk 2: the rest of the event + terminal delimiter.
+        stream
+            .write_all(format!("{:x}\r\n", c2.len()).as_bytes())
+            .await?;
+        stream.write_all(c2).await?;
+        stream.write_all(b"\r\n").await?;
+        stream.flush().await?;
+
+        // Terminate chunked encoding.
+        stream.write_all(b"0\r\n\r\n").await?;
+        stream.flush().await?;
+        Ok::<(), std::io::Error>(())
+    });
+
+    let url = format!("http://127.0.0.1:{}", addr.port());
+    let client = A2aClient::new().unwrap();
+
+    // -- Exec
+    let task = client
+        .subscribe_task(&url, "sse-split-utf8")
+        .await
+        .map_err(|e| format!("subscribe should return the terminal task: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(task.id, "sse-split-utf8");
+    assert_eq!(task.status.state, TaskState::Completed);
+    assert_eq!(
+        task.artifacts.len(),
+        1,
+        "the event carrying the split char must not be dropped"
+    );
+    assert_eq!(
+        task.artifacts[0].parts,
+        vec![Part::Text {
+            text: artifact_text,
+        }],
+        "multi-byte char must survive the chunk boundary intact"
+    );
     Ok(())
 }

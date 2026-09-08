@@ -107,7 +107,11 @@ impl A2aClient {
         }
 
         // ── SSE stream parsing (StreamResponse format) ────────────────────
-        let mut buf = String::new();
+        // Raw byte buffer: TCP chunks may split a multi-byte UTF-8 char across
+        // the chunk boundary, so bytes are buffered and decoded only when a
+        // complete event ("\n\n"-delimited) is available — decoding per-chunk
+        // with `str::from_utf8` silently dropped any chunk that ended mid-char.
+        let mut raw_buf: Vec<u8> = Vec::new();
         let mut current_data = String::new();
         let mut artifacts: Vec<Artifact> = Vec::new();
         let mut final_task_id: Option<String> = None;
@@ -121,14 +125,16 @@ impl A2aClient {
 
             match chunk {
                 Some(bytes) => {
-                    if let Ok(s) = std::str::from_utf8(&bytes) {
-                        buf.push_str(s);
-                    }
+                    raw_buf.extend_from_slice(&bytes);
 
-                    // Process complete SSE events (delimited by \n\n)
-                    while let Some(pos) = buf.find("\n\n") {
-                        let event_str = buf[..pos].to_string();
-                        buf.drain(..pos + 2);
+                    // Process complete SSE events ("\n\n"-delimited). Decode
+                    // each complete event with `from_utf8_lossy` — events are
+                    // delimited byte sequences, so the delimiter is always
+                    // a char boundary and any invalid bytes inside a complete
+                    // event are replaced, never dropped.
+                    while let Some(pos) = raw_buf.windows(2).position(|w| w == *b"\n\n") {
+                        let event_str = String::from_utf8_lossy(&raw_buf[..pos]).into_owned();
+                        raw_buf.drain(..pos + 2);
 
                         // Parse data: lines
                         for line in event_str.lines() {
