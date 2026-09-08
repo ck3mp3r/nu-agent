@@ -161,8 +161,9 @@ fn truncate_description(desc: &str) -> String {
     if desc.len() <= 150 {
         desc.to_string()
     } else {
+        let boundary = desc.floor_char_boundary(150);
         let mut truncated = String::with_capacity(151);
-        truncated.push_str(&desc[..150]);
+        truncated.push_str(&desc[..boundary]);
         truncated.push('…');
         truncated
     }

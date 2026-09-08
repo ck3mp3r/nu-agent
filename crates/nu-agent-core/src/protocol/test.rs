@@ -659,6 +659,17 @@ fn extract_skill_description_truncates_long_lines() -> Result<()> {
 }
 
 #[test]
+fn extract_skill_description_truncates_at_char_boundary_with_multibyte() -> Result<()> {
+    // 149 ASCII bytes + a 2-byte char whose first byte lands at offset 150,
+    // then more text to push the description past 150 bytes total.
+    let long = format!("{}é rest of the description", "a".repeat(149));
+    let content = format!("---\ndescription: \"{long}\"\n---\n");
+    let desc = extract_skill_description(&content).ok_or("should extract description")?;
+    assert_eq!(desc, format!("{}…", "a".repeat(149)));
+    Ok(())
+}
+
+#[test]
 fn extract_skill_description_returns_none_when_only_headings() {
     let content = "# Heading 1\n## Heading 2\n### Heading 3\n";
     let desc = extract_skill_description(content);
