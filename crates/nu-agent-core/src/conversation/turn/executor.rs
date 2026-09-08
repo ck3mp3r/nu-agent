@@ -401,7 +401,7 @@ where
                         .await;
                         continue;
                     }
-                    let msg_preview = &msg[..msg.len().min(200)];
+                    let msg_preview = &msg[..msg.floor_char_boundary(200)];
                     log::error!("Turn error (path A non-cancelled): {msg_preview}");
                     let user_msg = format!("Turn failed: {msg}");
                     break Err((
@@ -557,7 +557,7 @@ where
                 log::error!(
                     "Turn failed with unrecoverable error: session={:?} error={}",
                     final_session_id,
-                    &msg[..msg.len().min(200)]
+                    &msg[..msg.floor_char_boundary(200)]
                 );
                 if let Some(session_id) = final_session_id {
                     let delta: Vec<Message> = ctx

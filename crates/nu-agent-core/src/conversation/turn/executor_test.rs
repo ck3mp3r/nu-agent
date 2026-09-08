@@ -5409,3 +5409,186 @@ fn max_turns_steering_message_count(messages: &[crate::types::Message]) -> usize
         })
         .count()
 }
+
+// ---------------------------------------------------------------------------
+// Regression: error-log preview byte-slice panics (multi-byte UTF-8)
+// ---------------------------------------------------------------------------
+
+/// A no-op `log::Log` used to enable error logging in tests so the
+/// `log::error!` macros in `TurnExecutor` actually evaluate their arguments —
+/// including the preview slices under test.
+struct ErrorNoopLogger;
+
+impl log::Log for ErrorNoopLogger {
+    fn enabled(&self, _metadata: &log::Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, _record: &log::Record) {}
+
+    fn flush(&self) {}
+}
+
+static ERROR_LOGGER_INSTALL: std::sync::Once = std::sync::Once::new();
+
+/// Install the no-op error logger exactly once per test binary. Without a
+/// logger, `log::max_level()` is Off and `log::error!` skips its argument
+/// evaluation, so the preview construction is never executed.
+fn install_error_logger() {
+    ERROR_LOGGER_INSTALL.call_once(|| {
+        log::set_boxed_logger(Box::new(ErrorNoopLogger)).ok();
+        log::set_max_level(log::LevelFilter::Error);
+    });
+}
+
+/// An error message whose `TurnError` Display form (the string the error-log
+/// previews slice) is longer than 200 bytes with byte 200 inside a 2-byte
+/// char. rig wraps `MockError::Provider(msg)` as
+/// `CompletionError::ProviderError(msg)`, whose Display prefixes
+/// `"ProviderError: "` (15 bytes), so the previewed msg is
+/// `"ProviderError: " + message`. With 184 ASCII bytes + 'é' + suffix the
+/// 2-byte 'é' lands at msg bytes 199..201, straddling byte 200. Classified as
+/// `Unknown` (non-retryable, not model-correctable), so the turn fails fast
+/// to the hard-error path.
+fn multibyte_error_message() -> String {
+    format!("{}é rest of the provider error", "a".repeat(184))
+}
+
+/// Hard-error path (executor.rs:560): a `CompletionFailed` with an
+/// `Unknown` kind (non-retryable, not model-correctable) reaches
+/// `log::error!("Turn failed with unrecoverable error: ...", &msg[..200])`.
+/// With a multi-byte char straddling byte 200, the preview slice panicked
+/// inside the error-handling path before the fix.
+#[tokio::test]
+async fn test_turn_executor_hard_error_log_preview_multibyte_utf8() -> Result<()> {
+    // -- Setup & Fixtures
+    install_error_logger();
+    let config = Config {
+        max_retries: Some(0),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e:?}"))?;
+    let session_id = "test-error-preview-multibyte";
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let error_text = multibyte_error_message();
+    let model =
+        MockCompletionModel::from_stream_turns([[MockStreamEvent::error(error_text.clone())]]);
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle: rig::tool::server::ToolServer::new().run(),
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec & Check
+    // Byte 200 of the error message lands inside the 2-byte 'é'; before the
+    // fix the error-log preview sliced &msg[..msg.len().min(200)] and
+    // panicked here — masking the original error.
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "run it".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            Some(session_id),
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "hard error must propagate as LabeledError to the caller"
+    );
+    let err = result.err().ok_or("should be an error")?;
+    assert!(
+        err.to_string().contains("rest of the provider error"),
+        "error must carry the original provider text; got: {err}"
+    );
+    Ok(())
+}
+
+/// Path-A non-cancelled branch (executor.rs:404): a `MaxTurnsExceeded` where
+/// the steering-retry cannot fire (no session id) falls through to
+/// `let msg_preview = &msg[..msg.len().min(200)]` feeding
+/// `log::error!("Turn error (path A non-cancelled): {msg_preview}")`.
+/// With the error logger installed, this drives the same preview slice the
+/// fix replaces — the turn must fail cleanly with the path-A error logged,
+/// not panic. (The path-A message is rig's short max-turns text, so byte 200
+/// is never reached here; the mid-char panic case is proven at the shared
+/// hard-error site by `test_turn_executor_hard_error_log_preview_multibyte_utf8`.
+/// Both sites get the identical `floor_char_boundary` replacement.)
+#[tokio::test]
+async fn test_turn_executor_path_a_error_log_preview_multibyte_utf8() -> Result<()> {
+    // -- Setup & Fixtures
+    install_error_logger();
+    // max_tool_turns=0: rig raises MaxTurnsError as soon as a tool-call turn
+    // would be scheduled. No session id → the steering-retry branch is
+    // skipped (session-less turns cannot append feedback) and the path-A
+    // preview + error log run immediately.
+    let config = Config {
+        max_tool_turns: Some(0),
+        ..test_config()
+    };
+    let temp_dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e:?}"))?;
+    let mut memory_state = make_memory_state(&temp_dir);
+
+    let model = MockCompletionModel::from_stream_turns([[MockStreamEvent::tool_call(
+        "tc1",
+        "some_tool",
+        serde_json::json!({"x": 1}),
+    )]]);
+    let shared_model = super::test_utils::shared_model_handle(model);
+
+    let mut executor = TurnExecutor::new(
+        &config,
+        &mut memory_state,
+        ToolInfra {
+            closure_registry: Arc::new(ClosureRegistry::default()),
+            mcp_registry: Arc::new(McpToolRegistry::empty()),
+            tool_server_handle: rig::tool::server::ToolServer::new().run(),
+            visible_tool_definitions: vec![],
+            circuit_breaker: default_circuit_breaker(),
+            doom_state: default_doom_state(),
+            last_total_tokens: default_last_total_tokens(),
+            bus: crate::bus::create_bus(),
+        },
+        shared_model,
+        test_compaction_config(crate::bus::create_bus()),
+    );
+
+    // -- Exec & Check
+    let result = executor
+        .execute(
+            ExecuteInput {
+                prompt: "run it".to_string(),
+                preamble: None,
+                span: nu_protocol::Span::test_data(),
+            },
+            MockResolver,
+            None,
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "path-A hard error must propagate as LabeledError to the caller"
+    );
+    let err = result.err().ok_or("should be an error")?;
+    assert!(
+        err.to_string().contains("Max turns (0) exceeded"),
+        "error must carry the max-turns text; got: {err}"
+    );
+    Ok(())
+}
