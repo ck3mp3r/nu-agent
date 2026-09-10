@@ -23,14 +23,14 @@ pub const OUTPUT_REPETITION_BACKOFF_MESSAGE: &str = "Output repetition persisted
      Change your approach: write different content, use a tool, or ask the user for guidance.";
 
 /// Session-scoped state tracking the last normalized segment, how many
-/// consecutive times it has repeated, and the escalation ladder within a turn
-/// attempt.
+/// consecutive times it has repeated, the escalation ladder within a turn
+/// attempt, and the recent streaming delta chunks for intra-stream detection.
 #[derive(Debug, Clone, Default)]
 pub struct RepetitionState {
     last_segment: Option<String>,
     consecutive: usize,
     escalation_count: usize,
-    pending_steering: Option<String>,
+    recent_deltas: Vec<String>,
 }
 
 /// The escalation level of an output-repetition detection within one turn
@@ -46,41 +46,27 @@ pub enum RepetitionDetection {
 }
 
 impl RepetitionState {
-    /// Clears the escalation ladder (escalation count and pending steering)
-    /// while keeping the session-scoped segment tracking.
+    /// Clears the escalation ladder (escalation count and recent deltas) while
+    /// keeping the session-scoped segment tracking.
     pub fn reset_ladder(&mut self) {
         self.escalation_count = 0;
-        self.pending_steering = None;
+        self.recent_deltas.clear();
     }
 
     /// Increments the escalation counter and returns the detection phase for
     /// this turn attempt: 1 → First, 2..=3 → Backoff, 4+ → Stop.
-    ///
-    /// For the First and Backoff phases, the steering text is stored in
-    /// [`Self::pending_steering`] so the next `on_completion_call` can inject it
-    /// into the model's context. The Stop phase does not set it.
     pub fn escalate(&mut self) -> RepetitionDetection {
         self.escalation_count += 1;
         if self.escalation_count == 1 {
-            let message = OUTPUT_REPETITION_MESSAGE.to_string();
-            self.pending_steering = Some(message.clone());
-            RepetitionDetection::First(message)
+            RepetitionDetection::First(OUTPUT_REPETITION_MESSAGE.to_string())
         } else if self.escalation_count <= 1 + DOOM_LOOP_BACKOFF_LIMIT {
-            let message = OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string();
-            self.pending_steering = Some(message.clone());
-            RepetitionDetection::Backoff(message)
+            RepetitionDetection::Backoff(OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string())
         } else {
             RepetitionDetection::Stop(format!(
                 "{OUTPUT_REPETITION_STOP_PREFIX} the assistant kept repeating the same output \
                  after repeated steering. The run was stopped."
             ))
         }
-    }
-
-    /// Takes the pending steering text, clearing it (one-shot). Returns `None`
-    /// when no steering is pending.
-    pub fn take_pending_steering(&mut self) -> Option<String> {
-        self.pending_steering.take()
     }
 }
 
@@ -102,7 +88,6 @@ impl OutputRepetitionDetector {
         had_tool_calls: bool,
     ) -> Option<RepetitionDetection> {
         let normalized = normalize(text);
-        let segment = first_segment(&normalized);
 
         let mut state = state.lock().expect("output repetition mutex poisoned");
 
@@ -113,9 +98,11 @@ impl OutputRepetitionDetector {
             return None;
         }
 
-        let segment = segment?;
-        if state.last_segment.as_deref() != Some(segment.as_str()) {
-            state.last_segment = Some(segment);
+        if normalized.is_empty() {
+            return None;
+        }
+        if state.last_segment.as_deref() != Some(normalized.as_str()) {
+            state.last_segment = Some(normalized);
             state.consecutive = 1;
             state.reset_ladder();
         } else {
@@ -129,64 +116,58 @@ impl OutputRepetitionDetector {
         }
     }
 
-    /// Detects repetition within a single streaming response.
-    ///
-    /// Stateless: a pure function of the full assistant text streamed so far
-    /// this turn. Splits the raw text on `.` and `\n`, normalizes each piece,
-    /// and trips when the run of consecutive identical segments ENDING at the
-    /// last complete segment reaches [`OUTPUT_REPETITION_THRESHOLD`].
-    /// Alternating segments never trip. The escalation ladder is applied by
-    /// the caller via [`RepetitionState::escalate`].
-    pub fn check_streaming(aggregated: &str) -> bool {
-        let ends_with_boundary = aggregated.ends_with(['.', '\n']);
-        let pieces: Vec<String> = aggregated
-            .split(['.', '\n'])
-            .map(normalize)
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        let mut current_run = 0usize;
-        let mut prev: Option<&str> = None;
-        let mut last_complete_run = 0usize;
-
-        for (i, piece) in pieces.iter().enumerate() {
-            if prev == Some(piece.as_str()) {
-                current_run += 1;
-            } else {
-                current_run = 1;
-                prev = Some(piece.as_str());
-            }
-            // A piece is a complete segment when it is followed by a boundary:
-            // either it is not the final piece, or the text ends with a boundary.
-            let is_last = i == pieces.len() - 1;
-            if !is_last || ends_with_boundary {
-                last_complete_run = current_run;
+    /// Records one completed model turn from its canonical assistant content
+    /// and returns the detection phase when the same normalized segment has
+    /// repeated [`OUTPUT_REPETITION_THRESHOLD`] consecutive times with no tool
+    /// call.
+    pub fn record_turn_content(
+        state: &Arc<Mutex<RepetitionState>>,
+        content: &[rig::message::AssistantContent],
+    ) -> Option<RepetitionDetection> {
+        let mut text = String::new();
+        let mut tool_calls = 0usize;
+        for item in content {
+            match item {
+                rig::message::AssistantContent::Text(t) => text.push_str(&t.text),
+                rig::message::AssistantContent::ToolCall(_) => tool_calls += 1,
+                _ => {}
             }
         }
+        Self::record_response(state, &text, tool_calls > 0)
+    }
 
-        last_complete_run >= OUTPUT_REPETITION_THRESHOLD
+    /// Records one streaming delta chunk and returns the detection phase when
+    /// the last `OUTPUT_REPETITION_THRESHOLD` deltas are all identical. Mirrors
+    /// `DoomLoopState::check_and_record` (doom_loop.rs:45-70) with String deltas
+    /// instead of (String, String) signatures.
+    pub fn record_delta(
+        state: &Arc<Mutex<RepetitionState>>,
+        delta: &str,
+    ) -> Option<RepetitionDetection> {
+        let normalized = normalize(delta);
+        if normalized.is_empty() {
+            return None;
+        }
+        let mut state = state.lock().expect("output repetition mutex poisoned");
+        state.recent_deltas.push(normalized);
+        if state.recent_deltas.len() < OUTPUT_REPETITION_THRESHOLD {
+            return None;
+        }
+        let last_n =
+            &state.recent_deltas[state.recent_deltas.len() - OUTPUT_REPETITION_THRESHOLD..];
+        let first = &last_n[0];
+        if !last_n.iter().all(|d| d == first) {
+            return None;
+        }
+        Some(state.escalate())
     }
 }
 
 // region:    --- Support
 
-/// Normalizes assistant text: trims surrounding whitespace, collapses runs of
-/// whitespace to single spaces, and lowercases.
+/// Normalizes assistant text: trims surrounding whitespace and lowercases.
 fn normalize(text: &str) -> String {
-    text.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
-}
-
-/// Splits normalized text on `.` and `\n` and returns the first non-empty
-/// segment, or `None` when the text is empty.
-fn first_segment(normalized: &str) -> Option<String> {
-    normalized
-        .split(['.', '\n'])
-        .map(str::trim)
-        .find(|s| !s.is_empty())
-        .map(str::to_string)
+    text.trim().to_lowercase()
 }
 
 // endregion: --- Support

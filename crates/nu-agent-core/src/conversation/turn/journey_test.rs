@@ -1921,12 +1921,23 @@ async fn journey_context_warning_emitted_near_limit() -> Result<()> {
     {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, ResponseTemplate};
+        // Non-repeating filler content: identical 20-char delta chunks would
+        // legitimately trip the output-repetition detector (5 identical deltas).
+        let filler: String = (0..200)
+            .map(|i| {
+                format!(
+                    "{}{}",
+                    char::from_u32(0x4e00 + (i % 500) as u32).unwrap_or('x'),
+                    i / 500
+                )
+            })
+            .collect();
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .respond_with(
                 ResponseTemplate::new(200)
                     .append_header("content-type", "text/event-stream")
-                    .set_body_bytes(sse_text_response(&"b".repeat(200)).into_bytes()),
+                    .set_body_bytes(sse_text_response(&filler).into_bytes()),
             )
             .mount(&server)
             .await;
@@ -2358,35 +2369,58 @@ async fn journey_doom_loop_stop_surfaces_reason() -> Result<()> {
 // Output-repetition journeys: cross-turn and intra-stream
 // ---------------------------------------------------------------------------
 
-/// Cross-turn: 5 identical text-only completions across separate `execute_turn`
-/// calls sharing one `ToolInfra` trip on the 5th with a First detection (the
-/// turn continues with a Warning). The 6th and 7th are Backoff (continue). The
-/// 8th is Stop: the turn ends with an EarlyReturn whose response text is the
-/// exact stop text; the executor surfaces it.
+/// Cross-turn: 4 identical text-only completions across separate `execute_turn`
+/// calls sharing one `ToolInfra` do not trip. The 5th turn's completion is a
+/// First detection — `on_model_turn_finished` returns `retry_with_feedback`,
+/// and the retry (same content) escalates Backoff, Backoff, then Stop: the
+/// turn ends with an EarlyReturn whose response text is the exact stop text;
+/// the executor surfaces it.
 #[tokio::test]
 async fn journey_output_repetition_cross_turn_trips_on_fifth() -> Result<()> {
     // -- Setup & Fixtures
     let mut h = JourneyHarness::new("journey-output-repetition-cross-turn");
     let tool_infra = no_tools();
 
-    // -- Exec: 8 identical text-only turns sharing one ToolInfra.
-    let mut last: Option<std::result::Result<TurnOutcome, LabeledError>> = None;
-    let mut last_events = Vec::new();
-    for _ in 0..8 {
+    // -- Exec: 4 identical text-only turns (no detection), then a 5th turn
+    // whose model repeats the same content so the ladder escalates to Stop.
+    for _ in 0..(OUTPUT_REPETITION_THRESHOLD - 1) {
         let model = MockCompletionModel::from_stream_turns([[
             MockStreamEvent::Text("I will do the thing.".to_string()),
             MockStreamEvent::final_response_with_total_tokens(1),
         ]]);
-        let (r, events) = h.turn("do the thing", model, tool_infra.clone()).await;
-        last = Some(r);
-        last_events = events;
+        let (r, _) = h.turn("do the thing", model, tool_infra.clone()).await;
+        let outcome = r.map_err(|e| format!("turn {e:?}"))?;
+        assert!(
+            matches!(outcome, TurnOutcome::Completed),
+            "turn below threshold must complete"
+        );
     }
 
+    // 5th turn: First → retry, Backoff → retry, Backoff → retry, Stop.
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::Text("I will do the thing.".to_string()),
+            MockStreamEvent::final_response_with_total_tokens(1),
+        ],
+        vec![
+            MockStreamEvent::Text("I will do the thing.".to_string()),
+            MockStreamEvent::final_response_with_total_tokens(1),
+        ],
+        vec![
+            MockStreamEvent::Text("I will do the thing.".to_string()),
+            MockStreamEvent::final_response_with_total_tokens(1),
+        ],
+        vec![
+            MockStreamEvent::Text("I will do the thing.".to_string()),
+            MockStreamEvent::final_response_with_total_tokens(1),
+        ],
+    ]);
+    let (r, last_events) = h.turn("do the thing", model, tool_infra.clone()).await;
+
     // -- Check
-    let r = last.ok_or("should have run at least one turn")?;
-    let outcome = r.map_err(|e| format!("8th turn must be Ok: {e:?}"))?;
+    let outcome = r.map_err(|e| format!("5th turn must be Ok: {e:?}"))?;
     let TurnOutcome::EarlyReturn(value) = outcome else {
-        return Err("8th turn must return EarlyReturn".into());
+        return Err("5th turn must return EarlyReturn".into());
     };
     let response_text = extract_response_text_from_value(&value);
     let stop_text = format!(
@@ -2407,29 +2441,45 @@ async fn journey_output_repetition_cross_turn_trips_on_fifth() -> Result<()> {
     Ok(())
 }
 
-/// Cross-turn: the 5th identical completion is a First detection — the turn
-/// continues (Completed) and emits a Warning with the First steering text.
+/// Cross-turn: the 5th identical completion is a First detection —
+/// `on_model_turn_finished` returns `retry_with_feedback`; the retry produces
+/// different content, so the turn continues (Completed) and emits a Warning
+/// with the First steering text.
 #[tokio::test]
 async fn journey_output_repetition_cross_turn_fifth_is_first_continue() -> Result<()> {
     // -- Setup & Fixtures
     let mut h = JourneyHarness::new("journey-output-repetition-cross-turn-first");
     let tool_infra = no_tools();
 
-    // -- Exec: 5 identical text-only turns sharing one ToolInfra.
-    let mut last: Option<std::result::Result<TurnOutcome, LabeledError>> = None;
-    let mut last_events = Vec::new();
-    for _ in 0..OUTPUT_REPETITION_THRESHOLD {
+    // -- Exec: 4 identical text-only turns (no detection), then a 5th turn
+    // whose retry produces different content so the turn completes.
+    for _ in 0..(OUTPUT_REPETITION_THRESHOLD - 1) {
         let model = MockCompletionModel::from_stream_turns([[
             MockStreamEvent::Text("I will do the thing.".to_string()),
             MockStreamEvent::final_response_with_total_tokens(1),
         ]]);
-        let (r, events) = h.turn("do the thing", model, tool_infra.clone()).await;
-        last = Some(r);
-        last_events = events;
+        let (r, _) = h.turn("do the thing", model, tool_infra.clone()).await;
+        let outcome = r.map_err(|e| format!("turn {e:?}"))?;
+        assert!(
+            matches!(outcome, TurnOutcome::Completed),
+            "turn below threshold must complete"
+        );
     }
 
+    // 5th turn: First → retry_with_feedback, then different content → continue.
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::Text("I will do the thing.".to_string()),
+            MockStreamEvent::final_response_with_total_tokens(1),
+        ],
+        vec![
+            MockStreamEvent::Text("I changed my mind.".to_string()),
+            MockStreamEvent::final_response_with_total_tokens(1),
+        ],
+    ]);
+    let (r, last_events) = h.turn("do the thing", model, tool_infra.clone()).await;
+
     // -- Check
-    let r = last.ok_or("should have run at least one turn")?;
     let outcome = r.map_err(|e| format!("5th turn must be Ok: {e:?}"))?;
     assert!(
         matches!(outcome, TurnOutcome::Completed),

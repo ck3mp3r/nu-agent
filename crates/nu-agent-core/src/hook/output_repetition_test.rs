@@ -112,12 +112,12 @@ fn tool_call_presence_resets() {
 }
 
 #[test]
-fn whitespace_and_case_differences_count_as_same_segment() {
+fn trim_and_case_differences_count_as_same_segment() {
     // -- Setup & Fixtures
     let state = Arc::new(Mutex::new(RepetitionState::default()));
     let variants = [
         "I will do the thing.",
-        "  I   will do the thing.  ",
+        "  I will do the thing.  ",
         "i WILL do THE thing.",
         "I will do the thing.",
         "I will do the thing.",
@@ -134,7 +134,7 @@ fn whitespace_and_case_differences_count_as_same_segment() {
         } else {
             assert!(
                 detection.is_some(),
-                "call {i} must trip: whitespace/case differences are the same segment"
+                "call {i} must trip: trim/case differences are the same segment"
             );
         }
     }
@@ -180,12 +180,12 @@ fn empty_text_is_ignored() {
 }
 
 #[test]
-fn segmentation_uses_first_non_empty_sentence() {
+fn full_text_identical_with_trailing_sentences_trips() {
     // -- Setup & Fixtures
     let state = Arc::new(Mutex::new(RepetitionState::default()));
 
     // -- Exec & Check
-    // The first sentence is the segment; trailing sentences are ignored.
+    // The full normalized text is the segment; identical full text trips.
     for i in 0..OUTPUT_REPETITION_THRESHOLD {
         let text = "I will do the thing. Different trailing sentence.";
         let detection = OutputRepetitionDetector::record_response(&state, text, false);
@@ -197,19 +197,19 @@ fn segmentation_uses_first_non_empty_sentence() {
         } else {
             assert!(
                 detection.is_some(),
-                "call {i} must trip on the first sentence segment"
+                "call {i} must trip on identical full text"
             );
         }
     }
 }
 
 #[test]
-fn newline_separated_segments_are_split() {
+fn full_text_identical_with_newlines_trips() {
     // -- Setup & Fixtures
     let state = Arc::new(Mutex::new(RepetitionState::default()));
 
     // -- Exec & Check
-    // A newline splits segments; the first non-empty is the segment.
+    // The full normalized text is the segment; identical full text trips.
     for i in 0..OUTPUT_REPETITION_THRESHOLD {
         let text = "I will do the thing.\n\nTrailing paragraph.";
         let detection = OutputRepetitionDetector::record_response(&state, text, false);
@@ -221,7 +221,7 @@ fn newline_separated_segments_are_split() {
         } else {
             assert!(
                 detection.is_some(),
-                "call {i} must trip on the newline-split segment"
+                "call {i} must trip on identical full text"
             );
         }
     }
@@ -311,71 +311,6 @@ fn escalation_ladder_first_backoff_backoff_stop() {
     }
 }
 
-/// `escalate` stores the steering text in `pending_steering` for the First and
-/// Backoff phases, and `take_pending_steering` consumes it exactly once. The
-/// Stop phase does not set it.
-#[test]
-fn pending_steering_set_on_first_backoff_consumed_once_not_on_stop() -> Result<()> {
-    // -- Setup & Fixtures
-    let state = Arc::new(Mutex::new(RepetitionState::default()));
-
-    // -- Exec: drive to First (5th response).
-    for _ in 0..OUTPUT_REPETITION_THRESHOLD {
-        OutputRepetitionDetector::record_response(&state, "I will do the thing.", false);
-    }
-
-    // -- Check: First sets pending steering.
-    let first_steering = state
-        .lock()
-        .map_err(|_| "should lock")?
-        .take_pending_steering();
-    assert_eq!(
-        first_steering.as_deref(),
-        Some(OUTPUT_REPETITION_MESSAGE),
-        "First must set pending_steering to the First message"
-    );
-    // Consumed exactly once — a second take returns None.
-    assert!(
-        state
-            .lock()
-            .map_err(|_| "should lock")?
-            .take_pending_steering()
-            .is_none(),
-        "pending_steering must be None after consumption"
-    );
-
-    // -- Exec: drive to Backoff (6th and 7th responses).
-    for _ in 0..2 {
-        OutputRepetitionDetector::record_response(&state, "I will do the thing.", false);
-    }
-
-    // -- Check: Backoff sets pending steering.
-    let backoff_steering = state
-        .lock()
-        .map_err(|_| "should lock")?
-        .take_pending_steering();
-    assert_eq!(
-        backoff_steering.as_deref(),
-        Some(OUTPUT_REPETITION_BACKOFF_MESSAGE),
-        "Backoff must set pending_steering to the Backoff message"
-    );
-
-    // -- Exec: drive to Stop (8th response).
-    OutputRepetitionDetector::record_response(&state, "I will do the thing.", false);
-
-    // -- Check: Stop does not set pending steering.
-    assert!(
-        state
-            .lock()
-            .map_err(|_| "should lock")?
-            .take_pending_steering()
-            .is_none(),
-        "Stop must not set pending_steering"
-    );
-
-    Ok(())
-}
-
 /// A differing segment resets the escalation ladder, so a subsequent identical
 /// run starts again at First.
 #[test]
@@ -463,128 +398,192 @@ fn reset_ladder_clears_escalation_counter() -> Result<()> {
         )),
         "after a ladder reset the next detection must be First"
     );
+    assert!(
+        state
+            .lock()
+            .map_err(|_| "should lock")?
+            .recent_deltas
+            .is_empty(),
+        "reset_ladder must clear recent_deltas"
+    );
 
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Intra-stream detection (check_streaming)
+// Intra-stream detection (record_delta)
 // ---------------------------------------------------------------------------
 
-#[test]
-fn check_streaming_five_identical_sentences_trips() {
-    // -- Setup & Fixtures
-    let aggregated = "I will do the thing. I will do the thing. I will do the thing. \
-                      I will do the thing. I will do the thing.";
-
-    // -- Exec
-    let detection = OutputRepetitionDetector::check_streaming(aggregated);
-
-    // -- Check
-    assert!(detection, "5 consecutive identical sentences must trip");
+/// Drives the detector through `OUTPUT_REPETITION_THRESHOLD` identical deltas,
+/// returning every detection in order.
+fn drive_deltas_to_threshold(
+    state: &Arc<Mutex<RepetitionState>>,
+    delta: &str,
+) -> Vec<Option<RepetitionDetection>> {
+    let mut detections = Vec::new();
+    for _ in 0..OUTPUT_REPETITION_THRESHOLD {
+        detections.push(OutputRepetitionDetector::record_delta(state, delta));
+    }
+    detections
 }
 
 #[test]
-fn check_streaming_four_identical_sentences_do_not_trip() {
+fn record_delta_five_identical_deltas_trip_first() {
     // -- Setup & Fixtures
-    let aggregated = "I will do the thing. I will do the thing. I will do the thing. \
-                      I will do the thing.";
+    let state = Arc::new(Mutex::new(RepetitionState::default()));
 
     // -- Exec
-    let detection = OutputRepetitionDetector::check_streaming(aggregated);
+    let detections = drive_deltas_to_threshold(&state, "I will do the thing.");
 
     // -- Check
-    assert!(!detection, "4 identical sentences must not trip");
+    for (i, detection) in detections.iter().enumerate() {
+        if i < OUTPUT_REPETITION_THRESHOLD - 1 {
+            assert!(
+                detection.is_none(),
+                "delta {i} must not trip below threshold"
+            );
+        } else {
+            assert_eq!(
+                detection,
+                &Some(RepetitionDetection::First(
+                    OUTPUT_REPETITION_MESSAGE.to_string()
+                )),
+                "delta {i} must trip with the First detection"
+            );
+        }
+    }
 }
 
 #[test]
-fn check_streaming_alternating_never_trips() {
+fn record_delta_sixth_seventh_trip_backoff() {
     // -- Setup & Fixtures
-    let aggregated = "I will do the thing. I will do the other thing. I will do the thing. \
-                      I will do the other thing. I will do the thing. I will do the other thing. \
-                      I will do the thing. I will do the other thing. I will do the thing. \
-                      I will do the other thing.";
+    let state = Arc::new(Mutex::new(RepetitionState::default()));
 
     // -- Exec
-    let detection = OutputRepetitionDetector::check_streaming(aggregated);
+    let mut detections = drive_deltas_to_threshold(&state, "I will do the thing.");
+    detections.push(OutputRepetitionDetector::record_delta(
+        &state,
+        "I will do the thing.",
+    ));
+    detections.push(OutputRepetitionDetector::record_delta(
+        &state,
+        "I will do the thing.",
+    ));
 
     // -- Check
-    assert!(!detection, "alternating segments must never trip");
-}
-
-#[test]
-fn check_streaming_run_broken_by_differing_segment_resets() {
-    // -- Setup & Fixtures
-    // 4 identical, then a differing segment, then 4 more identical — the run
-    // resets at the differing segment so the trailing run is 4.
-    let aggregated = "I will do the thing. I will do the thing. I will do the thing. \
-                      I will do the thing. I changed my mind. I will do the thing. \
-                      I will do the thing. I will do the thing. I will do the thing.";
-
-    // -- Exec
-    let detection = OutputRepetitionDetector::check_streaming(aggregated);
-
-    // -- Check
-    assert!(
-        !detection,
-        "a differing segment must reset the trailing run"
+    assert_eq!(
+        detections[OUTPUT_REPETITION_THRESHOLD],
+        Some(RepetitionDetection::Backoff(
+            OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string()
+        )),
+        "6th identical delta must be Backoff"
+    );
+    assert_eq!(
+        detections[OUTPUT_REPETITION_THRESHOLD + 1],
+        Some(RepetitionDetection::Backoff(
+            OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string()
+        )),
+        "7th identical delta must be Backoff"
     );
 }
 
 #[test]
-fn check_streaming_newline_separated_repeats_trip() {
+fn record_delta_eighth_trips_stop() {
     // -- Setup & Fixtures
-    let aggregated = "I will do the thing.\nI will do the thing.\nI will do the thing.\n\
-                      I will do the thing.\nI will do the thing.";
+    let state = Arc::new(Mutex::new(RepetitionState::default()));
 
     // -- Exec
-    let detection = OutputRepetitionDetector::check_streaming(aggregated);
+    let mut detections = drive_deltas_to_threshold(&state, "I will do the thing.");
+    for _ in 0..3 {
+        detections.push(OutputRepetitionDetector::record_delta(
+            &state,
+            "I will do the thing.",
+        ));
+    }
 
     // -- Check
-    assert!(detection, "newline-separated repeats must trip");
+    assert_eq!(
+        detections[OUTPUT_REPETITION_THRESHOLD + 2],
+        Some(RepetitionDetection::Stop(format!(
+            "{OUTPUT_REPETITION_STOP_PREFIX} the assistant kept repeating the same output \
+             after repeated steering. The run was stopped."
+        ))),
+        "8th identical delta must be Stop"
+    );
 }
 
 #[test]
-fn check_streaming_empty_text_returns_false() {
+fn record_delta_differing_delta_requires_five_more() {
     // -- Setup & Fixtures
-    let aggregated = "";
+    let state = Arc::new(Mutex::new(RepetitionState::default()));
 
     // -- Exec
-    let detection = OutputRepetitionDetector::check_streaming(aggregated);
-
-    // -- Check
-    assert!(!detection, "empty text must return false");
+    for _ in 0..3 {
+        assert!(OutputRepetitionDetector::record_delta(&state, "I will do the thing.").is_none());
+    }
+    // A differing delta is recorded but does not trip; the sliding window is
+    // not yet 5 identical.
+    assert!(OutputRepetitionDetector::record_delta(&state, "I changed my mind.").is_none());
+    for i in 0..4 {
+        let d = OutputRepetitionDetector::record_delta(&state, "I will do the thing.");
+        assert!(d.is_none(), "delta {i} after differing must not trip");
+    }
+    // The 5th identical after the differing one trips First.
+    let d = OutputRepetitionDetector::record_delta(&state, "I will do the thing.");
+    assert_eq!(
+        d,
+        Some(RepetitionDetection::First(
+            OUTPUT_REPETITION_MESSAGE.to_string()
+        )),
+        "5 identical deltas after a differing one must trip First"
+    );
 }
 
-/// A trailing run that ends at the last complete segment trips, but a run that
-/// was broken earlier and is not the trailing run does not re-fire.
 #[test]
-fn check_streaming_trailing_run_semantics() {
+fn record_delta_empty_delta_ignored() {
     // -- Setup & Fixtures
-    // 5 identical, then a differing segment, then 4 identical — the trailing
-    // run is 4, so it must not trip even though an earlier run reached 5.
-    let broken_then_short = "I will do the thing. I will do the thing. I will do the thing. \
-                             I will do the thing. I will do the thing. I changed my mind. \
-                             I will do the thing. I will do the thing. I will do the thing. \
-                             I will do the thing.";
-    // 4 identical, then a differing segment, then 5 identical — the trailing
-    // run is 5, so it must trip.
-    let short_then_five = "I will do the thing. I will do the thing. I will do the thing. \
-                           I will do the thing. I changed my mind. I will do the thing. \
-                           I will do the thing. I will do the thing. I will do the thing. \
-                           I will do the thing.";
+    let state = Arc::new(Mutex::new(RepetitionState::default()));
 
     // -- Exec
-    let broken = OutputRepetitionDetector::check_streaming(broken_then_short);
-    let trailing = OutputRepetitionDetector::check_streaming(short_then_five);
+    for _ in 0..4 {
+        assert!(OutputRepetitionDetector::record_delta(&state, "I will do the thing.").is_none());
+    }
+    // An empty delta is ignored (not pushed, returns None).
+    assert!(OutputRepetitionDetector::record_delta(&state, "").is_none());
+    // The 5th identical delta trips First — the empty delta did not count.
+    let d = OutputRepetitionDetector::record_delta(&state, "I will do the thing.");
+    assert_eq!(
+        d,
+        Some(RepetitionDetection::First(
+            OUTPUT_REPETITION_MESSAGE.to_string()
+        )),
+        "empty delta must not count toward the window"
+    );
+}
+
+#[test]
+fn record_delta_cargo_response_pattern() {
+    // -- Setup & Fixtures
+    let state = Arc::new(Mutex::new(RepetitionState::default()));
+
+    // -- Exec
+    let detections = drive_deltas_to_threshold(&state, "cargo response");
 
     // -- Check
-    assert!(
-        !broken,
-        "a broken run followed by a short trailing run must not trip"
-    );
-    assert!(
-        trailing,
-        "a short run followed by a 5-long trailing run must trip"
-    );
+    for (i, detection) in detections.iter().enumerate() {
+        if i < OUTPUT_REPETITION_THRESHOLD - 1 {
+            assert!(
+                detection.is_none(),
+                "delta {i} must not trip below threshold"
+            );
+        } else {
+            assert_eq!(
+                detection,
+                &Some(RepetitionDetection::First(
+                    OUTPUT_REPETITION_MESSAGE.to_string()
+                )),
+                "5 identical 'cargo response' deltas must trip First"
+            );
+        }
+    }
 }

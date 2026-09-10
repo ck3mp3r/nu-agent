@@ -16,11 +16,10 @@ use std::sync::{Arc, Mutex};
 
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
-    InvalidToolCallContext, ModelHandle, ModelSelection, ModelSelectionAction, ObservationAction,
-    RequestPatch, StreamResponseFinish, TextDelta, ToolCall, ToolCallAction, ToolResultAction,
-    ToolResultEvent,
+    InvalidToolCallContext, ModelHandle, ModelSelection, ModelSelectionAction, ModelTurnAction,
+    ModelTurnFinished, ObservationAction, RequestPatch, StreamResponseFinish, TextDelta, ToolCall,
+    ToolCallAction, ToolResultAction, ToolResultEvent,
 };
-use rig::completion::Document;
 use rig::core::wasm_compat::WasmCompatSend;
 use rig::message::Message;
 
@@ -186,7 +185,6 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         let conversation_id = self.conversation_id.clone();
         let compaction = self.compaction.clone();
         let last_total_tokens = Arc::clone(&self.last_total_tokens);
-        let output_repetition = Arc::clone(&self.output_repetition);
         // Cloned history for the compaction decision; rig owns `event.history`.
         let history: Vec<Message> = event.history.to_vec();
         let prompt = event.prompt.clone();
@@ -199,7 +197,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
 
             // Compaction decision: patch the per-turn history when a marker
             // already summarizes the prefix, or when a new compaction is needed.
-            let mut action = decide_compaction(
+            let action = decide_compaction(
                 &history,
                 &prompt,
                 conversation_id.as_str(),
@@ -209,28 +207,6 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                 &bus,
             )
             .await;
-
-            // Inject pending output-repetition steering into the model's context
-            // (one-shot). When a compaction patch already exists, merge the
-            // steering document into its `extra_context` instead of replacing it.
-            let steering = output_repetition
-                .lock()
-                .expect("output repetition mutex poisoned")
-                .take_pending_steering();
-            if let Some(text) = steering {
-                let doc = Document {
-                    id: "output-repetition-steering".to_string(),
-                    text,
-                    additional_props: Default::default(),
-                };
-                action = Some(match action {
-                    Some(CompletionCallAction::Patch(mut patch)) => {
-                        patch.extra_context.push(doc);
-                        CompletionCallAction::Patch(patch)
-                    }
-                    _ => CompletionCallAction::patch(RequestPatch::new().context(doc)),
-                });
-            }
 
             if let Some(action) = action {
                 return action;
@@ -248,25 +224,13 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         let cancelled = self.is_cancelled();
         let bus = self.bus.clone();
         let text = event.aggregated.to_string();
-        let output_repetition = Arc::clone(&self.output_repetition);
-        // Intra-stream repetition detection: a repeat can only complete at a
-        // segment boundary, so only re-scan when this delta carries one. The
-        // check is a pure function of the aggregated text; the escalation
-        // ladder is applied to the shared state. Compute it synchronously
-        // before the `async move` so `event.aggregated` is not borrowed across
-        // the await point.
-        let repetition_detection = if event.delta.contains(['.', '\n'])
-            && OutputRepetitionDetector::check_streaming(event.aggregated)
-        {
-            Some(
-                output_repetition
-                    .lock()
-                    .expect("output repetition mutex poisoned")
-                    .escalate(),
-            )
-        } else {
-            None
-        };
+        // Intra-stream repetition detection: record every delta chunk and trip
+        // when the last `OUTPUT_REPETITION_THRESHOLD` deltas are all identical.
+        // Mirrors `DoomLoopState::check_and_record` (doom_loop.rs:45-70).
+        // Compute it synchronously before the `async move` so `event.delta` is
+        // not borrowed across the await point.
+        let repetition_detection =
+            OutputRepetitionDetector::record_delta(&self.output_repetition, event.delta);
 
         async move {
             if cancelled {
@@ -477,7 +441,6 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         event: StreamResponseFinish<'_>,
     ) -> impl std::future::Future<Output = ObservationAction> + WasmCompatSend {
         let usage = event.usage;
-        let mut response_text = String::new();
         let mut tool_calls = 0usize;
         let completed = if usage.total_tokens > 0 {
             let mut response_chars = 0usize;
@@ -485,7 +448,6 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                 match item {
                     rig::message::AssistantContent::Text(text) => {
                         response_chars += text.text.chars().count();
-                        response_text.push_str(&text.text);
                     }
                     rig::message::AssistantContent::ToolCall(_) => tool_calls += 1,
                     _ => {}
@@ -504,39 +466,46 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         } else {
             None
         };
-        // Detect assistant-output repetition. The action must be computable
-        // before the `async move` so it is decided synchronously.
-        let repetition_detection = if usage.total_tokens > 0 {
-            OutputRepetitionDetector::record_response(
-                &self.output_repetition,
-                &response_text,
-                tool_calls > 0,
-            )
-        } else {
-            None
-        };
+        let bus = self.bus.clone();
+        async move {
+            if let Some(event) = completed {
+                let _ = bus.llm().send(event).await;
+            }
+            ObservationAction::continue_run()
+        }
+    }
+
+    fn on_model_turn_finished(
+        &self,
+        _ctx: &HookContext,
+        event: ModelTurnFinished<'_>,
+    ) -> impl std::future::Future<Output = ModelTurnAction> + WasmCompatSend {
+        // Detect assistant-output repetition across completed model turns. The
+        // action must be computable before the `async move` so it is decided
+        // synchronously.
+        let repetition_detection =
+            OutputRepetitionDetector::record_turn_content(&self.output_repetition, event.content);
         let bus = self.bus.clone();
         async move {
             if let Some(detection) = repetition_detection {
                 match detection {
                     RepetitionDetection::First(message) | RepetitionDetection::Backoff(message) => {
-                        let _ = bus.warning().send(WarningEvent::Message { message }).await;
-                        if let Some(event) = completed {
-                            let _ = bus.llm().send(event).await;
-                        }
-                        return ObservationAction::continue_run();
+                        let _ = bus
+                            .warning()
+                            .send(WarningEvent::Message {
+                                message: message.clone(),
+                            })
+                            .await;
+                        return ModelTurnAction::retry_with_feedback(message);
                     }
                     RepetitionDetection::Stop(message) => {
                         // No hook-side warning — the executor surfaces the stop
                         // reason, mirroring the tool doom loop.
-                        return ObservationAction::stop(message);
+                        return ModelTurnAction::stop(message);
                     }
                 }
             }
-            if let Some(event) = completed {
-                let _ = bus.llm().send(event).await;
-            }
-            ObservationAction::continue_run()
+            ModelTurnAction::continue_run()
         }
     }
 
