@@ -116,6 +116,9 @@ where
     /// Doom loop state shared across turns so that repetitive tool call patterns
     /// are detected even when they span multiple consecutive turns.
     pub doom_state: Arc<Mutex<DoomLoopState>>,
+    /// Assistant-output repetition state shared across turns so that consecutive
+    /// text-only completions are detected even when they span multiple turns.
+    pub output_repetition: Arc<Mutex<crate::hook::output_repetition::RepetitionState>>,
     /// Real token count from the last LLM completion, shared across turns. Used by
     /// the hook's compaction threshold check.
     pub last_total_tokens: Arc<Mutex<Option<u64>>>,
@@ -215,6 +218,7 @@ where
                     visible_tool_definitions,
                     circuit_breaker: Arc::clone(&self.circuit_breaker),
                     doom_state: Arc::clone(&self.doom_state),
+                    output_repetition: Arc::clone(&self.output_repetition),
                     last_total_tokens: Arc::clone(&self.last_total_tokens),
                     bus: self.bus.clone(),
                 },

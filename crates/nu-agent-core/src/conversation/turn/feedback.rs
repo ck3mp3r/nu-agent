@@ -25,20 +25,35 @@ pub const MAX_TURNS_FEEDBACK_PREFIX: &str =
 /// Maximum bytes of the raw provider message kept in the feedback.
 const FEEDBACK_RAW_MSG_MAX_BYTES: usize = 500;
 
+/// The escalation phase of a provider-feedback steering message within one
+/// turn attempt.
+///
+/// Mirrors the doom-loop ladder: the first steering is a gentle remedy, and
+/// subsequent steers escalate to a stronger remedy. There is no `Stop` phase
+/// here — the executor stops the turn when the steering budget is exhausted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedbackPhase {
+    /// First steering in this turn attempt: gentle remedy.
+    First,
+    /// Backoff steering in this turn attempt: stronger remedy.
+    Backoff,
+}
+
 /// Returns `true` for error kinds the model can correct on its next attempt.
 ///
 /// Retryable kinds (rate limit, overload, server error, network) are handled
 /// by the executor's retry loop and never reach the feedback path. Permanent
 /// infrastructure failures (auth, quota, credits, refusal, endpoint, unknown)
 /// need operator action, so they are not model-correctable either.
+///
+/// `ContextOverflow` is deliberately excluded: the model cannot shorten the
+/// existing session history, so a feedback retry re-fails. It is a hard stop
+/// with the "run 'agent session compact'" guidance.
+///
+/// Classification lives in [`CompletionErrorKind::category`]; this predicate
+/// delegates to it so every variant maps to exactly one category from one site.
 pub fn is_model_correctable(kind: &CompletionErrorKind) -> bool {
-    matches!(
-        kind,
-        CompletionErrorKind::ToolStructure
-            | CompletionErrorKind::ContextOverflow
-            | CompletionErrorKind::OutputBudget
-            | CompletionErrorKind::RequestTooLarge
-    )
+    kind.category() == super::executor::CompletionErrorCategory::Steerable
 }
 
 /// Build the model-facing feedback message for a provider-failed turn.
@@ -52,23 +67,38 @@ pub fn is_model_correctable(kind: &CompletionErrorKind) -> bool {
 /// selects between "empty_output" (default) and "shorter_response". In
 /// "empty_output" mode, `output_budget_empty_remedy` overrides the built-in
 /// default text when set.
+///
+/// The `phase` selects the escalation level: [`FeedbackPhase::First`] uses the
+/// gentle remedy, [`FeedbackPhase::Backoff`] uses a stronger remedy that
+/// differs from the first so the model sees escalating guidance on repeated
+/// failures.
 pub fn build_feedback_message(
     kind: &CompletionErrorKind,
+    phase: FeedbackPhase,
     raw_provider_msg: &str,
     output_budget_empty_remedy: Option<&str>,
     output_budget_remedy_mode: Option<&str>,
 ) -> String {
     let remedy = match kind {
-        CompletionErrorKind::ToolStructure => "ensure every tool call has a matching tool result",
-        CompletionErrorKind::ContextOverflow => {
-            "the conversation is too long; continue with a shorter request"
-        }
+        CompletionErrorKind::ToolStructure => match phase {
+            FeedbackPhase::First => "ensure every tool call has a matching tool result",
+            FeedbackPhase::Backoff => {
+                "the tool sequence is still malformed; re-check that every tool call has a \
+                 matching tool result and that the arguments match the tool schema"
+            }
+        },
         CompletionErrorKind::OutputBudget => {
-            output_budget_remedy(output_budget_empty_remedy, output_budget_remedy_mode)
+            output_budget_remedy(phase, output_budget_empty_remedy, output_budget_remedy_mode)
         }
-        CompletionErrorKind::RequestTooLarge => {
-            "the request was too large; reduce the size of attached tool results"
-        }
+        CompletionErrorKind::RequestTooLarge => match phase {
+            FeedbackPhase::First => {
+                "the request was too large; reduce the size of attached tool results"
+            }
+            FeedbackPhase::Backoff => {
+                "the request is still too large; split the work across turns or drop \
+                 non-essential tool results before continuing"
+            }
+        },
         // Non-model-correctable kinds still get the neutral frame; the wiring
         // only feeds model-correctable kinds back to the model.
         _ => "wait for the operator to resolve the underlying issue",
@@ -105,19 +135,36 @@ pub fn build_max_turns_feedback_message(max_turns: usize) -> String {
 /// steers the model to produce its answer immediately; "shorter_response"
 /// keeps the legacy shorten-the-response guidance. In "empty_output" mode,
 /// `output_budget_empty_remedy` overrides the built-in default when set.
+///
+/// The `phase` escalates the remedy: [`FeedbackPhase::First`] steers the model
+/// to produce its answer immediately; [`FeedbackPhase::Backoff`] escalates to
+/// shortening the response or splitting the work across turns.
 fn output_budget_remedy<'a>(
+    phase: FeedbackPhase,
     output_budget_empty_remedy: Option<&'a str>,
     output_budget_remedy_mode: Option<&str>,
 ) -> &'a str {
     let mode = output_budget_remedy_mode
         .unwrap_or(crate::config::defaults::DEFAULT_OUTPUT_BUDGET_REMEDY_MODE);
     match mode {
-        "shorter_response" => {
-            "the response hit the output token limit; continue with a shorter response"
-        }
+        "shorter_response" => match phase {
+            FeedbackPhase::First => {
+                "the response hit the output token limit; continue with a shorter response"
+            }
+            FeedbackPhase::Backoff => {
+                "the response is still hitting the output token limit; shorten the response \
+                 further or split the work across turns"
+            }
+        },
         // "empty_output" (default) or any unset/unknown value
-        _ => output_budget_empty_remedy
-            .unwrap_or(crate::config::defaults::DEFAULT_OUTPUT_BUDGET_EMPTY_REMEDY),
+        _ => match phase {
+            FeedbackPhase::First => output_budget_empty_remedy
+                .unwrap_or(crate::config::defaults::DEFAULT_OUTPUT_BUDGET_EMPTY_REMEDY),
+            FeedbackPhase::Backoff => {
+                "the response is still hitting the output token limit; shorten the response \
+                 or split the work across turns"
+            }
+        },
     }
 }
 

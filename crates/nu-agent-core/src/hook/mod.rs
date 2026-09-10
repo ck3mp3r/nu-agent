@@ -4,6 +4,7 @@ pub mod chain;
 pub mod circuit_breaker_guard;
 pub mod doom_loop;
 pub mod history_snapshot;
+pub mod output_repetition;
 pub mod permission_resolver;
 pub mod subturn_cap;
 

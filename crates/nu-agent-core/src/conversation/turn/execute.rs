@@ -145,6 +145,7 @@ where
         HookState {
             circuit_breaker: ctx.tool_infra.circuit_breaker.clone(),
             doom_state: ctx.tool_infra.doom_state.clone(),
+            output_repetition: ctx.tool_infra.output_repetition.clone(),
             shared_model,
             memory: Arc::clone(&ctx.conversation.memory),
             conversation_id: ctx.conversation.conversation_id.clone(),

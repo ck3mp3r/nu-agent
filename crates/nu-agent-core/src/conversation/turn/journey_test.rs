@@ -10,12 +10,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use nu_protocol::LabeledError;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
-use super::super::test::{default_circuit_breaker, default_doom_state, default_last_total_tokens};
+use super::super::test::{
+    default_circuit_breaker, default_doom_state, default_last_total_tokens,
+    default_output_repetition,
+};
 use super::test_utils::{BusEventCollector, MockResolver, test_config};
 use super::*;
 use crate::conversation::providers::CachedProviderClient;
 use crate::conversation::state::memory::MemoryState;
 use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
+use crate::hook::output_repetition::{
+    OUTPUT_REPETITION_MESSAGE, OUTPUT_REPETITION_STOP_PREFIX, OUTPUT_REPETITION_THRESHOLD,
+};
 use crate::protocol::event::UiEvent;
 use crate::session::{FsSessionStore, StoreEntry};
 use crate::tools::closure::ClosureRegistry;
@@ -35,6 +41,7 @@ fn default_tool_infra(
         visible_tool_definitions: definitions,
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        output_repetition: default_output_repetition(),
         last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
     }
@@ -2342,6 +2349,289 @@ async fn journey_doom_loop_stop_surfaces_reason() -> Result<()> {
             })
         }),
         "persisted history must contain the skip-result ToolResults; got: {msgs:?}"
+    );
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Output-repetition journeys: cross-turn and intra-stream
+// ---------------------------------------------------------------------------
+
+/// Cross-turn: 5 identical text-only completions across separate `execute_turn`
+/// calls sharing one `ToolInfra` trip on the 5th with a First detection (the
+/// turn continues with a Warning). The 6th and 7th are Backoff (continue). The
+/// 8th is Stop: the turn ends with an EarlyReturn whose response text is the
+/// exact stop text; the executor surfaces it.
+#[tokio::test]
+async fn journey_output_repetition_cross_turn_trips_on_fifth() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut h = JourneyHarness::new("journey-output-repetition-cross-turn");
+    let tool_infra = no_tools();
+
+    // -- Exec: 8 identical text-only turns sharing one ToolInfra.
+    let mut last: Option<std::result::Result<TurnOutcome, LabeledError>> = None;
+    let mut last_events = Vec::new();
+    for _ in 0..8 {
+        let model = MockCompletionModel::from_stream_turns([[
+            MockStreamEvent::Text("I will do the thing.".to_string()),
+            MockStreamEvent::final_response_with_total_tokens(1),
+        ]]);
+        let (r, events) = h.turn("do the thing", model, tool_infra.clone()).await;
+        last = Some(r);
+        last_events = events;
+    }
+
+    // -- Check
+    let r = last.ok_or("should have run at least one turn")?;
+    let outcome = r.map_err(|e| format!("8th turn must be Ok: {e:?}"))?;
+    let TurnOutcome::EarlyReturn(value) = outcome else {
+        return Err("8th turn must return EarlyReturn".into());
+    };
+    let response_text = extract_response_text_from_value(&value);
+    let stop_text = format!(
+        "{OUTPUT_REPETITION_STOP_PREFIX} the assistant kept repeating the same output \
+         after repeated steering. The run was stopped."
+    );
+    assert_eq!(
+        response_text, stop_text,
+        "response text must be the exact stop text, got: {response_text}"
+    );
+    assert!(
+        last_events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Warning { message } if *message == stop_text)),
+        "must emit a Warning with the stop text; got: {last_events:?}"
+    );
+
+    Ok(())
+}
+
+/// Cross-turn: the 5th identical completion is a First detection — the turn
+/// continues (Completed) and emits a Warning with the First steering text.
+#[tokio::test]
+async fn journey_output_repetition_cross_turn_fifth_is_first_continue() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut h = JourneyHarness::new("journey-output-repetition-cross-turn-first");
+    let tool_infra = no_tools();
+
+    // -- Exec: 5 identical text-only turns sharing one ToolInfra.
+    let mut last: Option<std::result::Result<TurnOutcome, LabeledError>> = None;
+    let mut last_events = Vec::new();
+    for _ in 0..OUTPUT_REPETITION_THRESHOLD {
+        let model = MockCompletionModel::from_stream_turns([[
+            MockStreamEvent::Text("I will do the thing.".to_string()),
+            MockStreamEvent::final_response_with_total_tokens(1),
+        ]]);
+        let (r, events) = h.turn("do the thing", model, tool_infra.clone()).await;
+        last = Some(r);
+        last_events = events;
+    }
+
+    // -- Check
+    let r = last.ok_or("should have run at least one turn")?;
+    let outcome = r.map_err(|e| format!("5th turn must be Ok: {e:?}"))?;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed),
+        "5th turn must continue (Completed), not stop"
+    );
+    assert!(
+        last_events.iter().any(
+            |e| matches!(e, UiEvent::Warning { message } if message == OUTPUT_REPETITION_MESSAGE)
+        ),
+        "must emit a Warning with the First steering text; got: {last_events:?}"
+    );
+
+    Ok(())
+}
+
+/// Cross-turn: a text-only completion with a tool call resets the counter, so
+/// 4 identical text-only turns after a tool-call turn must not trip.
+#[tokio::test]
+async fn journey_output_repetition_cross_turn_tool_call_resets() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut h = JourneyHarness::new("journey-output-repetition-tool-reset");
+    let tool_infra = echo_tool("result_42");
+
+    // -- Exec: one tool-call turn, then 4 identical text-only turns.
+    // The tool-call turn needs two model calls: one to emit the tool call,
+    // one after the tool result to emit the final text.
+    let tool_model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call("tc1", "test_echo", serde_json::json!({})),
+            MockStreamEvent::final_response_with_total_tokens(1),
+        ],
+        vec![
+            MockStreamEvent::Text("tool done".to_string()),
+            MockStreamEvent::final_response_with_total_tokens(1),
+        ],
+    ]);
+    let (r, _) = h
+        .turn("call the tool", tool_model, tool_infra.clone())
+        .await;
+    r.map_err(|e| format!("tool-call turn must be Ok: {e:?}"))?;
+
+    for _ in 0..(OUTPUT_REPETITION_THRESHOLD - 1) {
+        let model = MockCompletionModel::from_stream_turns([[
+            MockStreamEvent::Text("I will do the thing.".to_string()),
+            MockStreamEvent::final_response_with_total_tokens(1),
+        ]]);
+        let (r, _) = h.turn("do the thing", model, tool_infra.clone()).await;
+        let outcome = r.map_err(|e| format!("text-only turn must be Ok: {e:?}"))?;
+        assert!(
+            matches!(outcome, TurnOutcome::Completed),
+            "turn after tool-call reset must complete, not trip"
+        );
+    }
+
+    Ok(())
+}
+
+/// Intra-stream: 8 identical sentences streamed within one response. The 5th
+/// trips First (Continue), 6th/7th Backoff (Continue), 8th Stop — the turn
+/// ends with an EarlyReturn whose response text is the exact stop text; the
+/// bus carries a Warning.
+#[tokio::test]
+async fn journey_output_repetition_intra_stream_trips() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut h = JourneyHarness::new("journey-output-repetition-intra-stream");
+    let tool_infra = no_tools();
+
+    // 8 identical sentences, each a separate delta carrying a `.` boundary.
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::final_response_with_default_usage(),
+    ]]);
+
+    // -- Exec
+    let (r, events) = h.turn("do the thing", model, tool_infra).await;
+
+    // -- Check
+    let outcome = r.map_err(|e| format!("intra-stream trip must be Ok: {e:?}"))?;
+    let TurnOutcome::EarlyReturn(value) = outcome else {
+        return Err("intra-stream trip must return EarlyReturn".into());
+    };
+    let response_text = extract_response_text_from_value(&value);
+    let stop_text = format!(
+        "{OUTPUT_REPETITION_STOP_PREFIX} the assistant kept repeating the same output \
+         after repeated steering. The run was stopped."
+    );
+    assert_eq!(
+        response_text, stop_text,
+        "response text must be the exact stop text, got: {response_text}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Warning { message } if *message == stop_text)),
+        "must emit a Warning with the stop text; got: {events:?}"
+    );
+
+    Ok(())
+}
+
+/// Intra-stream: the 5th identical sentence is a First detection — the turn
+/// continues (Completed) and emits a Warning with the First steering text.
+#[tokio::test]
+async fn journey_output_repetition_intra_stream_fifth_is_first_continue() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut h = JourneyHarness::new("journey-output-repetition-intra-stream-first");
+    let tool_infra = no_tools();
+
+    // 5 identical sentences, each a separate delta carrying a `.` boundary.
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::final_response_with_default_usage(),
+    ]]);
+
+    // -- Exec
+    let (r, events) = h.turn("do the thing", model, tool_infra).await;
+
+    // -- Check
+    let outcome = r.map_err(|e| format!("5-sentence turn must be Ok: {e:?}"))?;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed),
+        "5 identical sentences must continue (Completed), not stop"
+    );
+    assert!(
+        events.iter().any(
+            |e| matches!(e, UiEvent::Warning { message } if message == OUTPUT_REPETITION_MESSAGE)
+        ),
+        "must emit a Warning with the First steering text; got: {events:?}"
+    );
+
+    Ok(())
+}
+
+/// Intra-stream: 4 identical sentences streamed within one response do not
+/// trip; the turn completes normally.
+#[tokio::test]
+async fn journey_output_repetition_intra_stream_four_does_not_trip() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut h = JourneyHarness::new("journey-output-repetition-intra-stream-four");
+    let tool_infra = no_tools();
+
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::Text("I will do the thing.".to_string()),
+        MockStreamEvent::final_response_with_default_usage(),
+    ]]);
+
+    // -- Exec
+    let (r, _) = h.turn("do the thing", model, tool_infra).await;
+
+    // -- Check
+    let outcome = r.map_err(|e| format!("4-sentence turn must be Ok: {e:?}"))?;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed),
+        "4 identical sentences must not trip intra-stream"
+    );
+
+    Ok(())
+}
+
+/// Intra-stream: alternating segments never trip, even well past the threshold.
+#[tokio::test]
+async fn journey_output_repetition_intra_stream_alternating_never_trips() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut h = JourneyHarness::new("journey-output-repetition-intra-stream-alt");
+    let tool_infra = no_tools();
+
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::Text("I will do the thing. ".to_string()),
+        MockStreamEvent::Text("I will do the other thing. ".to_string()),
+        MockStreamEvent::Text("I will do the thing. ".to_string()),
+        MockStreamEvent::Text("I will do the other thing. ".to_string()),
+        MockStreamEvent::Text("I will do the thing. ".to_string()),
+        MockStreamEvent::Text("I will do the other thing. ".to_string()),
+        MockStreamEvent::Text("I will do the thing. ".to_string()),
+        MockStreamEvent::Text("I will do the other thing. ".to_string()),
+        MockStreamEvent::Text("I will do the thing. ".to_string()),
+        MockStreamEvent::Text("I will do the other thing. ".to_string()),
+        MockStreamEvent::final_response_with_default_usage(),
+    ]]);
+
+    // -- Exec
+    let (r, _) = h.turn("do the thing", model, tool_infra).await;
+
+    // -- Check
+    let outcome = r.map_err(|e| format!("alternating turn must be Ok: {e:?}"))?;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed),
+        "alternating segments must never trip intra-stream"
     );
 
     Ok(())

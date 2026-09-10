@@ -18,8 +18,9 @@ pub const MAX_RETRIES: u8 = 3;
 
 /// Default maximum provider-feedback retries per user turn for
 /// model-correctable errors. Each retry appends one model-facing feedback
-/// message to the session memory and re-runs the turn once.
-pub const MAX_PROVIDER_FEEDBACK_RETRIES: u8 = 2;
+/// message to the session memory and re-runs the turn once. Set to 3 for
+/// exact doom-loop parity (First + Backoff + Backoff, then stop).
+pub const MAX_PROVIDER_FEEDBACK_RETRIES: u8 = 3;
 
 /// Default maximum max-turns steering retries per user turn. Each retry
 /// appends one model-facing steering message to the session memory and

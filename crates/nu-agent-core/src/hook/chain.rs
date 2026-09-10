@@ -20,6 +20,7 @@ use rig::agent::{
     RequestPatch, StreamResponseFinish, TextDelta, ToolCall, ToolCallAction, ToolResultAction,
     ToolResultEvent,
 };
+use rig::completion::Document;
 use rig::core::wasm_compat::WasmCompatSend;
 use rig::message::Message;
 
@@ -38,6 +39,7 @@ use super::agent_hook::HookState;
 use super::circuit_breaker_guard::CircuitBreakerGuard;
 use super::doom_loop::DoomLoopDetector;
 use super::history_snapshot::HistorySnapshot;
+use super::output_repetition::{OutputRepetitionDetector, RepetitionDetection, RepetitionState};
 use super::permission_resolver::{
     AsyncPermissionResolver, PermissionDecision, resolve_tool_source,
 };
@@ -54,6 +56,7 @@ pub struct HookChain<
     cancel_rx: Arc<Mutex<CancelRx>>,
     subturn: SubTurnCap,
     doom: DoomLoopDetector,
+    output_repetition: Arc<Mutex<RepetitionState>>,
     circuit: CircuitBreakerGuard,
     history: HistorySnapshot,
     permission: P,
@@ -97,6 +100,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChai
             doom: DoomLoopDetector {
                 state: hook_state.doom_state,
             },
+            output_repetition: hook_state.output_repetition,
             circuit: CircuitBreakerGuard {
                 breaker: hook_state.circuit_breaker,
             },
@@ -182,6 +186,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         let conversation_id = self.conversation_id.clone();
         let compaction = self.compaction.clone();
         let last_total_tokens = Arc::clone(&self.last_total_tokens);
+        let output_repetition = Arc::clone(&self.output_repetition);
         // Cloned history for the compaction decision; rig owns `event.history`.
         let history: Vec<Message> = event.history.to_vec();
         let prompt = event.prompt.clone();
@@ -194,7 +199,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
 
             // Compaction decision: patch the per-turn history when a marker
             // already summarizes the prefix, or when a new compaction is needed.
-            if let Some(action) = decide_compaction(
+            let mut action = decide_compaction(
                 &history,
                 &prompt,
                 conversation_id.as_str(),
@@ -203,8 +208,31 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                 &last_total_tokens,
                 &bus,
             )
-            .await
-            {
+            .await;
+
+            // Inject pending output-repetition steering into the model's context
+            // (one-shot). When a compaction patch already exists, merge the
+            // steering document into its `extra_context` instead of replacing it.
+            let steering = output_repetition
+                .lock()
+                .expect("output repetition mutex poisoned")
+                .take_pending_steering();
+            if let Some(text) = steering {
+                let doc = Document {
+                    id: "output-repetition-steering".to_string(),
+                    text,
+                    additional_props: Default::default(),
+                };
+                action = Some(match action {
+                    Some(CompletionCallAction::Patch(mut patch)) => {
+                        patch.extra_context.push(doc);
+                        CompletionCallAction::Patch(patch)
+                    }
+                    _ => CompletionCallAction::patch(RequestPatch::new().context(doc)),
+                });
+            }
+
+            if let Some(action) = action {
                 return action;
             }
 
@@ -220,13 +248,47 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         let cancelled = self.is_cancelled();
         let bus = self.bus.clone();
         let text = event.aggregated.to_string();
+        let output_repetition = Arc::clone(&self.output_repetition);
+        // Intra-stream repetition detection: a repeat can only complete at a
+        // segment boundary, so only re-scan when this delta carries one. The
+        // check is a pure function of the aggregated text; the escalation
+        // ladder is applied to the shared state. Compute it synchronously
+        // before the `async move` so `event.aggregated` is not borrowed across
+        // the await point.
+        let repetition_detection = if event.delta.contains(['.', '\n'])
+            && OutputRepetitionDetector::check_streaming(event.aggregated)
+        {
+            Some(
+                output_repetition
+                    .lock()
+                    .expect("output repetition mutex poisoned")
+                    .escalate(),
+            )
+        } else {
+            None
+        };
 
         async move {
             if cancelled {
                 return ObservationAction::stop("Cancelled by user");
             }
-            let _ = bus.llm().send(LlmEvent::AssistantMessage { text }).await;
-            ObservationAction::continue_run()
+            if let Some(detection) = repetition_detection {
+                match detection {
+                    RepetitionDetection::First(message) | RepetitionDetection::Backoff(message) => {
+                        let _ = bus.warning().send(WarningEvent::Message { message }).await;
+                        let _ = bus.llm().send(LlmEvent::AssistantMessage { text }).await;
+                        ObservationAction::continue_run()
+                    }
+                    RepetitionDetection::Stop(message) => {
+                        // No hook-side warning — the executor surfaces the stop
+                        // reason, mirroring the tool doom loop.
+                        ObservationAction::stop(message)
+                    }
+                }
+            } else {
+                let _ = bus.llm().send(LlmEvent::AssistantMessage { text }).await;
+                ObservationAction::continue_run()
+            }
         }
     }
 
@@ -415,13 +477,15 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         event: StreamResponseFinish<'_>,
     ) -> impl std::future::Future<Output = ObservationAction> + WasmCompatSend {
         let usage = event.usage;
+        let mut response_text = String::new();
+        let mut tool_calls = 0usize;
         let completed = if usage.total_tokens > 0 {
             let mut response_chars = 0usize;
-            let mut tool_calls = 0usize;
             for item in event.content.iter() {
                 match item {
                     rig::message::AssistantContent::Text(text) => {
                         response_chars += text.text.chars().count();
+                        response_text.push_str(&text.text);
                     }
                     rig::message::AssistantContent::ToolCall(_) => tool_calls += 1,
                     _ => {}
@@ -440,8 +504,35 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         } else {
             None
         };
+        // Detect assistant-output repetition. The action must be computable
+        // before the `async move` so it is decided synchronously.
+        let repetition_detection = if usage.total_tokens > 0 {
+            OutputRepetitionDetector::record_response(
+                &self.output_repetition,
+                &response_text,
+                tool_calls > 0,
+            )
+        } else {
+            None
+        };
         let bus = self.bus.clone();
         async move {
+            if let Some(detection) = repetition_detection {
+                match detection {
+                    RepetitionDetection::First(message) | RepetitionDetection::Backoff(message) => {
+                        let _ = bus.warning().send(WarningEvent::Message { message }).await;
+                        if let Some(event) = completed {
+                            let _ = bus.llm().send(event).await;
+                        }
+                        return ObservationAction::continue_run();
+                    }
+                    RepetitionDetection::Stop(message) => {
+                        // No hook-side warning — the executor surfaces the stop
+                        // reason, mirroring the tool doom loop.
+                        return ObservationAction::stop(message);
+                    }
+                }
+            }
             if let Some(event) = completed {
                 let _ = bus.llm().send(event).await;
             }

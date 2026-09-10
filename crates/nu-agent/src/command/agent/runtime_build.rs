@@ -475,6 +475,9 @@ pub(crate) fn build_runtime(
         interactive_pending: None,
         circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
         doom_state: Arc::new(Mutex::new(nu_agent_core::hook::DoomLoopState::default())),
+        output_repetition: Arc::new(Mutex::new(
+            nu_agent_core::hook::output_repetition::RepetitionState::default(),
+        )),
         last_total_tokens: Arc::new(Mutex::new(None)),
         bus: params.bus,
         shared_model,

@@ -13,6 +13,7 @@ use super::*;
 use crate::config::Config;
 use crate::conversation::state::memory::MemoryOf;
 use crate::hook::agent_hook::DoomLoopState;
+use crate::hook::output_repetition::RepetitionState;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use crate::session::FsSessionStore;
 use crate::tools::closure::ClosureRegistry;
@@ -31,6 +32,10 @@ pub(crate) fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreake
 
 pub(crate) fn default_doom_state() -> Arc<std::sync::Mutex<DoomLoopState>> {
     Arc::new(std::sync::Mutex::new(DoomLoopState::default()))
+}
+
+pub(crate) fn default_output_repetition() -> Arc<std::sync::Mutex<RepetitionState>> {
+    Arc::new(std::sync::Mutex::new(RepetitionState::default()))
 }
 
 /// A `last_total_tokens` slot starting at `None` (no real token count yet).
@@ -126,6 +131,7 @@ fn make_turn_context<'a>(
         visible_tool_definitions: vec![],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        output_repetition: default_output_repetition(),
         last_total_tokens: default_last_total_tokens(),
         bus,
     };
@@ -237,6 +243,7 @@ async fn execute_turn_cancel_returns_cancelled_true() -> Result<()> {
         }],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        output_repetition: default_output_repetition(),
         last_total_tokens: default_last_total_tokens(),
         bus: bus.clone(),
     };
@@ -1010,6 +1017,7 @@ async fn transient_turn_does_not_write_jsonl() -> Result<()> {
         visible_tool_definitions: vec![],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        output_repetition: default_output_repetition(),
         last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
     };
@@ -1069,6 +1077,7 @@ async fn persistent_turn_writes_jsonl() -> Result<()> {
         visible_tool_definitions: vec![],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        output_repetition: default_output_repetition(),
         last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
     };

@@ -10,7 +10,10 @@ use std::sync::Arc;
 
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
-use super::super::test::{default_circuit_breaker, default_doom_state, default_last_total_tokens};
+use super::super::test::{
+    default_circuit_breaker, default_doom_state, default_last_total_tokens,
+    default_output_repetition,
+};
 use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
 use crate::conversation::state::memory::MemoryState;
@@ -50,6 +53,7 @@ fn turn_executor_new_constructs_without_panic() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -79,6 +83,7 @@ fn turn_executor_exposes_memory_state() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -110,6 +115,7 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -190,6 +196,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
             }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus,
         },
@@ -312,6 +319,7 @@ async fn completed_turn_no_explicit_store_append_needed() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -423,6 +431,7 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
             }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus,
         },
@@ -518,6 +527,7 @@ async fn last_total_tokens_updated_on_completed_turn() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -596,6 +606,7 @@ async fn max_turns_error_persists_full_history() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -681,6 +692,7 @@ async fn unknown_tool_error_persists_full_history() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -762,6 +774,7 @@ async fn network_error_on_fresh_session_persists_user_message() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -859,6 +872,7 @@ async fn hard_error_on_first_llm_call_persists_user_message() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -943,6 +957,7 @@ async fn hard_error_no_session_persists_nothing() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -1042,6 +1057,7 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() -> 
             }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus,
         },
@@ -1156,6 +1172,7 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() -
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -1616,6 +1633,77 @@ fn is_retryable_matches_spec() {
     );
 }
 
+/// Every one of the 14 variants maps to exactly one category from the single
+/// classification site (`CompletionErrorKind::category`).
+#[test]
+fn category_maps_every_variant_to_exactly_one_category() {
+    // -- Setup & Fixtures
+    let all: &[(CompletionErrorKind, CompletionErrorCategory)] = &[
+        (
+            CompletionErrorKind::RateLimit,
+            CompletionErrorCategory::Retryable,
+        ),
+        (
+            CompletionErrorKind::Overloaded,
+            CompletionErrorCategory::Retryable,
+        ),
+        (
+            CompletionErrorKind::ServerError,
+            CompletionErrorCategory::Retryable,
+        ),
+        (
+            CompletionErrorKind::Network,
+            CompletionErrorCategory::Retryable,
+        ),
+        (
+            CompletionErrorKind::OutputBudget,
+            CompletionErrorCategory::Steerable,
+        ),
+        (
+            CompletionErrorKind::ToolStructure,
+            CompletionErrorCategory::Steerable,
+        ),
+        (
+            CompletionErrorKind::RequestTooLarge,
+            CompletionErrorCategory::Steerable,
+        ),
+        (
+            CompletionErrorKind::ContextOverflow,
+            CompletionErrorCategory::HardStop,
+        ),
+        (CompletionErrorKind::Auth, CompletionErrorCategory::HardStop),
+        (
+            CompletionErrorKind::Quota,
+            CompletionErrorCategory::HardStop,
+        ),
+        (
+            CompletionErrorKind::CreditsExhausted,
+            CompletionErrorCategory::HardStop,
+        ),
+        (
+            CompletionErrorKind::Refusal,
+            CompletionErrorCategory::HardStop,
+        ),
+        (
+            CompletionErrorKind::EndpointNotFound,
+            CompletionErrorCategory::HardStop,
+        ),
+        (
+            CompletionErrorKind::Unknown,
+            CompletionErrorCategory::HardStop,
+        ),
+    ];
+
+    // -- Exec & Check
+    for (kind, expected) in all {
+        assert_eq!(
+            kind.category(),
+            *expected,
+            "{kind:?} must map to {expected:?}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CompletionError + hook history recovery tests
 // ---------------------------------------------------------------------------
@@ -1688,6 +1776,7 @@ async fn hard_error_after_prior_history_persists_user_message() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -1852,6 +1941,7 @@ async fn hard_error_after_prior_history_persists_only_delta() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -1941,6 +2031,7 @@ async fn hard_error_twice_does_not_double_history() -> Result<()> {
                 visible_tool_definitions: vec![],
                 circuit_breaker: default_circuit_breaker(),
                 doom_state: default_doom_state(),
+                output_repetition: default_output_repetition(),
                 last_total_tokens: default_last_total_tokens(),
                 bus: crate::bus::create_bus(),
             },
@@ -1980,6 +2071,7 @@ async fn hard_error_twice_does_not_double_history() -> Result<()> {
                 visible_tool_definitions: vec![],
                 circuit_breaker: default_circuit_breaker(),
                 doom_state: default_doom_state(),
+                output_repetition: default_output_repetition(),
                 last_total_tokens: default_last_total_tokens(),
                 bus: crate::bus::create_bus(),
             },
@@ -2018,6 +2110,7 @@ async fn hard_error_twice_does_not_double_history() -> Result<()> {
                 visible_tool_definitions: vec![],
                 circuit_breaker: default_circuit_breaker(),
                 doom_state: default_doom_state(),
+                output_repetition: default_output_repetition(),
                 last_total_tokens: default_last_total_tokens(),
                 bus: crate::bus::create_bus(),
             },
@@ -2138,6 +2231,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
             }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus,
         },
@@ -2232,6 +2326,7 @@ async fn hard_error_on_first_llm_call_no_prior_history_persists_user_message() -
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -2388,6 +2483,7 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
             }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -2680,6 +2776,7 @@ async fn retry_succeeds_on_second_attempt() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -2765,6 +2862,7 @@ async fn retry_exhausted_surfaces_attempt_count() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -2836,6 +2934,7 @@ async fn non_retryable_error_not_retried() {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -2874,10 +2973,11 @@ async fn output_budget_error_surfaces_user_message() -> Result<()> {
     let session_id = "test-output-budget";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    // Three failing turns: attempts 1-2 each get one feedback retry (cap 2);
-    // attempt 3 exceeds the cap, so the final break carries the OutputBudget
+    // Four failing turns: attempts 1-3 each get one feedback retry (cap 3);
+    // attempt 4 exceeds the cap, so the final break carries the OutputBudget
     // kind and the hard-error path surfaces the max_output_tokens message.
     let model = MockCompletionModel::from_stream_turns([
+        vec![MockStreamEvent::error("The model ran out of output budget")],
         vec![MockStreamEvent::error("The model ran out of output budget")],
         vec![MockStreamEvent::error("The model ran out of output budget")],
         vec![MockStreamEvent::error("The model ran out of output budget")],
@@ -2899,6 +2999,7 @@ async fn output_budget_error_surfaces_user_message() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -2975,6 +3076,7 @@ async fn output_budget_raise_applies_multiplier_on_retry() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -3054,6 +3156,7 @@ async fn output_budget_raise_compounds_on_consecutive_failures() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -3133,6 +3236,7 @@ async fn output_budget_raise_disabled_keeps_max_tokens_unchanged() -> Result<()>
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -3202,6 +3306,7 @@ async fn output_budget_raise_no_base_max_tokens_no_raise() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -3273,6 +3378,7 @@ async fn output_budget_raise_base_at_cap_no_raise() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -3306,7 +3412,7 @@ async fn output_budget_raise_base_at_cap_no_raise() -> Result<()> {
     Ok(())
 }
 
-/// When raise is enabled but the kind is not OutputBudget (e.g. ContextOverflow),
+/// When raise is enabled but the kind is not OutputBudget (e.g. ToolStructure),
 /// the feedback retry keeps max_tokens unchanged.
 #[tokio::test]
 async fn output_budget_raise_non_output_budget_kind_no_raise() -> Result<()> {
@@ -3321,7 +3427,9 @@ async fn output_budget_raise_non_output_budget_kind_no_raise() -> Result<()> {
     let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("context_length_exceeded in prompt")],
+        vec![MockStreamEvent::error(
+            "invalid_request_body: tool_use call_id missing",
+        )],
         vec![
             MockStreamEvent::Text("recovered".to_string()),
             MockStreamEvent::final_response_with_default_usage(),
@@ -3344,6 +3452,7 @@ async fn output_budget_raise_non_output_budget_kind_no_raise() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -3405,6 +3514,10 @@ async fn prompt_wrapped_empty_output_length_reaches_feedback_retry() -> Result<(
         ],
         vec![
             MockStreamEvent::reasoning("thinking..."),
+            MockStreamEvent::FinalResponse(length_final.clone()),
+        ],
+        vec![
+            MockStreamEvent::reasoning("thinking..."),
             MockStreamEvent::FinalResponse(length_final),
         ],
     ]);
@@ -3425,6 +3538,7 @@ async fn prompt_wrapped_empty_output_length_reaches_feedback_retry() -> Result<(
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -3497,6 +3611,7 @@ async fn retry_disabled_when_max_retries_is_zero() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -3732,6 +3847,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
         }],
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
+        output_repetition: default_output_repetition(),
         last_total_tokens: default_last_total_tokens(),
         bus: bus.clone(),
     };
@@ -4003,6 +4119,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: bus.clone(),
         },
@@ -4092,6 +4209,7 @@ async fn on_stream_response_finish_stores_total_tokens() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: last_total_tokens.clone(),
             bus: crate::bus::create_bus(),
         },
@@ -4234,6 +4352,7 @@ async fn hard_error_with_failing_append_store_emits_warning_event() -> Result<()
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus,
         },
@@ -4314,6 +4433,7 @@ async fn hard_error_with_working_store_emits_no_warning_event() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus,
         },
@@ -4399,6 +4519,7 @@ async fn model_correctable_failure_appends_feedback_and_reruns_turn() -> Result<
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -4453,11 +4574,11 @@ async fn model_correctable_failure_appends_feedback_and_reruns_turn() -> Result<
     Ok(())
 }
 
-/// Three consecutive model-correctable failures with a cap of
-/// MAX_PROVIDER_FEEDBACK_RETRIES (2) must produce exactly two feedback
+/// Four consecutive model-correctable failures with a cap of
+/// MAX_PROVIDER_FEEDBACK_RETRIES (3) must produce exactly three feedback
 /// messages and then fall through to the hard-error path.
 #[tokio::test]
-async fn feedback_cap_two_produces_two_messages_then_hard_error() -> Result<()> {
+async fn feedback_cap_three_produces_three_messages_then_hard_error() -> Result<()> {
     // -- Setup & Fixtures
     let config = Config {
         max_retries: Some(3),
@@ -4468,8 +4589,9 @@ async fn feedback_cap_two_produces_two_messages_then_hard_error() -> Result<()> 
     let session_id = "test-feedback-cap";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    let overflow = || MockStreamEvent::error("context_length_exceeded in prompt");
+    let overflow = || MockStreamEvent::error("The model ran out of output budget");
     let model = MockCompletionModel::from_stream_turns([
+        vec![overflow()],
         vec![overflow()],
         vec![overflow()],
         vec![overflow()],
@@ -4487,6 +4609,7 @@ async fn feedback_cap_two_produces_two_messages_then_hard_error() -> Result<()> 
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -4513,8 +4636,8 @@ async fn feedback_cap_two_produces_two_messages_then_hard_error() -> Result<()> 
         .ok_or("capped model-correctable failures must fall through to the hard error")?;
     assert_eq!(
         probe.request_count(),
-        3,
-        "two feedback retries plus the capped final attempt = 3 model calls"
+        4,
+        "three feedback retries plus the capped final attempt = 4 model calls"
     );
     assert!(
         !err.msg.contains("Turn failed after"),
@@ -4522,16 +4645,22 @@ async fn feedback_cap_two_produces_two_messages_then_hard_error() -> Result<()> 
         err.msg
     );
     assert!(
-        err.msg.contains("conversation too long"),
-        "hard-error message must describe the final ContextOverflow failure; got: {}",
+        err.msg.contains("max_output_tokens"),
+        "hard-error message must describe the final OutputBudget failure; got: {}",
+        err.msg
+    );
+    assert!(
+        err.msg
+            .contains(crate::conversation::turn::executor::NO_OUTPUT_STATEMENT),
+        "exhausted steering must surface the no-output statement; got: {}",
         err.msg
     );
 
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         feedback_message_count(&persisted),
-        2,
-        "cap 2 must produce exactly two feedback messages; got {persisted:?}"
+        3,
+        "cap 3 must produce exactly three feedback messages; got {persisted:?}"
     );
 
     Ok(())
@@ -4567,6 +4696,7 @@ async fn retryable_kind_failure_appends_no_feedback_message() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -4623,7 +4753,7 @@ async fn successful_feedback_retry_persists_feedback_exactly_once() -> Result<()
     let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("context_length_exceeded in prompt")],
+        vec![MockStreamEvent::error("The model ran out of output budget")],
         vec![
             MockStreamEvent::Text("recovered".to_string()),
             MockStreamEvent::final_response_with_default_usage(),
@@ -4641,6 +4771,7 @@ async fn successful_feedback_retry_persists_feedback_exactly_once() -> Result<()
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -4714,7 +4845,7 @@ async fn no_session_turn_appends_no_feedback_message() -> Result<()> {
     let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("context_length_exceeded in prompt")],
+        vec![MockStreamEvent::error("The model ran out of output budget")],
         vec![
             MockStreamEvent::Text("unreachable".to_string()),
             MockStreamEvent::final_response_with_default_usage(),
@@ -4733,6 +4864,7 @@ async fn no_session_turn_appends_no_feedback_message() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -4763,8 +4895,8 @@ async fn no_session_turn_appends_no_feedback_message() -> Result<()> {
         "session-less turns must not re-run via feedback"
     );
     assert!(
-        err.msg.contains("conversation too long"),
-        "hard-error message must describe the ContextOverflow failure; got: {}",
+        err.msg.contains("max_output_tokens"),
+        "hard-error message must describe the OutputBudget failure; got: {}",
         err.msg
     );
 
@@ -4786,8 +4918,8 @@ async fn feedback_retries_do_not_consume_backoff_budget() -> Result<()> {
     let mut memory_state = make_memory_state(&temp_dir);
 
     let model = MockCompletionModel::from_stream_turns([
-        vec![MockStreamEvent::error("context_length_exceeded in prompt")],
-        vec![MockStreamEvent::error("context_length_exceeded in prompt")],
+        vec![MockStreamEvent::error("The model ran out of output budget")],
+        vec![MockStreamEvent::error("The model ran out of output budget")],
         vec![MockStreamEvent::error("429 rate_limit_error")],
     ]);
     let probe = model.clone();
@@ -4803,6 +4935,7 @@ async fn feedback_retries_do_not_consume_backoff_budget() -> Result<()> {
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -4903,6 +5036,7 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
             }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -5021,6 +5155,7 @@ async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Re
             }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -5116,6 +5251,7 @@ async fn no_session_max_turns_failure_returns_err_without_steering() -> Result<(
             }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -5207,6 +5343,7 @@ async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -
             }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus,
         },
@@ -5296,6 +5433,7 @@ async fn user_cancel_stays_silent_with_empty_response() -> Result<()> {
             }],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus,
         },
@@ -5486,6 +5624,7 @@ async fn test_turn_executor_hard_error_log_preview_multibyte_utf8() -> Result<()
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },
@@ -5562,6 +5701,7 @@ async fn test_turn_executor_path_a_error_log_preview_multibyte_utf8() -> Result<
             visible_tool_definitions: vec![],
             circuit_breaker: default_circuit_breaker(),
             doom_state: default_doom_state(),
+            output_repetition: default_output_repetition(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
         },

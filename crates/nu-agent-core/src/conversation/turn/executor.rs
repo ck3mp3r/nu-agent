@@ -4,13 +4,19 @@
 //! Extracted from `AgentConversationRuntime::execute_turn` to give it a single
 //! responsibility. `AgentConversationRuntime` constructs a `TurnExecutor` and delegates.
 
+/// Statement appended to the user-facing error when steering is exhausted and
+/// the provider returned no partial output. The partial response text is not
+/// carried in the error path, so this explicit no-output statement satisfies
+/// the exhausted-steering contract.
+pub const NO_OUTPUT_STATEMENT: &str = "No output was produced.";
+
 use std::sync::{Arc, Mutex};
 
 use nu_protocol::{LabeledError, Span, Value};
 use rig::memory::ConversationMemory;
 
 use super::feedback::{
-    build_feedback_message, build_max_turns_feedback_message, is_model_correctable,
+    FeedbackPhase, build_feedback_message, build_max_turns_feedback_message, is_model_correctable,
 };
 use crate::bus::{Bus, LlmEvent, TurnEvent, WarningEvent};
 use crate::config::{Config, defaults};
@@ -19,6 +25,7 @@ use crate::conversation::managers::SessionManager;
 use crate::conversation::turn::{TurnContext, error, execute_turn};
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
+use crate::hook::output_repetition::{OUTPUT_REPETITION_STOP_PREFIX, RepetitionState};
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::session::repair::inject_missing_tool_results;
 use crate::session::{CachedMemory, SessionStore};
@@ -65,6 +72,10 @@ pub struct ToolInfra {
     pub visible_tool_definitions: Vec<ToolDefinition>,
     pub circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
     pub doom_state: Arc<Mutex<DoomLoopState>>,
+    /// Session-scoped assistant-output repetition state, shared across turns and
+    /// caller retries so consecutive text-only completions accumulate across
+    /// executor attempts.
+    pub output_repetition: Arc<Mutex<RepetitionState>>,
     /// Real token count from the last LLM completion, shared across turns. Used by
     /// the hook's compaction threshold check.
     pub last_total_tokens: Arc<Mutex<Option<u64>>>,
@@ -178,6 +189,17 @@ where
                 .lock()
                 .expect("doom loop mutex poisoned")
                 .reset();
+            // Reset the output-repetition escalation ladder on retry attempts
+            // only, so the ladder persists across the first attempt of each
+            // turn for cross-turn escalation (mirrors the tool loop's
+            // per-attempt reset while keeping cross-turn continuity).
+            if attempt > 0 {
+                self.tool_infra
+                    .output_repetition
+                    .lock()
+                    .expect("output repetition mutex poisoned")
+                    .reset_ladder();
+            }
 
             let attempt_cfg = attempt_config.as_ref();
             let turn_ctx = TurnContext::new(
@@ -202,6 +224,7 @@ where
                     ),
                     circuit_breaker: self.tool_infra.circuit_breaker.clone(),
                     doom_state: self.tool_infra.doom_state.clone(),
+                    output_repetition: self.tool_infra.output_repetition.clone(),
                     last_total_tokens: self.tool_infra.last_total_tokens.clone(),
                     bus: self.tool_infra.bus.clone(),
                 },
@@ -234,8 +257,18 @@ where
                         && let Some(session_id) = final_session_id
                     {
                         feedback_retries += 1;
+                        // Escalating steering: the first feedback is a gentle
+                        // remedy, subsequent steers escalate to a stronger
+                        // remedy so the model sees different guidance on each
+                        // repeated failure.
+                        let phase = if feedback_retries == 1 {
+                            FeedbackPhase::First
+                        } else {
+                            FeedbackPhase::Backoff
+                        };
                         let feedback = build_feedback_message(
                             kind,
+                            phase,
                             msg,
                             self.config.output_budget_empty_remedy.as_deref(),
                             self.config.output_budget_remedy_mode.as_deref(),
@@ -328,6 +361,28 @@ where
                         break Err((
                             crate::conversation::turn::TurnError::CompletionFailed {
                                 msg: retry_msg,
+                                kind: kind.clone(),
+                            },
+                            error::TurnContext {
+                                last_known_history: ctx.last_known_history.clone(),
+                                pre_turn_message_count: ctx.pre_turn_message_count,
+                            },
+                        ));
+                    }
+                    // Steering exhausted: the model-correctable error failed
+                    // after every steering retry. The partial response text is
+                    // not carried in the error path, so surface an explicit
+                    // no-output statement alongside the existing guidance.
+                    if is_model_correctable(kind)
+                        && feedback_retries >= defaults::MAX_PROVIDER_FEEDBACK_RETRIES
+                    {
+                        log::warn!(
+                            "Steering exhausted after {feedback_retries} feedback retries: {kind:?}"
+                        );
+                        let exhausted_msg = format!("{msg} No output was produced.");
+                        break Err((
+                            crate::conversation::turn::TurnError::CompletionFailed {
+                                msg: exhausted_msg,
                                 kind: kind.clone(),
                             },
                             error::TurnContext {
@@ -480,7 +535,9 @@ where
                     }
                 }
                 // Surface the doom-loop stop reason if this cancellation was a doom stop.
-                let response_text = if msg.starts_with(DOOM_LOOP_STOP_PREFIX) {
+                let response_text = if msg.starts_with(DOOM_LOOP_STOP_PREFIX)
+                    || msg.starts_with(OUTPUT_REPETITION_STOP_PREFIX)
+                {
                     let _ = self
                         .tool_infra
                         .bus
@@ -548,7 +605,14 @@ where
                 let user_msg = if msg.starts_with("Turn failed after") {
                     msg.clone()
                 } else if let Some(kind) = kind_opt {
-                    kind_to_user_msg(kind, msg)
+                    let base = kind_to_user_msg(kind, msg);
+                    // Preserve the explicit no-output statement appended when
+                    // steering is exhausted (criterion 3).
+                    if msg.ends_with(NO_OUTPUT_STATEMENT) {
+                        format!("{base} {NO_OUTPUT_STATEMENT}")
+                    } else {
+                        base
+                    }
                 } else {
                     // ToolExecutionFailed — no kind, use raw message
                     format!("Turn failed: {msg}")
@@ -689,7 +753,10 @@ where
                 .await;
             // Surface the doom-loop stop reason if this cancellation was a doom stop.
             let response_text = match &turn_result.cancel_reason {
-                Some(reason) if reason.starts_with(DOOM_LOOP_STOP_PREFIX) => {
+                Some(reason)
+                    if reason.starts_with(DOOM_LOOP_STOP_PREFIX)
+                        || reason.starts_with(OUTPUT_REPETITION_STOP_PREFIX) =>
+                {
                     let _ = self
                         .tool_infra
                         .bus
@@ -868,13 +935,44 @@ pub enum CompletionErrorKind {
 }
 
 impl CompletionErrorKind {
+    /// Classify this kind into exactly one category.
+    ///
+    /// This is the single classification site for all 14 variants. Callers
+    /// decide their response from the category, never from scattered matches
+    /// over individual kinds.
+    pub fn category(&self) -> CompletionErrorCategory {
+        match self {
+            Self::RateLimit | Self::Overloaded | Self::ServerError | Self::Network => {
+                CompletionErrorCategory::Retryable
+            }
+            Self::OutputBudget | Self::ToolStructure | Self::RequestTooLarge => {
+                CompletionErrorCategory::Steerable
+            }
+            Self::ContextOverflow
+            | Self::Auth
+            | Self::Quota
+            | Self::CreditsExhausted
+            | Self::Refusal
+            | Self::EndpointNotFound
+            | Self::Unknown => CompletionErrorCategory::HardStop,
+        }
+    }
+
     /// Returns `true` for transient errors that are safe to retry.
     pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::RateLimit | Self::Overloaded | Self::ServerError | Self::Network
-        )
+        self.category() == CompletionErrorCategory::Retryable
     }
+}
+
+/// The category of a completion failure, deciding how the executor responds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionErrorCategory {
+    /// Transient infrastructure failure — retry with backoff.
+    Retryable,
+    /// Model-correctable failure — steer with escalating feedback.
+    Steerable,
+    /// Permanent failure — kill the turn immediately.
+    HardStop,
 }
 
 /// Returns a user-visible error message for a given `CompletionErrorKind`.

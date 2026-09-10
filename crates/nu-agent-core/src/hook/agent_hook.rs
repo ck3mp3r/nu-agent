@@ -11,6 +11,7 @@ use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 pub use crate::hook::chain::HookChain;
 pub use crate::hook::doom_loop::{DOOM_LOOP_THRESHOLD, DoomLoopState};
+pub use crate::hook::output_repetition::RepetitionState;
 pub use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 
 /// Session-scoped state shared across turns via the hook.
@@ -23,6 +24,10 @@ pub use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDe
 pub struct HookState<S: SessionStore + Clone + Send + Sync> {
     pub circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
     pub doom_state: Arc<Mutex<DoomLoopState>>,
+    /// Session-scoped assistant-output repetition state, shared across turns
+    /// via the hook. Survives caller retries so consecutive text-only
+    /// completions accumulate across executor attempts.
+    pub output_repetition: Arc<Mutex<RepetitionState>>,
     /// Shared runtime model handle. The single point of model identity: the
     /// hook's `on_model_select` routes each turn to its current value. It is
     /// constructed eagerly at startup and updated on every `switch_model()`.

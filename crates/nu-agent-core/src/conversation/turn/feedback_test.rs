@@ -2,14 +2,13 @@ use super::*;
 
 type TestResult<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-/// Every one of the four model-correctable kinds is classified as
+/// Every one of the three model-correctable kinds is classified as
 /// model-correctable.
 #[test]
 fn is_model_correctable_true_for_model_correctable_kinds() {
     // -- Setup & Fixtures
     let kinds = [
         CompletionErrorKind::ToolStructure,
-        CompletionErrorKind::ContextOverflow,
         CompletionErrorKind::OutputBudget,
         CompletionErrorKind::RequestTooLarge,
     ];
@@ -23,7 +22,8 @@ fn is_model_correctable_true_for_model_correctable_kinds() {
     }
 }
 
-/// Every remaining kind is classified as not model-correctable.
+/// Every remaining kind is classified as not model-correctable, including
+/// ContextOverflow (the model cannot shorten existing history).
 #[test]
 fn is_model_correctable_false_for_non_model_correctable_kinds() {
     // -- Setup & Fixtures
@@ -32,6 +32,7 @@ fn is_model_correctable_false_for_non_model_correctable_kinds() {
         CompletionErrorKind::Overloaded,
         CompletionErrorKind::ServerError,
         CompletionErrorKind::Network,
+        CompletionErrorKind::ContextOverflow,
         CompletionErrorKind::Auth,
         CompletionErrorKind::Quota,
         CompletionErrorKind::CreditsExhausted,
@@ -72,7 +73,7 @@ fn build_feedback_message_starts_with_prefix_for_every_kind() {
 
     // -- Exec & Check
     for kind in &kinds {
-        let message = build_feedback_message(kind, "raw", None, None);
+        let message = build_feedback_message(kind, FeedbackPhase::First, "raw", None, None);
         assert!(
             message.starts_with(FEEDBACK_PREFIX),
             "message for {kind:?} must start with FEEDBACK_PREFIX, got: {message}"
@@ -90,10 +91,6 @@ fn build_feedback_message_contains_pinned_remedy_per_kind() -> TestResult<()> {
             "ensure every tool call has a matching tool result",
         ),
         (
-            CompletionErrorKind::ContextOverflow,
-            "the conversation is too long; continue with a shorter request",
-        ),
-        (
             CompletionErrorKind::OutputBudget,
             "produce your answer immediately without extended reasoning",
         ),
@@ -105,7 +102,7 @@ fn build_feedback_message_contains_pinned_remedy_per_kind() -> TestResult<()> {
 
     // -- Exec & Check
     for (kind, remedy) in &cases {
-        let message = build_feedback_message(kind, "raw", None, None);
+        let message = build_feedback_message(kind, FeedbackPhase::First, "raw", None, None);
         assert!(
             message.contains(remedy),
             "message for {kind:?} must contain the pinned remedy, got: {message}"
@@ -125,11 +122,11 @@ fn build_feedback_message_truncates_raw_msg_at_500_bytes() {
     // -- Exec & Check
     for kind in [
         CompletionErrorKind::ToolStructure,
-        CompletionErrorKind::ContextOverflow,
         CompletionErrorKind::OutputBudget,
         CompletionErrorKind::RequestTooLarge,
     ] {
-        let message = build_feedback_message(&kind, &raw_provider_msg, None, None);
+        let message =
+            build_feedback_message(&kind, FeedbackPhase::First, &raw_provider_msg, None, None);
         assert!(
             message.contains(&kept),
             "message for {kind:?} must keep the first 500 bytes"
@@ -154,11 +151,11 @@ fn build_feedback_message_keeps_short_raw_msg_verbatim() {
     // -- Exec & Check
     for kind in [
         CompletionErrorKind::ToolStructure,
-        CompletionErrorKind::ContextOverflow,
         CompletionErrorKind::OutputBudget,
         CompletionErrorKind::RequestTooLarge,
     ] {
-        let message = build_feedback_message(&kind, raw_provider_msg, None, None);
+        let message =
+            build_feedback_message(&kind, FeedbackPhase::First, raw_provider_msg, None, None);
         assert!(
             message.ends_with(raw_provider_msg),
             "message for {kind:?} must keep the short raw message verbatim, got: {message}"
@@ -177,7 +174,8 @@ fn build_feedback_message_cuts_at_char_boundary_for_multibyte_input() {
 
     // -- Exec & Check
     let message = build_feedback_message(
-        &CompletionErrorKind::ContextOverflow,
+        &CompletionErrorKind::OutputBudget,
+        FeedbackPhase::First,
         &raw_provider_msg,
         None,
         None,
@@ -196,14 +194,14 @@ fn build_feedback_message_avoids_permission_language_for_empty_raw_msg() {
     let forbidden = ["permission", "grant", "escalat", "allow"];
     let kinds = [
         CompletionErrorKind::ToolStructure,
-        CompletionErrorKind::ContextOverflow,
         CompletionErrorKind::OutputBudget,
         CompletionErrorKind::RequestTooLarge,
     ];
 
     // -- Exec & Check
     for kind in &kinds {
-        let message = build_feedback_message(kind, "", None, None).to_lowercase();
+        let message =
+            build_feedback_message(kind, FeedbackPhase::First, "", None, None).to_lowercase();
         for word in &forbidden {
             assert!(
                 !message.contains(word),
@@ -291,7 +289,13 @@ fn build_max_turns_feedback_message_avoids_permission_language() {
 #[test]
 fn output_budget_remedy_defaults_to_empty_output_when_mode_unset() -> TestResult<()> {
     // -- Exec & Check
-    let message = build_feedback_message(&CompletionErrorKind::OutputBudget, "raw", None, None);
+    let message = build_feedback_message(
+        &CompletionErrorKind::OutputBudget,
+        FeedbackPhase::First,
+        "raw",
+        None,
+        None,
+    );
     assert!(
         message.contains("produce your answer immediately without extended reasoning"),
         "default OutputBudget remedy must steer empty-output, got: {message}"
@@ -313,6 +317,7 @@ fn output_budget_remedy_empty_output_mode_uses_empty_steering() -> TestResult<()
     // -- Exec & Check
     let message = build_feedback_message(
         &CompletionErrorKind::OutputBudget,
+        FeedbackPhase::First,
         "raw",
         None,
         Some("empty_output"),
@@ -331,6 +336,7 @@ fn output_budget_remedy_shorter_response_mode_uses_shorten_steering() -> TestRes
     // -- Exec & Check
     let message = build_feedback_message(
         &CompletionErrorKind::OutputBudget,
+        FeedbackPhase::First,
         "raw",
         None,
         Some("shorter_response"),
@@ -349,6 +355,7 @@ fn output_budget_remedy_custom_empty_remedy_overrides_default() -> TestResult<()
     // -- Exec & Check
     let message = build_feedback_message(
         &CompletionErrorKind::OutputBudget,
+        FeedbackPhase::First,
         "raw",
         Some("custom remedy text"),
         None,
@@ -356,6 +363,36 @@ fn output_budget_remedy_custom_empty_remedy_overrides_default() -> TestResult<()
     assert!(
         message.contains("custom remedy text"),
         "custom empty remedy must override the default, got: {message}"
+    );
+    Ok(())
+}
+
+/// The second OutputBudget steering message must differ from the first: the
+/// Backoff phase escalates to shorten-the-response guidance.
+#[test]
+fn output_budget_backoff_steering_differs_from_first() -> TestResult<()> {
+    // -- Exec & Check
+    let first = build_feedback_message(
+        &CompletionErrorKind::OutputBudget,
+        FeedbackPhase::First,
+        "raw",
+        None,
+        None,
+    );
+    let backoff = build_feedback_message(
+        &CompletionErrorKind::OutputBudget,
+        FeedbackPhase::Backoff,
+        "raw",
+        None,
+        None,
+    );
+    assert_ne!(
+        first, backoff,
+        "the second OutputBudget steering must differ from the first"
+    );
+    assert!(
+        backoff.contains("shorten the response or split the work across turns"),
+        "backoff OutputBudget steering must escalate to shorten/split guidance, got: {backoff}"
     );
     Ok(())
 }
