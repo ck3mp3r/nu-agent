@@ -10,6 +10,13 @@
 /// the exhausted-steering contract.
 pub const NO_OUTPUT_STATEMENT: &str = "No output was produced.";
 
+/// User-facing notice published when the executor converts a repetition stop
+/// into a steering retry (Path A or Path C). The steering itself rides
+/// memory, so without this notice the retry is invisible and the user only
+/// sees the eventual terminal stop.
+pub const REPETITION_STEERING_NOTICE: &str =
+    "Repetition guard steering the model to try a different approach...";
+
 use std::sync::{Arc, Mutex};
 
 use nu_protocol::{LabeledError, Span, Value};
@@ -25,7 +32,9 @@ use crate::conversation::managers::SessionManager;
 use crate::conversation::turn::{TurnContext, error, execute_turn};
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
-use crate::hook::output_repetition::{OUTPUT_REPETITION_STOP_PREFIX, RepetitionState};
+use crate::hook::output_repetition::{
+    OUTPUT_REPETITION_BACKOFF_MESSAGE, OUTPUT_REPETITION_STOP_PREFIX, RepetitionState,
+};
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::session::repair::inject_missing_tool_results;
 use crate::session::{CachedMemory, SessionStore};
@@ -76,6 +85,9 @@ pub struct ToolInfra {
     /// caller retries so consecutive text-only completions accumulate across
     /// executor attempts.
     pub output_repetition: Arc<Mutex<RepetitionState>>,
+    /// Enable/disable the repetition guard (doom-loop + output-repetition
+    /// detection). Passed through to the hook chain.
+    pub repetition_guard: bool,
     /// Real token count from the last LLM completion, shared across turns. Used by
     /// the hook's compaction threshold check.
     pub last_total_tokens: Arc<Mutex<Option<u64>>>,
@@ -171,15 +183,31 @@ where
         // each steering retry appends one user-role message and re-runs the
         // turn with a fresh tool-call budget.
         let mut max_turns_feedback_retries = 0u8;
+        // Per-turn steering budget for output-repetition guard stops:
+        // converting a repetition stop into a steering retry (steering
+        // message + ladder reset) re-runs the turn, up to the
+        // MAX_REPETITION_STOP_RETRIES cap; a stop at the cap is terminal.
+        // Independent of the other retry counters.
+        let mut rep_stop_retries = 0u8;
+        // Session-less steering carrier: with no session (final_session_id
+        // None) the steering message cannot be appended to session memory, so
+        // the conversion path prepends it to the retry prompt instead
+        // (transient in-memory delivery; nothing is persisted).
+        let mut session_less_steering: Option<String> = None;
         // Per-attempt Config override for the OutputBudget max_tokens auto-raise.
         // When set, this clone (with a raised max_tokens) is used for the next
         // attempt instead of `self.config`. Cleared implicitly by being replaced
         // each time a raise is applied; None means use the base config.
         let mut attempt_config: Option<Config> = None;
         let visitor_result = loop {
-            // Restore tool definitions on retry attempts (backoff or feedback:
-            // the previous attempt consumed them via std::mem::take)
-            if attempt > 0 || feedback_retries > 0 || max_turns_feedback_retries > 0 {
+            // Restore tool definitions on retry attempts (backoff, feedback,
+            // or steering: the previous attempt consumed them via
+            // std::mem::take)
+            if attempt > 0
+                || feedback_retries > 0
+                || max_turns_feedback_retries > 0
+                || rep_stop_retries > 0
+            {
                 self.tool_infra.visible_tool_definitions = saved_tool_definitions.clone();
             }
 
@@ -189,18 +217,6 @@ where
                 .lock()
                 .expect("doom loop mutex poisoned")
                 .reset();
-            // Reset the output-repetition escalation ladder on retry attempts
-            // only, so the ladder persists across the first attempt of each
-            // turn for cross-turn escalation (mirrors the tool loop's
-            // per-attempt reset while keeping cross-turn continuity).
-            if attempt > 0 {
-                self.tool_infra
-                    .output_repetition
-                    .lock()
-                    .expect("output repetition mutex poisoned")
-                    .reset_ladder();
-            }
-
             let attempt_cfg = attempt_config.as_ref();
             let turn_ctx = TurnContext::new(
                 super::TurnConversation {
@@ -211,7 +227,10 @@ where
                     compaction: self.compaction.clone(),
                 },
                 super::TurnInput {
-                    prompt: prompt.clone(),
+                    prompt: match &session_less_steering {
+                        Some(steering) => format!("{steering}\n\n{prompt}"),
+                        None => prompt.clone(),
+                    },
                     preamble: preamble.as_deref(),
                     max_turns: self.config.max_tool_turns,
                 },
@@ -225,6 +244,7 @@ where
                     circuit_breaker: self.tool_infra.circuit_breaker.clone(),
                     doom_state: self.tool_infra.doom_state.clone(),
                     output_repetition: self.tool_infra.output_repetition.clone(),
+                    repetition_guard: self.tool_infra.repetition_guard,
                     last_total_tokens: self.tool_infra.last_total_tokens.clone(),
                     bus: self.tool_infra.bus.clone(),
                 },
@@ -471,6 +491,109 @@ where
                         },
                     ));
                 }
+                Ok(turn_result)
+                    if turn_result.cancelled
+                        && turn_result.cancel_reason.as_deref().is_some_and(|reason| {
+                            reason.starts_with(OUTPUT_REPETITION_STOP_PREFIX)
+                        }) =>
+                {
+                    // Path C stop-to-steering: the repetition guard stopped the
+                    // stream mid-turn and the Ok-cancelled result carries the
+                    // reason. Below the retry cap, publish the steering notice,
+                    // deliver the repetition steering message (session append,
+                    // or prompt prepend when there is no session), reset the
+                    // escalation ladder (the retry starts fresh at First), and
+                    // re-run the turn. A stop at the cap exhausts it and falls
+                    // through to the terminal surface after the loop.
+                    if rep_stop_retries < defaults::MAX_REPETITION_STOP_RETRIES {
+                        rep_stop_retries += 1;
+                        log::warn!(
+                            "Repetition stop converted to steering retry {rep_stop_retries}/{}. ",
+                            defaults::MAX_REPETITION_STOP_RETRIES
+                        );
+                        let _ = self
+                            .tool_infra
+                            .bus
+                            .warning()
+                            .send(WarningEvent::Message {
+                                message: REPETITION_STEERING_NOTICE.to_string(),
+                            })
+                            .await;
+                        match final_session_id {
+                            Some(session_id) => {
+                                self.append_to_memory_or_warn(
+                                    session_id,
+                                    vec![Message::user(OUTPUT_REPETITION_BACKOFF_MESSAGE)],
+                                    "repetition stop steering retry",
+                                )
+                                .await;
+                            }
+                            None => {
+                                // No session: carry the steering in the retry
+                                // prompt (transient, nothing persisted).
+                                session_less_steering =
+                                    Some(OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string());
+                            }
+                        }
+                        self.tool_infra
+                            .output_repetition
+                            .lock()
+                            .expect("output repetition mutex poisoned")
+                            .reset_ladder();
+                        continue;
+                    }
+                    break result;
+                }
+                Err((crate::conversation::turn::TurnError::Cancelled { msg, .. }, _))
+                    if msg.starts_with(OUTPUT_REPETITION_STOP_PREFIX) =>
+                {
+                    // Path A stop-to-steering: the repetition guard cancelled the
+                    // turn via rig's PromptCancelled. Below the retry cap,
+                    // publish the steering notice, deliver the repetition
+                    // steering message (session append, or prompt prepend when
+                    // there is no session), reset the escalation ladder, and
+                    // re-run the turn. A stop at the cap exhausts it and falls
+                    // through to the terminal surface after the loop (which
+                    // surfaces the stop reason).
+                    if rep_stop_retries < defaults::MAX_REPETITION_STOP_RETRIES {
+                        rep_stop_retries += 1;
+                        log::warn!(
+                            "Repetition stop converted to steering retry {rep_stop_retries}/{}. ",
+                            defaults::MAX_REPETITION_STOP_RETRIES
+                        );
+                        let _ = self
+                            .tool_infra
+                            .bus
+                            .warning()
+                            .send(WarningEvent::Message {
+                                message: REPETITION_STEERING_NOTICE.to_string(),
+                            })
+                            .await;
+                        match final_session_id {
+                            Some(session_id) => {
+                                self.append_to_memory_or_warn(
+                                    session_id,
+                                    vec![Message::user(OUTPUT_REPETITION_BACKOFF_MESSAGE)],
+                                    "repetition stop steering retry",
+                                )
+                                .await;
+                            }
+                            None => {
+                                // No session: carry the steering in the retry
+                                // prompt (transient, nothing persisted).
+                                session_less_steering =
+                                    Some(OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string());
+                            }
+                        }
+                        self.tool_infra
+                            .output_repetition
+                            .lock()
+                            .expect("output repetition mutex poisoned")
+                            .reset_ladder();
+                        continue;
+                    }
+                    break result;
+                }
                 _ => break result,
             }
         };
@@ -534,7 +657,14 @@ where
                         .await;
                     }
                 }
+                // Stop-to-steering exhaustion: a repetition stop at the
+                // per-turn retry cap falls through to this block, which
+                // surfaces the terminal stop (mirroring the doom-loop stop
+                // surface).
                 // Surface the doom-loop stop reason if this cancellation was a doom stop.
+                // Fix 2: the reason rides `LlmEvent::Stopped`, never
+                // `AssistantMessage` — routing it through the assistant-stream
+                // dedup path would truncate the streamed repeated block.
                 let response_text = if msg.starts_with(DOOM_LOOP_STOP_PREFIX)
                     || msg.starts_with(OUTPUT_REPETITION_STOP_PREFIX)
                 {
@@ -550,7 +680,9 @@ where
                         .tool_infra
                         .bus
                         .llm()
-                        .send(LlmEvent::AssistantMessage { text: msg.clone() })
+                        .send(LlmEvent::Stopped {
+                            reason: msg.clone(),
+                        })
                         .await;
                     msg
                 } else {
@@ -743,15 +875,14 @@ where
                     }
                 }
             }
-            let _ = self
-                .tool_infra
-                .bus
-                .turn()
-                .send(TurnEvent::Completed {
-                    tool_calls: turn_result.tool_call_count,
-                })
-                .await;
-            // Surface the doom-loop stop reason if this cancellation was a doom stop.
+            // Surface the doom-loop stop reason if this cancellation was a doom
+            // stop. Fix 1: the warning is sent BEFORE `TurnEvent::Completed` so
+            // the TUI reduces the warning ahead of turn finalize (the race with
+            // the separate bus channels is bounded; the TUI-side finalize fix
+            // preserves warnings deterministically). Fix 2: the reason rides
+            // `LlmEvent::Stopped`, never `AssistantMessage` — routing it
+            // through the assistant-stream dedup path would truncate the
+            // streamed repeated block.
             let response_text = match &turn_result.cancel_reason {
                 Some(reason)
                     if reason.starts_with(DOOM_LOOP_STOP_PREFIX)
@@ -769,14 +900,22 @@ where
                         .tool_infra
                         .bus
                         .llm()
-                        .send(LlmEvent::AssistantMessage {
-                            text: reason.clone(),
+                        .send(LlmEvent::Stopped {
+                            reason: reason.clone(),
                         })
                         .await;
                     reason.clone()
                 }
                 _ => String::new(),
             };
+            let _ = self
+                .tool_infra
+                .bus
+                .turn()
+                .send(TurnEvent::Completed {
+                    tool_calls: turn_result.tool_call_count,
+                })
+                .await;
             return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
                 &crate::llm::LlmResponse {
                     text: response_text,

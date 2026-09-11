@@ -42,6 +42,7 @@ impl UiRenderer for FakeRenderer {
             UiEvent::CompactionCompleted { .. } => "compaction_completed",
             UiEvent::CompactionFailed { .. } => "compaction_failed",
             UiEvent::AssistantMessage { .. } => "assistant_message",
+            UiEvent::Stopped { .. } => "stopped",
             UiEvent::Completed { .. } => "completed",
         };
         self.events.lock().expect("events").push(label.to_string());

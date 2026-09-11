@@ -105,6 +105,8 @@ pub struct ModelRoleConfig {
     pub output_budget_raise_multiplier: Option<f64>,
     /// Absolute ceiling for the raised max_tokens. None = 32768.
     pub output_budget_raise_cap: Option<u32>,
+    /// Enable/disable repetition guard (tool-call + output repetition detection). None = true.
+    pub repetition_guard: Option<bool>,
 }
 
 /// Top-level plugin configuration (provider-centric)
@@ -323,6 +325,10 @@ pub struct Config {
 
     /// Session store backend type. None = use default (SQLite).
     pub session_store_type: Option<StoreType>,
+
+    /// Enable/disable repetition guard (tool-call + output repetition detection).
+    /// None = use default (true).
+    pub repetition_guard: Option<bool>,
 }
 
 impl Config {

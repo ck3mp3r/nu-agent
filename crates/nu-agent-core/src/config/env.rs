@@ -54,6 +54,7 @@ impl Config {
         let output_budget_raise_multiplier: Option<f64> =
             parse_env_var("AGENT_OUTPUT_BUDGET_RAISE_MULTIPLIER");
         let output_budget_raise_cap: Option<u32> = parse_env_var("AGENT_OUTPUT_BUDGET_RAISE_CAP");
+        let repetition_guard: Option<bool> = parse_env_var("AGENT_REPETITION_GUARD");
         let read_timeout_secs: Option<u64> = parse_env_var("AGENT_READ_TIMEOUT_SECS");
         let a2a_enabled: Option<bool> = parse_env_var("AGENT_A2A_ENABLED");
 
@@ -91,6 +92,7 @@ impl Config {
             output_budget_raise_enabled,
             output_budget_raise_multiplier,
             output_budget_raise_cap,
+            repetition_guard,
             max_tool_calls_per_subturn,
             additional_params: None,
             a2a_enabled,

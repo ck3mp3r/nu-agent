@@ -111,6 +111,7 @@ max_context_tokens = 32768
 | `output_budget_raise_enabled` | bool | Opt-in auto-raise of max_tokens on OutputBudget feedback retries | `false` |
 | `output_budget_raise_multiplier` | float | Multiplier applied to the effective max_tokens for a raised retry | `2.0` |
 | `output_budget_raise_cap` | int | Absolute ceiling for the raised max_tokens | `32768` |
+| `repetition_guard` | bool | Enable/disable repetition guard (tool-call + output repetition detection) | `true` |
 
 All fields except `model` are optional. When omitted, the value is inherited from the next level in the [resolution priority](#resolution-priority).
 
@@ -629,6 +630,7 @@ Two turn-executor retry budgets are fixed defaults in `crates/nu-agent-core/src/
 |----------|---------|----------|
 | `MAX_PROVIDER_FEEDBACK_RETRIES` | 2 | Provider feedback retries per user turn for model-correctable failures. Each retry appends one model-facing feedback message to the session memory and re-runs the turn once. |
 | `MAX_TURNS_FEEDBACK_RETRIES` | 1 | Max-turns steering retries per user turn. On tool-call budget exhaustion, the executor appends a steering message and re-runs the turn once with a fresh budget before returning the hard error. |
+| `MAX_REPETITION_STOP_RETRIES` | 3 | Repetition-stop steering retries per user turn. When the output-repetition guard stops the stream mid-turn, the executor converts the stop into a steering retry (steering notice + steering message + escalation-ladder reset); a stop at the retry cap is terminal. |
 
 ## CLI commands reference
 

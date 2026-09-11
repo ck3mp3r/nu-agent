@@ -196,6 +196,15 @@ pub(crate) fn apply_cli_flags(config: &mut Config, call: &EvaluatedCall) {
         config.a2a_enabled = Some(true);
         config.a2a_port = Some(port_val as u16);
     }
+
+    // --repetition-guard: enable/disable repetition guard ("on"/"off").
+    if let Some(val) = get_string_flag(call, "repetition-guard") {
+        config.repetition_guard = match val.as_str() {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None,
+        };
+    }
 }
 
 /// Apply persona model override if CLI --model was not provided.
@@ -397,6 +406,12 @@ pub(crate) fn build_runtime(
         .model_context_tokens
         .or_else(|| params.config.max_context_tokens.map(|t| t as usize))
         .unwrap_or(defaults::MAX_CONTEXT_TOKENS as usize);
+    // Resolve the repetition-guard flag before params.config is moved: when
+    // unset, the guard defaults to enabled.
+    let repetition_guard = params
+        .config
+        .repetition_guard
+        .unwrap_or(defaults::REPETITION_GUARD_ENABLED);
 
     // The shared model handle is the single point of model identity: the agent
     // is built from it, the hook's `on_model_select` routes each turn to it,
@@ -478,6 +493,7 @@ pub(crate) fn build_runtime(
         output_repetition: Arc::new(Mutex::new(
             nu_agent_core::hook::output_repetition::RepetitionState::default(),
         )),
+        repetition_guard,
         last_total_tokens: Arc::new(Mutex::new(None)),
         bus: params.bus,
         shared_model,

@@ -4,7 +4,7 @@
 //! through `dispatch_turn_event` (the single turn dispatch seam).
 
 use crate::interaction::reducer::{ReducerInput, UserAction, reduce_with_cancel_controller};
-use crate::state::{AppState, InputState, UiPhase};
+use crate::state::{AppState, InputState, StatusMessageKind, UiPhase};
 use nu_agent_core::bus::TurnEvent;
 use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
 
@@ -87,4 +87,48 @@ fn finalize_resets_assistant_stream_start() {
     finalize_turn(&mut state);
 
     assert!(state.transcript.assistant_stream_start.is_none());
+}
+
+/// Fix 1 (deterministic): `finalize` clears only Neutral-kind status messages.
+/// A warning-kind message survives turn completion and expires via its own
+/// TTL — the repetition-stop warning arrives just before `TurnEvent::Completed`
+/// and must not be wiped by it.
+#[test]
+fn finalize_preserves_warning_and_clears_neutral_status() -> Result<()> {
+    // -- Setup & Fixtures: a warning-kind status message.
+    let mut state = AppState::default();
+    state
+        .status
+        .message
+        .set_warning("Output repetition stopped: …");
+
+    // -- Exec
+    finalize_turn(&mut state);
+
+    // -- Check: the warning survives.
+    assert_eq!(
+        state.status.message.status_line(),
+        "Output repetition stopped: …",
+        "finalize must preserve a warning-kind status message"
+    );
+    assert_eq!(
+        state.status.message.kind(),
+        StatusMessageKind::Warning,
+        "the surviving message must still be warning-kind"
+    );
+
+    // -- Setup & Fixtures: a Neutral-kind status message.
+    let mut state = AppState::default();
+    state.status.message.set_message("Tool: prior");
+
+    // -- Exec
+    finalize_turn(&mut state);
+
+    // -- Check: the neutral message is cleared.
+    assert!(
+        state.status.message.status_line().is_empty(),
+        "finalize must clear a Neutral-kind status message"
+    );
+
+    Ok(())
 }

@@ -28,6 +28,9 @@ pub struct HookState<S: SessionStore + Clone + Send + Sync> {
     /// via the hook. Survives caller retries so consecutive text-only
     /// completions accumulate across executor attempts.
     pub output_repetition: Arc<Mutex<RepetitionState>>,
+    /// Enable/disable the repetition guard (doom-loop + output-repetition
+    /// detection). When `false`, the hook chain skips all detector calls.
+    pub repetition_guard: bool,
     /// Shared runtime model handle. The single point of model identity: the
     /// hook's `on_model_select` routes each turn to its current value. It is
     /// constructed eagerly at startup and updated on every `switch_model()`.

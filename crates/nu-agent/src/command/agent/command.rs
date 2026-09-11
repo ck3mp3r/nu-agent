@@ -216,6 +216,12 @@ Compaction flags:
                 None,
             )
             .named(
+                "repetition-guard",
+                nu_protocol::SyntaxShape::String,
+                "Enable/disable repetition guard (on/off)",
+                None,
+            )
+            .named(
                 "mesh-key",
                 nu_protocol::SyntaxShape::String,
                 "Mesh isolation key. Agents only discover peers with the same key. Default: SHA-256 of cwd.",

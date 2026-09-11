@@ -128,6 +128,10 @@ pub enum UiEvent {
     AssistantMessage {
         text: String,
     },
+    /// A hook stopped the run; the reason is appended as a closing notice.
+    Stopped {
+        reason: String,
+    },
     Completed {
         tool_calls: usize,
     },

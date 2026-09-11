@@ -119,6 +119,10 @@ where
     /// Assistant-output repetition state shared across turns so that consecutive
     /// text-only completions are detected even when they span multiple turns.
     pub output_repetition: Arc<Mutex<crate::hook::output_repetition::RepetitionState>>,
+    /// Enable/disable the repetition guard (doom-loop + output-repetition
+    /// detection). Resolved from config; when `false`, the hook skips all
+    /// detector calls.
+    pub repetition_guard: bool,
     /// Real token count from the last LLM completion, shared across turns. Used by
     /// the hook's compaction threshold check.
     pub last_total_tokens: Arc<Mutex<Option<u64>>>,
@@ -219,6 +223,7 @@ where
                     circuit_breaker: Arc::clone(&self.circuit_breaker),
                     doom_state: Arc::clone(&self.doom_state),
                     output_repetition: Arc::clone(&self.output_repetition),
+                    repetition_guard: self.repetition_guard,
                     last_total_tokens: Arc::clone(&self.last_total_tokens),
                     bus: self.bus.clone(),
                 },

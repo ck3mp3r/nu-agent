@@ -317,6 +317,7 @@ fn test_validate_valid_config() {
         output_budget_raise_enabled: None,
         output_budget_raise_multiplier: None,
         output_budget_raise_cap: None,
+        repetition_guard: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -353,6 +354,7 @@ fn test_validate_minimal_config() {
         output_budget_raise_enabled: None,
         output_budget_raise_multiplier: None,
         output_budget_raise_cap: None,
+        repetition_guard: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -389,6 +391,7 @@ fn test_validate_empty_provider() -> Result<()> {
         output_budget_raise_enabled: None,
         output_budget_raise_multiplier: None,
         output_budget_raise_cap: None,
+        repetition_guard: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -430,6 +433,7 @@ fn test_validate_empty_model() -> Result<()> {
         output_budget_raise_enabled: None,
         output_budget_raise_multiplier: None,
         output_budget_raise_cap: None,
+        repetition_guard: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -471,6 +475,7 @@ fn test_validate_max_output_exceeds_context() -> Result<()> {
         output_budget_raise_enabled: None,
         output_budget_raise_multiplier: None,
         output_budget_raise_cap: None,
+        repetition_guard: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -513,6 +518,7 @@ fn test_validate_max_output_equals_context() {
         output_budget_raise_enabled: None,
         output_budget_raise_multiplier: None,
         output_budget_raise_cap: None,
+        repetition_guard: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -549,6 +555,7 @@ fn test_validate_zero_max_tool_turns() -> Result<()> {
         output_budget_raise_enabled: None,
         output_budget_raise_multiplier: None,
         output_budget_raise_cap: None,
+        repetition_guard: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -591,6 +598,7 @@ fn test_validate_only_context_tokens_set() {
         output_budget_raise_enabled: None,
         output_budget_raise_multiplier: None,
         output_budget_raise_cap: None,
+        repetition_guard: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -627,6 +635,7 @@ fn test_validate_only_output_tokens_set() {
         output_budget_raise_enabled: None,
         output_budget_raise_multiplier: None,
         output_budget_raise_cap: None,
+        repetition_guard: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -1514,6 +1523,150 @@ fn test_resolve_model_output_budget_raise_fields() -> Result<()> {
 
 #[test]
 #[serial]
+fn test_resolve_model_repetition_guard_none_when_unset() -> Result<()> {
+    // -- Setup & Fixtures
+    let plugin_config = PluginConfig {
+        models: {
+            let mut m = HashMap::new();
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
+            m
+        },
+        providers: HashMap::new(),
+        compaction: None,
+        agents: AgentsConfig::default(),
+        a2a_enabled: None,
+        session_store: None,
+        secret_store: None,
+        models_cache: None,
+        permissions: None,
+        mcp: None,
+    };
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        ..ModelRoleConfig::default()
+    };
+
+    // -- Exec
+    let config = plugin_config
+        .resolve_model(&role_config)
+        .map_err(|e| format!("should resolve: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(config.repetition_guard, None);
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn test_resolve_model_repetition_guard_role_false() -> Result<()> {
+    // -- Setup & Fixtures
+    let plugin_config = PluginConfig {
+        models: {
+            let mut m = HashMap::new();
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
+            m
+        },
+        providers: HashMap::new(),
+        compaction: None,
+        agents: AgentsConfig::default(),
+        a2a_enabled: None,
+        session_store: None,
+        secret_store: None,
+        models_cache: None,
+        permissions: None,
+        mcp: None,
+    };
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        repetition_guard: Some(false),
+        ..ModelRoleConfig::default()
+    };
+
+    // -- Exec
+    let config = plugin_config
+        .resolve_model(&role_config)
+        .map_err(|e| format!("should resolve: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(config.repetition_guard, Some(false));
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn test_from_env_repetition_guard_false() -> Result<()> {
+    // -- Setup & Fixtures
+    with_env_vars(vec![("AGENT_REPETITION_GUARD", "false")], || {
+        // -- Exec
+        let config = Config::from_env("openai", "gpt-4");
+
+        // -- Check
+        assert_eq!(config.repetition_guard, Some(false));
+    });
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn test_resolve_model_repetition_guard_role_overrides_env() -> Result<()> {
+    // -- Setup & Fixtures
+    let plugin_config = PluginConfig {
+        models: {
+            let mut m = HashMap::new();
+            m.insert(
+                "default".to_string(),
+                ModelRoleConfig {
+                    model: "openai/gpt-4".to_string(),
+                    ..ModelRoleConfig::default()
+                },
+            );
+            m
+        },
+        providers: HashMap::new(),
+        compaction: None,
+        agents: AgentsConfig::default(),
+        a2a_enabled: None,
+        session_store: None,
+        secret_store: None,
+        models_cache: None,
+        permissions: None,
+        mcp: None,
+    };
+    let role_config = ModelRoleConfig {
+        model: "openai/gpt-4".to_string(),
+        repetition_guard: Some(true),
+        ..ModelRoleConfig::default()
+    };
+
+    // -- Exec
+    let mut resolved: Option<Config> = None;
+    with_env_vars(vec![("AGENT_REPETITION_GUARD", "false")], || {
+        resolved = plugin_config
+            .resolve_model(&role_config)
+            .map_err(|e| format!("should resolve: {e:?}"))
+            .ok();
+    });
+
+    // -- Check
+    let config = resolved.ok_or("should resolve")?;
+    assert_eq!(config.repetition_guard, Some(true));
+    Ok(())
+}
+
+#[test]
+#[serial]
 fn test_resolve_model_role_max_output_tokens_overrides_model_limit() -> Result<()> {
     // Role-level max_output_tokens must beat the model-level limit from the
     // provider's models map (role config is highest priority within resolve_model).
@@ -1938,6 +2091,7 @@ fn test_validate_none_max_tool_turns_is_valid() {
         output_budget_raise_enabled: None,
         output_budget_raise_multiplier: None,
         output_budget_raise_cap: None,
+        repetition_guard: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,
@@ -1974,6 +2128,7 @@ fn test_validate_zero_max_tool_turns_still_invalid() -> Result<()> {
         output_budget_raise_enabled: None,
         output_budget_raise_multiplier: None,
         output_budget_raise_cap: None,
+        repetition_guard: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,

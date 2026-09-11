@@ -38,7 +38,9 @@ use super::agent_hook::HookState;
 use super::circuit_breaker_guard::CircuitBreakerGuard;
 use super::doom_loop::DoomLoopDetector;
 use super::history_snapshot::HistorySnapshot;
-use super::output_repetition::{OutputRepetitionDetector, RepetitionDetection, RepetitionState};
+use super::output_repetition::{
+    OUTPUT_REPETITION_STOP_PREFIX, OutputRepetitionDetector, RepetitionDetection, RepetitionState,
+};
 use super::permission_resolver::{
     AsyncPermissionResolver, PermissionDecision, resolve_tool_source,
 };
@@ -56,6 +58,9 @@ pub struct HookChain<
     subturn: SubTurnCap,
     doom: DoomLoopDetector,
     output_repetition: Arc<Mutex<RepetitionState>>,
+    /// Enable/disable the repetition guard (doom-loop + output-repetition
+    /// detection). When `false`, the detector call sites are skipped.
+    repetition_guard: bool,
     circuit: CircuitBreakerGuard,
     history: HistorySnapshot,
     permission: P,
@@ -100,6 +105,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChai
                 state: hook_state.doom_state,
             },
             output_repetition: hook_state.output_repetition,
+            repetition_guard: hook_state.repetition_guard,
             circuit: CircuitBreakerGuard {
                 breaker: hook_state.circuit_breaker,
             },
@@ -224,35 +230,40 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         let cancelled = self.is_cancelled();
         let bus = self.bus.clone();
         let text = event.aggregated.to_string();
-        // Intra-stream repetition detection: record every delta chunk and trip
-        // when the last `OUTPUT_REPETITION_THRESHOLD` deltas are all identical.
-        // Mirrors `DoomLoopState::check_and_record` (doom_loop.rs:45-70).
-        // Compute it synchronously before the `async move` so `event.delta` is
-        // not borrowed across the await point.
-        let repetition_detection =
-            OutputRepetitionDetector::record_delta(&self.output_repetition, event.delta);
+        // Intra-stream repetition detection: check the full aggregated stream
+        // text (not individual deltas — streaming servers tokenize differently
+        // each pass, so delta chunks are never reliably identical, but the
+        // repetition is fully visible in the aggregated suffix). The 100-char
+        // growth throttle inside `check_aggregated` bounds the check cost.
+        // Compute it synchronously before the `async move` so `event` is not
+        // borrowed across the await point. Skipped entirely when the repetition
+        // guard is disabled.
+        let repetition_action = if self.repetition_guard {
+            OutputRepetitionDetector::check_aggregated(&self.output_repetition, event.aggregated)
+        } else {
+            None
+        };
 
         async move {
             if cancelled {
                 return ObservationAction::stop("Cancelled by user");
             }
-            if let Some(detection) = repetition_detection {
-                match detection {
-                    RepetitionDetection::First(message) | RepetitionDetection::Backoff(message) => {
-                        let _ = bus.warning().send(WarningEvent::Message { message }).await;
-                        let _ = bus.llm().send(LlmEvent::AssistantMessage { text }).await;
-                        ObservationAction::continue_run()
-                    }
-                    RepetitionDetection::Stop(message) => {
-                        // No hook-side warning — the executor surfaces the stop
-                        // reason, mirroring the tool doom loop.
-                        ObservationAction::stop(message)
-                    }
-                }
-            } else {
-                let _ = bus.llm().send(LlmEvent::AssistantMessage { text }).await;
-                ObservationAction::continue_run()
+            // Every intra-stream detection stops the stream: `check_aggregated`
+            // returns Stop on ANY detection (the stream stops on the FIRST,
+            // not after ladder escalations). NO warning here — the executor
+            // surfaces the stop reason and drives the stop-to-steering retry
+            // (append steering + reset ladder + re-run, terminal on the second
+            // stop), the same path as the Esc-Esc cancel: `ObservationAction
+            // ::stop` → PromptCancelled → cancel-reason matching →
+            // `LlmEvent::Stopped` + `WarningEvent`.
+            if repetition_action.is_some() {
+                return ObservationAction::stop(format!(
+                    "{OUTPUT_REPETITION_STOP_PREFIX} the assistant kept repeating the same \
+                     output after repeated steering. The run was stopped."
+                ));
             }
+            let _ = bus.llm().send(LlmEvent::AssistantMessage { text }).await;
+            ObservationAction::continue_run()
         }
     }
 
@@ -292,10 +303,13 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             if let Some(action) = subturn_action {
                 return action;
             }
-            let doom_action = self
-                .doom
-                .check_and_record(&tool_name_owned, &args_owned, &bus)
-                .await;
+            let doom_action = if self.repetition_guard {
+                self.doom
+                    .check_and_record(&tool_name_owned, &args_owned, &bus)
+                    .await
+            } else {
+                None
+            };
             if let Some(action) = doom_action {
                 return action;
             }
@@ -480,11 +494,17 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         _ctx: &HookContext,
         event: ModelTurnFinished<'_>,
     ) -> impl std::future::Future<Output = ModelTurnAction> + WasmCompatSend {
-        // Detect assistant-output repetition across completed model turns. The
-        // action must be computable before the `async move` so it is decided
-        // synchronously.
-        let repetition_detection =
-            OutputRepetitionDetector::record_turn_content(&self.output_repetition, event.content);
+        // Detect assistant-output repetition at the turn boundary. The action
+        // must be computable before the `async move` so it is decided
+        // synchronously. `finish_turn` consumes the intra-stream detection
+        // flag (escalating the ladder when intra-stream detection fired) and
+        // otherwise falls back to the cross-turn full-text comparison.
+        // Skipped entirely when the repetition guard is disabled.
+        let repetition_detection = if self.repetition_guard {
+            OutputRepetitionDetector::finish_turn(&self.output_repetition, event.content)
+        } else {
+            None
+        };
         let bus = self.bus.clone();
         async move {
             if let Some(detection) = repetition_detection {

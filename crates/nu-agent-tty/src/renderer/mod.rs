@@ -314,6 +314,17 @@ impl<W: Write> StderrUiRenderer<W> {
                 }
             }
             UiEvent::AssistantMessage { .. } => None,
+            UiEvent::Stopped { reason } => {
+                if self.policy.quiet {
+                    None
+                } else {
+                    Some(style_text(
+                        &format!("⚠ stopped: {reason}"),
+                        &StyleHint::Error,
+                        self.use_color,
+                    ))
+                }
+            }
             UiEvent::Completed { tool_calls } => {
                 if self.policy.quiet {
                     None
@@ -427,6 +438,11 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 }
             }
             UiEvent::TurnError { .. } if self.spinner.is_active() => {
+                self.clear_spinner_line();
+                self.spinner.stop();
+                self.active_tool_name = None;
+            }
+            UiEvent::Stopped { .. } if self.spinner.is_active() => {
                 self.clear_spinner_line();
                 self.spinner.stop();
                 self.active_tool_name = None;

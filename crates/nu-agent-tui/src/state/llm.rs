@@ -39,7 +39,42 @@ impl LlmState {
                 log::trace!("reducer: AssistantMessage text_len={}", text.len());
                 self.assistant_message(store, scroll, &text)
             }
+            LlmEvent::Stopped { reason } => self.stopped(store, scroll, &reason),
         }
+    }
+
+    /// Render a hook-stop reason as a closing notice. The reason is APPENDED
+    /// as a new transcript entry — never routed through the
+    /// `assistant_message` dedup path, which would truncate the streamed
+    /// block (Fix 2 of the repetition stop UX). The streaming cursor is
+    /// cleared so the streamed block stays intact and any later assistant
+    /// message starts a fresh block.
+    fn stopped(
+        &mut self,
+        store: &mut TranscriptStore,
+        scroll: &mut ScrollState,
+        reason: &str,
+    ) -> bool {
+        let trimmed = reason.trim();
+        if trimmed.is_empty() {
+            store.assistant_stream_start = None;
+            return false;
+        }
+        // Close the in-progress streamed block: a spacer separates it from
+        // the notice, and the cursor resets so nothing later truncates it.
+        if !store.is_empty() && !store.last_is_spacer() {
+            store.push_spacer();
+        }
+        store.assistant_stream_start = None;
+        scroll.scroll_transcript_to_bottom();
+        store.push_transcript_item(TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::Assistant(ProseMessage {
+                markdown: trimmed.to_string(),
+            }),
+            status: None,
+        });
+        true
     }
 
     fn handle_start(

@@ -413,3 +413,111 @@ fn assistant_streaming_truncates_prior_render() {
 }
 
 // endregion: --- Raw markdown projection (moved from task_4a_tests)
+
+// ---------------------------------------------------------------------------
+// LlmEvent::Stopped — hook-stop notice (Fix 2)
+// ---------------------------------------------------------------------------
+
+/// `LlmEvent::Stopped` APPENDS the reason as a new transcript entry without
+/// truncating the streamed assistant block (Fix 2 of the repetition stop UX):
+/// the streamed repeated text stays visible, the reason is added after it,
+/// and `assistant_stream_start` resets so nothing later truncates the block.
+#[test]
+fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
+    // -- Setup & Fixtures: stream an assistant block (2 dedup steps).
+    let mut state = busy_state_with_clean_transcript();
+    reduce_llm(&mut state, assistant_message("repeated text"));
+    reduce_llm(&mut state, assistant_message("repeated text continues"));
+    let streamed_start = state
+        .transcript
+        .assistant_stream_start
+        .ok_or("stream should have set assistant_stream_start")?;
+    assert!(
+        state
+            .transcript
+            .entries
+            .iter()
+            .any(|entry| entry.role() == Role::Assistant
+                && entry.text().contains("repeated text continues")),
+        "the streamed block must exist before the stop"
+    );
+
+    // -- Exec
+    let changed = reduce_llm(
+        &mut state,
+        LlmEvent::Stopped {
+            reason: "Output repetition stopped: the run was stopped.".to_string(),
+        },
+    );
+
+    // -- Check
+    assert!(changed, "Stopped must mark the TUI changed");
+    // The streamed block is NOT truncated: the streamed text is still there.
+    assert!(
+        state
+            .transcript
+            .entries
+            .iter()
+            .any(|entry| entry.role() == Role::Assistant
+                && entry.text().contains("repeated text continues")),
+        "the streamed block must survive the stop notice"
+    );
+    // The reason is appended as a NEW entry after the streamed block.
+    let last = state
+        .transcript
+        .entries
+        .last()
+        .ok_or("should have transcript entries")?;
+    let reason_appended = match &last.kind {
+        TranscriptEntryKind::Assistant(ProseMessage { markdown }) => {
+            markdown.contains("Output repetition stopped")
+        }
+        _ => false,
+    };
+    assert!(
+        reason_appended,
+        "the stop reason must be appended as a new entry, got {last:?}"
+    );
+    // The streaming cursor resets.
+    assert!(
+        state.transcript.assistant_stream_start.is_none(),
+        "Stopped must reset assistant_stream_start"
+    );
+    // The start index is BEFORE the appended reason (stream untouched).
+    let _ = streamed_start;
+
+    Ok(())
+}
+
+/// An empty Stopped reason is a no-op render-wise but still clears the
+/// streaming cursor so no later assistant message truncates the block.
+#[test]
+fn stopped_event_with_empty_reason_resets_stream_start() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = busy_state_with_clean_transcript();
+    reduce_llm(&mut state, assistant_message("streamed block"));
+    assert!(state.transcript.assistant_stream_start.is_some());
+    let before = state.transcript.entries.len();
+
+    // -- Exec
+    let changed = reduce_llm(
+        &mut state,
+        LlmEvent::Stopped {
+            reason: "  ".to_string(),
+        },
+    );
+
+    // -- Check
+    assert!(!changed, "an empty reason renders nothing");
+    assert_eq!(
+        state.transcript.entries.len(),
+        before,
+        "an empty reason must not append entries"
+    );
+    assert!(
+        state.transcript.assistant_stream_start.is_none(),
+        "Stopped must reset assistant_stream_start even for an empty reason"
+    );
+
+    Ok(())
+}

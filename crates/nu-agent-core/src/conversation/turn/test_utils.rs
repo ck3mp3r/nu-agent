@@ -246,6 +246,7 @@ pub(super) fn test_config() -> Config {
         output_budget_raise_enabled: None,
         output_budget_raise_multiplier: None,
         output_budget_raise_cap: None,
+        repetition_guard: None,
         max_tool_calls_per_subturn: None,
         additional_params: None,
         a2a_enabled: None,

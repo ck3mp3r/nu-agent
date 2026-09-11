@@ -415,6 +415,9 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
         UiEvent::AssistantMessage { text } => {
             crate::state::dispatch_llm_event(state, LlmEvent::AssistantMessage { text })
         }
+        UiEvent::Stopped { reason } => {
+            crate::state::dispatch_llm_event(state, LlmEvent::Stopped { reason })
+        }
         UiEvent::ToolStarted {
             name,
             source,

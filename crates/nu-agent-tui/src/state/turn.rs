@@ -4,7 +4,7 @@
 use nu_agent_core::bus::TurnEvent;
 
 use super::transcript_store::TranscriptStore;
-use super::{AppState, StatusState};
+use super::{AppState, StatusMessageKind, StatusState};
 
 /// Turn-domain decisions extracted from the former `reduce_ui_event_impl`
 /// `Completed` arm and `finalize` helper. The prompt-cycle completion itself
@@ -37,7 +37,13 @@ impl TurnState {
     ) -> bool {
         store.push_spacer();
         *input_locked = false;
-        status.message.clear();
+        // Clear only Neutral status messages. Warning-kind messages survive
+        // turn finalize and expire via their own 15 s TTL — a repetition-stop
+        // warning arrives just before `TurnEvent::Completed` and must not be
+        // wiped by it.
+        if status.message.kind() == StatusMessageKind::Neutral {
+            status.message.clear();
+        }
         // Reset streaming state when the LLM response is complete
         store.assistant_stream_start = None;
         true

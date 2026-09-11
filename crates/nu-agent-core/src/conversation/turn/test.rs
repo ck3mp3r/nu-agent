@@ -38,6 +38,11 @@ pub(crate) fn default_output_repetition() -> Arc<std::sync::Mutex<RepetitionStat
     Arc::new(std::sync::Mutex::new(RepetitionState::default()))
 }
 
+/// Repetition guard enabled by default so existing tests exercise detection.
+pub(crate) fn default_repetition_guard() -> bool {
+    true
+}
+
 /// A `last_total_tokens` slot starting at `None` (no real token count yet).
 pub(crate) fn default_last_total_tokens() -> Arc<std::sync::Mutex<Option<u64>>> {
     Arc::new(std::sync::Mutex::new(None))
@@ -132,6 +137,7 @@ fn make_turn_context<'a>(
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
         output_repetition: default_output_repetition(),
+        repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
         bus,
     };
@@ -244,6 +250,7 @@ async fn execute_turn_cancel_returns_cancelled_true() -> Result<()> {
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
         output_repetition: default_output_repetition(),
+        repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
         bus: bus.clone(),
     };
@@ -1018,6 +1025,7 @@ async fn transient_turn_does_not_write_jsonl() -> Result<()> {
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
         output_repetition: default_output_repetition(),
+        repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
     };
@@ -1078,6 +1086,7 @@ async fn persistent_turn_writes_jsonl() -> Result<()> {
         circuit_breaker: default_circuit_breaker(),
         doom_state: default_doom_state(),
         output_repetition: default_output_repetition(),
+        repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
     };

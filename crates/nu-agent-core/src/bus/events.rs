@@ -40,6 +40,12 @@ pub enum LlmEvent {
     AssistantMessage {
         text: String,
     },
+    /// The run was stopped by a hook (e.g. a repetition/doom-loop stop). The
+    /// reason is surfaced as an appended notice — never routed through the
+    /// assistant-stream dedup path, so streamed content is not truncated.
+    Stopped {
+        reason: String,
+    },
 }
 
 /// A conversation turn lifecycle event.
@@ -187,6 +193,7 @@ impl From<LlmEvent> for Option<UiEvent> {
                 total_tokens,
             }),
             LlmEvent::AssistantMessage { text } => Some(UiEvent::AssistantMessage { text }),
+            LlmEvent::Stopped { reason } => Some(UiEvent::Stopped { reason }),
         }
     }
 }

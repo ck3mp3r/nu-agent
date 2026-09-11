@@ -27,6 +27,13 @@ pub const MAX_PROVIDER_FEEDBACK_RETRIES: u8 = 3;
 /// re-runs the turn once with a fresh tool-call budget.
 pub const MAX_TURNS_FEEDBACK_RETRIES: u8 = 1;
 
+/// Default maximum repetition-stop steering retries per user turn. When the
+/// output-repetition guard stops the stream mid-turn, the executor converts
+/// each stop into a steering retry (appends the repetition steering message
+/// and resets the escalation ladder) until the retry cap is reached; only
+/// then is a stop terminal.
+pub const MAX_REPETITION_STOP_RETRIES: u8 = 3;
+
 /// Default base backoff in ms, doubles each attempt, capped at 30_000ms.
 pub const RETRY_BASE_DELAY_MS: u64 = 1000;
 
@@ -62,3 +69,7 @@ pub const OUTPUT_BUDGET_RAISE_MULTIPLIER: f64 = 2.0;
 /// Default absolute ceiling for the raised max_tokens on an OutputBudget
 /// feedback retry. The raised value never exceeds this cap.
 pub const OUTPUT_BUDGET_RAISE_CAP: u32 = 32768;
+
+/// Default flag for the repetition guard (tool-call + output repetition
+/// detection). True = enabled.
+pub const REPETITION_GUARD_ENABLED: bool = true;

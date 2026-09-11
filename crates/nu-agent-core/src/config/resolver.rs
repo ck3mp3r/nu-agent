@@ -141,6 +141,9 @@ impl PluginConfig {
         if let Some(r) = role_config.output_budget_raise_cap {
             config.output_budget_raise_cap = Some(r);
         }
+        if let Some(r) = role_config.repetition_guard {
+            config.repetition_guard = Some(r);
+        }
 
         // Resolve secret store references (e.g. "store:openai" → actual key)
         if let Some(store) = &self.secret_store
