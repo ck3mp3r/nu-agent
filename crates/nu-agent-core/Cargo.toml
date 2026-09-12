@@ -11,7 +11,7 @@ rig = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 async-trait = "0.1"
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "chrono", "migrate"] }
+sqlx = { version = "0.9", features = ["sqlite", "runtime-tokio", "chrono", "migrate"] }
 futures = { workspace = true }
 rmcp = { workspace = true }
 thiserror = { workspace = true }
@@ -43,8 +43,8 @@ unicodeit = { workspace = true }
 unicode-width = { workspace = true }
 fs2 = { workspace = true }
 libloading = "0.9"
-tree-sitter = "0.26"
-tree-sitter-config = "0.26"
+tree-sitter = "0.27"
+tree-sitter-config = "0.27"
 tree-sitter-language = "0.1"
 
 [dev-dependencies]
