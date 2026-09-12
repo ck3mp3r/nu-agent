@@ -43,50 +43,59 @@ impl BlockRenderer for TuiRenderer {
 
         let mut result = Vec::new();
 
+        // Pre-wrap prose so no emitted Line exceeds the pane width; ratatui's
+        // Paragraph wrap then never re-wraps, and every visual row keeps its
+        // lane prefix (alignment column 4 on continuation rows too).
+        let wrap_width = ctx.width.saturating_sub(lane_prefix_width()).max(1);
+
         for (index, content_line) in content_lines.iter().enumerate() {
             let is_first = index == 0;
+            let wrapped_rows = self.wrapped_row_spans(content_line, &block.role, wrap_width);
 
-            // Build prefix for first line
-            let mut spans = if is_first {
-                let mut spans =
-                    self.lane_prefix(block.role.clone(), ctx.cursor, block.suppress_prefix);
+            for (row_idx, row_spans) in wrapped_rows.into_iter().enumerate() {
+                // Build prefix for first row of the first ContentLine; every
+                // other row is a continuation: no cursor, no status indicator,
+                // and (except for the user rail) a blank role label so the
+                // icon never repeats on wrapped rows.
+                let is_row_zero = is_first && row_idx == 0;
+                let mut spans = if is_row_zero {
+                    let mut spans =
+                        self.lane_prefix(block.role.clone(), ctx.cursor, block.suppress_prefix);
 
-                // Add status indicator if present
-                if let Some(status) = &ctx.status {
-                    let indicator = Self::indicator_char(status, ctx.now_millis);
-                    let style = self.indicator_style(status);
-                    spans.push(RatatuiSpan::styled(format!("{indicator} "), style));
+                    // Add status indicator if present
+                    if let Some(status) = &ctx.status {
+                        let indicator = Self::indicator_char(status, ctx.now_millis);
+                        let style = self.indicator_style(status);
+                        spans.push(RatatuiSpan::styled(format!("{indicator} "), style));
+                    }
+
+                    spans
+                } else {
+                    self.lane_prefix_continuation(block.role.clone(), block.suppress_prefix)
+                };
+
+                // Add the wrapped content spans for this row
+                spans.extend(row_spans);
+
+                // Center the line if requested
+                if block.center {
+                    let line_char_width: usize =
+                        spans.iter().map(|s| s.content.chars().count()).sum();
+                    let padding = ctx.width.saturating_sub(line_char_width) / 2;
+                    if padding > 0 {
+                        let mut padded =
+                            vec![RatatuiSpan::styled(" ".repeat(padding), Style::default())];
+                        padded.append(&mut spans);
+                        spans = padded;
+                    }
                 }
 
-                spans
-            } else {
-                // Subsequent lines: no cursor, no status indicator
-                self.lane_prefix(block.role.clone(), false, block.suppress_prefix)
-            };
+                // Apply row overlays (selection highlighting, etc.)
+                let row_style = self.row_style(&block.role);
+                let spans = self.apply_row_overlays(spans, row_style, ctx.selected);
 
-            // Add content spans
-            for span in &content_line.spans {
-                let style = self.hint_to_style(&span.hint, &block.role);
-                spans.push(RatatuiSpan::styled(span.text.clone(), style));
+                result.push(Line::from(spans));
             }
-
-            // Center the line if requested
-            if block.center {
-                let line_char_width: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-                let padding = ctx.width.saturating_sub(line_char_width) / 2;
-                if padding > 0 {
-                    let mut padded =
-                        vec![RatatuiSpan::styled(" ".repeat(padding), Style::default())];
-                    padded.append(&mut spans);
-                    spans = padded;
-                }
-            }
-
-            // Apply row overlays (selection highlighting, etc.)
-            let row_style = self.row_style(&block.role);
-            let spans = self.apply_row_overlays(spans, row_style, ctx.selected);
-
-            result.push(Line::from(spans));
         }
 
         result
@@ -97,6 +106,122 @@ pub fn lane_prefix_width() -> usize {
     // cursor_str (2 chars: "> " or "  ") + label (2 chars: role icon + space)
     4
 }
+
+/// Pre-wrap a single prose row at `width` display columns so no rendered
+/// [`Line`] ever exceeds the pane width and ratatui never re-wraps (which
+/// would discard the per-row lane prefix). Greedy first-fit on ASCII spaces,
+/// matching ratatui's default word wrapper. Returns at least one row, so an
+/// empty input still renders as one empty row.
+pub(crate) fn wrap_prose(text: &str, width: usize) -> Vec<std::borrow::Cow<'_, str>> {
+    textwrap::wrap(
+        text,
+        textwrap::Options::new(width.max(1)).word_splitter(textwrap::WordSplitter::NoHyphenation),
+    )
+}
+
+// region:    --- Support
+
+impl TuiRenderer {
+    /// Wrap a ContentLine at `wrap_width` display columns and reconstruct the
+    /// styled spans of every wrapped row.
+    ///
+    /// Single-span lines (all prose) wrap one-to-one. Multi-span lines wrap on
+    /// the joined span text; textwrap rows are contiguous byte substrings of
+    /// that text (it drops only inter-word whitespace at wrap points and inserts
+    /// nothing), so a forward scan from the previous row locates each row's byte
+    /// range and the original spans are sliced at that range.
+    fn wrapped_row_spans(
+        &self,
+        content_line: &ContentLine,
+        role: &Role,
+        wrap_width: usize,
+    ) -> Vec<Vec<RatatuiSpan<'static>>> {
+        let spans = &content_line.spans;
+        let hang_indent = content_line.hang_indent.min(wrap_width.saturating_sub(1));
+        let text_width = wrap_width - hang_indent;
+
+        if spans.len() == 1 {
+            let style = self.hint_to_style(&spans[0].hint, role);
+            return wrap_prose(&spans[0].text, text_width)
+                .iter()
+                .enumerate()
+                .map(|(row_idx, row)| {
+                    let text = row.to_string();
+                    if row_idx > 0 && hang_indent > 0 {
+                        // Hang indent is content indentation, not the styled
+                        // lane prefix, so a plain unstyled span is correct.
+                        let mut row_spans = vec![RatatuiSpan::raw(" ".repeat(hang_indent))];
+                        row_spans.push(RatatuiSpan::styled(text, style));
+                        row_spans
+                    } else {
+                        vec![RatatuiSpan::styled(text, style)]
+                    }
+                })
+                .collect();
+        }
+
+        let full_text: String = spans.iter().map(|s| s.text.as_str()).collect();
+        let mut cursor = 0usize;
+        wrap_prose(&full_text, text_width)
+            .iter()
+            .enumerate()
+            .map(|(row_idx, row)| {
+                if row.is_empty() {
+                    return Vec::new();
+                }
+                let mut row_spans = if row_idx > 0 && hang_indent > 0 {
+                    vec![RatatuiSpan::raw(" ".repeat(hang_indent))]
+                } else {
+                    Vec::new()
+                };
+                let Some(start) = full_text[cursor..]
+                    .find(row.as_ref())
+                    .map(|rel| cursor + rel)
+                else {
+                    // Defensive: wrap rows are always substrings of the joined
+                    // text. If matching ever fails, render the row unstyled
+                    // rather than dropping content.
+                    row_spans.push(RatatuiSpan::raw(row.to_string()));
+                    return row_spans;
+                };
+                let end = start + row.len();
+                cursor = end;
+                row_spans.extend(self.sliced_row_spans(spans, role, start, end));
+                row_spans
+            })
+            .collect()
+    }
+
+    /// Styled spans covering byte range `[start, end)` of the joined span text.
+    fn sliced_row_spans(
+        &self,
+        spans: &[nu_agent_core::transcript::ir::Span],
+        role: &Role,
+        start: usize,
+        end: usize,
+    ) -> Vec<RatatuiSpan<'static>> {
+        let mut result = Vec::new();
+        let mut offset = 0usize;
+        for span in spans {
+            let span_start = offset;
+            let span_end = offset + span.text.len();
+            offset = span_end;
+            let from = start.max(span_start);
+            let to = end.min(span_end);
+            if from >= to {
+                continue;
+            }
+            let text = &span.text[from - span_start..to - span_start];
+            result.push(RatatuiSpan::styled(
+                text.to_string(),
+                self.hint_to_style(&span.hint, role),
+            ));
+        }
+        result
+    }
+}
+
+// endregion: --- Support
 
 impl TuiRenderer {
     fn lane_prefix(
@@ -121,6 +246,33 @@ impl TuiRenderer {
         };
         vec![
             RatatuiSpan::styled(cursor_str.to_string(), Style::default()),
+            RatatuiSpan::styled(label.to_string(), style),
+        ]
+    }
+
+    /// Lane prefix for wrapped continuation rows: identical lane styling but
+    /// a blank 2-char role label, except the user rail which stays on every
+    /// row (task 7bd175d2).
+    fn lane_prefix_continuation(
+        &self,
+        role: Role,
+        suppress_prefix: bool,
+    ) -> Vec<RatatuiSpan<'static>> {
+        let (label, style) = if suppress_prefix {
+            ("  ", self.theme.role_system)
+        } else {
+            match role {
+                Role::User => ("▏ ", self.theme.lane_prefix_user),
+                Role::Assistant => ("  ", self.theme.lane_prefix_assistant),
+                Role::Tool => ("  ", self.theme.lane_prefix_tool),
+                Role::ToolDisplay => ("  ", self.theme.lane_prefix_assistant),
+                Role::Compaction => ("  ", self.theme.lane_prefix_compaction),
+                Role::System => ("  ", self.theme.lane_prefix_system),
+                Role::Separator => ("  ", self.theme.role_separator),
+            }
+        };
+        vec![
+            RatatuiSpan::styled("  ".to_string(), Style::default()),
             RatatuiSpan::styled(label.to_string(), style),
         ]
     }

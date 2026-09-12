@@ -52,3 +52,7 @@ In TUI mode, assistant markdown is projected into readable transcript lines.
 Fenced code blocks use syntax highlighting when the fence language is recognized.
 If the language is unknown (or unsupported by the highlighter adapter), rendering
 falls back to stable plain code text so transcript readability is preserved.
+
+Wrapped transcript rows keep their lane alignment: role icons (⚙, ~, ·) appear
+on the first row only, list items hang-indent under their marker text, and edit
+diffs render one visual row per diff line with no stray blank rows.

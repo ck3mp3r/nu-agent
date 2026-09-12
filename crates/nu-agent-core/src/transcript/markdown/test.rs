@@ -92,6 +92,17 @@ fn markdown_projection_fixture_lists_and_blockquote_render_deterministically() {
             "│ second"
         ]
     );
+
+    // Hanging indent: the list marker width feeds ContentLine.hang_indent so
+    // wrapped continuations align under the item text (task 7bd175d2).
+    let hang = project_markdown_to_lines(&markdown, None);
+    assert_eq!(hang[0].hang_indent, 2, "bullet marker '• ' is 2 cols");
+    assert_eq!(hang[1].hang_indent, 2);
+    assert_eq!(hang[2].hang_indent, 0, "blank separator has no hang indent");
+    assert_eq!(hang[3].hang_indent, 3, "ordered marker '1. ' is 3 cols");
+    assert_eq!(hang[4].hang_indent, 3);
+    assert_eq!(hang[5].hang_indent, 0);
+    assert_eq!(hang[6].hang_indent, 0, "blockquote line is not a list item");
 }
 
 #[test]

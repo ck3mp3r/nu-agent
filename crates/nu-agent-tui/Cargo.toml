@@ -10,6 +10,7 @@ ratatui = { workspace = true }
 ratatui-textarea = { workspace = true }
 crossterm = { workspace = true }
 unicode-width = { workspace = true }
+textwrap = { workspace = true }
 arboard = { workspace = true }
 pulldown-cmark = { workspace = true }
 unicodeit = { workspace = true }

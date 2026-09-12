@@ -1,6 +1,6 @@
-use crate::state::{AppState, TranscriptRole};
+use crate::state::{AppState, ScrollState, TranscriptRole};
 use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::TranscriptEntryKind;
+use nu_agent_core::transcript::items::{Renderable, TranscriptEntry, TranscriptEntryKind};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -394,5 +394,85 @@ fn push_transcript_line_user_fenced_code_block_produces_multiple_lines() -> Resu
     // Verify projection of the stored raw markdown yields multiple lines
     let projected = crate::markdown::render_markdown_lines(&m.markdown, None);
     assert!(projected.len() >= 2);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Estimator parity — recompute_entry_visual_info vs TuiRenderer::render
+// ---------------------------------------------------------------------------
+
+/// Row count the renderer actually produces for `entry` at `width`.
+fn rendered_row_count(entry: &TranscriptEntry, width: usize) -> usize {
+    let renderer = crate::tui_renderer::TuiRenderer {
+        theme: crate::rendering::theme::TuiTheme::default(),
+    };
+    let block = entry.to_render_block();
+    let ctx = nu_agent_core::transcript::renderer::RenderContext {
+        width,
+        cursor: false,
+        selected: false,
+        status: None,
+        now_millis: 0,
+    };
+    use nu_agent_core::transcript::renderer::BlockRenderer;
+    renderer.render(&block, &ctx).len()
+}
+
+#[test]
+fn recompute_entry_visual_info_matches_rendered_rows_for_short_prose() -> Result<()> {
+    let mut state = AppState::default();
+    state
+        .transcript
+        .push_transcript_line(TranscriptRole::User, "short line".to_string());
+
+    let width = 80;
+    let entry = state.transcript.entries.last().ok_or("should have entry")?;
+    let expected = rendered_row_count(entry, width);
+
+    let mut scroll = crate::state::ScrollState::default();
+    state
+        .transcript
+        .recompute_entry_visual_info(&mut scroll, width);
+
+    let info = scroll
+        .entry_visual_info
+        .last()
+        .ok_or("should have visual info")?;
+    assert_eq!(
+        info.visual_row_count, expected,
+        "estimator must match rendered rows for short prose"
+    );
+    Ok(())
+}
+
+#[test]
+fn recompute_entry_visual_info_matches_rendered_rows_for_wrapping_prose() -> Result<()> {
+    // A single long prose line that wraps at width 24 (20 chars available
+    // after the 4-col lane prefix): 60 words of 3 chars => 240 chars total.
+    let mut state = AppState::default();
+    let long_line = vec!["abc"; 60].join(" ");
+    state
+        .transcript
+        .push_transcript_line(TranscriptRole::User, long_line.clone());
+
+    for width in [24usize, 40, 80, 120] {
+        let entry = state.transcript.entries.last().ok_or("should have entry")?;
+        let expected = rendered_row_count(entry, width);
+
+        let mut scroll = ScrollState::default();
+        state
+            .transcript
+            .recompute_entry_visual_info(&mut scroll, width);
+
+        let info = scroll
+            .entry_visual_info
+            .last()
+            .ok_or("should have visual info")?;
+        assert_eq!(
+            info.visual_row_count, expected,
+            "estimator must match rendered rows at width {width}"
+        );
+    }
+
     Ok(())
 }

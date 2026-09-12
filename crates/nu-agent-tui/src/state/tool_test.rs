@@ -13,13 +13,270 @@ use nu_agent_core::transcript::renderer::ItemStatus;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+use nu_agent_core::transcript::ir::StyleHint;
+
+/// Collect the StyleHints of all pushed ToolDisplay lines for the last diff
+/// section (one entry per line, each single-span via project_diff_lines).
+fn diff_section_hints(state: &AppState) -> Vec<StyleHint> {
+    state
+        .transcript
+        .entries
+        .iter()
+        .filter(|entry| entry.role() == Role::ToolDisplay)
+        .flat_map(|entry| match &entry.kind {
+            TranscriptEntryKind::ToolResult(result) => result
+                .lines
+                .iter()
+                .flat_map(|line| line.spans.iter().map(|s| s.hint.clone()))
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+/// Regression (task 6424470b): a `diff` section must carry diff hints
+/// (DiffAdd/DiffRemove/DiffHunk) so the renderer paints green/red/bold —
+/// not syntect MdCode* hints, which lose the diff coloring entirely.
+#[test]
+fn tool_display_diff_section_produces_diff_hints() -> Result<()> {
+    let content = "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n context\n\\ No newline at end of file\n";
+    let mut state = AppState::default();
+    reduce_tool(&mut state, started("edit", r#"{"path":"sample.txt"}"#));
+    reduce_tool(
+        &mut state,
+        ToolEvent::Completed {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit sample.txt".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "sample.txt".to_string(),
+                    language: "diff".to_string(),
+                    content: content.to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        },
+    );
+
+    let hints = diff_section_hints(&state);
+    assert!(
+        hints.contains(&StyleHint::DiffAdd),
+        "diff section must carry DiffAdd hints for '+' lines; got {hints:?}"
+    );
+    assert!(
+        hints.contains(&StyleHint::DiffRemove),
+        "diff section must carry DiffRemove hints for '-' lines; got {hints:?}"
+    );
+    assert!(
+        hints.contains(&StyleHint::DiffHunk),
+        "diff section must carry DiffHunk hints for '@@ ' lines; got {hints:?}"
+    );
+    assert!(
+        hints.contains(&StyleHint::Meta),
+        "diff section must carry Meta hints for ---/+++ header lines; got {hints:?}"
+    );
+    assert!(
+        !hints
+            .iter()
+            .any(|h| matches!(h, StyleHint::MdCodePlain | StyleHint::MdCodeKeyword)),
+        "diff section must NOT be routed through syntect MdCode* hints; got {hints:?}"
+    );
+    Ok(())
+}
+
+/// Regression (task 6424470b): diff lines keep the line-number prefixes added
+/// by add_diff_line_number_readability.
+#[test]
+fn tool_display_diff_section_keeps_line_number_prefixes() -> Result<()> {
+    let content = "@@ -3,2 +3,2 @@\n alpha\n-beta\n+omega\n";
+    let mut state = AppState::default();
+    reduce_tool(&mut state, started("edit", r#"{"path":"sample.txt"}"#));
+    reduce_tool(
+        &mut state,
+        ToolEvent::Completed {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit sample.txt".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "sample.txt".to_string(),
+                    language: "diff".to_string(),
+                    content: content.to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        },
+    );
+
+    let lines: Vec<String> = state
+        .transcript
+        .entries
+        .iter()
+        .flat_map(extract_all_text_from_entry)
+        .collect();
+    assert!(
+        lines.iter().any(|line| line.contains("│alpha")),
+        "context line must keep its line-number prefix; got {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("│beta")),
+        "removed line must keep its line-number prefix; got {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("│omega")),
+        "added line must keep its line-number prefix; got {lines:?}"
+    );
+    Ok(())
+}
+
+/// Regression (task 6424470b criterion 2): non-diff code sections still get
+/// syntect MdCode* hints — only the diff path changes.
+#[test]
+fn tool_display_non_diff_code_section_still_produces_code_hints() -> Result<()> {
+    let content = "fn main() {}\n";
+    let mut state = AppState::default();
+    reduce_tool(&mut state, started("nu", r#"{"command":"ls"}"#));
+    reduce_tool(
+        &mut state,
+        ToolEvent::Completed {
+            name: "nu".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"command":"ls"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "nu sample.rs".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "sample.rs".to_string(),
+                    language: "rust".to_string(),
+                    content: content.to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        },
+    );
+
+    let hints = diff_section_hints(&state);
+    assert!(
+        hints
+            .iter()
+            .any(|h| matches!(h, StyleHint::MdCodeKeyword | StyleHint::MdCodePlain)),
+        "non-diff code section must keep MdCode* hints; got {hints:?}"
+    );
+    Ok(())
+}
+
+/// Regression (task 7bd175d2): every edit-display line must render as exactly
+/// one visual row. A trailing newline in the projected row text made the word
+/// wrapper emit an extra empty row after every diff line, interleaving blank
+/// rows in the transcript.
+#[test]
+fn edit_display_renders_one_visual_row_per_line_without_blank_rows() -> Result<()> {
+    use crate::rendering::theme::TuiTheme;
+    use nu_agent_core::transcript::items::Renderable;
+    use nu_agent_core::transcript::renderer::BlockRenderer;
+    use nu_agent_core::transcript::renderer::RenderContext;
+
+    let content = "--- a/README.md\n+++ b/README.md\n@@ -1,4 +1,6 @@\n # Title\n \n+```rust\n fn a() {}\n+```\n tail\n";
+    let mut state = AppState::default();
+    reduce_tool(&mut state, started("edit", r#"{"path":"README.md"}"#));
+    reduce_tool(
+        &mut state,
+        ToolEvent::Completed {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"README.md"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit README.md".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "README.md".to_string(),
+                    language: "diff".to_string(),
+                    content: content.to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        },
+    );
+
+    let diff_rows: Vec<_> = state
+        .transcript
+        .entries
+        .iter()
+        .filter(|entry| entry.role() == Role::ToolDisplay)
+        .cloned()
+        .collect();
+    let display_line_count: usize = diff_rows
+        .iter()
+        .map(|entry| extract_all_text_from_entry(entry).len())
+        .sum();
+    assert!(
+        display_line_count >= 8,
+        "edit display must push every diff line; got {display_line_count}"
+    );
+
+    let renderer = crate::tui_renderer::TuiRenderer {
+        theme: TuiTheme::default(),
+    };
+    let ctx = RenderContext {
+        width: 120,
+        cursor: false,
+        selected: false,
+        status: None,
+        now_millis: 0,
+    };
+    let mut rendered_rows = 0usize;
+    for entry in &diff_rows {
+        let block = entry.to_render_block();
+        rendered_rows += renderer.render(&block, &ctx).len();
+    }
+    assert_eq!(
+        rendered_rows, display_line_count,
+        "each display line must render as exactly one visual row (no blank rows from trailing newlines)"
+    );
+
+    // No stored display line may carry a raw trailing newline.
+    for entry in &diff_rows {
+        for text in extract_all_text_from_entry(entry) {
+            assert!(
+                !text.ends_with('\n'),
+                "display line text must not embed a trailing newline; got {text:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn extract_all_text_from_entry(
     entry: &nu_agent_core::transcript::items::TranscriptEntry,
 ) -> Vec<String> {
     match &entry.kind {
-        TranscriptEntryKind::ToolResult(result) => {
-            result.lines.iter().map(|line| line.text.clone()).collect()
-        }
+        TranscriptEntryKind::ToolResult(result) => result
+            .lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.text.as_str())
+                    .collect::<String>()
+            })
+            .collect(),
         _ => vec![entry.text()],
     }
 }
@@ -295,9 +552,10 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
         .iter()
         .filter(|entry| match &entry.kind {
             TranscriptEntryKind::ToolResult(result) => result.lines.iter().any(|line| {
-                line.text == "sample.txt (diff)"
-                    || line.text.contains("--- a/sample.txt")
-                    || line.text.contains("+++ b/sample.txt")
+                let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
+                text == "sample.txt (diff)"
+                    || text.contains("--- a/sample.txt")
+                    || text.contains("+++ b/sample.txt")
             }),
             _ => false,
         })
@@ -348,7 +606,8 @@ fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
         .filter(|entry| match &entry.kind {
             TranscriptEntryKind::ToolResult(result) if entry.role() == Role::ToolDisplay => {
                 result.lines.iter().any(|line| {
-                    line.text.contains("--- a/sample.txt") || line.text.contains("+++ b/sample.txt")
+                    let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
+                    text.contains("--- a/sample.txt") || text.contains("+++ b/sample.txt")
                 })
             }
             _ => false,
@@ -390,10 +649,10 @@ fn diff_display_preserves_hunk_line_range_context() {
 
     assert!(state.transcript.entries.iter().any(|entry| {
         match &entry.kind {
-            TranscriptEntryKind::ToolResult(result) => result
-                .lines
-                .iter()
-                .any(|line| line.text.contains("@@ -10,3 +10,4 @@")),
+            TranscriptEntryKind::ToolResult(result) => result.lines.iter().any(|line| {
+                let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
+                text.contains("@@ -10,3 +10,4 @@")
+            }),
             _ => false,
         }
     }));
@@ -437,9 +696,8 @@ fn diff_display_supports_line_number_readability_without_breaking_highlighting()
 
     assert!(diff_rows.iter().any(|entry| match &entry.kind {
         TranscriptEntryKind::ToolResult(result) => result.lines.iter().any(|line| {
-            line.text.contains("│alpha")
-                || line.text.contains("│beta")
-                || line.text.contains("│omega")
+            let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
+            text.contains("│alpha") || text.contains("│beta") || text.contains("│omega")
         }),
         _ => false,
     }));

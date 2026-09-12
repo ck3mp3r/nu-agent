@@ -100,13 +100,13 @@ fn tool_result_empty_lines_uses_name_with_error_hint() {
 }
 
 #[test]
-fn tool_result_maps_display_lines_to_content_lines() {
+fn tool_result_maps_content_lines_to_render_block() {
     let block = ToolResult {
         name: "t".to_string(),
         success: true,
         lines: vec![
-            DisplayLine::new("+added".to_string(), StyleHint::DiffAdd),
-            DisplayLine::new("-removed".to_string(), StyleHint::DiffRemove),
+            ContentLine::single("+added".to_string(), StyleHint::DiffAdd),
+            ContentLine::single("-removed".to_string(), StyleHint::DiffRemove),
         ],
     }
     .to_render_block();

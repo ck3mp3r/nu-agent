@@ -78,24 +78,36 @@ impl Span {
     }
 }
 
+/// A single projected content row. `hang_indent` is the number of display
+/// columns the line's leading marker occupies; when the line wraps, the
+/// renderer indents continuation rows by this amount so list item text stays
+/// aligned under the marker text (task 7bd175d2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentLine {
     pub spans: Vec<Span>,
+    pub hang_indent: usize,
 }
 
 impl ContentLine {
     pub fn single(text: String, hint: StyleHint) -> Self {
         Self {
             spans: vec![Span::new(text, hint)],
+            hang_indent: 0,
         }
     }
 
     pub fn from_spans(spans: Vec<Span>) -> Self {
-        Self { spans }
+        Self {
+            spans,
+            hang_indent: 0,
+        }
     }
 
     pub fn empty() -> Self {
-        Self { spans: vec![] }
+        Self {
+            spans: vec![],
+            hang_indent: 0,
+        }
     }
 }
 
@@ -109,16 +121,4 @@ pub struct RenderBlock {
     pub markdown: Option<String>,
     pub center: bool,
     pub suppress_prefix: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DisplayLine {
-    pub text: String,
-    pub hint: StyleHint,
-}
-
-impl DisplayLine {
-    pub fn new(text: String, hint: StyleHint) -> Self {
-        Self { text, hint }
-    }
 }

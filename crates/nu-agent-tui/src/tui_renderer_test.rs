@@ -358,13 +358,11 @@ fn short_line_no_wrap() {
 }
 
 #[test]
-fn word_wrap_breaks_at_space() {
+fn word_wrap_breaks_at_space() -> Result<()> {
     let r = make_renderer();
-    // "hello world foo" with width forcing a break between words
-    // Prefix is 4 chars, available = 40 - 4 = 36 chars
-    // First word "hello" = 5 chars, space = 1, "world" = 5, space = 1, "foo" = 3
-    // Total = 15 chars, fits on one line
-    // But let's make it wrap: "hello world " = 12 chars
+    // "hello world foobar" with width forcing a break between words.
+    // Width = 20, prefix = 4, available = 16:
+    // "hello world " = 12 chars, "foobar" = 6 chars -> wraps
     let text = "hello world foobar";
     let block = TranscriptEntry {
         id: 0,
@@ -375,32 +373,332 @@ fn word_wrap_breaks_at_space() {
     }
     .to_render_block();
 
-    // Width = 20, prefix = 4, available = 16
-    // "hello world " = 12 chars, "foobar" = 6 chars -> wraps
     let lines = r.render(&block, &default_ctx(20));
 
-    if lines.len() > 1 {
-        let first_line = concat_spans(&[lines[0].clone()]);
-        let second_line = concat_spans(&[lines[1].clone()]);
+    assert!(
+        lines.len() > 1,
+        "18-char prose at width 20 (16 after prefix) must wrap; got {} lines",
+        lines.len()
+    );
 
-        // First line should contain "hello world" and NOT split mid-word
-        assert!(
-            first_line.contains("hello world") || first_line.contains("hello"),
-            "first line should contain complete words"
+    let first_line = concat_spans(&[lines[0].clone()]);
+    let second_line = concat_spans(&[lines[1].clone()]);
+
+    // First line should contain "hello world" and NOT split mid-word
+    assert!(
+        first_line.contains("hello world"),
+        "first line should contain complete words; got {first_line:?}"
+    );
+
+    // Second line should start with "foobar" (complete word, not a split)
+    assert!(
+        second_line.contains("foobar"),
+        "continuation should contain complete word; got {second_line:?}"
+    );
+
+    // Verify no word is split with hyphen or mid-character
+    assert!(
+        !first_line.ends_with("foo"),
+        "should not split 'foobar' into 'foo' and 'bar'"
+    );
+
+    // Continuation rows must carry the lane prefix: rows 1+ get the plain
+    // lane prefix (no cursor, no status indicator), so the wrapped row
+    // starts with the 4-col prefix before its content word.
+    let second_prefix: String = lines[1]
+        .spans
+        .iter()
+        .take(2)
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert_eq!(
+        second_prefix, "  ▏ ",
+        "wrapped continuation row must start with the user lane prefix; got {second_prefix:?}"
+    );
+    assert!(
+        second_line.starts_with("  ▏ foobar"),
+        "continuation row must be lane prefix followed by the content word; got {second_line:?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn wrapped_continuation_row_aligns_at_lane_prefix_column() -> Result<()> {
+    // -- Setup & Fixtures
+    let r = make_renderer();
+    // 30-char single-line prose; at width 24 the available width after the
+    // 4-col prefix is 20, so the text must wrap.
+    let markdown = "aaaaaaaaaa bbbbbbbbbb cccccccccc";
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: markdown.to_string(),
+        }),
+        status: None,
+    }
+    .to_render_block();
+
+    // -- Exec
+    let lines = r.render(&block, &default_ctx(24));
+
+    // -- Check
+    assert!(
+        lines.len() >= 2,
+        "30-char prose at width 24 (20 after prefix) must wrap; got {} lines",
+        lines.len()
+    );
+
+    // Row 0: cursor/indicator lane prefix ("  " + "▏ ") then content.
+    let first_prefix: String = lines[0]
+        .spans
+        .iter()
+        .take(2)
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert_eq!(first_prefix, "  ▏ ", "first row must keep the lane prefix");
+
+    // Every continuation row must start at column 4 — the same column as the
+    // first content character of row 0 — because the lane prefix spans are
+    // emitted on EVERY row, not just the first.
+    for (row_idx, line) in lines.iter().enumerate().skip(1) {
+        let prefix: String = line
+            .spans
+            .iter()
+            .take(2)
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(
+            prefix, "  ▏ ",
+            "continuation row {row_idx} must start with the 4-col lane prefix, not wrap to column 0"
         );
-
-        // Second line should start with "foobar" or "world" (complete word)
         assert!(
-            second_line.contains("foobar") || second_line.contains("world"),
-            "continuation should start with complete word"
-        );
-
-        // Verify no word is split with hyphen or mid-character
-        assert!(
-            !first_line.ends_with("foo") || first_line.contains("foobar"),
-            "should not split 'foobar' into 'foo' and 'bar'"
+            !line.spans.iter().any(|s| s.content.starts_with('a')),
+            "continuation row {row_idx} must not begin with raw content before the prefix"
         );
     }
+
+    // Content integrity: all three words survive the wrap, in order.
+    let joined = concat_spans(&lines);
+    assert!(
+        joined.contains("aaaaaaaaaa")
+            && joined.contains("bbbbbbbbbb")
+            && joined.contains("cccccccccc"),
+        "all words must survive wrapping; got {joined:?}"
+    );
+
+    Ok(())
+}
+
+// === Task 7bd175d2: continuation rows must not repeat the role icon ===
+
+fn tool_wrapped_block(args_text: String) -> RenderBlock {
+    TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Tool(ToolInvocation {
+            name: "edit".to_string(),
+            source: String::new(),
+            args: args_text,
+        }),
+        status: None,
+    }
+    .to_render_block()
+}
+
+#[test]
+fn wrapped_tool_row_continuation_uses_blank_label_with_lane_style() -> Result<()> {
+    // -- Setup & Fixtures
+    let r = make_renderer();
+    // args line long enough to wrap at width 24 (20 available after prefix).
+    let args = format!("→ {}", "a".repeat(60));
+    let block = tool_wrapped_block(args);
+
+    // -- Exec
+    let lines = r.render(&block, &default_ctx(24));
+
+    // -- Check
+    assert!(
+        lines.len() >= 2,
+        "long tool args at width 24 must wrap; got {} lines",
+        lines.len()
+    );
+
+    // Row 0 keeps the cog label.
+    let first_prefix: String = lines[0]
+        .spans
+        .iter()
+        .take(2)
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert_eq!(first_prefix, "  ⚙ ", "first row must keep the tool icon");
+
+    // Continuation rows must NOT repeat the cog: their 2-char label slot is
+    // blank, but the lane style must match the tool lane style.
+    let theme = TuiTheme::default();
+    for (row_idx, line) in lines.iter().enumerate().skip(1) {
+        let prefix_spans: Vec<_> = line.spans.iter().take(2).collect();
+        assert_eq!(
+            prefix_spans.len(),
+            2,
+            "continuation row {row_idx} must still carry the 2-span prefix"
+        );
+        let label = prefix_spans[1].content.as_ref();
+        assert_eq!(
+            label, "  ",
+            "continuation row {row_idx} label must be blank, got {label:?}"
+        );
+        assert_eq!(
+            prefix_spans[1].style.fg, theme.lane_prefix_tool.fg,
+            "continuation row {row_idx} label must keep the tool lane style"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn wrapped_compaction_row_continuation_uses_blank_label() -> Result<()> {
+    // -- Setup & Fixtures
+    let r = make_renderer();
+    let block = RenderBlock {
+        role: Role::Compaction,
+        lines: vec![ContentLine::single(
+            format!("{} {}", "compact".repeat(6), "x".repeat(30)),
+            StyleHint::Normal,
+        )],
+        markdown: None,
+        center: false,
+        suppress_prefix: false,
+    };
+
+    // -- Exec
+    let lines = r.render(&block, &default_ctx(24));
+
+    // -- Check
+    assert!(lines.len() >= 2, "long compaction line must wrap");
+    let second_prefix: String = lines[1]
+        .spans
+        .iter()
+        .take(2)
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert_eq!(
+        second_prefix, "    ",
+        "compaction continuation row must have a blank label (cursor col + label col), got {second_prefix:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn wrapped_system_row_continuation_uses_blank_label() -> Result<()> {
+    // -- Setup & Fixtures
+    let r = make_renderer();
+    let block = RenderBlock {
+        role: Role::System,
+        lines: vec![ContentLine::single(
+            format!("{} {}", "system".repeat(6), "y".repeat(30)),
+            StyleHint::Normal,
+        )],
+        markdown: None,
+        center: false,
+        suppress_prefix: false,
+    };
+
+    // -- Exec
+    let lines = r.render(&block, &default_ctx(24));
+
+    // -- Check
+    assert!(lines.len() >= 2, "long system line must wrap");
+    let second_prefix: String = lines[1]
+        .spans
+        .iter()
+        .take(2)
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert_eq!(
+        second_prefix, "    ",
+        "system continuation row must have a blank label, got {second_prefix:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn wrapped_user_prose_keeps_rail_on_every_row() -> Result<()> {
+    // Regression guard: user prose continuation rows must keep the ▏ rail.
+    // -- Setup & Fixtures
+    let r = make_renderer();
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::User(ProseMessage {
+            markdown: format!("{} {}", "word ".repeat(10), "tail"),
+        }),
+        status: None,
+    }
+    .to_render_block();
+
+    // -- Exec
+    let lines = r.render(&block, &default_ctx(24));
+
+    // -- Check
+    assert!(lines.len() >= 2, "long user prose must wrap");
+    for (row_idx, line) in lines.iter().enumerate() {
+        let prefix: String = line
+            .spans
+            .iter()
+            .take(2)
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(
+            prefix, "  ▏ ",
+            "user row {row_idx} must keep the ▏ rail on every wrapped row"
+        );
+    }
+    Ok(())
+}
+
+// === Task 7bd175d2: list item hanging indent ===
+
+#[test]
+fn wrapped_list_item_continuation_indents_under_marker_text() -> Result<()> {
+    // -- Setup & Fixtures
+    let r = make_renderer();
+    // A bullet item whose text wraps: the "- " marker projects as "• " (2 cols).
+    let markdown = "- aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp";
+    let block = TranscriptEntry {
+        id: 0,
+        kind: TranscriptEntryKind::Assistant(ProseMessage {
+            markdown: markdown.to_string(),
+        }),
+        status: None,
+    }
+    .to_render_block();
+
+    // -- Exec
+    let lines = r.render(&block, &default_ctx(24));
+
+    // -- Check
+    assert!(
+        lines.len() >= 2,
+        "long list item must wrap; got {} lines",
+        lines.len()
+    );
+
+    // Row 0: lane prefix (assistant = 4 blank cols) + "• a..."
+    let first_text = concat_spans(&[lines[0].clone()]);
+    assert!(
+        first_text.len() > 4 && first_text[4..].starts_with("• "),
+        "first row must contain the bullet marker after the 4-col lane prefix; got {first_text:?}"
+    );
+
+    // Continuation rows: lane prefix + 2 spaces of hang indent + item text.
+    for (row_idx, line) in lines.iter().enumerate().skip(1) {
+        let text = concat_spans(std::slice::from_ref(line));
+        assert!(
+            text.starts_with("      "),
+            "assistant list continuation row {row_idx} must indent to marker column + marker width (6 cols total); got {text:?}"
+        );
+    }
+    Ok(())
 }
 
 // === Task 5: visual differentiation between user and assistant prose ===

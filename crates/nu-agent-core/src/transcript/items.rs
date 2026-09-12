@@ -1,4 +1,4 @@
-use super::ir::{ContentLine, DisplayLine, RenderBlock, Role, Span, StyleHint};
+use super::ir::{ContentLine, RenderBlock, Role, Span, StyleHint};
 use super::renderer::ItemStatus;
 
 pub trait Renderable {
@@ -27,7 +27,7 @@ pub struct ToolInvocation {
 pub struct ToolResult {
     pub name: String,
     pub success: bool,
-    pub lines: Vec<DisplayLine>,
+    pub lines: Vec<ContentLine>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,10 +93,7 @@ impl Renderable for ToolResult {
                 },
             )]
         } else {
-            self.lines
-                .iter()
-                .map(|dl| ContentLine::single(dl.text.clone(), dl.hint.clone()))
-                .collect()
+            self.lines.clone()
         };
         RenderBlock {
             role: Role::ToolDisplay,

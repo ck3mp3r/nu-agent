@@ -5511,7 +5511,10 @@ fn permission_rx_caller_pre_authorize_display_applied_before_reduce() {
         .filter(|entry| entry.role() == Role::ToolDisplay)
         .any(|entry| {
             matches!(&entry.kind, TranscriptEntryKind::ToolResult(result)
-                if result.lines.iter().any(|line| line.text.contains("preview-title")))
+            if result.lines.iter().any(|line| {
+                let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
+                text.contains("preview-title")
+            }))
         });
     assert!(
         display_applied,

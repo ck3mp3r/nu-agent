@@ -56,10 +56,3 @@ fn render_block_stores_role_and_lines() {
     assert_eq!(block.lines.len(), 1);
     assert!(block.markdown.is_none());
 }
-
-#[test]
-fn display_line_new_stores_fields() {
-    let dl = DisplayLine::new("foo".to_string(), StyleHint::Error);
-    assert_eq!(dl.text, "foo");
-    assert_eq!(dl.hint, StyleHint::Error);
-}

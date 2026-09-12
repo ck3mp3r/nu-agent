@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 
 use nu_agent_core::protocol::contracts::UiMessageSnapshot;
-use nu_agent_core::transcript::ir::{ContentLine, DisplayLine, Role};
+use nu_agent_core::transcript::ir::{ContentLine, Role};
 use nu_agent_core::transcript::items::{
     ProseMessage, Spacer as SpacerItem, SystemMessage, ToolInvocation,
     ToolResult as TranscriptToolResult, TranscriptEntry, TranscriptEntryKind, annotate_diff_hint,
@@ -83,7 +83,7 @@ impl TranscriptStore {
                 kind: TranscriptEntryKind::ToolResult(TranscriptToolResult {
                     name: String::new(),
                     success: true,
-                    lines: vec![DisplayLine::new(text.clone(), annotate_diff_hint(&text))],
+                    lines: vec![ContentLine::single(text.clone(), annotate_diff_hint(&text))],
                 }),
                 status: None,
             },
@@ -97,6 +97,21 @@ impl TranscriptStore {
                 kind: TranscriptEntryKind::System(SystemMessage { text }),
                 status: None,
             },
+        };
+        self.push_transcript_item(entry);
+    }
+
+    /// Push a tool-display entry whose lines are already-projected ContentLines
+    /// carrying StyleHints (e.g. code highlighting).
+    pub fn push_tool_display_lines(&mut self, lines: Vec<ContentLine>) {
+        let entry = TranscriptEntry {
+            id: 0,
+            kind: TranscriptEntryKind::ToolResult(TranscriptToolResult {
+                name: String::new(),
+                success: true,
+                lines,
+            }),
+            status: None,
         };
         self.push_transcript_item(entry);
     }
@@ -188,18 +203,15 @@ impl TranscriptStore {
             };
             let prefix_width = crate::tui_renderer::lane_prefix_width();
             let effective_width = width.saturating_sub(prefix_width).max(1);
+            // Same wrap_prose call (and hang-indent budget) as the renderer, so
+            // row counts match rendering exactly.
             let visual_rows: usize = content_lines
                 .iter()
                 .map(|line| {
-                    let ratatui_line = ratatui::text::Line::from(
-                        line.spans
-                            .iter()
-                            .map(|s| ratatui::text::Span::raw(s.text.clone()))
-                            .collect::<Vec<_>>(),
-                    );
-                    ratatui::widgets::Paragraph::new(ratatui_line)
-                        .wrap(ratatui::widgets::Wrap::default())
-                        .line_count(effective_width as u16)
+                    let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
+                    let text_width = effective_width.saturating_sub(line.hang_indent).max(1);
+                    crate::tui_renderer::wrap_prose(&text, text_width)
+                        .len()
                         .max(1)
                 })
                 .sum::<usize>()

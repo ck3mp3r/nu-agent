@@ -251,8 +251,20 @@ fn append_direct_tool_display_section(
         section.content
     };
 
-    let markdown = format!("```{}\n{}\n```", section.language, section_content);
-    for rendered_line in store.project_assistant_markdown_lines(&markdown) {
+    // Project the section content directly so ContentLines carry StyleHints
+    // instead of being flattened to plain text. Diffs take the dedicated
+    // annotate_diff_hint path (DiffAdd/DiffRemove/DiffHunk) — routing them
+    // through syntect would flatten every line to MdCode* hints and lose the
+    // diff coloring. Non-diff languages keep code-block highlighting. Both
+    // paths avoid the markdown round-trip that could leak literal ``` fence
+    // markers when projection falls back.
+    let projected = if section.language == "diff" {
+        crate::markdown::project_diff_lines(&section_content)
+    } else {
+        crate::markdown::project_code_block_lines(&section.language, &section_content)
+    };
+    let mut lines = Vec::with_capacity(projected.len());
+    for rendered_line in projected {
         let text: String = rendered_line
             .spans
             .iter()
@@ -261,7 +273,10 @@ fn append_direct_tool_display_section(
         if text.trim().is_empty() {
             continue;
         }
-        store.push_transcript_line(TranscriptRole::ToolDisplay, text);
+        lines.push(rendered_line);
+    }
+    if !lines.is_empty() {
+        store.push_tool_display_lines(lines);
     }
 }
 

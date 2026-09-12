@@ -2911,6 +2911,7 @@ dependencies = [
  "ratatui-textarea",
  "serial_test",
  "tempfile",
+ "textwrap",
  "tokio",
  "unicode-width 0.2.2",
  "unicodeit",

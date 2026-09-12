@@ -76,6 +76,10 @@ struct Projector {
     max_width: Option<u16>,
     /// True once the projector has emitted any non-empty line.
     has_content: bool,
+    /// Display columns occupied by the leading marker of the list item being
+    /// projected, `Some` while inside a `Tag::Item` and attached to every line
+    /// flushed for that item so the renderer can hang-indent wrapped rows.
+    item_hang_indent: Option<usize>,
 }
 
 impl Projector {
@@ -127,7 +131,9 @@ impl Projector {
             return;
         }
         let spans = std::mem::take(&mut self.current_spans);
-        self.lines.push(ContentLine::from_spans(spans));
+        let mut line = ContentLine::from_spans(spans);
+        line.hang_indent = self.item_hang_indent.unwrap_or(0);
+        self.lines.push(line);
         self.pending_prefix = true;
         self.has_content = true;
     }
@@ -158,7 +164,14 @@ impl Projector {
     }
 
     fn render_code_block(&mut self, block: CodeBlockState) {
-        for token_line in highlighted_code_lines(&block) {
+        for mut token_line in highlighted_code_lines(&block) {
+            // Highlighters keep each source line's trailing newline in its
+            // final token. A raw '\n' inside a ContentLine makes the word
+            // wrapper emit an extra empty row (blank rows in edit displays),
+            // so terminate the token text at the newline before projecting.
+            if let Some((last_text, _)) = token_line.last_mut() {
+                *last_text = last_text.trim_end_matches('\n').to_string();
+            }
             self.push_text("    ", StyleHint::Normal);
             for (text, hint) in token_line {
                 self.push_text(&text, hint);
@@ -309,6 +322,8 @@ impl Projector {
                     } else {
                         "• ".to_string()
                     };
+                    let marker_width = indent.chars().count() + marker.chars().count();
+                    self.item_hang_indent = Some(marker_width);
                     self.push_text(&(indent + &marker), StyleHint::Normal);
                 }
             }
@@ -376,6 +391,7 @@ impl Projector {
             }
             TagEnd::Item => {
                 self.flush_line();
+                self.item_hang_indent = None;
             }
             TagEnd::CodeBlock => {
                 self.flush_line();
