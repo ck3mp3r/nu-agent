@@ -15,8 +15,7 @@ use super::super::test::{
     default_output_repetition, default_repetition_guard,
 };
 use super::REPETITION_STEERING_NOTICE;
-use super::executor_test::message_text;
-use super::test_utils::{BusEventCollector, MockResolver, test_config};
+use super::test_utils::{BusEventCollector, MockResolver, message_text, test_config};
 use super::*;
 use crate::conversation::providers::CachedProviderClient;
 use crate::conversation::state::memory::MemoryState;
@@ -31,7 +30,7 @@ use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::types::Message;
 use crate::utils::value_ext::extract_response_text_from_value;
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn default_tool_infra(
     handle: rig::tool::server::ToolServerHandle,

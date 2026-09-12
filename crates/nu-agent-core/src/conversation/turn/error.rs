@@ -427,3 +427,7 @@ impl From<rig::agent::StreamingError> for TurnError {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "error_test.rs"]
+mod error_test;

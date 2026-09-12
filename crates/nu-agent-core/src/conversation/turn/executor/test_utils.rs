@@ -253,3 +253,24 @@ pub(super) fn test_config() -> Config {
         session_store_type: None,
     }
 }
+
+/// Extract the first Text content string from a User or Assistant message.
+pub(crate) fn message_text(msg: &crate::types::Message) -> Option<String> {
+    match msg {
+        crate::types::Message::User { content } => content.iter().find_map(|c| {
+            if let crate::types::UserContent::Text(t) = c {
+                Some(t.text.clone())
+            } else {
+                None
+            }
+        }),
+        crate::types::Message::Assistant { content, .. } => content.iter().find_map(|c| {
+            if let crate::types::AssistantContent::Text(t) = c {
+                Some(t.text.clone())
+            } else {
+                None
+            }
+        }),
+        crate::types::Message::System { .. } => None,
+    }
+}
