@@ -6,7 +6,7 @@ use std::time::Duration;
 use nu_protocol::{LabeledError, Value};
 
 use nu_agent_a2a::{
-    A2aCompletionEvent, AgentCard, InMemoryTaskStore, IncomingTask, Part, Peer, PeerCache,
+    A2aCompletionEvent, AgentCard, InMemoryTaskStore, IncomingTask, Peer, PeerCache,
     PeerDiscoveryImpl, mdns_name_for_switch, rebuild_card_for_switch, skill_from_persona,
 };
 use nu_agent_core::bus::{OneshotTx, TurnEvent};
@@ -351,10 +351,7 @@ pub(crate) async fn run_stderr_mode(
     if let Some(rx) = &mut a2a.completion_rx
         && let Ok(event) = rx.try_recv()
     {
-        let prompt = format!(
-            "[A2A Task {} completed by {}]: {}\n\nStatus: {}.",
-            event.task_id, event.agent_name, event.result, event.status
-        );
+        let prompt = event.to_prompt();
         return run_stderr_turn(
             runtime_impl,
             stderr_renderer,
@@ -371,20 +368,7 @@ pub(crate) async fn run_stderr_mode(
         && let Ok(incoming) = rx.try_recv()
     {
         let task_id = incoming.task_id.clone();
-        let text: String = incoming
-            .message
-            .parts
-            .iter()
-            .filter_map(|p| match p {
-                Part::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        let prompt = format!(
-            "[A2A Task {} from {}]: {}\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result.",
-            incoming.task_id, incoming.sender_url, text
-        );
+        let prompt = incoming.to_prompt();
         let result = run_stderr_turn(
             runtime_impl,
             stderr_renderer,

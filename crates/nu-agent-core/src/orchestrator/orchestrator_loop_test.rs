@@ -1350,7 +1350,7 @@ async fn a2a_task_rx_dispatches_turn() -> Result<()> {
         WorkerCommand::ExecuteTurn { prompt, .. } => {
             assert_eq!(
                 prompt,
-                "[A2A Task task-1 from http://a.local]: do work\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result."
+                "[A2A] do work\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result.\n\n---\nTask ID: task-1\nFrom: http://a.local"
             );
         }
         _ => panic!("expected ExecuteTurn"),
@@ -1448,7 +1448,7 @@ async fn a2a_completion_rx_dispatches_turn() -> Result<()> {
         WorkerCommand::ExecuteTurn { prompt, .. } => {
             assert_eq!(
                 prompt,
-                "[A2A Task task-2 completed by agent-b]: all done\n\nStatus: TASK_STATE_COMPLETED."
+                "[A2A] Task completed by agent-b: all done\n\n---\nTask ID: task-2\nStatus: TASK_STATE_COMPLETED"
             );
         }
         _ => panic!("expected ExecuteTurn"),

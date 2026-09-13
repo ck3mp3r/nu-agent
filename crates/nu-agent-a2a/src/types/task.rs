@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use super::artifact::Artifact;
 use super::message::Message;
+use super::part::Part;
 use super::task_state::TaskState;
 use super::task_status::TaskStatus;
 
@@ -33,6 +34,36 @@ pub struct IncomingTask {
     pub parent_task_id: Option<String>,
 }
 
+impl IncomingTask {
+    /// Joins the `Part::Text` parts of the message with a single space.
+    pub fn text(&self) -> String {
+        self.message
+            .parts
+            .iter()
+            .filter_map(|p| match p {
+                Part::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Formats the task as an LLM prompt with a metadata footer.
+    pub fn to_prompt(&self) -> String {
+        let mut prompt = format!(
+            "[A2A] {}\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result.",
+            self.text()
+        );
+        prompt.push_str("\n\n---\nTask ID: ");
+        prompt.push_str(&self.task_id);
+        if !self.sender_url.is_empty() {
+            prompt.push_str("\nFrom: ");
+            prompt.push_str(&self.sender_url);
+        }
+        prompt
+    }
+}
+
 // ---------------------------------------------------------------------------
 // A2aCompletionEvent
 // ---------------------------------------------------------------------------
@@ -51,6 +82,16 @@ pub struct A2aCompletionEvent {
     /// artifacts or status message).
     pub result: String,
     pub status: TaskState,
+}
+
+impl A2aCompletionEvent {
+    /// Formats the completion event as an LLM prompt with a metadata footer.
+    pub fn to_prompt(&self) -> String {
+        format!(
+            "[A2A] Task completed by {}: {}\n\n---\nTask ID: {}\nStatus: {}",
+            self.agent_name, self.result, self.task_id, self.status
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------

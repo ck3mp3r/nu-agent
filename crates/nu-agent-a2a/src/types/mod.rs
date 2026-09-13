@@ -32,3 +32,5 @@ mod protocol_test;
 mod task_state_test;
 #[cfg(test)]
 mod task_status_test;
+#[cfg(test)]
+mod task_test;

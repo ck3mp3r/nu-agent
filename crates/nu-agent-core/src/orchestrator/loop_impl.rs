@@ -2,7 +2,7 @@
 //! points. These functions wire the worker, the stages, the bus channels, and
 //! the render-loop together and drive the orchestrator loop.
 
-use nu_agent_a2a::{A2aCompletionEvent, IncomingTask, Part};
+use nu_agent_a2a::{A2aCompletionEvent, IncomingTask};
 use nu_protocol::{LabeledError, Value};
 use tokio::sync::mpsc;
 
@@ -445,31 +445,13 @@ where
 
             incoming = recv_or_pending(&mut a2a_task_rx_opt) => {
                 let Some(incoming) = incoming else { break };
-                // Format the same prompt the removed std-bridge forwarder used.
-                let text: String = incoming
-                    .message
-                    .parts
-                    .iter()
-                    .filter_map(|p| match p {
-                        Part::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let prompt = format!(
-                    "[A2A Task {} from {}]: {}\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result.",
-                    incoming.task_id, incoming.sender_url, text
-                );
+                let prompt = incoming.to_prompt();
                 handle_external_prompt(prompt, incoming.task_id, ctx).await;
             }
 
             event = recv_or_pending(&mut a2a_completion_rx_opt) => {
                 let Some(event) = event else { break };
-                // Format the same prompt the removed std-bridge forwarder used.
-                let prompt = format!(
-                    "[A2A Task {} completed by {}]: {}\n\nStatus: {}.",
-                    event.task_id, event.agent_name, event.result, event.status
-                );
+                let prompt = event.to_prompt();
                 handle_external_prompt(prompt, event.task_id, ctx).await;
             }
         }
