@@ -45,8 +45,14 @@ impl BlockRenderer for TuiRenderer {
 
         // Pre-wrap prose so no emitted Line exceeds the pane width; ratatui's
         // Paragraph wrap then never re-wraps, and every visual row keeps its
-        // lane prefix (alignment column 4 on continuation rows too).
-        let wrap_width = ctx.width.saturating_sub(lane_prefix_width()).max(1);
+        // lane prefix (alignment column 4 on continuation rows too). The status
+        // indicator occupies 2 columns on row 0, so the content budget shrinks
+        // by that much when a status is present — otherwise row 0 overflows the
+        // pane and ratatui re-wraps it into an extra visual row the row
+        // accounting misses. Shared with the accounting via
+        // state::code_block::content_wrap_width so both agree by construction.
+        let wrap_width =
+            crate::state::code_block::content_wrap_width(ctx.width, ctx.status.is_some());
 
         for (index, content_line) in content_lines.iter().enumerate() {
             let is_first = index == 0;

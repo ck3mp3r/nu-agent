@@ -11,8 +11,8 @@ use crate::{
     runtime::{render::expand_to_visual_rows, render::frame::current_time_millis},
     state::{InputMode, PaneFocus},
 };
-use nu_agent_core::transcript::ir::{ContentLine, Role, StyleHint};
-use nu_agent_core::transcript::items::{Renderable, TranscriptEntry, TranscriptEntryKind};
+use nu_agent_core::transcript::ir::Role;
+use nu_agent_core::transcript::items::{Renderable, TranscriptEntry};
 use nu_agent_core::transcript::renderer::RenderContext;
 
 use crate::runtime::RuntimeCoordinator;
@@ -104,11 +104,16 @@ impl RuntimeCoordinator {
                     &ctx,
                     self.state.transcript.assistant_projection_cache_mut(),
                 );
-                let flags = code_block_line_flags(entry, width);
+                let flags = crate::state::code_block::code_block_line_flags(
+                    entry,
+                    width,
+                    item_status.is_some(),
+                );
                 // Inject one untinted margin row above and below each filled
                 // code-block region so the block does not touch surrounding
                 // content (matching the user-block breathing room).
-                let (entry_lines, flags) = with_margin_rows(entry_lines, flags);
+                let (entry_lines, flags) =
+                    crate::state::code_block::with_margin_rows(entry_lines, flags);
                 for (line_idx, _) in entry_lines.iter().enumerate() {
                     entry_indices.push(idx);
                     code_block_flags.push(flags.get(line_idx).copied().unwrap_or(false));
@@ -293,71 +298,6 @@ pub(super) fn row_needs_user_bg(entries: &[TranscriptEntry], entry_idx: usize) -
 /// rendered block is a code-block content row that should receive the
 /// full-width background fill. Returns one flag per rendered line (pre-wrap).
 ///
-/// - A nu `ToolInvocation` entry: row 0 (status row) is untinted; rows 1+ are
-///   code-block rows.
-/// - An edit `ToolResult` display entry: the diff content lines (those carrying
-///   Diff* StyleHints) are tinted; label/stats lines are not.
-/// - All other entries: no code-block rows.
-pub(super) fn code_block_line_flags(entry: &TranscriptEntry, width: usize) -> Vec<bool> {
-    let block = entry.to_render_block();
-    let content_lines: Vec<ContentLine> = if let Some(md) = &block.markdown {
-        crate::markdown::render_markdown_lines(md, Some(width as u16))
-    } else {
-        block.lines
-    };
-    let prefix_width = crate::tui_renderer::lane_prefix_width();
-    let effective_width = width.saturating_sub(prefix_width).max(1);
-
-    let mut flags = Vec::new();
-    match &entry.kind {
-        TranscriptEntryKind::Tool(inv) if inv.name == "nu" => {
-            for (idx, line) in content_lines.iter().enumerate() {
-                let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
-                let text_width = effective_width.saturating_sub(line.hang_indent).max(1);
-                let rows = crate::tui_renderer::wrap_prose(&text, text_width)
-                    .len()
-                    .max(1);
-                for _ in 0..rows {
-                    flags.push(idx > 0);
-                }
-            }
-        }
-        TranscriptEntryKind::ToolResult(_) => {
-            // A ToolResult entry that carries any Diff* hint is a diff content
-            // block (pushed by push_tool_display_lines); fill every line of it.
-            // Label/stats lines are separate entries with no Diff* hints and
-            // stay untinted.
-            let is_diff_block = content_lines.iter().any(|line| {
-                line.spans.iter().any(|s| {
-                    matches!(
-                        s.hint,
-                        StyleHint::DiffAdd | StyleHint::DiffRemove | StyleHint::DiffHunk
-                    )
-                })
-            });
-            for line in content_lines.iter() {
-                let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
-                let text_width = effective_width.saturating_sub(line.hang_indent).max(1);
-                let rows = crate::tui_renderer::wrap_prose(&text, text_width)
-                    .len()
-                    .max(1);
-                flags.extend(std::iter::repeat_n(is_diff_block, rows));
-            }
-        }
-        _ => {
-            for line in content_lines.iter() {
-                let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
-                let text_width = effective_width.saturating_sub(line.hang_indent).max(1);
-                let rows = crate::tui_renderer::wrap_prose(&text, text_width)
-                    .len()
-                    .max(1);
-                flags.extend(std::iter::repeat_n(false, rows));
-            }
-        }
-    }
-    flags
-}
-
 /// Expand per-rendered-line code-block flags to per-visual-row flags, matching
 /// the wrap expansion used for `entry_indices`.
 pub(super) fn expand_code_block_flags(
@@ -374,38 +314,4 @@ pub(super) fn expand_code_block_flags(
         }
     }
     expanded
-}
-
-/// Insert one blank filled row immediately above and below each contiguous
-/// run of filled code-block rows, so the background block has top/bottom
-/// margin rows INSIDE the block (internal padding around the text). Returns
-/// the padded lines and matching flags; the inserted margin rows are filled
-/// (flag true) so they share the block background.
-pub(super) fn with_margin_rows(
-    lines: Vec<Line<'static>>,
-    flags: Vec<bool>,
-) -> (Vec<Line<'static>>, Vec<bool>) {
-    let mut out_lines = Vec::with_capacity(lines.len() + 2);
-    let mut out_flags = Vec::with_capacity(flags.len() + 2);
-    let mut prev_filled = false;
-    for (line, flag) in lines.into_iter().zip(flags) {
-        if flag && !prev_filled {
-            // Start of a filled run: insert a filled top margin row.
-            out_lines.push(Line::from(""));
-            out_flags.push(true);
-        } else if !flag && prev_filled {
-            // End of a filled run: insert a filled bottom margin row.
-            out_lines.push(Line::from(""));
-            out_flags.push(true);
-        }
-        out_lines.push(line);
-        out_flags.push(flag);
-        prev_filled = flag;
-    }
-    if prev_filled {
-        // Trailing filled run: insert a filled bottom margin row.
-        out_lines.push(Line::from(""));
-        out_flags.push(true);
-    }
-    (out_lines, out_flags)
 }

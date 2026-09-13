@@ -201,10 +201,12 @@ impl TranscriptStore {
             } else {
                 block.lines
             };
-            let prefix_width = crate::tui_renderer::lane_prefix_width();
-            let effective_width = width.saturating_sub(prefix_width).max(1);
+            let has_status = entry.status.is_some();
+            let effective_width = crate::state::code_block::content_wrap_width(width, has_status);
             // Same wrap_prose call (and hang-indent budget) as the renderer, so
-            // row counts match rendering exactly.
+            // row counts match rendering exactly. The renderer shrinks the wrap
+            // budget by the 2-column status indicator on row 0 when a status is
+            // present; mirror that here so the row count agrees.
             let visual_rows: usize = content_lines
                 .iter()
                 .map(|line| {
@@ -216,6 +218,14 @@ impl TranscriptStore {
                 })
                 .sum::<usize>()
                 .max(1);
+            // The renderer injects one blank margin row above and below each
+            // contiguous run of filled code-block rows (with_margin_rows).
+            // Count those same rows here so total_visual_rows matches the
+            // rendered output and the tail never clips content under the input
+            // box. Both sides derive the count from the shared
+            // code_block_line_flags, so they agree by construction.
+            let flags = crate::state::code_block::code_block_line_flags(entry, width, has_status);
+            let visual_rows = visual_rows + crate::state::code_block::margin_row_count(&flags);
             info.push(EntryVisualInfo {
                 start_visual_row: start,
                 visual_row_count: visual_rows,

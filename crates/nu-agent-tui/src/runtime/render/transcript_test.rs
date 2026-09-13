@@ -1,9 +1,10 @@
 use nu_agent_core::transcript::items::{
     ProseMessage, Spacer, ToolInvocation, ToolResult, TranscriptEntry, TranscriptEntryKind,
 };
-use ratatui::text::Line;
+use nu_agent_core::transcript::renderer::ItemStatus;
 
-use super::transcript::{code_block_line_flags, row_needs_user_bg, with_margin_rows};
+use super::transcript::row_needs_user_bg;
+use crate::state::code_block::{code_block_line_flags, with_margin_rows};
 
 fn user() -> TranscriptEntry {
     TranscriptEntry {
@@ -81,7 +82,9 @@ fn non_separator_non_user_entries_do_not_need_user_bg() {
     assert!(!row_needs_user_bg(&entries, 0));
 }
 
-// ── code_block_line_flags ───────────────────────────────────────────────────
+// ── row-count parity (margin rows) ──────────────────────────────────────────
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 fn nu_tool(args: &str) -> TranscriptEntry {
     TranscriptEntry {
@@ -120,116 +123,156 @@ fn edit_diff() -> TranscriptEntry {
     }
 }
 
-#[test]
-fn nu_tool_status_row_not_filled_code_rows_filled() {
-    let entry = nu_tool("ls | select name type size");
-    let flags = code_block_line_flags(&entry, 120);
-    assert_eq!(flags.len(), 2, "status row + one code row");
-    assert!(!flags[0], "status row must not be filled");
-    assert!(flags[1], "code row must be filled");
+fn rendered_row_count_with_margins(
+    entry: &TranscriptEntry,
+    width: usize,
+    status: Option<ItemStatus>,
+) -> Result<usize> {
+    use crate::rendering::theme::TuiTheme;
+    use crate::tui_renderer::TuiRenderer;
+    use nu_agent_core::transcript::items::Renderable;
+    use nu_agent_core::transcript::renderer::RenderContext;
+
+    let renderer = TuiRenderer {
+        theme: TuiTheme::default(),
+    };
+    let block = entry.to_render_block();
+    let ctx = RenderContext {
+        width,
+        cursor: false,
+        selected: false,
+        status,
+        now_millis: 0,
+    };
+    let mut cache = std::collections::HashMap::new();
+    let entry_lines = renderer.render_cached(&block, &ctx, &mut cache);
+    // Secondary divergence check: the renderer pre-wraps each ContentLine via
+    // textwrap so no emitted Line exceeds the pane width. If any line were
+    // wider, ratatui's Paragraph::line_count would re-wrap it and the visual
+    // row count would diverge from textwrap's count. Assert every line fits.
+    for line in &entry_lines {
+        let line_width: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+        assert!(
+            line_width <= width,
+            "width {width}: rendered line {line_width} exceeds pane width {width}"
+        );
+    }
+    let flags = code_block_line_flags(entry, width, status.is_some());
+    let (entry_lines, _) = with_margin_rows(entry_lines, flags);
+    Ok(entry_lines.len())
 }
 
 #[test]
-fn nu_tool_multi_line_command_fills_every_code_row() {
+fn entry_visual_info_matches_rendered_rows_with_margins() -> Result<()> {
+    use crate::state::{ScrollState, TranscriptStore};
+
+    let entries = vec![
+        nu_tool("ls | where size > 1mb\n| select name type\n| sort-by modified"),
+        edit_diff(),
+        user(),
+    ];
+    for width in [80usize, 120usize] {
+        for entry in &entries {
+            // -- Exec: compute entry_visual_info
+            let mut store = TranscriptStore::default();
+            store.push_transcript_item(entry.clone());
+            let mut scroll = ScrollState::default();
+            store.recompute_entry_visual_info(&mut scroll, width);
+            let total_visual_rows = scroll
+                .entry_visual_info
+                .last()
+                .map(|i| i.start_visual_row + i.visual_row_count)
+                .ok_or("should have entry visual info")?;
+
+            // -- Exec: render the same entry with margins
+            let rendered_rows = rendered_row_count_with_margins(entry, width, None)?;
+
+            // -- Check
+            assert_eq!(
+                total_visual_rows, rendered_rows,
+                "width {width}: entry_visual_info must count margin rows injected by with_margin_rows"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn tail_follow_never_clips_last_entry_below_input_box() -> Result<()> {
+    use crate::state::{ScrollState, TranscriptStore};
+
     let entry = nu_tool("ls | where size > 1mb\n| select name type\n| sort-by modified");
-    let flags = code_block_line_flags(&entry, 120);
-    assert_eq!(flags.len(), 4, "status row + 3 code rows");
-    assert!(!flags[0], "status row must not be filled");
-    assert!(flags[1] && flags[2] && flags[3], "all code rows filled");
+    for width in [80usize, 120usize] {
+        let mut store = TranscriptStore::default();
+        store.push_transcript_item(entry.clone());
+        let mut scroll = ScrollState::default();
+        store.recompute_entry_visual_info(&mut scroll, width);
+
+        let total_visual_rows = scroll
+            .entry_visual_info
+            .last()
+            .map(|i| i.start_visual_row + i.visual_row_count)
+            .ok_or("should have entry visual info")?;
+        let rendered_rows = rendered_row_count_with_margins(&entry, width, None)?;
+
+        // A viewport smaller than the content forces tailing to scroll.
+        let viewport_height = 4;
+        let max_scroll = total_visual_rows.saturating_sub(viewport_height);
+        let effective_offset = max_scroll; // following_tail
+
+        // -- Check: nothing clipped — the last rendered row must be visible.
+        assert!(
+            effective_offset + viewport_height >= rendered_rows,
+            "width {width}: tail view must show every rendered row (offset {effective_offset} + viewport {viewport_height} = {} < rendered {rendered_rows})",
+            effective_offset + viewport_height
+        );
+    }
+    Ok(())
 }
 
 #[test]
-fn nu_tool_empty_args_has_no_code_rows() {
-    let entry = nu_tool("");
-    let flags = code_block_line_flags(&entry, 120);
-    assert_eq!(flags.len(), 1, "status row only");
-    assert!(!flags[0], "status row must not be filled");
-}
+fn entry_visual_info_matches_rendered_rows_with_status_indicator() -> Result<()> {
+    use crate::state::{ScrollState, TranscriptStore};
 
-#[test]
-fn non_nu_tool_has_no_filled_rows() {
+    // A non-nu tool whose row-0 content (name + "→ " + long args summary)
+    // wraps at the pane width. With a status indicator on row 0, the renderer
+    // must shrink the wrap budget by 2 columns so row 0 fits the pane and
+    // ratatui does not re-wrap it into an extra visual row.
     let entry = TranscriptEntry {
         id: 0,
         kind: TranscriptEntryKind::Tool(ToolInvocation {
-            name: "read".to_string(),
+            name: "gh".to_string(),
             source: "".to_string(),
-            args: "{}".to_string(),
+            args: "{\"owner\":\"some-org\",\"repo\":\"some-repository-name\",\"number\":12345,\"labels\":[\"bug\",\"priority-high\",\"needs-review\"]}".to_string(),
         }),
-        status: None,
+        status: Some(ItemStatus::InProgress),
     };
-    let flags = code_block_line_flags(&entry, 120);
-    assert!(flags.iter().all(|&f| !f), "non-nu tool must not be filled");
-}
+    for width in [80usize, 120usize] {
+        for status in [Some(ItemStatus::InProgress), Some(ItemStatus::Done)] {
+            let mut entry = entry.clone();
+            entry.status = status;
 
-#[test]
-fn edit_diff_content_rows_all_filled() {
-    let entry = edit_diff();
-    let flags = code_block_line_flags(&entry, 120);
-    assert_eq!(flags.len(), 3);
-    assert!(
-        flags.iter().all(|&f| f),
-        "all diff-block lines (incl. context) must be filled"
-    );
-}
+            // -- Exec: compute entry_visual_info
+            let mut store = TranscriptStore::default();
+            store.push_transcript_item(entry.clone());
+            let mut scroll = ScrollState::default();
+            store.recompute_entry_visual_info(&mut scroll, width);
+            let total_visual_rows = scroll
+                .entry_visual_info
+                .last()
+                .map(|i| i.start_visual_row + i.visual_row_count)
+                .ok_or("should have entry visual info")?;
 
-#[test]
-fn non_diff_tool_result_not_filled() {
-    let entry = TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::ToolResult(ToolResult {
-            name: String::new(),
-            success: true,
-            lines: vec![nu_agent_core::transcript::ir::ContentLine::single(
-                "plain".to_string(),
-                nu_agent_core::transcript::ir::StyleHint::Normal,
-            )],
-        }),
-        status: None,
-    };
-    let flags = code_block_line_flags(&entry, 120);
-    assert!(
-        flags.iter().all(|&f| !f),
-        "non-diff ToolResult must not be filled"
-    );
-}
+            // -- Exec: render the same entry with the status indicator
+            let rendered_rows = rendered_row_count_with_margins(&entry, width, status)?;
 
-#[test]
-fn user_entry_has_no_code_block_rows() {
-    let entry = user();
-    let flags = code_block_line_flags(&entry, 120);
-    assert!(flags.iter().all(|&f| !f), "user entry must not be filled");
-}
-
-// ── with_margin_rows ─────────────────────────────────────────────────────────
-
-#[test]
-fn with_margin_rows_adds_top_and_bottom_blank_rows() {
-    let lines = vec![Line::from("a"), Line::from("b"), Line::from("c")];
-    let flags = vec![false, true, false];
-    let (out_lines, out_flags) = with_margin_rows(lines, flags);
-    // [a, blank, b, blank, c] — margin rows are filled (inside the block)
-    assert_eq!(out_lines.len(), 5);
-    assert_eq!(out_flags, vec![false, true, true, true, false]);
-    assert_eq!(out_lines[1].to_string(), "", "top margin row");
-    assert_eq!(out_lines[2].to_string(), "b", "filled row preserved");
-    assert_eq!(out_lines[3].to_string(), "", "bottom margin row");
-}
-
-#[test]
-fn with_margin_rows_no_fill_returns_unchanged() {
-    let lines = vec![Line::from("a"), Line::from("b")];
-    let flags = vec![false, false];
-    let (out_lines, out_flags) = with_margin_rows(lines, flags);
-    assert_eq!(out_lines.len(), 2);
-    assert_eq!(out_flags, vec![false, false]);
-}
-
-#[test]
-fn with_margin_rows_contiguous_run_gets_single_margin_pair() {
-    let lines = vec![Line::from("a"), Line::from("b"), Line::from("c")];
-    let flags = vec![false, true, true];
-    let (out_lines, out_flags) = with_margin_rows(lines, flags);
-    // [a, blank, b, c, blank] — margin rows are filled (inside the block)
-    assert_eq!(out_lines.len(), 5);
-    assert_eq!(out_flags, vec![false, true, true, true, true]);
+            // -- Check: the indicator must not push row 0 past the pane width,
+            // and the accounting must equal the rendered row count.
+            assert_eq!(
+                total_visual_rows, rendered_rows,
+                "width {width} status {status:?}: entry_visual_info must count the status-indicator row budget"
+            );
+        }
+    }
+    Ok(())
 }

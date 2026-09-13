@@ -1,4 +1,5 @@
 mod app_state;
+pub(crate) mod code_block;
 mod compaction;
 mod input;
 mod input_history;
@@ -31,6 +32,9 @@ pub use tool::*;
 pub(crate) use tool_parsing::parse_persisted_tool_status_line;
 pub use transcript_store::*;
 pub use turn::*;
+
+#[cfg(test)]
+mod code_block_test;
 
 #[cfg(test)]
 mod selection_test;
