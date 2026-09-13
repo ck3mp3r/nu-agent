@@ -112,7 +112,10 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
             event_tx,
             terminal_rx,
             &mut live,
-            branch_rx,
+            crate::interactive::RenderLoopChannels {
+                branch_rx,
+                theme_persist_tx: None,
+            },
         )
         .await;
     });

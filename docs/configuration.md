@@ -57,6 +57,31 @@ Top-level sections:
 - `[agents]` — built-in persona availability (optional)
 - `[session_store]` — session store backend (optional)
 - `a2a_enabled` — enable A2A (agent-to-agent) protocol (default: `false`)
+- `theme` — default TUI theme (optional, see [Theme](#theme))
+
+### Theme
+
+The `theme` key sets the default TUI theme. Valid values are the four built-in Catppuccin flavors:
+
+```toml
+theme = "catppuccin-frappe"
+```
+
+Valid values:
+
+- `catppuccin-mocha` (default)
+- `catppuccin-latte`
+- `catppuccin-frappe`
+- `catppuccin-macchiato`
+
+An unknown value is ignored with a log warning and the default applies. The theme can also be set per-launch with the `--theme` CLI flag, which overrides the config value. Selecting a theme in the TUI picker persists the choice to `$XDG_DATA_HOME/nu-agent/theme.json` (mode 0600), which is used on the next launch unless overridden by config or the CLI flag.
+
+Resolution order (highest first):
+
+1. `--theme` CLI flag
+2. `theme` in config.toml
+3. Saved preference file (written by the TUI picker)
+4. Default: `catppuccin-mocha`
 
 ### Model roles
 

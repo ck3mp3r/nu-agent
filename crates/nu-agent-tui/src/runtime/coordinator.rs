@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::layout::{Margin, Rect};
+use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
@@ -18,7 +19,7 @@ use crate::interaction::{
 use crate::platform::transport::{TransportItem, TuiTransport};
 use crate::rendering::{
     layout::{INPUT_MAX_HEIGHT, INPUT_MIN_HEIGHT, MAIN_SIDE_MARGIN},
-    theme::TuiTheme,
+    theme::{ThemeName, TuiTheme},
 };
 use crate::runtime::layout::{compute_bottom_box_height, compute_status_h};
 use crate::runtime::render::frame::current_time_millis;
@@ -53,6 +54,7 @@ pub struct RuntimeCoordinator {
     input_watchdog_started_at: Instant,
     input_watchdog_timeout: Duration,
     pub(crate) repo_branch_tracker: Option<RepoBranchTracker>,
+    pub(crate) theme_name: ThemeName,
     pub(crate) theme: TuiTheme,
     pub(crate) render_needed: bool,
     pub(crate) last_render_at: Instant,
@@ -93,7 +95,8 @@ impl RuntimeCoordinator {
         input_watchdog_timeout: Duration,
     ) -> Self {
         let side_pane_visible = Some(false);
-        let theme = TuiTheme::default();
+        let theme_name = ThemeName::default();
+        let theme = theme_name.resolve();
         let (event_tx, _event_rx) =
             tokio::sync::mpsc::channel::<nu_agent_core::orchestrator::OrchestratorEvent>(256);
         let mut coordinator = Self {
@@ -110,6 +113,7 @@ impl RuntimeCoordinator {
             input_watchdog_started_at: Instant::now(),
             input_watchdog_timeout,
             repo_branch_tracker: None,
+            theme_name,
             theme: theme.clone(),
             render_needed: true,
             last_render_at: Instant::now() - Duration::from_millis(100),
@@ -118,6 +122,19 @@ impl RuntimeCoordinator {
         coordinator.state.theme = theme;
         coordinator.sync_transcript_viewport_lines_with_layout();
         coordinator
+    }
+
+    /// Set the active theme by name, mirroring the `SwitchRequest::Theme` arm
+    /// in `AppState::take_pending_events`: update the name, resolve the theme,
+    /// sync `state.theme`, and clear the assistant projection cache.
+    pub fn set_theme(&mut self, name: ThemeName) {
+        self.theme_name = name;
+        self.theme = name.resolve();
+        self.state.theme = self.theme.clone();
+        self.state.theme_name = name;
+        self.state.transcript.clear_assistant_projection_cache();
+        self.state.transcript.visual_info_dirty = true;
+        self.mark_render_needed();
     }
 
     /// Consume a UI-state event from the bus. Status-owned events are handled
@@ -998,6 +1015,10 @@ impl RuntimeCoordinator {
 
         live.draw(|frame| {
             let area = frame.area();
+            frame.render_widget(
+                Block::default().style(Style::default().bg(self.theme.base)),
+                area,
+            );
             let has_side = self.side_pane_visible.unwrap_or(false);
             let horizontal = if has_side {
                 Layout::default()
@@ -1085,6 +1106,7 @@ impl RuntimeCoordinator {
             if has_side {
                 let side = horizontal[1];
                 let side_widget = Paragraph::new(Line::from("Events pane reserved"))
+                    .style(Style::default().fg(self.theme.row_assistant.fg.unwrap_or_default()))
                     .block(Block::default().borders(Borders::ALL).title("Events"));
                 frame.render_widget(side_widget, side);
             }

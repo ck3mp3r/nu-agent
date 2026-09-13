@@ -452,6 +452,7 @@ pub(super) fn run_command(
         let was_tui = mode.is_tui();
         let result = match mode {
             AgentMode::Tui => {
+                let theme_name = super::runtime_build::resolve_theme_name(call, &plugin_config)?;
                 run_tui_mode(
                     runtime_impl,
                     input,
@@ -463,7 +464,7 @@ pub(super) fn run_command(
                         initial_messages: session_resolution.initial_messages,
                         last_total_tokens: session_resolution.last_total_tokens,
                     },
-                    a2a,
+                    super::mode_execute::TuiModeOptions { a2a, theme_name },
                 )
                 .await
             }
@@ -508,7 +509,7 @@ async fn run_tui_mode(
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
     hydration: super::mode_execute::TuiHydrationInput,
-    a2a: super::mode_execute::A2aContext,
+    options: super::mode_execute::TuiModeOptions,
 ) -> Result<Value, LabeledError> {
     super::mode_execute::run_tui_mode(
         runtime_impl,
@@ -517,7 +518,7 @@ async fn run_tui_mode(
         span,
         ui_policy,
         hydration,
-        a2a,
+        options,
     )
     .await
 }

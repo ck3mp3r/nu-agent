@@ -100,6 +100,13 @@ pub(crate) struct A2aContext {
     pub(crate) mesh_key: Option<String>,
 }
 
+/// Extra TUI-mode options bundled to keep `run_tui_mode` under the clippy
+/// argument-count limit.
+pub(crate) struct TuiModeOptions {
+    pub(crate) a2a: A2aContext,
+    pub(crate) theme_name: nu_agent_tui::rendering::theme::ThemeName,
+}
+
 pub(crate) async fn run_tui_mode(
     mut runtime_impl: AgentConversationRuntime,
     input: &Value,
@@ -107,7 +114,7 @@ pub(crate) async fn run_tui_mode(
     span: nu_protocol::Span,
     ui_policy: UiPolicy,
     hydration: TuiHydrationInput,
-    a2a: A2aContext,
+    options: TuiModeOptions,
 ) -> Result<Value, LabeledError> {
     // Set up the interactive permission pending map for TUI mode.
     // This Arc is shared between the worker thread (via InteractivePermissionResolver)
@@ -133,6 +140,27 @@ pub(crate) async fn run_tui_mode(
     .map_err(|err| LabeledError::new(format!("Failed to initialize TUI renderer: {err}")))?;
 
     let mut tui_ui = TuiInteractiveUi::new(runtime_renderer);
+    tui_ui.set_theme(options.theme_name);
+    // Create the persistence channel: the render loop forwards picker theme
+    // selections over this channel; the receiving task saves them fire-and-forget.
+    let (theme_persist_tx, mut theme_persist_rx) = tokio::sync::mpsc::channel::<String>(8);
+    tui_ui.set_theme_persist_tx(theme_persist_tx);
+    tokio::spawn(async move {
+        while let Some(name) = theme_persist_rx.recv().await {
+            // Normalize to the canonical kebab-case form so the preference file
+            // always stores `{"theme": "catppuccin-<flavor>"}` regardless of
+            // the upstream spelling (the picker emits Debug-format names).
+            let Some(kebab) = nu_agent_tui::rendering::theme::ThemeName::from_name(&name)
+                .map(|n| n.kebab_name().to_string())
+            else {
+                continue;
+            };
+            let pref = nu_agent_core::theme_pref::ThemePreference { theme: Some(kebab) };
+            if let Err(e) = pref.save() {
+                log::warn!("Failed to persist theme preference: {e}");
+            }
+        }
+    });
     let active_model_identity = super::picker::format_active_model_identity(
         runtime_impl.provider_name(),
         runtime_impl.model(),
@@ -212,15 +240,15 @@ pub(crate) async fn run_tui_mode(
     // `tokio::sync` receivers. They are passed directly into `InteractiveLoopConfig`,
     // and the orchestrator `select!`s over them. No std-bridge forwarder threads
     // are needed.
-    let task_cancel_rx = a2a.task_cancel_rx;
-    let a2a_task_rx = a2a.task_rx;
-    let a2a_completion_rx = a2a.completion_rx;
+    let task_cancel_rx = options.a2a.task_cancel_rx;
+    let a2a_task_rx = options.a2a.task_rx;
+    let a2a_completion_rx = options.a2a.completion_rx;
 
     // Auto-complete A2A tasks from turn-completion events on the signal bus.
     // The session stage publishes `TurnEvent::TaskCompleted` with the task ID after
     // each external turn completes. A background thread reads these and calls
     // `store.complete_task()`.
-    if let Some(store) = &a2a.task_store {
+    if let Some(store) = &options.a2a.task_store {
         let store = Arc::clone(store);
         let bus = runtime_impl.bus.clone();
         tokio::spawn(async move {
@@ -245,11 +273,11 @@ pub(crate) async fn run_tui_mode(
     // Build the on_agent_switch callback for A2A card updates.
     // Always built (regardless of A2A status) so the persona icon can be
     // updated on agent switch even when A2A is disabled.
-    let card_handle = a2a.card_handle;
-    let cache = a2a.cache.clone();
-    let self_port = a2a.self_port;
-    let discovery = a2a.discovery.clone();
-    let mesh_key = a2a.mesh_key.clone();
+    let card_handle = options.a2a.card_handle;
+    let cache = options.a2a.cache.clone();
+    let self_port = options.a2a.self_port;
+    let discovery = options.a2a.discovery.clone();
+    let mesh_key = options.a2a.mesh_key.clone();
     let on_agent_switch: Option<OnAgentSwitch> = Some(Arc::new(
         move |name: String, description: Option<String>, _icon: Option<String>| {
             let Some(card_handle) = card_handle.as_ref() else {

@@ -1716,6 +1716,7 @@ fn apply_persona_model_overrides_plugin_config() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let applied = runtime_build::apply_persona_model(
@@ -1836,6 +1837,7 @@ fn apply_persona_model_clears_provider_impl() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let applied = runtime_build::apply_persona_model(

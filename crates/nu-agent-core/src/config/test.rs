@@ -818,6 +818,7 @@ fn test_resolve_model_basic() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -898,6 +899,7 @@ fn plugin_config_with_cache() -> PluginConfig {
         }),
         permissions: None,
         mcp: None,
+        theme: None,
     }
 }
 
@@ -1028,6 +1030,7 @@ fn test_resolve_model_with_env_fallback() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1070,6 +1073,7 @@ fn test_resolve_model_invalid_format() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     // No slash separator
@@ -1124,6 +1128,7 @@ fn test_resolve_model_provider_not_found() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let result = plugin_config.resolve_model(&ModelRoleConfig {
@@ -1183,6 +1188,7 @@ fn test_resolve_model_model_not_in_config() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1240,6 +1246,7 @@ fn test_resolve_model_with_provider_field() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1316,6 +1323,7 @@ fn test_resolve_model_merges_limits() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1388,6 +1396,7 @@ fn test_plugin_config_resolve_model_role_level_overrides() -> Result<()> {
             models_cache: None,
             permissions: None,
             mcp: None,
+            theme: None,
         }
     };
 
@@ -1456,6 +1465,7 @@ fn test_resolve_model_output_budget_remedy_fields() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
     let role_config = ModelRoleConfig {
         model: "openai/gpt-4".to_string(),
@@ -1504,6 +1514,7 @@ fn test_resolve_model_output_budget_raise_fields() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
     let role_config = ModelRoleConfig {
         model: "openai/gpt-4".to_string(),
@@ -1546,6 +1557,7 @@ fn test_resolve_model_repetition_guard_none_when_unset() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
     let role_config = ModelRoleConfig {
         model: "openai/gpt-4".to_string(),
@@ -1587,6 +1599,7 @@ fn test_resolve_model_repetition_guard_role_false() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
     let role_config = ModelRoleConfig {
         model: "openai/gpt-4".to_string(),
@@ -1643,6 +1656,7 @@ fn test_resolve_model_repetition_guard_role_overrides_env() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
     let role_config = ModelRoleConfig {
         model: "openai/gpt-4".to_string(),
@@ -1722,6 +1736,7 @@ fn test_resolve_model_role_max_output_tokens_overrides_model_limit() -> Result<(
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1782,6 +1797,7 @@ fn resolve_model_handles_two_part_format() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1823,6 +1839,7 @@ fn resolve_model_validates_empty_parts() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     // Empty provider
@@ -1898,6 +1915,7 @@ fn resolve_model_uses_split_once_for_multi_part_models() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -1957,6 +1975,7 @@ fn resolve_model_works_with_simple_two_part() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -2022,6 +2041,7 @@ fn integration_github_copilot_with_backend_in_model() -> Result<()> {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     // Test default model

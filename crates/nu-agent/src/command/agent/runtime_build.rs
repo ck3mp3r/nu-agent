@@ -23,6 +23,46 @@ fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
         .and_then(|v: Value| v.as_str().map(|s| s.to_string()).ok())
 }
 
+/// Resolve the effective TUI theme name with precedence:
+/// 1. `--theme` CLI flag (validated; unknown value = labeled error)
+/// 2. `theme` in config.toml (unknown value = ignored with a log warning)
+/// 3. Saved preference file (written by the picker)
+/// 4. Default: CatppuccinMocha
+pub(crate) fn resolve_theme_name(
+    call: &EvaluatedCall,
+    plugin_config: &PluginConfig,
+) -> Result<nu_agent_tui::rendering::theme::ThemeName, LabeledError> {
+    use nu_agent_tui::rendering::theme::ThemeName;
+
+    // 1. CLI flag — highest precedence, validated at parse.
+    if let Some(flag) = get_string_flag(call, "theme") {
+        return ThemeName::from_name(&flag).ok_or_else(|| {
+            LabeledError::new(format!(
+                "Unknown theme: '{flag}'. Valid values: catppuccin-mocha, catppuccin-latte, catppuccin-frappe, catppuccin-macchiato"
+            ))
+        });
+    }
+
+    // 2. config.toml — unknown value is ignored with a log warning.
+    if let Some(raw) = plugin_config.theme.as_deref() {
+        if let Some(name) = ThemeName::from_name(raw) {
+            return Ok(name);
+        }
+        log::warn!("Unknown theme in config.toml: '{raw}'; using default");
+    }
+
+    // 3. Saved preference file.
+    if let Ok(pref) = nu_agent_core::theme_pref::ThemePreference::load()
+        && let Some(raw) = pref.theme.as_deref()
+        && let Some(name) = ThemeName::from_name(raw)
+    {
+        return Ok(name);
+    }
+
+    // 4. Default.
+    Ok(ThemeName::default())
+}
+
 /// Resolve configuration from all sources with proper precedence.
 ///
 /// Resolution pipeline:

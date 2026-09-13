@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use nu_agent_core::config::{Config, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{Span, Spanned, Value};
+use serial_test::serial;
+use tempfile::TempDir;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -287,6 +289,7 @@ fn make_plugin_config(models: HashMap<String, ModelRoleConfig>) -> PluginConfig 
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     }
 }
 
@@ -515,6 +518,7 @@ fn make_plugin_config_with_providers(
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     }
 }
 
@@ -757,4 +761,148 @@ fn apply_persona_model_none_does_not_change_preamble() -> Result<()> {
     // Preamble should NOT change
     assert_eq!(config.preamble, Some("Original preamble.".to_string()));
     Ok(())
+}
+
+// ── resolve_theme_name tests ───────────────────────────────────────────────
+
+/// Run a test with a controlled XDG_DATA_HOME pointing to a temp dir.
+fn with_xdg_data_home<F>(test: F) -> Result<()>
+where
+    F: FnOnce(&TempDir) -> Result<()>,
+{
+    let dir = tempfile::TempDir::new().map_err(|e| format!("failed to create temp dir: {e}"))?;
+    unsafe {
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+    }
+    let result = test(&dir);
+    unsafe {
+        std::env::remove_var("XDG_DATA_HOME");
+    }
+    result
+}
+
+fn write_theme_pref(dir: &TempDir, name: &str) -> Result<()> {
+    let path = dir.path().join("nu-agent").join("theme.json");
+    let pref = nu_agent_core::theme_pref::ThemePreference {
+        theme: Some(name.to_string()),
+    };
+    pref.save_to(&path)?;
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn resolve_theme_name_cli_flag_wins_over_config() -> Result<()> {
+    with_xdg_data_home(|_| {
+        let call = call_with_flags(vec![(
+            "theme",
+            Some(Value::test_string("catppuccin-frappe")),
+        )]);
+        let config = PluginConfig {
+            theme: Some("catppuccin-latte".to_string()),
+            ..PluginConfig::default()
+        };
+
+        let name = super::resolve_theme_name(&call, &config).map_err(|e| format!("{e:?}"))?;
+
+        assert_eq!(
+            name,
+            nu_agent_tui::rendering::theme::ThemeName::CatppuccinFrappe
+        );
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn resolve_theme_name_config_wins_over_pref() -> Result<()> {
+    with_xdg_data_home(|dir| {
+        write_theme_pref(dir, "catppuccin-macchiato")?;
+        let call = call_with_flags(vec![]);
+        let config = PluginConfig {
+            theme: Some("catppuccin-latte".to_string()),
+            ..PluginConfig::default()
+        };
+
+        let name = super::resolve_theme_name(&call, &config).map_err(|e| format!("{e:?}"))?;
+
+        assert_eq!(
+            name,
+            nu_agent_tui::rendering::theme::ThemeName::CatppuccinLatte
+        );
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn resolve_theme_name_pref_wins_over_default() -> Result<()> {
+    with_xdg_data_home(|dir| {
+        write_theme_pref(dir, "catppuccin-frappe")?;
+        let call = call_with_flags(vec![]);
+        let config = PluginConfig::default();
+
+        let name = super::resolve_theme_name(&call, &config).map_err(|e| format!("{e:?}"))?;
+
+        assert_eq!(
+            name,
+            nu_agent_tui::rendering::theme::ThemeName::CatppuccinFrappe
+        );
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn resolve_theme_name_default_when_nothing_set() -> Result<()> {
+    with_xdg_data_home(|_| {
+        let call = call_with_flags(vec![]);
+        let config = PluginConfig::default();
+
+        let name = super::resolve_theme_name(&call, &config).map_err(|e| format!("{e:?}"))?;
+
+        assert_eq!(name, nu_agent_tui::rendering::theme::ThemeName::default());
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn resolve_theme_name_invalid_cli_flag_returns_error() -> Result<()> {
+    with_xdg_data_home(|_| {
+        let call = call_with_flags(vec![("theme", Some(Value::test_string("bogus")))]);
+        let config = PluginConfig::default();
+
+        let msg = match super::resolve_theme_name(&call, &config) {
+            Ok(_) => return Err("expected an error for bogus theme".into()),
+            Err(e) => e.to_string(),
+        };
+        assert!(msg.contains("bogus"), "error should mention theme: {msg}");
+        assert!(
+            msg.contains("catppuccin-mocha"),
+            "error should list valid values: {msg}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn resolve_theme_name_invalid_config_ignored_falls_to_pref() -> Result<()> {
+    with_xdg_data_home(|dir| {
+        write_theme_pref(dir, "catppuccin-macchiato")?;
+        let call = call_with_flags(vec![]);
+        let config = PluginConfig {
+            theme: Some("bogus".to_string()),
+            ..PluginConfig::default()
+        };
+
+        let name = super::resolve_theme_name(&call, &config).map_err(|e| format!("{e:?}"))?;
+
+        assert_eq!(
+            name,
+            nu_agent_tui::rendering::theme::ThemeName::CatppuccinMacchiato
+        );
+        Ok(())
+    })
 }

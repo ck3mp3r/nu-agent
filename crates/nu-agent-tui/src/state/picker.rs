@@ -543,6 +543,12 @@ impl AppState {
         self.pending_switch_requests.pop_front()
     }
 
+    /// Pop the next theme name the picker selected, for the command layer to
+    /// persist. The TUI never writes the preference file itself.
+    pub fn take_next_theme_persist_request(&mut self) -> Option<String> {
+        self.pending_theme_persist.pop_front()
+    }
+
     pub fn queue_launch_request(&mut self, action: SharedUiAction) {
         self.pending_launch.push_back(action);
         self.abort.pending = false;

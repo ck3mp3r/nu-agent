@@ -291,6 +291,12 @@ Compaction flags:
                 "Session store backend: sqlite|jsonl|memory",
                 None,
             )
+            .named(
+                "theme",
+                nu_protocol::SyntaxShape::String,
+                "TUI theme: catppuccin-mocha, catppuccin-latte, catppuccin-frappe, catppuccin-macchiato",
+                None,
+            )
     }
 
     fn run(

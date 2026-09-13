@@ -151,6 +151,10 @@ pub struct PluginConfig {
     /// MCP server configurations (raw TOML table, parsed at runtime)
     #[serde(default)]
     pub mcp: Option<toml::Value>,
+
+    /// Default TUI theme (kebab-case name, e.g. "catppuccin-frappe").
+    /// Unknown values are kept as `Some(raw)` and ignored at resolve time.
+    pub theme: Option<String>,
 }
 
 /// All fields are `Option` — `None` means "use default".

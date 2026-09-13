@@ -18,6 +18,7 @@ use nu_agent_core::orchestrator::OrchestratorEvent;
 use nu_agent_core::transcript::items::TranscriptEntryKind;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 
 use crate::interaction::cancel::CancelController;
@@ -105,6 +106,34 @@ impl RenderLoopDriver {
         text
     }
 
+    /// Returns the first cell (if any) whose style has no explicit background,
+    /// scanning row-major across the whole rendered buffer.
+    pub(crate) fn first_cell_without_bg(&self) -> Option<(u16, u16)> {
+        let buffer = self.terminal.backend().buffer();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                if buffer[(x, y)].style().bg.is_none() {
+                    return Some((x, y));
+                }
+            }
+        }
+        None
+    }
+
+    /// Rendered buffer content within `rect` as plain text, one screen row per
+    /// line (rows outside `rect` are omitted).
+    pub(crate) fn buffer_text_in_rect(&self, rect: Rect) -> String {
+        let buffer = self.terminal.backend().buffer();
+        let mut text = String::new();
+        for y in rect.y..rect.y.saturating_add(rect.height) {
+            for x in rect.x..rect.x.saturating_add(rect.width) {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
+
     // endregion: --- Accessors
 
     // region: Commands
@@ -149,7 +178,10 @@ impl RenderLoopDriver {
                 event_tx,
                 terminal_rx,
                 &mut live,
-                branch_rx,
+                crate::interactive::RenderLoopChannels {
+                    branch_rx,
+                    theme_persist_tx: None,
+                },
             )
             .await;
             (coordinator, terminal)

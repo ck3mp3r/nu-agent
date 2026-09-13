@@ -1,6 +1,7 @@
 use ratatui::{
     Frame,
     layout::{Margin, Rect},
+    style::Style,
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph},
 };
@@ -31,6 +32,10 @@ impl RuntimeCoordinator {
             self.theme.subtle_meta
         };
         frame.render_widget(Clear, bottom_box_rect);
+        frame.render_widget(
+            Block::default().style(Style::default().bg(self.theme.base)),
+            bottom_box_rect,
+        );
         frame.render_widget(
             Block::default()
                 .borders(Borders::ALL)
@@ -174,6 +179,10 @@ impl RuntimeCoordinator {
                         height: total_height,
                     };
                     frame.render_widget(Clear, slash_rect);
+                    frame.render_widget(
+                        Block::default().style(Style::default().bg(self.theme.base)),
+                        slash_rect,
+                    );
                     let block = Block::default()
                         .borders(Borders::ALL)
                         .border_set(ratatui::symbols::border::ROUNDED)

@@ -27,8 +27,8 @@ use crate::{
         status_panel_lines,
     },
     state::{
-        ActivePicker, AppState, InputMode, InputState, McpServerUsabilityState, PickerRenderKind,
-        PromptStatus, TranscriptRole, UiPhase,
+        ActivePicker, AppState, InputMode, InputState, McpServerUsabilityState, PickerOption,
+        PickerPayload, PickerRenderKind, PromptStatus, TranscriptRole, UiPhase,
     },
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -5757,6 +5757,66 @@ async fn status_section_fit_no_message_renders_single_lane_below_input_divider()
     assert_eq!(
         lane_row, right_row,
         "fit+no-message must paint left and right fragments on the same row\n{buffer}",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_rendered_cell_has_an_explicit_background() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check
+    if let Some((x, y)) = driver.first_cell_without_bg() {
+        return Err(format!(
+            "cell ({x},{y}) has no explicit background after render; the opaque theme surface must paint every cell\n{}",
+            driver.buffer_text()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn theme_picker_popup_does_not_bleed_transcript_glyphs() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
+    driver
+        .coordinator_mut()
+        .state
+        .transcript
+        .push_transcript_line(TranscriptRole::User, "bleed-sentinel".to_string());
+    driver.coordinator_mut().state.set_picker_options(
+        ActivePicker::Theme,
+        vec![PickerOption {
+            id: "CatppuccinMocha".to_string(),
+            display: "Catppuccin Mocha".to_string(),
+            search_text: "Catppuccin Mocha".to_string(),
+            payload: PickerPayload::Theme,
+        }],
+    );
+    driver
+        .coordinator_mut()
+        .state
+        .picker
+        .open(ActivePicker::Theme);
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check
+    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let popup = super::render::frame::modal_rect_for_panel(
+        area,
+        super::render::frame::ModalPanelKind::Themes,
+    );
+    let popup_text = driver.buffer_text_in_rect(popup);
+    assert!(
+        !popup_text.contains("bleed-sentinel"),
+        "theme picker popup must not show stale transcript glyphs; got:\n{popup_text}",
     );
     Ok(())
 }

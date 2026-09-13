@@ -207,6 +207,38 @@ model = "openai/gpt-4"
 
 #[test]
 #[serial]
+fn load_parses_theme_key() -> Result<()> {
+    with_xdg_config_home(|dir| {
+        let config_dir = dir.path().join("nu-agent");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "theme = \"catppuccin-latte\"",
+        )
+        .expect("write config");
+
+        let config = load().map_err(|e| format!("load should succeed: {e:?}"))?;
+        assert_eq!(config.theme.as_deref(), Some("catppuccin-latte"));
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn load_keeps_invalid_theme_raw() -> Result<()> {
+    with_xdg_config_home(|dir| {
+        let config_dir = dir.path().join("nu-agent");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        std::fs::write(config_dir.join("config.toml"), "theme = \"bogus\"").expect("write config");
+
+        let config = load().map_err(|e| format!("load should succeed: {e:?}"))?;
+        assert_eq!(config.theme.as_deref(), Some("bogus"));
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
 fn load_handles_serde_default_annotations() -> Result<()> {
     with_xdg_config_home(|dir| {
         let config_dir = dir.path().join("nu-agent");

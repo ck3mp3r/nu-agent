@@ -1,6 +1,7 @@
 use ratatui::{
     Frame,
     layout::{Margin, Rect},
+    style::Style,
     text::{Line, Text},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
@@ -32,6 +33,10 @@ pub(super) fn render_modal_frame(
     theme: &TuiTheme,
 ) -> Rect {
     frame.render_widget(Clear, area);
+    frame.render_widget(
+        Block::default().style(Style::default().bg(theme.base)),
+        area,
+    );
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)

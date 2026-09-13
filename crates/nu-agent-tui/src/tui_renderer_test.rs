@@ -822,7 +822,7 @@ mod task_5_visual_diff_tests {
             assert_eq!(
                 span.style.bg,
                 Some(bg),
-                "user prose rows must have the USER_BG background color; got {:?}",
+                "user prose rows must have the surface0 background color; got {:?}",
                 span.style.bg
             );
         }

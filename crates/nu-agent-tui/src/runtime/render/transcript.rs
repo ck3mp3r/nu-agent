@@ -1,8 +1,9 @@
 use ratatui::{
     Frame,
     layout::Rect,
+    style::Style,
     text::{Line, Span},
-    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
+    widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
 
 use crate::runtime::transcript_entries_for_render;
@@ -32,7 +33,11 @@ impl RuntimeCoordinator {
             theme: self.theme.clone(),
         };
 
-        frame.render_widget(ratatui::widgets::Clear, transcript_content_area);
+        frame.render_widget(Clear, transcript_content_area);
+        frame.render_widget(
+            Block::default().style(Style::default().bg(self.theme.base)),
+            transcript_content_area,
+        );
         if transcript_content_area.height > 0 {
             let width = transcript_list_area.width as usize;
             let viewport_height = transcript_list_area.height as usize;

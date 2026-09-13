@@ -335,7 +335,7 @@ impl TuiRenderer {
             StyleHint::MdCodeOperator => self.theme.syntax_operator,
             StyleHint::MdCodePunctuation => self.theme.syntax_punctuation,
             StyleHint::MdCodeComment => self.theme.syntax_comment,
-            StyleHint::MdCodePlain => Style::default(),
+            StyleHint::MdCodePlain => self.theme.row_assistant,
         }
     }
 
@@ -370,10 +370,14 @@ impl TuiRenderer {
         row_style: Style,
         selected: bool,
     ) -> Vec<RatatuiSpan<'static>> {
+        let row_bg = row_style.bg;
         spans
             .into_iter()
             .map(|span| {
-                let mut style = span.style.patch(row_style);
+                let mut style = span.style;
+                if let Some(bg) = row_bg {
+                    style = style.bg(bg);
+                }
                 if selected {
                     style = style.patch(self.theme.selection_bg);
                 }

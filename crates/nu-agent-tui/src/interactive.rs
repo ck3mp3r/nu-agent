@@ -24,6 +24,13 @@ where
     R: UiRenderer,
 {
     renderer: TuiRuntimeRenderer<R, HybridTerminalEvents>,
+    theme_persist_tx: Option<mpsc::Sender<String>>,
+}
+
+/// Auxiliary receivers the render loop drains alongside terminal events.
+pub(crate) struct RenderLoopChannels {
+    pub(crate) branch_rx: mpsc::Receiver<()>,
+    pub(crate) theme_persist_tx: Option<mpsc::Sender<String>>,
 }
 
 impl<R> TuiInteractiveUi<R>
@@ -31,7 +38,22 @@ where
     R: UiRenderer,
 {
     pub fn new(renderer: TuiRuntimeRenderer<R, HybridTerminalEvents>) -> Self {
-        Self { renderer }
+        Self {
+            renderer,
+            theme_persist_tx: None,
+        }
+    }
+
+    /// Set the channel the render loop uses to forward picker theme selections
+    /// to the command layer for persistence. The TUI never writes the file.
+    pub fn set_theme_persist_tx(&mut self, tx: mpsc::Sender<String>) {
+        self.theme_persist_tx = Some(tx);
+    }
+
+    /// Set the active theme by name on the coordinator before the render loop
+    /// starts. Mirrors the `SwitchRequest::Theme` arm.
+    pub fn set_theme(&mut self, name: crate::rendering::theme::ThemeName) {
+        self.renderer.coordinator.set_theme(name);
     }
 
     pub fn set_active_model_identity(&mut self, active_model_identity: String) {
@@ -103,6 +125,15 @@ where
             .set_active_agent_identity(name);
     }
 
+    /// Pop the next theme name the picker selected, for the command layer to
+    /// persist. The TUI never writes the preference file itself.
+    pub fn take_next_theme_persist_request(&mut self) -> Option<String> {
+        self.renderer
+            .coordinator
+            .state
+            .take_next_theme_persist_request()
+    }
+
     pub fn set_agent_cycle_names(&mut self, names: Vec<String>) {
         self.renderer
             .coordinator
@@ -128,6 +159,7 @@ where
             &mut self.renderer.coordinator,
             RuntimeCoordinator::new(120, 30, Some(true)),
         );
+        let theme_persist_tx = self.theme_persist_tx.take();
         let live_terminal = self.renderer.take_live_terminal();
         let cancel_controller = coordinator.cancel_controller.clone();
         // Subscribe a filesystem watcher to git ref files before the loop starts
@@ -153,6 +185,10 @@ where
                 let mut live = live_terminal;
                 let mut live_ref = live.as_mut().map(|l| &mut l.terminal);
                 let _branch_watcher = branch_watcher;
+                let channels = RenderLoopChannels {
+                    branch_rx,
+                    theme_persist_tx,
+                };
                 run_render_loop(
                     &mut coordinator,
                     &bus,
@@ -160,7 +196,7 @@ where
                     event_tx,
                     terminal_rx,
                     &mut live_ref,
-                    branch_rx,
+                    channels,
                 )
                 .await;
             });
@@ -221,6 +257,22 @@ pub fn spawn_terminal_input(
     })
 }
 
+/// Forward any pending picker theme selections to the command layer for
+/// persistence. The TUI never writes the preference file itself.
+async fn drain_theme_persist(
+    coordinator: &mut RuntimeCoordinator,
+    theme_persist_tx: &Option<mpsc::Sender<String>>,
+) {
+    let Some(tx) = theme_persist_tx else {
+        return;
+    };
+    while let Some(name) = coordinator.state.take_next_theme_persist_request() {
+        if tx.send(name).await.is_err() {
+            return;
+        }
+    }
+}
+
 /// Render loop driving `RuntimeCoordinator` from terminal events, bus
 /// channels, and a periodic tick. Owns `&mut RuntimeCoordinator` and calls
 /// `AppState` methods directly.
@@ -231,7 +283,7 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
     event_tx: mpsc::Sender<OrchestratorEvent>,
     mut terminal_event_rx: mpsc::Receiver<TerminalEvent>,
     live_terminal: &mut Option<&mut ratatui::Terminal<B>>,
-    mut branch_rx: mpsc::Receiver<()>,
+    mut channels: RenderLoopChannels,
 ) {
     let mut tool_rx = bus.tool().subscribe();
     let mut llm_rx = bus.llm().subscribe();
@@ -254,6 +306,7 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
                         return;
                     }
                 }
+                drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
                 let ui_state_events = coordinator.state.take_pending_ui_state_events();
                 for ev in ui_state_events {
                     let _ = bus.ui_state().send(ev).await;
@@ -316,6 +369,7 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
                             return;
                         }
                     }
+                    drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
                     let ui_state_events = coordinator.state.take_pending_ui_state_events();
                     for ev in ui_state_events {
                         let _ = bus.ui_state().send(ev).await;
@@ -351,7 +405,7 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
                     }
                 }
             }
-            _ = branch_rx.recv() => {
+            _ = channels.branch_rx.recv() => {
                 coordinator.refresh_repo_branch();
                 let _ = coordinator.render_if_needed(live_terminal);
             }

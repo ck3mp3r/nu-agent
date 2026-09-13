@@ -82,6 +82,7 @@ fn model_picker_catalog_projection_is_sorted_and_marks_active() {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
     let projected = build_model_picker_catalog(None, &plugin_config, "a-provider/a-model");
 
@@ -139,6 +140,7 @@ fn tui_startup_hydrates_model_picker_catalog_from_cached_config() {
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let catalog = model_picker_catalog_from_cached_startup_plugin_config(
@@ -244,6 +246,7 @@ fn build_model_picker_catalog_with_cache_shows_all_models_for_configured_provide
         models_cache: None,
         permissions: None,
         mcp: None,
+        theme: None,
     };
 
     let catalog = build_model_picker_catalog(Some(&cache), &plugin_config, "openai/gpt-4o-mini");

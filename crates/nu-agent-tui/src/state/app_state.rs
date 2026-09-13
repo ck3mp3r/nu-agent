@@ -236,6 +236,7 @@ pub struct AppState {
     pub picker: PickerContainer,
     pub(crate) pending_switch_requests: VecDeque<SwitchRequest>,
     pub(crate) pending_launch: VecDeque<SharedUiAction>,
+    pub(crate) pending_theme_persist: VecDeque<String>,
     pub info_panel: Option<InfoPanel>,
     pub info_panel_scroll: usize,
     pub permission: PermissionState,
@@ -251,6 +252,7 @@ pub struct AppState {
     pub compaction: CompactionState,
     pub turn: TurnState,
     pub theme: TuiTheme,
+    pub(crate) theme_name: ThemeName,
     pub event_tx: tokio::sync::mpsc::Sender<nu_agent_core::orchestrator::OrchestratorEvent>,
 }
 
@@ -269,6 +271,7 @@ impl Default for AppState {
             picker: PickerContainer::default(),
             pending_switch_requests: VecDeque::new(),
             pending_launch: VecDeque::new(),
+            pending_theme_persist: VecDeque::new(),
             info_panel: None,
             info_panel_scroll: 0,
             permission: PermissionState::default(),
@@ -284,6 +287,7 @@ impl Default for AppState {
             compaction: CompactionState::default(),
             turn: TurnState,
             theme: TuiTheme::default(),
+            theme_name: ThemeName::default(),
             event_tx,
         }
     }
@@ -321,8 +325,10 @@ impl AppState {
                 SwitchRequest::Theme(name) => {
                     if let Some(theme_name) = ThemeName::from_name(&name) {
                         self.theme = theme_name.resolve();
+                        self.theme_name = theme_name;
                         self.transcript.clear_assistant_projection_cache();
                         self.transcript.visual_info_dirty = true;
+                        self.pending_theme_persist.push_back(name);
                     }
                 }
             }
@@ -467,6 +473,8 @@ impl AppState {
                         let display_name = match name {
                             ThemeName::CatppuccinMocha => "Catppuccin Mocha".to_string(),
                             ThemeName::CatppuccinLatte => "Catppuccin Latte".to_string(),
+                            ThemeName::CatppuccinFrappe => "Catppuccin Frappe".to_string(),
+                            ThemeName::CatppuccinMacchiato => "Catppuccin Macchiato".to_string(),
                         };
                         PickerOption {
                             id: format!("{name:?}"),
@@ -479,6 +487,15 @@ impl AppState {
                 self.set_picker_options(ActivePicker::Theme, options);
                 self.close_info_panel();
                 self.picker.open(ActivePicker::Theme);
+                // Highlight the active theme row.
+                if let Some(state) = self.picker.active_state_mut()
+                    && let Some(idx) = state
+                        .options
+                        .iter()
+                        .position(|opt| opt.id == format!("{:?}", self.theme_name))
+                {
+                    state.selection = idx;
+                }
                 self.ensure_invariants();
                 true
             }
