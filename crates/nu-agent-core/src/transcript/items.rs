@@ -67,13 +67,30 @@ pub struct TranscriptEntry {
 
 impl Renderable for ToolInvocation {
     fn to_render_block(&self) -> RenderBlock {
-        RenderBlock {
-            role: Role::Tool,
-            lines: vec![ContentLine::from_spans(vec![
+        let lines = if self.name == "nu" {
+            // Status row carries only the name and source; the command is
+            // rendered as a highlighted code block below it (one row per
+            // command line), or nothing at all for an empty command.
+            let mut lines = vec![ContentLine::from_spans(vec![
+                Span::emphasis(self.name.clone()),
+                Span::meta(self.source.clone()),
+            ])];
+            if !self.args.is_empty() {
+                lines.extend(crate::transcript::markdown::project_code_block_lines(
+                    "nu", &self.args,
+                ));
+            }
+            lines
+        } else {
+            vec![ContentLine::from_spans(vec![
                 Span::emphasis(self.name.clone()),
                 Span::meta(self.source.clone()),
                 Span::muted(format!(" {}", self.args)),
-            ])],
+            ])]
+        };
+        RenderBlock {
+            role: Role::Tool,
+            lines,
             markdown: None,
             center: false,
             suppress_prefix: false,

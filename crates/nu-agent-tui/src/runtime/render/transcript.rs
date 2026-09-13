@@ -11,8 +11,8 @@ use crate::{
     runtime::{render::expand_to_visual_rows, render::frame::current_time_millis},
     state::{InputMode, PaneFocus},
 };
-use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::{Renderable, TranscriptEntry};
+use nu_agent_core::transcript::ir::{ContentLine, Role, StyleHint};
+use nu_agent_core::transcript::items::{Renderable, TranscriptEntry, TranscriptEntryKind};
 use nu_agent_core::transcript::renderer::RenderContext;
 
 use crate::runtime::RuntimeCoordinator;
@@ -82,6 +82,7 @@ impl RuntimeCoordinator {
             // Only render visible entries
             let mut all_lines: Vec<Line<'static>> = Vec::new();
             let mut entry_indices: Vec<usize> = Vec::new();
+            let mut code_block_flags: Vec<bool> = Vec::new();
 
             let visible_end = last_visible.min(entries_for_render.len());
             for (rel_idx, entry) in entries_for_render[first_visible..visible_end]
@@ -103,8 +104,14 @@ impl RuntimeCoordinator {
                     &ctx,
                     self.state.transcript.assistant_projection_cache_mut(),
                 );
-                for _ in 0..entry_lines.len() {
+                let flags = code_block_line_flags(entry, width);
+                // Inject one untinted margin row above and below each filled
+                // code-block region so the block does not touch surrounding
+                // content (matching the user-block breathing room).
+                let (entry_lines, flags) = with_margin_rows(entry_lines, flags);
+                for (line_idx, _) in entry_lines.iter().enumerate() {
                     entry_indices.push(idx);
+                    code_block_flags.push(flags.get(line_idx).copied().unwrap_or(false));
                 }
                 all_lines.extend(entry_lines);
             }
@@ -118,23 +125,30 @@ impl RuntimeCoordinator {
                 let bottom_padding = padding - top_padding;
                 let mut padded_lines = Vec::with_capacity(viewport_height);
                 let mut padded_indices = Vec::with_capacity(viewport_height);
+                let mut padded_flags = Vec::with_capacity(viewport_height);
                 for _ in 0..top_padding {
                     padded_lines.push(Line::from(""));
                     padded_indices.push(0);
+                    padded_flags.push(false);
                 }
                 padded_lines.append(&mut all_lines);
                 padded_indices.append(&mut entry_indices);
+                padded_flags.append(&mut code_block_flags);
                 for _ in 0..bottom_padding {
                     padded_lines.push(Line::from(""));
                     padded_indices.push(0);
+                    padded_flags.push(false);
                 }
                 all_lines = padded_lines;
                 entry_indices = padded_indices;
+                code_block_flags = padded_flags;
             }
 
             // Expand entry_indices to visual rows for cursor/selection mapping
             let expanded_entry_indices = expand_to_visual_rows(entry_indices, &all_lines, width);
             self.state.scroll.entry_indices = expanded_entry_indices;
+            let expanded_code_block_flags =
+                expand_code_block_flags(code_block_flags, &all_lines, width);
 
             let partial_offset = effective_offset.saturating_sub(
                 self.state
@@ -149,23 +163,35 @@ impl RuntimeCoordinator {
                 .scroll((partial_offset.min(u16::MAX as usize) as u16, 0));
             frame.render_widget(paragraph, transcript_list_area);
 
-            // Fill user prompt rows (and adjacent spacers) with full-width background
+            // Fill user prompt rows (and adjacent spacers) and code-block rows
+            // with full-width background.
             let user_bg = self.theme.row_user_bg;
+            let code_block_bg = self.theme.surface0;
             for row in 0..viewport_height {
-                if let Some(&entry_idx) = self.state.scroll.entry_indices.get(partial_offset + row)
-                    && row_needs_user_bg(&entries_for_render, entry_idx)
+                let Some(&entry_idx) = self.state.scroll.entry_indices.get(partial_offset + row)
+                else {
+                    continue;
+                };
+                let is_code_block = expanded_code_block_flags
+                    .get(partial_offset + row)
+                    .copied()
+                    .unwrap_or(false);
+                let bg = if is_code_block {
+                    code_block_bg
+                } else if row_needs_user_bg(&entries_for_render, entry_idx) {
+                    user_bg
+                } else {
+                    continue;
+                };
+                let row_screen_y = transcript_list_area.y + row as u16;
+                for x in transcript_list_area.x..transcript_list_area.x + transcript_list_area.width
                 {
-                    let row_screen_y = transcript_list_area.y + row as u16;
-                    for x in
-                        transcript_list_area.x..transcript_list_area.x + transcript_list_area.width
+                    if let Some(cell) = frame
+                        .buffer_mut()
+                        .cell_mut(ratatui::layout::Position { x, y: row_screen_y })
                     {
-                        if let Some(cell) = frame
-                            .buffer_mut()
-                            .cell_mut(ratatui::layout::Position { x, y: row_screen_y })
-                        {
-                            let current_style = cell.style();
-                            cell.set_style(current_style.bg(user_bg));
-                        }
+                        let current_style = cell.style();
+                        cell.set_style(current_style.bg(bg));
                     }
                 }
             }
@@ -261,4 +287,125 @@ pub(super) fn row_needs_user_bg(entries: &[TranscriptEntry], entry_idx: usize) -
         .get(entry_idx + 1)
         .is_some_and(|e| e.role() == Role::User);
     prev_is_user || next_is_user
+}
+
+/// Compute per-rendered-line flags indicating whether each line of the entry's
+/// rendered block is a code-block content row that should receive the
+/// full-width background fill. Returns one flag per rendered line (pre-wrap).
+///
+/// - A nu `ToolInvocation` entry: row 0 (status row) is untinted; rows 1+ are
+///   code-block rows.
+/// - An edit `ToolResult` display entry: the diff content lines (those carrying
+///   Diff* StyleHints) are tinted; label/stats lines are not.
+/// - All other entries: no code-block rows.
+pub(super) fn code_block_line_flags(entry: &TranscriptEntry, width: usize) -> Vec<bool> {
+    let block = entry.to_render_block();
+    let content_lines: Vec<ContentLine> = if let Some(md) = &block.markdown {
+        crate::markdown::render_markdown_lines(md, Some(width as u16))
+    } else {
+        block.lines
+    };
+    let prefix_width = crate::tui_renderer::lane_prefix_width();
+    let effective_width = width.saturating_sub(prefix_width).max(1);
+
+    let mut flags = Vec::new();
+    match &entry.kind {
+        TranscriptEntryKind::Tool(inv) if inv.name == "nu" => {
+            for (idx, line) in content_lines.iter().enumerate() {
+                let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
+                let text_width = effective_width.saturating_sub(line.hang_indent).max(1);
+                let rows = crate::tui_renderer::wrap_prose(&text, text_width)
+                    .len()
+                    .max(1);
+                for _ in 0..rows {
+                    flags.push(idx > 0);
+                }
+            }
+        }
+        TranscriptEntryKind::ToolResult(_) => {
+            // A ToolResult entry that carries any Diff* hint is a diff content
+            // block (pushed by push_tool_display_lines); fill every line of it.
+            // Label/stats lines are separate entries with no Diff* hints and
+            // stay untinted.
+            let is_diff_block = content_lines.iter().any(|line| {
+                line.spans.iter().any(|s| {
+                    matches!(
+                        s.hint,
+                        StyleHint::DiffAdd | StyleHint::DiffRemove | StyleHint::DiffHunk
+                    )
+                })
+            });
+            for line in content_lines.iter() {
+                let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
+                let text_width = effective_width.saturating_sub(line.hang_indent).max(1);
+                let rows = crate::tui_renderer::wrap_prose(&text, text_width)
+                    .len()
+                    .max(1);
+                flags.extend(std::iter::repeat_n(is_diff_block, rows));
+            }
+        }
+        _ => {
+            for line in content_lines.iter() {
+                let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
+                let text_width = effective_width.saturating_sub(line.hang_indent).max(1);
+                let rows = crate::tui_renderer::wrap_prose(&text, text_width)
+                    .len()
+                    .max(1);
+                flags.extend(std::iter::repeat_n(false, rows));
+            }
+        }
+    }
+    flags
+}
+
+/// Expand per-rendered-line code-block flags to per-visual-row flags, matching
+/// the wrap expansion used for `entry_indices`.
+pub(super) fn expand_code_block_flags(
+    flags: Vec<bool>,
+    lines: &[Line<'static>],
+    width: usize,
+) -> Vec<bool> {
+    let mut expanded = Vec::with_capacity(lines.len().max(flags.len()));
+    for (i, line) in lines.iter().enumerate() {
+        let flag = *flags.get(i).unwrap_or(&false);
+        let visual_rows = crate::runtime::render::single_line_visual_row_count(line, width);
+        for _ in 0..visual_rows {
+            expanded.push(flag);
+        }
+    }
+    expanded
+}
+
+/// Insert one blank filled row immediately above and below each contiguous
+/// run of filled code-block rows, so the background block has top/bottom
+/// margin rows INSIDE the block (internal padding around the text). Returns
+/// the padded lines and matching flags; the inserted margin rows are filled
+/// (flag true) so they share the block background.
+pub(super) fn with_margin_rows(
+    lines: Vec<Line<'static>>,
+    flags: Vec<bool>,
+) -> (Vec<Line<'static>>, Vec<bool>) {
+    let mut out_lines = Vec::with_capacity(lines.len() + 2);
+    let mut out_flags = Vec::with_capacity(flags.len() + 2);
+    let mut prev_filled = false;
+    for (line, flag) in lines.into_iter().zip(flags) {
+        if flag && !prev_filled {
+            // Start of a filled run: insert a filled top margin row.
+            out_lines.push(Line::from(""));
+            out_flags.push(true);
+        } else if !flag && prev_filled {
+            // End of a filled run: insert a filled bottom margin row.
+            out_lines.push(Line::from(""));
+            out_flags.push(true);
+        }
+        out_lines.push(line);
+        out_flags.push(flag);
+        prev_filled = flag;
+    }
+    if prev_filled {
+        // Trailing filled run: insert a filled bottom margin row.
+        out_lines.push(Line::from(""));
+        out_flags.push(true);
+    }
+    (out_lines, out_flags)
 }

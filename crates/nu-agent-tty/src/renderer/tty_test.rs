@@ -176,3 +176,31 @@ fn multi_line_separated_by_newlines() {
         "should have newline between lines, got: {out}"
     );
 }
+
+#[test]
+fn tool_multi_line_nu_command_renders_every_command_line() {
+    // -- Setup & Fixtures
+    let r = plain();
+    let block = ToolInvocation {
+        name: "nu".to_string(),
+        source: "".to_string(),
+        args: "ls | where size > 1mb\n| select name type\n| sort-by modified".to_string(),
+    }
+    .to_render_block();
+
+    // -- Exec
+    let out = r.render(&block, &ctx());
+
+    // -- Check
+    // The tty renderer joins all block lines with newlines, so the command
+    // must appear one line per command line (no leading indent), with no
+    // JSON summary.
+    assert!(
+        out.contains("ls | where size > 1mb\n| select name type\n| sort-by modified"),
+        "got: {out}"
+    );
+    assert!(
+        !out.contains("→"),
+        "nu block must not contain the arrow summary, got: {out}"
+    );
+}

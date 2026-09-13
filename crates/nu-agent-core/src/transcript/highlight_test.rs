@@ -217,3 +217,112 @@ fn cached_syntax_set_returns_same_instance() {
     let b = cached_syntax_set();
     assert!(std::ptr::eq(a, b));
 }
+
+#[test]
+fn nu_hint_highlights_keyword_string_and_comment_channels() {
+    let lines = highlight_source_tokens(HighlightRequest {
+        language_hint: Some("nu"),
+        source: "let x = \"hello\" # comment",
+    });
+
+    let rendered = lines
+        .iter()
+        .map(|line| {
+            line.iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(rendered, vec!["let x = \"hello\" # comment"]);
+
+    let channels = lines
+        .iter()
+        .flat_map(|line| line.iter().map(|span| span.channel))
+        .collect::<Vec<_>>();
+
+    assert!(
+        channels.contains(&SyntaxTokenChannel::Keyword),
+        "expected nu channels to include Keyword for `let`, got: {:?}",
+        channels
+    );
+    assert!(
+        channels.contains(&SyntaxTokenChannel::String),
+        "expected nu channels to include String for the quoted literal, got: {:?}",
+        channels
+    );
+    assert!(
+        channels.contains(&SyntaxTokenChannel::Comment),
+        "expected nu channels to include Comment, got: {:?}",
+        channels
+    );
+}
+
+#[test]
+fn nushell_alias_resolves_to_nu_syntax() {
+    let lines = highlight_source_tokens(HighlightRequest {
+        language_hint: Some("nushell"),
+        source: "let x = \"hello\" # comment",
+    });
+
+    let has_highlighted_channel = lines
+        .iter()
+        .flat_map(|line| line.iter())
+        .any(|span| span.channel != SyntaxTokenChannel::Plain);
+    assert!(
+        has_highlighted_channel,
+        "nushell alias should resolve to the nu syntax definition"
+    );
+}
+
+#[test]
+fn nu_pipeline_and_builtins_highlight_as_function_or_operator() {
+    let lines = highlight_source_tokens(HighlightRequest {
+        language_hint: Some("nu"),
+        source: "ls | where size > 1mb",
+    });
+
+    let channels = lines
+        .iter()
+        .flat_map(|line| line.iter().map(|span| span.channel))
+        .collect::<Vec<_>>();
+
+    assert!(
+        channels.contains(&SyntaxTokenChannel::Function)
+            || channels.contains(&SyntaxTokenChannel::Operator),
+        "expected nu pipeline to include Function or Operator channels, got: {:?}",
+        channels
+    );
+}
+
+#[test]
+fn nu_malformed_source_does_not_panic_and_preserves_text() -> Result<()> {
+    let malformed = "let s = \"unterminated\n\u{0}\nls | open file";
+
+    let result = std::panic::catch_unwind(|| {
+        highlight_source_tokens(HighlightRequest {
+            language_hint: Some("nu"),
+            source: malformed,
+        })
+    });
+
+    assert!(
+        result.is_ok(),
+        "highlighting should not panic on malformed nu source"
+    );
+    let lines = match result {
+        Ok(lines) => lines,
+        Err(_) => return Err("catch_unwind should return highlighted lines".into()),
+    };
+    let joined = lines
+        .iter()
+        .map(|line| {
+            line.iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("\"unterminated"));
+    assert!(joined.contains("ls | open file"));
+    Ok(())
+}

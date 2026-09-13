@@ -56,21 +56,144 @@ fn assistant_chunk_produces_assistant_role_block_with_markdown() {
 // ── Non-prose blocks have markdown: None ─────────────────────────────────────
 
 #[test]
-fn tool_invocation_produces_three_spans() {
+fn tool_invocation_other_tool_produces_three_spans() {
+    // -- Setup & Fixtures
     let block = ToolInvocation {
-        name: "nu".to_string(),
+        name: "run".to_string(),
         source: "builtin".to_string(),
         args: "{\"cmd\":\"ls\"}".to_string(),
     }
     .to_render_block();
+
+    // -- Check
     assert_eq!(block.role, Role::Tool);
     assert!(block.markdown.is_none());
     assert_eq!(block.lines[0].spans.len(), 3);
-    assert_eq!(block.lines[0].spans[0], Span::emphasis("nu".to_string()));
+    assert_eq!(block.lines[0].spans[0], Span::emphasis("run".to_string()));
     assert_eq!(block.lines[0].spans[1], Span::meta("builtin".to_string()));
     assert_eq!(
         block.lines[0].spans[2],
         Span::muted(" {\"cmd\":\"ls\"}".to_string())
+    );
+}
+
+#[test]
+fn tool_invocation_nu_renders_status_row_and_code_block() {
+    // -- Setup & Fixtures
+    let block = ToolInvocation {
+        name: "nu".to_string(),
+        source: "builtin".to_string(),
+        args: "ls | select name type size".to_string(),
+    }
+    .to_render_block();
+
+    // -- Check
+    assert_eq!(block.role, Role::Tool);
+    assert!(block.markdown.is_none());
+
+    // Status row: name + source only, no command text, no arrow.
+    assert_eq!(block.lines.len(), 2, "status row + one code row");
+    assert_eq!(block.lines[0].spans.len(), 2, "name + source only");
+    assert_eq!(block.lines[0].spans[0], Span::emphasis("nu".to_string()));
+    assert_eq!(block.lines[0].spans[1], Span::meta("builtin".to_string()));
+    let row_text: String = block.lines[0]
+        .spans
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(
+        !row_text.contains("ls"),
+        "status row carries no command text"
+    );
+    assert!(!row_text.contains("→"), "status row carries no arrow");
+
+    // Code row: highlighted command, no leading indent span (sits at lane col).
+    let code_text: String = block.lines[1]
+        .spans
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    assert_eq!(code_text, "ls | select name type size");
+    assert!(
+        block.lines[1]
+            .spans
+            .iter()
+            .any(|s| is_md_code_hint(&s.hint)),
+        "code row must carry MdCode* hints, got: {:?}",
+        block.lines[1]
+            .spans
+            .iter()
+            .map(|s| s.hint.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !block.lines[1]
+            .spans
+            .iter()
+            .any(|s| matches!(s.hint, StyleHint::Muted)),
+        "code row must not be Muted"
+    );
+}
+
+#[test]
+fn tool_invocation_nu_multi_line_command_renders_one_code_row_per_line() {
+    // -- Setup & Fixtures
+    let block = ToolInvocation {
+        name: "nu".to_string(),
+        source: "".to_string(),
+        args: "ls | where size > 1mb\n| select name type\n| sort-by modified".to_string(),
+    }
+    .to_render_block();
+
+    // -- Check
+    assert_eq!(block.lines.len(), 4, "status row + 3 command lines");
+    let row_text =
+        |line: &ContentLine| -> String { line.spans.iter().map(|s| s.text.as_str()).collect() };
+    assert_eq!(block.lines[0].spans.len(), 2, "name + source only");
+    assert_eq!(row_text(&block.lines[1]), "ls | where size > 1mb");
+    assert_eq!(row_text(&block.lines[2]), "| select name type");
+    assert_eq!(row_text(&block.lines[3]), "| sort-by modified");
+    for line in block.lines.iter().skip(1) {
+        assert!(
+            line.spans.iter().any(|s| is_md_code_hint(&s.hint)),
+            "every code row must carry MdCode* hints"
+        );
+    }
+}
+
+#[test]
+fn tool_invocation_nu_empty_args_renders_status_row_only() {
+    // -- Setup & Fixtures
+    let block = ToolInvocation {
+        name: "nu".to_string(),
+        source: "".to_string(),
+        args: String::new(),
+    }
+    .to_render_block();
+
+    // -- Check
+    assert_eq!(block.lines.len(), 1, "status row only");
+    assert_eq!(block.lines[0].spans.len(), 2, "name + source only");
+}
+
+#[test]
+fn tool_invocation_non_nu_keeps_three_span_muted_rendering() {
+    // -- Setup & Fixtures
+    let block = ToolInvocation {
+        name: "edit".to_string(),
+        source: "builtin".to_string(),
+        args: "{\"path\":\"a.rs\"}".to_string(),
+    }
+    .to_render_block();
+
+    // -- Check
+    assert_eq!(block.lines.len(), 1);
+    assert_eq!(block.lines[0].spans.len(), 3);
+    assert_eq!(block.lines[0].spans[0], Span::emphasis("edit".to_string()));
+    assert_eq!(block.lines[0].spans[1], Span::meta("builtin".to_string()));
+    assert_eq!(
+        block.lines[0].spans[2],
+        Span::muted(" {\"path\":\"a.rs\"}".to_string())
     );
 }
 
@@ -315,3 +438,24 @@ fn transcript_entry_defaults_to_none_status() {
     };
     assert!(entry.status.is_none());
 }
+
+// region:    --- Test Support
+
+fn is_md_code_hint(hint: &StyleHint) -> bool {
+    matches!(
+        hint,
+        StyleHint::MdCodeKeyword
+            | StyleHint::MdCodeType
+            | StyleHint::MdCodeFunction
+            | StyleHint::MdCodeVariable
+            | StyleHint::MdCodeConstant
+            | StyleHint::MdCodeString
+            | StyleHint::MdCodeNumber
+            | StyleHint::MdCodeOperator
+            | StyleHint::MdCodePunctuation
+            | StyleHint::MdCodeComment
+            | StyleHint::MdCodePlain
+    )
+}
+
+// endregion: --- Test Support

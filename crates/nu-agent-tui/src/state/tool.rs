@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use nu_agent_core::bus::ToolEvent;
 use nu_agent_core::protocol::event::{ToolDisplay, ToolDisplaySection};
 use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::{ToolInvocation, TranscriptEntryKind};
+use nu_agent_core::transcript::items::{ToolInvocation, TranscriptEntry, TranscriptEntryKind};
 use nu_agent_core::transcript::renderer::ItemStatus;
 
 use super::transcript_store::TranscriptStore;
@@ -52,36 +52,18 @@ impl ToolState {
     }
 
     fn tool_started(&mut self, store: &mut TranscriptStore, name: &str, arguments: &str) -> bool {
-        // Push closing spacer for previous block (if not already a Spacer) + starting
-        // spacer, but only when starting a new tool block (not continuing from a
-        // previous tool call in the same block). Tool calls within a block have no
-        // spacers between them.
-        let is_continuing_tool_block = store.last().is_some_and(|last| {
-            matches!(
-                &last.kind,
-                TranscriptEntryKind::Tool(_) | TranscriptEntryKind::ToolResult(_)
-            )
-        });
-        if !is_continuing_tool_block {
-            let prev_is_assistant = matches!(store.last_content_role(), Some(Role::Assistant));
-
-            if prev_is_assistant {
-                // Only ONE spacer between assistant and tool block
-                // If the closing spacer was already pushed, don't add another
-                if !store.last_is_spacer() {
-                    store.push_spacer();
-                }
-            } else {
-                // Two spacers (closing + starting) for all other transitions
-                // Only push a closing spacer if there is a previous block to close.
-                if !store.is_empty() && !store.last_is_spacer() {
-                    store.push_spacer(); // closing spacer for previous block
-                }
-                store.push_spacer(); // starting spacer for tool block
-            }
-        }
+        self.push_block_spacers(store, name);
         self.start_tool_call(store, name, arguments);
         true
+    }
+
+    /// Push the spacers that separate a new tool block from the preceding
+    /// content. The count is decided purely by [`spacer_count`]; this method
+    /// only applies it.
+    fn push_block_spacers(&self, store: &mut TranscriptStore, name: &str) {
+        for _ in 0..spacer_count(store, name) {
+            store.push_spacer();
+        }
     }
 
     fn tool_completed(
@@ -111,13 +93,22 @@ impl ToolState {
         name: &str,
         arguments: &str,
     ) {
+        // The nu tool renders its raw command as a highlighted code block
+        // under the status row, so the args field carries the command text
+        // itself; every other tool keeps the truncated JSON summary.
         let args_summary = nu_agent_core::protocol::tool_args::summarize_tool_arguments(arguments);
+        let args_display = if name == "nu" {
+            nu_agent_core::protocol::tool_args::nu_command_from_args(arguments)
+                .unwrap_or_else(|| format!("→ {args_summary}"))
+        } else {
+            format!("→ {args_summary}")
+        };
         store.push_transcript_item(nu_agent_core::transcript::items::TranscriptEntry {
             id: 0,
             kind: TranscriptEntryKind::Tool(ToolInvocation {
                 name: name.to_string(),
                 source: String::new(),
-                args: format!("→ {args_summary}"),
+                args: args_display,
             }),
             status: Some(ItemStatus::InProgress),
         });
@@ -167,6 +158,58 @@ impl ToolState {
             })
             .map(|item| item.key.clone())
     }
+}
+
+/// Whether the entry is a tool-call or tool-display row (i.e. part of a tool
+/// block).
+fn is_tool_entry(entry: &TranscriptEntry) -> bool {
+    matches!(
+        &entry.kind,
+        TranscriptEntryKind::Tool(_) | TranscriptEntryKind::ToolResult(_)
+    )
+}
+
+/// Whether the entry renders a full-width background block: a nu tool call, or
+/// a tool-display carrying Diff* hints (edit diff).
+fn renders_background_block(entry: &TranscriptEntry) -> bool {
+    match &entry.kind {
+        TranscriptEntryKind::Tool(inv) => inv.name == "nu",
+        TranscriptEntryKind::ToolResult(result) => result.lines.iter().any(|line| {
+            line.spans.iter().any(|s| {
+                matches!(
+                    s.hint,
+                    nu_agent_core::transcript::ir::StyleHint::DiffAdd
+                        | nu_agent_core::transcript::ir::StyleHint::DiffRemove
+                        | nu_agent_core::transcript::ir::StyleHint::DiffHunk
+                )
+            })
+        }),
+        _ => false,
+    }
+}
+
+/// Decide how many spacer rows separate a new tool block from the preceding
+/// content. Pure decision: the caller applies the count.
+///
+/// - Continuing a tool block: 0 spacers, unless either the previous or the new
+///   call renders a background block (then 1, so filled regions stay separate).
+/// - New block after an assistant turn: 1 spacer (unless one was already pushed).
+/// - New block after anything else: a closing spacer for the previous block
+///   (if any) plus a starting spacer.
+fn spacer_count(store: &TranscriptStore, name: &str) -> usize {
+    let continuing_block = store.last().is_some_and(is_tool_entry);
+    if continuing_block {
+        let new_renders_block = name == "nu";
+        let prev_renders_block = store.last().is_some_and(renders_background_block);
+        return usize::from(new_renders_block || prev_renders_block);
+    }
+
+    if matches!(store.last_content_role(), Some(Role::Assistant)) {
+        return usize::from(!store.last_is_spacer());
+    }
+
+    let closing = usize::from(!store.is_empty() && !store.last_is_spacer());
+    closing + 1
 }
 
 /// Renders a pre-authorize tool display into the transcript and records the

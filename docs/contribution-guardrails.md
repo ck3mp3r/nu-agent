@@ -68,6 +68,8 @@ Keep handler dependencies one-way:
 - `dispatch` orchestrates only.
 - `authz_gate` owns policy/ask/session-grant resolution.
 - `pre_authorize` is side-effect free preview/context generation.
+  - The `nu` tool has no pre-authorize preview: the command renders as a syntax-highlighted code block under the tool status row in the transcript, populated at `ToolEvent::Started` from the tool-call arguments alone. The nu code block and the edit diff display both render on a full-width background block (same fill mechanism as user prompt rows) with one blank margin row above and below; consecutive tool blocks get one spacer when either renders a background block.
+  - The `edit` preview is built from tool-call arguments plus a planned diff of the target file (no writes). The interactive resolver (`InteractivePermissionResolver`) populates `AskContext.pre_authorize_display` for edit Builtin calls; the TTY/`NoOpAskHook` path renders nothing.
 - `builtin_kinds` owns builtin tool name parsing and classification.
 - `fs` owns builtin filesystem tool dispatch contracts.
 - `result` owns output/failure shaping.
@@ -86,6 +88,7 @@ Before code:
 - [ ] Confirm tool source classification and ownership boundary (`dispatch` vs `builtin_kinds`/`fs` vs MCP); see ToolSource taxonomy table (section 3) for correct variant.
 - [ ] Confirm permission DSL mapping and precedence impact (`*` -> tool -> nested field rule).
 - [ ] Confirm whether pre-authorize preview is required and remains zero-write.
+  - Zero-write rule for the `edit` preview: built from the tool-call arguments plus a planned diff of the target file; no file writes occur before approval. The `nu` tool has no preview — its command renders in the tool status row from arguments alone.
 
 During code:
 

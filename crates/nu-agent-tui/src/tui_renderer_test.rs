@@ -128,21 +128,78 @@ fn concat_spans(lines: &[ratatui::text::Line<'static>]) -> String {
 
 #[test]
 fn tool_row_renders_name_without_tool_brackets() {
+    // -- Setup & Fixtures
     let r = make_renderer();
     let block = ToolInvocation {
         name: "nu".to_string(),
         source: "".to_string(),
-        args: r#"{"command":"version"}"#.to_string(),
+        args: "ls | select name type size".to_string(),
     }
     .to_render_block();
+
+    // -- Exec
     let lines = r.render(&block, &default_ctx(120));
+
+    // -- Check
     let text = concat_spans(&lines);
     assert!(text.contains("nu"), "should contain tool name");
     assert!(!text.contains("tool["), "should not have tool[ prefix");
     assert!(
-        text.contains(r#"{"command":"version"}"#),
-        "should contain args"
+        text.contains("ls | select name type size"),
+        "should contain command"
     );
+}
+
+#[test]
+fn tool_row_multi_line_nu_command_renders_one_row_per_command_line() -> Result<()> {
+    // -- Setup & Fixtures
+    let r = make_renderer();
+    let block = ToolInvocation {
+        name: "nu".to_string(),
+        source: "".to_string(),
+        args: "ls | where size > 1mb\n| select name type\n| sort-by modified".to_string(),
+    }
+    .to_render_block();
+
+    // -- Exec
+    let lines = r.render(&block, &default_ctx(120));
+
+    // -- Check
+    // Status row + one visual row per command line, no command line wraps.
+    assert_eq!(
+        lines.len(),
+        4,
+        "expected 4 rows (status + 3 command), got: {lines:#?}"
+    );
+    let joined = concat_spans(&lines);
+    assert!(joined.contains("ls | where size > 1mb"));
+    assert!(joined.contains("| select name type"));
+    assert!(joined.contains("| sort-by modified"));
+
+    // Status row: cog + no command text.
+    let status_text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(status_text.contains("⚙"), "row 0 is the tool status row");
+    assert!(
+        !status_text.contains("ls"),
+        "status row must not carry command text"
+    );
+
+    // Continuation rows: blank tool label, no cog repetition.
+    for line in lines.iter().skip(1) {
+        let prefix: String = line
+            .spans
+            .iter()
+            .take(2)
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(prefix, "    ", "continuation rows have blank label");
+        assert!(
+            !prefix.contains("⚙"),
+            "icon must not repeat on code-block rows"
+        );
+    }
+
+    Ok(())
 }
 
 #[test]

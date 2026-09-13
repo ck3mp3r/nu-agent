@@ -416,6 +416,68 @@ fn permission_event_field_shape_is_explicit_and_stable() {
     }
 }
 
+// === Tests: tool_args ===
+
+#[test]
+fn nu_command_from_args_extracts_command_string() {
+    // -- Setup & Fixtures
+    let args = r#"{"command":"ls | select name type size"}"#;
+
+    // -- Exec
+    let command = super::tool_args::nu_command_from_args(args);
+
+    // -- Check
+    assert_eq!(command.as_deref(), Some("ls | select name type size"));
+}
+
+#[test]
+fn nu_command_from_args_normalizes_crlf_to_lf() {
+    // -- Setup & Fixtures
+    let args = r#"{"command":"ls\r\n| get name"}"#;
+
+    // -- Exec
+    let command = super::tool_args::nu_command_from_args(args);
+
+    // -- Check
+    assert_eq!(command.as_deref(), Some("ls\n| get name"));
+}
+
+#[test]
+fn nu_command_from_args_returns_none_without_command_key() {
+    // -- Setup & Fixtures
+    let args = r#"{"path":"a.rs"}"#;
+
+    // -- Exec & Check
+    assert_eq!(super::tool_args::nu_command_from_args(args), None);
+}
+
+#[test]
+fn nu_command_from_args_returns_none_for_non_string_command() {
+    // -- Setup & Fixtures
+    let args = r#"{"command":42}"#;
+
+    // -- Exec & Check
+    assert_eq!(super::tool_args::nu_command_from_args(args), None);
+}
+
+#[test]
+fn nu_command_from_args_returns_none_for_invalid_json() {
+    // -- Setup & Fixtures
+    let args = "not-json";
+
+    // -- Exec & Check
+    assert_eq!(super::tool_args::nu_command_from_args(args), None);
+}
+
+#[test]
+fn nu_command_from_args_returns_none_for_empty_command() {
+    // -- Setup & Fixtures
+    let args = r#"{"command":""}"#;
+
+    // -- Exec & Check
+    assert_eq!(super::tool_args::nu_command_from_args(args), None);
+}
+
 // === Tests: skills ===
 
 #[test]

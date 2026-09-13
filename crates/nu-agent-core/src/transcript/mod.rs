@@ -5,6 +5,8 @@ pub mod markdown;
 pub mod renderer;
 
 #[cfg(test)]
+mod highlight_test;
+#[cfg(test)]
 mod ir_test;
 #[cfg(test)]
 mod items_test;

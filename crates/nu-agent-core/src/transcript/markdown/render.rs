@@ -34,9 +34,9 @@ pub fn project_markdown_to_lines(markdown: &str, max_width: Option<u16>) -> Vec<
 }
 
 /// Project a fenced code block directly into ContentLines carrying code
-/// StyleHints (MdCodeKeyword, MdCodePlain, etc.), with the same 4-space indent
-/// the markdown projector applies. This bypasses the markdown round-trip so
-/// tool-display code keeps its syntax highlighting instead of being flattened
+/// StyleHints (MdCodeKeyword, MdCodePlain, etc.), with no leading indent span
+/// (the block sits at the lane column). This bypasses the markdown round-trip
+/// so tool-display code keeps its syntax highlighting instead of being flattened
 /// to plain text.
 pub fn project_code_block_lines(language: &str, source: &str) -> Vec<ContentLine> {
     let block = CodeBlockState {
@@ -52,15 +52,17 @@ pub fn project_code_block_lines(language: &str, source: &str) -> Vec<ContentLine
         if let Some((last_text, _)) = token_line.last_mut() {
             *last_text = last_text.trim_end_matches('\n').to_string();
         }
-        let mut spans = Vec::with_capacity(token_line.len() + 1);
-        spans.push(crate::transcript::ir::Span::new(
-            "    ".to_string(),
-            StyleHint::Normal,
-        ));
+        let mut spans = Vec::with_capacity(token_line.len());
         for (text, hint) in token_line {
             spans.push(crate::transcript::ir::Span::new(text, hint));
         }
-        lines.push(ContentLine::from_spans(spans));
+        // No leading indent span: the code block sits at the lane column (4).
+        // hang_indent = 4 so wrapped continuation rows indent further (col 8),
+        // emphasizing they are continuations of the previous line.
+        lines.push(ContentLine {
+            spans,
+            hang_indent: 4,
+        });
     }
     lines
 }

@@ -363,6 +363,89 @@ fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status(
 }
 
 #[test]
+fn tool_start_nu_sets_args_to_raw_command_string() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+
+    // -- Exec
+    reduce_tool(
+        &mut state,
+        started("nu", r#"{"command":"ls | select name type size"}"#),
+    );
+
+    // -- Check
+    let entry = &state.transcript.entries[1];
+    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
+        assert_eq!(invocation.args, "ls | select name type size");
+    } else {
+        panic!("Expected Tool variant");
+    }
+}
+
+#[test]
+fn tool_start_nu_multi_line_command_preserves_newlines_in_args() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    let arguments =
+        r#"{"command":"ls | where size > 1mb\n| select name type\n| sort-by modified"}"#;
+
+    // -- Exec
+    reduce_tool(&mut state, started("nu", arguments));
+
+    // -- Check
+    let entry = &state.transcript.entries[1];
+    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
+        assert_eq!(
+            invocation.args,
+            "ls | where size > 1mb\n| select name type\n| sort-by modified"
+        );
+    } else {
+        panic!("Expected Tool variant");
+    }
+}
+
+#[test]
+fn tool_start_nu_without_command_key_falls_back_to_summary_arrow() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+
+    // -- Exec
+    reduce_tool(&mut state, started("nu", r#"{"timeout_seconds":5}"#));
+
+    // -- Check
+    let entry = &state.transcript.entries[1];
+    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
+        assert!(
+            invocation.args.starts_with("→ "),
+            "fallback must use the arrow summary, got: {:?}",
+            invocation.args
+        );
+    } else {
+        panic!("Expected Tool variant");
+    }
+}
+
+#[test]
+fn tool_start_non_nu_keeps_args_summary_arrow() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+
+    // -- Exec
+    reduce_tool(
+        &mut state,
+        started("k8s__list_pods", r#"{"namespace":"prod"}"#),
+    );
+
+    // -- Check
+    let entry = &state.transcript.entries[1];
+    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
+        assert!(invocation.args.starts_with("→ "));
+    } else {
+        panic!("Expected Tool variant");
+    }
+}
+
+#[test]
 fn tool_end_transitions_same_row_to_done_or_failed_status() {
     let mut state = AppState::default();
 
@@ -1018,6 +1101,64 @@ fn handle_tool_end_does_not_push_spacer_between_tool_calls() {
         state.transcript.entries[0].kind,
         TranscriptEntryKind::Spacer(_)
     ));
+    assert!(matches!(
+        state.transcript.entries[1].kind,
+        TranscriptEntryKind::Tool(_)
+    ));
+    assert!(matches!(
+        state.transcript.entries[2].kind,
+        TranscriptEntryKind::Tool(_)
+    ));
+}
+
+#[test]
+fn tool_start_nu_after_plain_tool_pushes_spacer_between_blocks() {
+    let mut state = AppState::default();
+    // Plain tool call (no background block)
+    reduce_tool(&mut state, started("read", "{}"));
+    // nu tool call (renders a background block) — must get a spacer between them
+    reduce_tool(&mut state, started("nu", r#"{"command":"ls"}"#));
+
+    // transcript: [Spacer, Tool(read), Spacer, Tool(nu)]
+    assert_eq!(state.transcript.entries.len(), 4);
+    assert!(matches!(
+        state.transcript.entries[2].kind,
+        TranscriptEntryKind::Spacer(_)
+    ));
+    assert!(matches!(
+        state.transcript.entries[3].kind,
+        TranscriptEntryKind::Tool(_)
+    ));
+}
+
+#[test]
+fn tool_start_plain_after_nu_pushes_spacer_between_blocks() {
+    let mut state = AppState::default();
+    // nu tool call (renders a background block)
+    reduce_tool(&mut state, started("nu", r#"{"command":"ls"}"#));
+    // plain tool call after nu — must get a spacer between them
+    reduce_tool(&mut state, started("read", "{}"));
+
+    // transcript: [Spacer, Tool(nu), Spacer, Tool(read)]
+    assert_eq!(state.transcript.entries.len(), 4);
+    assert!(matches!(
+        state.transcript.entries[2].kind,
+        TranscriptEntryKind::Spacer(_)
+    ));
+    assert!(matches!(
+        state.transcript.entries[3].kind,
+        TranscriptEntryKind::Tool(_)
+    ));
+}
+
+#[test]
+fn tool_start_two_plain_tools_keep_no_spacer_between() {
+    let mut state = AppState::default();
+    reduce_tool(&mut state, started("read", "{}"));
+    reduce_tool(&mut state, started("write", "{}"));
+
+    // transcript: [Spacer, Tool(read), Tool(write)] — no spacer between plain tools
+    assert_eq!(state.transcript.entries.len(), 3);
     assert!(matches!(
         state.transcript.entries[1].kind,
         TranscriptEntryKind::Tool(_)

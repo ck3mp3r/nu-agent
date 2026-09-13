@@ -1,5 +1,4 @@
 use crate::types::ToolCall;
-use nu_plugin::EngineInterface;
 use serde_json::Value as JsonValue;
 
 use crate::protocol::event::ToolDisplay;
@@ -7,6 +6,8 @@ use crate::tools::authz::AskContext;
 
 use super::ToolSource;
 use super::builtin_kinds::BuiltinKind;
+use super::resolve::resolve_fs_path_generic;
+use crate::tools::closure::EngineInterfaceLike;
 
 #[derive(Debug, Clone, Default)]
 pub struct PreAuthorizeOutput {
@@ -60,14 +61,14 @@ pub fn pre_authorize_fs_tool(
     })
 }
 
-pub fn pre_authorize_tool_call(
+pub fn pre_authorize_tool_call<E: EngineInterfaceLike>(
     tool_call: &ToolCall,
     source: ToolSource,
-    engine: &EngineInterface,
+    engine: &E,
 ) -> PreAuthorizeOutput {
     match source {
         ToolSource::Closure | ToolSource::Builtin => {
-            let builtin_cwd = match super::resolve_fs_path(".", engine) {
+            let builtin_cwd = match resolve_fs_path_generic(".", engine) {
                 Ok(path) => path,
                 Err(_) => return PreAuthorizeOutput::default(),
             };
@@ -79,3 +80,7 @@ pub fn pre_authorize_tool_call(
         ToolSource::Mcp | ToolSource::Unknown => PreAuthorizeOutput::default(),
     }
 }
+
+#[cfg(test)]
+#[path = "pre_authorize_test.rs"]
+mod tests;

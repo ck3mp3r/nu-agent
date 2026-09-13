@@ -6,6 +6,12 @@ use serde_json::json;
 /// Trait to abstract engine interface for testing
 pub trait EngineInterfaceLike {
     fn get_span_contents(&self, span: Span) -> Result<Vec<u8>, String>;
+
+    /// Current working directory. Optional: only engines that can resolve a
+    /// cwd need to override it; the real nu_plugin::EngineInterface does.
+    fn get_current_dir(&self) -> Result<String, String> {
+        Err("current dir not available for this engine implementation".to_string())
+    }
 }
 
 /// Implementation for nu_plugin::EngineInterface
@@ -13,6 +19,11 @@ impl EngineInterfaceLike for EngineInterface {
     fn get_span_contents(&self, span: Span) -> Result<Vec<u8>, String> {
         self.get_span_contents(span)
             .map_err(|e| format!("Failed to get span contents: {e}"))
+    }
+
+    fn get_current_dir(&self) -> Result<String, String> {
+        self.get_current_dir()
+            .map_err(|e| format!("Failed to get current dir: {e}"))
     }
 }
 

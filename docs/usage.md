@@ -270,6 +270,15 @@ TUI rendering guardrails:
 - Permission decision controls are rendered in a **sticky footer row** so controls remain visible independent of transcript window clipping.
 - Viewport fitting preserves a required permission-context row while ask is active; manual user scroll override disables auto-recentering jitter but keeps required-row preservation state.
 
+Nu command rendering:
+
+- When the agent calls the `nu` tool, the transcript shows the command as a syntax-highlighted code block under the tool status row, on a full-width background block (with one blank margin row above and below) that separates it from the transcript. The command appears at `ToolEvent::Started` — before the permission decision and before completion.
+- There is no separate permission-time preview block for `nu`: nothing executes before you approve, and the status row is built from the tool-call arguments alone.
+- The edit tool's diff display renders in the same full-width background block style (with margin rows).
+- Consecutive tool blocks get one spacer line between them when either renders a background block.
+- Other tools keep their existing previews (edit shows a diff) or none.
+- See `./contribution-guardrails.md` for the pre-authorize zero-write rules behind the edit preview.
+
 Lifecycle events emitted by runtime/UI path:
 
 - `PermissionRequested`

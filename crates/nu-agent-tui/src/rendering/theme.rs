@@ -70,6 +70,7 @@ pub struct TuiTheme {
     pub syntax_operator: Style,
     pub syntax_punctuation: Style,
     pub syntax_comment: Style,
+    pub surface0: Color,
 }
 
 fn fg(color: Color) -> Style {
@@ -92,8 +93,7 @@ impl TuiTheme {
         const PEACH: Color = Color::Rgb(250, 179, 135);
         const OVERLAY0: Color = Color::Rgb(108, 112, 134);
         const OVERLAY1: Color = Color::Rgb(127, 132, 156);
-        #[expect(dead_code)]
-        const SURFACE0: Color = Color::Rgb(57, 58, 73);
+        const SURFACE0: Color = Color::Rgb(38, 38, 55);
         const SURFACE1: Color = Color::Rgb(69, 71, 90);
         const USER_BG: Color = Color::Rgb(38, 38, 55);
         Self {
@@ -137,6 +137,7 @@ impl TuiTheme {
             syntax_operator: fg(SAPPHIRE),
             syntax_punctuation: fg(OVERLAY1),
             syntax_comment: fg_dim(OVERLAY0),
+            surface0: SURFACE0,
         }
     }
 
@@ -151,8 +152,7 @@ impl TuiTheme {
         const PEACH: Color = Color::Rgb(254, 100, 11);
         const OVERLAY0: Color = Color::Rgb(156, 160, 176);
         const OVERLAY1: Color = Color::Rgb(140, 143, 161);
-        #[expect(dead_code)]
-        const SURFACE0: Color = Color::Rgb(204, 208, 218);
+        const SURFACE0: Color = Color::Rgb(228, 230, 236);
         const SURFACE1: Color = Color::Rgb(188, 192, 204);
         const USER_BG: Color = Color::Rgb(228, 230, 236);
 
@@ -197,6 +197,7 @@ impl TuiTheme {
             syntax_operator: fg(SAPPHIRE),
             syntax_punctuation: fg(OVERLAY1),
             syntax_comment: fg_dim(OVERLAY0),
+            surface0: SURFACE0,
         }
     }
 }

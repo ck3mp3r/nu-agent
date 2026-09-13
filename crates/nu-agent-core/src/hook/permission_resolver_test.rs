@@ -569,3 +569,151 @@ async fn policy_resolver_allow_decision_has_no_reason_payload() {
         "expected the bare Allow unit variant, got: {decision:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Nu preview removed (task 6a581540): nu Ask-path requests carry no
+// pre_authorize_display — the command renders in the tool status row instead.
+// ---------------------------------------------------------------------------
+
+/// A nu Builtin call on the Ask path publishes a context with no
+/// pre_authorize_display.
+#[tokio::test]
+async fn interactive_resolver_nu_call_has_no_pre_authorize_display() -> Result<()> {
+    // -- Setup & Fixtures
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.permission().subscribe();
+    let resolver_clone = resolver.clone();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move {
+            resolver
+                .resolve("nu", r#"{"command": "ls | where size > 1mb"}"#, None, &bus)
+                .await
+        }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        PermissionEvent::Requested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+
+    // Unblock the resolver after inspecting the event.
+    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    let decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(decision, PermissionDecision::Allow);
+    let PermissionEvent::Requested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    assert!(
+        context.pre_authorize_display.is_none(),
+        "nu Ask-path context must not carry a pre-authorize display"
+    );
+    Ok(())
+}
+
+/// Non-nu tools keep `pre_authorize_display: None` on the Ask path.
+#[tokio::test]
+async fn interactive_resolver_other_ask_tool_has_no_pre_authorize_display() -> Result<()> {
+    // -- Setup & Fixtures
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.permission().subscribe();
+    let resolver_clone = resolver.clone();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move { resolver.resolve(ASK_TOOL, "{}", None, &bus).await }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        PermissionEvent::Requested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    let decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(decision, PermissionDecision::Allow);
+    let PermissionEvent::Requested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    assert!(
+        context.pre_authorize_display.is_none(),
+        "non-nu Ask-path context must not carry a pre-authorize display"
+    );
+    Ok(())
+}
+
+/// A nu call with a missing/non-string command still prompts normally, without a display.
+#[tokio::test]
+async fn interactive_resolver_nu_missing_command_prompts_without_display() -> Result<()> {
+    // -- Setup & Fixtures
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.permission().subscribe();
+    let resolver_clone = resolver.clone();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move { resolver.resolve("nu", "{}", None, &bus).await }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        PermissionEvent::Requested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    let decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    assert_eq!(decision, PermissionDecision::Allow);
+    let PermissionEvent::Requested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    assert!(
+        context.pre_authorize_display.is_none(),
+        "nu with missing command must prompt without a preview"
+    );
+    Ok(())
+}
+
+/// An explicitly allowed tool (read) still returns Allow without emitting any
+/// PermissionRequested event — no preview path involvement.
+#[tokio::test]
+async fn interactive_resolver_allowed_tool_emits_no_permission_event_with_display() {
+    // -- Setup & Fixtures
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.permission().subscribe();
+
+    // -- Exec
+    let decision = resolver.resolve(ALLOW_TOOL, "{}", None, &bus).await;
+
+    // -- Check
+    assert_eq!(decision, PermissionDecision::Allow);
+    assert!(
+        permission_rx.try_recv().is_err(),
+        "allowed tool must not emit a PermissionRequested event"
+    );
+}

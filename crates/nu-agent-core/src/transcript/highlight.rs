@@ -46,6 +46,44 @@ contexts:
       pop: true
 "#;
 
+const NU_SYNTAX: &str = r#"%YAML 1.2
+---
+name: Nu
+file_extensions: [nu]
+scope: source.nu
+contexts:
+  main:
+    - match: '#.*$'
+      scope: comment.line.number-sign.nu
+    - match: '"'
+      scope: punctuation.definition.string.begin.nu
+      push: double_quoted_string
+    - match: '\b(let|def|export|use|const|mut|if|else|match|for|in|where|try|catch|do|return|hide-env|overlay|module)\b'
+      scope: keyword.control.nu
+    - match: '\b(ls|open|get|each|first|last|sort-by|group-by|str|path|format|split|describe|print|echo|input)\b'
+      scope: support.function.nu
+    - match: '\$env(\.[A-Za-z0-9_]+)?'
+      scope: variable.other.nu
+    - match: '\$[A-Za-z0-9_!?]+'
+      scope: variable.other.nu
+    - match: '\b(true|false|null)\b'
+      scope: constant.language.nu
+    - match: '\b\d+(\.\d+)?\b'
+      scope: constant.numeric.nu
+    - match: '\|\||==|!=|<=|>=|&&|=>|\||\+|-|\*|/|=|<|>'
+      scope: keyword.operator.nu
+    - match: '[{}()\[\];,.]'
+      scope: punctuation.separator.nu
+
+  double_quoted_string:
+    - meta_scope: string.quoted.double.nu
+    - match: '\\.'
+      scope: constant.character.escape.nu
+    - match: '"'
+      scope: punctuation.definition.string.end.nu
+      pop: true
+"#;
+
 #[derive(Debug, Clone, Copy)]
 pub struct HighlightRequest<'a> {
     pub language_hint: Option<&'a str>,
@@ -94,6 +132,9 @@ fn load_syntax_set_with_nix_support() -> SyntaxSet {
     let mut builder = syntax_set.into_builder();
     if let Ok(nix_syntax) = SyntaxDefinition::load_from_str(NIX_SYNTAX, true, Some("Nix")) {
         builder.add(nix_syntax);
+    }
+    if let Ok(nu_syntax) = SyntaxDefinition::load_from_str(NU_SYNTAX, true, Some("Nu")) {
+        builder.add(nu_syntax);
     }
     builder.build()
 }

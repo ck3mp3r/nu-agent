@@ -35,4 +35,4 @@ pub use types::{McpToolRegistry, ToolErrorKind, ToolFailureOutcome, ToolHandlerE
 pub use authz_gate::{AuthorizationFlowContext, enforce_authorization_for_tool_call};
 
 pub use resolve::is_builtin_tool_name;
-pub(crate) use resolve::{resolve_fs_path, resolve_fs_path_for_cwd};
+pub(crate) use resolve::resolve_fs_path_for_cwd;

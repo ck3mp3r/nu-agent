@@ -903,3 +903,84 @@ fn inline_math_text_command_renders_inner_content() {
     assert!(text.contains("Plugin Config"));
     assert!(!text.contains("\\text"));
 }
+
+// ---------------------------------------------------------------------------
+// Nu fence integration: nu/nushell highlighting through the markdown pipeline
+// ---------------------------------------------------------------------------
+
+/// A ```nu fenced block must project spans carrying MdCodeKeyword, MdCodeString,
+/// and MdCodeComment hints — the pipeline the TUI uses for ToolDisplay sections.
+#[test]
+fn markdown_projection_nu_fence_highlights_keyword_string_comment() -> Result<()> {
+    // -- Setup & Fixtures
+    let md = "```nu\nlet x = \"hello\" # comment\n```";
+
+    // -- Exec
+    let lines = project_markdown_to_lines(md, None);
+
+    // -- Check
+    let code_line = lines
+        .iter()
+        .find(|line| plain_line(line).contains("let x"))
+        .ok_or("nu code line should be projected")?;
+    assert!(
+        line_has_code_hint(code_line, StyleHint::MdCodeKeyword),
+        "nu fence should map `let` to MdCodeKeyword"
+    );
+    assert!(
+        line_has_code_hint(code_line, StyleHint::MdCodeString),
+        "nu fence should map the double-quoted string to MdCodeString"
+    );
+    assert!(
+        line_has_code_hint(code_line, StyleHint::MdCodeComment),
+        "nu fence should map `# comment` to MdCodeComment"
+    );
+    Ok(())
+}
+
+/// The `nushell` fence label must canonicalize to the nu syntax and yield
+/// non-plain token styles (the alias path through canonical_language_hint).
+#[test]
+fn markdown_projection_nushell_alias_reaches_nu_syntax() -> Result<()> {
+    // -- Setup & Fixtures
+    let md = "```nushell\nls | where size > 1mb\n```";
+
+    // -- Exec
+    let lines = project_markdown_to_lines(md, None);
+
+    // -- Check
+    let code_line = lines
+        .iter()
+        .find(|line| plain_line(line).contains("where"))
+        .ok_or("nushell code line should be projected")?;
+    assert!(
+        line_has_non_default_token_style(code_line),
+        "nushell alias fence should carry non-plain token hints"
+    );
+    Ok(())
+}
+
+/// An unknown fence language stays plain: Normal/MdCodePlain hints only
+/// (regression guard mirroring the fixture-based unknown-language check).
+#[test]
+fn markdown_projection_unknown_language_stays_plain() -> Result<()> {
+    // -- Setup & Fixtures
+    let md = "```not-a-language\nlet x = \"hello\" # comment\n```";
+
+    // -- Exec
+    let lines = project_markdown_to_lines(md, None);
+
+    // -- Check
+    let code_line = lines
+        .iter()
+        .find(|line| plain_line(line).contains("let x"))
+        .ok_or("unknown-language code line should be projected")?;
+    assert!(
+        code_line
+            .spans
+            .iter()
+            .all(|span| matches!(span.hint, StyleHint::Normal | StyleHint::MdCodePlain)),
+        "unknown fence language must produce only Normal/MdCodePlain hints"
+    );
+    Ok(())
+}
