@@ -62,11 +62,13 @@ fn parse_windows_handles_empty_output() {
 #[test]
 fn parse_panes_parses_pipe_delimited_lines() {
     let output = "%0|0|1|bash|main|80x24\n%1|1|0|vim|editor|120x40\n";
-    let panes = parse_panes(output);
+    let panes = parse_panes(output, "nu-agent", "2");
 
     assert_eq!(panes.len(), 2);
     assert_eq!(panes[0]["id"], "%0");
     assert_eq!(panes[0]["index"], 0);
+    assert_eq!(panes[0]["window"], 2);
+    assert_eq!(panes[0]["target"], "nu-agent:2.0");
     assert_eq!(panes[0]["active"], true);
     assert_eq!(panes[0]["command"], "bash");
     assert_eq!(panes[0]["title"], "main");
@@ -74,6 +76,8 @@ fn parse_panes_parses_pipe_delimited_lines() {
     assert_eq!(panes[0]["height"], 24);
     assert_eq!(panes[1]["id"], "%1");
     assert_eq!(panes[1]["index"], 1);
+    assert_eq!(panes[1]["window"], 2);
+    assert_eq!(panes[1]["target"], "nu-agent:2.1");
     assert_eq!(panes[1]["active"], false);
     assert_eq!(panes[1]["command"], "vim");
     assert_eq!(panes[1]["width"], 120);
@@ -82,14 +86,14 @@ fn parse_panes_parses_pipe_delimited_lines() {
 
 #[test]
 fn parse_panes_handles_empty_output() {
-    let panes = parse_panes("");
+    let panes = parse_panes("", "nu-agent", "2");
     assert!(panes.is_empty());
 }
 
 #[test]
 fn parse_panes_handles_malformed_size() {
     let output = "%0|0|1|bash|main|notasize\n";
-    let panes = parse_panes(output);
+    let panes = parse_panes(output, "nu-agent", "2");
     assert_eq!(panes.len(), 1);
     assert_eq!(panes[0]["width"], 0);
     assert_eq!(panes[0]["height"], 0);
@@ -111,23 +115,27 @@ fn parse_size_handles_malformed_input() {
 #[test]
 fn parse_panes_find_filters_by_name() {
     let output = "%0|0|1|bash|main|80x24|/home/user\n%1|1|0|vim|editor|120x40|/home/user/proj\n";
-    let panes = parse_panes_find(output, Some("main"), None);
+    let panes = parse_panes_find(output, "nu-agent", "2", Some("main"), None);
     assert_eq!(panes.len(), 1);
     assert_eq!(panes[0]["id"], "%0");
+    assert_eq!(panes[0]["window"], 2);
+    assert_eq!(panes[0]["target"], "nu-agent:2.0");
 }
 
 #[test]
 fn parse_panes_find_filters_by_context_path() {
     let output = "%0|0|1|bash|main|80x24|/home/user\n%1|1|0|vim|editor|120x40|/home/user/proj\n";
-    let panes = parse_panes_find(output, None, Some("proj"));
+    let panes = parse_panes_find(output, "nu-agent", "2", None, Some("proj"));
     assert_eq!(panes.len(), 1);
     assert_eq!(panes[0]["id"], "%1");
+    assert_eq!(panes[0]["window"], 2);
+    assert_eq!(panes[0]["target"], "nu-agent:2.1");
 }
 
 #[test]
 fn parse_panes_find_filters_by_context_command() {
     let output = "%0|0|1|bash|main|80x24|/home/user\n%1|1|0|vim|editor|120x40|/home/user\n";
-    let panes = parse_panes_find(output, None, Some("vim"));
+    let panes = parse_panes_find(output, "nu-agent", "2", None, Some("vim"));
     assert_eq!(panes.len(), 1);
     assert_eq!(panes[0]["id"], "%1");
 }
@@ -135,15 +143,19 @@ fn parse_panes_find_filters_by_context_command() {
 #[test]
 fn parse_panes_find_returns_empty_when_no_match() {
     let output = "%0|0|1|bash|main|80x24|/home/user\n";
-    let panes = parse_panes_find(output, Some("nonexistent"), None);
+    let panes = parse_panes_find(output, "nu-agent", "2", Some("nonexistent"), None);
     assert!(panes.is_empty());
 }
 
 #[test]
 fn parse_panes_find_with_no_filters_returns_all() {
     let output = "%0|0|1|bash|main|80x24|/home/user\n%1|1|0|vim|editor|120x40|/home/user\n";
-    let panes = parse_panes_find(output, None, None);
+    let panes = parse_panes_find(output, "nu-agent", "2", None, None);
     assert_eq!(panes.len(), 2);
+    assert_eq!(panes[0]["window"], 2);
+    assert_eq!(panes[0]["target"], "nu-agent:2.0");
+    assert_eq!(panes[1]["window"], 2);
+    assert_eq!(panes[1]["target"], "nu-agent:2.1");
 }
 
 #[test]
@@ -186,16 +198,29 @@ fn resolve_dir_returns_none_for_missing_directory() {
 }
 
 #[test]
-fn pane_target_with_percent_id_returns_id_directly() {
-    assert_eq!(pane_target("nu-agent", Some("%5")), "%5");
+fn pane_target_without_window_and_pane_returns_session() {
+    assert_eq!(pane_target("nu-agent", None, None), "nu-agent");
 }
 
 #[test]
-fn pane_target_with_window_name_returns_session_prefix() {
-    assert_eq!(pane_target("nu-agent", Some("0")), "nu-agent:0");
+fn pane_target_with_window_and_no_pane_returns_session_window() {
+    assert_eq!(pane_target("nu-agent", Some("2"), None), "nu-agent:2");
 }
 
 #[test]
-fn pane_target_without_pane_returns_session() {
-    assert_eq!(pane_target("nu-agent", None), "nu-agent");
+fn pane_target_with_window_and_pane_returns_session_window_pane() {
+    assert_eq!(
+        pane_target("nu-agent", Some("2"), Some("1")),
+        "nu-agent:2.1"
+    );
+}
+
+#[test]
+fn pane_target_without_window_but_with_pane_returns_session_dot_pane() {
+    assert_eq!(pane_target("nu-agent", None, Some("1")), "nu-agent:.1");
+}
+
+#[test]
+fn pane_target_with_percent_id_returns_id_directly_ignoring_window() {
+    assert_eq!(pane_target("nu-agent", Some("2"), Some("%5")), "%5");
 }

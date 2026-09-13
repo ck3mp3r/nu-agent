@@ -23,6 +23,14 @@ pub struct WindowArgs {
 
 pub struct TmuxWindowTool;
 
+/// Parse `tmux new-window` `#{window_id}:#{window_index}` output into `(id, index)`.
+pub(crate) fn parse_window_create_output(output: &str) -> Option<(String, u64)> {
+    let trimmed = output.trim();
+    let (id, index) = trimmed.split_once(':')?;
+    let index = index.parse::<u64>().ok()?;
+    Some((id.to_string(), index))
+}
+
 impl BuiltinTool for TmuxWindowTool {
     const NAME: &'static str = "tmux_window";
 
@@ -45,7 +53,7 @@ impl BuiltinTool for TmuxWindowTool {
                     target,
                     "-P".to_string(),
                     "-F".to_string(),
-                    "#{window_name}".to_string(),
+                    "#{window_id}:#{window_index}".to_string(),
                 ];
                 if let Some(name) = &args.name {
                     cmd.push("-n".to_string());
@@ -57,11 +65,22 @@ impl BuiltinTool for TmuxWindowTool {
                 }
                 let refs: Vec<&str> = cmd.iter().map(String::as_str).collect();
                 let output = run_tmux(&refs)?;
-                let window_name = output.trim().to_string();
-                Ok(serde_json::json!({
+                let (window_id, window_index) =
+                    parse_window_create_output(&output).ok_or_else(|| {
+                        ToolHandlerError::runtime(format!(
+                            "Unexpected tmux new-window output: {}",
+                            output.trim()
+                        ))
+                    })?;
+                let mut response = serde_json::json!({
                     "session": args.session,
-                    "window": window_name,
-                }))
+                    "window_id": window_id,
+                    "window_index": window_index,
+                });
+                if let Some(name) = &args.name {
+                    response["window_name"] = serde_json::json!(name);
+                }
+                Ok(response)
             }
             "kill" => {
                 require_force(args.force)?;

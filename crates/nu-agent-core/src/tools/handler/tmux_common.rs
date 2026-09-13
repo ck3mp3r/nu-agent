@@ -51,11 +51,17 @@ pub(crate) fn require_force(force: Option<bool>) -> Result<(), ToolHandlerError>
 }
 
 /// Build a pane target string, defaulting to the session's active pane.
-pub(crate) fn pane_target(session: &str, pane: Option<&str>) -> String {
+pub(crate) fn pane_target(session: &str, window: Option<&str>, pane: Option<&str>) -> String {
     match pane {
         Some(p) if p.starts_with('%') => p.to_string(),
-        Some(p) => format!("{session}:{p}"),
-        None => session.to_string(),
+        Some(p) => match window {
+            Some(w) => format!("{session}:{w}.{p}"),
+            None => format!("{session}:.{p}"),
+        },
+        None => match window {
+            Some(w) => format!("{session}:{w}"),
+            None => session.to_string(),
+        },
     }
 }
 
@@ -108,16 +114,19 @@ pub(crate) fn parse_windows(output: &str) -> Vec<JsonValue> {
 }
 
 /// Parse `tmux list-panes` pipe-delimited output into a JSON array.
-pub(crate) fn parse_panes(output: &str) -> Vec<JsonValue> {
+pub(crate) fn parse_panes(output: &str, session: &str, window_index: &str) -> Vec<JsonValue> {
     output
         .lines()
         .filter(|l| !l.trim().is_empty())
         .map(|line| {
             let fields: Vec<&str> = line.split('|').collect();
             let (width, height) = parse_size(fields.get(5).copied().unwrap_or(""));
+            let index = fields.get(1).copied().unwrap_or("");
             serde_json::json!({
                 "id": fields.first().copied().unwrap_or(""),
-                "index": fields.get(1).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0),
+                "index": index.parse::<u64>().unwrap_or(0),
+                "window": window_index.parse::<u64>().unwrap_or(0),
+                "target": format!("{session}:{window_index}.{index}"),
                 "active": fields.get(2).map(|s| *s == "1").unwrap_or(false),
                 "command": fields.get(3).copied().unwrap_or(""),
                 "title": fields.get(4).copied().unwrap_or(""),
@@ -131,6 +140,8 @@ pub(crate) fn parse_panes(output: &str) -> Vec<JsonValue> {
 /// Parse `tmux list-panes` output (with current path) and filter by name/context.
 pub(crate) fn parse_panes_find(
     output: &str,
+    session: &str,
+    window_index: &str,
     name: Option<&str>,
     context: Option<&str>,
 ) -> Vec<JsonValue> {
@@ -151,9 +162,12 @@ pub(crate) fn parse_panes_find(
             }
 
             let (width, height) = parse_size(fields.get(5).copied().unwrap_or(""));
+            let index = fields.get(1).copied().unwrap_or("");
             Some(serde_json::json!({
                 "id": fields.first().copied().unwrap_or(""),
-                "index": fields.get(1).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0),
+                "index": index.parse::<u64>().unwrap_or(0),
+                "window": window_index.parse::<u64>().unwrap_or(0),
+                "target": format!("{session}:{window_index}.{index}"),
                 "active": fields.get(2).map(|s| *s == "1").unwrap_or(false),
                 "command": command,
                 "title": title,

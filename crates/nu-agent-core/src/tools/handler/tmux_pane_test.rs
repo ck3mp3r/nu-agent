@@ -106,12 +106,14 @@ fn pane_args_deserialize() {
     let args: super::PaneArgs = parse_args(&serde_json::json!({
         "action": "split",
         "session": "main",
+        "window": "2",
         "direction": "horizontal",
         "size": 50,
         "force": true
     }))
     .unwrap();
     assert_eq!(args.action, "split");
+    assert_eq!(args.window.as_deref(), Some("2"));
     assert_eq!(args.direction.as_deref(), Some("horizontal"));
     assert_eq!(args.size, Some(50));
     assert_eq!(args.force, Some(true));

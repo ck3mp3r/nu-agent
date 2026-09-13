@@ -344,6 +344,10 @@ The agent exposes the following built-in tools (no MCP server required):
 - `tmux_pane` — list, find, capture, send, split, kill panes
 - `tmux_layout` — select layout
 
+Panes are addressed as `session:window.pane`. Prefer the `target` field returned by
+`tmux_pane` list/find; `pane: "2"` means pane index 2 of the given (or current)
+window, not window 2.
+
 These names are unprefixed and exact. There are no builtin aliases like
 `fs__read` or `tool__edit`.
 

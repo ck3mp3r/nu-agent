@@ -12,6 +12,8 @@ pub struct PaneArgs {
     pub action: String,
     pub session: String,
     #[serde(default)]
+    pub window: Option<String>,
+    #[serde(default)]
     pub pane: Option<String>,
     #[serde(default)]
     pub command: Option<String>,
@@ -45,14 +47,25 @@ impl BuiltinTool for TmuxPaneTool {
 
         match args.action.as_str() {
             "list" => {
-                let output = run_tmux(&[
-                    "list-panes",
+                let windows = run_tmux(&[
+                    "list-windows",
                     "-t",
                     args.session.as_str(),
                     "-F",
-                    "#{pane_id}|#{pane_index}|#{pane_active}|#{pane_current_command}|#{pane_title}|#{pane_width}x#{pane_height}",
+                    "#{window_index}",
                 ])?;
-                Ok(serde_json::json!({ "panes": parse_panes(&output) }))
+                let mut panes = Vec::new();
+                for window_index in windows.lines().filter(|l| !l.trim().is_empty()) {
+                    let output = run_tmux(&[
+                        "list-panes",
+                        "-t",
+                        &format!("{}:{}", args.session, window_index),
+                        "-F",
+                        "#{pane_id}|#{pane_index}|#{pane_active}|#{pane_current_command}|#{pane_title}|#{pane_width}x#{pane_height}",
+                    ])?;
+                    panes.extend(parse_panes(&output, &args.session, window_index));
+                }
+                Ok(serde_json::json!({ "panes": panes }))
             }
             "find" => {
                 let name = args.name.as_deref();
@@ -62,19 +75,35 @@ impl BuiltinTool for TmuxPaneTool {
                         "tmux_pane find requires 'name' or 'context'",
                     ));
                 }
-                let output = run_tmux(&[
-                    "list-panes",
+                let windows = run_tmux(&[
+                    "list-windows",
                     "-t",
                     args.session.as_str(),
                     "-F",
-                    "#{pane_id}|#{pane_index}|#{pane_active}|#{pane_current_command}|#{pane_title}|#{pane_width}x#{pane_height}|#{pane_current_path}",
+                    "#{window_index}",
                 ])?;
-                Ok(serde_json::json!({
-                    "panes": parse_panes_find(&output, name, context),
-                }))
+                let mut panes = Vec::new();
+                for window_index in windows.lines().filter(|l| !l.trim().is_empty()) {
+                    let output = run_tmux(&[
+                        "list-panes",
+                        "-t",
+                        &format!("{}:{}", args.session, window_index),
+                        "-F",
+                        "#{pane_id}|#{pane_index}|#{pane_active}|#{pane_current_command}|#{pane_title}|#{pane_width}x#{pane_height}|#{pane_current_path}",
+                    ])?;
+                    panes.extend(parse_panes_find(
+                        &output,
+                        &args.session,
+                        window_index,
+                        name,
+                        context,
+                    ));
+                }
+                Ok(serde_json::json!({ "panes": panes }))
             }
             "process" => {
-                let target = pane_target(&args.session, args.pane.as_deref());
+                let target =
+                    pane_target(&args.session, args.window.as_deref(), args.pane.as_deref());
                 let output = run_tmux(&["display-message", "-t", &target, "-p", "#{pane_pid}"])?;
                 let pid = output.trim().parse::<u64>().map_err(|_| {
                     ToolHandlerError::runtime("failed to parse pane PID from tmux output")
@@ -82,7 +111,8 @@ impl BuiltinTool for TmuxPaneTool {
                 Ok(serde_json::json!({ "pid": pid }))
             }
             "capture" => {
-                let target = pane_target(&args.session, args.pane.as_deref());
+                let target =
+                    pane_target(&args.session, args.window.as_deref(), args.pane.as_deref());
                 let mut cmd: Vec<String> = vec![
                     "capture-pane".to_string(),
                     "-t".to_string(),
@@ -101,13 +131,15 @@ impl BuiltinTool for TmuxPaneTool {
                 let command = args.command.as_deref().ok_or_else(|| {
                     ToolHandlerError::validation("tmux_pane send requires 'command'")
                 })?;
-                let target = pane_target(&args.session, args.pane.as_deref());
+                let target =
+                    pane_target(&args.session, args.window.as_deref(), args.pane.as_deref());
                 run_tmux(&["send-keys", "-t", &target, command, "Enter"])?;
                 let output = run_tmux(&["capture-pane", "-t", &target, "-p"])?;
                 Ok(serde_json::json!({ "content": output }))
             }
             "split" => {
-                let target = pane_target(&args.session, args.pane.as_deref());
+                let target =
+                    pane_target(&args.session, args.window.as_deref(), args.pane.as_deref());
                 let mut cmd: Vec<String> = vec![
                     "split-window".to_string(),
                     "-t".to_string(),
@@ -144,7 +176,8 @@ impl BuiltinTool for TmuxPaneTool {
             }
             "kill" => {
                 require_force(args.force)?;
-                let target = pane_target(&args.session, args.pane.as_deref());
+                let target =
+                    pane_target(&args.session, args.window.as_deref(), args.pane.as_deref());
                 run_tmux(&["kill-pane", "-t", &target])?;
                 Ok(serde_json::json!({ "killed": target }))
             }

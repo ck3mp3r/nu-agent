@@ -1,6 +1,6 @@
 use super::super::builtin_tool::BuiltinTool;
 use super::super::tmux_common::parse_args;
-use super::TmuxWindowTool;
+use super::{TmuxWindowTool, parse_window_create_output};
 use crate::bus::Bus;
 use crate::tools::handler::ToolErrorKind;
 use std::path::Path;
@@ -73,4 +73,15 @@ fn window_args_deserialize() {
     assert_eq!(args.session, "main");
     assert_eq!(args.index, Some(3));
     assert_eq!(args.force, Some(false));
+}
+
+#[test]
+fn parse_window_create_output_parses_id_and_index() {
+    let parsed = parse_window_create_output("@5:2");
+    assert_eq!(parsed, Some(("@5".to_string(), 2)));
+}
+
+#[test]
+fn parse_window_create_output_returns_none_for_malformed_output() {
+    assert_eq!(parse_window_create_output("not-a-valid-shape"), None);
 }

@@ -194,6 +194,28 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_f
     Ok(())
 }
 
+#[test]
+fn builtin_tmux_pane_definition_has_window_property() -> Result<()> {
+    let pane = builtin_tool_definitions()
+        .into_iter()
+        .find(|tool| tool.name == "tmux_pane")
+        .ok_or("tmux_pane tool definition")?;
+
+    assert_eq!(pane.parameters["properties"]["window"]["type"], "string");
+    assert!(
+        pane.description.contains("session:window.pane"),
+        "Expected session:window.pane targeting mention, got: {}",
+        pane.description
+    );
+    assert!(
+        pane.description.contains("target"),
+        "Expected target field mention, got: {}",
+        pane.description
+    );
+
+    Ok(())
+}
+
 // ── messaging_tool_definitions ───────────────────────────────────────────────
 
 #[test]

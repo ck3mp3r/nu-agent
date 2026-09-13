@@ -223,7 +223,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "tmux_window".to_string(),
-            description: "Manage tmux windows within a session. Create a new window (optionally with a name, directory, and target index) or kill a window. Killing requires force=true.".to_string(),
+            description: "Manage tmux windows within a session. Create a new window (optionally with a name, directory, and target index) or kill a window. Create returns the new window's window_id (e.g. @5) and window_index. Killing requires force=true.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -240,12 +240,13 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "tmux_pane".to_string(),
-            description: "Control tmux panes within a session. List panes, find a pane by name or context, inspect the running process, capture visible output, send a command, split a pane (horizontally or vertically with a size percentage and optional directory), or kill a pane. Killing requires force=true.".to_string(),
+            description: "Control tmux panes within a session. List panes, find a pane by name or context, inspect the running process, capture visible output, send a command, split a pane (horizontally or vertically with a size percentage and optional directory), or kill a pane. Panes are addressed as session:window.pane; list/find responses include a target field (session:window_index.pane_index) to copy verbatim. Killing requires force=true.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "action": { "type": "string", "enum": ["list", "find", "process", "capture", "send", "split", "kill"] },
                     "session": { "type": "string", "description": "Session name" },
+                    "window": { "type": "string", "description": "Window index or name (optional; defaults to the session's current window)" },
                     "pane": { "type": "string", "description": "Pane ID (optional, for capture/send/split/kill/process)" },
                     "command": { "type": "string", "description": "Command to send to the pane (required for send)" },
                     "direction": { "type": "string", "enum": ["horizontal", "vertical"], "description": "Split direction (optional, for split)" },
