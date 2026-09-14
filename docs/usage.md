@@ -592,6 +592,7 @@ CLI flags override config.toml, which overrides built-in defaults.
 - Unknown slash commands emit deterministic warning text and the interactive loop continues.
 - Immediate slash command text is not echoed into the transcript and is not persisted as a session turn message.
 - Compaction result artifacts remain transcript-visible (for example, compaction summary/source/count rows).
+- Input soft-wraps at word boundaries; the input box grows up to 6 rows, then scrolls internally keeping the caret visible.
 
 ### Model picker and switch semantics
 

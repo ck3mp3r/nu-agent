@@ -18,7 +18,7 @@ use crate::interaction::{
 };
 use crate::platform::transport::{TransportItem, TuiTransport};
 use crate::rendering::{
-    layout::{INPUT_MAX_HEIGHT, INPUT_MIN_HEIGHT, MAIN_SIDE_MARGIN},
+    layout::{INPUT_MAX_HEIGHT, INPUT_MIN_HEIGHT, MAIN_SIDE_MARGIN, input_content_row_count},
     theme::{ThemeName, TuiTheme},
 };
 use crate::runtime::layout::{compute_bottom_box_height, compute_status_h};
@@ -44,7 +44,9 @@ pub struct RuntimeCoordinator {
     pub(crate) state: AppState,
     transport: TuiTransport,
     pub(crate) cancel_controller: CancelController,
-    input_height: u16,
+    pub(crate) input_height: u16,
+    last_input_content_width: usize,
+    pub(crate) last_input_scroll_top: u16,
     side_pane_visible: Option<bool>,
     pub(crate) quit_requested: bool,
     pub(crate) fatal_error: Option<String>,
@@ -74,6 +76,22 @@ impl RuntimeCoordinator {
         )
     }
 
+    /// Build an input textarea with word-or-glyph soft wrap enabled.
+    pub(crate) fn new_textarea(lines: Vec<String>) -> ratatui_textarea::TextArea<'static> {
+        let mut textarea = ratatui_textarea::TextArea::new(lines);
+        textarea.set_wrap_mode(ratatui_textarea::WrapMode::WordOrGlyph);
+        textarea
+    }
+
+    /// Replace the input textarea, resetting the scroll-top mirror. The crate's
+    /// internal scroll state lives on the `TextArea` and resets to 0 on
+    /// replacement, so the mirror must reset too or the terminal cursor renders
+    /// stale rows above the caret.
+    fn replace_textarea(&mut self, lines: Vec<String>) {
+        self.textarea = Self::new_textarea(lines);
+        self.last_input_scroll_top = 0;
+    }
+
     pub fn hydrate_transcript_from_messages(
         &mut self,
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
@@ -89,7 +107,7 @@ impl RuntimeCoordinator {
     }
 
     pub(crate) fn new_with_watchdog(
-        _columns: u16,
+        columns: u16,
         _rows: u16,
         _side_pane_visible: Option<bool>,
         input_watchdog_timeout: Duration,
@@ -99,11 +117,15 @@ impl RuntimeCoordinator {
         let theme = theme_name.resolve();
         let (event_tx, _event_rx) =
             tokio::sync::mpsc::channel::<nu_agent_core::orchestrator::OrchestratorEvent>(256);
+        let side_margin = if columns >= 8 { MAIN_SIDE_MARGIN } else { 0 };
+        let last_input_content_width = columns.saturating_sub(2 * side_margin + 4) as usize;
         let mut coordinator = Self {
             state: AppState::new_with_sender(event_tx),
             transport: TuiTransport::default(),
             cancel_controller: CancelController::default(),
             input_height: INPUT_MIN_HEIGHT,
+            last_input_content_width,
+            last_input_scroll_top: 0,
             side_pane_visible,
             quit_requested: false,
             fatal_error: None,
@@ -117,7 +139,7 @@ impl RuntimeCoordinator {
             theme: theme.clone(),
             render_needed: true,
             last_render_at: Instant::now() - Duration::from_millis(100),
-            textarea: ratatui_textarea::TextArea::default(),
+            textarea: Self::new_textarea(Vec::new()),
         };
         coordinator.state.theme = theme;
         coordinator.sync_transcript_viewport_lines_with_layout();
@@ -370,9 +392,16 @@ impl RuntimeCoordinator {
         // processing the next event.
         self.pickup_restored_input_text();
 
-        if let TerminalEvent::Resize(_) = event {
+        if let TerminalEvent::Resize(resize) = event {
             self.state.transcript.clear_assistant_projection_cache();
             self.state.transcript.visual_info_dirty = true;
+            let side_margin = if resize.columns >= 8 {
+                MAIN_SIDE_MARGIN
+            } else {
+                0
+            };
+            self.last_input_content_width =
+                resize.columns.saturating_sub(2 * side_margin + 4) as usize;
             self.recompute_layout_for_current_input();
         }
 
@@ -435,7 +464,7 @@ impl RuntimeCoordinator {
             let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
             let last_line = lines.len().saturating_sub(1) as u16;
             let last_col = lines.last().map(|l| l.len()).unwrap_or(0) as u16;
-            self.textarea = ratatui_textarea::TextArea::new(lines);
+            self.replace_textarea(lines);
             self.textarea
                 .move_cursor(ratatui_textarea::CursorMove::Jump(last_line, last_col));
             self.mark_render_needed();
@@ -471,7 +500,7 @@ impl RuntimeCoordinator {
             // Submit — read textarea, clear it, dispatch submit
             TerminalKey::Enter => {
                 let text = self.textarea.lines().join("\n");
-                self.textarea = ratatui_textarea::TextArea::default();
+                self.replace_textarea(Vec::new());
                 self.state.input.pending_submit_text = Some(text);
                 let changed = dispatch_terminal_event(
                     &mut self.state,
@@ -486,8 +515,7 @@ impl RuntimeCoordinator {
             TerminalKey::Esc => false,
             // History — navigate within multiline textarea or history
             TerminalKey::Up => {
-                let ratatui_textarea::DataCursor(row, _) = self.textarea.cursor();
-                if row > 0 {
+                if self.textarea.screen_cursor().row > 0 {
                     self.textarea.input(ratatui_textarea::Input {
                         key: ratatui_textarea::Key::Up,
                         ctrl: false,
@@ -501,9 +529,10 @@ impl RuntimeCoordinator {
                 }
             }
             TerminalKey::Down => {
-                let ratatui_textarea::DataCursor(row, _) = self.textarea.cursor();
-                let line_count = self.textarea.lines().len();
-                if row < line_count.saturating_sub(1) {
+                let buffer = self.textarea.lines().join("\n");
+                let wrapped_row_count =
+                    input_content_row_count(&buffer, self.last_input_content_width);
+                if self.textarea.screen_cursor().row + 1 < wrapped_row_count as usize {
                     self.textarea.input(ratatui_textarea::Input {
                         key: ratatui_textarea::Key::Down,
                         ctrl: false,
@@ -606,7 +635,7 @@ impl RuntimeCoordinator {
             TerminalKey::CtrlC => {
                 let text = self.textarea.lines().join("\n");
                 if !text.is_empty() && self.state.phase == crate::state::UiPhase::Idle {
-                    self.textarea = ratatui_textarea::TextArea::default();
+                    self.replace_textarea(Vec::new());
                     self.state.check_inline_slash("");
                     self.mark_render_needed();
                     true
@@ -698,7 +727,7 @@ impl RuntimeCoordinator {
                             ReducerInput::User(UserAction::PickerSubmit(SubmitAction::SlashAccept)),
                             Some(&self.cancel_controller),
                         );
-                        self.textarea = ratatui_textarea::TextArea::default();
+                        self.replace_textarea(Vec::new());
                         self.state.check_inline_slash("");
                         self.mark_render_needed();
                         true
@@ -726,7 +755,7 @@ impl RuntimeCoordinator {
                     ReducerInput::User(UserAction::PickerSubmit(SubmitAction::SlashAccept)),
                     Some(&self.cancel_controller),
                 );
-                self.textarea = ratatui_textarea::TextArea::default();
+                self.replace_textarea(Vec::new());
                 self.state.check_inline_slash("");
                 self.mark_render_needed();
                 changed
@@ -764,7 +793,7 @@ impl RuntimeCoordinator {
         let submitted = self.state.submitted_prompt_texts();
         if let Some(text) = self.state.input.history_up(&submitted, &current) {
             let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
-            self.textarea = ratatui_textarea::TextArea::new(lines);
+            self.replace_textarea(lines);
             self.mark_render_needed();
         }
         true
@@ -779,15 +808,16 @@ impl RuntimeCoordinator {
         let submitted = self.state.submitted_prompt_texts();
         if let Some(text) = self.state.input.history_down(&submitted) {
             let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
-            self.textarea = ratatui_textarea::TextArea::new(lines);
+            self.replace_textarea(lines);
             self.mark_render_needed();
         }
         true
     }
 
     fn recompute_layout_for_current_input(&mut self) {
-        let line_count = self.textarea.lines().len() as u16;
-        self.input_height = line_count.clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
+        let buffer = self.textarea.lines().join("\n");
+        self.input_height = input_content_row_count(&buffer, self.last_input_content_width)
+            .clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
     }
 
     fn flush_clipboard_request(&mut self) {
@@ -1038,6 +1068,7 @@ impl RuntimeCoordinator {
                 vertical: 0,
                 horizontal: side_margin,
             });
+            self.last_input_content_width = content_main.width.saturating_sub(4) as usize;
             let queue_count = self.state.pending_prompt_count() as u16;
             let queue_h = queue_count + if queue_count > 0 { 1 } else { 0 };
             let available_inner_w = content_main.width.saturating_sub(4) as usize;

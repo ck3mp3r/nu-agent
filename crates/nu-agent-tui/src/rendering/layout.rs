@@ -36,25 +36,14 @@ pub fn wrapped_input_rows(input: &str, content_width: usize) -> Vec<String> {
     let mut rows = Vec::new();
 
     for logical_line in input.split('\n') {
-        if logical_line.is_empty() {
+        let wrapped = textwrap::wrap(
+            logical_line,
+            textwrap::Options::new(width).word_splitter(textwrap::WordSplitter::NoHyphenation),
+        );
+        if wrapped.is_empty() {
             rows.push(String::new());
-            continue;
-        }
-
-        let mut current = String::new();
-        let mut col = 0usize;
-        for ch in logical_line.chars() {
-            current.push(ch);
-            col += 1;
-            if col >= width {
-                rows.push(current);
-                current = String::new();
-                col = 0;
-            }
-        }
-
-        if !current.is_empty() {
-            rows.push(current);
+        } else {
+            rows.extend(wrapped.into_iter().map(|row| row.into_owned()));
         }
     }
 

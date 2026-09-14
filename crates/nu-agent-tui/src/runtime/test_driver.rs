@@ -106,6 +106,11 @@ impl RenderLoopDriver {
         text
     }
 
+    /// The terminal cursor position from the last rendered frame.
+    pub(crate) fn cursor_position(&self) -> ratatui::layout::Position {
+        self.terminal.backend().cursor_position()
+    }
+
     /// Returns the first cell (if any) whose style has no explicit background,
     /// scanning row-major across the whole rendered buffer.
     pub(crate) fn first_cell_without_bg(&self) -> Option<(u16, u16)> {

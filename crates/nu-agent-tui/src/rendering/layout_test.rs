@@ -38,3 +38,25 @@ fn input_pane_min_height_is_one() {
     let h = input_pane_height_for_content("", 80);
     assert_eq!(h, 1);
 }
+
+#[test]
+fn wrapped_rows_split_at_word_boundaries() {
+    let rows = wrapped_input_rows("hello world foo bar", 8);
+    assert_eq!(
+        rows,
+        vec![
+            "hello".to_string(),
+            "world".to_string(),
+            "foo bar".to_string()
+        ]
+    );
+}
+
+#[test]
+fn wrapped_rows_split_long_word_across_rows() {
+    let rows = wrapped_input_rows("helloworld", 4);
+    assert_eq!(
+        rows,
+        vec!["hell".to_string(), "owor".to_string(), "ld".to_string()]
+    );
+}

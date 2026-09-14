@@ -199,12 +199,27 @@ impl RuntimeCoordinator {
                 && self.state.info_panel.is_none()
                 && bottom_box_rect.height >= 4
             {
-                let ratatui_textarea::DataCursor(row, col) = self.textarea.cursor();
+                let sc = self.textarea.screen_cursor();
+                // Mirror the crate's internal scroll top (next_scroll_top,
+                // crate src/widget.rs:85-93) so the caret's rendered visual row
+                // accounts for content scrolled above the input box.
+                let prev_top = self.last_input_scroll_top;
+                let height = textarea_rect.height;
+                let screen_row = sc.row as u16;
+                let top_row = if screen_row < prev_top {
+                    screen_row
+                } else if prev_top + height <= screen_row {
+                    screen_row + 1 - height
+                } else {
+                    prev_top
+                };
+                self.last_input_scroll_top = top_row;
+                let visual_row = screen_row - top_row;
                 let x = bottom_box_rect
                     .x
                     .saturating_add(1) // left border
                     .saturating_add(mode_indicator_width)
-                    .saturating_add(col as u16);
+                    .saturating_add(sc.col as u16);
                 let max_x = bottom_box_rect
                     .x
                     .saturating_add(bottom_box_rect.width.saturating_sub(2));
@@ -212,7 +227,7 @@ impl RuntimeCoordinator {
                     .y
                     .saturating_add(1) // top border
                     .saturating_add(queue_h) // queue section
-                    .saturating_add(row as u16)
+                    .saturating_add(visual_row)
                     .min(input_div_y.saturating_sub(1)); // clamp to last input row
                 frame.set_cursor_position(ratatui::layout::Position { x: x.min(max_x), y });
             }
