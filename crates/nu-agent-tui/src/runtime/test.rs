@@ -5015,6 +5015,90 @@ fn model_picker_rows_do_not_contain_selection_prefix() {
     }
 }
 
+#[tokio::test]
+async fn model_picker_renders_active_and_configured_glyphs() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
+    driver
+        .coordinator_mut()
+        .state
+        .status
+        .identity
+        .active_model_identity = "openai/gpt-4o".to_string();
+    driver.coordinator_mut().state.set_picker_options(
+        ActivePicker::Model,
+        vec![
+            nu_agent_core::protocol::picker::ModelPickerOption {
+                provider: "openai".to_string(),
+                model: "gpt-4o".to_string(),
+                identity: "openai/gpt-4o".to_string(),
+                display: "openai/gpt-4o".to_string(),
+                active: true,
+                context_window: None,
+                max_output: None,
+                configured: true,
+                provider_display_name: String::new(),
+            },
+            nu_agent_core::protocol::picker::ModelPickerOption {
+                provider: "anthropic".to_string(),
+                model: "claude-3-5-sonnet".to_string(),
+                identity: "anthropic/claude-3-5-sonnet".to_string(),
+                display: "anthropic/claude-3-5-sonnet".to_string(),
+                active: false,
+                context_window: None,
+                max_output: None,
+                configured: false,
+                provider_display_name: String::new(),
+            },
+        ],
+    );
+    driver
+        .coordinator_mut()
+        .state
+        .picker
+        .open(ActivePicker::Model);
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check
+    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let popup = super::render::frame::modal_rect_for_panel(
+        area,
+        super::render::frame::ModalPanelKind::Models,
+    );
+    let popup_text = driver.buffer_text_in_rect(popup);
+    let lines: Vec<&str> = popup_text.lines().collect();
+    let active_row = lines
+        .iter()
+        .position(|l| l.contains("openai/gpt-4o"))
+        .ok_or("should find active model row")?;
+    let configured_row = lines
+        .iter()
+        .position(|l| l.contains("openai/gpt-4o"))
+        .ok_or("should find configured model row")?;
+    let inactive_row = lines
+        .iter()
+        .position(|l| l.contains("anthropic/claude-3-5-sonnet"))
+        .ok_or("should find inactive model row")?;
+    assert!(
+        lines[active_row].contains('*'),
+        "active model row must render the active glyph; row: {:?}\n{popup_text}",
+        lines[active_row]
+    );
+    assert!(
+        lines[configured_row].contains('◆'),
+        "configured model row must render the configured glyph; row: {:?}\n{popup_text}",
+        lines[configured_row]
+    );
+    assert!(
+        !lines[inactive_row].contains('*') && !lines[inactive_row].contains('◆'),
+        "inactive+unconfigured row must render empty glyph cells; row: {:?}\n{popup_text}",
+        lines[inactive_row]
+    );
+    Ok(())
+}
+
 #[test]
 fn agent_picker_rows_do_not_contain_selection_prefix() {
     let mut state = AppState::default();

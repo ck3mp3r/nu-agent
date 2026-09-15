@@ -270,12 +270,21 @@ pub(crate) fn model_picker_row_cells_for_test(state: &AppState) -> Vec<Vec<Strin
         .filtered()
         .iter()
         .map(|opt| {
-            let (identity, active) = match &opt.payload {
-                PickerPayload::Model { identity, .. } => (identity.clone(), false),
+            let (identity, configured) = match &opt.payload {
+                PickerPayload::Model {
+                    identity,
+                    configured,
+                    ..
+                } => (identity.clone(), *configured),
                 _ => (String::new(), false),
             };
-            let active = if active { "*" } else { "" };
-            vec![identity, active.to_string()]
+            let active = if opt.id == state.status.identity.active_model_identity {
+                "*"
+            } else {
+                ""
+            };
+            let configured = if configured { "◆" } else { "" };
+            vec![identity, active.to_string(), configured.to_string()]
         })
         .collect()
 }

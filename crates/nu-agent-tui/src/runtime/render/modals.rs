@@ -224,13 +224,13 @@ impl RuntimeCoordinator {
             let mut current_provider: Option<String> = None;
             let mut selected_row = 0;
             for (model_idx, opt) in options.iter().enumerate() {
-                let (provider, provider_display_name, identity) = match &opt.payload {
+                let (provider, provider_display_name, identity, configured) = match &opt.payload {
                     PickerPayload::Model {
                         provider,
                         provider_display_name,
                         identity,
-                        ..
-                    } => (provider, provider_display_name, identity),
+                        configured,
+                    } => (provider, provider_display_name, identity, *configured),
                     _ => unreachable!(),
                 };
                 if current_provider.as_deref() != Some(provider.as_str()) {
@@ -240,11 +240,16 @@ impl RuntimeCoordinator {
                     );
                     current_provider = Some(provider.clone());
                 }
+                let active = if opt.id == self.state.status.identity.active_model_identity {
+                    "*"
+                } else {
+                    ""
+                };
+                let configured_glyph = if configured { "◆" } else { "" };
                 table_rows.push(Row::new(vec![
                     Cell::from(format!("  {identity}")),
-                    Cell::from(String::new()),
-                    Cell::from(String::new()),
-                    Cell::from(String::new()),
+                    Cell::from(active),
+                    Cell::from(configured_glyph),
                 ]));
                 if model_idx == picker_state.selection {
                     selected_row = table_rows.len() - 1;
@@ -255,7 +260,6 @@ impl RuntimeCoordinator {
                 table_rows,
                 [
                     Constraint::Min(20),
-                    Constraint::Length(8),
                     Constraint::Length(1),
                     Constraint::Length(1),
                 ],
