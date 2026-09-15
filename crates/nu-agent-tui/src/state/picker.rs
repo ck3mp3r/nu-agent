@@ -56,6 +56,7 @@ pub enum PickerPayload {
         identity: String,
         provider: String,
         provider_display_name: String,
+        configured: bool,
     },
     Agent {
         name: String,
@@ -448,6 +449,7 @@ impl From<ModelPickerOption> for PickerOption {
                 identity: opt.identity,
                 provider: opt.provider,
                 provider_display_name: opt.provider_display_name,
+                configured: opt.configured,
             },
         }
     }

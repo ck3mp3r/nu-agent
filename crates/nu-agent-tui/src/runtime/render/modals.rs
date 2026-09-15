@@ -229,6 +229,7 @@ impl RuntimeCoordinator {
                         provider,
                         provider_display_name,
                         identity,
+                        ..
                     } => (provider, provider_display_name, identity),
                     _ => unreachable!(),
                 };

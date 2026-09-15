@@ -1171,3 +1171,59 @@ fn picker_submit_with_selection_resolves_payload_switch_action() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn from_model_picker_option_carries_configured_true() -> Result<()> {
+    // -- Setup & Fixtures
+    let opt = ModelPickerOption {
+        provider: "openai".to_string(),
+        model: "gpt-4o-mini".to_string(),
+        identity: "openai/gpt-4o-mini".to_string(),
+        display: "openai / gpt-4o-mini".to_string(),
+        active: true,
+        context_window: None,
+        max_output: None,
+        configured: true,
+        provider_display_name: String::new(),
+    };
+
+    // -- Exec
+    let option = PickerOption::from(opt);
+
+    // -- Check
+    match option.payload {
+        PickerPayload::Model { configured, .. } => {
+            assert!(configured, "configured flag must be forwarded");
+        }
+        _ => return Err("expected PickerPayload::Model".into()),
+    }
+    Ok(())
+}
+
+#[test]
+fn from_model_picker_option_carries_configured_false() -> Result<()> {
+    // -- Setup & Fixtures
+    let opt = ModelPickerOption {
+        provider: "anthropic".to_string(),
+        model: "claude-3-5-sonnet".to_string(),
+        identity: "anthropic/claude-3-5-sonnet".to_string(),
+        display: "anthropic / claude-3-5-sonnet".to_string(),
+        active: false,
+        context_window: None,
+        max_output: None,
+        configured: false,
+        provider_display_name: String::new(),
+    };
+
+    // -- Exec
+    let option = PickerOption::from(opt);
+
+    // -- Check
+    match option.payload {
+        PickerPayload::Model { configured, .. } => {
+            assert!(!configured, "configured flag must be forwarded");
+        }
+        _ => return Err("expected PickerPayload::Model".into()),
+    }
+    Ok(())
+}
