@@ -1,5 +1,5 @@
 use crate::runtime::session_picker::{relative_timestamp, session_picker_table_model};
-use crate::state::{ActivePicker, AppState, PickerOption, PickerPayload};
+use crate::state::{ActivePicker, AppState, PickerOption, PickerPayload, PickerSortKeyPart};
 
 #[test]
 fn relative_timestamp_seconds() {
@@ -70,6 +70,9 @@ fn session_picker_table_model_with_options() {
                 id: "abc123def456789".to_string(),
                 display: "My Session (abc123def456789)".to_string(),
                 search_text: "My Session (abc123def456789)".to_string(),
+                sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(
+                    now - chrono::Duration::hours(2),
+                ))],
                 payload: PickerPayload::Session {
                     session_id: "abc123def456789".to_string(),
                     title: Some("My Session".to_string()),
@@ -80,6 +83,9 @@ fn session_picker_table_model_with_options() {
                 id: "xyz789".to_string(),
                 display: "(untitled) (xyz789)".to_string(),
                 search_text: "(untitled) (xyz789)".to_string(),
+                sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(
+                    now - chrono::Duration::days(1),
+                ))],
                 payload: PickerPayload::Session {
                     session_id: "xyz789".to_string(),
                     title: None,
@@ -107,6 +113,9 @@ fn session_picker_table_model_overflow_cue() {
             id: format!("id{i}"),
             display: format!("Session {i} (id{i})"),
             search_text: format!("Session {i} (id{i})"),
+            sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(
+                now - chrono::Duration::hours(i),
+            ))],
             payload: PickerPayload::Session {
                 session_id: format!("id{i}"),
                 title: Some(format!("Session {i}")),

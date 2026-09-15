@@ -825,6 +825,7 @@ fn picker_option(id: &str) -> PickerOption {
         id: id.to_string(),
         display: id.to_string(),
         search_text: id.to_string(),
+        sort_key: Vec::new(),
         payload: PickerPayload::Theme,
     }
 }
@@ -916,6 +917,9 @@ fn set_picker_options_sorts_session_by_created_at_desc() {
                 id: "old".to_string(),
                 display: "old".to_string(),
                 search_text: "old".to_string(),
+                sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(
+                    now - chrono::Duration::days(1),
+                ))],
                 payload: PickerPayload::Session {
                     session_id: "old".to_string(),
                     title: None,
@@ -926,6 +930,7 @@ fn set_picker_options_sorts_session_by_created_at_desc() {
                 id: "new".to_string(),
                 display: "new".to_string(),
                 search_text: "new".to_string(),
+                sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(now))],
                 payload: PickerPayload::Session {
                     session_id: "new".to_string(),
                     title: None,
@@ -954,12 +959,14 @@ fn set_picker_options_keeps_theme_unsorted() {
                 id: "b".to_string(),
                 display: "b".to_string(),
                 search_text: "b".to_string(),
+                sort_key: Vec::new(),
                 payload: PickerPayload::Theme,
             },
             PickerOption {
                 id: "a".to_string(),
                 display: "a".to_string(),
                 search_text: "a".to_string(),
+                sort_key: Vec::new(),
                 payload: PickerPayload::Theme,
             },
         ],
@@ -1024,6 +1031,46 @@ fn set_picker_options_sorts_model_by_provider_then_identity() {
 }
 
 #[test]
+fn set_picker_options_sorts_model_configured_first() {
+    let mut state = AppState::default();
+    state.set_picker_options(
+        ActivePicker::Model,
+        vec![
+            ModelPickerOption {
+                provider: "openai".to_string(),
+                model: "gpt-4o-mini".to_string(),
+                identity: "openai/gpt-4o-mini".to_string(),
+                display: "openai/gpt-4o-mini".to_string(),
+                active: false,
+                context_window: None,
+                max_output: None,
+                configured: false,
+                provider_display_name: String::new(),
+            },
+            ModelPickerOption {
+                provider: "openai".to_string(),
+                model: "gpt-4o".to_string(),
+                identity: "openai/gpt-4o".to_string(),
+                display: "openai/gpt-4o".to_string(),
+                active: true,
+                context_window: None,
+                max_output: None,
+                configured: true,
+                provider_display_name: String::new(),
+            },
+        ],
+    );
+
+    let ids: Vec<String> = state.picker.entries[1]
+        .state
+        .options
+        .iter()
+        .map(|o| o.id.clone())
+        .collect();
+    assert_eq!(ids, vec!["openai/gpt-4o", "openai/gpt-4o-mini"]);
+}
+
+#[test]
 fn open_command_palette_twice_opens_single_picker() {
     let mut state = AppState::default();
     open_command_palette_for_test(&mut state);
@@ -1043,6 +1090,9 @@ fn test_session_options() -> Vec<PickerOption> {
             id: "old".to_string(),
             display: "old".to_string(),
             search_text: "old".to_string(),
+            sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(
+                now - chrono::Duration::days(1),
+            ))],
             payload: PickerPayload::Session {
                 session_id: "old".to_string(),
                 title: None,
@@ -1053,6 +1103,7 @@ fn test_session_options() -> Vec<PickerOption> {
             id: "new".to_string(),
             display: "new".to_string(),
             search_text: "new".to_string(),
+            sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(now))],
             payload: PickerPayload::Session {
                 session_id: "new".to_string(),
                 title: None,

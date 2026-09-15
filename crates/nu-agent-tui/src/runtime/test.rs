@@ -5879,6 +5879,7 @@ async fn theme_picker_popup_does_not_bleed_transcript_glyphs() -> Result<()> {
             id: "CatppuccinMocha".to_string(),
             display: "Catppuccin Mocha".to_string(),
             search_text: "Catppuccin Mocha".to_string(),
+            sort_key: Vec::new(),
             payload: PickerPayload::Theme,
         }],
     );

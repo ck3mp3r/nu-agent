@@ -8,6 +8,21 @@ use crate::state::CommandPaletteAction;
 
 // region:    --- Types
 
+/// A single sort-key part attached at the conversion boundary. The picker
+/// orders options by comparing these parts with ONE generic comparator; an
+/// empty key under a stable sort preserves insertion order.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PickerSortKeyPart {
+    /// Ascending string part (producer lowercases).
+    Asc(String),
+    /// Boolean part: false sorts before true; pass `!flag` when flag-true
+    /// should sort first.
+    First(bool),
+    /// Recency part, latest sorts first (wrapped in Reverse so the derived
+    /// Ord yields latest-first under a plain `cmp`).
+    Recent(std::cmp::Reverse<chrono::DateTime<chrono::Utc>>),
+}
+
 pub trait PickerItem: Clone {
     fn display(&self) -> String;
     fn id(&self) -> String;
@@ -24,6 +39,8 @@ pub struct PickerOption {
     pub display: String,
     pub search_text: String,
     pub payload: PickerPayload,
+    /// Sort key attached at the conversion boundary; empty = keep insertion order.
+    pub sort_key: Vec<PickerSortKeyPart>,
 }
 
 impl PickerItem for PickerOption {
@@ -445,6 +462,11 @@ impl From<ModelPickerOption> for PickerOption {
             id: opt.identity.clone(),
             display: opt.display.clone(),
             search_text,
+            sort_key: vec![
+                PickerSortKeyPart::Asc(opt.provider.to_ascii_lowercase()),
+                PickerSortKeyPart::First(!opt.configured),
+                PickerSortKeyPart::Asc(opt.identity.to_ascii_lowercase()),
+            ],
             payload: PickerPayload::Model {
                 identity: opt.identity,
                 provider: opt.provider,
@@ -462,9 +484,30 @@ impl From<AgentPickerOption> for PickerOption {
             id: opt.name.clone(),
             display: opt.display.clone(),
             search_text,
+            sort_key: vec![PickerSortKeyPart::Asc(opt.name.to_ascii_lowercase())],
             payload: PickerPayload::Agent {
                 name: opt.name,
                 active: opt.active,
+            },
+        }
+    }
+}
+
+impl From<nu_agent_core::session::SessionInfo> for PickerOption {
+    fn from(info: nu_agent_core::session::SessionInfo) -> Self {
+        let title = info.title.clone();
+        let display = title.clone().unwrap_or_else(|| "(untitled)".to_string());
+        Self {
+            id: info.id.clone(),
+            display: display.clone(),
+            search_text: display.clone(),
+            sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(
+                info.last_active,
+            ))],
+            payload: PickerPayload::Session {
+                session_id: info.id,
+                title,
+                created_at: info.last_active,
             },
         }
     }
@@ -490,7 +533,7 @@ impl AppState {
         options: Vec<T>,
     ) {
         let mut options: Vec<PickerOption> = options.into_iter().map(Into::into).collect();
-        sort_picker_options(kind, &mut options);
+        sort_picker_options(&mut options);
         let idx = self.picker.index_of(kind);
         self.picker.entries[idx].state.options = options;
         self.ensure_invariants();
@@ -562,32 +605,8 @@ impl AppState {
     }
 }
 
-fn sort_picker_options(kind: ActivePicker, options: &mut [PickerOption]) {
-    match kind {
-        ActivePicker::Model => options.sort_by(|a, b| {
-            let (ap, am) = match &a.payload {
-                PickerPayload::Model {
-                    provider, identity, ..
-                } => (provider.as_str(), identity.as_str()),
-                _ => ("", ""),
-            };
-            let (bp, bm) = match &b.payload {
-                PickerPayload::Model {
-                    provider, identity, ..
-                } => (provider.as_str(), identity.as_str()),
-                _ => ("", ""),
-            };
-            ap.to_ascii_lowercase()
-                .cmp(&bp.to_ascii_lowercase())
-                .then_with(|| am.to_ascii_lowercase().cmp(&bm.to_ascii_lowercase()))
-        }),
-        ActivePicker::Agent => options.sort_by_key(|a| a.id.to_ascii_lowercase()),
-        ActivePicker::Session => options.sort_by_key(|b| match &b.payload {
-            PickerPayload::Session { created_at, .. } => std::cmp::Reverse(*created_at),
-            _ => std::cmp::Reverse(chrono::DateTime::<chrono::Utc>::MIN_UTC),
-        }),
-        _ => {}
-    }
+fn sort_picker_options(options: &mut [PickerOption]) {
+    options.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
 }
 
 fn fuzzy_matches(query: &str, candidate: &str) -> bool {

@@ -256,6 +256,7 @@ impl AppState {
                 id: c.label().to_string(),
                 display: c.label().to_string(),
                 search_text: c.label().to_string(),
+                sort_key: Vec::new(),
                 payload: PickerPayload::Slash(c),
             })
             .collect();

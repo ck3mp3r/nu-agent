@@ -257,6 +257,7 @@ fn handle_toggle_command_palette(state: &mut AppState) -> bool {
                 id: a.label().to_string(),
                 display: a.label().to_string(),
                 search_text: a.label().to_string(),
+                sort_key: Vec::new(),
                 payload: PickerPayload::Command(*a),
             })
             .collect();

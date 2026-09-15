@@ -401,23 +401,8 @@ impl AppState {
                 );
             }
             UiStateEvent::SetSessionPickerOptions(sessions) => {
-                let tui_options: Vec<PickerOption> = sessions
-                    .into_iter()
-                    .map(|info| {
-                        let title = info.title.clone();
-                        let display = title.clone().unwrap_or_else(|| "(untitled)".to_string());
-                        PickerOption {
-                            id: info.id.clone(),
-                            display: display.clone(),
-                            search_text: display.clone(),
-                            payload: PickerPayload::Session {
-                                session_id: info.id,
-                                title,
-                                created_at: info.last_active,
-                            },
-                        }
-                    })
-                    .collect();
+                let tui_options: Vec<PickerOption> =
+                    sessions.into_iter().map(PickerOption::from).collect();
                 self.set_picker_options(ActivePicker::Session, tui_options)
             }
             UiStateEvent::DisplayIncomingMessage(msg) => self.display_incoming_message(&msg),
@@ -480,6 +465,7 @@ impl AppState {
                             id: format!("{name:?}"),
                             display: display_name.clone(),
                             search_text: display_name.clone(),
+                            sort_key: Vec::new(),
                             payload: PickerPayload::Theme,
                         }
                     })

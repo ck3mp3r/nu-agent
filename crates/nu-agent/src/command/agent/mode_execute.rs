@@ -187,20 +187,7 @@ pub(crate) async fn run_tui_mode(
             Ok(sessions) => {
                 let options: Vec<nu_agent_tui::state::PickerOption> = sessions
                     .into_iter()
-                    .map(|info| {
-                        let title = info.title.clone();
-                        let display = title.clone().unwrap_or_else(|| "(untitled)".to_string());
-                        nu_agent_tui::state::PickerOption {
-                            id: info.id.clone(),
-                            display: display.clone(),
-                            search_text: display.clone(),
-                            payload: nu_agent_tui::state::PickerPayload::Session {
-                                session_id: info.id,
-                                title,
-                                created_at: info.last_active,
-                            },
-                        }
-                    })
+                    .map(nu_agent_tui::state::PickerOption::from)
                     .collect();
                 tui_ui.set_picker_options(ActivePicker::Session, options);
             }

@@ -23,6 +23,7 @@ pub(crate) fn open_command_palette_for_test(state: &mut AppState) {
             id: a.label().to_string(),
             display: a.label().to_string(),
             search_text: a.label().to_string(),
+            sort_key: Vec::new(),
             payload: PickerPayload::Command(*a),
         })
         .collect();
