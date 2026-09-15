@@ -116,14 +116,14 @@ pub(crate) fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'s
     }
 
     let mut lines = vec![Line::from("Discoverable skills")];
-    lines.extend(
-        state
-            .status
-            .mcp
-            .discoverable_skills()
-            .iter()
-            .map(|skill| Line::from(format!("- {} ({})", skill.name, skill.source))),
-    );
+    lines.extend(state.status.mcp.discoverable_skills().iter().map(|skill| {
+        let suffix = skill
+            .description
+            .as_ref()
+            .map(|desc| format!(" — {desc}"))
+            .unwrap_or_default();
+        Line::from(format!("- {} ({}){suffix}", skill.name, skill.source))
+    }));
     ("Skills", lines)
 }
 

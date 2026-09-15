@@ -270,13 +270,14 @@ pub(crate) fn model_picker_row_cells_for_test(state: &AppState) -> Vec<Vec<Strin
         .filtered()
         .iter()
         .map(|opt| {
-            let (identity, configured) = match &opt.payload {
+            let (identity, configured, context_window) = match &opt.payload {
                 PickerPayload::Model {
                     identity,
                     configured,
+                    context_window,
                     ..
-                } => (identity.clone(), *configured),
-                _ => (String::new(), false),
+                } => (identity.clone(), *configured, *context_window),
+                _ => (String::new(), false, None),
             };
             let active = if opt.id == state.status.identity.active_model_identity {
                 "*"
@@ -284,7 +285,15 @@ pub(crate) fn model_picker_row_cells_for_test(state: &AppState) -> Vec<Vec<Strin
                 ""
             };
             let configured = if configured { "◆" } else { "" };
-            vec![identity, active.to_string(), configured.to_string()]
+            let context_cell = context_window
+                .map(|n| format!("{}k", n / 1000))
+                .unwrap_or_default();
+            vec![
+                identity,
+                active.to_string(),
+                configured.to_string(),
+                context_cell,
+            ]
         })
         .collect()
 }
@@ -297,9 +306,9 @@ pub(crate) fn agent_picker_row_cells_for_test(state: &AppState) -> Vec<Vec<Strin
         .filtered()
         .iter()
         .map(|opt| {
-            let name = match &opt.payload {
-                PickerPayload::Agent { name } => name.clone(),
-                _ => String::new(),
+            let (name, description) = match &opt.payload {
+                PickerPayload::Agent { name, description } => (name.clone(), description.clone()),
+                _ => (String::new(), None),
             };
             let active = if Some(opt.id.as_str())
                 == state.status.identity.active_agent_identity.as_deref()
@@ -308,7 +317,7 @@ pub(crate) fn agent_picker_row_cells_for_test(state: &AppState) -> Vec<Vec<Strin
             } else {
                 ""
             };
-            vec![name, String::new(), active.to_string()]
+            vec![name, description.unwrap_or_default(), active.to_string()]
         })
         .collect()
 }

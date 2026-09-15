@@ -163,6 +163,7 @@ pub struct DiscoverableSkill {
     pub source_priority: u8,
     pub source: String,
     pub name: String,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

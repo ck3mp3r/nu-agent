@@ -77,6 +77,7 @@ fn session_picker_table_model_with_options() {
                     session_id: "abc123def456789".to_string(),
                     title: Some("My Session".to_string()),
                     created_at: now - chrono::Duration::hours(2),
+                    message_count: 10,
                 },
             },
             PickerOption {
@@ -90,6 +91,7 @@ fn session_picker_table_model_with_options() {
                     session_id: "xyz789".to_string(),
                     title: None,
                     created_at: now - chrono::Duration::days(1),
+                    message_count: 3,
                 },
             },
         ],
@@ -120,6 +122,7 @@ fn session_picker_table_model_overflow_cue() {
                 session_id: format!("id{i}"),
                 title: Some(format!("Session {i}")),
                 created_at: now - chrono::Duration::hours(i),
+                message_count: i as usize + 1,
             },
         })
         .collect();
@@ -130,4 +133,32 @@ fn session_picker_table_model_overflow_cue() {
     let model = session_picker_table_model(&state, 5);
     assert_eq!(model.rows.len(), 5);
     assert_eq!(model.overflow_cue, Some("1 of 5".to_string()));
+}
+
+#[test]
+fn session_picker_table_model_renders_message_count_cell() {
+    let mut state = AppState::default();
+    let now = chrono::Utc::now();
+    state.set_picker_options(
+        ActivePicker::Session,
+        vec![PickerOption {
+            id: "abc123".to_string(),
+            display: "My Session (abc123)".to_string(),
+            search_text: "My Session (abc123)".to_string(),
+            sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(now))],
+            payload: PickerPayload::Session {
+                session_id: "abc123".to_string(),
+                title: Some("My Session".to_string()),
+                created_at: now,
+                message_count: 42,
+            },
+        }],
+    );
+    state.picker.open(ActivePicker::Session);
+
+    let model = session_picker_table_model(&state, 20);
+    assert_eq!(model.rows.len(), 1);
+    assert_eq!(model.rows[0][0], "0s ago");
+    assert_eq!(model.rows[0][1], "My Session");
+    assert_eq!(model.rows[0][2], "42");
 }

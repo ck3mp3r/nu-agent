@@ -36,15 +36,18 @@ pub(super) fn session_picker_table_model(
     let rows: Vec<Vec<String>> = options
         .iter()
         .map(|opt| {
-            let (created_at, title) = match &opt.payload {
+            let (created_at, title, message_count) = match &opt.payload {
                 PickerPayload::Session {
-                    created_at, title, ..
-                } => (created_at, title),
+                    created_at,
+                    title,
+                    message_count,
+                    ..
+                } => (created_at, title, *message_count),
                 _ => unreachable!(),
             };
             let relative = relative_timestamp(*created_at, now);
             let title = title.as_deref().unwrap_or("(untitled)").to_string();
-            vec![relative, title]
+            vec![relative, title, format!("{message_count}")]
         })
         .collect();
 

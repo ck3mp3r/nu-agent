@@ -224,15 +224,23 @@ impl RuntimeCoordinator {
             let mut current_provider: Option<String> = None;
             let mut selected_row = 0;
             for (model_idx, opt) in options.iter().enumerate() {
-                let (provider, provider_display_name, identity, configured) = match &opt.payload {
-                    PickerPayload::Model {
-                        provider,
-                        provider_display_name,
-                        identity,
-                        configured,
-                    } => (provider, provider_display_name, identity, *configured),
-                    _ => unreachable!(),
-                };
+                let (provider, provider_display_name, identity, configured, context_window) =
+                    match &opt.payload {
+                        PickerPayload::Model {
+                            provider,
+                            provider_display_name,
+                            identity,
+                            configured,
+                            context_window,
+                        } => (
+                            provider,
+                            provider_display_name,
+                            identity,
+                            *configured,
+                            *context_window,
+                        ),
+                        _ => unreachable!(),
+                    };
                 if current_provider.as_deref() != Some(provider.as_str()) {
                     table_rows.push(
                         Row::new(vec![Cell::from(format!("  {provider_display_name}"))])
@@ -246,10 +254,14 @@ impl RuntimeCoordinator {
                     ""
                 };
                 let configured_glyph = if configured { "◆" } else { "" };
+                let context_cell = context_window
+                    .map(|n| format!("{}k", n / 1000))
+                    .unwrap_or_default();
                 table_rows.push(Row::new(vec![
                     Cell::from(format!("  {identity}")),
                     Cell::from(active),
                     Cell::from(configured_glyph),
+                    Cell::from(context_cell),
                 ]));
                 if model_idx == picker_state.selection {
                     selected_row = table_rows.len() - 1;
@@ -262,6 +274,7 @@ impl RuntimeCoordinator {
                     Constraint::Min(20),
                     Constraint::Length(1),
                     Constraint::Length(1),
+                    Constraint::Length(6),
                 ],
             )
             .column_spacing(1)
@@ -300,8 +313,10 @@ impl RuntimeCoordinator {
             let table_rows: Vec<Row> = options
                 .iter()
                 .map(|opt| {
-                    let name = match &opt.payload {
-                        PickerPayload::Agent { name } => name.clone(),
+                    let (name, description) = match &opt.payload {
+                        PickerPayload::Agent { name, description } => {
+                            (name.clone(), description.clone())
+                        }
                         _ => unreachable!(),
                     };
                     let active = if Some(opt.id.as_str())
@@ -313,7 +328,7 @@ impl RuntimeCoordinator {
                     };
                     Row::new(vec![
                         Cell::from(name),
-                        Cell::from(String::new()),
+                        Cell::from(description.unwrap_or_default()),
                         Cell::from(active),
                     ])
                 })
@@ -364,16 +379,26 @@ impl RuntimeCoordinator {
                 rows[1],
             );
         } else {
-            let header = Row::new(vec!["When", "Title"]).style(self.theme.subtle_meta);
-            let table_rows = model
-                .rows
-                .iter()
-                .map(|row| Row::new(vec![Cell::from(row[0].clone()), Cell::from(row[1].clone())]));
-            let table = Table::new(table_rows, [Constraint::Length(10), Constraint::Min(20)])
-                .header(header)
-                .column_spacing(1)
-                .highlight_symbol("❯ ")
-                .row_highlight_style(self.theme.focus);
+            let header = Row::new(vec!["When", "Title", "Msgs"]).style(self.theme.subtle_meta);
+            let table_rows = model.rows.iter().map(|row| {
+                Row::new(vec![
+                    Cell::from(row[0].clone()),
+                    Cell::from(row[1].clone()),
+                    Cell::from(row[2].clone()),
+                ])
+            });
+            let table = Table::new(
+                table_rows,
+                [
+                    Constraint::Length(10),
+                    Constraint::Min(20),
+                    Constraint::Length(6),
+                ],
+            )
+            .header(header)
+            .column_spacing(1)
+            .highlight_symbol("❯ ")
+            .row_highlight_style(self.theme.focus);
             let mut table_state = TableState::default();
             table_state.select(model.selected);
             frame.render_stateful_widget(table, rows[1], &mut table_state);

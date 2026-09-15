@@ -74,14 +74,17 @@ pub enum PickerPayload {
         provider: String,
         provider_display_name: String,
         configured: bool,
+        context_window: Option<u32>,
     },
     Agent {
         name: String,
+        description: Option<String>,
     },
     Session {
         session_id: String,
         title: Option<String>,
         created_at: chrono::DateTime<chrono::Utc>,
+        message_count: usize,
     },
     Theme,
     Command(CommandPaletteAction),
@@ -482,6 +485,7 @@ impl From<ModelPickerOption> for PickerOption {
                 provider: opt.provider,
                 provider_display_name: opt.provider_display_name,
                 configured: opt.configured,
+                context_window: opt.context_window,
             },
         }
     }
@@ -495,7 +499,10 @@ impl From<AgentPickerOption> for PickerOption {
             display: opt.display.clone(),
             search_text,
             sort_key: vec![PickerSortKeyPart::Asc(opt.name.to_ascii_lowercase())],
-            payload: PickerPayload::Agent { name: opt.name },
+            payload: PickerPayload::Agent {
+                name: opt.name,
+                description: opt.description,
+            },
         }
     }
 }
@@ -515,6 +522,7 @@ impl From<nu_agent_core::session::SessionInfo> for PickerOption {
                 session_id: info.id,
                 title,
                 created_at: info.last_active,
+                message_count: info.message_count,
             },
         }
     }

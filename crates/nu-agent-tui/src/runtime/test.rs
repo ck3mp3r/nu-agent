@@ -3023,16 +3023,19 @@ fn skills_panel_lists_skills_in_deterministic_order() -> Result<()> {
             source_priority: 1,
             source: "home".to_string(),
             name: "zeta".to_string(),
+            description: Some("Zeta skills".to_string()),
         },
         crate::state::DiscoverableSkill {
             source_priority: 0,
             source: "repo".to_string(),
             name: "beta".to_string(),
+            description: None,
         },
         crate::state::DiscoverableSkill {
             source_priority: 0,
             source: "repo".to_string(),
             name: "alpha".to_string(),
+            description: Some("Alpha agent".to_string()),
         },
     ]);
 
@@ -3048,6 +3051,14 @@ fn skills_panel_lists_skills_in_deterministic_order() -> Result<()> {
     let zeta_idx = rendered.find("zeta").ok_or("should find zeta row")?;
     assert!(alpha_idx < beta_idx);
     assert!(beta_idx < zeta_idx);
+    assert!(
+        rendered.contains("- alpha (repo) — Alpha agent"),
+        "skill with description must render the trailing description; got:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("- beta (repo)\n"),
+        "skill with None description must render no separator; got:\n{rendered}"
+    );
     Ok(())
 }
 
@@ -3126,11 +3137,13 @@ fn skills_panel_scroll_offset_applied() {
             source_priority: 0,
             source: "repo".to_string(),
             name: "alpha".to_string(),
+            description: None,
         },
         crate::state::DiscoverableSkill {
             source_priority: 0,
             source: "repo".to_string(),
             name: "beta".to_string(),
+            description: None,
         },
     ]);
 
@@ -5087,6 +5100,65 @@ async fn agent_picker_renders_active_marker_from_identity() -> Result<()> {
 }
 
 #[tokio::test]
+async fn agent_picker_renders_description_column() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
+    driver.coordinator_mut().state.set_picker_options(
+        ActivePicker::Agent,
+        vec![
+            nu_agent_core::protocol::picker::AgentPickerOption {
+                name: "reviewer".to_string(),
+                description: Some("Runs reviews".to_string()),
+                display: "reviewer".to_string(),
+                builtin: false,
+            },
+            nu_agent_core::protocol::picker::AgentPickerOption {
+                name: "plain".to_string(),
+                description: None,
+                display: "plain".to_string(),
+                builtin: false,
+            },
+        ],
+    );
+    driver
+        .coordinator_mut()
+        .state
+        .picker
+        .open(ActivePicker::Agent);
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check
+    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let popup = super::render::frame::modal_rect_for_panel(
+        area,
+        super::render::frame::ModalPanelKind::Agents,
+    );
+    let popup_text = driver.buffer_text_in_rect(popup);
+    let lines: Vec<&str> = popup_text.lines().collect();
+    let desc_row = lines
+        .iter()
+        .position(|l| l.contains("reviewer"))
+        .ok_or("should find reviewer row")?;
+    let none_row = lines
+        .iter()
+        .position(|l| l.contains("plain"))
+        .ok_or("should find plain row")?;
+    assert!(
+        lines[desc_row].contains("Runs reviews"),
+        "description row must render the description text; row: {:?}\n{popup_text}",
+        lines[desc_row]
+    );
+    assert!(
+        !lines[none_row].contains("Runs reviews"),
+        "None-description row must not render a description; row: {:?}\n{popup_text}",
+        lines[none_row]
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn model_picker_renders_active_and_configured_glyphs() -> Result<()> {
     // -- Setup & Fixtures
     let mut driver = RenderLoopDriver::new(120, 30);
@@ -5166,6 +5238,75 @@ async fn model_picker_renders_active_and_configured_glyphs() -> Result<()> {
         !lines[inactive_row].contains('*') && !lines[inactive_row].contains('◆'),
         "inactive+unconfigured row must render empty glyph cells; row: {:?}\n{popup_text}",
         lines[inactive_row]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn model_picker_renders_context_window_column() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
+    driver.coordinator_mut().state.set_picker_options(
+        ActivePicker::Model,
+        vec![
+            nu_agent_core::protocol::picker::ModelPickerOption {
+                provider: "openai".to_string(),
+                model: "gpt-4o".to_string(),
+                identity: "openai/gpt-4o".to_string(),
+                display: "openai/gpt-4o".to_string(),
+                active: true,
+                context_window: Some(200000),
+                max_output: None,
+                configured: true,
+                provider_display_name: String::new(),
+            },
+            nu_agent_core::protocol::picker::ModelPickerOption {
+                provider: "anthropic".to_string(),
+                model: "claude-3-5-sonnet".to_string(),
+                identity: "anthropic/claude-3-5-sonnet".to_string(),
+                display: "anthropic/claude-3-5-sonnet".to_string(),
+                active: false,
+                context_window: None,
+                max_output: None,
+                configured: false,
+                provider_display_name: String::new(),
+            },
+        ],
+    );
+    driver
+        .coordinator_mut()
+        .state
+        .picker
+        .open(ActivePicker::Model);
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check
+    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let popup = super::render::frame::modal_rect_for_panel(
+        area,
+        super::render::frame::ModalPanelKind::Models,
+    );
+    let popup_text = driver.buffer_text_in_rect(popup);
+    let lines: Vec<&str> = popup_text.lines().collect();
+    let ctx_row = lines
+        .iter()
+        .position(|l| l.contains("openai/gpt-4o"))
+        .ok_or("should find context-window model row")?;
+    let none_row = lines
+        .iter()
+        .position(|l| l.contains("anthropic/claude-3-5-sonnet"))
+        .ok_or("should find no-context model row")?;
+    assert!(
+        lines[ctx_row].contains("200k"),
+        "context-window row must render the 200k cell; row: {:?}\n{popup_text}",
+        lines[ctx_row]
+    );
+    assert!(
+        !lines[none_row].contains("200k"),
+        "None-context row must render an empty context cell; row: {:?}\n{popup_text}",
+        lines[none_row]
     );
     Ok(())
 }

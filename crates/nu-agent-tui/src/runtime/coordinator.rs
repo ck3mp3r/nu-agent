@@ -242,6 +242,7 @@ impl RuntimeCoordinator {
                 source_priority: skill.source.priority(),
                 source: skill.source.label().to_string(),
                 name: skill.name,
+                description: skill.description,
             })
             .collect();
         self.state.status.mcp.set_discoverable_skills(mapped);
