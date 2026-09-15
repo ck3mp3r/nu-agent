@@ -300,15 +300,21 @@ impl RuntimeCoordinator {
             let table_rows: Vec<Row> = options
                 .iter()
                 .map(|opt| {
-                    let (name, active) = match &opt.payload {
-                        PickerPayload::Agent { name, active } => (name, *active),
+                    let name = match &opt.payload {
+                        PickerPayload::Agent { name } => name.clone(),
                         _ => unreachable!(),
                     };
-                    let active = if active { "*" } else { "" };
+                    let active = if Some(opt.id.as_str())
+                        == self.state.status.identity.active_agent_identity.as_deref()
+                    {
+                        "*"
+                    } else {
+                        ""
+                    };
                     Row::new(vec![
-                        Cell::from(name.clone()),
+                        Cell::from(name),
                         Cell::from(String::new()),
-                        Cell::from(active.to_string()),
+                        Cell::from(active),
                     ])
                 })
                 .collect();

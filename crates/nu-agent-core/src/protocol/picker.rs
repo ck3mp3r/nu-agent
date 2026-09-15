@@ -22,6 +22,5 @@ pub struct AgentPickerOption {
     pub name: String,
     pub description: Option<String>,
     pub display: String,
-    pub active: bool,
     pub builtin: bool,
 }

@@ -172,10 +172,8 @@ pub(crate) async fn run_tui_mode(
             active_model_identity.as_str(),
         );
     tui_ui.set_picker_options(ActivePicker::Model, model_picker_catalog);
-    let agent_picker_catalog = super::picker::build_agent_picker_catalog(
-        runtime_impl.available_agent_summaries(),
-        runtime_impl.agent_identity(),
-    );
+    let agent_picker_catalog =
+        super::picker::build_agent_picker_catalog(runtime_impl.available_agent_summaries());
     tui_ui.set_picker_options(ActivePicker::Agent, agent_picker_catalog);
     // Populate session picker from session store
     {

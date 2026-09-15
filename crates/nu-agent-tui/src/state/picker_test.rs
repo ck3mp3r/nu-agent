@@ -365,21 +365,18 @@ fn test_agent_options() -> Vec<AgentPickerOption> {
             name: "alpha".into(),
             description: Some("Alpha agent".into()),
             display: "alpha — Alpha agent".into(),
-            active: false,
             builtin: false,
         },
         AgentPickerOption {
             name: "beta".into(),
             description: None,
             display: "beta".into(),
-            active: true,
             builtin: false,
         },
         AgentPickerOption {
             name: "gamma".into(),
             description: Some("Gamma agent".into()),
             display: "gamma — Gamma agent".into(),
-            active: false,
             builtin: false,
         },
     ]
@@ -579,22 +576,6 @@ fn test_set_active_agent_identity() {
 
     state.set_active_agent_identity("beta");
 
-    let options = &state.picker.entries[2].state.options;
-    for opt in options {
-        let name = match &opt.payload {
-            PickerPayload::Agent { name, .. } => name.clone(),
-            _ => String::new(),
-        };
-        let active = match &opt.payload {
-            PickerPayload::Agent { active, .. } => *active,
-            _ => false,
-        };
-        if name == "beta" {
-            assert!(active, "beta should be active");
-        } else {
-            assert!(!active, "{} should not be active", name);
-        }
-    }
     assert_eq!(state.status.identity.active_agent_identity(), Some("beta"));
 }
 
@@ -884,14 +865,12 @@ fn set_picker_options_sorts_agent_by_id() {
                 name: "zeta".into(),
                 description: None,
                 display: "zeta".into(),
-                active: false,
                 builtin: false,
             },
             AgentPickerOption {
                 name: "alpha".into(),
                 description: None,
                 display: "alpha".into(),
-                active: false,
                 builtin: false,
             },
         ],

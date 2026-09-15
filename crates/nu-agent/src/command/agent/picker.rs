@@ -93,12 +93,10 @@ pub(crate) fn model_picker_catalog_from_cached_startup_plugin_config(
 
 pub(crate) fn build_agent_picker_catalog(
     available_agents: &[PersonaSummary],
-    active_agent: Option<&str>,
 ) -> Vec<AgentPickerOption> {
     available_agents
         .iter()
         .map(|agent| {
-            let active = active_agent.is_some_and(|a| a == agent.name);
             let display = if agent.builtin {
                 match &agent.description {
                     Some(desc) => format!("{} — {} [built-in]", agent.name, desc),
@@ -114,7 +112,6 @@ pub(crate) fn build_agent_picker_catalog(
                 name: agent.name.clone(),
                 description: agent.description.clone(),
                 display,
-                active,
                 builtin: agent.builtin,
             }
         })

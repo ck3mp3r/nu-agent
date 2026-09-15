@@ -297,11 +297,17 @@ pub(crate) fn agent_picker_row_cells_for_test(state: &AppState) -> Vec<Vec<Strin
         .filtered()
         .iter()
         .map(|opt| {
-            let (name, active) = match &opt.payload {
-                PickerPayload::Agent { name, active } => (name.clone(), *active),
-                _ => (String::new(), false),
+            let name = match &opt.payload {
+                PickerPayload::Agent { name } => name.clone(),
+                _ => String::new(),
             };
-            let active = if active { "*" } else { "" };
+            let active = if Some(opt.id.as_str())
+                == state.status.identity.active_agent_identity.as_deref()
+            {
+                "*"
+            } else {
+                ""
+            };
             vec![name, String::new(), active.to_string()]
         })
         .collect()

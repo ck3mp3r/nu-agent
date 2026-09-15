@@ -77,7 +77,6 @@ pub enum PickerPayload {
     },
     Agent {
         name: String,
-        active: bool,
     },
     Session {
         session_id: String,
@@ -496,10 +495,7 @@ impl From<AgentPickerOption> for PickerOption {
             display: opt.display.clone(),
             search_text,
             sort_key: vec![PickerSortKeyPart::Asc(opt.name.to_ascii_lowercase())],
-            payload: PickerPayload::Agent {
-                name: opt.name,
-                active: opt.active,
-            },
+            payload: PickerPayload::Agent { name: opt.name },
         }
     }
 }
@@ -552,11 +548,6 @@ impl AppState {
 
     pub fn set_active_agent_identity(&mut self, name: &str) {
         self.status.identity.active_agent_identity = Some(name.to_string());
-        for opt in &mut self.picker.entries[2].state.options {
-            if let PickerPayload::Agent { name: n, active } = &mut opt.payload {
-                *active = n == name;
-            }
-        }
     }
 
     pub fn has_agents_to_cycle(&self) -> bool {

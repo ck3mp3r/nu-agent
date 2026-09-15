@@ -5016,6 +5016,77 @@ fn model_picker_rows_do_not_contain_selection_prefix() {
 }
 
 #[tokio::test]
+async fn agent_picker_renders_active_marker_from_identity() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
+    driver
+        .coordinator_mut()
+        .state
+        .status
+        .identity
+        .active_agent_identity = Some("coder".to_string());
+    driver.coordinator_mut().state.set_picker_options(
+        ActivePicker::Agent,
+        vec![
+            nu_agent_core::protocol::picker::AgentPickerOption {
+                name: "default".to_string(),
+                description: Some("Default agent".to_string()),
+                display: "default".to_string(),
+                builtin: true,
+            },
+            nu_agent_core::protocol::picker::AgentPickerOption {
+                name: "coder".to_string(),
+                description: Some("Coding assistant".to_string()),
+                display: "coder".to_string(),
+                builtin: false,
+            },
+            nu_agent_core::protocol::picker::AgentPickerOption {
+                name: "reviewer".to_string(),
+                description: None,
+                display: "reviewer".to_string(),
+                builtin: false,
+            },
+        ],
+    );
+    driver
+        .coordinator_mut()
+        .state
+        .picker
+        .open(ActivePicker::Agent);
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check
+    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let popup = super::render::frame::modal_rect_for_panel(
+        area,
+        super::render::frame::ModalPanelKind::Agents,
+    );
+    let popup_text = driver.buffer_text_in_rect(popup);
+    let lines: Vec<&str> = popup_text.lines().collect();
+    let active_row = lines
+        .iter()
+        .position(|l| l.contains("coder"))
+        .ok_or("should find active agent row")?;
+    let inactive_row = lines
+        .iter()
+        .position(|l| l.contains("default"))
+        .ok_or("should find inactive agent row")?;
+    assert!(
+        lines[active_row].contains('*'),
+        "active agent row must render the marker; row: {:?}\n{popup_text}",
+        lines[active_row]
+    );
+    assert!(
+        !lines[inactive_row].contains('*'),
+        "inactive agent row must render an empty marker cell; row: {:?}\n{popup_text}",
+        lines[inactive_row]
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn model_picker_renders_active_and_configured_glyphs() -> Result<()> {
     // -- Setup & Fixtures
     let mut driver = RenderLoopDriver::new(120, 30);
@@ -5109,21 +5180,18 @@ fn agent_picker_rows_do_not_contain_selection_prefix() {
                 name: "default".to_string(),
                 description: Some("Default agent".to_string()),
                 display: "default".to_string(),
-                active: true,
                 builtin: true,
             },
             nu_agent_core::protocol::picker::AgentPickerOption {
                 name: "coder".to_string(),
                 description: Some("Coding assistant".to_string()),
                 display: "coder".to_string(),
-                active: false,
                 builtin: false,
             },
             nu_agent_core::protocol::picker::AgentPickerOption {
                 name: "reviewer".to_string(),
                 description: None,
                 display: "reviewer".to_string(),
-                active: false,
                 builtin: false,
             },
         ],
