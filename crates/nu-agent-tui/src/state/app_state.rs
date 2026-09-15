@@ -436,6 +436,8 @@ impl AppState {
             SharedUiAction::Models => {
                 self.info_panel = None;
                 self.picker.open(ActivePicker::Model);
+                self.picker
+                    .position_selection_on(&self.status.identity.active_model_identity);
                 self.ensure_invariants();
                 true
             }
@@ -474,14 +476,8 @@ impl AppState {
                 self.close_info_panel();
                 self.picker.open(ActivePicker::Theme);
                 // Highlight the active theme row.
-                if let Some(state) = self.picker.active_state_mut()
-                    && let Some(idx) = state
-                        .options
-                        .iter()
-                        .position(|opt| opt.id == format!("{:?}", self.theme_name))
-                {
-                    state.selection = idx;
-                }
+                self.picker
+                    .position_selection_on(&format!("{:?}", self.theme_name));
                 self.ensure_invariants();
                 true
             }

@@ -325,6 +325,17 @@ impl PickerContainer {
             .map(|e| &mut e.state)
     }
 
+    /// Positions the active picker's selection on the option whose id matches
+    /// `id`. No-op when no option matches or no entry is active.
+    pub fn position_selection_on(&mut self, id: &str) {
+        let Some(state) = self.active_state_mut() else {
+            return;
+        };
+        if let Some(idx) = state.options.iter().position(|opt| opt.id == id) {
+            state.selection = idx;
+        }
+    }
+
     pub fn active_entry(&self) -> Option<&PickerEntry> {
         self.entries.iter().find(|e| e.state.open)
     }
