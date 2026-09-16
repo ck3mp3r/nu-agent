@@ -31,6 +31,7 @@ fn make_interactive(permissions: PermissionsConfig) -> (InteractivePermissionRes
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         bus: bus.clone(),
+        previewed: Arc::new(StdMutex::new(std::collections::HashSet::new())),
     };
     (resolver, bus)
 }
@@ -699,6 +700,71 @@ async fn interactive_resolver_nu_missing_command_prompts_without_display() -> Re
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Edit pre-authorize preview: the Ask path must carry a diff before the
+// user is prompted (regression: pre_authorize was never wired into the
+// interactive resolver, so edit prompts had no preview at all).
+// ---------------------------------------------------------------------------
+
+/// An edit-apply call that would create a file, on the Ask path, must carry
+/// a `pre_authorize_display` diff so the user sees the change before
+/// approving/denying — mirroring the coverage already present for the
+/// no-preview (nu) case above.
+#[tokio::test]
+async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display() -> Result<()> {
+    // -- Setup & Fixtures
+    let tmp = tempfile::tempdir()?;
+    let target = tmp.path().join("new-file.txt");
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.permission().subscribe();
+    let resolver_clone = resolver.clone();
+    let args = serde_json::json!({
+        "path": target.to_string_lossy(),
+        "mode": "apply",
+        "operation": {"type": "create", "content": "hello\n"}
+    })
+    .to_string();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move { resolver.resolve("edit", &args, None, &bus).await }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        PermissionEvent::Requested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::Deny);
+    let _decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    let PermissionEvent::Requested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    let display = context
+        .pre_authorize_display
+        .as_ref()
+        .ok_or("edit apply Ask-path context must carry a pre-authorize display")?;
+    let section = display
+        .sections
+        .first()
+        .ok_or("pre-authorize display should have one section")?;
+    assert_eq!(section.language, "diff");
+    assert!(
+        section.content.contains("+hello"),
+        "diff must contain the created content, got: {:?}",
+        section.content
+    );
+    Ok(())
+}
+
 /// An explicitly allowed tool (read) still returns Allow without emitting any
 /// PermissionRequested event — no preview path involvement.
 #[tokio::test]
@@ -715,5 +781,94 @@ async fn interactive_resolver_allowed_tool_emits_no_permission_event_with_displa
     assert!(
         permission_rx.try_recv().is_err(),
         "allowed tool must not emit a PermissionRequested event"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// take_previewed: the single, race-free source of truth `HookChain` consults
+// after the tool finishes, to decide whether the completion event should
+// still carry its own copy of an already-shown preview.
+// ---------------------------------------------------------------------------
+
+/// After an edit-apply Ask-path call that carried a preview, `take_previewed`
+/// reports `true` exactly once for that `(tool_name, arguments)` pair, then
+/// `false` on subsequent calls (single-use, matching a single tool
+/// invocation).
+#[tokio::test]
+async fn interactive_resolver_take_previewed_is_true_once_after_edit_preview() -> Result<()> {
+    // -- Setup & Fixtures
+    let tmp = tempfile::tempdir()?;
+    let target = tmp.path().join("new-file.txt");
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.permission().subscribe();
+    let resolver_clone = resolver.clone();
+    let args = serde_json::json!({
+        "path": target.to_string_lossy(),
+        "mode": "apply",
+        "operation": {"type": "create", "content": "hello\n"}
+    })
+    .to_string();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        let args = args.clone();
+        async move { resolver.resolve("edit", &args, None, &bus).await }
+    });
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        PermissionEvent::Requested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    assert!(
+        resolver_clone.take_previewed("edit", &args),
+        "a preview was shown for this exact call; take_previewed must report true"
+    );
+    assert!(
+        !resolver_clone.take_previewed("edit", &args),
+        "take_previewed must be single-use: false on the second call"
+    );
+    Ok(())
+}
+
+/// A call that never shows a preview (nu, or edit under an explicit-allow
+/// policy with no Ask) leaves `take_previewed` false — nothing to consume.
+#[tokio::test]
+async fn interactive_resolver_take_previewed_is_false_without_a_preview() {
+    // -- Setup & Fixtures
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.permission().subscribe();
+    let resolver_clone = resolver.clone();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move {
+            resolver
+                .resolve("nu", r#"{"command": "ls"}"#, None, &bus)
+                .await
+        }
+    });
+    let event = permission_rx.recv().await.expect("Requested event");
+    let request_id = match &event {
+        PermissionEvent::Requested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    resolve_fut.await.expect("resolve task panicked");
+
+    // -- Check
+    assert!(
+        !resolver_clone.take_previewed("nu", r#"{"command": "ls"}"#),
+        "nu never shows a preview; take_previewed must report false"
     );
 }

@@ -921,3 +921,85 @@ async fn on_text_delta_repetition_stops_mid_stream_at_any_ladder_level() -> Resu
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// suppress_previewed_display: the race-free gate between a pre-authorize
+// preview shown before the tool ran and the completion event's own display.
+// ---------------------------------------------------------------------------
+
+/// Stub resolver whose `take_previewed` answer is fixed at construction, so
+/// `suppress_previewed_display` can be tested as a pure function without
+/// rig's opaque `ToolResultEvent` type or a real permission flow.
+#[derive(Clone)]
+struct StubPreviewResolver {
+    previewed: bool,
+}
+
+impl crate::hook::permission_resolver::AsyncPermissionResolver for StubPreviewResolver {
+    async fn resolve(
+        &self,
+        _tool_name: &str,
+        _arguments: &str,
+        _tool_call_id: Option<String>,
+        _bus: &Bus,
+    ) -> crate::hook::permission_resolver::PermissionDecision {
+        crate::hook::permission_resolver::PermissionDecision::Allow
+    }
+
+    fn take_previewed(&self, _tool_name: &str, _arguments: &str) -> bool {
+        self.previewed
+    }
+}
+
+fn sample_display() -> crate::protocol::event::ToolDisplay {
+    crate::protocol::event::ToolDisplay {
+        title: "edit foo.rs".to_string(),
+        sections: vec![],
+    }
+}
+
+#[test]
+fn suppress_previewed_display_drops_it_when_already_shown() {
+    // -- Setup & Fixtures
+    let resolver = StubPreviewResolver { previewed: true };
+
+    // -- Exec
+    let result = suppress_previewed_display(&resolver, "edit", "{}", Some(sample_display()));
+
+    // -- Check
+    assert!(
+        result.is_none(),
+        "a display already shown via pre-authorize preview must be suppressed"
+    );
+}
+
+#[test]
+fn suppress_previewed_display_passes_through_when_not_previewed() {
+    // -- Setup & Fixtures
+    let resolver = StubPreviewResolver { previewed: false };
+    let display = Some(sample_display());
+
+    // -- Exec
+    let result = suppress_previewed_display(&resolver, "edit", "{}", display.clone());
+
+    // -- Check
+    assert_eq!(
+        result, display,
+        "a display that was never previewed must pass through unchanged"
+    );
+}
+
+#[test]
+fn suppress_previewed_display_none_input_stays_none_either_way() {
+    // -- Setup & Fixtures
+    let previewed = StubPreviewResolver { previewed: true };
+    let not_previewed = StubPreviewResolver { previewed: false };
+
+    // -- Exec & Check
+    for resolver in [previewed, not_previewed] {
+        assert!(
+            suppress_previewed_display(&resolver, "nu", "{}", None).is_none(),
+            "a tool with no display to begin with must stay None regardless of previewed state"
+        );
+    }
+}

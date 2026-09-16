@@ -27,7 +27,7 @@ mod http_test;
 
 pub use conversion::{json_to_nu_value, nu_value_to_json};
 pub use dispatch::llm_visible_tool_definitions;
-pub use pre_authorize::PreAuthorizeOutput;
+pub use pre_authorize::{PreAuthorizeOutput, pre_authorize_fs_tool};
 pub use result::build_direct_tool_display;
 pub use types::{McpToolRegistry, ToolErrorKind, ToolFailureOutcome, ToolHandlerError, ToolSource};
 

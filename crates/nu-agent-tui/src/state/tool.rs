@@ -1,7 +1,7 @@
 //! Tool domain: tool-call bookkeeping, tool-display rendering, and the
 //! tool-event reducer.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use nu_agent_core::bus::ToolEvent;
 use nu_agent_core::protocol::event::{ToolDisplay, ToolDisplaySection};
@@ -10,17 +10,20 @@ use nu_agent_core::transcript::items::{ToolInvocation, TranscriptEntry, Transcri
 use nu_agent_core::transcript::renderer::ItemStatus;
 
 use super::transcript_store::TranscriptStore;
-use super::{AppState, ToolCallLine, ToolCallStatus, TranscriptRole};
+use super::{AppState, ToolCallLine, TranscriptRole};
 
 /// Tool-domain state extracted from `AppState`: the tool-call rows tracked by
-/// key, the active (in-progress) call ids per key, the next call id, and the
-/// keys whose display was already rendered during a permission request.
+/// key, the active (in-progress) call ids per key, and the next call id.
+///
+/// Completion-display de-duplication against a pre-authorize preview is NOT
+/// handled here: `HookChain::on_tool_result`/`suppress_previewed_display`
+/// (nu-agent-core) already omit `display` from the `Completed` event when a
+/// preview was shown, so this layer never sees a duplicate to suppress.
 #[derive(Debug, Clone)]
 pub struct ToolState {
     pub(crate) calls: Vec<ToolCallLine>,
     pub(crate) active_ids_by_key: HashMap<String, VecDeque<u64>>,
     next_call_id: u64,
-    pub(crate) pre_displayed_keys: HashSet<String>,
 }
 
 impl Default for ToolState {
@@ -29,7 +32,6 @@ impl Default for ToolState {
             calls: Vec::new(),
             active_ids_by_key: HashMap::new(),
             next_call_id: 1,
-            pre_displayed_keys: HashSet::new(),
         }
     }
 }
@@ -76,10 +78,7 @@ impl ToolState {
     ) -> bool {
         self.finish_tool_call(store, name, arguments, Some(success));
 
-        let tool_key = format!("{name}\n{arguments}");
-        if self.pre_displayed_keys.remove(&tool_key) {
-            // Display was already pushed during permission request - skip
-        } else if let Some(display) = display {
+        if let Some(display) = display {
             append_direct_tool_display(store, display);
         }
 
@@ -141,23 +140,6 @@ impl ToolState {
         )
         .finish_tool_call(name, arguments, success, store.entries_mut(), item_status);
     }
-
-    pub(crate) fn latest_in_progress_tool_key_for_tool(&self, tool_name: &str) -> Option<String> {
-        let base_tool_name = tool_name.split('(').next().unwrap_or(tool_name);
-
-        self.calls
-            .iter()
-            .rev()
-            .find(|item| {
-                item.status == ToolCallStatus::InProgress
-                    && item
-                        .key
-                        .split_once('\n')
-                        .map(|(name, _)| name == base_tool_name)
-                        .unwrap_or(false)
-            })
-            .map(|item| item.key.clone())
-    }
 }
 
 /// Whether the entry is a tool-call or tool-display row (i.e. part of a tool
@@ -212,19 +194,19 @@ fn spacer_count(store: &TranscriptStore, name: &str) -> usize {
     closing + 1
 }
 
-/// Renders a pre-authorize tool display into the transcript and records the
-/// matching in-progress tool key so the completion event skips the duplicate.
+/// Renders a pre-authorize tool display (e.g. an edit diff) into the
+/// transcript before the user is asked to approve/deny the tool call.
+///
+/// No bookkeeping is needed to avoid a later duplicate: `HookChain` (in
+/// nu-agent-core) already omits `display` from the matching `Completed`
+/// event when a preview was shown, so `tool_completed` never sees the same
+/// content twice.
 pub(crate) fn note_permission_request_display(
-    tool: &mut ToolState,
     store: &mut TranscriptStore,
     context: &nu_agent_core::protocol::event::PermissionRequestContext,
 ) {
     if let Some(display) = &context.pre_authorize_display {
         append_direct_tool_display(store, display.clone());
-
-        if let Some(tool_key) = tool.latest_in_progress_tool_key_for_tool(&context.tool) {
-            tool.pre_displayed_keys.insert(tool_key);
-        }
     }
 }
 

@@ -510,5 +510,5 @@ pub(crate) fn apply_permission_request_display(
     state: &mut AppState,
     context: &PermissionRequestContext,
 ) {
-    crate::state::note_permission_request_display(&mut state.tool, &mut state.transcript, context);
+    crate::state::note_permission_request_display(&mut state.transcript, context);
 }

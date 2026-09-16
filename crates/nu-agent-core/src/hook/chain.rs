@@ -332,6 +332,10 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             match decision {
                 PermissionDecision::Allow => ToolCallAction::run(),
                 PermissionDecision::Deny { reason } => {
+                    // The tool never runs, so on_tool_result never fires to
+                    // consume a previously-recorded preview flag — discard it
+                    // here so it doesn't linger.
+                    permission.take_previewed(&tool_name_owned, &args_owned);
                     let _ = bus
                         .tool()
                         .send(ToolEvent::Completed {
@@ -396,6 +400,13 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         let display = serde_json::from_str::<serde_json::Value>(&result_text)
             .ok()
             .and_then(|json| crate::tools::handler::build_direct_tool_display(tool_name, &json));
+
+        // Suppress the display if a pre-authorize preview of it was already
+        // shown to the user before the tool ran (the Ask-path edit diff).
+        // `take_previewed` is the single, synchronous source of truth for
+        // this — resolved deterministically inside the same before/after
+        // hook call chain, so there is no event-ordering race to get wrong.
+        let display = suppress_previewed_display(&self.permission, tool_name, args, display);
 
         // 2. Resolve source
         let source = resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
@@ -787,6 +798,26 @@ where
         None => Vec::new(),
     };
     (marker, messages_after_marker)
+}
+
+/// Decide whether a tool-completion `display` should still be attached, or
+/// suppressed because a pre-authorize preview of it was already shown to the
+/// user before the tool ran.
+///
+/// Pulled out as a pure function (rather than inlined in `on_tool_result`'s
+/// async block) so it's directly unit-testable against a stub resolver,
+/// without needing rig's opaque `ToolResultEvent` type.
+fn suppress_previewed_display<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
+    permission: &P,
+    tool_name: &str,
+    args: &str,
+    display: Option<crate::protocol::event::ToolDisplay>,
+) -> Option<crate::protocol::event::ToolDisplay> {
+    if permission.take_previewed(tool_name, args) {
+        None
+    } else {
+        display
+    }
 }
 
 /// If a marker exists, return a patch built from `[summary, ...messages_after_marker]`.

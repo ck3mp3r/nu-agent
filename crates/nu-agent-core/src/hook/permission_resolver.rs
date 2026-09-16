@@ -23,7 +23,7 @@ use crate::tools::authz::{
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::{
     AuthorizationFlowContext, McpToolRegistry, ToolSource, builtin_kinds::BuiltinKind,
-    enforce_authorization_for_tool_call,
+    enforce_authorization_for_tool_call, pre_authorize_fs_tool,
 };
 use crate::types::{ToolCall, ToolCallId, ToolFunction};
 
@@ -127,6 +127,25 @@ pub trait AsyncPermissionResolver: Clone + Send + Sync + 'static {
         tool_call_id: Option<String>,
         bus: &crate::bus::Bus,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send;
+
+    /// Reports, and consumes, whether a pre-authorize preview (e.g. an edit
+    /// diff) was already shown to the user for the given `(tool_name,
+    /// arguments)` pair during `resolve()`.
+    ///
+    /// `HookChain::on_tool_result` calls this after the tool finishes, to
+    /// decide whether the completion event should still carry its own copy
+    /// of the same display. This is the single, deterministic source of
+    /// truth for "was this already shown" — resolved synchronously inside
+    /// the same before/after hook call chain, so it cannot race against
+    /// anything (unlike reconstructing the answer from independently
+    /// scheduled UI event streams).
+    ///
+    /// Resolvers that never build previews (e.g. TTY-mode
+    /// `PolicyPermissionResolver`) use the default, which always returns
+    /// `false`.
+    fn take_previewed(&self, _tool_name: &str, _arguments: &str) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +277,11 @@ pub struct InteractivePermissionResolver {
     pub closure_registry: Arc<ClosureRegistry>,
     pub mcp_registry: Arc<McpToolRegistry>,
     bus: crate::bus::Bus,
+    /// Keys (`"{tool_name}\n{arguments}"`) for which a pre-authorize preview
+    /// was published to the user during `resolve()`. Consumed (removed) by
+    /// [`AsyncPermissionResolver::take_previewed`] once `HookChain` checks
+    /// it, so `on_tool_result` never attaches the same display twice.
+    previewed: Arc<StdMutex<std::collections::HashSet<String>>>,
 }
 
 impl InteractivePermissionResolver {
@@ -288,6 +312,7 @@ impl InteractivePermissionResolver {
             closure_registry,
             mcp_registry,
             bus,
+            previewed: Arc::new(StdMutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -315,19 +340,29 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
         let mcp_registry = Arc::clone(&self.mcp_registry);
         let pending = Arc::clone(&self.pending);
         let bus = self.bus.clone();
+        let previewed = Arc::clone(&self.previewed);
 
         async move {
             let args_json: JsonValue = serde_json::from_str(&arguments)
                 .unwrap_or(JsonValue::Object(serde_json::Map::new()));
             let call_id = tool_call_id.unwrap_or_else(|| "synthetic".to_string());
             let source = resolve_tool_source(&tool_name, &closure_registry, &mcp_registry);
+            // Build the pre-authorize preview (e.g. an edit diff) so the Ask
+            // prompt below can show it before the user decides. The cwd here
+            // only matters for relative paths; edit args are already resolved
+            // to absolute paths by the model in normal operation.
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let ask_context = tool_name
+                .parse::<BuiltinKind>()
+                .ok()
+                .and_then(|kind| pre_authorize_fs_tool(Some(kind), &args_json, &cwd))
+                .map(|output| output.ask_context)
+                .unwrap_or_default();
             let tool_call = ToolCall::new(
                 ToolCallId::new_or_mint(call_id),
                 ToolFunction::new(tool_name.clone(), args_json),
             );
-            let flow_context = AuthorizationFlowContext {
-                ask_context: AskContext::default(),
-            };
+            let flow_context = AuthorizationFlowContext { ask_context };
 
             let mut capture_hook = AskContextCapture {
                 was_called: false,
@@ -369,6 +404,17 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                             summary: "→".to_string(),
                             pre_authorize_display: None,
                         });
+
+                // A preview was shown to the user for this exact call iff
+                // `pre_authorize_display` is populated here. Record it now,
+                // synchronously, in the same call chain that will later ask
+                // `take_previewed` — no cross-channel event ordering involved.
+                if context.pre_authorize_display.is_some() {
+                    previewed
+                        .lock()
+                        .expect("previewed lock")
+                        .insert(format!("{tool_name}\n{arguments}"));
+                }
 
                 let (tx, rx) = OneshotTx::<ProtocolPermissionDecision>::channel("permission");
                 let request_id = bus
@@ -417,6 +463,13 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 }
             }
         }
+    }
+
+    fn take_previewed(&self, tool_name: &str, arguments: &str) -> bool {
+        self.previewed
+            .lock()
+            .expect("previewed lock")
+            .remove(&format!("{tool_name}\n{arguments}"))
     }
 }
 

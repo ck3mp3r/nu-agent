@@ -916,8 +916,80 @@ fn permission_requested_with_display_pushes_to_transcript() {
     );
 }
 
+/// Non-duplication is no longer this layer's job: `HookChain::on_tool_result`
+/// (nu-agent-core) omits `display` from the `Completed` event whenever a
+/// pre-authorize preview was already shown, so the reducer here never
+/// receives a duplicate to begin with. This test documents that contract at
+/// the TUI boundary: when the source correctly sends `display: None` after a
+/// preview, the transcript shows the preview exactly once.
 #[test]
-fn tool_end_after_permission_does_not_duplicate_display() {
+fn tool_end_after_previewed_permission_with_source_suppressed_display_shows_once() {
+    let mut state = AppState::default();
+
+    reduce_tool(&mut state, started("edit", r#"{"file":"bar.rs"}"#));
+
+    let context = nu_agent_core::protocol::event::PermissionRequestContext {
+        tool: "edit".to_string(),
+        source: "closure".to_string(),
+        mode: Some("apply".to_string()),
+        matched_rule_identity: "tool:edit".to_string(),
+        scope: "tool".to_string(),
+        target_field: None,
+        pattern: "edit".to_string(),
+        summary: "→ {...}".to_string(),
+        pre_authorize_display: Some(ToolDisplay {
+            title: "edit bar.rs".to_string(),
+            sections: vec![ToolDisplaySection {
+                label: "changes".to_string(),
+                language: "diff".to_string(),
+                content: "+new content".to_string(),
+                stats: None,
+            }],
+        }),
+    };
+    apply_permission_request_display(&mut state, &context);
+
+    // The source (chain.rs's suppress_previewed_display) already omitted the
+    // display here — that's the actual non-duplication contract.
+    reduce_tool(
+        &mut state,
+        ToolEvent::Completed {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"file":"bar.rs"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: None,
+            error_kind: None,
+            message: None,
+        },
+    );
+
+    let lines: Vec<String> = state
+        .transcript
+        .entries
+        .iter()
+        .flat_map(extract_all_text_from_entry)
+        .collect();
+
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.contains("+new content"))
+            .count(),
+        1,
+        "the preview must appear exactly once, got: {lines:?}"
+    );
+}
+
+/// The TUI reducer itself does not deduplicate: if a `Completed` event were
+/// ever to carry a display after a preview was already shown (a source bug),
+/// the transcript would show it twice. This isn't desired behavior — it's a
+/// regression guard documenting that the non-duplication guarantee lives
+/// entirely in `nu-agent-core`'s `suppress_previewed_display`
+/// (`hook/chain.rs`), not here.
+#[test]
+fn tool_end_renders_whatever_display_it_is_given_no_local_dedup() {
     let mut state = AppState::default();
 
     reduce_tool(&mut state, started("edit", r#"{"file":"bar.rs"}"#));
@@ -972,13 +1044,14 @@ fn tool_end_after_permission_does_not_duplicate_display() {
         .flat_map(extract_all_text_from_entry)
         .collect();
 
-    assert!(
-        lines.iter().any(|line| line.contains("changes (diff)")),
-        "Expected to find 'changes (diff)' in transcript"
-    );
-    assert!(
-        lines.iter().any(|line| line.contains("+new content")),
-        "Expected to find '+new content' in transcript"
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.contains("+new content"))
+            .count(),
+        2,
+        "the reducer has no dedup of its own — a source that (incorrectly) \
+         resends the display after a preview will show it twice; got: {lines:?}"
     );
 }
 
