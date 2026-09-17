@@ -2,12 +2,15 @@ use std::collections::HashMap;
 
 use http::HeaderName;
 
+use crate::config::vault::Vault;
 use crate::tools::mcp::{
     client::McpToolDefinition,
     config::{McpAuthConfig, McpServerConfig, McpTransportType},
 };
 
 use super::{McpRuntime, build_http_transport_config};
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
 fn discovered_tools_accessor_returns_runtime_tools() {
@@ -207,7 +210,7 @@ fn sse_transport_config_is_stateless() {
         enabled: true,
     };
 
-    let config = build_http_transport_config(&server).expect("config");
+    let config = build_http_transport_config(&server, None).expect("config");
     assert!(config.allow_stateless);
 }
 
@@ -226,7 +229,7 @@ fn http_transport_config_requires_session() {
         enabled: true,
     };
 
-    let config = build_http_transport_config(&server).expect("config");
+    let config = build_http_transport_config(&server, None).expect("config");
     assert!(!config.allow_stateless);
 }
 
@@ -415,7 +418,7 @@ fn http_bearer_auth_sets_auth_header_on_transport_config() {
         enabled: true,
     };
 
-    let config = build_http_transport_config(&server).expect("config");
+    let config = build_http_transport_config(&server, None).expect("config");
     assert_eq!(config.auth_header, Some("my-token".to_string()));
 }
 
@@ -434,7 +437,7 @@ fn http_none_auth_leaves_auth_header_unset() {
         enabled: true,
     };
 
-    let config = build_http_transport_config(&server).expect("config");
+    let config = build_http_transport_config(&server, None).expect("config");
     assert_eq!(config.auth_header, None);
 }
 
@@ -458,7 +461,7 @@ fn http_oauth_auth_leaves_auth_header_unset() {
         enabled: true,
     };
 
-    let config = build_http_transport_config(&server).expect("config");
+    let config = build_http_transport_config(&server, None).expect("config");
     assert_eq!(config.auth_header, None);
 }
 
@@ -483,7 +486,7 @@ fn http_bearer_auth_skips_authorization_from_custom_headers() {
         enabled: true,
     };
 
-    let config = build_http_transport_config(&server).expect("config");
+    let config = build_http_transport_config(&server, None).expect("config");
     // auth_header is set from the auth field
     assert_eq!(config.auth_header, Some("new-token".to_string()));
     // Authorization header is NOT in custom_headers
@@ -518,7 +521,7 @@ fn http_none_auth_passes_authorization_header_through() {
         enabled: true,
     };
 
-    let config = build_http_transport_config(&server).expect("config");
+    let config = build_http_transport_config(&server, None).expect("config");
     // auth_header is not set
     assert_eq!(config.auth_header, None);
     // Authorization header IS in custom_headers (backwards compat)
@@ -550,7 +553,7 @@ fn http_non_auth_headers_always_pass_through() {
         enabled: true,
     };
 
-    let config = build_http_transport_config(&server).expect("config");
+    let config = build_http_transport_config(&server, None).expect("config");
     assert!(
         config
             .custom_headers
@@ -580,9 +583,123 @@ fn sse_bearer_auth_sets_auth_header() {
         enabled: true,
     };
 
-    let config = build_http_transport_config(&server).expect("config");
+    let config = build_http_transport_config(&server, None).expect("config");
     assert_eq!(config.auth_header, Some("sse-token".to_string()));
 }
+
+#[test]
+fn http_bearer_store_ref_resolves_from_vault() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::TempDir::new()?;
+    let vault = vault_with_bearer(&dir, "my-mcp-token", "actual-secret")?;
+    let server = bearer_server("store:my-mcp-token");
+
+    // -- Exec
+    let config = build_http_transport_config(&server, Some(&vault)).map_err(|e| e.to_string())?;
+
+    // -- Check
+    assert_eq!(
+        config.auth_header.as_deref(),
+        Some("actual-secret"),
+        "the resolved secret is used, not the store: reference"
+    );
+    Ok(())
+}
+
+#[test]
+fn http_bearer_raw_token_is_used_without_vault_lookup() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::TempDir::new()?;
+    // Vault is empty — a raw token must not consult it.
+    let vault = empty_vault(&dir)?;
+    let server = bearer_server("raw-token-value");
+
+    // -- Exec
+    let config = build_http_transport_config(&server, Some(&vault)).map_err(|e| e.to_string())?;
+
+    // -- Check
+    assert_eq!(config.auth_header.as_deref(), Some("raw-token-value"));
+    Ok(())
+}
+
+#[test]
+fn http_bearer_missing_store_ref_returns_error() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::TempDir::new()?;
+    let vault = empty_vault(&dir)?;
+    let server = bearer_server("store:missing");
+
+    // -- Exec
+    let config = build_http_transport_config(&server, Some(&vault));
+
+    // -- Check
+    let message = config.err().ok_or("should fail for a missing token")?;
+    assert!(
+        message.contains("failed to resolve bearer token"),
+        "error names the bearer resolution failure, got: {message}"
+    );
+    assert!(
+        message.contains("mcp:bearer:missing"),
+        "error names the missing vault key, got: {message}"
+    );
+    Ok(())
+}
+
+#[test]
+fn http_bearer_store_ref_without_vault_uses_raw_reference() -> Result<()> {
+    // -- Setup & Fixtures
+    // With no vault the reference cannot be resolved, so it passes through.
+    let server = bearer_server("store:my-mcp-token");
+
+    // -- Exec
+    let config = build_http_transport_config(&server, None).map_err(|e| e.to_string())?;
+
+    // -- Check
+    assert_eq!(config.auth_header.as_deref(), Some("store:my-mcp-token"));
+    Ok(())
+}
+
+// region:    --- Test Support
+
+/// A `McpServerConfig` using HTTP transport and a Bearer `token`.
+fn bearer_server(token: &str) -> McpServerConfig {
+    McpServerConfig {
+        name: "bearer-test".to_string(),
+        transport: McpTransportType::Http,
+        url: Some("https://api.example.com/mcp".to_string()),
+        headers: HashMap::new(),
+        auth: McpAuthConfig::Bearer {
+            token: token.to_string(),
+        },
+        command: None,
+        cwd: None,
+        args: vec![],
+        env: HashMap::new(),
+        enabled: true,
+    }
+}
+
+/// A `FileBackend`-backed vault with `mcp:bearer:<name>` set to `secret`.
+fn vault_with_bearer(dir: &tempfile::TempDir, name: &str, secret: &str) -> Result<Vault> {
+    use crate::config::vault::VaultBackend;
+
+    let vault = empty_vault(dir)?;
+    vault
+        .backend()
+        .set(&format!("mcp:bearer:{name}"), secret)
+        .map_err(|e| e.to_string())?;
+    Ok(vault)
+}
+
+/// A `FileBackend`-backed vault inside `dir`.
+fn empty_vault(dir: &tempfile::TempDir) -> Result<Vault> {
+    let backend = crate::config::file_backend::FileBackend::new(dir.path().join("secrets.json"));
+    Ok(Vault::new(crate::config::vault::VaultBackendKind::File(
+        backend,
+    )))
+}
+
+// endregion: --- Test Support
 
 #[tokio::test]
 async fn connect_servers_does_not_replace_existing_handle_contents() {
@@ -597,7 +714,8 @@ async fn connect_servers_does_not_replace_existing_handle_contents() {
     let handle = ToolServer::new().run();
 
     // Connect with no servers — should succeed and return empty runtime
-    let result = crate::tools::mcp::runtime::connect_servers(&handle, &[], None, 20_000).await;
+    let result =
+        crate::tools::mcp::runtime::connect_servers(&handle, &[], None, 20_000, None).await;
 
     assert!(
         result.is_ok(),

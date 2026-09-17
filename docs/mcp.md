@@ -117,7 +117,7 @@ When you run `agent mcp auth login <name>`, the following happens:
 9. **Browser redirects** — the authorization server redirects to the callback server at `http://127.0.0.1:<random-port>/mcp/oauth/callback?code=...&state=...`.
 10. **Validate state** — the callback server verifies the `state` parameter matches the one sent (CSRF protection).
 11. **Exchange code for tokens** — sends the authorization code, `code_verifier`, and `redirect_uri` to the token endpoint. Receives `access_token`, `refresh_token`, and `expires_in`.
-12. **Save credentials** — stores tokens to `$XDG_DATA_HOME/nu-agent/mcp-auth.json` with `0600` permissions.
+12. **Save credentials** — stores the tokens in the OS keychain. When no keychain is available, the agent uses its file store instead.
 13. **Stop callback server** — shuts down the local HTTP server.
 
 On subsequent agent runs, the stored access token is used automatically. If expired, the refresh token is used to obtain a new access token without user interaction.
@@ -126,7 +126,7 @@ On subsequent agent runs, the stored access token is used automatically. If expi
 
 | Measure | Implementation |
 |---------|---------------|
-| **File permissions** | Credentials stored at `$XDG_DATA_HOME/nu-agent/mcp-auth.json` with `0600` permissions (owner read/write only). |
+| **Credential storage** | The agent stores MCP OAuth tokens in the OS keychain. When no keychain is available, the agent uses a JSON file with `0600` permissions (owner read/write only). |
 | **Loopback-only callback** | The OAuth callback server binds exclusively to `127.0.0.1` — never exposed to the network. |
 | **CSRF protection** | The `state` parameter is a cryptographically random token. The callback validates it matches the sent value before exchanging the code. |
 | **SSRF blocking** | URL validation in the HTTP client blocks requests to cloud metadata endpoints (`169.254.169.254`) and link-local addresses (`169.254.0.0/16`). |

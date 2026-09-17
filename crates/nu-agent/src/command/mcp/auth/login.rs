@@ -1,14 +1,10 @@
 use std::sync::Arc;
 
+use nu_agent_core::config::vault::Vault;
+use nu_agent_core::tools::mcp::config::{McpAuthConfig, McpConfig, McpServerConfig};
+use nu_agent_core::tools::mcp::oauth_callback::{CallbackServer, DEFAULT_TIMEOUT_SECS};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, SignalAction, Signature, SyntaxShape, Value};
-use tokio::sync::Mutex;
-
-use nu_agent_core::tools::mcp::config::{McpAuthConfig, McpConfig, McpServerConfig};
-use nu_agent_core::tools::mcp::credentials::{
-    FileCredentialStore, FileStateStore, McpCredentialsStore,
-};
-use nu_agent_core::tools::mcp::oauth_callback::{CallbackServer, DEFAULT_TIMEOUT_SECS};
 
 use crate::plugin::AgentPlugin;
 
@@ -153,10 +149,8 @@ async fn run_inner(
         LabeledError::new(format!("Invalid MCP server URL for '{server_name}': {e}"))
     })?;
 
-    // 5. Load credential store
-    let credential_store = McpCredentialsStore::load()
-        .map_err(|e| LabeledError::new(format!("Failed to load credential store: {e}")))?;
-    let credential_store = Arc::new(Mutex::new(credential_store));
+    // 5. Construct the vault
+    let vault = Arc::new(Vault::auto_detect());
 
     // 6. Start callback server on a random port
     let callback_server = CallbackServer::start(0)
@@ -164,9 +158,9 @@ async fn run_inner(
         .map_err(|e| LabeledError::new(format!("Failed to start callback server: {e}")))?;
     let actual_port = callback_server.port();
 
-    // 7. Create AuthorizationManager with file-backed stores
-    let file_credential_store = FileCredentialStore::new(credential_store.clone(), server_name);
-    let file_state_store = FileStateStore::new(credential_store.clone());
+    // 7. Create AuthorizationManager with vault-backed stores
+    let vault_credential_store = vault.mcp_credential_store(server_name);
+    let vault_state_store = vault.mcp_state_store();
 
     let mut auth_manager = rmcp::transport::AuthorizationManager::new(server_url)
         .await
@@ -176,8 +170,8 @@ async fn run_inner(
             ))
         })?;
 
-    auth_manager.set_credential_store(file_credential_store);
-    auth_manager.set_state_store(file_state_store);
+    auth_manager.set_credential_store(vault_credential_store);
+    auth_manager.set_state_store(vault_state_store);
 
     // 8. Discover OAuth metadata from the server (required before configure_client_id or register_client)
     let metadata = auth_manager.discover_metadata().await.map_err(|e| {
@@ -286,13 +280,7 @@ async fn run_inner(
             ))
         })?;
 
-    // 14. Save credentials to disk
-    {
-        let guard = credential_store.lock().await;
-        guard
-            .save()
-            .map_err(|e| LabeledError::new(format!("Failed to save credentials: {e}")))?;
-    }
+    // The vault credential adapter persisted the tokens during the exchange.
 
     // 15. Stop callback server if idle
     // We need a mutable reference to call stop_if_idle

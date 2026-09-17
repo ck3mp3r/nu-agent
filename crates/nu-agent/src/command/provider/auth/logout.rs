@@ -1,7 +1,7 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
 
-use nu_agent_core::config::secrets::SecretStore;
+use nu_agent_core::config::vault::Vault;
 
 use crate::plugin::AgentPlugin;
 
@@ -26,7 +26,7 @@ impl SimplePluginCommand for AgentProviderAuthLogout {
 
     fn extra_description(&self) -> &str {
         "Removes the stored credential entry for the specified provider from the \
-         nu-agent secret store ($XDG_DATA_HOME/nu-agent/secrets.json)."
+         nu-agent vault (OS keychain, or the file store when no keychain is available)."
     }
 
     fn search_terms(&self) -> Vec<&str> {
@@ -67,20 +67,18 @@ impl SimplePluginCommand for AgentProviderAuthLogout {
     ) -> Result<Value, LabeledError> {
         let name: String = call.req(0)?;
 
-        let mut store = SecretStore::load()
-            .map_err(|e| LabeledError::new(format!("Failed to load secret store: {e}")))?;
+        let vault = Vault::auto_detect();
 
-        match store.remove(&name) {
-            Some(_) => {
-                store
-                    .save()
-                    .map_err(|e| LabeledError::new(format!("Failed to save secret store: {e}")))?;
-                Ok(Value::string(
-                    format!("Removed credentials for '{name}'"),
-                    call.head,
-                ))
-            }
-            None => Ok(Value::string(
+        let removed = vault
+            .remove_provider(&name)
+            .map_err(|e| LabeledError::new(format!("Failed to remove credentials: {e}")))?;
+
+        match removed {
+            true => Ok(Value::string(
+                format!("Removed credentials for '{name}'"),
+                call.head,
+            )),
+            false => Ok(Value::string(
                 format!("No stored credentials for '{name}'"),
                 call.head,
             )),

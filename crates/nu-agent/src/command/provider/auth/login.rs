@@ -1,7 +1,7 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
 
-use nu_agent_core::config::secrets::{Credential, SecretStore};
+use nu_agent_core::config::vault::Vault;
 
 use crate::plugin::AgentPlugin;
 
@@ -25,9 +25,9 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
     }
 
     fn extra_description(&self) -> &str {
-        "Stores credentials in the nu-agent secret store. For github-copilot, runs the OAuth \
+        "Stores credentials in the OS keychain. For github-copilot, runs the OAuth \
          device-code flow. For other providers, accepts an API key via --api-key or piped \
-         from stdin. Keys are persisted to $XDG_DATA_HOME/nu-agent/secrets.json."
+         from stdin. Falls back to a file store when no keychain is available."
     }
 
     fn search_terms(&self) -> Vec<&str> {
@@ -119,12 +119,10 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
                 ));
             };
 
-            let mut store = SecretStore::load()
-                .map_err(|e| LabeledError::new(format!("Failed to load secret store: {e}")))?;
-            store.set(name.clone(), Credential::ApiKey { key });
-            store
-                .save()
-                .map_err(|e| LabeledError::new(format!("Failed to save secret store: {e}")))?;
+            let vault = Vault::auto_detect();
+            vault
+                .store_api_key(&name, &key)
+                .map_err(|e| LabeledError::new(format!("Failed to store API key: {e}")))?;
 
             Ok(Value::string(
                 format!("Stored API key for '{name}'"),

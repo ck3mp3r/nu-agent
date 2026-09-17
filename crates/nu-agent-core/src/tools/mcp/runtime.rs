@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
 use http::{HeaderName, HeaderValue};
-use tokio::sync::Mutex;
 
 use crate::config::defaults;
+use crate::config::vault::Vault;
 use crate::tools::mcp::{
     MCP_TOOL_NAMESPACE_DELIMITER,
     client::McpToolDefinition,
     config::{McpAuthConfig, McpServerConfig, McpTransportType},
-    credentials::{FileCredentialStore, FileStateStore, McpCredentialsStore},
     namespaced::NamespacedClientHandler,
 };
 
@@ -183,6 +182,7 @@ fn register_exposed_name(
 
 fn build_http_transport_config(
     server: &McpServerConfig,
+    vault: Option<&Vault>,
 ) -> Result<rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig, String> {
     let (url, headers, allow_stateless) = match server.transport {
         McpTransportType::Sse => (
@@ -236,7 +236,19 @@ fn build_http_transport_config(
 
     match &server.auth {
         McpAuthConfig::Bearer { token } => {
-            config = config.auth_header(token.clone());
+            // A `store:` token is resolved from the vault at connect time so a
+            // rotated secret takes effect without editing config.toml. Without a
+            // vault (or for a raw token) the configured value is used as-is.
+            let resolved = match vault {
+                Some(vault) => vault.resolve_bearer(token).map_err(|e| {
+                    format!(
+                        "MCP server '{}': failed to resolve bearer token: {e}",
+                        server.name
+                    )
+                })?,
+                None => token.clone(),
+            };
+            config = config.auth_header(resolved);
         }
         McpAuthConfig::None | McpAuthConfig::OAuth { .. } => {
             // No config-level auth header for None or OAuth
@@ -305,19 +317,8 @@ pub async fn connect_servers(
     servers: &[McpServerConfig],
     caller_cwd: Option<&std::path::Path>,
     max_tool_result_bytes: usize,
+    vault: Option<&Arc<Vault>>,
 ) -> Result<McpRuntime, String> {
-    // Check if any server uses OAuth — if so, load the shared credential store
-    let needs_oauth = servers
-        .iter()
-        .any(|s| matches!(s.auth, McpAuthConfig::OAuth { .. }));
-    let shared_cred_store: Option<Arc<Mutex<McpCredentialsStore>>> = if needs_oauth {
-        Some(Arc::new(Mutex::new(
-            McpCredentialsStore::load().unwrap_or_default(),
-        )))
-    } else {
-        None
-    };
-
     let mut sessions = Vec::new();
     let mut connected_servers = std::collections::BTreeSet::new();
     let mut discovered_tools = Vec::new();
@@ -329,7 +330,7 @@ pub async fn connect_servers(
             server,
             caller_cwd,
             max_tool_result_bytes,
-            shared_cred_store.as_ref(),
+            vault,
         )
         .await?;
 
@@ -354,7 +355,7 @@ pub(crate) async fn connect_server(
     server: &McpServerConfig,
     caller_cwd: Option<&std::path::Path>,
     max_tool_result_bytes: usize,
-    shared_cred_store: Option<&Arc<Mutex<McpCredentialsStore>>>,
+    vault: Option<&Arc<Vault>>,
 ) -> Result<
     (
         rmcp::service::RunningService<rmcp::service::RoleClient, NamespacedClientHandler>,
@@ -411,7 +412,7 @@ pub(crate) async fn connect_server(
             Ok((service, discovered_tools))
         }
         McpTransportType::Sse | McpTransportType::Http => {
-            let config = build_http_transport_config(server)?;
+            let config = build_http_transport_config(server, vault.map(Arc::as_ref))?;
 
             match &server.auth {
                 McpAuthConfig::None | McpAuthConfig::Bearer { .. } => {
@@ -443,18 +444,15 @@ pub(crate) async fn connect_server(
                         |e| format!("Invalid MCP server URL for '{}': {e}", server.name),
                     )?;
 
-                    // Load the shared credential store
-                    let shared_store = shared_cred_store.as_ref().ok_or_else(|| {
+                    // The vault supplies per-server credential and state adapters.
+                    let vault = vault.ok_or_else(|| {
                         format!(
-                            "MCP server '{}' requires OAuth but credential store not initialized",
+                            "MCP server '{}' requires OAuth but no vault is configured",
                             server.name
                         )
                     })?;
-
-                    // Create per-server FileCredentialStore and FileStateStore
-                    let file_cred_store =
-                        FileCredentialStore::new((*shared_store).clone(), &server.name);
-                    let file_state_store = FileStateStore::new((*shared_store).clone());
+                    let vault_cred_store = vault.mcp_credential_store(&server.name);
+                    let vault_state_store = vault.mcp_state_store();
 
                     // Create AuthorizationManager
                     let mut auth_manager = rmcp::transport::AuthorizationManager::new(&server_url)
@@ -464,8 +462,8 @@ pub(crate) async fn connect_server(
                         })?;
 
                     // Set credential and state stores
-                    auth_manager.set_credential_store(file_cred_store);
-                    auth_manager.set_state_store(file_state_store);
+                    auth_manager.set_credential_store(vault_cred_store);
+                    auth_manager.set_state_store(vault_state_store);
 
                     // Discover OAuth metadata (required before the manager can use stored credentials)
                     let metadata = auth_manager.discover_metadata().await.map_err(|e| {
@@ -497,7 +495,7 @@ pub(crate) async fn connect_server(
                     }
                     // If no client_id in config, the client was registered during login.
                     // The stored client_info in the credential store has the client_id.
-                    // rmcp's AuthorizationManager loads it from FileCredentialStore.
+                    // rmcp's AuthorizationManager loads it from the vault credential adapter.
 
                     // Build HTTP client and wrap with AuthClient
                     let http_client = build_mcp_http_client(defaults::MCP_READ_TIMEOUT_SECS)?;

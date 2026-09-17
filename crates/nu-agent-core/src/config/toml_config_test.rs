@@ -239,6 +239,84 @@ fn load_keeps_invalid_theme_raw() -> Result<()> {
 
 #[test]
 #[serial]
+fn load_rejects_raw_api_key() -> Result<()> {
+    with_xdg_config_home(|dir| {
+        let config_dir = dir.path().join("nu-agent");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        std::fs::write(
+            config_dir.join("config.toml"),
+            r#"
+[providers.openai]
+api_key = "sk-raw-literal"
+"#,
+        )
+        .expect("write config");
+
+        let err = match load() {
+            Ok(_) => return Err("load should reject a raw api_key".into()),
+            Err(e) => e,
+        };
+        let TomlConfigError::InvalidApiKey(message) = err else {
+            return Err("expected InvalidApiKey error".into());
+        };
+        assert!(
+            message.contains("providers.openai"),
+            "message must name the provider: {message}"
+        );
+        assert!(
+            message.contains("agent provider auth login openai"),
+            "message must suggest the login command: {message}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn load_accepts_store_reference() -> Result<()> {
+    with_xdg_config_home(|dir| {
+        let config_dir = dir.path().join("nu-agent");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        std::fs::write(
+            config_dir.join("config.toml"),
+            r#"
+[providers.openai]
+api_key = "store:openai"
+"#,
+        )
+        .expect("write config");
+
+        let config = load().map_err(|e| format!("load should succeed: {e:?}"))?;
+        let openai = config.providers.get("openai").ok_or("openai provider")?;
+        assert_eq!(openai.api_key.as_deref(), Some("store:openai"));
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn load_accepts_env_reference() -> Result<()> {
+    with_xdg_config_home(|dir| {
+        let config_dir = dir.path().join("nu-agent");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        std::fs::write(
+            config_dir.join("config.toml"),
+            r#"
+[providers.openai]
+api_key = "env:MY_CUSTOM_KEY"
+"#,
+        )
+        .expect("write config");
+
+        let config = load().map_err(|e| format!("load should succeed: {e:?}"))?;
+        let openai = config.providers.get("openai").ok_or("openai provider")?;
+        assert_eq!(openai.api_key.as_deref(), Some("env:MY_CUSTOM_KEY"));
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
 fn load_handles_serde_default_annotations() -> Result<()> {
     with_xdg_config_home(|dir| {
         let config_dir = dir.path().join("nu-agent");

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +8,7 @@ use crate::session::StoreType;
 
 use super::defaults;
 use super::models_cache::ModelsCache;
-use super::secrets::SecretStore;
+use super::vault::Vault;
 
 /// Model limits (context and output token limits)
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -136,9 +137,10 @@ pub struct PluginConfig {
     #[serde(default)]
     pub session_store: Option<StoreTypeConfig>,
 
-    /// Secret store for API keys and OAuth tokens (not serialized).
+    /// Secret vault for API keys and OAuth tokens (not serialized).
+    /// Wrapped in `Arc` so the MCP runtime can share one vault across servers.
     #[serde(skip)]
-    pub secret_store: Option<SecretStore>,
+    pub vault: Option<Arc<Vault>>,
 
     /// Local models.dev cache (not serialized). Populated at runtime.
     #[serde(skip)]

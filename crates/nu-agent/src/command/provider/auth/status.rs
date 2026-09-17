@@ -1,7 +1,7 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, Value};
 
-use nu_agent_core::config::secrets::{Credential, SecretStore};
+use nu_agent_core::config::vault::{CredentialType, Vault};
 
 use crate::plugin::AgentPlugin;
 
@@ -59,17 +59,19 @@ impl SimplePluginCommand for AgentProviderAuthStatus {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let store = SecretStore::load()
-            .map_err(|e| LabeledError::new(format!("Failed to load secret store: {e}")))?;
+        let vault = Vault::auto_detect();
+        let entries = vault
+            .list_providers()
+            .map_err(|e| LabeledError::new(format!("Failed to list credentials: {e}")))?;
 
-        let rows: Vec<Value> = store
-            .list()
+        let rows: Vec<Value> = entries
             .into_iter()
-            .map(|(name, cred)| {
-                let (cred_type, expiry) = match cred {
-                    Credential::ApiKey { .. } => ("api_key".to_string(), Value::nothing(call.head)),
-                    Credential::OAuth { expires_at, .. } => {
-                        let exp = expires_at
+            .map(|entry| {
+                let (cred_type, expiry) = match entry.credential_type {
+                    CredentialType::ApiKey => ("api_key".to_string(), Value::nothing(call.head)),
+                    CredentialType::OAuth => {
+                        let exp = entry
+                            .expires_at
                             .map(|t| Value::int(t as i64, call.head))
                             .unwrap_or(Value::nothing(call.head));
                         ("oauth".to_string(), exp)
@@ -77,7 +79,7 @@ impl SimplePluginCommand for AgentProviderAuthStatus {
                 };
                 Value::record(
                     nu_protocol::record! {
-                        "provider" => Value::string(name, call.head),
+                        "provider" => Value::string(entry.name, call.head),
                         "type" => Value::string(cred_type, call.head),
                         "expires_at" => expiry,
                     },

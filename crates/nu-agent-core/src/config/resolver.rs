@@ -60,10 +60,25 @@ impl PluginConfig {
         {
             config.provider_impl = Some(impl_name.clone());
         }
+        // Only merge the provider config key when env vars did not provide one.
+        // Env vars outrank the config file; without this guard the config's
+        // `store:openai` reference would clobber an env-provided raw key.
         if let Some(pc) = provider_config
+            && config.api_key.is_none()
             && let Some(api_key) = &pc.api_key
         {
             config.api_key = Some(api_key.clone());
+        }
+        // When the provider block exists but omits `api_key`, and no env var
+        // supplied one, default to the vault entry for the provider element
+        // name. This makes `agent provider auth login <name>` sufficient
+        // without an explicit config line.
+        if provider_config.is_some()
+            && let Some(vault) = &self.vault
+            && config.api_key.is_none()
+            && let Some(resolved) = vault.resolve(&format!("store:{provider_name}"))
+        {
+            config.api_key = Some(resolved);
         }
         if let Some(pc) = provider_config
             && let Some(base_url) = &pc.base_url
@@ -145,12 +160,33 @@ impl PluginConfig {
             config.repetition_guard = Some(r);
         }
 
-        // Resolve secret store references (e.g. "store:openai" → actual key)
-        if let Some(store) = &self.secret_store
-            && let Some(key) = &config.api_key
-            && let Some(resolved) = store.resolve(key)
+        // Resolve secret store references (e.g. "store:openai" → actual key).
+        // Only a `store:` prefix triggers a lookup — a raw key from an env var
+        // or a literal config value is used as-is.
+        if let Some(vault) = &self.vault
+            && let Some(api_key) = &config.api_key
+            && api_key.starts_with("store:")
+            && let Some(resolved) = vault.resolve(api_key)
         {
             config.api_key = Some(resolved);
+        }
+
+        // Resolve explicit `env:VAR_NAME` references (e.g. "env:MY_KEY").
+        // This covers non-standard env var names that from_env() does not read.
+        // When the env var is absent, clear the key so the reference string
+        // never leaks through as an api_key.
+        if let Some(api_key) = &config.api_key
+            && let Some(var_name) = api_key.strip_prefix("env:")
+        {
+            match std::env::var(var_name) {
+                Ok(value) => config.api_key = Some(value),
+                Err(_) => {
+                    log::warn!(
+                        "resolve_model: env reference '{var_name}' for provider '{provider_name}' is not set — no api_key"
+                    );
+                    config.api_key = None;
+                }
+            }
         }
 
         // Apply models.json cache specs (fill missing values only)
@@ -186,3 +222,11 @@ impl PluginConfig {
         Ok(config)
     }
 }
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "resolver_test.rs"]
+mod resolver_test;
+
+// endregion: --- Tests

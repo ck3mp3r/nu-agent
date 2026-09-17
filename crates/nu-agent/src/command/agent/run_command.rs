@@ -278,6 +278,7 @@ pub(super) fn run_command(
                     config
                         .max_tool_result_bytes
                         .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
+                    plugin_config.vault.as_ref(),
                 )
                 .await
                 .map_err(|msg| {
@@ -383,6 +384,7 @@ pub(super) fn run_command(
                 mcp_lifecycle_projection,
                 mcp_server_configs: mcp_config.mcp.clone(),
                 mcp_caller_cwd: Some(mcp_caller_cwd),
+                vault: plugin_config.vault.clone(),
                 mcp_registry,
                 engine: engine.clone(),
                 store: store.clone(),

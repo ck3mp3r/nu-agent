@@ -20,7 +20,7 @@ fn mcp_state_with_k8s_tools() -> Result<(McpState, Vec<ToolDefinition>)> {
         tool_definition_named("k8s__delete_pod"),
     ];
 
-    let state = McpState::new(None, vec![], configs, None, registry, 20_000);
+    let state = McpState::new(None, vec![], configs, None, registry, 20_000, None);
 
     Ok((state, tool_definitions))
 }
@@ -90,7 +90,7 @@ async fn disable_leaves_non_target_server_tools_enabled() -> Result<()> {
         tool_definition_named("gh__list_prs"),
     ];
 
-    let mut mcp_state = McpState::new(None, vec![], configs, None, registry, 20_000);
+    let mut mcp_state = McpState::new(None, vec![], configs, None, registry, 20_000, None);
     let handle = rig::tool::server::ToolServer::new().run();
 
     mcp_state

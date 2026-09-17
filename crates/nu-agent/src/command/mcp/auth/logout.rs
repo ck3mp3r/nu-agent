@@ -1,19 +1,24 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
 
-use nu_agent_core::tools::mcp::credentials::McpCredentialsStore;
+use nu_agent_core::config::vault::Vault;
 
 use crate::plugin::AgentPlugin;
 
-/// Perform the logout logic: remove credentials for `server_name` from `store`.
+/// Perform the logout logic: clear credentials for `server_name` from `vault`.
 ///
 /// Returns a user-facing message indicating success or that no credentials existed.
-pub(crate) fn perform_logout(store: &mut McpCredentialsStore, server_name: &str) -> String {
-    if store.entries.contains_key(server_name) {
-        store.remove(server_name);
-        format!("Cleared credentials for '{server_name}'")
-    } else {
-        format!("No stored credentials for '{server_name}'")
+pub(crate) fn perform_logout(vault: &Vault, server_name: &str) -> String {
+    if vault
+        .get_mcp_credentials(server_name)
+        .unwrap_or(None)
+        .is_none()
+    {
+        return format!("No stored credentials for '{server_name}'");
+    }
+    match vault.clear_mcp_credentials(server_name) {
+        Ok(()) => format!("Cleared credentials for '{server_name}'"),
+        Err(e) => format!("Failed to clear credentials for '{server_name}': {e}"),
     }
 }
 
@@ -73,14 +78,9 @@ impl SimplePluginCommand for AgentAuthMcpLogout {
     ) -> Result<Value, LabeledError> {
         let server_name: String = call.req(0)?;
 
-        let mut store = McpCredentialsStore::load()
-            .map_err(|e| LabeledError::new(format!("Failed to load credential store: {e}")))?;
+        let vault = Vault::auto_detect();
 
-        let msg = perform_logout(&mut store, &server_name);
-
-        store
-            .save()
-            .map_err(|e| LabeledError::new(format!("Failed to save credential store: {e}")))?;
+        let msg = perform_logout(&vault, &server_name);
 
         Ok(Value::string(msg, call.head))
     }

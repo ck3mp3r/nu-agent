@@ -1,4 +1,7 @@
 use crate::protocol::contracts::McpUsabilityState;
+use std::sync::Arc;
+
+use crate::config::vault::Vault;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::{
     config::McpServerConfig,
@@ -17,6 +20,8 @@ pub struct McpState {
     mcp_caller_cwd: Option<std::path::PathBuf>,
     mcp_registry: McpToolRegistry,
     max_tool_result_bytes: usize,
+    /// Secret vault, needed to connect OAuth servers enabled mid-session.
+    vault: Option<Arc<Vault>>,
 }
 
 impl McpState {
@@ -27,6 +32,7 @@ impl McpState {
         mcp_caller_cwd: Option<std::path::PathBuf>,
         mcp_registry: McpToolRegistry,
         max_tool_result_bytes: usize,
+        vault: Option<Arc<Vault>>,
     ) -> Self {
         Self {
             mcp_runtime,
@@ -35,6 +41,7 @@ impl McpState {
             mcp_caller_cwd,
             mcp_registry,
             max_tool_result_bytes,
+            vault,
         }
     }
 
@@ -132,6 +139,7 @@ impl McpState {
             &single_server_config,
             self.mcp_caller_cwd.as_deref(),
             self.max_tool_result_bytes,
+            self.vault.as_ref(),
         )
         .await
         {

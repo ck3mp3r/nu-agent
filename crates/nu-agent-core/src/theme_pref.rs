@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 /// The persisted TUI theme preference.
 ///
 /// Stored as a single JSON key `{"theme": "<kebab-name>"}` at
-/// `$XDG_DATA_HOME/nu-agent/theme.json` with mode 0600, following the
-/// `McpCredentialsStore` file pattern.
+/// `$XDG_DATA_HOME/nu-agent/theme.json` with mode 0600.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ThemePreference {
     /// The kebab-case theme name (e.g. "catppuccin-frappe").

@@ -6,7 +6,7 @@ use nu_protocol::{LabeledError, Value};
 use nu_agent_core::config::{
     self, Config, ModelRoleConfig, PluginConfig, defaults,
     models_cache::{ModelsCache, ModelsCacheError},
-    secrets::{SecretStore, SecretStoreError},
+    vault::Vault,
 };
 use nu_agent_core::conversation::runtime::AgentConversationRuntime;
 use nu_agent_core::protocol::preamble::{
@@ -85,11 +85,11 @@ pub fn resolve_config(call: &EvaluatedCall) -> Result<(Config, PluginConfig), La
     }
     let mut plugin_config = config::toml_config::load()
         .map_err(|e| LabeledError::new(format!("Failed to load config.toml: {e}")))?;
-    match SecretStore::load() {
-        Ok(store) => plugin_config.secret_store = Some(store),
-        Err(SecretStoreError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => log::warn!("Failed to load secret store: {e}"),
-    }
+    // Load .env files before anything reads the environment. User-level and
+    // project-level values only fill variables that are not already set.
+    config::dotenv::load_env_files();
+    // Probe keychain, then file, then env-only. The first available wins.
+    plugin_config.vault = Some(Arc::new(Vault::auto_detect()));
     match ModelsCache::load() {
         Ok(cache) => plugin_config.models_cache = Some(cache),
         Err(ModelsCacheError::NotFound(_)) => {}
@@ -398,6 +398,7 @@ pub(crate) struct RuntimeBuildParams {
         Vec<nu_agent_core::tools::mcp::runtime::McpServerLifecycle>,
     pub(crate) mcp_server_configs: Vec<nu_agent_core::tools::mcp::config::McpServerConfig>,
     pub(crate) mcp_caller_cwd: Option<std::path::PathBuf>,
+    pub(crate) vault: Option<Arc<Vault>>,
     pub(crate) mcp_registry: nu_agent_core::tools::handler::McpToolRegistry,
     pub(crate) engine: nu_plugin::EngineInterface,
     pub(crate) store: Arc<SessionStoreBackend>,
@@ -504,6 +505,7 @@ pub(crate) fn build_runtime(
             params.mcp_caller_cwd,
             params.mcp_registry,
             max_tool_result_bytes,
+            params.vault,
         ),
         engine: params.engine,
         store: params.store,

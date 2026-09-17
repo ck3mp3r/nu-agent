@@ -7,7 +7,7 @@ Configuration is organised around three files, all located under the XDG base di
 | File | Location | Purpose |
 |------|----------|---------|
 | `config.toml` | `$XDG_CONFIG_HOME/nu-agent/config.toml` | Main configuration: models, providers, MCP, compaction, agents, session store |
-| `secrets.json` | `$XDG_DATA_HOME/nu-agent/secrets.json` | Secret store for API keys and OAuth tokens |
+| `.env` | `$XDG_CONFIG_HOME/nu-agent/.env` and `./.env` | Optional environment variables (see [Secret Storage](#2-secret-storage)) |
 | `models.json` | `$XDG_DATA_HOME/nu-agent/models.json` | Local cache of the `models.dev` database |
 
 > On macOS/Linux the XDG defaults are `~/.config`, `~/.local/share`, and `~/.cache`. If `XDG_CONFIG_HOME`/`XDG_DATA_HOME` are set they take precedence.
@@ -144,7 +144,7 @@ All fields except `model` are optional. When omitted, the value is inherited fro
 
 ```toml
 [providers.openai]
-api_key = "store:openai"       # or "sk-..." literal, or omit to use env var
+api_key = "store:openai"       # vault lookup, env: reference, or omit for the default vault lookup
 base_url = "https://api.openai.com/v1"   # optional override
 provider = "openai"            # provider implementation (default: the key itself)
 name = "OpenAI"                # optional display name
@@ -158,7 +158,7 @@ preamble = "You are helpful." # optional provider preamble
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `api_key` | String | API key or a `store:` reference (see [secrets.json](#2-secretsjson)) |
+| `api_key` | String | A `store:` or `env:` reference (see [Secret Storage](#2-secret-storage)). Omit the field for the default vault lookup. A raw key literal is rejected at startup. |
 | `base_url` | String | Custom API endpoint URL |
 | `provider` | String | Provider implementation to use (e.g. `"openai"` for a `github-copilot` provider or any OpenAI-compatible endpoint) |
 | `name` | String | Provider display name |
@@ -536,9 +536,48 @@ Auth types: `none` (default), `bearer` (requires `token`), `oauth` (requires htt
 - `agent mcp auth logout <server>` — clear credentials
 - `agent mcp auth status` — show auth status for all servers
 
-## 2. secrets.json
+## 2. Secret Storage
 
-The secret store persists API keys and OAuth tokens to `$XDG_DATA_HOME/nu-agent/secrets.json` with `0600` permissions. It is the recommended way to keep credentials out of `config.toml`.
+The Vault stores all secrets. The Vault is the only interface to secret storage. No other component reads a secret directly.
+
+### Startup hierarchy
+
+The Vault probes backends at startup. The first available backend wins. No config section is necessary.
+
+1. **OS keychain** — macOS Keychain, Linux Secret Service, or Windows Credential Manager.
+2. **File store** — a JSON file in `$XDG_DATA_HOME/nu-agent/` with `0600` permissions. The agent uses this backend when no keychain is available.
+3. **Environment only** — no stored secrets. Lookups return nothing. The agent uses environment variables and `.env` files only.
+
+The Vault always selects a backend. The agent never fails because a keychain is absent.
+
+| Backend | Storage | Use case |
+|---------|---------|----------|
+| Keychain | OS credential store | Desktop systems with a keychain |
+| File | JSON file, mode `0600` | Headless Linux, containers with a mounted data directory |
+| Environment only | Nothing | Docker and CI with environment variables only |
+
+### `.env` files
+
+The agent loads two `.env` files at startup, before it reads any environment variable:
+
+1. `$XDG_CONFIG_HOME/nu-agent/.env` — user-level, always loaded.
+2. `./.env` — project-level, loaded when the file exists.
+
+The loader sets a variable only when the process environment does not already contain it. The loader skips malformed lines and continues.
+
+The order of the two files gives the user-level file priority. The loader reads the user-level file first. Because the loader never overwrites a variable, a key in both files takes the user-level value.
+
+Supported line forms:
+
+```sh
+# A comment line is skipped
+OPENAI_API_KEY=sk-from-file
+export ANTHROPIC_API_KEY=sk-ant
+QUOTED="value with spaces"
+SINGLE='single quoted'
+```
+
+The agent does not support multiline values, escape sequences, or variable interpolation.
 
 ### `store:` reference syntax
 
@@ -549,7 +588,56 @@ Reference a stored credential from `config.toml` with a `store:` prefix:
 api_key = "store:openai"
 ```
 
-At runtime, `store:openai` is resolved by looking up `openai` in the secret store and using the stored credential (API key or OAuth access token). If the key is not present, `nu-agent` falls back to the corresponding environment variable.
+At runtime, the Vault resolves `store:openai` to the credential for `openai`. The credential is an API key or an OAuth access token. The syntax is identical for every backend.
+
+### `env:` reference syntax
+
+Reference an environment variable from `config.toml` with an `env:` prefix:
+
+```toml
+[providers.my-gateway]
+api_key = "env:MY_GATEWAY_KEY"
+```
+
+At runtime, the resolver reads `MY_GATEWAY_KEY` from the environment. Use `env:` for a non-standard variable name. The automatic `{PROVIDER}_API_KEY` reading (for example `OPENAI_API_KEY`) needs no `env:` reference. When the named variable is absent, the resolver sets `api_key` to None and logs a warning. The resolver never uses the `env:VAR_NAME` string as a key.
+
+### Default vault lookup
+
+Omit the `api_key` field to look up the credential by provider element name:
+
+```toml
+[providers.openai]
+# no api_key field — the agent looks up provider:openai in the Vault
+```
+
+The resolver looks up `provider:<name>` in the Vault, where `<name>` is the `providers.<name>` element name. When the Vault holds no entry, the resolver leaves `api_key` as None.
+
+### Raw key literals are rejected
+
+A raw key literal in `config.toml` is a hard error at startup:
+
+```toml
+[providers.openai]
+api_key = "sk-raw-literal"   # REJECTED: not a store: or env: reference
+```
+
+The agent refuses to start and reports: `api_key in [providers.openai] must be a store: or env: reference, not a raw value. Use: agent provider auth login openai`. Every `providers.<name>.api_key` value must start with `store:` or `env:`, or the field must be omitted.
+
+### Precedence
+
+Highest priority first:
+
+| Priority | Source | Notes |
+|----------|--------|-------|
+| 1 | CLI flags | `--api-key` overrides all other sources |
+| 2 | Environment variables | Set in the shell, or read from a `.env` file. Includes `{PROVIDER}_API_KEY` and `env:` references |
+| 3 | `config.toml` `api_key` | A `store:` or `env:` reference |
+| 4 | Vault | Resolves a `store:` reference, or the default `provider:<name>` lookup when `api_key` is omitted |
+| 5 | Built-in defaults | Hardcoded fallbacks |
+
+An environment variable always overrides a stored credential. For example, `OPENAI_API_KEY=sk-temp agent run` uses `sk-temp` even when the Vault holds a key for `openai`.
+
+The agent reads the `api_key` from `config.toml` only when no environment variable supplies a key. The Vault does not override an environment variable, because the Vault resolves only the `store:` reference that `config.toml` supplies, or the default lookup when `api_key` is omitted.
 
 ### Managing credentials
 
@@ -570,7 +658,7 @@ agent provider auth logout openai
 agent provider auth status
 ```
 
-`agent provider auth status` outputs one row per stored provider credential, showing the credential type (`api_key` or `oauth`) and, for OAuth, the token expiry timestamp.
+`agent provider auth status` outputs one row per stored provider credential. Each row shows the credential type (`api_key` or `oauth`) and, for OAuth, the token expiry timestamp.
 
 ## 3. models.json
 
@@ -604,7 +692,7 @@ When resolving the runtime config for a model, values are filled from the highes
 3. **Role-level config** — the `[models.<role>]` record for the selected role (e.g. `models.heavy`)
 4. **Provider/model-level config** — `[providers.<name>]` and `[providers.<name>.models.<model>]`
 5. **models.json cache** — fills `max_context_tokens`, `max_output_tokens`, and `model_context_tokens` when not already set by the levels above
-6. **Secret store** — resolves `store:` references in `api_key`
+6. **Vault** — resolves `store:` references in `api_key`, or performs the default `provider:<name>` lookup when `api_key` is omitted
 7. **Environment variables** — `AGENT_*` vars and `{PROVIDER}_API_KEY` (lowest priority fallback)
 8. **Built-in defaults** — hardcoded fallbacks
 
@@ -620,7 +708,7 @@ A value set at a higher priority is never overridden by a lower one. For example
 
 ## Environment variable fallback
 
-Environment variables still work as a lowest-priority fallback when `config.toml` / `secrets.json` don't set a value:
+Environment variables still work as a lowest-priority fallback when `config.toml` and the Vault don't set a value:
 
 - `AGENT_BASE_URL`
 - `AGENT_TEMPERATURE`
@@ -667,7 +755,7 @@ agent config init [--force]                     # generate starter config.toml f
 agent models sync                                # fetch models.dev into the local cache
 agent models list [--provider <name>]            # list models from the cache
 
-# Provider auth (secrets.json)
+# Provider auth (OS keychain)
 agent provider auth login <name> [--api-key <key>]
 agent provider auth logout <name>
 agent provider auth status

@@ -2,14 +2,13 @@ use oauth2::{AccessToken, basic::BasicTokenType};
 use rmcp::transport::auth::{OAuthTokenResponse, StoredCredentials, VendorExtraTokenFields};
 
 use nu_agent_core::tools::mcp::config::McpAuthConfig;
-use nu_agent_core::tools::mcp::credentials::McpCredentialsEntry;
 
 use super::status::determine_status;
 
-fn make_entry_with_token(
+fn make_creds_with_token(
     expires_in_secs: Option<u64>,
     received_at: Option<u64>,
-) -> McpCredentialsEntry {
+) -> StoredCredentials {
     let mut resp = OAuthTokenResponse::new(
         AccessToken::new("test-token".to_string()),
         BasicTokenType::Bearer,
@@ -19,27 +18,11 @@ fn make_entry_with_token(
         resp.set_expires_in(Some(std::time::Duration::from_secs(expires_in)).as_ref());
     }
 
-    McpCredentialsEntry {
-        stored_credentials: Some(StoredCredentials::new(
-            "test-client".to_string(),
-            Some(resp),
-            vec![],
-            received_at,
-        )),
-        ..Default::default()
-    }
+    StoredCredentials::new("test-client".to_string(), Some(resp), vec![], received_at)
 }
 
-fn make_entry_without_token() -> McpCredentialsEntry {
-    McpCredentialsEntry {
-        stored_credentials: Some(StoredCredentials::new(
-            "test-client".to_string(),
-            None,
-            vec![],
-            None,
-        )),
-        ..Default::default()
-    }
+fn make_creds_without_token() -> StoredCredentials {
+    StoredCredentials::new("test-client".to_string(), None, vec![], None)
 }
 
 #[test]
@@ -68,7 +51,7 @@ fn status_oauth_with_valid_token_shows_authenticated() {
     };
     // Token received at t=100, expires in 60s → expires at t=160
     // now=150 → not expired
-    let entry = make_entry_with_token(Some(60), Some(100));
+    let entry = make_creds_with_token(Some(60), Some(100));
     let status = determine_status(&auth, Some(&entry), 150);
     assert_eq!(status, "authenticated (token valid)");
 }
@@ -83,7 +66,7 @@ fn status_oauth_with_expired_token_shows_will_refresh() {
     };
     // Token received at t=100, expires in 60s → expires at t=160
     // now=200 → expired
-    let entry = make_entry_with_token(Some(60), Some(100));
+    let entry = make_creds_with_token(Some(60), Some(100));
     let status = determine_status(&auth, Some(&entry), 200);
     assert_eq!(status, "authenticated (token expired — will refresh)");
 }
@@ -111,8 +94,8 @@ fn status_oauth_with_entry_but_no_token_response_shows_not_authenticated() {
         scope: None,
         redirect_uri: None,
     };
-    let entry = make_entry_without_token();
-    let status = determine_status(&auth, Some(&entry), 0);
+    let creds = make_creds_without_token();
+    let status = determine_status(&auth, Some(&creds), 0);
     assert_eq!(
         status,
         "not authenticated (run: agent mcp auth login <name>)"
@@ -128,7 +111,7 @@ fn status_oauth_with_token_no_expiry_info_shows_valid() {
         redirect_uri: None,
     };
     // Token with no expires_in and no received_at → assume valid
-    let entry = make_entry_with_token(None, None);
+    let entry = make_creds_with_token(None, None);
     let status = determine_status(&auth, Some(&entry), 999999);
     assert_eq!(status, "authenticated (token valid)");
 }

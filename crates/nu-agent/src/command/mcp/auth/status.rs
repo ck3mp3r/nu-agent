@@ -3,27 +3,28 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, Value};
 use oauth2::TokenResponse;
+use rmcp::transport::auth::StoredCredentials;
 
+use nu_agent_core::config::vault::Vault;
 use nu_agent_core::tools::mcp::config::{McpAuthConfig, McpConfig};
-use nu_agent_core::tools::mcp::credentials::{McpCredentialsEntry, McpCredentialsStore};
 
 use crate::plugin::AgentPlugin;
 
 /// Determine the authentication status string for a single MCP server.
 ///
 /// * `auth` — the server's auth configuration
-/// * `entry` — optional stored credentials entry (for OAuth servers)
+/// * `creds` — optional stored credentials (for OAuth servers)
 /// * `now` — current unix timestamp in seconds (injected for testability)
 pub(crate) fn determine_status(
     auth: &McpAuthConfig,
-    entry: Option<&McpCredentialsEntry>,
+    creds: Option<&StoredCredentials>,
     now: u64,
 ) -> String {
     match auth {
         McpAuthConfig::None => "no auth required".to_string(),
         McpAuthConfig::Bearer { .. } => "static token (from config)".to_string(),
         McpAuthConfig::OAuth { .. } => {
-            match entry.and_then(|e| e.stored_credentials.as_ref()) {
+            match creds {
                 Some(creds) if creds.token_response.is_some() => {
                     let is_expired = if let Some(token_response) = creds.token_response.as_ref()
                         && let Some(expires_in) = token_response.expires_in()
@@ -103,9 +104,8 @@ impl SimplePluginCommand for AgentAuthMcpStatus {
             LabeledError::new("Failed to load MCP config").with_label(msg, call.head)
         })?;
 
-        // 2. Load credential store
-        let credential_store = McpCredentialsStore::load()
-            .map_err(|e| LabeledError::new(format!("Failed to load credential store: {e}")))?;
+        // 2. Construct the vault
+        let vault = Vault::auto_detect();
 
         // 3. Build status rows
         let mut rows: Vec<Value> = Vec::new();
@@ -121,8 +121,8 @@ impl SimplePluginCommand for AgentAuthMcpStatus {
                 McpAuthConfig::OAuth { .. } => "oauth".to_string(),
             };
 
-            let entry = credential_store.entries.get(&server.name);
-            let status = determine_status(&server.auth, entry, now);
+            let creds = vault.get_mcp_credentials(&server.name).unwrap_or(None);
+            let status = determine_status(&server.auth, creds.as_ref(), now);
 
             let record = nu_protocol::record! {
                 "server" => Value::string(&server.name, call.head),

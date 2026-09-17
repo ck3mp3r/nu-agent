@@ -709,7 +709,7 @@ agent config init [--force]
 agent models sync
 agent models list [--provider <name>]
 
-# Provider auth (secrets.json)
+# Provider auth (OS keychain)
 agent provider auth login <name> [--api-key <key>]
 agent provider auth logout <name>
 agent provider auth status
@@ -763,7 +763,7 @@ The OAuth authorization-code flow with PKCE proceeds as follows:
 9. **Browser redirects** — the authorization server redirects to the callback server at `http://127.0.0.1:<random-port>/mcp/oauth/callback?code=...&state=...`.
 10. **Validate state** — the callback server verifies the `state` parameter matches the one sent (CSRF protection).
 11. **Exchange code for tokens** — sends the authorization code, `code_verifier`, and `redirect_uri` to the token endpoint. Receives `access_token`, `refresh_token`, and `expires_in`.
-12. **Save credentials** — stores tokens to `$XDG_DATA_HOME/nu-agent/mcp-auth.json` with `0600` permissions.
+12. **Save credentials** — stores the tokens in the OS keychain. When no keychain is available, the agent uses its file store instead.
 13. **Stop callback server** — shuts down the local HTTP server.
 
 On subsequent agent runs, the stored access token is used automatically. If expired, the refresh token is used to obtain a new access token without user interaction.

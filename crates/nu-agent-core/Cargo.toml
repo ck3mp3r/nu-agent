@@ -42,6 +42,7 @@ syntect = { workspace = true }
 unicodeit = { workspace = true }
 unicode-width = { workspace = true }
 fs2 = { workspace = true }
+keyring = { version = "4", default-features = false, features = ["v1", "apple-native-keyring-store", "zbus-secret-service-keyring-store"] }
 libloading = "0.9"
 tree-sitter = "0.26"
 tree-sitter-config = "0.26"

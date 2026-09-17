@@ -2,7 +2,6 @@ pub mod auth_error;
 pub mod circuit_breaker;
 pub mod client;
 pub mod config;
-pub mod credentials;
 pub mod namespaced;
 pub mod oauth_callback;
 pub mod runtime;
