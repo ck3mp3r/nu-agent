@@ -315,7 +315,9 @@ impl<W: Write> StderrUiRenderer<W> {
             }
             UiEvent::AssistantMessage { .. } => None,
             UiEvent::Stopped { reason } => {
-                if self.policy.quiet {
+                // An empty reason is a silent discard (provisional output from a
+                // retried model turn), not a user-visible stop.
+                if self.policy.quiet || reason.trim().is_empty() {
                     None
                 } else {
                     Some(style_text(
@@ -441,6 +443,23 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.clear_spinner_line();
                 self.spinner.stop();
                 self.active_tool_name = None;
+            }
+            UiEvent::Stopped { reason } if reason.trim().is_empty() => {
+                // Silent discard of provisional output from a retried model
+                // turn: reset the streaming state so the retry's text starts a
+                // fresh block instead of being sliced against the discarded
+                // provisional length.
+                if self.spinner.is_active() {
+                    self.clear_spinner_line();
+                    self.spinner.stop();
+                    self.active_tool_name = None;
+                }
+                if self.streaming_started {
+                    let _ = self.writer.write_all(b"\n");
+                    self.streaming_started = false;
+                    self.streaming_printed_len = 0;
+                    self.markdown_buffer.reset();
+                }
             }
             UiEvent::Stopped { .. } if self.spinner.is_active() => {
                 self.clear_spinner_line();

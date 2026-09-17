@@ -272,9 +272,16 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
     assert!(saw_completed, "TurnEvent::Completed must be published");
     // The llm channel: the LAST event is the Stopped reason on the cancel turn
     // (Warning → Stopped → Completed, with Stopped replacing AssistantMessage).
+    // The channel is drained only here, so a retry-heavy run can overflow the
+    // broadcast buffer; `Lagged` drops the OLDEST events, so skipping it keeps
+    // the last-sent event as the last one read.
     let mut llm_stopped = None;
-    while let Ok(event) = llm_rx.try_recv() {
-        llm_stopped = Some(event);
+    loop {
+        match llm_rx.try_recv() {
+            Ok(event) => llm_stopped = Some(event),
+            Err(crate::bus::TryRecvError::Lagged(_)) => continue,
+            Err(_) => break,
+        }
     }
     let llm_stopped =
         llm_stopped.ok_or("LlmEvent::Stopped must be published on the cancel path")?;

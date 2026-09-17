@@ -57,6 +57,14 @@ impl LlmState {
     ) -> bool {
         let trimmed = reason.trim();
         if trimmed.is_empty() {
+            // Silent discard: an empty reason signals that the in-progress
+            // streaming block is provisional output from a retried turn
+            // (rig's `ModelTurnRetried` contract). Remove the block instead
+            // of leaving it orphaned next to the retry's output.
+            if let Some(start) = store.assistant_stream_start {
+                store.truncate(start);
+                store.clear_assistant_projection_cache();
+            }
             store.assistant_stream_start = None;
             return false;
         }

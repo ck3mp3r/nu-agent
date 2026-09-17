@@ -8,7 +8,7 @@
 use futures::StreamExt;
 use std::sync::Arc;
 
-use crate::bus::{Bus, WarningEvent};
+use crate::bus::{Bus, LlmEvent, WarningEvent};
 use crate::config::defaults;
 use crate::conversation::state::memory::MemoryOf;
 use crate::hook::agent_hook::HookState;
@@ -482,6 +482,24 @@ where
                     text = fin.output().to_string();
                     usage = fin.usage();
                     messages = fin.messages().map(|h| h.to_vec());
+                }
+
+                // --- MODEL TURN RETRIED ---
+                // rig's contract: "Text and reasoning deltas emitted for this
+                // turn were provisional. A consumer should discard or visually
+                // reset output associated with `turn`." Reset the accumulated
+                // text and the delta flag so the retry's output overwrites
+                // cleanly, and signal the TUI to discard the provisional
+                // streaming block (empty reason = silent discard).
+                rig::agent::MultiTurnStreamItem::ModelTurnRetried { .. } => {
+                    deltas_emitted = false;
+                    text.clear();
+                    let _ = bus
+                        .llm()
+                        .send(LlmEvent::Stopped {
+                            reason: String::new(),
+                        })
+                        .await;
                 }
 
                 // MultiTurnStreamItem is #[non_exhaustive] — required wildcard arm.

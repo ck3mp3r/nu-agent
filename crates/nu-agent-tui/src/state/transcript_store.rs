@@ -283,6 +283,7 @@ impl TranscriptStore {
 
     pub(crate) fn truncate(&mut self, len: usize) {
         self.entries.truncate(len);
+        self.visual_info_dirty = true;
     }
 
     // endregion: --- Accessors

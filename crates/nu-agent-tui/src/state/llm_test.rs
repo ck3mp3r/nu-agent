@@ -489,15 +489,15 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     Ok(())
 }
 
-/// An empty Stopped reason is a no-op render-wise but still clears the
-/// streaming cursor so no later assistant message truncates the block.
+/// An empty Stopped reason silently discards the provisional streaming
+/// block: the in-progress assistant block is truncated and the streaming
+/// cursor resets.
 #[test]
 fn stopped_event_with_empty_reason_resets_stream_start() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = busy_state_with_clean_transcript();
     reduce_llm(&mut state, assistant_message("streamed block"));
     assert!(state.transcript.assistant_stream_start.is_some());
-    let before = state.transcript.entries.len();
 
     // -- Exec
     let changed = reduce_llm(
@@ -509,14 +509,94 @@ fn stopped_event_with_empty_reason_resets_stream_start() -> Result<()> {
 
     // -- Check
     assert!(!changed, "an empty reason renders nothing");
-    assert_eq!(
-        state.transcript.entries.len(),
-        before,
-        "an empty reason must not append entries"
+    assert!(
+        !state
+            .transcript
+            .entries
+            .iter()
+            .any(|entry| entry.role() == Role::Assistant),
+        "an empty reason must discard the provisional assistant block"
     );
     assert!(
         state.transcript.assistant_stream_start.is_none(),
         "Stopped must reset assistant_stream_start even for an empty reason"
+    );
+
+    Ok(())
+}
+
+/// An empty Stopped reason truncates the in-progress assistant block so the
+/// retry's output does not sit next to the provisional block.
+#[test]
+fn stopped_with_empty_reason_truncates_in_progress_block() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = busy_state_with_clean_transcript();
+    reduce_llm(&mut state, assistant_message("provisional text"));
+    let start = state
+        .transcript
+        .assistant_stream_start
+        .ok_or("stream should have set assistant_stream_start")?;
+    assert!(
+        state
+            .transcript
+            .entries
+            .iter()
+            .any(|entry| entry.role() == Role::Assistant
+                && entry.text().contains("provisional text")),
+        "the provisional block must exist before the discard"
+    );
+
+    // -- Exec
+    let changed = reduce_llm(
+        &mut state,
+        LlmEvent::Stopped {
+            reason: String::new(),
+        },
+    );
+
+    // -- Check
+    assert!(!changed, "a silent discard renders nothing");
+    assert_eq!(
+        state.transcript.entries.len(),
+        start,
+        "the provisional block must be truncated back to its start index"
+    );
+    assert!(
+        !state
+            .transcript
+            .entries
+            .iter()
+            .any(|entry| entry.role() == Role::Assistant),
+        "the provisional assistant block must be gone"
+    );
+    assert!(
+        state.transcript.assistant_stream_start.is_none(),
+        "the streaming cursor must reset"
+    );
+
+    Ok(())
+}
+
+/// An empty Stopped reason pushes neither a spacer nor a notice.
+#[test]
+fn stopped_with_empty_reason_does_not_push_notice() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = busy_state_with_clean_transcript();
+    assert!(state.transcript.entries.is_empty());
+
+    // -- Exec
+    let changed = reduce_llm(
+        &mut state,
+        LlmEvent::Stopped {
+            reason: String::new(),
+        },
+    );
+
+    // -- Check
+    assert!(!changed, "a silent discard renders nothing");
+    assert!(
+        state.transcript.entries.is_empty(),
+        "an empty reason must not push a spacer or notice"
     );
 
     Ok(())
