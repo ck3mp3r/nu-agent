@@ -389,8 +389,8 @@ impl CoreRuntime for ContextWindowRuntime {
     ) -> Result<Value, LabeledError> {
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         Ok(Value::nothing(span))
     }
@@ -510,14 +510,20 @@ impl ContextWindowUi {
         let ui_state_event_count = Arc::clone(&self.ui_state_event_count);
         let min_ui_state_events = self.min_ui_state_events;
 
-        let mut turn_rx = bus.turn().subscribe();
+        let mut ui_event_rx = bus.ui_event().subscribe();
         let mut ui_state_rx = bus.ui_state().subscribe();
-        let mut warning_rx = bus.warning().subscribe();
 
         self._bus_task = Some(tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Ok(_event) = turn_rx.recv() => {}
+                    Ok(event) = ui_event_rx.recv() => {
+                        match event {
+                            UiEvent::Warning { message } | UiEvent::TurnError { message } => {
+                                warnings.lock().expect("warnings lock").push(message);
+                            }
+                            _ => {}
+                        }
+                    }
                     Ok(event) = ui_state_rx.recv() => {
                         let count = ui_state_event_count.fetch_add(1, Ordering::SeqCst) + 1;
                         if let UiStateEvent::SetContextWindowMaxTokens(max_tokens) = event {
@@ -526,14 +532,6 @@ impl ContextWindowUi {
                         let empty = model_switch_requests.lock().expect("model switch lock").is_empty();
                         if empty && count > min_ui_state_events {
                             quit.store(true, Ordering::SeqCst);
-                        }
-                    }
-                    Ok(event) = warning_rx.recv() => {
-                        match event {
-                            crate::bus::WarningEvent::Message { message }
-                            | crate::bus::WarningEvent::TurnError { message } => {
-                                warnings.lock().expect("warnings lock").push(message);
-                            }
                         }
                     }
                     else => break,
@@ -568,8 +566,8 @@ impl CoreRuntime for TokenSeedingRuntime {
     ) -> Result<Value, LabeledError> {
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         Ok(Value::nothing(span))
     }
@@ -769,8 +767,8 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
     ) -> Result<Value, LabeledError> {
         let _ = self
             .bus
-            .tool()
-            .send(crate::bus::ToolEvent::Started {
+            .ui_event()
+            .send(UiEvent::ToolStarted {
                 name: "edit".to_string(),
                 source: "closure".to_string(),
                 arguments: "{}".to_string(),
@@ -778,8 +776,8 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
             .await;
         let _ = self
             .bus
-            .tool()
-            .send(crate::bus::ToolEvent::Completed {
+            .ui_event()
+            .send(UiEvent::ToolCompleted {
                 name: "edit".to_string(),
                 source: "closure".to_string(),
                 arguments: "{}".to_string(),
@@ -801,8 +799,8 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
             .await;
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 1 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 1 })
             .await;
         Ok(Value::nothing(span))
     }
@@ -845,8 +843,8 @@ impl CoreRuntime for CancelFirstRuntime {
         self.prompts.push(prompt);
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         if self.prompts.len() == 1 {
             return Err(LabeledError::new("LLM call cancelled"));
@@ -895,8 +893,8 @@ impl CoreRuntime for ErrorFirstRuntime {
         self.prompts.push(prompt);
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         if self.prompts.len() == 1 {
             return Err(LabeledError::new("API rate limit exceeded"));
@@ -990,10 +988,10 @@ impl CoreRuntime for PermissionGateRuntime {
             .insert(request_id.clone(), tx);
         let _ = self
             .bus
-            .permission()
-            .send(crate::bus::PermissionEvent::Requested {
+            .ui_event()
+            .send(UiEvent::PermissionRequested {
                 request_id: request_id.clone(),
-                context: Box::new(context),
+                context,
             })
             .await;
         self.requested.store(true, Ordering::SeqCst);
@@ -1003,12 +1001,12 @@ impl CoreRuntime for PermissionGateRuntime {
 
         if decision != PermissionDecision::Deny {
             self.side_effects.fetch_add(1, Ordering::SeqCst);
-            // Publish the tool-start to the bus tool channel directly, matching
-            // production where the hook publishes ToolEvent::Started.
+            // Publish the tool-start to the bus ui_event channel directly,
+            // matching production where the hook publishes UiEvent::ToolStarted.
             let _ = self
                 .bus
-                .tool()
-                .send(crate::bus::ToolEvent::Started {
+                .ui_event()
+                .send(UiEvent::ToolStarted {
                     name: "nu".to_string(),
                     source: "closure".to_string(),
                     arguments: r#"{"command":"echo hi"}"#.to_string(),
@@ -1020,8 +1018,8 @@ impl CoreRuntime for PermissionGateRuntime {
         // converts UiEvent::Completed), matching production.
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         self.finished.store(true, Ordering::SeqCst);
         self.active.store(false, Ordering::SeqCst);
@@ -1128,45 +1126,42 @@ impl PermissionOrderingUi {
         let quit = Arc::clone(&self.quit);
         let decision = self.decision;
 
-        let mut permission_rx = bus.permission().subscribe();
-        let mut turn_rx = bus.turn().subscribe();
-        let mut tool_rx = bus.tool().subscribe();
+        let mut ui_event_rx = bus.ui_event().subscribe();
 
         self._background_tasks.push(tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Ok(event) = permission_rx.recv() => {
-                        if let crate::bus::PermissionEvent::Requested { ref request_id, ref context } = event {
-                            request_seen.store(true, Ordering::SeqCst);
-                            pending_decisions.lock().expect("pending decisions lock").push_back(PermissionDecisionSubmission {
-                                request_id: request_id.clone(),
-                                decision,
-                                matched_rule_identity: context.matched_rule_identity.clone(),
-                            });
-                            events.lock().expect("events lock").push(UiEvent::PermissionRequested {
-                                request_id: request_id.clone(),
-                                context: context.as_ref().clone(),
-                            });
-                        }
-                        if let crate::bus::PermissionEvent::DecisionTimedOut { ref request_id } = event {
-                            events.lock().expect("events lock").push(UiEvent::PermissionDecisionTimedOut { request_id: request_id.clone() });
-                        }
-                        if let crate::bus::PermissionEvent::DecisionIgnored { ref request_id, ref reason } = event {
-                            events.lock().expect("events lock").push(UiEvent::PermissionDecisionIgnored { request_id: request_id.clone(), reason: reason.clone() });
-                        }
-                    }
-                    Ok(event) = turn_rx.recv() => {
-                        if let crate::bus::TurnEvent::Completed { .. } = event {
-                            quit.store(true, Ordering::SeqCst);
-                        }
-                    }
-                    Ok(event) = tool_rx.recv() => {
-                        if let crate::bus::ToolEvent::Started { name, source, arguments } = event {
-                            events.lock().expect("events lock").push(UiEvent::ToolStarted {
-                                name,
-                                source,
-                                arguments,
-                            });
+                    Ok(event) = ui_event_rx.recv() => {
+                        match event {
+                            UiEvent::PermissionRequested { request_id, context } => {
+                                request_seen.store(true, Ordering::SeqCst);
+                                pending_decisions.lock().expect("pending decisions lock").push_back(PermissionDecisionSubmission {
+                                    request_id: request_id.clone(),
+                                    decision,
+                                    matched_rule_identity: context.matched_rule_identity.clone(),
+                                });
+                                events.lock().expect("events lock").push(UiEvent::PermissionRequested {
+                                    request_id,
+                                    context,
+                                });
+                            }
+                            UiEvent::PermissionDecisionTimedOut { request_id } => {
+                                events.lock().expect("events lock").push(UiEvent::PermissionDecisionTimedOut { request_id });
+                            }
+                            UiEvent::PermissionDecisionIgnored { request_id, reason } => {
+                                events.lock().expect("events lock").push(UiEvent::PermissionDecisionIgnored { request_id, reason });
+                            }
+                            UiEvent::ToolStarted { name, source, arguments } => {
+                                events.lock().expect("events lock").push(UiEvent::ToolStarted {
+                                    name,
+                                    source,
+                                    arguments,
+                                });
+                            }
+                            UiEvent::Completed { .. } => {
+                                quit.store(true, Ordering::SeqCst);
+                            }
+                            _ => {}
                         }
                     }
                     else => break,
@@ -1254,14 +1249,14 @@ impl ModelPickerLaunchWhileActiveUi {
         let shared_actions = Arc::clone(&self.shared_actions);
         let expected_completions = self.expected_completions;
 
-        let mut turn_rx = bus.turn().subscribe();
+        let mut ui_event_rx = bus.ui_event().subscribe();
         let mut ui_state_rx = bus.ui_state().subscribe();
 
         self._bus_task = Some(tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Ok(event) = turn_rx.recv() => {
-                        if let crate::bus::TurnEvent::Completed { .. } = event {
+                    Ok(event) = ui_event_rx.recv() => {
+                        if let UiEvent::Completed { .. } = event {
                             let count = completed_count.fetch_add(1, Ordering::SeqCst) + 1;
                             if count >= expected_completions {
                                 quit.store(true, Ordering::SeqCst);
@@ -1337,8 +1332,8 @@ impl CoreRuntime for StartupHydrationRuntime {
     ) -> Result<Value, LabeledError> {
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         Ok(Value::nothing(span))
     }
@@ -1393,7 +1388,7 @@ crate::default_session!(StartupHydrationRuntime);
 async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() -> TResult {
     let bus = create_bus();
     let mut runtime = ToolDisplayOnlyRuntime { bus: bus.clone() };
-    let mut tool_rx = bus.tool().subscribe();
+    let mut ui_event_rx = bus.ui_event().subscribe();
 
     let value = run_single_turn(
         &mut runtime,
@@ -1407,16 +1402,11 @@ async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() -> 
 
     assert!(value.is_nothing());
 
-    // Drain the bus tool channel (events published by the runtime) and convert
-    // to UiEvent at the boundary.
+    // Drain the bus ui_event channel (events published by the runtime).
     let mut events = Vec::new();
     loop {
-        match tool_rx.try_recv() {
-            Ok(event) => {
-                if let Some(e) = Option::<UiEvent>::from(event) {
-                    events.push(e);
-                }
-            }
+        match ui_event_rx.try_recv() {
+            Ok(event) => events.push(event),
             Err(crate::bus::TryRecvError::Empty) => break,
             Err(crate::bus::TryRecvError::Lagged(_)) => continue,
             Err(crate::bus::TryRecvError::Closed) => break,
@@ -1817,7 +1807,7 @@ struct PermissionBridgeUi {
     event_tx: mpsc::Sender<OrchestratorEvent>,
     submitted: std::collections::VecDeque<String>,
     pending_decisions: Arc<Mutex<std::collections::VecDeque<PermissionDecisionSubmission>>>,
-    events: Arc<Mutex<Vec<crate::bus::PermissionEvent>>>,
+    events: Arc<Mutex<Vec<UiEvent>>>,
     quit: Arc<AtomicBool>,
     decision: PermissionDecision,
     _bus_task: Option<tokio::task::JoinHandle<()>>,
@@ -1843,25 +1833,25 @@ impl PermissionBridgeUi {
         let quit = Arc::clone(&self.quit);
         let decision = self.decision;
 
-        let mut permission_rx = bus.permission().subscribe();
-        let mut turn_rx = bus.turn().subscribe();
+        let mut ui_event_rx = bus.ui_event().subscribe();
 
         self._bus_task = Some(tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Ok(event) = permission_rx.recv() => {
+                    Ok(event) = ui_event_rx.recv() => {
                         events.lock().expect("events lock").push(event.clone());
-                        if let crate::bus::PermissionEvent::Requested { ref request_id, ref context } = event {
-                            pending_decisions.lock().expect("pending decisions lock").push_back(PermissionDecisionSubmission {
-                                request_id: request_id.clone(),
-                                decision,
-                                matched_rule_identity: context.matched_rule_identity.clone(),
-                            });
-                        }
-                    }
-                    Ok(event) = turn_rx.recv() => {
-                        if let crate::bus::TurnEvent::Completed { .. } = event {
-                            quit.store(true, Ordering::SeqCst);
+                        match event {
+                            UiEvent::PermissionRequested { request_id, context } => {
+                                pending_decisions.lock().expect("pending decisions lock").push_back(PermissionDecisionSubmission {
+                                    request_id,
+                                    decision,
+                                    matched_rule_identity: context.matched_rule_identity.clone(),
+                                });
+                            }
+                            UiEvent::Completed { .. } => {
+                                quit.store(true, Ordering::SeqCst);
+                            }
+                            _ => {}
                         }
                     }
                     else => break,
@@ -1936,8 +1926,8 @@ async fn permission_flow_reaches_bus_through_worker_bridge() -> TResult {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, crate::bus::PermissionEvent::Requested { .. })),
-        "permission resolver must publish a PermissionEvent::Requested to the permission bus"
+            .any(|event| matches!(event, UiEvent::PermissionRequested { .. })),
+        "permission resolver must publish a UiEvent::PermissionRequested to the ui_event bus"
     );
     Ok(())
 }
@@ -1959,15 +1949,15 @@ impl CoreRuntime for PermissionTimeoutIgnoredRuntime {
     ) -> Result<Value, LabeledError> {
         let _ = self
             .bus
-            .permission()
-            .send(crate::bus::PermissionEvent::DecisionTimedOut {
+            .ui_event()
+            .send(UiEvent::PermissionDecisionTimedOut {
                 request_id: self.request_id.clone(),
             })
             .await;
         let _ = self
             .bus
-            .permission()
-            .send(crate::bus::PermissionEvent::DecisionIgnored {
+            .ui_event()
+            .send(UiEvent::PermissionDecisionIgnored {
                 request_id: self.request_id.clone(),
                 reason: "decision_channel_closed".to_string(),
             })
@@ -1976,8 +1966,8 @@ impl CoreRuntime for PermissionTimeoutIgnoredRuntime {
         // converts UiEvent::Completed), matching production.
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         Ok(Value::nothing(span))
     }
@@ -2050,14 +2040,14 @@ async fn permission_timeout_and_ignored_reach_bus_through_worker_bridge() -> TRe
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, crate::bus::PermissionEvent::DecisionTimedOut { .. })),
-        "worker bridge must forward PermissionEvent::DecisionTimedOut to the permission bus"
+            .any(|event| matches!(event, UiEvent::PermissionDecisionTimedOut { .. })),
+        "worker bridge must forward UiEvent::PermissionDecisionTimedOut to the ui_event bus"
     );
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, crate::bus::PermissionEvent::DecisionIgnored { .. })),
-        "worker bridge must forward PermissionEvent::DecisionIgnored to the permission bus"
+            .any(|event| matches!(event, UiEvent::PermissionDecisionIgnored { .. })),
+        "worker bridge must forward UiEvent::PermissionDecisionIgnored to the ui_event bus"
     );
     Ok(())
 }
@@ -2142,7 +2132,7 @@ async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_pr
     let block_first_turn = Arc::new(AtomicBool::new(false));
     let runtime = LongRunningRuntime::new(Arc::clone(&block_first_turn)).with_bus(bus.clone());
     let ui = FakeInteractiveUi::with_prompts(&["first"])
-        .with_min_bus_events(3)
+        .with_min_bus_events(2)
         .with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
@@ -2300,8 +2290,8 @@ impl CoreRuntime for McpToggleRuntime {
     ) -> Result<Value, LabeledError> {
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         Ok(Value::nothing(span))
     }
@@ -2368,8 +2358,8 @@ impl CoreRuntime for FailingMcpToggleRuntime {
     ) -> Result<Value, LabeledError> {
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         Ok(Value::nothing(span))
     }
@@ -2440,8 +2430,8 @@ impl CoreRuntime for SequencedMcpToggleRuntime {
     ) -> Result<Value, LabeledError> {
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         Ok(Value::nothing(span))
     }
@@ -3284,8 +3274,8 @@ impl CoreRuntime for CancellableBlockingRuntime {
                         self.cancelled.store(true, Ordering::SeqCst);
                         let _ = self
                             .bus
-                            .turn()
-                            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+                            .ui_event()
+                            .send(UiEvent::Completed { tool_calls: 0 })
                             .await;
                         return Err(LabeledError::new("LLM call cancelled"));
                     }
@@ -3299,8 +3289,8 @@ impl CoreRuntime for CancellableBlockingRuntime {
         }
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         Ok(Value::nothing(Span::test_data()))
     }

@@ -7,17 +7,15 @@
 //! no trait objects. A crossfire backend can be added later as another enum
 //! variant without changing the public surface.
 //!
-//! Level 2 use-case aliases (e.g. [`ToolTx`], [`LlmRx`]) live at the bottom of
-//! this module so the topology choice for each channel lives in one place.
+//! Level 2 use-case aliases (e.g. [`TurnTx`], [`UiEventRx`]) live at the bottom
+//! of this module so the topology choice for each channel lives in one place.
 
 use std::future::Future;
 
 use crate::orchestrator::UiStateEvent;
+use crate::protocol::event::UiEvent;
 
-use super::events::{
-    CancelEvent, CompactionEvent, ExternalEvent, LlmEvent, PermissionEvent, SessionEvent,
-    ToolEvent, TurnEvent, WarningEvent,
-};
+use super::events::{CancelEvent, CompactionEvent, ExternalEvent, SessionEvent, TurnEvent};
 
 // region:    --- Types
 
@@ -384,14 +382,6 @@ impl<M: Send + 'static, T: Metrics + Unpin> Future for OneshotRx<M, T> {
 pub type CancelTx = BroadcastTx<CancelEvent>;
 /// Cancel channel receiver.
 pub type CancelRx = BroadcastRx<CancelEvent>;
-/// Tool lifecycle channel.
-pub type ToolTx = BroadcastTx<ToolEvent>;
-/// Tool lifecycle channel receiver.
-pub type ToolRx = BroadcastRx<ToolEvent>;
-/// LLM lifecycle channel.
-pub type LlmTx = BroadcastTx<LlmEvent>;
-/// LLM lifecycle channel receiver.
-pub type LlmRx = BroadcastRx<LlmEvent>;
 /// Turn lifecycle channel.
 pub type TurnTx = BroadcastTx<TurnEvent>;
 /// Turn lifecycle channel receiver.
@@ -408,17 +398,13 @@ pub type ExternalRx = BroadcastRx<ExternalEvent>;
 pub type CompactionTx = BroadcastTx<CompactionEvent>;
 /// Compaction lifecycle channel receiver.
 pub type CompactionRx = BroadcastRx<CompactionEvent>;
-/// Warning channel.
-pub type WarningTx = BroadcastTx<WarningEvent>;
-/// Warning channel receiver.
-pub type WarningRx = BroadcastRx<WarningEvent>;
-/// Permission lifecycle channel.
-pub type PermissionTx = BroadcastTx<PermissionEvent>;
-/// Permission lifecycle channel receiver.
-pub type PermissionRx = BroadcastRx<PermissionEvent>;
 /// UI state channel.
 pub type UiStateTx = BroadcastTx<UiStateEvent>;
 /// UI state channel receiver.
 pub type UiStateRx = BroadcastRx<UiStateEvent>;
+/// Unified UI event channel.
+pub type UiEventTx = BroadcastTx<UiEvent>;
+/// Unified UI event channel receiver.
+pub type UiEventRx = BroadcastRx<UiEvent>;
 
 // endregion: --- Level 2 Aliases

@@ -140,6 +140,16 @@ pub enum PermissionEvent {
     },
 }
 
+// region:    --- Froms
+
+// These `From<XxxEvent> for Option<UiEvent>` impls are retained for the TUI
+// state dispatch layer and for test code. The TUI reconstructs typed events
+// from `UiEvent` fields in `dispatch_ui_event` (reducer.rs) and passes them to
+// the state-level reducers; tests construct the typed enums directly. Only
+// `From<CompactionEvent>` still has a production caller (the TTY drain task in
+// mode_execute.rs). Do not remove the others without first migrating the TUI
+// state layer off the typed enums.
+
 impl From<ToolEvent> for Option<UiEvent> {
     fn from(event: ToolEvent) -> Self {
         match event {

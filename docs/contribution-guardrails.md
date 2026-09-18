@@ -106,3 +106,37 @@ Tests/docs before review:
   - `crates/nu-agent-tui/src/runtime/test.rs`
 - [ ] Update `docs/usage.md` when user-visible behavior changes.
 - [ ] Update this page when introducing/relaxing guardrails.
+
+## 6) Bus channel topology and UI event dispatch
+
+`Bus` (`crates/nu-agent-core/src/bus/hub.rs`) exposes these channels:
+
+| Channel | Event type | Role |
+|---|---|---|
+| `ui_event` | `UiEvent` | **Single channel for UI-facing events.** All tool, LLM, warning, permission, compaction, and turn-completion events reach the TUI here. |
+| `ui_state` | `UiStateEvent` | UI chrome state (model identity, MCP status, context window). |
+| `turn` | `TurnEvent` | Control-plane turn lifecycle: `Started` and `TaskCompleted` (A2A). |
+| `cancel` | `CancelEvent` | Cancellation requests. |
+| `compaction` | `CompactionEvent` | Compaction lifecycle. |
+| `session` | `SessionEvent` | Session lifecycle. |
+| `external` | `ExternalEvent` | External (A2A) prompt intake. |
+
+The typed event enums `ToolEvent`, `LlmEvent`, `WarningEvent`, and `PermissionEvent`
+(`crates/nu-agent-core/src/bus/events.rs`) are **not bus channels**. They are internal
+dispatch types in the TUI state layer. `dispatch_ui_event`
+(`crates/nu-agent-tui/src/interaction/reducer.rs`) reconstructs them from `UiEvent`
+fields and passes them to the domain reducers (`dispatch_tool_event`,
+`dispatch_llm_event`, `dispatch_turn_event`, `status.reduce_warning_event`,
+`permission.reduce_permission_event`).
+
+Permission display flows through `dispatch_ui_event`, not the render loop:
+
+- `UiEvent::PermissionRequested` is handled in `dispatch_ui_event`, which calls
+  `apply_permission_request_display` and then `permission.reduce_permission_event`.
+- The render loop only reads the resulting state; it does not subscribe to a
+  dedicated permission channel.
+- `InteractivePermissionResolver` publishes `UiEvent::PermissionRequested` on
+  `bus.ui_event()` and awaits the decision on a oneshot channel.
+
+Do not add per-category bus channels for tool, LLM, warning, or permission events.
+Route them through `ui_event`.

@@ -233,8 +233,8 @@ where
 
             let outcome = if let Some(pending) = self.interactive_pending.as_ref() {
                 // TUI mode: construct InteractivePermissionResolver. The resolver owns
-                // a clone of the shared bus and publishes `PermissionEvent` on
-                // `bus.permission()` directly. No UI channel is threaded through the
+                // a clone of the shared bus and publishes `UiEvent::PermissionRequested`
+                // on `bus.ui_event()` directly. No UI channel is threaded through the
                 // executor; the turn's drain loop creates its own channel internally
                 // and terminates when the prompt resolves.
                 let resolver = InteractivePermissionResolver::new(

@@ -6,9 +6,9 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::channel::{CancelTx, ChannelResult, PermissionTx};
-use super::events::{CancelEvent, PermissionEvent};
-use crate::protocol::event::PermissionRequestContext;
+use super::channel::{CancelTx, ChannelResult, UiEventTx};
+use super::events::CancelEvent;
+use crate::protocol::event::{PermissionRequestContext, UiEvent};
 
 // region:    --- Support
 
@@ -26,20 +26,20 @@ fn next_request_id() -> String {
 
 // region:    --- Domain Methods
 
-impl PermissionTx {
-    /// Publish a `PermissionEvent::Requested` and return the generated request ID.
+impl UiEventTx {
+    /// Publish a `UiEvent::PermissionRequested` and return the generated request ID.
     ///
-    /// Generates a fresh request ID, boxes the context, sends the event, and
-    /// returns the ID on success. On a send failure the error is returned and
-    /// no ID is handed back to the caller.
+    /// Generates a fresh request ID, sends the event with the unboxed context,
+    /// and returns the ID on success. On a send failure the error is returned
+    /// and no ID is handed back to the caller.
     pub async fn request_permission(
         &self,
         context: PermissionRequestContext,
     ) -> ChannelResult<String> {
         let request_id = next_request_id();
-        self.send(PermissionEvent::Requested {
+        self.send(UiEvent::PermissionRequested {
             request_id: request_id.clone(),
-            context: Box::new(context),
+            context,
         })
         .await?;
         Ok(request_id)

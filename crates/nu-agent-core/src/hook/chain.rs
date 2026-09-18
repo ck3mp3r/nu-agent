@@ -23,13 +23,12 @@ use rig::agent::{
 use rig::core::wasm_compat::WasmCompatSend;
 use rig::message::Message;
 
-use crate::bus::{
-    Bus, CancelEvent, CancelRx, CompactionEvent, LlmEvent, ToolEvent, TryRecvError, WarningEvent,
-};
+use crate::bus::{Bus, CancelEvent, CancelRx, CompactionEvent, TryRecvError};
 use crate::config::defaults;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::compaction::compactor::{NuCompactor, SummaryArtifact};
 use crate::conversation::turn::token_estimate::estimate_token_count;
+use crate::protocol::event::UiEvent;
 use crate::session::SessionStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
@@ -199,7 +198,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             if cancelled {
                 return CompletionCallAction::stop("Cancelled by user");
             }
-            let _ = bus.llm().send(LlmEvent::Started).await;
+            let _ = bus.ui_event().send(UiEvent::LlmStarted).await;
 
             // Compaction decision: patch the per-turn history when a marker
             // already summarizes the prefix, or when a new compaction is needed.
@@ -262,7 +261,10 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                      output after repeated steering. The run was stopped."
                 ));
             }
-            let _ = bus.llm().send(LlmEvent::AssistantMessage { text }).await;
+            let _ = bus
+                .ui_event()
+                .send(UiEvent::AssistantMessage { text })
+                .await;
             ObservationAction::continue_run()
         }
     }
@@ -318,8 +320,8 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             }
 
             let _ = bus
-                .tool()
-                .send(ToolEvent::Started {
+                .ui_event()
+                .send(UiEvent::ToolStarted {
                     name: tool_name_owned.clone(),
                     source: source_owned.clone(),
                     arguments: args_owned.clone(),
@@ -337,8 +339,8 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                     // here so it doesn't linger.
                     permission.take_previewed(&tool_name_owned, &args_owned);
                     let _ = bus
-                        .tool()
-                        .send(ToolEvent::Completed {
+                        .ui_event()
+                        .send(UiEvent::ToolCompleted {
                             name: tool_name_owned,
                             source: source_owned,
                             arguments: args_owned,
@@ -432,8 +434,8 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
 
         async move {
             let _ = bus
-                .tool()
-                .send(ToolEvent::Completed {
+                .ui_event()
+                .send(UiEvent::ToolCompleted {
                     name: tool_name_owned.clone(),
                     source: source_owned,
                     arguments: args_owned.clone(),
@@ -481,7 +483,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             // Store the real API token count for the compaction threshold check.
             // Mutex poison is a fatal internal inconsistency — panicking is correct.
             *self.last_total_tokens.lock().unwrap() = Some(usage.total_tokens);
-            Some(LlmEvent::Completed {
+            Some(UiEvent::LlmCompleted {
                 response_chars,
                 tool_calls,
                 input_tokens: usage.input_tokens,
@@ -493,8 +495,8 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         };
         let bus = self.bus.clone();
         async move {
-            if let Some(event) = completed {
-                let _ = bus.llm().send(event).await;
+            if let Some(ui) = completed {
+                let _ = bus.ui_event().send(ui).await;
             }
             ObservationAction::continue_run()
         }
@@ -522,8 +524,8 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                 match detection {
                     RepetitionDetection::First(message) | RepetitionDetection::Backoff(message) => {
                         let _ = bus
-                            .warning()
-                            .send(WarningEvent::Message {
+                            .ui_event()
+                            .send(UiEvent::Warning {
                                 message: message.clone(),
                             })
                             .await;
@@ -554,8 +556,8 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         let bus = self.bus.clone();
         async move {
             let _ = bus
-                .warning()
-                .send(WarningEvent::Message {
+                .ui_event()
+                .send(UiEvent::Warning {
                     message: feedback.clone(),
                 })
                 .await;

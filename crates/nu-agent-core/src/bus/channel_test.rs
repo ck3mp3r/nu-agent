@@ -1,9 +1,11 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::channel::{BroadcastRx, BroadcastTx, Metrics, MpscRx, MpscTx, OneshotRx, OneshotTx};
+use super::channel::{
+    BroadcastRx, BroadcastTx, Metrics, MpscRx, MpscTx, OneshotRx, OneshotTx, UiEventRx,
+};
 use crate::bus::create_bus;
-use crate::bus::events::ToolEvent;
+use crate::protocol::event::UiEvent;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -156,11 +158,11 @@ async fn custom_non_default_hook_is_called() -> Result<()> {
 async fn bus_default_uses_no_metrics() -> Result<()> {
     // -- Setup & Fixtures
     let bus = create_bus();
-    let mut rx = bus.tool().subscribe();
+    let mut rx = bus.ui_event().subscribe();
 
     // -- Exec
-    bus.tool()
-        .send(ToolEvent::Started {
+    bus.ui_event()
+        .send(UiEvent::ToolStarted {
             name: "read".into(),
             source: "user".into(),
             arguments: "{}".into(),
@@ -170,8 +172,32 @@ async fn bus_default_uses_no_metrics() -> Result<()> {
 
     // -- Check
     assert!(
-        matches!(event, ToolEvent::Started { .. }),
+        matches!(event, UiEvent::ToolStarted { .. }),
         "default bus channels must still send and receive"
+    );
+    Ok(())
+}
+
+// -- UiEvent FIFO
+
+#[tokio::test]
+async fn ui_event_channel_preserves_fifo_order() -> Result<()> {
+    // -- Setup & Fixtures
+    let bus = create_bus();
+    let mut rx: UiEventRx = bus.ui_event().subscribe();
+
+    // -- Exec
+    bus.ui_event().send(UiEvent::Tick).await?;
+    bus.ui_event().send(UiEvent::LlmStarted).await?;
+    let first = rx.recv().await?;
+    let second = rx.recv().await?;
+
+    // -- Check
+    assert_eq!(first, UiEvent::Tick, "first event must arrive first");
+    assert_eq!(
+        second,
+        UiEvent::LlmStarted,
+        "second event must arrive second"
     );
     Ok(())
 }

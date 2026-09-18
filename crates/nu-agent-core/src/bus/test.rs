@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::event::UiEvent;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -26,11 +27,11 @@ async fn publish_cancel_reaches_subscriber() -> Result<()> {
 #[tokio::test]
 async fn publish_tool_reaches_multiple_subscribers() -> Result<()> {
     let bus = create_bus();
-    let mut rx1 = bus.tool().subscribe();
-    let mut rx2 = bus.tool().subscribe();
+    let mut rx1 = bus.ui_event().subscribe();
+    let mut rx2 = bus.ui_event().subscribe();
 
-    bus.tool()
-        .send(ToolEvent::Started {
+    bus.ui_event()
+        .send(UiEvent::ToolStarted {
             name: "read".into(),
             source: "user".into(),
             arguments: "{}".into(),
@@ -49,11 +50,11 @@ async fn publish_tool_reaches_multiple_subscribers() -> Result<()> {
         .map_err(|_| "second subscriber should receive")?;
 
     match (received1, received2) {
-        (ToolEvent::Started { name: n1, .. }, ToolEvent::Started { name: n2, .. }) => {
+        (UiEvent::ToolStarted { name: n1, .. }, UiEvent::ToolStarted { name: n2, .. }) => {
             assert_eq!(n1, "read");
             assert_eq!(n2, "read");
         }
-        _ => panic!("expected ToolEvent::Started on both subscribers"),
+        _ => panic!("expected UiEvent::ToolStarted on both subscribers"),
     }
     Ok(())
 }
@@ -63,12 +64,12 @@ async fn subscriber_only_receives_its_channel() {
     let bus = create_bus();
     let mut cancel_rx = bus.cancel().subscribe();
 
-    // No subscriber on the tool channel, so the send returns a SendError
+    // No subscriber on the ui_event channel, so the send returns a SendError
     // (broadcast drops the message when there are zero receivers). That is
     // expected — the assertion is that the cancel subscriber never sees it.
     let _ = bus
-        .tool()
-        .send(ToolEvent::Started {
+        .ui_event()
+        .send(UiEvent::ToolStarted {
             name: "write".into(),
             source: "system".into(),
             arguments: "{}".into(),

@@ -285,13 +285,9 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
     live_terminal: &mut Option<&mut ratatui::Terminal<B>>,
     mut channels: RenderLoopChannels,
 ) {
-    let mut tool_rx = bus.tool().subscribe();
-    let mut llm_rx = bus.llm().subscribe();
-    let mut warning_rx = bus.warning().subscribe();
+    let mut ui_event_rx = bus.ui_event().subscribe();
     let mut compaction_rx = bus.compaction().subscribe();
-    let mut turn_rx = bus.turn().subscribe();
     let mut session_rx = bus.session().subscribe();
-    let mut permission_rx = bus.permission().subscribe();
     let mut ui_state_rx = bus.ui_state().subscribe();
     let mut render_timer = tokio::time::interval(std::time::Duration::from_millis(80));
 
@@ -326,39 +322,9 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
                 coordinator.mark_render_needed();
                 let _ = coordinator.render_if_needed(live_terminal);
             }
-            ok = tool_rx.recv() => {
-                if let Ok(event) = ok {
-                    coordinator.reduce_tool_event(event);
-                    coordinator.mark_render_needed();
-                    let _ = coordinator.render_if_needed(live_terminal);
-                }
-            }
-            ok = llm_rx.recv() => {
-                if let Ok(event) = ok {
-                    coordinator.reduce_llm_event(event);
-                    coordinator.mark_render_needed();
-                    let _ = coordinator.render_if_needed(live_terminal);
-                }
-            }
-            ok = warning_rx.recv() => {
+            ok = ui_event_rx.recv() => {
                 if let Ok(event) = ok
-                    && coordinator.reduce_warning_event(event)
-                {
-                    coordinator.mark_render_needed();
-                    let _ = coordinator.render_if_needed(live_terminal);
-                }
-            }
-            ok = compaction_rx.recv() => {
-                if let Ok(event) = ok
-                    && coordinator.reduce_compaction_event(event)
-                {
-                    coordinator.mark_render_needed();
-                    let _ = coordinator.render_if_needed(live_terminal);
-                }
-            }
-            ok = turn_rx.recv() => {
-                if let Ok(event) = ok
-                    && coordinator.reduce_turn_event(event)
+                    && coordinator.reduce_ui_event(event)
                 {
                     // A turn completion (or failure) clears the active prompt. Drain
                     // any prompts stacked during the turn into PromptSubmitted events
@@ -378,6 +344,14 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
                     let _ = coordinator.render_if_needed(live_terminal);
                 }
             }
+            ok = compaction_rx.recv() => {
+                if let Ok(event) = ok
+                    && coordinator.reduce_compaction_event(event)
+                {
+                    coordinator.mark_render_needed();
+                    let _ = coordinator.render_if_needed(live_terminal);
+                }
+            }
             ok = session_rx.recv() => {
                 // Session lifecycle events are not rendered in the TUI; drain only.
                 let _ = ok;
@@ -387,22 +361,6 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
                     coordinator.reduce_ui_state_event(event);
                     coordinator.mark_render_needed();
                     let _ = coordinator.render_if_needed(live_terminal);
-                }
-            }
-            ok = permission_rx.recv() => {
-                if let Ok(event) = ok {
-                    if let nu_agent_core::bus::PermissionEvent::Requested { context, .. } = &event {
-                        crate::interaction::reducer::apply_permission_request_display(
-                            &mut coordinator.state,
-                            context,
-                        );
-                    }
-                    if coordinator.state.permission.reduce_permission_event(event) {
-                        coordinator.state.scroll.scroll_transcript_to_bottom();
-                        coordinator.state.ensure_invariants();
-                        coordinator.mark_render_needed();
-                        let _ = coordinator.render_if_needed(live_terminal);
-                    }
                 }
             }
             _ = channels.branch_rx.recv() => {

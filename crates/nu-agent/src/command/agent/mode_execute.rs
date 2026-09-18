@@ -245,8 +245,10 @@ pub(crate) async fn run_tui_mode(
                             log::warn!("auto-complete failed for task {task_id}: {e}");
                         }
                     }
-                    Ok(TurnEvent::Completed { .. }) => {}
                     Ok(TurnEvent::Started { .. }) => {}
+                    // `TurnEvent::Completed` is no longer sent on the turn
+                    // channel (it moved to `ui_event`); ignore it.
+                    Ok(_) => {}
                     Err(nu_agent_core::bus::ChannelError::Lagged { .. }) => {}
                     Err(nu_agent_core::bus::ChannelError::Closed) => break,
                     Err(_) => {}
@@ -418,11 +420,10 @@ pub(crate) async fn run_stderr_mode(
 /// renderer and mapping SIGINT/cancel to a `CancelEvent` on the bus.
 ///
 /// Core no longer threads a `ProgressUi` through the turn; it publishes domain
-/// events (tool/LLM/turn/warning/compaction/permission) on the shared `Bus`.
-/// This helper subscribes to those channels, converts each event to a `UiEvent`
-/// at the boundary, and emits it on the stderr renderer while the turn runs.
-/// It also bridges the user's Ctrl+C (via `cancel_flag`) into a `CancelEvent`
-/// on `bus.cancel()`.
+/// events on the shared `Bus`. This helper subscribes to `ui_event` and
+/// `compaction`, emits each event on the stderr renderer while the turn runs,
+/// and bridges the user's Ctrl+C (via `cancel_flag`) into a `CancelEvent` on
+/// `bus.cancel()`.
 async fn run_stderr_turn<R: nu_agent_core::renderer::UiRenderer + Send + 'static>(
     runtime_impl: &mut AgentConversationRuntime,
     renderer: R,
@@ -457,37 +458,41 @@ async fn run_stderr_turn<R: nu_agent_core::renderer::UiRenderer + Send + 'static
     });
 
     // Drain task: subscribe to the bus channels the turn publishes on and forward
-    // each event to the shared renderer (converted to `UiEvent` at the boundary).
-    // Runs concurrently with the turn so events stream in real time.
+    // each event to the shared renderer. UI events arrive as `UiEvent` already;
+    // compaction events convert at the boundary. Runs concurrently with the turn
+    // so events stream in real time.
     let drain_shared = Arc::clone(&shared);
     let drain_stop = Arc::clone(&stop);
     let drain_bus = bus.clone();
     runtime_impl.spawn(async move {
-        let mut tool_rx = drain_bus.tool().subscribe();
-        let mut llm_rx = drain_bus.llm().subscribe();
-        let mut turn_rx = drain_bus.turn().subscribe();
-        let mut warning_rx = drain_bus.warning().subscribe();
+        let mut ui_rx = drain_bus.ui_event().subscribe();
         let mut compaction_rx = drain_bus.compaction().subscribe();
-        let mut permission_rx = drain_bus.permission().subscribe();
         // Emit a periodic Tick so the stderr spinner animates while the turn
         // runs (the renderer's SystemTickGate throttles it).
-        let mut tick_interval = tokio::time::interval(std::time::Duration::from_millis(16));
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(16));
         loop {
             if drain_stop.load(AtomicOrdering::SeqCst) {
                 break;
             }
-            // Drain all channels each iteration; emit converted events. Each
-            // channel is handled explicitly because the receiver types differ.
-            drain_channel(&mut tool_rx, &drain_shared);
-            drain_channel(&mut llm_rx, &drain_shared);
-            drain_channel(&mut turn_rx, &drain_shared);
-            drain_channel(&mut warning_rx, &drain_shared);
-            drain_channel(&mut compaction_rx, &drain_shared);
-            drain_channel(&mut permission_rx, &drain_shared);
-            // Tick the spinner on a fixed cadence.
-            tick_interval.tick().await;
-            if let Ok(mut guard) = drain_shared.lock() {
-                guard.emit(&UiEvent::Tick);
+            tokio::select! {
+                Ok(event) = ui_rx.recv() => {
+                    if let Ok(mut guard) = drain_shared.lock() {
+                        guard.emit(&event);
+                    }
+                }
+                ok = compaction_rx.recv() => {
+                    if let Ok(event) = ok
+                        && let Some(ui) = Option::<UiEvent>::from(event)
+                        && let Ok(mut guard) = drain_shared.lock()
+                    {
+                        guard.emit(&ui);
+                    }
+                }
+                _ = tick.tick() => {
+                    if let Ok(mut guard) = drain_shared.lock() {
+                        guard.emit(&UiEvent::Tick);
+                    }
+                }
             }
         }
     });
@@ -506,32 +511,4 @@ async fn run_stderr_turn<R: nu_agent_core::renderer::UiRenderer + Send + 'static
     }
 
     result
-}
-
-/// Drain a single broadcast channel, forwarding each event that converts to a
-/// `Some(UiEvent)` to the shared stderr renderer. `Empty` ends the drain;
-/// `Lagged` skips to the next event; `Closed` ends the drain.
-fn drain_channel<T, R>(
-    rx: &mut nu_agent_core::bus::BroadcastRx<T>,
-    renderer: &Arc<std::sync::Mutex<R>>,
-) where
-    Option<nu_agent_core::protocol::event::UiEvent>: From<T>,
-    T: Clone + Send + 'static,
-    R: nu_agent_core::renderer::UiRenderer,
-{
-    loop {
-        match rx.try_recv() {
-            Ok(event) => {
-                if let Some(ui_event) =
-                    Option::<nu_agent_core::protocol::event::UiEvent>::from(event)
-                    && let Ok(mut guard) = renderer.lock()
-                {
-                    guard.emit(&ui_event);
-                }
-            }
-            Err(nu_agent_core::bus::TryRecvError::Empty) => break,
-            Err(nu_agent_core::bus::TryRecvError::Lagged(_)) => continue,
-            Err(nu_agent_core::bus::TryRecvError::Closed) => break,
-        }
-    }
 }

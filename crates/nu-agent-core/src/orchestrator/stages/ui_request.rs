@@ -1,9 +1,10 @@
 use std::collections::VecDeque;
 
-use crate::bus::{SessionEvent, WarningEvent};
+use crate::bus::SessionEvent;
 use crate::orchestrator::stages::{OrchestrationContext, UiRequestHandler};
 use crate::orchestrator::{UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand};
 use crate::protocol::contracts::McpUsabilityState;
+use crate::protocol::event::UiEvent;
 
 /// Handles UI requests (model/agent/session switch, MCP toggle, session refresh)
 /// with a concurrency policy: blocking requests (model/agent/session) require an
@@ -47,11 +48,7 @@ impl UiRequestStage {
                 }
                 _ => "Worker channel closed".to_string(),
             };
-            let _ = ctx
-                .bus
-                .warning()
-                .send(WarningEvent::Message { message })
-                .await;
+            let _ = ctx.bus.ui_event().send(UiEvent::Warning { message }).await;
         }
     }
 
@@ -88,8 +85,8 @@ impl UiRequestStage {
                 _ => {
                     let _ = ctx
                         .bus
-                        .warning()
-                        .send(WarningEvent::Message {
+                        .ui_event()
+                        .send(UiEvent::Warning {
                             message: "Worker channel closed".to_string(),
                         })
                         .await;
@@ -126,8 +123,8 @@ impl UiRequestHandler for UiRequestStage {
                 if *ctx.worker_active {
                     let _ = ctx
                         .bus
-                        .warning()
-                        .send(WarningEvent::Message {
+                        .ui_event()
+                        .send(UiEvent::Warning {
                             message: "Cannot switch session while worker is active".to_string(),
                         })
                         .await;
@@ -176,8 +173,8 @@ impl UiRequestHandler for UiRequestStage {
             UiRequestResponse::ModelSwitch(Err(msg)) => {
                 let _ = ctx
                     .bus
-                    .warning()
-                    .send(WarningEvent::Message { message: msg })
+                    .ui_event()
+                    .send(UiEvent::Warning { message: msg })
                     .await;
             }
             UiRequestResponse::AgentSwitch(Ok((
@@ -210,8 +207,8 @@ impl UiRequestHandler for UiRequestStage {
             UiRequestResponse::AgentSwitch(Err(msg)) => {
                 let _ = ctx
                     .bus
-                    .warning()
-                    .send(WarningEvent::Message { message: msg })
+                    .ui_event()
+                    .send(UiEvent::Warning { message: msg })
                     .await;
             }
             UiRequestResponse::SessionSwitch {
@@ -241,8 +238,8 @@ impl UiRequestHandler for UiRequestStage {
             } => {
                 let _ = ctx
                     .bus
-                    .warning()
-                    .send(WarningEvent::Message { message: msg })
+                    .ui_event()
+                    .send(UiEvent::Warning { message: msg })
                     .await;
             }
             _ => {}
@@ -339,8 +336,8 @@ impl UiRequestHandler for UiRequestStage {
             UiRequestResponse::SessionRefresh(Err(msg)) => {
                 let _ = ctx
                     .bus
-                    .warning()
-                    .send(WarningEvent::Message { message: msg })
+                    .ui_event()
+                    .send(UiEvent::Warning { message: msg })
                     .await;
             }
             _ => {}

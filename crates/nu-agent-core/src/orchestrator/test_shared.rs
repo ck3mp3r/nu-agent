@@ -5,7 +5,7 @@ pub(crate) use std::sync::{
 };
 pub(crate) use std::time::Duration;
 
-pub(crate) use crate::bus::{CompactionEvent, ExternalEvent, TurnEvent, WarningEvent, create_bus};
+pub(crate) use crate::bus::{CompactionEvent, ExternalEvent, create_bus};
 pub(crate) use crate::orchestrator::{
     InteractiveLoopConfig, OrchestratorEvent, UiRequest, UiStateEvent, run_interactive_loop_impl,
     run_single_turn,
@@ -15,7 +15,7 @@ pub(crate) use crate::protocol::{
         CoreRuntime, McpToggleRequest, McpUsabilityState, SharedUiAction, UiMessageSnapshot,
         UiMessageUsageSnapshot, UserInputUi,
     },
-    event::{PermissionDecision, ToolDisplay, ToolDisplaySection},
+    event::{PermissionDecision, ToolDisplay, ToolDisplaySection, UiEvent},
     mcp_management::McpManagement,
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
@@ -132,17 +132,22 @@ impl FakeInteractiveUi {
         let bus_event_count = Arc::new(AtomicUsize::new(0));
         let compaction_rx_count = Arc::new(AtomicUsize::new(0));
 
-        let mut turn_rx = bus.turn().subscribe();
+        let mut ui_event_rx = bus.ui_event().subscribe();
         let mut ui_state_rx = bus.ui_state().subscribe();
-        let mut warning_rx = bus.warning().subscribe();
         let mut compaction_rx = bus.compaction().subscribe();
 
         self._bus_task = Some(tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Ok(event) = turn_rx.recv() => {
+                    Ok(event) = ui_event_rx.recv() => {
                         let events = bus_event_count.fetch_add(1, Ordering::SeqCst) + 1;
-                        let _ = event;
+                        match event {
+                            UiEvent::Completed { .. } => {}
+                            UiEvent::Warning { message } | UiEvent::TurnError { message } => {
+                                warnings.lock().expect("warnings lock").push(message);
+                            }
+                            _ => {}
+                        }
                         let submitted_empty = submitted.lock().expect("submitted lock").is_empty();
                         let mcp_toggle_empty = mcp_toggle_requests.lock().expect("mcp toggle lock").is_empty();
                         let mcp_details_len = mcp_details.lock().expect("mcp details lock").len();
@@ -184,20 +189,6 @@ impl FakeInteractiveUi {
                                 let _ = last_total_tokens;
                             }
                             _ => {}
-                        }
-                        let submitted_empty = submitted.lock().expect("submitted lock").is_empty();
-                        let mcp_toggle_empty = mcp_toggle_requests.lock().expect("mcp toggle lock").is_empty();
-                        let mcp_details_len = mcp_details.lock().expect("mcp details lock").len();
-                        if submitted_empty && mcp_toggle_empty && mcp_details_len >= expected_mcp_updates && events > min_bus_events {
-                            quit.store(true, Ordering::SeqCst);
-                        }
-                    }
-                    Ok(event) = warning_rx.recv() => {
-                        let events = bus_event_count.fetch_add(1, Ordering::SeqCst) + 1;
-                        match event {
-                            WarningEvent::Message { message } | WarningEvent::TurnError { message } => {
-                                warnings.lock().expect("warnings lock").push(message);
-                            }
                         }
                         let submitted_empty = submitted.lock().expect("submitted lock").is_empty();
                         let mcp_toggle_empty = mcp_toggle_requests.lock().expect("mcp toggle lock").is_empty();
@@ -248,7 +239,7 @@ impl FakeInteractiveUi {
 
         move |event_tx| {
             let event_tx = event_tx.clone();
-            let mut turn_rx = bus.turn().subscribe();
+            let mut ui_event_rx = bus.ui_event().subscribe();
             tokio::spawn(async move {
                 // Send one turn-producing prompt (NotSlash) at a time, waiting
                 // for TurnCompleted before sending the next. Slash commands
@@ -318,8 +309,8 @@ impl FakeInteractiveUi {
                         break;
                     }
                     if turn_pending {
-                        while let Ok(event) = turn_rx.recv().await {
-                            if matches!(event, TurnEvent::Completed { .. }) {
+                        while let Ok(event) = ui_event_rx.recv().await {
+                            if matches!(event, UiEvent::Completed { .. }) {
                                 turn_pending = false;
                                 break;
                             }
@@ -363,8 +354,8 @@ impl CoreRuntime for FakeRuntime {
         // production (see executor.rs).
         let _ = self
             .bus
-            .turn()
-            .send(TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         Ok(Value::nothing(Span::test_data()))
     }
@@ -462,8 +453,8 @@ impl CoreRuntime for FakeValueRuntime {
         // converts UiEvent::Completed), matching production.
         let _ = self
             .bus
-            .turn()
-            .send(TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         Ok(Value::record(nu_protocol::Record::new(), span))
     }
@@ -564,8 +555,8 @@ impl CoreRuntime for LongRunningRuntime {
         // converts UiEvent::Completed), matching production.
         let _ = self
             .bus
-            .turn()
-            .send(TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         self.active.store(false, Ordering::SeqCst);
         Ok(Value::nothing(Span::test_data()))
@@ -662,28 +653,26 @@ impl ResponsiveInteractiveUi {
         let warnings = Arc::clone(&self.warnings);
         let expected_completions = self.expected_completions;
 
-        let mut turn_rx = bus.turn().subscribe();
-        let mut warning_rx = bus.warning().subscribe();
+        let mut ui_event_rx = bus.ui_event().subscribe();
 
         self._bus_task = Some(tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Ok(event) = turn_rx.recv() => {
-                        if active.load(Ordering::SeqCst) {
-                            active_pump_count.fetch_add(1, Ordering::SeqCst);
-                        }
-                        if let TurnEvent::Completed { .. } = event {
-                            let count = completed_count.fetch_add(1, Ordering::SeqCst) + 1;
-                            if count >= expected_completions {
-                                quit.store(true, Ordering::SeqCst);
-                            }
-                        }
-                    }
-                    Ok(event) = warning_rx.recv() => {
+                    Ok(event) = ui_event_rx.recv() => {
                         match event {
-                            WarningEvent::Message { message } | WarningEvent::TurnError { message } => {
+                            UiEvent::Completed { .. } => {
+                                if active.load(Ordering::SeqCst) {
+                                    active_pump_count.fetch_add(1, Ordering::SeqCst);
+                                }
+                                let count = completed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                                if count >= expected_completions {
+                                    quit.store(true, Ordering::SeqCst);
+                                }
+                            }
+                            UiEvent::Warning { message } | UiEvent::TurnError { message } => {
                                 warnings.lock().expect("warnings lock").push(message);
                             }
+                            _ => {}
                         }
                     }
                     else => break,

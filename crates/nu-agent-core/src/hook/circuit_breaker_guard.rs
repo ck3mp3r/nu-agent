@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 use rig::agent::ToolCallAction;
 use rig::tool::{ToolExecutionError, ToolResult};
 
-use crate::bus::{Bus, WarningEvent};
+use crate::bus::Bus;
+use crate::protocol::event::UiEvent;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::auth_error::McpAuthError;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
@@ -95,8 +96,8 @@ impl CircuitBreakerGuard {
                     log::error!("Failed to disable MCP server '{}': {}", server_name, e);
                 }
                 let _ = bus
-                    .warning()
-                    .send(WarningEvent::Message {
+                    .ui_event()
+                    .send(UiEvent::Warning {
                         message: format!(
                             "MCP server '{server_name}' disconnected — tools disabled. \
                          Re-enable via MCP panel."

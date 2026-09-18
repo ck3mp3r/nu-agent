@@ -393,7 +393,9 @@ fn handle_escape_confirm(
 /// `RuntimeCoordinator::reduce_*_event` and the transport drain) converge
 /// here or on the same domain reducers.
 pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
-    use nu_agent_core::bus::{CompactionEvent, LlmEvent, ToolEvent, TurnEvent};
+    use nu_agent_core::bus::{
+        CompactionEvent, LlmEvent, PermissionEvent, ToolEvent, TurnEvent, WarningEvent,
+    };
 
     match event {
         UiEvent::LlmStarted => crate::state::dispatch_llm_event(state, LlmEvent::Started),
@@ -499,11 +501,29 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
             crate::state::dispatch_turn_event(state, TurnEvent::Completed { tool_calls: 0 });
             true
         }
-        UiEvent::PermissionRequested { .. }
-        | UiEvent::PermissionDecisionSubmitted { .. }
+        UiEvent::PermissionRequested {
+            request_id,
+            context,
+        } => {
+            apply_permission_request_display(state, &context);
+            let changed = state
+                .permission
+                .reduce_permission_event(PermissionEvent::Requested {
+                    request_id,
+                    context: Box::new(context),
+                });
+            if changed {
+                state.scroll.scroll_transcript_to_bottom();
+                state.ensure_invariants();
+            }
+            true
+        }
+        UiEvent::Warning { message } => state
+            .status
+            .reduce_warning_event(WarningEvent::Message { message }),
+        UiEvent::PermissionDecisionSubmitted { .. }
         | UiEvent::PermissionDecisionTimedOut { .. }
-        | UiEvent::PermissionDecisionIgnored { .. }
-        | UiEvent::Warning { .. } => false,
+        | UiEvent::PermissionDecisionIgnored { .. } => false,
     }
 }
 

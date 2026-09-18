@@ -13,8 +13,9 @@
 
 use std::time::Duration;
 
-use nu_agent_core::bus::{Bus, ToolEvent};
+use nu_agent_core::bus::Bus;
 use nu_agent_core::orchestrator::OrchestratorEvent;
+use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::transcript::items::TranscriptEntryKind;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -35,8 +36,11 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 pub(crate) enum DriveEvent {
     /// Routed through the loop's terminal arm, like a real keypress.
     Key(TerminalEvent),
-    /// Published on the bus tool channel like a production stage does.
-    Tool(ToolEvent),
+    /// Published on the bus ui_event channel like a production stage does.
+    ///
+    /// Boxed because `UiEvent` is much larger than `TerminalEvent`; clippy's
+    /// `large_enum_variant` requires the indirection.
+    UiEvent(Box<UiEvent>),
 }
 
 /// Drives the real production render loop with a `TestBackend` terminal.
@@ -199,7 +203,9 @@ impl RenderLoopDriver {
         for event in events {
             let delivered = match event {
                 DriveEvent::Key(key) => terminal_tx.send(key.clone()).await.is_ok(),
-                DriveEvent::Tool(event) => self.bus.tool().send(event.clone()).await.is_ok(),
+                DriveEvent::UiEvent(event) => {
+                    self.bus.ui_event().send((**event).clone()).await.is_ok()
+                }
             };
             if !delivered {
                 // The loop has exited (for example on quit); later scripted
@@ -284,21 +290,21 @@ async fn render_loop_driver_test_backend_buffer_observes_sentinel_after_event() 
 }
 
 #[tokio::test]
-async fn render_loop_driver_routes_tool_event_through_bus_tool_arm() -> Result<()> {
+async fn render_loop_driver_routes_tool_event_through_bus_ui_event_arm() -> Result<()> {
     // -- Setup & Fixtures
     let mut driver = RenderLoopDriver::new(120, 30);
 
-    // -- Exec: publish a ToolEvent on the bus like production stages do.
+    // -- Exec: publish a UiEvent on the bus like production stages do.
     driver
-        .advance(&[DriveEvent::Tool(ToolEvent::Started {
+        .advance(&[DriveEvent::UiEvent(Box::new(UiEvent::ToolStarted {
             name: "sentinel_tool".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
-        })])
+        }))])
         .await?;
 
-    // -- Check: the loop's tool arm reduced the event (the transcript records
-    // the tool).
+    // -- Check: the loop's ui_event arm reduced the event (the transcript
+    // records the tool).
     assert!(
         driver
             .state()

@@ -32,7 +32,6 @@ use crate::{
     },
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use nu_agent_core::bus::{PermissionEvent, WarningEvent};
 use nu_agent_core::orchestrator::{OrchestratorEvent, UiStateEvent};
 use nu_agent_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
 use nu_agent_core::protocol::event::{
@@ -5549,14 +5548,14 @@ fn bottom_align_pads_content_when_shorter_than_viewport() {
 }
 
 #[test]
-fn reduce_warning_event_message_sets_status_line_and_marks_render_needed() {
+fn ui_event_warning_sets_status_line_and_marks_render_needed() {
     // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
     coordinator.set_render_needed(false);
 
     // -- Exec
-    // Mirrors the interactive loop's warning_rx arm: reduce, then mark on true.
-    let handled = coordinator.reduce_warning_event(WarningEvent::Message {
+    // Mirrors the interactive loop's ui_event arm: reduce, then mark on true.
+    let handled = coordinator.reduce_ui_event(UiEvent::Warning {
         message: "warned".to_string(),
     });
     if handled {
@@ -5573,14 +5572,14 @@ fn reduce_warning_event_message_sets_status_line_and_marks_render_needed() {
 }
 
 #[test]
-fn reduce_warning_event_turn_error_falls_through_to_transcript_and_finalize() {
+fn ui_event_turn_error_falls_through_to_transcript_and_finalize() {
     // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
     coordinator.state.phase = UiPhase::Busy;
     coordinator.state.input_locked = true;
 
     // -- Exec
-    let handled = coordinator.reduce_warning_event(WarningEvent::TurnError {
+    let handled = coordinator.reduce_ui_event(UiEvent::TurnError {
         message: "boom".to_string(),
     });
 
@@ -5689,16 +5688,16 @@ fn reduce_ui_state_event_non_status_variants_fall_back_to_app_state() {
 }
 
 #[test]
-fn permission_rx_caller_requested_applies_all_effects() {
+fn ui_event_permission_requested_applies_all_effects() {
     // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
     coordinator.set_render_needed(false);
     coordinator.state.status.message.set_message("idle");
     coordinator.state.scroll.following_tail = false;
 
-    let event = PermissionEvent::Requested {
+    let event = UiEvent::PermissionRequested {
         request_id: "ask-0000000000000001".to_string(),
-        context: Box::new(PermissionRequestContext {
+        context: PermissionRequestContext {
             tool: "nu".to_string(),
             source: "closure".to_string(),
             mode: Some("apply".to_string()),
@@ -5708,54 +5707,46 @@ fn permission_rx_caller_requested_applies_all_effects() {
             pattern: "*".to_string(),
             summary: "→ {\"command\":\"echo hi\"}".to_string(),
             pre_authorize_display: None,
-        }),
+        },
     };
 
     // -- Exec
-    // Mirrors the interactive loop's permission_rx arm: apply the display,
-    // then reduce, then apply the caller effects on true.
-    if let PermissionEvent::Requested { context, .. } = &event {
-        crate::interaction::reducer::apply_permission_request_display(
-            &mut coordinator.state,
-            context,
-        );
-    }
-    let handled = coordinator.state.permission.reduce_permission_event(event);
+    // Mirrors the render loop's ui_event arm: reduce, then mark the frame
+    // dirty when the reducer reports a change.
+    let handled = coordinator.reduce_ui_event(event);
     if handled {
-        coordinator.state.scroll.scroll_transcript_to_bottom();
-        coordinator.state.ensure_invariants();
         coordinator.mark_render_needed();
     }
 
     // -- Check
-    assert!(handled, "Requested must reduce to true");
+    assert!(handled, "PermissionRequested must reduce to true");
     assert_eq!(coordinator.state.status.message.status_line(), "idle");
     assert!(
         coordinator.state.scroll.following_tail,
-        "Requested must scroll the transcript to the bottom"
+        "PermissionRequested must scroll the transcript to the bottom"
     );
     assert!(
         coordinator.render_needed(),
-        "Requested must mark the frame dirty"
+        "PermissionRequested must mark the frame dirty"
     );
     assert!(
         coordinator.state.permission.has_prompt(),
-        "Requested must open the permission prompt"
+        "PermissionRequested must open the permission prompt"
     );
 }
 
 #[test]
-fn permission_rx_caller_decision_variants_skip_effects() {
+fn ui_event_permission_decision_variants_skip_effects() {
     for event in [
-        PermissionEvent::DecisionSubmitted {
+        UiEvent::PermissionDecisionSubmitted {
             request_id: "ask-0000000000000001".to_string(),
             decision: PermissionDecision::AllowOnce,
             matched_rule_identity: "nested:nu.command:*".to_string(),
         },
-        PermissionEvent::DecisionTimedOut {
+        UiEvent::PermissionDecisionTimedOut {
             request_id: "ask-0000000000000001".to_string(),
         },
-        PermissionEvent::DecisionIgnored {
+        UiEvent::PermissionDecisionIgnored {
             request_id: "ask-0000000000000001".to_string(),
             reason: "user closed".to_string(),
         },
@@ -5767,10 +5758,8 @@ fn permission_rx_caller_decision_variants_skip_effects() {
         coordinator.state.scroll.following_tail = false;
 
         // -- Exec
-        let handled = coordinator.state.permission.reduce_permission_event(event);
+        let handled = coordinator.reduce_ui_event(event);
         if handled {
-            coordinator.state.scroll.scroll_transcript_to_bottom();
-            coordinator.state.ensure_invariants();
             coordinator.mark_render_needed();
         }
 
@@ -5793,7 +5782,7 @@ fn permission_rx_caller_decision_variants_skip_effects() {
 }
 
 #[test]
-fn permission_rx_caller_pre_authorize_display_applied_before_reduce() {
+fn ui_event_permission_pre_authorize_display_applied_before_reduce() {
     // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
     let context = PermissionRequestContext {
@@ -5812,20 +5801,15 @@ fn permission_rx_caller_pre_authorize_display_applied_before_reduce() {
     };
 
     // -- Exec
-    // Mirrors the interactive loop's permission_rx arm ordering: the display
-    // is applied before reduce_permission_event runs.
-    crate::interaction::reducer::apply_permission_request_display(&mut coordinator.state, &context);
-    let handled =
-        coordinator
-            .state
-            .permission
-            .reduce_permission_event(PermissionEvent::Requested {
-                request_id: "ask-0000000000000001".to_string(),
-                context: Box::new(context),
-            });
+    // The render loop's ui_event arm dispatches through reduce_ui_event, which
+    // applies the pre-authorize display before opening the prompt.
+    let handled = coordinator.reduce_ui_event(UiEvent::PermissionRequested {
+        request_id: "ask-0000000000000001".to_string(),
+        context,
+    });
 
     // -- Check
-    assert!(handled, "Requested must reduce to true");
+    assert!(handled, "PermissionRequested must reduce to true");
     let display_applied = coordinator
         .state
         .transcript

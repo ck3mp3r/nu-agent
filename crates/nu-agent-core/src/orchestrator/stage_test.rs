@@ -1,7 +1,7 @@
 use nu_protocol::{LabeledError, Span};
 use tokio::sync::mpsc;
 
-use crate::bus::{Bus, SessionEvent, SessionRx, UiStateRx, WarningEvent, WarningRx, create_bus};
+use crate::bus::{Bus, SessionEvent, SessionRx, UiEventRx, UiStateRx, create_bus};
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::session::SessionStage;
 use crate::orchestrator::stages::ui_request::UiRequestStage;
@@ -9,6 +9,7 @@ use crate::orchestrator::stages::{OrchestrationContext, SessionHandler, UiReques
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand};
 use crate::protocol::contracts::{McpUsabilityState, UiMessageSnapshot};
+use crate::protocol::event::UiEvent;
 use crate::session::SessionInfo;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -28,7 +29,7 @@ struct HarnessParts<'a> {
     concurrent_tx: &'a mpsc::Sender<UiRequestResponse>,
     bus: &'a Bus,
     worker_rx: &'a mut Option<mpsc::Receiver<WorkerCommand>>,
-    warning_rx: &'a mut WarningRx,
+    ui_event_rx: &'a mut UiEventRx,
     ui_state_rx: &'a mut UiStateRx,
     session_rx: &'a mut SessionRx,
     state: &'a mut CtxState,
@@ -41,7 +42,7 @@ struct Harness {
     blocking_tx: mpsc::Sender<UiRequestResponse>,
     concurrent_tx: mpsc::Sender<UiRequestResponse>,
     bus: Bus,
-    warning_rx: WarningRx,
+    ui_event_rx: UiEventRx,
     ui_state_rx: UiStateRx,
     session_rx: SessionRx,
     state: CtxState,
@@ -53,7 +54,7 @@ impl Harness {
         let (blocking_tx, _blocking_rx) = mpsc::channel::<UiRequestResponse>(256);
         let (concurrent_tx, _concurrent_rx) = mpsc::channel::<UiRequestResponse>(256);
         let bus = create_bus();
-        let warning_rx = bus.warning().subscribe();
+        let ui_event_rx = bus.ui_event().subscribe();
         let ui_state_rx = bus.ui_state().subscribe();
         let session_rx = bus.session().subscribe();
         Self {
@@ -62,7 +63,7 @@ impl Harness {
             worker_rx: Some(worker_rx),
             blocking_tx,
             concurrent_tx,
-            warning_rx,
+            ui_event_rx,
             ui_state_rx,
             session_rx,
             bus,
@@ -84,7 +85,7 @@ impl Harness {
             concurrent_tx: &self.concurrent_tx,
             bus: &self.bus,
             worker_rx: &mut self.worker_rx,
-            warning_rx: &mut self.warning_rx,
+            ui_event_rx: &mut self.ui_event_rx,
             ui_state_rx: &mut self.ui_state_rx,
             session_rx: &mut self.session_rx,
             state: &mut self.state,
@@ -117,12 +118,13 @@ fn recv_command(worker_rx: &mut Option<mpsc::Receiver<WorkerCommand>>) -> Option
     worker_rx.as_mut()?.try_recv().ok()
 }
 
-fn take_warnings(warning_rx: &mut WarningRx) -> Vec<String> {
+fn take_warnings(ui_event_rx: &mut UiEventRx) -> Vec<String> {
     let mut out = Vec::new();
-    while let Ok(event) = warning_rx.try_recv() {
+    while let Ok(event) = ui_event_rx.try_recv() {
         match event {
-            WarningEvent::Message { message } => out.push(message),
-            WarningEvent::TurnError { message } => out.push(message),
+            UiEvent::Warning { message } => out.push(message),
+            UiEvent::TurnError { message } => out.push(message),
+            _ => {}
         }
     }
     out
@@ -172,7 +174,7 @@ async fn model_switch_send_failure_emits_warning() {
         concurrent_tx,
         bus,
         worker_rx: _,
-        warning_rx,
+        ui_event_rx,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -187,7 +189,7 @@ async fn model_switch_send_failure_emits_warning() {
         )
         .await;
 
-    let warnings = take_warnings(warning_rx);
+    let warnings = take_warnings(ui_event_rx);
     assert!(
         warnings
             .iter()
@@ -206,7 +208,7 @@ async fn model_switch_error_response_emits_warning() -> Result<()> {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx,
+        ui_event_rx,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -229,7 +231,7 @@ async fn model_switch_error_response_emits_warning() -> Result<()> {
         )
         .await;
 
-    let warnings = take_warnings(warning_rx);
+    let warnings = take_warnings(ui_event_rx);
     assert!(warnings.iter().any(|w| w == "model failed"));
     let cmd = recv_command(worker_rx).ok_or("HandleUiRequest should be dispatched")?;
     assert!(
@@ -254,7 +256,7 @@ async fn agent_switch_send_failure_emits_warning() {
         concurrent_tx,
         bus,
         worker_rx: _,
-        warning_rx,
+        ui_event_rx,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -269,7 +271,7 @@ async fn agent_switch_send_failure_emits_warning() {
         )
         .await;
 
-    let warnings = take_warnings(warning_rx);
+    let warnings = take_warnings(ui_event_rx);
     assert!(
         warnings
             .iter()
@@ -288,7 +290,7 @@ async fn agent_switch_error_response_emits_warning() -> Result<()> {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx,
+        ui_event_rx,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -311,7 +313,7 @@ async fn agent_switch_error_response_emits_warning() -> Result<()> {
         )
         .await;
 
-    let warnings = take_warnings(warning_rx);
+    let warnings = take_warnings(ui_event_rx);
     assert!(warnings.iter().any(|w| w == "agent failed"));
     let cmd = recv_command(worker_rx).ok_or("HandleUiRequest should be dispatched")?;
     assert!(
@@ -335,7 +337,7 @@ async fn session_switch_while_worker_active_is_rejected_and_not_queued() {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx,
+        ui_event_rx,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -351,7 +353,7 @@ async fn session_switch_while_worker_active_is_rejected_and_not_queued() {
         )
         .await;
 
-    let warnings = take_warnings(warning_rx);
+    let warnings = take_warnings(ui_event_rx);
     assert!(
         warnings
             .iter()
@@ -373,7 +375,7 @@ async fn session_switch_while_pending_is_ignored() {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx,
+        ui_event_rx,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -403,7 +405,7 @@ async fn session_switch_while_pending_is_ignored() {
         recv_command(worker_rx).is_none(),
         "only one session switch should be dispatched"
     );
-    let warnings = take_warnings(warning_rx);
+    let warnings = take_warnings(ui_event_rx);
     assert!(
         !warnings.iter().any(|w| w.contains("sess-2")),
         "no warning should mention the ignored second request, got {warnings:?}"
@@ -421,7 +423,7 @@ async fn session_switch_success_clears_and_hydrates_transcript() {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx: _,
+        ui_event_rx: _,
         ui_state_rx,
         session_rx,
         state,
@@ -481,7 +483,7 @@ async fn session_switch_error_emits_warning() {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx,
+        ui_event_rx,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -508,7 +510,7 @@ async fn session_switch_error_emits_warning() {
         )
         .await;
 
-    let warnings = take_warnings(warning_rx);
+    let warnings = take_warnings(ui_event_rx);
     assert!(warnings.iter().any(|w| w == "session load failed"));
     assert!(!stage.has_blocking_pending());
 }
@@ -524,7 +526,7 @@ async fn session_switch_send_failure_emits_warning() {
         concurrent_tx,
         bus,
         worker_rx: _,
-        warning_rx,
+        ui_event_rx,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -539,7 +541,7 @@ async fn session_switch_send_failure_emits_warning() {
         )
         .await;
 
-    let warnings = take_warnings(warning_rx);
+    let warnings = take_warnings(ui_event_rx);
     assert!(
         warnings
             .iter()
@@ -562,7 +564,7 @@ async fn session_picker_launch_dispatches_refresh_command() -> Result<()> {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx: _,
+        ui_event_rx: _,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -596,7 +598,7 @@ async fn session_picker_refresh_dispatched_when_no_pending() -> Result<()> {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx: _,
+        ui_event_rx: _,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -630,7 +632,7 @@ async fn session_picker_refresh_in_flight_skips_new_command() {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx: _,
+        ui_event_rx: _,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -663,7 +665,7 @@ async fn session_picker_refresh_success_sets_options() {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx: _,
+        ui_event_rx: _,
         ui_state_rx,
         session_rx: _,
         state,
@@ -708,7 +710,7 @@ async fn session_picker_refresh_error_warns() {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx,
+        ui_event_rx,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -727,7 +729,7 @@ async fn session_picker_refresh_error_warns() {
         )
         .await;
 
-    let warnings = take_warnings(warning_rx);
+    let warnings = take_warnings(ui_event_rx);
     assert!(warnings.iter().any(|w| w == "refresh failed"));
     assert!(!stage.has_pending());
 }
@@ -743,7 +745,7 @@ async fn session_picker_refresh_send_failure_warns() {
         concurrent_tx,
         bus,
         worker_rx: _,
-        warning_rx,
+        ui_event_rx,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -753,7 +755,7 @@ async fn session_picker_refresh_send_failure_warns() {
         .handle_incoming(UiRequest::RefreshSessionPicker, &mut ctx)
         .await;
 
-    let warnings = take_warnings(warning_rx);
+    let warnings = take_warnings(ui_event_rx);
     assert!(warnings.iter().any(|w| w == "Worker channel closed"));
     assert!(!stage.has_pending());
 }
@@ -772,7 +774,7 @@ async fn worker_result_processed_before_model_switch_result() -> Result<()> {
         concurrent_tx,
         bus,
         worker_rx: _,
-        warning_rx,
+        ui_event_rx,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -795,7 +797,7 @@ async fn worker_result_processed_before_model_switch_result() -> Result<()> {
         )
         .await;
 
-    let warnings = take_warnings(warning_rx);
+    let warnings = take_warnings(ui_event_rx);
     let session_idx = warnings
         .iter()
         .position(|w| w == "turn failed")
@@ -824,7 +826,7 @@ async fn turn_error_warning_passes_message_verbatim() -> Result<()> {
         concurrent_tx,
         bus,
         worker_rx: _,
-        warning_rx,
+        ui_event_rx,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -841,7 +843,7 @@ async fn turn_error_warning_passes_message_verbatim() -> Result<()> {
         .await;
 
     // -- Check
-    let warnings = take_warnings(warning_rx);
+    let warnings = take_warnings(ui_event_rx);
     assert_eq!(
         warnings,
         vec!["Turn failed: output budget exhausted".to_string()],
@@ -860,7 +862,7 @@ async fn pending_model_switch_skips_slash_stage() {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx: _,
+        ui_event_rx: _,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -893,7 +895,7 @@ async fn concurrent_in_flight_rules_allow_multiple_mcp_toggles() {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx: _,
+        ui_event_rx: _,
         ui_state_rx: _,
         session_rx: _,
         state,
@@ -976,7 +978,7 @@ async fn session_switch_success_rehydrates_transcript_from_snapshots() {
         concurrent_tx,
         bus,
         worker_rx,
-        warning_rx: _,
+        ui_event_rx: _,
         ui_state_rx,
         session_rx: _,
         state,

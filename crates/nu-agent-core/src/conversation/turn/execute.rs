@@ -8,12 +8,13 @@
 use futures::StreamExt;
 use std::sync::Arc;
 
-use crate::bus::{Bus, LlmEvent, WarningEvent};
+use crate::bus::Bus;
 use crate::config::defaults;
 use crate::conversation::state::memory::MemoryOf;
 use crate::hook::agent_hook::HookState;
 use crate::hook::chain::HookChain;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
+use crate::protocol::event::UiEvent;
 use crate::session::SessionStore;
 use crate::session::repair::repair_messages;
 use crate::types::{Message, Text, ToolDefinition, UserContent};
@@ -207,8 +208,8 @@ where
         log::debug!("execute_turn: token_estimate={estimated} threshold={threshold} limit={limit}");
         if estimated >= threshold {
             let _ = bus
-                .warning()
-                .send(WarningEvent::Message {
+                .ui_event()
+                .send(UiEvent::Warning {
                     message: format!(
                         "Conversation is using ~{estimated} estimated tokens \
                      (~{}% of the {limit}-token context window). \
@@ -495,8 +496,8 @@ where
                     deltas_emitted = false;
                     text.clear();
                     let _ = bus
-                        .llm()
-                        .send(LlmEvent::Stopped {
+                        .ui_event()
+                        .send(UiEvent::Stopped {
                             reason: String::new(),
                         })
                         .await;

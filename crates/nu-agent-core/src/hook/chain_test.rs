@@ -1,12 +1,15 @@
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use crate::bus::{Bus, WarningEvent};
+use crate::bus::Bus;
 use crate::compaction::CompactionParams;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::compaction::compactor::NuCompactor;
 use crate::hook::doom_loop::DoomLoopState;
 use crate::hook::output_repetition::RepetitionState;
-use crate::hook::permission_resolver::PolicyPermissionResolver;
+use crate::hook::permission_resolver::{InteractivePermissionResolver, PolicyPermissionResolver};
+use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
+use crate::protocol::event::UiEvent;
 use crate::session::{CachedMemory, FsSessionStore, SessionStore, StoreEntry};
 use crate::types::Message;
 use futures::StreamExt;
@@ -540,10 +543,12 @@ impl RepetitionTurnFixture {
 /// Drain warning messages from an EXISTING subscriber (must be subscribed
 /// before the events are published — broadcast sends are not buffered for
 /// later subscribers).
-fn warnings(rx: &mut crate::bus::WarningRx) -> Vec<String> {
+fn warnings(rx: &mut crate::bus::UiEventRx) -> Vec<String> {
     let mut out = Vec::new();
-    while let Ok(WarningEvent::Message { message }) = rx.try_recv() {
-        out.push(message);
+    while let Ok(event) = rx.try_recv() {
+        if let UiEvent::Warning { message } = event {
+            out.push(message);
+        }
     }
     out
 }
@@ -571,7 +576,7 @@ async fn on_text_delta_repetition_stops_mid_stream_on_first_detection() -> Resul
     fx.queue_turn(vec![identical_text_turn(12)]);
     // Subscribe BEFORE driving the stream — broadcast sends are not buffered
     // for later subscribers.
-    let mut warning_rx = fx.bus.warning().subscribe();
+    let mut warning_rx = fx.bus.ui_event().subscribe();
 
     // -- Exec: drive the stream; the repetitive turn must die mid-stream.
     let items = fx.turn(false).await?;
@@ -617,7 +622,7 @@ async fn on_model_turn_finished_cross_turn_ladder() -> Result<()> {
     // -- Setup & Fixtures
     let fx = RepetitionTurnFixture::new()?;
     // Subscribe BEFORE driving any turn (see the intra-stream test).
-    let mut warning_rx = fx.bus.warning().subscribe();
+    let mut warning_rx = fx.bus.ui_event().subscribe();
 
     // -- Exec & Check
     let mut total_warnings = 0usize;
@@ -708,7 +713,7 @@ async fn on_model_turn_finished_tool_call_resets() -> Result<()> {
     // -- Setup & Fixtures
     let fx = RepetitionTurnFixture::new()?;
     // Subscribe BEFORE driving any turn (see the intra-stream test).
-    let mut warning_rx = fx.bus.warning().subscribe();
+    let mut warning_rx = fx.bus.ui_event().subscribe();
 
     // -- Exec & Check: 4 identical text turns are below threshold.
     for turn in 1..=4usize {
@@ -773,7 +778,7 @@ async fn on_model_turn_finished_non_repetitive_continues_without_warning() -> Re
     ];
     let fx = RepetitionTurnFixture::new()?;
     // Subscribe BEFORE driving any turn (see the intra-stream test).
-    let mut warning_rx = fx.bus.warning().subscribe();
+    let mut warning_rx = fx.bus.ui_event().subscribe();
 
     // -- Exec & Check
     for (i, text) in texts.iter().enumerate() {
@@ -815,7 +820,7 @@ async fn on_text_delta_repetition_stops_mid_stream_with_pre_escalated_ladder() -
 
     // Subscribe BEFORE driving the stream — broadcast sends are not buffered
     // for later subscribers.
-    let mut warning_rx = fx.bus.warning().subscribe();
+    let mut warning_rx = fx.bus.ui_event().subscribe();
 
     // -- Exec: a fresh repetitive turn must die mid-stream, not complete.
     fx.queue_turn(vec![identical_text_turn(12)]);
@@ -885,7 +890,7 @@ async fn on_text_delta_repetition_stops_mid_stream_at_any_ladder_level() -> Resu
     );
 
     // Subscribe BEFORE driving the stream.
-    let mut warning_rx = fx.bus.warning().subscribe();
+    let mut warning_rx = fx.bus.ui_event().subscribe();
 
     // -- Exec: the next repetitive turn must STILL stop mid-stream
     // (escalation_count 1 < 4 does not matter — every detection stops).
@@ -1002,4 +1007,125 @@ fn suppress_previewed_display_none_input_stays_none_either_way() {
             "a tool with no display to begin with must stay None regardless of previewed state"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Producer-side FIFO invariant: ToolStarted must be published before
+// PermissionRequested on the single ui_event channel.
+// ---------------------------------------------------------------------------
+
+/// Regression test for the producer-side FIFO invariant that the unified UI
+/// event loop depends on: `HookChain::on_tool_call` publishes
+/// `UiEvent::ToolStarted` BEFORE the permission resolver publishes
+/// `UiEvent::PermissionRequested`. Both travel on the single `bus.ui_event()`
+/// channel, so arrival order equals send order.
+///
+/// If a future edit moves `permission.resolve()` above the `ToolStarted` send
+/// (chain.rs), the edit diff preview renders above the tool-call line again —
+/// this test fails.
+#[tokio::test]
+async fn on_tool_call_publishes_tool_started_before_permission_requested() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let memory = Arc::new(CachedMemory::new(store));
+    let bus = Bus::default();
+    let pending = Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let resolver = InteractivePermissionResolver::new(
+        Arc::clone(&pending),
+        Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(true)),
+        Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),
+        Arc::new(crate::tools::closure::ClosureRegistry::default()),
+        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        bus.clone(),
+    );
+    let resolver_clone = resolver.clone();
+    // The hook's `on_model_select` routes every turn to `shared_model`, so the
+    // scripted tool-call turn must be queued there — the builder's own model is
+    // never consulted.
+    let shared_model = Arc::new(Mutex::new(ModelHandle::new(
+        MockCompletionModel::from_stream_turns([
+            vec![
+                MockStreamEvent::tool_call("tc1", "add", serde_json::json!({"x": 1, "y": 2})),
+                MockStreamEvent::final_response_with_default_usage(),
+            ],
+            vec![
+                MockStreamEvent::Text("tool done".to_string()),
+                MockStreamEvent::final_response_with_default_usage(),
+            ],
+        ]),
+    )));
+    let hook = HookChain::new(
+        bus.clone(),
+        resolver,
+        Arc::new(crate::tools::closure::ClosureRegistry::default()),
+        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        None,
+        HookState {
+            circuit_breaker: Arc::new(Mutex::new(
+                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
+            )),
+            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
+            output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
+            repetition_guard: true,
+            shared_model,
+            memory,
+            conversation_id: "fifo-invariant-conv".to_string(),
+            compaction: CompactionConfig {
+                compactor: NuCompactor::new(
+                    ModelHandle::new(MockCompletionModel::text("summary")),
+                    Bus::default(),
+                    None,
+                ),
+                params: CompactionParams::default(),
+                threshold_tokens: None,
+            },
+            last_total_tokens: Arc::new(Mutex::new(None)),
+        },
+    );
+    // The "add" tool is not in `safe_defaults(true)`'s allow list, so the
+    // global Ask action fires and the resolver publishes PermissionRequested.
+    let agent = rig::agent::AgentBuilder::from_model_handle(ModelHandle::new(
+        MockCompletionModel::default(),
+    ))
+    .add_hook(hook)
+    .tool(rig::test_utils::MockAddTool)
+    .build();
+    // Subscribe BEFORE driving the stream — broadcast sends are not buffered
+    // for later subscribers.
+    let mut ui_rx = bus.ui_event().subscribe();
+
+    // -- Exec: drive the turn; the tool call blocks on the permission oneshot.
+    let turn = tokio::spawn(async move {
+        let mut stream = agent.stream_prompt("run").max_turns(16).await;
+        while stream.next().await.is_some() {}
+    });
+
+    // Collect ui_event arrivals until PermissionRequested, then submit a
+    // decision so the blocked resolve() future can continue.
+    let mut order = Vec::new();
+    let request_id = loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), ui_rx.recv())
+            .await
+            .map_err(|_| "should receive a ui_event within timeout")?
+            .map_err(|_| "ui_event channel should stay open")?;
+        match event {
+            UiEvent::ToolStarted { .. } => order.push("ToolStarted"),
+            UiEvent::PermissionRequested { request_id, .. } => {
+                order.push("PermissionRequested");
+                break request_id;
+            }
+            _ => {}
+        }
+    };
+    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    turn.await.map_err(|_| "turn task should not panic")?;
+
+    // -- Check
+    assert_eq!(
+        order,
+        vec!["ToolStarted", "PermissionRequested"],
+        "ToolStarted must arrive before PermissionRequested on the FIFO ui_event channel"
+    );
+    Ok(())
 }

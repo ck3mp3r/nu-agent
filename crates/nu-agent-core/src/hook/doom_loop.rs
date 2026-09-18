@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use rig::agent::ToolCallAction;
 use serde_json::Value;
 
-use crate::bus::{Bus, WarningEvent};
+use crate::bus::Bus;
+use crate::protocol::event::UiEvent;
 
 pub const DOOM_LOOP_THRESHOLD: usize = 5;
 pub const DOOM_LOOP_BACKOFF_LIMIT: usize = 2;
@@ -155,8 +156,8 @@ impl DoomLoopDetector {
                     tool, DOOM_LOOP_THRESHOLD
                 );
                 let _ = bus
-                    .warning()
-                    .send(WarningEvent::Message {
+                    .ui_event()
+                    .send(UiEvent::Warning {
                         message: message.clone(),
                     })
                     .await;
@@ -170,8 +171,8 @@ impl DoomLoopDetector {
                     tool
                 );
                 let _ = bus
-                    .warning()
-                    .send(WarningEvent::Message {
+                    .ui_event()
+                    .send(UiEvent::Warning {
                         message: message.clone(),
                     })
                     .await;

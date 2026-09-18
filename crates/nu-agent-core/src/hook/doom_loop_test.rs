@@ -458,12 +458,12 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
         state: Arc::clone(&state),
     };
     let bus = create_bus();
-    let mut warning_rx = bus.warning().subscribe();
+    let mut ui_event_rx = bus.ui_event().subscribe();
 
     // -- Exec
     // First detection (skip + warning), then drain the warning channel.
     let _ = drive_to_first_detection(&detector, &bus).await;
-    let _ = warning_rx.try_recv();
+    let _ = ui_event_rx.try_recv();
     // Second detection (backoff skip + warning), then drain.
     let second = detector
         .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
@@ -472,7 +472,7 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
         matches!(second, Some(ToolCallAction::Skip { .. })),
         "second detection should be a backoff skip"
     );
-    let _ = warning_rx.try_recv();
+    let _ = ui_event_rx.try_recv();
     // Third detection (backoff skip + warning), then drain.
     let third = detector
         .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
@@ -481,7 +481,7 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
         matches!(third, Some(ToolCallAction::Skip { .. })),
         "third detection should be a backoff skip"
     );
-    let _ = warning_rx.try_recv();
+    let _ = ui_event_rx.try_recv();
     // Fourth detection (stop) — must emit no warning.
     let fourth = detector
         .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
@@ -493,8 +493,8 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
         "fourth detection should stop the run"
     );
     assert!(
-        matches!(warning_rx.try_recv(), Err(crate::bus::TryRecvError::Empty)),
-        "stop detection must not emit a warning on the bus warning channel"
+        matches!(ui_event_rx.try_recv(), Err(crate::bus::TryRecvError::Empty)),
+        "stop detection must not emit a warning on the bus ui_event channel"
     );
     Ok(())
 }

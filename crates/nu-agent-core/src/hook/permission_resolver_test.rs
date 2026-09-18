@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 
-use crate::bus::{Bus, PermissionEvent};
-use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
+use crate::bus::Bus;
+use crate::protocol::event::{PermissionDecision as ProtocolPermissionDecision, UiEvent};
 use crate::tools::authz::{
     PermissionAction, PermissionDecision as AuthzPermissionDecision, PermissionRuleMatch,
     PermissionsConfig, SessionGrantCache,
@@ -111,7 +111,7 @@ async fn policy_resolver_ask_config_returns_deny_without_interaction() {
 #[tokio::test]
 async fn interactive_resolver_explicit_allow_returns_allow_no_event() {
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
     let decision = resolver.resolve(ALLOW_TOOL, "{}", None, &bus).await;
     assert_eq!(decision, PermissionDecision::Allow);
     // No PermissionRequested event should have been emitted
@@ -125,7 +125,7 @@ async fn interactive_resolver_explicit_allow_returns_allow_no_event() {
 #[tokio::test]
 async fn interactive_resolver_explicit_deny_returns_deny_no_event() {
     let (resolver, bus) = make_interactive(deny_all_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
     let decision = resolver.resolve(ASK_TOOL, "{}", None, &bus).await;
     assert!(
         matches!(decision, PermissionDecision::Deny { .. }),
@@ -143,7 +143,7 @@ async fn interactive_resolver_explicit_deny_returns_deny_no_event() {
 #[tokio::test]
 async fn interactive_resolver_ask_config_submit_allow_returns_allow() -> Result<()> {
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
 
     // Clone the resolver so we can call submit_decision from a separate task
     let resolver_clone = resolver.clone();
@@ -160,7 +160,7 @@ async fn interactive_resolver_ask_config_submit_allow_returns_allow() -> Result<
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match event {
-        PermissionEvent::Requested { request_id, .. } => request_id,
+        UiEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected PermissionRequested, got {:?}", other),
     };
 
@@ -179,7 +179,7 @@ async fn interactive_resolver_ask_config_submit_allow_returns_allow() -> Result<
 #[tokio::test]
 async fn interactive_resolver_ask_config_submit_deny_returns_deny() -> Result<()> {
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
 
     let resolver_clone = resolver.clone();
 
@@ -194,7 +194,7 @@ async fn interactive_resolver_ask_config_submit_deny_returns_deny() -> Result<()
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match event {
-        PermissionEvent::Requested { request_id, .. } => request_id,
+        UiEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected PermissionRequested, got {:?}", other),
     };
 
@@ -217,7 +217,7 @@ async fn interactive_resolver_ask_config_submit_deny_returns_deny() -> Result<()
 #[tokio::test]
 async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call() -> Result<()> {
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
 
     // Clone the resolver so we can call submit_decision from a separate task
     let resolver_clone = resolver.clone();
@@ -235,7 +235,7 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match event {
-        PermissionEvent::Requested { request_id, .. } => request_id,
+        UiEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected PermissionRequested, got {:?}", other),
     };
 
@@ -408,7 +408,7 @@ async fn shared_bus_resolver_clones_observe_ordering_and_submit_unblocks_other_f
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
     let resolver_a = resolver.clone();
     let resolver_b = resolver.clone();
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
 
     // resolver_a spawns two concurrent resolve() futures. Both must publish a
     // Requested event and block on their own oneshot.
@@ -429,7 +429,7 @@ async fn shared_bus_resolver_clones_observe_ordering_and_submit_unblocks_other_f
         .await
         .map_err(|_| "first PermissionRequested event")?
     {
-        PermissionEvent::Requested { request_id, .. } => request_id,
+        UiEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected Requested, got {other:?}"),
     };
     let id2 = match permission_rx
@@ -437,7 +437,7 @@ async fn shared_bus_resolver_clones_observe_ordering_and_submit_unblocks_other_f
         .await
         .map_err(|_| "second PermissionRequested event")?
     {
-        PermissionEvent::Requested { request_id, .. } => request_id,
+        UiEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected Requested, got {other:?}"),
     };
     assert_ne!(id1, id2, "each request must have a unique request_id");
@@ -515,7 +515,7 @@ async fn policy_resolver_deny_reason_carries_rule_identity_and_scope() {
 async fn interactive_resolver_ask_deny_reason_carries_rule_identity() -> Result<()> {
     // -- Setup & Fixtures
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
     let resolver_clone = resolver.clone();
 
     let resolve_fut = tokio::spawn({
@@ -529,7 +529,7 @@ async fn interactive_resolver_ask_deny_reason_carries_rule_identity() -> Result<
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match event {
-        PermissionEvent::Requested { request_id, .. } => request_id,
+        UiEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::Deny);
@@ -582,7 +582,7 @@ async fn policy_resolver_allow_decision_has_no_reason_payload() {
 async fn interactive_resolver_nu_call_has_no_pre_authorize_display() -> Result<()> {
     // -- Setup & Fixtures
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
     let resolver_clone = resolver.clone();
 
     // -- Exec
@@ -600,7 +600,7 @@ async fn interactive_resolver_nu_call_has_no_pre_authorize_display() -> Result<(
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        PermissionEvent::Requested { request_id, .. } => request_id.clone(),
+        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
 
@@ -612,7 +612,7 @@ async fn interactive_resolver_nu_call_has_no_pre_authorize_display() -> Result<(
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
-    let PermissionEvent::Requested { context, .. } = &event else {
+    let UiEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
     assert!(
@@ -627,7 +627,7 @@ async fn interactive_resolver_nu_call_has_no_pre_authorize_display() -> Result<(
 async fn interactive_resolver_other_ask_tool_has_no_pre_authorize_display() -> Result<()> {
     // -- Setup & Fixtures
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
     let resolver_clone = resolver.clone();
 
     // -- Exec
@@ -641,7 +641,7 @@ async fn interactive_resolver_other_ask_tool_has_no_pre_authorize_display() -> R
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        PermissionEvent::Requested { request_id, .. } => request_id.clone(),
+        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
@@ -651,7 +651,7 @@ async fn interactive_resolver_other_ask_tool_has_no_pre_authorize_display() -> R
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
-    let PermissionEvent::Requested { context, .. } = &event else {
+    let UiEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
     assert!(
@@ -666,7 +666,7 @@ async fn interactive_resolver_other_ask_tool_has_no_pre_authorize_display() -> R
 async fn interactive_resolver_nu_missing_command_prompts_without_display() -> Result<()> {
     // -- Setup & Fixtures
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
     let resolver_clone = resolver.clone();
 
     // -- Exec
@@ -680,7 +680,7 @@ async fn interactive_resolver_nu_missing_command_prompts_without_display() -> Re
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        PermissionEvent::Requested { request_id, .. } => request_id.clone(),
+        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
@@ -690,7 +690,7 @@ async fn interactive_resolver_nu_missing_command_prompts_without_display() -> Re
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
-    let PermissionEvent::Requested { context, .. } = &event else {
+    let UiEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
     assert!(
@@ -716,7 +716,7 @@ async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display(
     let tmp = tempfile::tempdir()?;
     let target = tmp.path().join("new-file.txt");
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
     let resolver_clone = resolver.clone();
     let args = serde_json::json!({
         "path": target.to_string_lossy(),
@@ -736,7 +736,7 @@ async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display(
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        PermissionEvent::Requested { request_id, .. } => request_id.clone(),
+        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::Deny);
@@ -745,7 +745,7 @@ async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display(
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
 
     // -- Check
-    let PermissionEvent::Requested { context, .. } = &event else {
+    let UiEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
     let display = context
@@ -771,7 +771,7 @@ async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display(
 async fn interactive_resolver_allowed_tool_emits_no_permission_event_with_display() {
     // -- Setup & Fixtures
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
 
     // -- Exec
     let decision = resolver.resolve(ALLOW_TOOL, "{}", None, &bus).await;
@@ -800,7 +800,7 @@ async fn interactive_resolver_take_previewed_is_true_once_after_edit_preview() -
     let tmp = tempfile::tempdir()?;
     let target = tmp.path().join("new-file.txt");
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
     let resolver_clone = resolver.clone();
     let args = serde_json::json!({
         "path": target.to_string_lossy(),
@@ -820,7 +820,7 @@ async fn interactive_resolver_take_previewed_is_true_once_after_edit_preview() -
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        PermissionEvent::Requested { request_id, .. } => request_id.clone(),
+        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
@@ -846,7 +846,7 @@ async fn interactive_resolver_take_previewed_is_true_once_after_edit_preview() -
 async fn interactive_resolver_take_previewed_is_false_without_a_preview() {
     // -- Setup & Fixtures
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
-    let mut permission_rx = bus.permission().subscribe();
+    let mut permission_rx = bus.ui_event().subscribe();
     let resolver_clone = resolver.clone();
 
     // -- Exec
@@ -860,7 +860,7 @@ async fn interactive_resolver_take_previewed_is_false_without_a_preview() {
     });
     let event = permission_rx.recv().await.expect("Requested event");
     let request_id = match &event {
-        PermissionEvent::Requested { request_id, .. } => request_id.clone(),
+        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);

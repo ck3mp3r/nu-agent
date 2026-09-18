@@ -79,7 +79,7 @@ impl SessionStore for FailingAppendStore {
 }
 
 /// A failed session-memory append on the hard-error path must be surfaced as
-/// `WarningEvent::Message` on the bus warning channel (not silently dropped).
+/// `UiEvent::Warning` on the bus ui_event channel (not silently dropped).
 #[tokio::test]
 async fn hard_error_with_failing_append_store_emits_warning_event() -> Result<()> {
     // -- Setup & Fixtures
@@ -99,7 +99,7 @@ async fn hard_error_with_failing_append_store_emits_warning_event() -> Result<()
     }
 
     let bus = crate::bus::create_bus();
-    let mut warning_rx = bus.warning().subscribe();
+    let mut ui_event_rx = bus.ui_event().subscribe();
 
     let model =
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
@@ -129,20 +129,18 @@ async fn hard_error_with_failing_append_store_emits_warning_event() -> Result<()
     // -- Check
     assert!(result.is_err(), "hard error must propagate as Err");
 
-    let event = warning_rx
-        .try_recv()
-        .map_err(|e| format!("warning event should arrive after failed append: {e:?}"))?;
-    match event {
-        crate::bus::WarningEvent::Message { message } => {
-            assert!(
-                message.contains("hard error"),
-                "warning must name the append site; got: {message}"
-            );
-        }
-        other => {
-            return Err(format!("expected WarningEvent::Message; got {other:?}").into());
+    // The ui_event channel also carries LlmStarted, so scan for the warning.
+    let mut warning_message = None;
+    while let Ok(event) = ui_event_rx.try_recv() {
+        if let crate::protocol::event::UiEvent::Warning { message } = event {
+            warning_message = Some(message);
         }
     }
+    let message = warning_message.ok_or("warning event should arrive after failed append")?;
+    assert!(
+        message.contains("hard error"),
+        "warning must name the append site; got: {message}"
+    );
 
     Ok(())
 }
@@ -169,7 +167,7 @@ async fn hard_error_with_working_store_emits_no_warning_event() -> Result<()> {
     }
 
     let bus = crate::bus::create_bus();
-    let mut warning_rx = bus.warning().subscribe();
+    let mut ui_event_rx = bus.ui_event().subscribe();
 
     let model =
         MockCompletionModel::from_stream_turns([[MockStreamEvent::error("provider unavailable")]]);
@@ -199,14 +197,11 @@ async fn hard_error_with_working_store_emits_no_warning_event() -> Result<()> {
     // -- Check
     assert!(result.is_err(), "hard error must propagate as Err");
 
-    match warning_rx.try_recv() {
-        Err(crate::bus::TryRecvError::Empty) => {} // no warning emitted — correct
-        Err(other) => {
-            return Err(format!("warning channel should stay open: {other:?}").into());
-        }
-        Ok(event) => {
+    // The ui_event channel also carries LlmStarted; only a Warning is a failure.
+    while let Ok(event) = ui_event_rx.try_recv() {
+        if let crate::protocol::event::UiEvent::Warning { message } = event {
             return Err(
-                format!("successful append must not emit a warning event; got {event:?}").into(),
+                format!("successful append must not emit a warning event; got {message}").into(),
             );
         }
     }

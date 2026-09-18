@@ -19,6 +19,7 @@ use crate::orchestrator::{
 };
 use crate::protocol::{
     contracts::{CoreRuntime, McpUsabilityState, UiMessageSnapshot, UserInputUi},
+    event::UiEvent,
     mcp_management::McpManagement,
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
@@ -56,8 +57,8 @@ impl CoreRuntime for AgentSwitchRuntime {
     ) -> Result<Value, LabeledError> {
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         Ok(Value::nothing(span))
     }
@@ -151,26 +152,27 @@ impl AgentSwitchUi {
         let active_model_identity = Arc::clone(&self.active_model_identity);
         let active_agent_identity = Arc::clone(&self.active_agent_identity);
 
-        let mut turn_rx = bus.turn().subscribe();
-        let mut warning_rx = bus.warning().subscribe();
+        let mut ui_event_rx = bus.ui_event().subscribe();
         let mut ui_state_rx = bus.ui_state().subscribe();
 
         self._bus_task = Some(tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Ok(event) = turn_rx.recv() => {
-                        if let crate::bus::TurnEvent::Completed { .. } = event
-                            && agent_switch_requests
-                                .lock()
-                                .expect("agent switch requests lock")
-                                .is_empty()
-                        {
-                            quit.store(true, Ordering::SeqCst);
-                        }
-                    }
-                    ok = warning_rx.recv() => {
-                        if let Ok(crate::bus::WarningEvent::Message { message }) = ok {
-                            warnings.lock().expect("warnings lock").push(message);
+                    Ok(event) = ui_event_rx.recv() => {
+                        match event {
+                            UiEvent::Completed { .. } => {
+                                if agent_switch_requests
+                                    .lock()
+                                    .expect("agent switch requests lock")
+                                    .is_empty()
+                                {
+                                    quit.store(true, Ordering::SeqCst);
+                                }
+                            }
+                            UiEvent::Warning { message } | UiEvent::TurnError { message } => {
+                                warnings.lock().expect("warnings lock").push(message);
+                            }
+                            _ => {}
                         }
                     }
                     ok = ui_state_rx.recv() => {
@@ -296,8 +298,8 @@ impl CoreRuntime for LongRunningAgentRuntime {
         // converts UiEvent::Completed), matching production.
         let _ = self
             .bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         self.active.store(false, Ordering::SeqCst);
         Ok(Value::nothing(Span::test_data()))
@@ -401,28 +403,28 @@ impl ResponsiveAgentSwitchUi {
         let warnings = Arc::clone(&self.warnings);
         let active_agent_identity = Arc::clone(&self.active_agent_identity);
 
-        let mut turn_rx = bus.turn().subscribe();
-        let mut warning_rx = bus.warning().subscribe();
+        let mut ui_event_rx = bus.ui_event().subscribe();
         let mut ui_state_rx = bus.ui_state().subscribe();
 
         self._turn_task = Some(tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Ok(event) = turn_rx.recv() => {
-                        if let crate::bus::TurnEvent::Completed { .. } = event {
-                            let count = {
-                                let mut count = completed_count.lock().expect("completed count lock");
-                                *count += 1;
-                                *count
-                            };
-                            if count >= expected_completions {
-                                quit.store(true, Ordering::SeqCst);
+                    Ok(event) = ui_event_rx.recv() => {
+                        match event {
+                            UiEvent::Completed { .. } => {
+                                let count = {
+                                    let mut count = completed_count.lock().expect("completed count lock");
+                                    *count += 1;
+                                    *count
+                                };
+                                if count >= expected_completions {
+                                    quit.store(true, Ordering::SeqCst);
+                                }
                             }
-                        }
-                    }
-                    Ok(event) = warning_rx.recv() => {
-                        if let crate::bus::WarningEvent::Message { message } = event {
-                            warnings.lock().expect("warnings lock").push(message);
+                            UiEvent::Warning { message } | UiEvent::TurnError { message } => {
+                                warnings.lock().expect("warnings lock").push(message);
+                            }
+                            _ => {}
                         }
                     }
                     Ok(event) = ui_state_rx.recv() => {
@@ -665,8 +667,8 @@ impl CoreRuntime for SwitchSessionRuntime {
         span: Span,
     ) -> Result<Value, LabeledError> {
         let _ = bus
-            .turn()
-            .send(crate::bus::TurnEvent::Completed { tool_calls: 0 })
+            .ui_event()
+            .send(UiEvent::Completed { tool_calls: 0 })
             .await;
         Ok(Value::nothing(span))
     }

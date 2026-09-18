@@ -23,9 +23,9 @@ use crate::types::Message;
 use super::core::TurnExecutor;
 use super::error_kind::CompletionErrorKind;
 use super::response::extract_retry_after_ms;
-use crate::bus::WarningEvent;
 use crate::conversation::turn::TurnError;
 use crate::conversation::turn::TurnResult;
+use crate::protocol::event::UiEvent;
 
 impl<'a, ST, S> TurnExecutor<'a, S, ST>
 where
@@ -387,8 +387,8 @@ where
                         let _ = self
                             .tool_infra
                             .bus
-                            .warning()
-                            .send(WarningEvent::Message {
+                            .ui_event()
+                            .send(UiEvent::Warning {
                                 message: super::core::REPETITION_STEERING_NOTICE.to_string(),
                             })
                             .await;
@@ -437,8 +437,8 @@ where
                         let _ = self
                             .tool_infra
                             .bus
-                            .warning()
-                            .send(WarningEvent::Message {
+                            .ui_event()
+                            .send(UiEvent::Warning {
                                 message: super::core::REPETITION_STEERING_NOTICE.to_string(),
                             })
                             .await;

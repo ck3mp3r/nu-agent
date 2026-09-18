@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use nu_agent_core::bus::{Bus, TurnEvent};
+use nu_agent_core::bus::Bus;
 use nu_agent_core::orchestrator::OrchestratorEvent;
 use nu_agent_core::protocol::event::UiEvent;
 use nu_agent_core::renderer::UiRenderer;
@@ -161,10 +161,10 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
 
     // Complete the turn. The turn-completion branch must drain the stacked
     // prompt into a PromptSubmitted event without any further terminal input.
-    bus.turn()
-        .send(TurnEvent::Completed { tool_calls: 0 })
+    bus.ui_event()
+        .send(UiEvent::Completed { tool_calls: 0 })
         .await
-        .expect("publish TurnCompleted");
+        .expect("publish UiEvent::Completed");
     let second = tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
         .await
         .map_err(|_| "should receive second PromptSubmitted before timeout")?

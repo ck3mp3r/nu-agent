@@ -17,9 +17,8 @@ mod hub;
 
 pub use channel::{
     BroadcastRx, BroadcastTx, CancelRx, CancelTx, ChannelError, ChannelResult, CompactionRx,
-    CompactionTx, ExternalRx, ExternalTx, LlmRx, LlmTx, MpscRx, MpscTx, OneshotRx, OneshotTx,
-    PermissionRx, PermissionTx, SessionRx, SessionTx, ToolRx, ToolTx, TryRecvError, TurnRx, TurnTx,
-    UiStateRx, UiStateTx, WarningRx, WarningTx,
+    CompactionTx, ExternalRx, ExternalTx, MpscRx, MpscTx, OneshotRx, OneshotTx, SessionRx,
+    SessionTx, TryRecvError, TurnRx, TurnTx, UiEventRx, UiEventTx, UiStateRx, UiStateTx,
 };
 pub use events::{
     CancelEvent, CompactionEvent, ExternalEvent, LlmEvent, PermissionEvent, SessionEvent,

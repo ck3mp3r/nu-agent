@@ -1,6 +1,7 @@
-use crate::bus::{TurnEvent, WarningEvent};
+use crate::bus::TurnEvent;
 use crate::orchestrator::stages::{OrchestrationContext, SessionHandler};
 use crate::orchestrator::turn_outcome::TurnOutcome;
+use crate::protocol::event::UiEvent;
 use crate::utils::value_ext::extract_response_text_from_value;
 
 /// Applies turn outcomes (success, cancel, error).
@@ -15,7 +16,8 @@ impl SessionHandler for SessionStage {
                 log::info!("Turn outcome: Success");
 
                 // Publish a turn-completion event if this turn was triggered
-                // by an external prompt (e.g., A2A task).
+                // by an external prompt (e.g., A2A task). This is a control-plane
+                // event: it stays on `bus.turn()` and is not rendered in the TUI.
                 if ctx.active_external_prompt.take().is_some() {
                     let response_text = extract_response_text_from_value(&value);
                     let task_id = ctx.active_external_task_id.take();
@@ -44,8 +46,8 @@ impl SessionHandler for SessionStage {
                 );
                 let _ = ctx
                     .bus
-                    .warning()
-                    .send(WarningEvent::TurnError { message: error.msg })
+                    .ui_event()
+                    .send(UiEvent::TurnError { message: error.msg })
                     .await;
                 // Clear pending external prompt — the turn didn't complete.
                 let _ = ctx.active_external_prompt.take();

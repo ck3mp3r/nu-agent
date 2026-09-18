@@ -279,7 +279,7 @@ Nu command rendering:
 - Other tools keep their existing previews (edit shows a diff) or none.
 - See `./contribution-guardrails.md` for the pre-authorize zero-write rules behind the edit preview.
 
-Lifecycle events emitted by runtime/UI path:
+Lifecycle events emitted by runtime/UI path (all delivered on the single `ui_event` bus channel):
 
 - `PermissionRequested`
 - `PermissionDecisionSubmitted`

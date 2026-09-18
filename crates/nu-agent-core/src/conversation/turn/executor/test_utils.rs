@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::bus::{Bus, CompactionRx, LlmRx, PermissionRx, ToolRx, TurnRx, WarningRx};
+use crate::bus::{Bus, CompactionRx, UiEventRx};
 use crate::compaction::CompactionParams;
 use crate::config::Config;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
@@ -25,23 +25,15 @@ use rig::test_utils::MockCompletionModel;
 /// `ProgressUi` through the turn, tests observe events by subscribing to the
 /// same channels the TUI/TTY renderers subscribe to.
 pub(super) struct BusEventCollector {
-    tool_rx: ToolRx,
-    llm_rx: LlmRx,
-    turn_rx: TurnRx,
-    warning_rx: WarningRx,
+    ui_event_rx: UiEventRx,
     compaction_rx: CompactionRx,
-    permission_rx: PermissionRx,
 }
 
 impl BusEventCollector {
     pub(super) fn subscribe(bus: &Bus) -> Self {
         Self {
-            tool_rx: bus.tool().subscribe(),
-            llm_rx: bus.llm().subscribe(),
-            turn_rx: bus.turn().subscribe(),
-            warning_rx: bus.warning().subscribe(),
+            ui_event_rx: bus.ui_event().subscribe(),
             compaction_rx: bus.compaction().subscribe(),
-            permission_rx: bus.permission().subscribe(),
         }
     }
 
@@ -65,15 +57,11 @@ impl BusEventCollector {
     }
 
     /// Drain all subscribed channels, converting events to `UiEvent` in
-    /// insertion order (tool, llm, turn, warning, compaction, permission).
+    /// insertion order (ui_event, compaction).
     pub(super) fn drain(&mut self) -> Vec<UiEvent> {
         let mut events = Vec::new();
-        Self::drain_channel(&mut self.tool_rx, &mut events);
-        Self::drain_channel(&mut self.llm_rx, &mut events);
-        Self::drain_channel(&mut self.turn_rx, &mut events);
-        Self::drain_channel(&mut self.warning_rx, &mut events);
+        Self::drain_channel(&mut self.ui_event_rx, &mut events);
         Self::drain_channel(&mut self.compaction_rx, &mut events);
-        Self::drain_channel(&mut self.permission_rx, &mut events);
         events
     }
 }

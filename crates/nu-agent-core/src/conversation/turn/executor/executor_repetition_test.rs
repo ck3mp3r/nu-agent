@@ -160,10 +160,9 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
     let bus = crate::bus::create_bus();
 
     // Subscribe BEFORE the turns run — broadcast sends are not buffered for
-    // later subscribers. Raw LlmEvents are read from the llm channel in send
-    // order, which is what the ordering assertions need.
-    let mut llm_rx = bus.llm().subscribe();
-    let mut turn_rx = bus.turn().subscribe();
+    // later subscribers. Raw UiEvents are read from the ui_event channel in
+    // send order, which is what the ordering assertions need.
+    let mut ui_event_rx = bus.ui_event().subscribe();
     let mut event_collector = super::test_utils::BusEventCollector::subscribe(&bus);
 
     // Generous identical scripted turn supply; the exact consumption is
@@ -253,45 +252,29 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
         "the stop reason must NOT ride AssistantMessage; got: {events:?}"
     );
 
-    // Fix 1 ordering: the LAST TurnEvent::Completed on the turn channel is the
-    // cancel path's (the executor sends Warning → Stopped → Completed in that
-    // order; the warning precedes it). Every earlier turn ALSO publishes
-    // Completed, so drain all of them; their mere presence plus the Warning
-    // assertion above verifies the cancel path publishes both. The deterministic
-    // ordering check: the warning channel's stop warning is readable NOW (it
-    // was sent before this turn's Completed), which fails if finalize-clear
-    // ordering were inverted.
-    let mut saw_completed = false;
-    while let Ok(completed) = turn_rx.try_recv() {
-        assert!(
-            matches!(completed, crate::bus::TurnEvent::Completed { .. }),
-            "expected TurnEvent::Completed, got {completed:?}"
-        );
-        saw_completed = true;
-    }
-    assert!(saw_completed, "TurnEvent::Completed must be published");
-    // The llm channel: the LAST event is the Stopped reason on the cancel turn
-    // (Warning → Stopped → Completed, with Stopped replacing AssistantMessage).
-    // The channel is drained only here, so a retry-heavy run can overflow the
-    // broadcast buffer; `Lagged` drops the OLDEST events, so skipping it keeps
-    // the last-sent event as the last one read.
-    let mut llm_stopped = None;
+    // Fix 1 ordering: the cancel path publishes Warning → Stopped → Completed
+    // on the ui_event channel. The channel is drained only here, so a
+    // retry-heavy run can overflow the broadcast buffer; `Lagged` drops the
+    // OLDEST events, so skipping it keeps the last-sent events readable.
+    let mut ui_events = Vec::new();
     loop {
-        match llm_rx.try_recv() {
-            Ok(event) => llm_stopped = Some(event),
+        match ui_event_rx.try_recv() {
+            Ok(event) => ui_events.push(event),
             Err(crate::bus::TryRecvError::Lagged(_)) => continue,
             Err(_) => break,
         }
     }
-    let llm_stopped =
-        llm_stopped.ok_or("LlmEvent::Stopped must be published on the cancel path")?;
-    let llm_ok = matches!(
-        &llm_stopped,
-        crate::bus::LlmEvent::Stopped { reason } if reason.starts_with(OUTPUT_REPETITION_STOP_PREFIX)
+    assert!(
+        ui_events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Stopped { reason } if reason.starts_with(OUTPUT_REPETITION_STOP_PREFIX))),
+        "the cancel path must publish UiEvent::Stopped with the reason; got {ui_events:?}"
     );
     assert!(
-        llm_ok,
-        "the last llm event on the stop turn must be Stopped with the reason, got {llm_stopped:?}"
+        ui_events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Completed { .. })),
+        "the cancel path must publish UiEvent::Completed; got {ui_events:?}"
     );
 
     Ok(())

@@ -1,8 +1,8 @@
 //! Async permission resolution trait and its two implementations.
 //!
 //! - [`PolicyPermissionResolver`]: TTY/non-interactive mode — pure policy evaluation, returns immediately.
-//! - [`InteractivePermissionResolver`]: TUI mode — publishes a `PermissionEvent::Requested` on
-//!   `bus.permission()` and awaits the user's decision via a oneshot channel.
+//! - [`InteractivePermissionResolver`]: TUI mode — publishes a `UiEvent::PermissionRequested` on
+//!   `bus.ui_event()` and awaits the user's decision via a oneshot channel.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -116,7 +116,7 @@ fn summarize_ask_payload(args: &JsonValue) -> String {
 
 /// Resolves tool call permission decisions asynchronously.
 ///
-/// - TUI mode: sends a `PermissionEvent::Requested` on `bus.permission()` and
+/// - TUI mode: sends a `UiEvent::PermissionRequested` on `bus.ui_event()` and
 ///   awaits the user's decision via a oneshot channel.
 /// - TTY mode: evaluates policy inline and returns immediately.
 pub trait AsyncPermissionResolver: Clone + Send + Sync + 'static {
@@ -252,7 +252,7 @@ impl AskApprovalHook for AskContextCapture {
         });
         self.captured_auth_decision = Some(decision.clone());
         // AskContextCapture only captures context for the TUI oneshot flow.
-        // The actual UI event is published on bus.permission() in resolve().
+        // The actual UI event is published on bus.ui_event() in resolve().
         AskChoice::Deny
     }
 }
@@ -260,13 +260,13 @@ impl AskApprovalHook for AskContextCapture {
 /// Interactive permission resolver for TUI mode.
 ///
 /// When the policy requires user confirmation ("Ask"), publishes a
-/// `PermissionEvent::Requested` on `bus.permission()` and awaits the user's
+/// `UiEvent::PermissionRequested` on `bus.ui_event()` and awaits the user's
 /// decision. The TUI event loop must call [`InteractivePermissionResolver::submit_decision`]
 /// to unblock the waiting `resolve()` future.
 ///
 /// **Design note (deadlock prevention):** This struct does NOT own a
 /// `mpsc::UnboundedSender<UiEvent>`. It owns a `Bus` clone and publishes
-/// permission events on `bus.permission()` directly, so the executor's stack
+/// permission events on `bus.ui_event()` directly, so the executor's stack
 /// frame (which holds the resolver across the retry loop) never keeps a sender
 /// alive that would prevent the drain loop's channel from closing.
 #[derive(Clone)]
@@ -296,7 +296,7 @@ impl InteractivePermissionResolver {
     /// - `closure_registry`: registry of closure-based tools.
     /// - `mcp_registry`: registry of MCP tools.
     /// - `bus`: the shared signal bus; permission events are published on
-    ///   `bus.permission()`.
+    ///   `bus.ui_event()`.
     pub fn new(
         pending: Arc<StdMutex<HashMap<String, OneshotTx<ProtocolPermissionDecision>>>>,
         permissions: Arc<PermissionsConfig>,
@@ -418,7 +418,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
 
                 let (tx, rx) = OneshotTx::<ProtocolPermissionDecision>::channel("permission");
                 let request_id = bus
-                    .permission()
+                    .ui_event()
                     .request_permission(context)
                     .await
                     .unwrap_or_else(|_| next_request_id());

@@ -106,6 +106,7 @@ pub(crate) async fn handle_external_prompt(
             *ctx.pending_external_cancel = None;
             let _ = ctx.bus.cancel().send(CancelEvent::Requested).await;
         }
+        // Control-plane turn-start event: stays on `bus.turn()`, not rendered.
         let _ = ctx
             .bus
             .turn()

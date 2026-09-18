@@ -1,7 +1,8 @@
-use crate::bus::{CompactionEvent, TurnEvent, WarningEvent};
+use crate::bus::{CompactionEvent, TurnEvent};
 use crate::orchestrator::stages::{OrchestrationContext, SlashHandler};
 use crate::orchestrator::{UiStateEvent, WorkerCommand};
 use crate::protocol::contracts::SharedUiAction;
+use crate::protocol::event::UiEvent;
 use crate::protocol::slash::{SlashCommand, SlashParseResult, parse_slash_command};
 
 /// Processes slash commands and regular prompt submissions from the UI.
@@ -95,14 +96,15 @@ impl SlashHandler for SlashStage {
             SlashParseResult::Unknown(command) => {
                 let _ = ctx
                     .bus
-                    .warning()
-                    .send(WarningEvent::Message {
+                    .ui_event()
+                    .send(UiEvent::Warning {
                         message: format!("Unknown slash command: {command}"),
                     })
                     .await;
             }
             SlashParseResult::NotSlash => {
                 // Regular prompt: dispatch to worker
+                // Control-plane turn-start event: stays on `bus.turn()`, not rendered.
                 let _ = ctx
                     .bus
                     .turn()

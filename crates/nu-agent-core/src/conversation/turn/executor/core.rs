@@ -22,13 +22,14 @@ use std::sync::{Arc, Mutex};
 use nu_protocol::{LabeledError, Span, Value};
 use rig::memory::ConversationMemory;
 
-use crate::bus::{Bus, WarningEvent};
+use crate::bus::Bus;
 use crate::config::Config;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::managers::SessionManager;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::output_repetition::RepetitionState;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
+use crate::protocol::event::UiEvent;
 use crate::session::{CachedMemory, SessionStore};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
@@ -201,8 +202,8 @@ where
             let _ = self
                 .tool_infra
                 .bus
-                .warning()
-                .send(WarningEvent::Message {
+                .ui_event()
+                .send(UiEvent::Warning {
                     message: format!(
                         "Session memory update failed: {label} — this turn may not be saved."
                     ),

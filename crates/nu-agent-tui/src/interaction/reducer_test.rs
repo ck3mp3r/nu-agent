@@ -6,11 +6,13 @@
 use crate::{
     interaction::reducer::{
         ESC_ABORT_CONFIRM_STATUS, ReducerInput, UserAction,
-        VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS, reduce_with_cancel_controller,
+        VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS, dispatch_ui_event, reduce_with_cancel_controller,
     },
     state::{AppState, InputMode, InputState, PaneFocus, PromptStatus, ScrollState, UiPhase},
 };
-use nu_agent_core::protocol::event::{PermissionRequestContext, UiEvent};
+use nu_agent_core::protocol::event::{
+    PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
+};
 use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
 
@@ -453,7 +455,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             pre: busy_empty_status,
         },
         Case {
-            name: "warning_is_reducer_noop",
+            name: "warning_sets_status_line",
             event: UiEvent::Warning {
                 message: "warned".to_string(),
             },
@@ -514,11 +516,10 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 assert_eq!(state.status.tokens.session_total_tokens, 12);
                 assert!(state.status.message.status_line().is_empty());
             }
-            "warning_is_reducer_noop" => {
-                // Warning is handled by StatusState via warning_rx, not the
-                // transcript reducer — the reducer no-ops and the status line
-                // set by the `pre` fixture stays untouched.
-                assert!(state.status.message.status_line().is_empty());
+            "warning_sets_status_line" => {
+                // Warning is now handled by the UiEvent dispatch, which routes
+                // to StatusState::reduce_warning_event and sets the status line.
+                assert_eq!(state.status.message.status_line(), "warned");
             }
             "assistant_message_trims_and_appends" => {
                 // After the raw-markdown refactor, a single AssistantMessage
@@ -574,6 +575,97 @@ fn permission_request_focuses_transcript_for_immediate_prompt_visibility() {
 
     assert_eq!(state.scroll.pane_focus, crate::state::PaneFocus::Input);
     assert!(state.permission.has_prompt());
+}
+
+#[test]
+fn permission_requested_dispatch_orders_tool_before_diff_preview_and_follows_tail() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.scroll.following_tail = false;
+
+    // -- Exec
+    dispatch_ui_event(
+        &mut state,
+        UiEvent::ToolStarted {
+            name: "edit".to_string(),
+            source: "builtin".to_string(),
+            arguments: "{}".to_string(),
+        },
+    );
+    dispatch_ui_event(
+        &mut state,
+        UiEvent::PermissionRequested {
+            request_id: "perm-1".to_string(),
+            context: PermissionRequestContext {
+                tool: "edit".to_string(),
+                source: "builtin".to_string(),
+                mode: None,
+                matched_rule_identity: "tool:edit".to_string(),
+                scope: "tool".to_string(),
+                target_field: None,
+                pattern: "edit".to_string(),
+                summary: "test".to_string(),
+                pre_authorize_display: Some(ToolDisplay {
+                    title: "file (diff)".to_string(),
+                    sections: vec![ToolDisplaySection {
+                        label: "diff".to_string(),
+                        language: "diff".to_string(),
+                        content: "--- a\n+++ b\n".to_string(),
+                        stats: None,
+                    }],
+                }),
+            },
+        },
+    );
+
+    // -- Check
+    let tool_index = state
+        .transcript
+        .entries
+        .iter()
+        .position(|entry| entry.role() == Role::Tool);
+    let preview_index = state
+        .transcript
+        .entries
+        .iter()
+        .position(|entry| entry.role() == Role::ToolDisplay);
+    let tool_index = tool_index.ok_or("tool entry should exist")?;
+    let preview_index = preview_index.ok_or("diff preview entry should exist")?;
+    assert!(
+        tool_index < preview_index,
+        "tool entry ({tool_index}) must precede diff preview ({preview_index})"
+    );
+    assert!(
+        state.permission.has_prompt(),
+        "permission prompt must be open after PermissionRequested"
+    );
+    assert!(
+        state.scroll.following_tail,
+        "dispatch must scroll transcript to bottom"
+    );
+    Ok(())
+}
+
+#[test]
+fn warning_dispatch_sets_status_line() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+
+    // -- Exec
+    dispatch_ui_event(
+        &mut state,
+        UiEvent::Warning {
+            message: "test warning".to_string(),
+        },
+    );
+
+    // -- Check
+    assert_eq!(
+        state.status.message.status_line(),
+        "test warning",
+        "warning dispatch must set the status line"
+    );
+    Ok(())
 }
 
 #[cfg(test)]

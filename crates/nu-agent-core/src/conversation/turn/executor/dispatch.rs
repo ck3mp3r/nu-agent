@@ -7,9 +7,9 @@
 
 use nu_protocol::{LabeledError, Span};
 
-use crate::bus::{LlmEvent, TurnEvent, WarningEvent};
 use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
 use crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
+use crate::protocol::event::UiEvent;
 use crate::session::repair::inject_missing_tool_results;
 use crate::types::Message;
 
@@ -113,16 +113,16 @@ where
                     let _ = self
                         .tool_infra
                         .bus
-                        .warning()
-                        .send(WarningEvent::Message {
+                        .ui_event()
+                        .send(UiEvent::Warning {
                             message: msg.clone(),
                         })
                         .await;
                     let _ = self
                         .tool_infra
                         .bus
-                        .llm()
-                        .send(LlmEvent::Stopped {
+                        .ui_event()
+                        .send(UiEvent::Stopped {
                             reason: msg.clone(),
                         })
                         .await;
@@ -333,16 +333,16 @@ where
                     let _ = self
                         .tool_infra
                         .bus
-                        .warning()
-                        .send(WarningEvent::Message {
+                        .ui_event()
+                        .send(UiEvent::Warning {
                             message: reason.clone(),
                         })
                         .await;
                     let _ = self
                         .tool_infra
                         .bus
-                        .llm()
-                        .send(LlmEvent::Stopped {
+                        .ui_event()
+                        .send(UiEvent::Stopped {
                             reason: reason.clone(),
                         })
                         .await;
@@ -353,8 +353,8 @@ where
             let _ = self
                 .tool_infra
                 .bus
-                .turn()
-                .send(TurnEvent::Completed {
+                .ui_event()
+                .send(UiEvent::Completed {
                     tool_calls: turn_result.tool_call_count,
                 })
                 .await;
@@ -397,8 +397,8 @@ where
             let _ = self
                 .tool_infra
                 .bus
-                .llm()
-                .send(LlmEvent::AssistantMessage {
+                .ui_event()
+                .send(UiEvent::AssistantMessage {
                     text: turn_result.text.clone(),
                 })
                 .await;
@@ -406,8 +406,8 @@ where
         let _ = self
             .tool_infra
             .bus
-            .turn()
-            .send(TurnEvent::Completed {
+            .ui_event()
+            .send(UiEvent::Completed {
                 tool_calls: turn_result.tool_call_count,
             })
             .await;

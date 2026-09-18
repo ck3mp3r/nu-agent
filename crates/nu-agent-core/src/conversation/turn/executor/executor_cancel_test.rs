@@ -63,7 +63,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
 
     let shared_model = super::test_utils::shared_model_handle(model);
     let bus = crate::bus::create_bus();
-    let mut turn_rx = bus.turn().subscribe();
+    let mut ui_event_rx = bus.ui_event().subscribe();
 
     let handle = rig::tool::server::ToolServer::new()
         .tool(super::test_utils::CancellingTool::new(bus.clone()))
@@ -151,14 +151,16 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
     //     trim a trailing user-only message from an immediately-cancelled turn.
     // The key invariant is JSONL durability (step 2 above), not the repair-filtered view.
 
-    // 3. TurnEvent::Completed must have been published on the bus turn channel
-    let completed_received = turn_rx
-        .try_recv()
-        .map(|event| matches!(event, crate::bus::TurnEvent::Completed { .. }))
-        .unwrap_or(false);
+    // 3. UiEvent::Completed must have been published on the bus ui_event channel
+    let mut saw_completed = false;
+    while let Ok(event) = ui_event_rx.try_recv() {
+        if matches!(event, UiEvent::Completed { .. }) {
+            saw_completed = true;
+        }
+    }
     assert!(
-        completed_received,
-        "TurnEvent::Completed must be published for a cancelled turn (path C)"
+        saw_completed,
+        "UiEvent::Completed must be published for a cancelled turn (path C)"
     );
 
     // 4. UiEvent::AssistantMessage must NOT have been emitted

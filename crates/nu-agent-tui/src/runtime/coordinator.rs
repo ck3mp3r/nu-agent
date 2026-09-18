@@ -29,7 +29,7 @@ use crate::runtime::status::{
 use crate::state::{
     AppState, InputMode, McpServerState, McpServerUsabilityState, PickerRenderKind, SubmitAction,
 };
-use nu_agent_core::bus::{CompactionEvent, LlmEvent, ToolEvent, TurnEvent, WarningEvent};
+use nu_agent_core::bus::{CompactionEvent, LlmEvent, ToolEvent, TurnEvent};
 use nu_agent_core::orchestrator::UiStateEvent;
 use nu_agent_core::protocol::contracts::UiMessageSnapshot;
 use nu_agent_core::protocol::event::UiEvent;
@@ -190,24 +190,10 @@ impl RuntimeCoordinator {
         crate::state::dispatch_turn_event(&mut self.state, event)
     }
 
-    /// Dispatch a protocol `UiEvent` to the domain reducers. Both transport
-    /// event paths (`drain_transport` and the warning fallback) converge here.
+    /// Dispatch a protocol `UiEvent` to the domain reducers. Both the bus
+    /// `ui_event` arm and the transport drain converge here.
     pub(crate) fn reduce_ui_event(&mut self, event: UiEvent) -> bool {
         crate::interaction::reducer::dispatch_ui_event(&mut self.state, event)
-    }
-
-    /// Consume a warning event from the bus. `StatusState` handles plain
-    /// messages (status line only); everything else falls through to the
-    /// domain dispatch via the existing `WarningEvent -> UiEvent` conversion
-    /// (TurnError keeps its spacer + error line + finalize behavior).
-    pub fn reduce_warning_event(&mut self, event: WarningEvent) -> bool {
-        if self.state.status.reduce_warning_event(event.clone()) {
-            return true;
-        }
-        match Option::<UiEvent>::from(event) {
-            Some(ui_event) => self.reduce_ui_event(ui_event),
-            None => false,
-        }
     }
 
     pub(crate) fn set_mcp_lifecycle_projection(&mut self, projection: Vec<McpServerLifecycle>) {
