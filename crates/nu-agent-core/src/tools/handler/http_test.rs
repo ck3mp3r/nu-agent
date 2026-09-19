@@ -1,5 +1,6 @@
 use super::http::{HttpArgs, HttpTool, process_body};
 use crate::bus::Bus;
+use crate::protocol::tool_args::CallLineRender;
 use crate::tools::handler::builtin_tool::BuiltinTool;
 
 const DEFAULT_MAX_LENGTH: usize = 12000;
@@ -159,4 +160,52 @@ fn truncation_respects_char_boundary_multibyte() {
     let (content, truncated) = process_body(emoji_body, "text/plain", "raw", DEFAULT_MAX_LENGTH);
     assert!(truncated, "should be truncated");
     assert_eq!(content.chars().count(), DEFAULT_MAX_LENGTH);
+}
+
+// === call_line_render ===
+
+#[test]
+fn http_call_line_render_shows_explicit_method_and_url() {
+    // -- Setup & Fixtures
+    let args = r#"{"url":"https://example.com","method":"POST"}"#;
+
+    // -- Exec
+    let render = HttpTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ POST https://example.com".to_string(),
+        }
+    );
+}
+
+#[test]
+fn http_call_line_render_defaults_method_to_get() {
+    // -- Setup & Fixtures
+    let args = r#"{"url":"https://example.com"}"#;
+
+    // -- Exec
+    let render = HttpTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ GET https://example.com".to_string(),
+        }
+    );
+}
+
+#[test]
+fn http_call_line_render_falls_back_to_generic_on_invalid_json() {
+    // -- Setup & Fixtures
+    let args = "not-json";
+
+    // -- Exec
+    let render = HttpTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(render, CallLineRender::generic_json_summary(args));
 }

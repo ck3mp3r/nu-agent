@@ -1,6 +1,7 @@
 use super::*;
 use crate::protocol::event::ToolDisplay;
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
+use crate::protocol::tool_args::CallLineRender;
 
 #[test]
 fn tool_start_converts_to_tool_start() {
@@ -8,6 +9,7 @@ fn tool_start_converts_to_tool_start() {
         name: "read".to_string(),
         source: "user".to_string(),
         arguments: "{}".to_string(),
+        call_line: CallLineRender::generic_json_summary("{}"),
     };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(
@@ -16,6 +18,7 @@ fn tool_start_converts_to_tool_start() {
             name: "read".to_string(),
             source: "user".to_string(),
             arguments: "{}".to_string(),
+            call_line: CallLineRender::generic_json_summary("{}"),
         })
     );
 }

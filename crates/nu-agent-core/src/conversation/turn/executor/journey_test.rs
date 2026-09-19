@@ -28,6 +28,7 @@ use crate::protocol::event::UiEvent;
 use crate::session::{FsSessionStore, StoreEntry};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::types::Message;
 use crate::utils::value_ext::extract_response_text_from_value;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -47,6 +48,7 @@ fn default_tool_infra(
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
+        render_registry: ToolRenderRegistry::default(),
     }
 }
 

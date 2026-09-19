@@ -7,6 +7,7 @@ use crate::interaction::reducer::apply_permission_request_display;
 use crate::state::AppState;
 use nu_agent_core::bus::ToolEvent;
 use nu_agent_core::protocol::event::{ToolDisplay, ToolDisplaySection};
+use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::TranscriptEntryKind;
 use nu_agent_core::transcript::renderer::ItemStatus;
@@ -290,6 +291,24 @@ fn started(name: &str, arguments: &str) -> ToolEvent {
         name: name.to_string(),
         source: "mcp".to_string(),
         arguments: arguments.to_string(),
+        call_line: CallLineRender::generic_json_summary(arguments),
+    }
+}
+
+fn started_with_call_line(name: &str, arguments: &str, call_line: CallLineRender) -> ToolEvent {
+    ToolEvent::Started {
+        name: name.to_string(),
+        source: "mcp".to_string(),
+        arguments: arguments.to_string(),
+        call_line,
+    }
+}
+
+/// Flatten a `CallLineRender` to its display text for assertions.
+fn call_line_text(call_line: &CallLineRender) -> String {
+    match call_line {
+        CallLineRender::Inline { summary } => summary.clone(),
+        CallLineRender::CodeBlock { code, .. } => code.clone(),
     }
 }
 
@@ -323,11 +342,12 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
     let entry = &state.transcript.entries[1];
     assert_eq!(entry.role(), Role::Tool);
     assert_eq!(entry.text(), "k8s__list_pods");
-    // Check the args field for status and content
+    // Check the call line for status and content
     if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        assert!(invocation.args.contains("namespace"));
-        assert!(!invocation.args.contains("api-0"));
-        assert!(!invocation.args.contains("[{"));
+        let text = call_line_text(&invocation.call_line);
+        assert!(text.contains("namespace"));
+        assert!(!text.contains("api-0"));
+        assert!(!text.contains("[{"));
     } else {
         panic!("Expected Tool variant");
     }
@@ -352,7 +372,7 @@ fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status(
     assert_eq!(entry.role(), Role::Tool);
     assert_eq!(entry.text(), "k8s__list_pods");
     if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        assert!(invocation.args.contains("namespace"));
+        assert!(call_line_text(&invocation.call_line).contains("namespace"));
     } else {
         panic!("Expected Tool variant");
     }
@@ -363,42 +383,61 @@ fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status(
 }
 
 #[test]
-fn tool_start_nu_sets_args_to_raw_command_string() {
+fn tool_start_nu_sets_call_line_to_code_block_with_raw_command() {
     // -- Setup & Fixtures
     let mut state = AppState::default();
 
     // -- Exec
     reduce_tool(
         &mut state,
-        started("nu", r#"{"command":"ls | select name type size"}"#),
+        started_with_call_line(
+            "nu",
+            r#"{"command":"ls | select name type size"}"#,
+            CallLineRender::CodeBlock {
+                language: "nu".to_string(),
+                code: "ls | select name type size".to_string(),
+            },
+        ),
     );
 
     // -- Check
     let entry = &state.transcript.entries[1];
     if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        assert_eq!(invocation.args, "ls | select name type size");
+        assert_eq!(
+            invocation.call_line,
+            CallLineRender::CodeBlock {
+                language: "nu".to_string(),
+                code: "ls | select name type size".to_string(),
+            }
+        );
     } else {
         panic!("Expected Tool variant");
     }
 }
 
 #[test]
-fn tool_start_nu_multi_line_command_preserves_newlines_in_args() {
+fn tool_start_nu_multi_line_command_preserves_newlines_in_call_line() {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    let arguments =
-        r#"{"command":"ls | where size > 1mb\n| select name type\n| sort-by modified"}"#;
+    let command = "ls | where size > 1mb\n| select name type\n| sort-by modified";
 
     // -- Exec
-    reduce_tool(&mut state, started("nu", arguments));
+    reduce_tool(
+        &mut state,
+        started_with_call_line(
+            "nu",
+            r#"{"command":"ls | where size > 1mb\n| select name type\n| sort-by modified"}"#,
+            CallLineRender::CodeBlock {
+                language: "nu".to_string(),
+                code: command.to_string(),
+            },
+        ),
+    );
 
     // -- Check
     let entry = &state.transcript.entries[1];
     if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        assert_eq!(
-            invocation.args,
-            "ls | where size > 1mb\n| select name type\n| sort-by modified"
-        );
+        assert_eq!(call_line_text(&invocation.call_line), command);
     } else {
         panic!("Expected Tool variant");
     }
@@ -415,10 +454,10 @@ fn tool_start_nu_without_command_key_falls_back_to_summary_arrow() {
     // -- Check
     let entry = &state.transcript.entries[1];
     if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
+        let text = call_line_text(&invocation.call_line);
         assert!(
-            invocation.args.starts_with("→ "),
-            "fallback must use the arrow summary, got: {:?}",
-            invocation.args
+            text.starts_with("→ "),
+            "fallback must use the arrow summary, got: {text:?}"
         );
     } else {
         panic!("Expected Tool variant");
@@ -439,7 +478,7 @@ fn tool_start_non_nu_keeps_args_summary_arrow() {
     // -- Check
     let entry = &state.transcript.entries[1];
     if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        assert!(invocation.args.starts_with("→ "));
+        assert!(call_line_text(&invocation.call_line).starts_with("→ "));
     } else {
         panic!("Expected Tool variant");
     }
@@ -541,9 +580,10 @@ fn tool_start_truncates_long_args_summary_with_ellipsis() {
     ));
     assert_eq!(state.transcript.entries[1].text(), "k8s__describe");
     if let TranscriptEntryKind::Tool(invocation) = &state.transcript.entries[1].kind {
-        assert!(invocation.args.starts_with("→ "));
-        assert!(invocation.args.ends_with('…'));
-        assert!(invocation.args.chars().count() < 180);
+        let text = call_line_text(&invocation.call_line);
+        assert!(text.starts_with("→ "));
+        assert!(text.ends_with('…'));
+        assert!(text.chars().count() < 180);
     } else {
         panic!("Expected Tool variant");
     }
@@ -586,7 +626,10 @@ fn tool_display_renders_diff_sections_as_dedicated_code_blocks() {
         .collect();
 
     assert!(!lines.contains(&"edit sample.txt".to_string()));
-    assert!(lines.contains(&"sample.txt (diff)".to_string()));
+    assert!(
+        !lines.contains(&"sample.txt (diff)".to_string()),
+        "the call line already shows the path, so the section label is redundant"
+    );
     assert!(!lines.iter().any(|line| line.contains("fn main")));
     assert!(lines.iter().any(|line| line.contains("--- a/sample.txt")));
     assert!(lines.iter().any(|line| line.contains("+++ b/sample.txt")));
@@ -636,9 +679,7 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
         .filter(|entry| match &entry.kind {
             TranscriptEntryKind::ToolResult(result) => result.lines.iter().any(|line| {
                 let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
-                text == "sample.txt (diff)"
-                    || text.contains("--- a/sample.txt")
-                    || text.contains("+++ b/sample.txt")
+                text.contains("--- a/sample.txt") || text.contains("+++ b/sample.txt")
             }),
             _ => false,
         })
@@ -823,7 +864,104 @@ fn edit_preview_display_omits_redundant_edit_path_header() {
         .flat_map(extract_all_text_from_entry)
         .collect();
     assert!(!lines.contains(&"edit sample.txt".to_string()));
-    assert!(lines.contains(&"sample.txt (diff)".to_string()));
+    assert!(
+        !lines.contains(&"sample.txt (diff)".to_string()),
+        "the call line already shows the path, so the section label is redundant"
+    );
+}
+
+#[test]
+fn edit_display_with_multiple_sections_keeps_section_labels() {
+    let mut state = AppState::default();
+
+    reduce_tool(&mut state, started("edit", r#"{"path":"sample.txt"}"#));
+
+    reduce_tool(
+        &mut state,
+        ToolEvent::Completed {
+            name: "edit".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"path":"sample.txt"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit sample.txt".to_string(),
+                sections: vec![
+                    ToolDisplaySection {
+                        label: "sample.txt".to_string(),
+                        language: "diff".to_string(),
+                        content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
+                            .to_string(),
+                        stats: None,
+                    },
+                    ToolDisplaySection {
+                        label: "other.txt".to_string(),
+                        language: "diff".to_string(),
+                        content: "--- a/other.txt\n+++ b/other.txt\n@@ -1 +1 @@\n-a\n+b\n"
+                            .to_string(),
+                        stats: None,
+                    },
+                ],
+            }),
+            error_kind: None,
+            message: None,
+        },
+    );
+
+    let lines: Vec<String> = state
+        .transcript
+        .entries
+        .iter()
+        .flat_map(extract_all_text_from_entry)
+        .collect();
+    assert!(
+        lines.contains(&"sample.txt (diff)".to_string()),
+        "multi-section displays must keep every section label; got {lines:?}"
+    );
+    assert!(
+        lines.contains(&"other.txt (diff)".to_string()),
+        "multi-section displays must keep every section label; got {lines:?}"
+    );
+}
+
+#[test]
+fn non_diff_single_section_display_keeps_section_label() {
+    let mut state = AppState::default();
+
+    reduce_tool(&mut state, started("nu", r#"{"command":"ls"}"#));
+
+    reduce_tool(
+        &mut state,
+        ToolEvent::Completed {
+            name: "nu".to_string(),
+            source: "closure".to_string(),
+            arguments: r#"{"command":"ls"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "nu sample.rs".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "sample.rs".to_string(),
+                    language: "rust".to_string(),
+                    content: "fn main() {}\n".to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        },
+    );
+
+    let lines: Vec<String> = state
+        .transcript
+        .entries
+        .iter()
+        .flat_map(extract_all_text_from_entry)
+        .collect();
+    assert!(
+        lines.contains(&"sample.rs (rust)".to_string()),
+        "non-diff single-section displays must keep the section label; got {lines:?}"
+    );
 }
 
 #[test]
@@ -907,8 +1045,8 @@ fn permission_requested_with_display_pushes_to_transcript() {
         .collect();
 
     assert!(
-        lines.iter().any(|line| line.contains("changes (diff)")),
-        "Expected to find 'changes (diff)' in transcript"
+        !lines.iter().any(|line| line.contains("changes (diff)")),
+        "the call line already shows the path, so the section label is redundant"
     );
     assert!(
         lines.iter().any(|line| line.contains("+new content")),
@@ -1091,8 +1229,8 @@ fn tool_end_without_prior_permission_pushes_display_normally() {
         .collect();
 
     assert!(
-        lines.iter().any(|line| line.contains("changes (diff)")),
-        "Expected to find 'changes (diff)' in transcript"
+        !lines.iter().any(|line| line.contains("changes (diff)")),
+        "the call line already shows the path, so the section label is redundant"
     );
     assert!(
         lines.iter().any(|line| line.contains("+new content")),
@@ -1249,6 +1387,7 @@ fn bookkeeping_start_finish_tracks_row_status() {
         &mut state.transcript,
         "k8s__list_pods",
         r#"{"namespace":"prod"}"#,
+        CallLineRender::generic_json_summary(r#"{"namespace":"prod"}"#),
     );
     assert_eq!(state.transcript.entries.len(), 1);
     state.tool.finish_tool_call(
@@ -1267,6 +1406,7 @@ fn bookkeeping_start_finish_unknown_renders_unknown_status() {
         &mut state.transcript,
         "k8s__list_pods",
         r#"{"namespace":"prod"}"#,
+        CallLineRender::generic_json_summary(r#"{"namespace":"prod"}"#),
     );
     state.tool.finish_tool_call(
         &mut state.transcript,
@@ -1286,12 +1426,18 @@ fn concurrent_same_name_tool_calls_get_correct_statuses() {
     let mut state = AppState::default();
 
     // Start two tool calls with the same name but different arguments
-    state
-        .tool
-        .start_tool_call(&mut state.transcript, "k8s__get_pod", r#"{"name":"api-0"}"#);
-    state
-        .tool
-        .start_tool_call(&mut state.transcript, "k8s__get_pod", r#"{"name":"api-1"}"#);
+    state.tool.start_tool_call(
+        &mut state.transcript,
+        "k8s__get_pod",
+        r#"{"name":"api-0"}"#,
+        CallLineRender::generic_json_summary(r#"{"name":"api-0"}"#),
+    );
+    state.tool.start_tool_call(
+        &mut state.transcript,
+        "k8s__get_pod",
+        r#"{"name":"api-1"}"#,
+        CallLineRender::generic_json_summary(r#"{"name":"api-1"}"#),
+    );
 
     // Both should be InProgress
     assert_eq!(state.transcript.entries.len(), 2);

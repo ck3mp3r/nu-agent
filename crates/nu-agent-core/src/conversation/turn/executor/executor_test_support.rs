@@ -15,6 +15,7 @@ use crate::conversation::state::memory::MemoryState;
 use crate::session::{CachedMemory, FsSessionStore, SessionStore, StoreEntry};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 
 pub(super) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -38,6 +39,7 @@ pub(super) fn default_tool_infra(bus: Bus) -> ToolInfra {
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
         bus,
+        render_registry: ToolRenderRegistry::default(),
     }
 }
 

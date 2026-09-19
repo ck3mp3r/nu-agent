@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 
 use nu_agent_core::protocol::contracts::UiMessageSnapshot;
+use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::transcript::ir::{ContentLine, Role};
 use nu_agent_core::transcript::items::{
     ProseMessage, Spacer as SpacerItem, SystemMessage, ToolInvocation,
@@ -66,18 +67,15 @@ impl TranscriptStore {
                 kind: TranscriptEntryKind::Assistant(ProseMessage { markdown: text }),
                 status: None,
             },
-            TranscriptRole::Tool => {
-                let args = text.trim_start_matches("→ ").to_string();
-                TranscriptEntry {
-                    id: 0,
-                    kind: TranscriptEntryKind::Tool(ToolInvocation {
-                        name: String::new(),
-                        source: String::new(),
-                        args,
-                    }),
-                    status: None,
-                }
-            }
+            TranscriptRole::Tool => TranscriptEntry {
+                id: 0,
+                kind: TranscriptEntryKind::Tool(ToolInvocation {
+                    name: String::new(),
+                    source: String::new(),
+                    call_line: CallLineRender::Inline { summary: text },
+                }),
+                status: None,
+            },
             TranscriptRole::ToolDisplay => TranscriptEntry {
                 id: 0,
                 kind: TranscriptEntryKind::ToolResult(TranscriptToolResult {
@@ -359,7 +357,12 @@ impl TranscriptStore {
                         .tool_name()
                         .unwrap_or_else(|| extract_tool_name(persisted));
                     self.push_hydrate_tool_block_start_spacers();
-                    tool.start_tool_call(self, name, arguments);
+                    tool.start_tool_call(
+                        self,
+                        name,
+                        arguments,
+                        CallLineRender::generic_json_summary(arguments),
+                    );
                     tool.finish_tool_call(self, name, arguments, message.tool_success());
                     continue;
                 }
@@ -367,7 +370,12 @@ impl TranscriptStore {
                     parse_persisted_tool_status_line(persisted)
                 {
                     self.push_hydrate_tool_block_start_spacers();
-                    tool.start_tool_call(self, name, arguments);
+                    tool.start_tool_call(
+                        self,
+                        name,
+                        arguments,
+                        CallLineRender::generic_json_summary(arguments),
+                    );
                     tool.finish_tool_call(self, name, arguments, Some(success));
                     continue;
                 }

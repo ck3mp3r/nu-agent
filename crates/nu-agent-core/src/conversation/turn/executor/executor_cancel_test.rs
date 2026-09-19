@@ -15,6 +15,7 @@ use crate::protocol::event::UiEvent;
 use crate::session::StoreEntry;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::utils::value_ext::extract_response_text_from_value;
 
 // ---------------------------------------------------------------------------
@@ -91,6 +92,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
             bus,
+            render_registry: ToolRenderRegistry::default(),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),
@@ -229,6 +231,7 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
             bus,
+            render_registry: ToolRenderRegistry::default(),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),
@@ -354,6 +357,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
             bus,
+            render_registry: ToolRenderRegistry::default(),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),
@@ -526,6 +530,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
         bus: bus.clone(),
+        render_registry: ToolRenderRegistry::default(),
     };
 
     let shared_model = super::test_utils::shared_model_handle(model);
@@ -679,6 +684,7 @@ async fn user_cancel_stays_silent_with_empty_response() -> Result<()> {
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
             bus,
+            render_registry: ToolRenderRegistry::default(),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),

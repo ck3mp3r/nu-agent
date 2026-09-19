@@ -1,4 +1,5 @@
 use crate::protocol::event::{ToolDisplay, UiEvent};
+use crate::protocol::tool_args::CallLineRender;
 
 /// A request to cancel the current task.
 #[derive(Debug, Clone)]
@@ -13,6 +14,7 @@ pub enum ToolEvent {
         name: String,
         source: String,
         arguments: String,
+        call_line: CallLineRender,
     },
     Completed {
         name: String,
@@ -157,10 +159,12 @@ impl From<ToolEvent> for Option<UiEvent> {
                 name,
                 source,
                 arguments,
+                call_line,
             } => Some(UiEvent::ToolStarted {
                 name,
                 source,
                 arguments,
+                call_line,
             }),
             ToolEvent::Completed {
                 name,

@@ -3,6 +3,7 @@ use ratatui::style::Modifier;
 use crate::rendering::theme::TuiTheme;
 
 use crate::tui_renderer::TuiRenderer;
+use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::transcript::ir::*;
 use nu_agent_core::transcript::items::*;
 use nu_agent_core::transcript::renderer::*;
@@ -133,7 +134,10 @@ fn tool_row_renders_name_without_tool_brackets() {
     let block = ToolInvocation {
         name: "nu".to_string(),
         source: "".to_string(),
-        args: "ls | select name type size".to_string(),
+        call_line: CallLineRender::CodeBlock {
+            language: "nu".to_string(),
+            code: "ls | select name type size".to_string(),
+        },
     }
     .to_render_block();
 
@@ -157,7 +161,10 @@ fn tool_row_multi_line_nu_command_renders_one_row_per_command_line() -> Result<(
     let block = ToolInvocation {
         name: "nu".to_string(),
         source: "".to_string(),
-        args: "ls | where size > 1mb\n| select name type\n| sort-by modified".to_string(),
+        call_line: CallLineRender::CodeBlock {
+            language: "nu".to_string(),
+            code: "ls | where size > 1mb\n| select name type\n| sort-by modified".to_string(),
+        },
     }
     .to_render_block();
 
@@ -208,7 +215,9 @@ fn tool_lane_prefix_uses_cog_wheel() {
     let block = ToolInvocation {
         name: "test".to_string(),
         source: "".to_string(),
-        args: "".to_string(),
+        call_line: CallLineRender::Inline {
+            summary: String::new(),
+        },
     }
     .to_render_block();
     let lines = r.render(&block, &default_ctx(80));
@@ -227,7 +236,9 @@ fn tool_done_shows_checkmark() {
     let block = ToolInvocation {
         name: "test".to_string(),
         source: "".to_string(),
-        args: "".to_string(),
+        call_line: CallLineRender::Inline {
+            summary: String::new(),
+        },
     }
     .to_render_block();
     let mut ctx = default_ctx(80);
@@ -244,7 +255,9 @@ fn tool_failed_shows_cross() {
     let block = ToolInvocation {
         name: "test".to_string(),
         source: "".to_string(),
-        args: "".to_string(),
+        call_line: CallLineRender::Inline {
+            summary: String::new(),
+        },
     }
     .to_render_block();
     let mut ctx = default_ctx(80);
@@ -260,7 +273,9 @@ fn tool_unknown_shows_question_mark_with_queued_style() -> Result<()> {
     let block = ToolInvocation {
         name: "test".to_string(),
         source: "".to_string(),
-        args: "".to_string(),
+        call_line: CallLineRender::Inline {
+            summary: String::new(),
+        },
     }
     .to_render_block();
     let mut ctx = default_ctx(80);
@@ -555,7 +570,7 @@ fn tool_wrapped_block(args_text: String) -> RenderBlock {
         kind: TranscriptEntryKind::Tool(ToolInvocation {
             name: "edit".to_string(),
             source: String::new(),
-            args: args_text,
+            call_line: CallLineRender::Inline { summary: args_text },
         }),
         status: None,
     }

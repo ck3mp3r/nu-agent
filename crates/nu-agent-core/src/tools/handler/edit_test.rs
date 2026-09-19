@@ -1,5 +1,6 @@
 use super::*;
 use crate::bus::Bus;
+use crate::protocol::tool_args::CallLineRender;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -181,5 +182,38 @@ async fn edit_json_shape_preserved() -> Result<()> {
     ] {
         assert!(result.get(field).is_some(), "missing field: {field}");
     }
+    Ok(())
+}
+
+// === call_line_render ===
+
+#[test]
+fn edit_call_line_render_shows_path_and_diff_marker() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"path":"/tmp/f.txt"}"#;
+
+    // -- Exec
+    let render = EditTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ /tmp/f.txt (diff)".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn edit_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = "not-json";
+
+    // -- Exec
+    let render = EditTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(render, CallLineRender::generic_json_summary(args));
     Ok(())
 }

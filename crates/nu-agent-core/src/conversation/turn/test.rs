@@ -18,6 +18,7 @@ use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecisi
 use crate::session::FsSessionStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::{
     AssistantContent, Message, Text, ToolCall, ToolCallId, ToolDefinition, ToolFunction,
@@ -140,6 +141,7 @@ fn make_turn_context<'a>(
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
         bus,
+        render_registry: ToolRenderRegistry::default(),
     };
     TurnContext::new(conversation, input, tool_infra, config)
 }
@@ -253,6 +255,7 @@ async fn execute_turn_cancel_returns_cancelled_true() -> Result<()> {
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
         bus: bus.clone(),
+        render_registry: ToolRenderRegistry::default(),
     };
     let ctx = make_turn_context(shared_handle(model), &config, bus);
     // Override the tool infra with the cancelling tool. `make_turn_context`
@@ -1028,6 +1031,7 @@ async fn transient_turn_does_not_write_jsonl() -> Result<()> {
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
+        render_registry: ToolRenderRegistry::default(),
     };
     let config = Config::default();
     let ctx = TurnContext::new(conversation, input, tool_infra, &config);
@@ -1089,6 +1093,7 @@ async fn persistent_turn_writes_jsonl() -> Result<()> {
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
+        render_registry: ToolRenderRegistry::default(),
     };
     let config = Config::default();
     let ctx = TurnContext::new(conversation, input, tool_infra, &config);

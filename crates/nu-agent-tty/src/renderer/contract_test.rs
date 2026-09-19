@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use super::StderrUiRenderer;
 use nu_agent_core::protocol::event::UiEvent;
+use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::renderer::UiRenderer;
 
 use crate::policy::{UiPolicy, Verbosity};
@@ -65,6 +66,7 @@ fn run_mock_flow<R: UiRenderer>(renderer: &mut R) {
         name: "t".to_string(),
         source: "closure".to_string(),
         arguments: "{}".to_string(),
+        call_line: CallLineRender::generic_json_summary("{}"),
     });
     renderer.emit(&UiEvent::ToolCompleted {
         name: "t".to_string(),
@@ -275,6 +277,7 @@ fn spinner_pauses_for_persistent_lines_and_stops_on_completion() {
             name: "t".to_string(),
             source: "closure".to_string(),
             arguments: "{}".to_string(),
+            call_line: CallLineRender::generic_json_summary("{}"),
         });
 
         renderer.emit(&UiEvent::Completed { tool_calls: 0 });
@@ -303,6 +306,7 @@ fn default_tool_lifecycle_is_single_completion_line_with_result_block() {
         name: "gh__list_prs".to_string(),
         source: "mcp".to_string(),
         arguments: "{}".to_string(),
+        call_line: CallLineRender::generic_json_summary("{}"),
     });
     renderer.emit(&UiEvent::ToolCompleted {
         name: "gh__list_prs".to_string(),
@@ -339,6 +343,7 @@ fn default_tool_lifecycle_prints_non_empty_payloads() {
             name: "gh__list_prs".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
+            call_line: CallLineRender::generic_json_summary("{}"),
         });
         renderer.emit(&UiEvent::ToolCompleted {
             name: "gh__list_prs".to_string(),

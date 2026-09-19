@@ -33,6 +33,7 @@ use crate::protocol::event::UiEvent;
 use crate::session::{CachedMemory, SessionStore};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::{Message, ToolDefinition};
 
@@ -86,6 +87,9 @@ pub struct ToolInfra {
     pub last_total_tokens: Arc<Mutex<Option<u64>>>,
     /// Shared cancellation bus threaded through the turn pipeline.
     pub bus: Bus,
+    /// Per-tool call-line render functions, populated at builtin registration
+    /// time and consulted by the hook chain to build the transcript call line.
+    pub render_registry: ToolRenderRegistry,
 }
 
 pub struct TurnExecutor<

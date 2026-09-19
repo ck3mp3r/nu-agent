@@ -1,5 +1,6 @@
 use super::*;
 use crate::bus::Bus;
+use crate::protocol::tool_args::CallLineRender;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -82,5 +83,92 @@ async fn read_returns_version() -> Result<()> {
         .await
         .map_err(|e| format!("{e:?}"))?;
     assert!(result["version"].as_str().is_some_and(|v| !v.is_empty()));
+    Ok(())
+}
+
+// === call_line_render ===
+
+#[test]
+fn read_call_line_render_shows_path_only() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"path":"/tmp/f.txt"}"#;
+
+    // -- Exec
+    let render = ReadTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ /tmp/f.txt".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn read_call_line_render_shows_offset_limit_range() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"path":"/tmp/f.txt","offset":50,"limit":50}"#;
+
+    // -- Exec
+    let render = ReadTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ /tmp/f.txt:50-100".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn read_call_line_render_shows_path_only_when_offset_without_limit() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"path":"/tmp/f.txt","offset":50}"#;
+
+    // -- Exec
+    let render = ReadTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ /tmp/f.txt".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn read_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = "not-json";
+
+    // -- Exec
+    let render = ReadTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(render, CallLineRender::generic_json_summary(args));
+    Ok(())
+}
+
+#[test]
+fn read_call_line_render_saturates_offset_plus_limit_overflow() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"path":"/tmp/f.txt","offset":18446744073709551615,"limit":10}"#;
+
+    // -- Exec
+    let render = ReadTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ /tmp/f.txt:18446744073709551615-18446744073709551615".to_string(),
+        }
+    );
     Ok(())
 }

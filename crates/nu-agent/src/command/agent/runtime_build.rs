@@ -420,6 +420,7 @@ pub(crate) struct RuntimeBuildParams {
     pub(crate) agents_config: nu_agent_core::config::AgentsConfig,
     pub(crate) cwd: std::path::PathBuf,
     pub(crate) bus: nu_agent_core::bus::Bus,
+    pub(crate) render_registry: nu_agent_core::tools::handler::builtin_tool::ToolRenderRegistry,
 }
 
 pub(crate) fn build_runtime(
@@ -538,6 +539,7 @@ pub(crate) fn build_runtime(
         repetition_guard,
         last_total_tokens: Arc::new(Mutex::new(None)),
         bus: params.bus,
+        render_registry: params.render_registry,
         shared_model,
         compaction,
     })

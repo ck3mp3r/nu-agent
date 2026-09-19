@@ -128,6 +128,9 @@ where
     pub last_total_tokens: Arc<Mutex<Option<u64>>>,
     /// Shared cancellation bus threaded through the turn pipeline.
     pub bus: crate::bus::Bus,
+    /// Per-tool call-line render functions, populated at builtin registration
+    /// time and threaded to the hook chain via `ToolInfra`.
+    pub render_registry: crate::tools::handler::builtin_tool::ToolRenderRegistry,
     // ── Domain managers ──────────────────────────────────────────────────────
     pub provider: Prov,
     pub tools: Tools,
@@ -226,6 +229,7 @@ where
                     repetition_guard: self.repetition_guard,
                     last_total_tokens: Arc::clone(&self.last_total_tokens),
                     bus: self.bus.clone(),
+                    render_registry: self.render_registry.clone(),
                 },
                 Arc::clone(&self.shared_model),
                 self.compaction.clone(),

@@ -13,6 +13,7 @@ use crate::{
 use nu_agent_core::protocol::event::{
     PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
 };
+use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
 
@@ -99,6 +100,7 @@ fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
+            call_line: CallLineRender::generic_json_summary("{}"),
         },
         UiEvent::ToolCompleted {
             name: "k8s__list_pods".to_string(),
@@ -393,6 +395,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 name: "k8s__list_pods".to_string(),
                 source: "mcp".to_string(),
                 arguments: r#"{"namespace":"prod"}"#.to_string(),
+                call_line: CallLineRender::generic_json_summary(r#"{"namespace":"prod"}"#),
             }),
             None,
         );
@@ -426,6 +429,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 name: "k8s__list_pods".to_string(),
                 source: "mcp".to_string(),
                 arguments: "{}".to_string(),
+                call_line: CallLineRender::generic_json_summary("{}"),
             },
             pre: busy_empty_status,
         },
@@ -590,6 +594,7 @@ fn permission_requested_dispatch_orders_tool_before_diff_preview_and_follows_tai
             name: "edit".to_string(),
             source: "builtin".to_string(),
             arguments: "{}".to_string(),
+            call_line: CallLineRender::generic_json_summary("{}"),
         },
     );
     dispatch_ui_event(

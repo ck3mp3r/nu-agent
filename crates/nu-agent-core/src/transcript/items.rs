@@ -1,5 +1,6 @@
 use super::ir::{ContentLine, RenderBlock, Role, Span, StyleHint};
 use super::renderer::ItemStatus;
+use crate::protocol::tool_args::CallLineRender;
 
 pub trait Renderable {
     fn to_render_block(&self) -> RenderBlock;
@@ -20,7 +21,7 @@ pub struct ProseMessage {
 pub struct ToolInvocation {
     pub name: String,
     pub source: String,
-    pub args: String,
+    pub call_line: CallLineRender,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,26 +68,26 @@ pub struct TranscriptEntry {
 
 impl Renderable for ToolInvocation {
     fn to_render_block(&self) -> RenderBlock {
-        let lines = if self.name == "nu" {
-            // Status row carries only the name and source; the command is
-            // rendered as a highlighted code block below it (one row per
-            // command line), or nothing at all for an empty command.
-            let mut lines = vec![ContentLine::from_spans(vec![
-                Span::emphasis(self.name.clone()),
-                Span::meta(self.source.clone()),
-            ])];
-            if !self.args.is_empty() {
-                lines.extend(crate::transcript::markdown::project_code_block_lines(
-                    "nu", &self.args,
-                ));
+        let lines = match &self.call_line {
+            CallLineRender::Inline { summary } => {
+                vec![ContentLine::from_spans(vec![
+                    Span::emphasis(self.name.clone()),
+                    Span::meta(self.source.clone()),
+                    Span::muted(format!(" {summary}")),
+                ])]
             }
-            lines
-        } else {
-            vec![ContentLine::from_spans(vec![
-                Span::emphasis(self.name.clone()),
-                Span::meta(self.source.clone()),
-                Span::muted(format!(" {}", self.args)),
-            ])]
+            CallLineRender::CodeBlock { language, code } => {
+                let mut lines = vec![ContentLine::from_spans(vec![
+                    Span::emphasis(self.name.clone()),
+                    Span::meta(self.source.clone()),
+                ])];
+                if !code.is_empty() {
+                    lines.extend(crate::transcript::markdown::project_code_block_lines(
+                        language, code,
+                    ));
+                }
+                lines
+            }
         };
         RenderBlock {
             role: Role::Tool,

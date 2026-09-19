@@ -1,3 +1,5 @@
+use crate::protocol::tool_args::CallLineRender;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolDisplay {
     pub title: String,
@@ -74,6 +76,7 @@ pub enum UiEvent {
         name: String,
         source: String,
         arguments: String,
+        call_line: CallLineRender,
     },
     ToolCompleted {
         name: String,

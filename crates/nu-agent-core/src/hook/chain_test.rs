@@ -11,6 +11,7 @@ use crate::hook::permission_resolver::{InteractivePermissionResolver, PolicyPerm
 use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 use crate::protocol::event::UiEvent;
 use crate::session::{CachedMemory, FsSessionStore, SessionStore, StoreEntry};
+use crate::tools::handler::builtin_tool::BuiltinTool;
 use crate::types::Message;
 use futures::StreamExt;
 use rig::agent::ModelHandle;
@@ -509,6 +510,7 @@ impl RepetitionTurnFixture {
             },
             Arc::new(crate::tools::closure::ClosureRegistry::default()),
             Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+            crate::tools::handler::builtin_tool::ToolRenderRegistry::default(),
             None,
             HookState {
                 circuit_breaker: self.hook_state.circuit_breaker.clone(),
@@ -1060,6 +1062,7 @@ async fn on_tool_call_publishes_tool_started_before_permission_requested() -> Re
         resolver,
         Arc::new(crate::tools::closure::ClosureRegistry::default()),
         Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        crate::tools::handler::builtin_tool::ToolRenderRegistry::default(),
         None,
         HookState {
             circuit_breaker: Arc::new(Mutex::new(
@@ -1126,6 +1129,115 @@ async fn on_tool_call_publishes_tool_started_before_permission_requested() -> Re
         order,
         vec!["ToolStarted", "PermissionRequested"],
         "ToolStarted must arrive before PermissionRequested on the FIFO ui_event channel"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ToolRenderRegistry wiring: on_tool_call renders the call line via the
+// registry rather than passing raw arguments through.
+// ---------------------------------------------------------------------------
+
+/// `HookChain::on_tool_call` consults its `ToolRenderRegistry` and publishes
+/// the tailored `CallLineRender` on `UiEvent::ToolStarted`. A registered
+/// `read` tool renders `→ /tmp/f`; the raw JSON arguments never reach the
+/// event.
+#[tokio::test]
+async fn on_tool_call_publishes_registry_rendered_call_line() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
+    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    let memory = Arc::new(CachedMemory::new(store));
+    let bus = Bus::default();
+    let mut render_registry = crate::tools::handler::builtin_tool::ToolRenderRegistry::default();
+    render_registry.register(
+        "read",
+        crate::tools::handler::read::ReadTool::call_line_render,
+    );
+    let shared_model = Arc::new(Mutex::new(ModelHandle::new(
+        MockCompletionModel::from_stream_turns([
+            vec![
+                MockStreamEvent::tool_call("tc1", "read", serde_json::json!({"path": "/tmp/f"})),
+                MockStreamEvent::final_response_with_default_usage(),
+            ],
+            vec![
+                MockStreamEvent::Text("done".to_string()),
+                MockStreamEvent::final_response_with_default_usage(),
+            ],
+        ]),
+    )));
+    let hook = HookChain::new(
+        bus.clone(),
+        PolicyPermissionResolver {
+            permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
+            session_grants: Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),
+            closure_registry: Arc::new(crate::tools::closure::ClosureRegistry::default()),
+            mcp_registry: Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        },
+        Arc::new(crate::tools::closure::ClosureRegistry::default()),
+        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        render_registry,
+        None,
+        HookState {
+            circuit_breaker: Arc::new(Mutex::new(
+                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
+            )),
+            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
+            output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
+            repetition_guard: true,
+            shared_model,
+            memory,
+            conversation_id: "render-registry-conv".to_string(),
+            compaction: CompactionConfig {
+                compactor: NuCompactor::new(
+                    ModelHandle::new(MockCompletionModel::text("summary")),
+                    Bus::default(),
+                    None,
+                ),
+                params: CompactionParams::default(),
+                threshold_tokens: None,
+            },
+            last_total_tokens: Arc::new(Mutex::new(None)),
+        },
+    );
+    let agent = rig::agent::AgentBuilder::from_model_handle(ModelHandle::new(
+        MockCompletionModel::default(),
+    ))
+    .add_hook(hook)
+    .dynamic_tool(rig::tool::DynamicTool::new(
+        "read",
+        "Read a file",
+        serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        |_context, _args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("contents")) }),
+    ))
+    .build();
+    // Subscribe BEFORE driving the stream — broadcast sends are not buffered
+    // for later subscribers.
+    let mut ui_rx = bus.ui_event().subscribe();
+
+    // -- Exec: drive the turn and capture the first ToolStarted event.
+    let turn = tokio::spawn(async move {
+        let mut stream = agent.stream_prompt("run").max_turns(16).await;
+        while stream.next().await.is_some() {}
+    });
+    let call_line = loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), ui_rx.recv())
+            .await
+            .map_err(|_| "should receive a ui_event within timeout")?
+            .map_err(|_| "ui_event channel should stay open")?;
+        if let UiEvent::ToolStarted { call_line, .. } = event {
+            break call_line;
+        }
+    };
+    turn.await.map_err(|_| "turn task should not panic")?;
+
+    // -- Check
+    assert_eq!(
+        call_line,
+        crate::protocol::tool_args::CallLineRender::Inline {
+            summary: "→ /tmp/f".to_string(),
+        },
+        "ToolStarted must carry the registry-rendered call line"
     );
     Ok(())
 }

@@ -425,12 +425,14 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
             name,
             source,
             arguments,
+            call_line,
         } => crate::state::dispatch_tool_event(
             state,
             ToolEvent::Started {
                 name,
                 source,
                 arguments,
+                call_line,
             },
         ),
         UiEvent::ToolCompleted {

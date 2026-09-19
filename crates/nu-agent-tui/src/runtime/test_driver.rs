@@ -16,6 +16,7 @@ use std::time::Duration;
 use nu_agent_core::bus::Bus;
 use nu_agent_core::orchestrator::OrchestratorEvent;
 use nu_agent_core::protocol::event::UiEvent;
+use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::transcript::items::TranscriptEntryKind;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -300,6 +301,7 @@ async fn render_loop_driver_routes_tool_event_through_bus_ui_event_arm() -> Resu
             name: "sentinel_tool".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
+            call_line: CallLineRender::generic_json_summary("{}"),
         }))])
         .await?;
 

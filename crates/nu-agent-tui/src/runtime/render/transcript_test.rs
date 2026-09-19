@@ -1,3 +1,4 @@
+use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::transcript::items::{
     ProseMessage, Spacer, ToolInvocation, ToolResult, TranscriptEntry, TranscriptEntryKind,
 };
@@ -92,7 +93,10 @@ fn nu_tool(args: &str) -> TranscriptEntry {
         kind: TranscriptEntryKind::Tool(ToolInvocation {
             name: "nu".to_string(),
             source: "".to_string(),
-            args: args.to_string(),
+            call_line: CallLineRender::CodeBlock {
+                language: "nu".to_string(),
+                code: args.to_string(),
+            },
         }),
         status: None,
     }
@@ -243,7 +247,9 @@ fn entry_visual_info_matches_rendered_rows_with_status_indicator() -> Result<()>
         kind: TranscriptEntryKind::Tool(ToolInvocation {
             name: "gh".to_string(),
             source: "".to_string(),
-            args: "{\"owner\":\"some-org\",\"repo\":\"some-repository-name\",\"number\":12345,\"labels\":[\"bug\",\"priority-high\",\"needs-review\"]}".to_string(),
+            call_line: CallLineRender::generic_json_summary(
+                "{\"owner\":\"some-org\",\"repo\":\"some-repository-name\",\"number\":12345,\"labels\":[\"bug\",\"priority-high\",\"needs-review\"]}",
+            ),
         }),
         status: Some(ItemStatus::InProgress),
     };

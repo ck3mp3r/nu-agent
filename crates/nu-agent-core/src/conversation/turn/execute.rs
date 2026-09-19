@@ -142,6 +142,7 @@ where
         permission_resolver,
         ctx.tool_infra.closure_registry.clone(),
         ctx.tool_infra.mcp_registry.clone(),
+        ctx.tool_infra.render_registry.clone(),
         ctx.config.max_tool_calls_per_subturn,
         HookState {
             circuit_breaker: ctx.tool_infra.circuit_breaker.clone(),

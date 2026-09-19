@@ -120,6 +120,7 @@ where
                     repetition_guard: self.tool_infra.repetition_guard,
                     last_total_tokens: self.tool_infra.last_total_tokens.clone(),
                     bus: self.tool_infra.bus.clone(),
+                    render_registry: self.tool_infra.render_registry.clone(),
                 },
                 attempt_cfg.unwrap_or(self.config),
             );

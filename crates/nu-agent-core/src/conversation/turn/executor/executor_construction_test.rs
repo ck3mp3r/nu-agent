@@ -13,6 +13,7 @@ use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
 use crate::conversation::state::memory::MemoryState;
 use crate::session::{FsSessionStore, StoreEntry};
+use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 
 #[test]
 fn turn_executor_new_constructs_without_panic() {
@@ -194,6 +195,7 @@ async fn last_total_tokens_updated_on_completed_turn() -> Result<()> {
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
+            render_registry: ToolRenderRegistry::default(),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),
@@ -330,6 +332,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
             bus: bus.clone(),
+            render_registry: ToolRenderRegistry::default(),
         },
         shared_model,
         compaction_config,
@@ -421,6 +424,7 @@ async fn on_stream_response_finish_stores_total_tokens() -> Result<()> {
             repetition_guard: default_repetition_guard(),
             last_total_tokens: last_total_tokens.clone(),
             bus: crate::bus::create_bus(),
+            render_registry: ToolRenderRegistry::default(),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),

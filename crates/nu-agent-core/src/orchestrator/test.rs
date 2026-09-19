@@ -1,6 +1,7 @@
 use super::test_shared::*;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::{PermissionDecisionSubmission, UiEvent};
+use crate::protocol::tool_args::CallLineRender;
 
 type TResult = core::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -772,6 +773,7 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
                 name: "edit".to_string(),
                 source: "closure".to_string(),
                 arguments: "{}".to_string(),
+                call_line: CallLineRender::generic_json_summary("{}"),
             })
             .await;
         let _ = self
@@ -1010,6 +1012,7 @@ impl CoreRuntime for PermissionGateRuntime {
                     name: "nu".to_string(),
                     source: "closure".to_string(),
                     arguments: r#"{"command":"echo hi"}"#.to_string(),
+                    call_line: CallLineRender::generic_json_summary(r#"{"command":"echo hi"}"#),
                 })
                 .await;
         }
@@ -1151,11 +1154,12 @@ impl PermissionOrderingUi {
                             UiEvent::PermissionDecisionIgnored { request_id, reason } => {
                                 events.lock().expect("events lock").push(UiEvent::PermissionDecisionIgnored { request_id, reason });
                             }
-                            UiEvent::ToolStarted { name, source, arguments } => {
+                            UiEvent::ToolStarted { name, source, arguments, call_line } => {
                                 events.lock().expect("events lock").push(UiEvent::ToolStarted {
                                     name,
                                     source,
                                     arguments,
+                                    call_line,
                                 });
                             }
                             UiEvent::Completed { .. } => {

@@ -1,6 +1,7 @@
 use super::ir::*;
 use super::items::*;
 use super::renderer::ItemStatus;
+use crate::protocol::tool_args::CallLineRender;
 
 // ── ProseMessage stores raw markdown ─────────────────────────────────────────
 
@@ -61,7 +62,9 @@ fn tool_invocation_other_tool_produces_three_spans() {
     let block = ToolInvocation {
         name: "run".to_string(),
         source: "builtin".to_string(),
-        args: "{\"cmd\":\"ls\"}".to_string(),
+        call_line: CallLineRender::Inline {
+            summary: "→ {\"cmd\":\"ls\"}".to_string(),
+        },
     }
     .to_render_block();
 
@@ -73,7 +76,7 @@ fn tool_invocation_other_tool_produces_three_spans() {
     assert_eq!(block.lines[0].spans[1], Span::meta("builtin".to_string()));
     assert_eq!(
         block.lines[0].spans[2],
-        Span::muted(" {\"cmd\":\"ls\"}".to_string())
+        Span::muted(" → {\"cmd\":\"ls\"}".to_string())
     );
 }
 
@@ -83,7 +86,10 @@ fn tool_invocation_nu_renders_status_row_and_code_block() {
     let block = ToolInvocation {
         name: "nu".to_string(),
         source: "builtin".to_string(),
-        args: "ls | select name type size".to_string(),
+        call_line: CallLineRender::CodeBlock {
+            language: "nu".to_string(),
+            code: "ls | select name type size".to_string(),
+        },
     }
     .to_render_block();
 
@@ -141,7 +147,10 @@ fn tool_invocation_nu_multi_line_command_renders_one_code_row_per_line() {
     let block = ToolInvocation {
         name: "nu".to_string(),
         source: "".to_string(),
-        args: "ls | where size > 1mb\n| select name type\n| sort-by modified".to_string(),
+        call_line: CallLineRender::CodeBlock {
+            language: "nu".to_string(),
+            code: "ls | where size > 1mb\n| select name type\n| sort-by modified".to_string(),
+        },
     }
     .to_render_block();
 
@@ -167,7 +176,10 @@ fn tool_invocation_nu_empty_args_renders_status_row_only() {
     let block = ToolInvocation {
         name: "nu".to_string(),
         source: "".to_string(),
-        args: String::new(),
+        call_line: CallLineRender::CodeBlock {
+            language: "nu".to_string(),
+            code: String::new(),
+        },
     }
     .to_render_block();
 
@@ -182,7 +194,9 @@ fn tool_invocation_non_nu_keeps_three_span_muted_rendering() {
     let block = ToolInvocation {
         name: "edit".to_string(),
         source: "builtin".to_string(),
-        args: "{\"path\":\"a.rs\"}".to_string(),
+        call_line: CallLineRender::Inline {
+            summary: "→ {\"path\":\"a.rs\"}".to_string(),
+        },
     }
     .to_render_block();
 
@@ -193,7 +207,7 @@ fn tool_invocation_non_nu_keeps_three_span_muted_rendering() {
     assert_eq!(block.lines[0].spans[1], Span::meta("builtin".to_string()));
     assert_eq!(
         block.lines[0].spans[2],
-        Span::muted(" {\"path\":\"a.rs\"}".to_string())
+        Span::muted(" → {\"path\":\"a.rs\"}".to_string())
     );
 }
 
@@ -298,7 +312,7 @@ fn transcript_entry_role_returns_correct_role() {
             kind: TranscriptEntryKind::Tool(ToolInvocation {
                 name: "t".to_string(),
                 source: "".to_string(),
-                args: "".to_string(),
+                call_line: CallLineRender::generic_json_summary(""),
             }),
             status: None,
         }

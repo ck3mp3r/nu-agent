@@ -1,3 +1,4 @@
+use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::transcript::ir::*;
 use nu_agent_core::transcript::items::*;
 use nu_agent_core::transcript::renderer::*;
@@ -66,7 +67,7 @@ fn tool_shows_tool_prefix() {
     let block = ToolInvocation {
         name: "run".to_string(),
         source: "".to_string(),
-        args: "{}".to_string(),
+        call_line: CallLineRender::generic_json_summary("{}"),
     }
     .to_render_block();
     let out = r.render(&block, &ctx());
@@ -92,7 +93,7 @@ fn done_status_shows_checkmark() {
     let block = ToolInvocation {
         name: "t".to_string(),
         source: "".to_string(),
-        args: "".to_string(),
+        call_line: CallLineRender::generic_json_summary(""),
     }
     .to_render_block();
     let mut c = ctx();
@@ -107,7 +108,7 @@ fn unknown_status_shows_question_mark() {
     let block = ToolInvocation {
         name: "t".to_string(),
         source: "".to_string(),
-        args: "".to_string(),
+        call_line: CallLineRender::generic_json_summary(""),
     }
     .to_render_block();
     let mut c = ctx();
@@ -184,7 +185,10 @@ fn tool_multi_line_nu_command_renders_every_command_line() {
     let block = ToolInvocation {
         name: "nu".to_string(),
         source: "".to_string(),
-        args: "ls | where size > 1mb\n| select name type\n| sort-by modified".to_string(),
+        call_line: CallLineRender::CodeBlock {
+            language: "nu".to_string(),
+            code: "ls | where size > 1mb\n| select name type\n| sort-by modified".to_string(),
+        },
     }
     .to_render_block();
 

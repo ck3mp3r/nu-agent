@@ -178,7 +178,8 @@ impl<W: Write> StderrUiRenderer<W> {
             UiEvent::ToolStarted {
                 name,
                 source,
-                arguments,
+                call_line,
+                ..
             } => {
                 if self.policy.quiet || self.spinner.is_enabled() {
                     None
@@ -187,7 +188,7 @@ impl<W: Write> StderrUiRenderer<W> {
                         self.policy.verbosity,
                         name,
                         source,
-                        arguments,
+                        &call_line.to_plain_text(),
                     ))
                 }
             }
@@ -349,13 +350,11 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 self.spinner.start();
                 self.draw_spinner();
             }
-            UiEvent::ToolStarted { name, .. }
-                if self.spinner.is_enabled() && !self.policy.quiet =>
-            {
+            UiEvent::ToolStarted {
+                name, call_line, ..
+            } if self.spinner.is_enabled() && !self.policy.quiet => {
                 self.active_tool_name = Some(name.clone());
-                if let UiEvent::ToolStarted { arguments, .. } = event {
-                    self.active_tool_args = Some(arguments.clone());
-                }
+                self.active_tool_args = Some(call_line.to_plain_text());
                 self.spinner.start();
                 self.draw_spinner();
             }

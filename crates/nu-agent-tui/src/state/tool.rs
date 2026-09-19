@@ -5,6 +5,7 @@ use std::collections::{HashMap, VecDeque};
 
 use nu_agent_core::bus::ToolEvent;
 use nu_agent_core::protocol::event::{ToolDisplay, ToolDisplaySection};
+use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::{ToolInvocation, TranscriptEntry, TranscriptEntryKind};
 use nu_agent_core::transcript::renderer::ItemStatus;
@@ -41,8 +42,11 @@ impl ToolState {
     pub fn reduce_tool_event(&mut self, store: &mut TranscriptStore, event: ToolEvent) -> bool {
         match event {
             ToolEvent::Started {
-                name, arguments, ..
-            } => self.tool_started(store, &name, &arguments),
+                name,
+                arguments,
+                call_line,
+                ..
+            } => self.tool_started(store, &name, &arguments, call_line),
             ToolEvent::Completed {
                 name,
                 arguments,
@@ -53,9 +57,15 @@ impl ToolState {
         }
     }
 
-    fn tool_started(&mut self, store: &mut TranscriptStore, name: &str, arguments: &str) -> bool {
+    fn tool_started(
+        &mut self,
+        store: &mut TranscriptStore,
+        name: &str,
+        arguments: &str,
+        call_line: CallLineRender,
+    ) -> bool {
         self.push_block_spacers(store, name);
-        self.start_tool_call(store, name, arguments);
+        self.start_tool_call(store, name, arguments, call_line);
         true
     }
 
@@ -91,23 +101,14 @@ impl ToolState {
         store: &mut TranscriptStore,
         name: &str,
         arguments: &str,
+        call_line: CallLineRender,
     ) {
-        // The nu tool renders its raw command as a highlighted code block
-        // under the status row, so the args field carries the command text
-        // itself; every other tool keeps the truncated JSON summary.
-        let args_summary = nu_agent_core::protocol::tool_args::summarize_tool_arguments(arguments);
-        let args_display = if name == "nu" {
-            nu_agent_core::protocol::tool_args::nu_command_from_args(arguments)
-                .unwrap_or_else(|| format!("→ {args_summary}"))
-        } else {
-            format!("→ {args_summary}")
-        };
         store.push_transcript_item(nu_agent_core::transcript::items::TranscriptEntry {
             id: 0,
             kind: TranscriptEntryKind::Tool(ToolInvocation {
                 name: name.to_string(),
                 source: String::new(),
-                args: args_display,
+                call_line,
             }),
             status: Some(ItemStatus::InProgress),
         });
@@ -223,13 +224,22 @@ pub(crate) fn append_direct_tool_display(
 ) -> bool {
     let suppress_title = should_suppress_redundant_edit_title(&display);
     let suppress_single_section_stats = suppress_title && display.sections.len() == 1;
+    // The call line already shows `→ <path> (diff)`, so the section label row
+    // is redundant for the same single-diff-section edit display whose title
+    // is suppressed.
+    let skip_section_label = suppress_title;
 
     if !suppress_title {
         store.push_transcript_line(TranscriptRole::ToolDisplay, display.title);
     }
 
     for section in display.sections {
-        append_direct_tool_display_section(store, section, suppress_single_section_stats);
+        append_direct_tool_display_section(
+            store,
+            section,
+            suppress_single_section_stats,
+            skip_section_label,
+        );
     }
 
     true
@@ -245,11 +255,14 @@ fn append_direct_tool_display_section(
     store: &mut TranscriptStore,
     section: ToolDisplaySection,
     suppress_stats_line: bool,
+    skip_section_label: bool,
 ) {
-    store.push_transcript_line(
-        TranscriptRole::ToolDisplay,
-        format!("{} ({})", section.label, section.language),
-    );
+    if !skip_section_label {
+        store.push_transcript_line(
+            TranscriptRole::ToolDisplay,
+            format!("{} ({})", section.label, section.language),
+        );
+    }
 
     if !suppress_stats_line && let Some(stats) = section.stats {
         let mut stat_parts = Vec::new();

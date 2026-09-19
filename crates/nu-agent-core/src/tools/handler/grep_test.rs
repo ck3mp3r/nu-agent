@@ -1,5 +1,6 @@
 use super::*;
 use crate::bus::Bus;
+use crate::protocol::tool_args::CallLineRender;
 use std::io::Write;
 use tempfile::tempdir;
 
@@ -171,4 +172,91 @@ async fn grep_skips_binary_files_without_error() {
         result.is_ok(),
         "should not error on binary files: {result:?}"
     );
+}
+
+// === call_line_render ===
+
+#[test]
+fn grep_call_line_render_shows_quoted_pattern_and_glob_when_path_is_dot() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"pattern":"fn main","path":".","glob":"*.rs"}"#;
+
+    // -- Exec
+    let render = GrepTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ \"fn main\" *.rs".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn grep_call_line_render_combines_path_and_glob() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"pattern":"fn main","path":"/src","glob":"*.rs"}"#;
+
+    // -- Exec
+    let render = GrepTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ \"fn main\" /src/*.rs".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn grep_call_line_render_shows_path_without_glob() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"pattern":"fn main","path":"/src"}"#;
+
+    // -- Exec
+    let render = GrepTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ \"fn main\" /src".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn grep_call_line_render_shows_pattern_only_without_location() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"pattern":"fn main"}"#;
+
+    // -- Exec
+    let render = GrepTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ \"fn main\"".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn grep_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = "not-json";
+
+    // -- Exec
+    let render = GrepTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(render, CallLineRender::generic_json_summary(args));
+    Ok(())
 }

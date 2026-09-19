@@ -333,6 +333,7 @@ pub(super) fn run_command(
             merged_compaction,
             compaction_strategy: _,
             compaction_params,
+            render_registry,
         } = super::setup::register_tools(
             call,
             BuildInput {
@@ -406,6 +407,7 @@ pub(super) fn run_command(
                 agents_config,
                 cwd: cwd.clone(),
                 bus: bus.clone(),
+                render_registry,
             })?;
         log::debug!(
             "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",

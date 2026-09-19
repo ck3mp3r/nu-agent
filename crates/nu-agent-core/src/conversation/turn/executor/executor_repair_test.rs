@@ -12,6 +12,7 @@ use super::executor_test_support::*;
 use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
 use crate::session::StoreEntry;
+use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 
 // ---------------------------------------------------------------------------
 // Subtask 1 — inject_missing_tool_results: integration tests
@@ -79,6 +80,7 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() -> 
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
             bus,
+            render_registry: ToolRenderRegistry::default(),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),

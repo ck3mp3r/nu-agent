@@ -5,6 +5,7 @@ use tokio::io::AsyncReadExt;
 
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
 use crate::bus::Bus;
+use crate::protocol::tool_args::{CallLineRender, nu_command_from_args};
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 300;
 
@@ -19,6 +20,16 @@ pub struct NuTool;
 
 impl BuiltinTool for NuTool {
     const NAME: &'static str = "nu";
+
+    fn call_line_render(arguments: &str) -> CallLineRender {
+        let Some(code) = nu_command_from_args(arguments) else {
+            return CallLineRender::generic_json_summary(arguments);
+        };
+        CallLineRender::CodeBlock {
+            language: "nu".to_string(),
+            code,
+        }
+    }
 
     async fn execute(
         args: &JsonValue,

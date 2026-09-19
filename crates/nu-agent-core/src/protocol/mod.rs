@@ -14,6 +14,8 @@ pub mod skills;
 pub mod slash;
 pub mod tool_args;
 
+pub use tool_args::CallLineRender;
+
 #[cfg(test)]
 mod session_management_test;
 

@@ -1,3 +1,4 @@
+use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::transcript::ir::StyleHint;
 use nu_agent_core::transcript::items::{
     ProseMessage, ToolInvocation, ToolResult, TranscriptEntry, TranscriptEntryKind,
@@ -12,7 +13,10 @@ fn nu_tool(args: &str) -> TranscriptEntry {
         kind: TranscriptEntryKind::Tool(ToolInvocation {
             name: "nu".to_string(),
             source: "".to_string(),
-            args: args.to_string(),
+            call_line: CallLineRender::CodeBlock {
+                language: "nu".to_string(),
+                code: args.to_string(),
+            },
         }),
         status: None,
     }
@@ -88,7 +92,7 @@ fn non_nu_tool_has_no_filled_rows() {
         kind: TranscriptEntryKind::Tool(ToolInvocation {
             name: "read".to_string(),
             source: "".to_string(),
-            args: "{}".to_string(),
+            call_line: CallLineRender::generic_json_summary("{}"),
         }),
         status: None,
     };

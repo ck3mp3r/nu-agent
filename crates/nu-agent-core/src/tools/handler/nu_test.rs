@@ -1,4 +1,5 @@
 use crate::bus::{Bus, CancelEvent};
+use crate::protocol::tool_args::CallLineRender;
 use crate::tools::handler::ToolErrorKind;
 use crate::tools::handler::builtin_tool::BuiltinTool;
 use crate::tools::handler::nu::NuTool;
@@ -174,4 +175,38 @@ async fn nu_cancellation_kills_process_quickly() {
     assert!(elapsed < Duration::from_secs(5));
     assert!(result.is_err());
     assert!(result.unwrap_err().message.contains("cancelled"));
+}
+
+// === call_line_render ===
+
+#[test]
+fn nu_call_line_render_returns_nu_code_block() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"command":"ls"}"#;
+
+    // -- Exec
+    let render = NuTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::CodeBlock {
+            language: "nu".to_string(),
+            code: "ls".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn nu_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = "not-json";
+
+    // -- Exec
+    let render = NuTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(render, CallLineRender::generic_json_summary(args));
+    Ok(())
 }

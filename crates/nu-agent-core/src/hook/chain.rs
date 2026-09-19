@@ -32,6 +32,7 @@ use crate::protocol::event::UiEvent;
 use crate::session::SessionStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 
 use super::agent_hook::HookState;
 use super::circuit_breaker_guard::CircuitBreakerGuard;
@@ -67,6 +68,9 @@ pub struct HookChain<
     bus: Bus,
     closure_registry: Arc<ClosureRegistry>,
     mcp_registry: Arc<McpToolRegistry>,
+    /// Per-tool call-line render functions, populated at builtin registration
+    /// time. Consulted in `on_tool_call` to build the transcript call line.
+    render_registry: ToolRenderRegistry,
     /// Shared runtime model handle. The single point of model identity: the agent
     /// is built from this handle and `on_model_select` routes every turn to its
     /// current value. `switch_model()` is the only writer. It is constructed
@@ -92,6 +96,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChai
         permission_resolver: P,
         closure_registry: Arc<ClosureRegistry>,
         mcp_registry: Arc<McpToolRegistry>,
+        render_registry: ToolRenderRegistry,
         max_tool_calls_per_subturn: Option<usize>,
         hook_state: HookState<S>,
     ) -> Self {
@@ -113,6 +118,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChai
             bus,
             closure_registry,
             mcp_registry,
+            render_registry,
             shared_model: hook_state.shared_model,
             memory: hook_state.memory,
             conversation_id: hook_state.conversation_id,
@@ -319,12 +325,14 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                 return action;
             }
 
+            let call_line = self.render_registry.render(&tool_name_owned, &args_owned);
             let _ = bus
                 .ui_event()
                 .send(UiEvent::ToolStarted {
                     name: tool_name_owned.clone(),
                     source: source_owned.clone(),
                     arguments: args_owned.clone(),
+                    call_line,
                 })
                 .await;
 

@@ -1,6 +1,8 @@
 use crate::types::ToolDefinition;
 use std::path::Path;
 
+use super::BuiltinTool;
+
 /// Compile-time check that DynamicTool is Send + Sync.
 ///
 /// This ensures that DynamicTool instances can be registered with rig's ToolServer.
@@ -430,6 +432,96 @@ async fn dynamic_tool_error_kind_maps_to_rig_kind_with_details() -> TestResult<(
     assert_eq!(
         feedback, embedded,
         "model output must equal the truncated details embedded in the message"
+    );
+    Ok(())
+}
+
+// ================================================================
+// Call-line rendering: default trait method
+// ================================================================
+
+/// A builtin handler that does not override `call_line_render`.
+struct PlainRenderTool;
+
+impl super::BuiltinTool for PlainRenderTool {
+    const NAME: &'static str = "plain_render";
+
+    async fn execute(
+        _args: &serde_json::Value,
+        _cwd: &Path,
+        _bus: &crate::bus::Bus,
+    ) -> core::result::Result<serde_json::Value, super::super::ToolHandlerError> {
+        Ok(serde_json::json!({}))
+    }
+}
+
+/// A tool with no `call_line_render` override falls back to the generic
+/// JSON summary: an `Inline` render whose summary is the arrow-prefixed
+/// truncated arguments.
+#[test]
+fn call_line_render_defaults_to_generic_json_summary() -> TestResult<()> {
+    // -- Setup & Fixtures
+    let arguments = r#"{"path":"a.rs","limit":10}"#;
+
+    // -- Exec
+    let render = PlainRenderTool::call_line_render(arguments);
+
+    // -- Check
+    assert_eq!(
+        render,
+        crate::protocol::tool_args::CallLineRender::generic_json_summary(arguments)
+    );
+    match render {
+        crate::protocol::tool_args::CallLineRender::Inline { summary } => {
+            assert!(
+                summary.starts_with('→'),
+                "generic summary must start with the arrow marker, got: {summary}"
+            );
+        }
+        other => return Err(format!("expected Inline render, got {other:?}").into()),
+    }
+    Ok(())
+}
+
+// ================================================================
+// ToolRenderRegistry
+// ================================================================
+
+/// A registered tool's render fn is looked up by name and produces the
+/// tool's tailored `CallLineRender`.
+#[test]
+fn tool_render_registry_renders_registered_tool() -> TestResult<()> {
+    // -- Setup & Fixtures
+    let mut registry = super::ToolRenderRegistry::default();
+    registry.register("read", super::ReadTool::call_line_render);
+
+    // -- Exec
+    let render = registry.render("read", r#"{"path":"/tmp/f"}"#);
+
+    // -- Check
+    assert_eq!(
+        render,
+        crate::protocol::tool_args::CallLineRender::Inline {
+            summary: "→ /tmp/f".to_string(),
+        }
+    );
+    Ok(())
+}
+
+/// An unknown tool name falls back to the generic JSON summary.
+#[test]
+fn tool_render_registry_unknown_name_returns_generic() -> TestResult<()> {
+    // -- Setup & Fixtures
+    let registry = super::ToolRenderRegistry::default();
+    let arguments = r#"{"path":"/tmp/f"}"#;
+
+    // -- Exec
+    let render = registry.render("not_registered", arguments);
+
+    // -- Check
+    assert_eq!(
+        render,
+        crate::protocol::tool_args::CallLineRender::generic_json_summary(arguments)
     );
     Ok(())
 }

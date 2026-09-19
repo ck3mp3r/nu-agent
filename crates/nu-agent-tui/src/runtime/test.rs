@@ -37,6 +37,7 @@ use nu_agent_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapsh
 use nu_agent_core::protocol::event::{
     PermissionDecision, PermissionRequestContext, ToolDisplay, UiEvent,
 };
+use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::renderer::UiRenderer;
 use nu_agent_core::transcript::ir::Role;
 use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
@@ -1506,7 +1507,7 @@ fn hydrated_tool_history_matches_live_tool_row_shape() {
 }
 
 #[test]
-fn hydrated_nu_tool_row_args_is_raw_command_string() {
+fn hydrated_nu_tool_row_call_line_contains_command() {
     // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
 
@@ -1526,9 +1527,13 @@ fn hydrated_nu_tool_row_args_is_raw_command_string() {
     let entry = &coordinator.state().transcript.entries[1];
     assert_eq!(entry.role(), Role::Tool);
     if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        assert_eq!(
-            invocation.args, "ls | select name type size",
-            "hydrated nu row must carry the raw command, not JSON"
+        let summary = match &invocation.call_line {
+            CallLineRender::Inline { summary } => summary.clone(),
+            CallLineRender::CodeBlock { code, .. } => code.clone(),
+        };
+        assert!(
+            summary.contains("ls | select name type size"),
+            "hydrated nu row call line must carry the command, got {summary:?}"
         );
     } else {
         panic!("Expected Tool variant");

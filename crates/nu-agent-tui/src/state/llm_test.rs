@@ -293,6 +293,9 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
+            call_line: nu_agent_core::protocol::tool_args::CallLineRender::generic_json_summary(
+                r#"{"path":"sample.txt"}"#,
+            ),
         },
     );
     state.tool.reduce_tool_event(

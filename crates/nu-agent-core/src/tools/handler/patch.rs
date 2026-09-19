@@ -4,6 +4,7 @@ use std::path::Path;
 use super::edit::map_mutate_error;
 use super::{ToolErrorKind, ToolHandlerError, builtin_tool::BuiltinTool};
 use crate::bus::Bus;
+use crate::protocol::tool_args::{CallLineRender, parse_json_array_len, parse_json_string_field};
 use crate::tools::fs::core::{PatchOp, PatchRange, apply_line_range_patch_batch};
 
 #[derive(Debug, serde::Deserialize)]
@@ -30,6 +31,18 @@ pub struct PatchTool;
 
 impl BuiltinTool for PatchTool {
     const NAME: &'static str = "patch";
+
+    fn call_line_render(arguments: &str) -> CallLineRender {
+        let Some(path) = parse_json_string_field(arguments, "path") else {
+            return CallLineRender::generic_json_summary(arguments);
+        };
+        let Some(ops) = parse_json_array_len(arguments, "operations") else {
+            return CallLineRender::generic_json_summary(arguments);
+        };
+        CallLineRender::Inline {
+            summary: format!("→ {path} ({ops} ops)"),
+        }
+    }
 
     async fn execute(
         args: &JsonValue,

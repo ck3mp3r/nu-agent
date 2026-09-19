@@ -470,6 +470,10 @@ pub struct BuildArtifacts {
     pub merged_compaction: CompactionConfig,
     pub compaction_strategy: CompactionStrategy,
     pub compaction_params: CompactionParams,
+    /// Per-tool call-line render functions, populated as each builtin is
+    /// registered. Threaded to the runtime so the hook chain can build the
+    /// transcript call line for each tool call.
+    pub render_registry: crate::tools::handler::builtin_tool::ToolRenderRegistry,
 }
 
 /// Builder that registers all agent tools and wires multi-agent infrastructure.
@@ -546,6 +550,12 @@ impl<'a> AgentRuntimeBuilder<'a> {
             session.set_compaction_config(compaction_params.clone());
         }
 
+        // Registry of per-tool call-line render functions, populated as each
+        // builtin is registered. Returned in `BuildArtifacts` and threaded
+        // through the runtime to the hook chain.
+        let mut render_registry =
+            crate::tools::handler::builtin_tool::ToolRenderRegistry::default();
+
         for def in builtin_defs {
             crate::tools::handler::builtin_tool::register_builtin(
                 def,
@@ -553,6 +563,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
                 max_tool_result_bytes,
                 bus.clone(),
                 tool_server_handle,
+                &mut render_registry,
             )
             .await;
         }
@@ -562,6 +573,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
             merged_compaction,
             compaction_strategy,
             compaction_params,
+            render_registry,
         })
     }
 }

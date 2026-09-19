@@ -17,6 +17,7 @@ use crate::hook::output_repetition::{OUTPUT_REPETITION_BACKOFF_MESSAGE, Repetiti
 use crate::protocol::event::UiEvent;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::utils::value_ext::extract_response_text_from_value;
 
 // ---------------------------------------------------------------------------
@@ -76,6 +77,7 @@ async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
             bus,
+            render_registry: ToolRenderRegistry::default(),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),
@@ -194,6 +196,7 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
                 repetition_guard: default_repetition_guard(),
                 last_total_tokens: default_last_total_tokens(),
                 bus: bus.clone(),
+                render_registry: ToolRenderRegistry::default(),
             },
             shared_model.clone(),
             test_compaction_config(crate::bus::create_bus()),
@@ -340,6 +343,7 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
                 repetition_guard: default_repetition_guard(),
                 last_total_tokens: default_last_total_tokens(),
                 bus: bus.clone(),
+                render_registry: ToolRenderRegistry::default(),
             },
             shared_model.clone(),
             test_compaction_config(crate::bus::create_bus()),
@@ -483,6 +487,7 @@ async fn repetition_stop_reset_ladder_lets_retry_sequence_restart_at_first() -> 
                 repetition_guard: default_repetition_guard(),
                 last_total_tokens: default_last_total_tokens(),
                 bus: crate::bus::create_bus(),
+                render_registry: ToolRenderRegistry::default(),
             },
             shared_model.clone(),
             test_compaction_config(crate::bus::create_bus()),
@@ -584,6 +589,7 @@ async fn repetition_stop_session_less_steers_via_prompt_and_terminal_on_cap() ->
                 repetition_guard: default_repetition_guard(),
                 last_total_tokens: default_last_total_tokens(),
                 bus: bus.clone(),
+                render_registry: ToolRenderRegistry::default(),
             },
             shared_model.clone(),
             test_compaction_config(crate::bus::create_bus()),

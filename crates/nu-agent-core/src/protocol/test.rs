@@ -21,6 +21,7 @@ use super::slash::{
 use crate::bus::PermissionEvent;
 use crate::compaction::CompactionStrategy;
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
+use crate::protocol::tool_args::CallLineRender;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -274,6 +275,7 @@ fn ui_event_contract_exposes_required_variants() {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
+            call_line: CallLineRender::generic_json_summary("{}"),
         },
         UiEvent::ToolCompleted {
             name: "k8s__list_pods".to_string(),
@@ -476,6 +478,99 @@ fn nu_command_from_args_returns_none_for_empty_command() {
 
     // -- Exec & Check
     assert_eq!(super::tool_args::nu_command_from_args(args), None);
+}
+
+#[test]
+fn parse_json_string_field_extracts_string() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"path":"a.rs","limit":10}"#;
+
+    // -- Exec
+    let path = super::tool_args::parse_json_string_field(args, "path");
+
+    // -- Check
+    assert_eq!(path.as_deref(), Some("a.rs"));
+    Ok(())
+}
+
+#[test]
+fn parse_json_string_field_returns_none_for_non_string() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"path":42}"#;
+
+    // -- Exec & Check
+    assert_eq!(
+        super::tool_args::parse_json_string_field(args, "path"),
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn parse_json_usize_field_extracts_number() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"path":"a.rs","limit":10}"#;
+
+    // -- Exec
+    let limit = super::tool_args::parse_json_usize_field(args, "limit");
+
+    // -- Check
+    assert_eq!(limit, Some(10));
+    Ok(())
+}
+
+#[test]
+fn parse_json_usize_field_returns_none_for_non_number() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"limit":"ten"}"#;
+
+    // -- Exec & Check
+    assert_eq!(
+        super::tool_args::parse_json_usize_field(args, "limit"),
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn parse_json_array_len_counts_elements() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"paths":["a.rs","b.rs","c.rs"]}"#;
+
+    // -- Exec
+    let len = super::tool_args::parse_json_array_len(args, "paths");
+
+    // -- Check
+    assert_eq!(len, Some(3));
+    Ok(())
+}
+
+#[test]
+fn parse_json_array_len_returns_none_for_non_array() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"paths":"a.rs"}"#;
+
+    // -- Exec & Check
+    assert_eq!(super::tool_args::parse_json_array_len(args, "paths"), None);
+    Ok(())
+}
+
+#[test]
+fn generic_json_summary_prefixes_arrow_and_truncates() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"path":"a.rs"}"#;
+
+    // -- Exec
+    let render = super::tool_args::CallLineRender::generic_json_summary(args);
+
+    // -- Check
+    match render {
+        super::tool_args::CallLineRender::Inline { summary } => {
+            assert_eq!(summary, r#"→ {"path":"a.rs"}"#);
+        }
+        other => return Err(format!("expected Inline render, got {other:?}").into()),
+    }
+    Ok(())
 }
 
 // === Tests: skills ===

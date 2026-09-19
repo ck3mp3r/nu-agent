@@ -5,6 +5,7 @@ use serde_json::Value as JsonValue;
 
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
 use crate::bus::Bus;
+use crate::protocol::tool_args::{CallLineRender, parse_json_string_field};
 
 const DEFAULT_MAX_LENGTH: usize = 12000;
 const DEFAULT_MODE: &str = "markdown";
@@ -87,6 +88,17 @@ pub struct HttpTool;
 
 impl BuiltinTool for HttpTool {
     const NAME: &'static str = "http";
+
+    fn call_line_render(arguments: &str) -> CallLineRender {
+        let Some(url) = parse_json_string_field(arguments, "url") else {
+            return CallLineRender::generic_json_summary(arguments);
+        };
+        let method =
+            parse_json_string_field(arguments, "method").unwrap_or_else(|| "GET".to_string());
+        CallLineRender::Inline {
+            summary: format!("→ {method} {url}"),
+        }
+    }
 
     /// Fetch a URL via HTTP GET, optionally converts HTML to Markdown, and
     /// truncates the result to `max_length` characters.

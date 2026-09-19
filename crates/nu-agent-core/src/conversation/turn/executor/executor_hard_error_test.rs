@@ -13,6 +13,7 @@ use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
 use crate::config::Config;
 use crate::session::StoreEntry;
+use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 
 // ---------------------------------------------------------------------------
 // Error path persistence tests
@@ -948,6 +949,7 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
+            render_registry: ToolRenderRegistry::default(),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),

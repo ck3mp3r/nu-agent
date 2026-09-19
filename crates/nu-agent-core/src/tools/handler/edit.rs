@@ -8,6 +8,7 @@ use super::{
     types::EditPreviewDisplayPayload,
 };
 use crate::bus::Bus;
+use crate::protocol::tool_args::{CallLineRender, parse_json_string_field};
 use crate::tools::fs::core::apply_search_replace_edit;
 
 #[derive(Debug, serde::Deserialize)]
@@ -350,6 +351,15 @@ pub struct EditTool;
 
 impl BuiltinTool for EditTool {
     const NAME: &'static str = "edit";
+
+    fn call_line_render(arguments: &str) -> CallLineRender {
+        let Some(path) = parse_json_string_field(arguments, "path") else {
+            return CallLineRender::generic_json_summary(arguments);
+        };
+        CallLineRender::Inline {
+            summary: format!("→ {path} (diff)"),
+        }
+    }
 
     async fn execute(
         args: &JsonValue,

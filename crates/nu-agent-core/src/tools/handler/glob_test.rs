@@ -1,5 +1,6 @@
 use super::*;
 use crate::bus::Bus;
+use crate::protocol::tool_args::CallLineRender;
 use tempfile::tempdir;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -121,4 +122,55 @@ async fn glob_invalid_pattern_returns_validation_error() {
         Err(e) => assert_eq!(e.kind, ToolErrorKind::Validation),
         Ok(_) => { /* OverrideBuilder accepted it — acceptable */ }
     }
+}
+
+// === call_line_render ===
+
+#[test]
+fn glob_call_line_render_shows_pattern_when_path_is_dot() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"pattern":"**/*.rs","path":"."}"#;
+
+    // -- Exec
+    let render = GlobTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ **/*.rs".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn glob_call_line_render_combines_path_and_pattern() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"pattern":"**/*.rs","path":"/src"}"#;
+
+    // -- Exec
+    let render = GlobTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ /src/**/*.rs".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn glob_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = "not-json";
+
+    // -- Exec
+    let render = GlobTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(render, CallLineRender::generic_json_summary(args));
+    Ok(())
 }

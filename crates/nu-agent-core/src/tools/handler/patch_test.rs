@@ -1,5 +1,6 @@
 use super::*;
 use crate::bus::Bus;
+use crate::protocol::tool_args::CallLineRender;
 use crate::tools::fs::core::version_token;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -124,5 +125,38 @@ async fn patch_returns_version_info() -> Result<()> {
     assert!(!previous.is_empty());
     assert!(!new.is_empty());
     assert_ne!(previous, new);
+    Ok(())
+}
+
+// === call_line_render ===
+
+#[test]
+fn patch_call_line_render_shows_path_and_operation_count() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"path":"/tmp/f.txt","operations":[{"range":{"start":1,"end":1},"replacement":"a\n"},{"range":{"start":2,"end":2},"replacement":"b\n"}]}"#;
+
+    // -- Exec
+    let render = PatchTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLineRender::Inline {
+            summary: "→ /tmp/f.txt (2 ops)".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn patch_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = "not-json";
+
+    // -- Exec
+    let render = PatchTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(render, CallLineRender::generic_json_summary(args));
     Ok(())
 }
