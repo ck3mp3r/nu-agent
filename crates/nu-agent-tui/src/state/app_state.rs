@@ -22,12 +22,7 @@ use crate::interaction::input::{TerminalEvent, map_terminal_event};
 use crate::interaction::reducer::{ReducerInput, reduce_with_cancel_controller};
 use crate::rendering::theme::{ThemeName, TuiTheme};
 
-const STARTUP_LOGOS: &[&str] = &[
-    include_str!("../logos/00.txt"),
-    include_str!("../logos/01.txt"),
-    include_str!("../logos/02.txt"),
-    include_str!("../logos/03.txt"),
-];
+const STARTUP_LOGOS: &[&str] = &[include_str!("../logos/00.txt")];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntryVisualInfo {
