@@ -361,7 +361,9 @@ impl TranscriptStore {
                         self,
                         name,
                         arguments,
-                        CallLineRender::generic_json_summary(arguments),
+                        nu_agent_core::tools::handler::builtin_tool::call_line_render_for(
+                            name, arguments,
+                        ),
                     );
                     tool.finish_tool_call(self, name, arguments, message.tool_success());
                     continue;
@@ -374,7 +376,9 @@ impl TranscriptStore {
                         self,
                         name,
                         arguments,
-                        CallLineRender::generic_json_summary(arguments),
+                        nu_agent_core::tools::handler::builtin_tool::call_line_render_for(
+                            name, arguments,
+                        ),
                     );
                     tool.finish_tool_call(self, name, arguments, Some(success));
                     continue;

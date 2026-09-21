@@ -765,6 +765,70 @@ async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display(
     Ok(())
 }
 
+/// A search_replace edit-apply call that omits `expected_version` (the edit
+/// tool schema does not require it) must still carry a diff on the Ask path.
+/// Pre-authorize resolves the preview version from the file on disk.
+#[tokio::test]
+async fn interactive_resolver_edit_apply_search_replace_without_expected_version_carries_pre_authorize_display()
+-> Result<()> {
+    // -- Setup & Fixtures
+    let tmp = tempfile::tempdir()?;
+    let target = tmp.path().join("existing.txt");
+    std::fs::write(&target, "hello\nworld\n")?;
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.ui_event().subscribe();
+    let resolver_clone = resolver.clone();
+    let args = serde_json::json!({
+        "path": target.to_string_lossy(),
+        "mode": "apply",
+        "operation": {
+            "type": "search_replace",
+            "search": "world",
+            "replacement": "there"
+        }
+    })
+    .to_string();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move { resolver.resolve("edit", &args, None, &bus).await }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::Deny);
+    let _decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    let UiEvent::PermissionRequested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    let display = context
+        .pre_authorize_display
+        .as_ref()
+        .ok_or("search_replace Ask-path context must carry a pre-authorize display")?;
+    let section = display
+        .sections
+        .first()
+        .ok_or("pre-authorize display should have one section")?;
+    assert_eq!(section.language, "diff");
+    assert!(
+        section.content.contains("-world") && section.content.contains("+there"),
+        "diff must contain the replacement, got: {:?}",
+        section.content
+    );
+    Ok(())
+}
+
 /// An explicitly allowed tool (read) still returns Allow without emitting any
 /// PermissionRequested event — no preview path involvement.
 #[tokio::test]

@@ -526,6 +526,84 @@ fn tool_render_registry_unknown_name_returns_generic() -> TestResult<()> {
     Ok(())
 }
 
+// ================================================================
+// call_line_render_for: name-based dispatch
+// ================================================================
+
+/// The `nu` name dispatches to the nu tool's tailored code-block render.
+#[test]
+fn call_line_render_for_nu_returns_code_block() -> TestResult<()> {
+    // -- Setup & Fixtures
+    let arguments = r#"{"command":"ls | select name"}"#;
+
+    // -- Exec
+    let render = super::call_line_render_for("nu", arguments);
+
+    // -- Check
+    assert_eq!(
+        render,
+        crate::protocol::tool_args::CallLineRender::CodeBlock {
+            language: "nu".to_string(),
+            code: "ls | select name".to_string(),
+        }
+    );
+    Ok(())
+}
+
+/// The `edit` name dispatches to the edit tool's tailored inline render.
+#[test]
+fn call_line_render_for_edit_returns_tailored_inline() -> TestResult<()> {
+    // -- Setup & Fixtures
+    let arguments = r#"{"path":"a.rs","operation":{"type":"create","content":"x"}}"#;
+
+    // -- Exec
+    let render = super::call_line_render_for("edit", arguments);
+
+    // -- Check
+    assert_eq!(
+        render,
+        crate::protocol::tool_args::CallLineRender::Inline {
+            summary: "→ a.rs (diff)".to_string(),
+        }
+    );
+    Ok(())
+}
+
+/// An unknown tool name falls back to the generic JSON summary.
+#[test]
+fn call_line_render_for_unknown_name_returns_generic() -> TestResult<()> {
+    // -- Setup & Fixtures
+    let arguments = r#"{"path":"/tmp/f"}"#;
+
+    // -- Exec
+    let render = super::call_line_render_for("not_a_builtin", arguments);
+
+    // -- Check
+    assert_eq!(
+        render,
+        crate::protocol::tool_args::CallLineRender::generic_json_summary(arguments)
+    );
+    Ok(())
+}
+
+/// A builtin name with no tailored render (tmux_session) still resolves
+/// through the dispatch and yields the generic summary.
+#[test]
+fn call_line_render_for_builtin_without_tailored_render_returns_generic() -> TestResult<()> {
+    // -- Setup & Fixtures
+    let arguments = r#"{"session":"work"}"#;
+
+    // -- Exec
+    let render = super::call_line_render_for("tmux_session", arguments);
+
+    // -- Check
+    assert_eq!(
+        render,
+        crate::protocol::tool_args::CallLineRender::generic_json_summary(arguments)
+    );
+    Ok(())
+}
+
 // -- Test Support
 
 fn add_failing_tool<T: super::BuiltinTool>(toolset: &mut rig::tool::ToolSet, tool_name: &str) {

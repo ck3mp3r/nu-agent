@@ -229,3 +229,96 @@ fn test_pre_authorize_fs_tool_edit_apply_produces_diff_preview() -> Result<()> {
     assert_eq!(ask_display, display);
     Ok(())
 }
+
+#[test]
+fn test_pre_authorize_fs_tool_edit_apply_search_replace_without_expected_version_produces_diff_preview()
+-> Result<()> {
+    // The edit tool schema does not require `expected_version`, so the model
+    // legitimately omits it. Pre-authorize must still resolve a preview
+    // version from the file on disk so the permission prompt carries the
+    // diff instead of prompting bare.
+    // -- Setup & Fixtures
+    let tmp = tempfile::tempdir()?;
+    let target = tmp.path().join("existing.txt");
+    std::fs::write(&target, "hello\nworld\n")?;
+    let tool_call = make_tool_call(
+        "edit",
+        json!({
+            "path": target.to_string_lossy(),
+            "mode": "apply",
+            "operation": {
+                "type": "search_replace",
+                "search": "world",
+                "replacement": "there"
+            }
+        }),
+    );
+
+    // -- Exec
+    let output = pre_authorize_tool_call(
+        &tool_call,
+        ToolSource::Builtin,
+        &TestEngine {
+            cwd: tmp.path().to_path_buf(),
+        },
+    );
+
+    // -- Check
+    let display = output
+        .display
+        .ok_or("search_replace without expected_version must produce a display")?;
+    let section = display.sections.first().ok_or("should have one section")?;
+    assert_eq!(section.language, "diff");
+    assert!(
+        section.content.contains("-world") && section.content.contains("+there"),
+        "diff must contain the replacement, got: {:?}",
+        section.content
+    );
+    let ask_display = output
+        .ask_context
+        .pre_authorize_display
+        .ok_or("search_replace must populate ask_context.pre_authorize_display")?;
+    assert_eq!(ask_display, display);
+    Ok(())
+}
+
+#[test]
+fn test_pre_authorize_fs_tool_edit_apply_search_replace_with_stale_expected_version_produces_diff_preview()
+-> Result<()> {
+    // A stale version yields a conflict plan, which still previews.
+    // -- Setup & Fixtures
+    let tmp = tempfile::tempdir()?;
+    let target = tmp.path().join("existing.txt");
+    std::fs::write(&target, "hello\nworld\n")?;
+    let tool_call = make_tool_call(
+        "edit",
+        json!({
+            "path": target.to_string_lossy(),
+            "mode": "apply",
+            "expected_version": "deadbeef",
+            "operation": {
+                "type": "search_replace",
+                "search": "world",
+                "replacement": "there"
+            }
+        }),
+    );
+
+    // -- Exec
+    let output = pre_authorize_tool_call(
+        &tool_call,
+        ToolSource::Builtin,
+        &TestEngine {
+            cwd: tmp.path().to_path_buf(),
+        },
+    );
+
+    // -- Check
+    let display = output
+        .display
+        .ok_or("stale expected_version must still produce a display")?;
+    let section = display.sections.first().ok_or("should have one section")?;
+    assert_eq!(section.language, "diff");
+    assert!(output.ask_context.pre_authorize_display.is_some());
+    Ok(())
+}

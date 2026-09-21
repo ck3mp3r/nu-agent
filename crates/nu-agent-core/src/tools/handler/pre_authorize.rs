@@ -35,9 +35,15 @@ pub fn pre_authorize_fs_tool(
     let resolved_path = super::resolve_fs_path_for_cwd(&args.path, cwd);
     let plan = match &operation {
         super::edit::ResolvedEditOperation::SearchReplace(sr_op) => {
+            let preview_version = match args.expected_version.as_deref() {
+                Some(version) => Some(version.to_string()),
+                None => std::fs::read_to_string(&resolved_path)
+                    .ok()
+                    .map(|content| crate::tools::fs::core::version_token(&content)),
+            };
             crate::tools::fs::core::plan_search_replace_edit(
                 &resolved_path,
-                args.expected_version.as_deref(),
+                preview_version.as_deref(),
                 sr_op,
             )
             .ok()?

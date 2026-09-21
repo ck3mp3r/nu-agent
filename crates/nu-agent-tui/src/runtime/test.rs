@@ -1526,18 +1526,48 @@ fn hydrated_nu_tool_row_call_line_contains_command() {
     // -- Check
     let entry = &coordinator.state().transcript.entries[1];
     assert_eq!(entry.role(), Role::Tool);
-    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        let summary = match &invocation.call_line {
-            CallLineRender::Inline { summary } => summary.clone(),
-            CallLineRender::CodeBlock { code, .. } => code.clone(),
-        };
-        assert!(
-            summary.contains("ls | select name type size"),
-            "hydrated nu row call line must carry the command, got {summary:?}"
-        );
-    } else {
+    let TranscriptEntryKind::Tool(invocation) = &entry.kind else {
         panic!("Expected Tool variant");
-    }
+    };
+    assert_eq!(
+        invocation.call_line,
+        CallLineRender::CodeBlock {
+            language: "nu".to_string(),
+            code: "ls | select name type size".to_string(),
+        },
+        "hydrated nu row must use the nu tool's tailored code-block call line"
+    );
+}
+
+#[test]
+fn hydrated_edit_tool_row_call_line_uses_edit_tailored_render() {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+
+    // -- Exec
+    coordinator.hydrate_transcript_from_messages(
+        vec![
+            UiMessageSnapshot::new("tool", "tool[edit] → \"a.rs\" · done").with_tool_details(
+                Some(r#"{"path":"a.rs","operation":{"type":"create","content":"x"}}"#.to_string()),
+                None,
+                Some(true),
+            ),
+        ],
+        None,
+    );
+
+    // -- Check
+    let entry = &coordinator.state().transcript.entries[1];
+    let TranscriptEntryKind::Tool(invocation) = &entry.kind else {
+        panic!("Expected Tool variant");
+    };
+    assert_eq!(
+        invocation.call_line,
+        CallLineRender::Inline {
+            summary: "→ a.rs (diff)".to_string(),
+        },
+        "hydrated edit row must use the edit tool's tailored inline call line"
+    );
 }
 
 #[test]

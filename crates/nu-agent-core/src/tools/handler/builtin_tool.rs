@@ -43,6 +43,39 @@ pub trait BuiltinTool: Sized {
 /// A tool's call-line render function.
 pub type RenderFn = fn(&str) -> CallLineRender;
 
+/// Render the call line for a builtin tool by name. This is the single
+/// source of truth for builtin call-line rendering: it maps the name to its
+/// `BuiltinKind` and delegates to that tool's `call_line_render`. Unknown
+/// names and builtins without a tailored render fall back to the generic
+/// JSON summary.
+pub fn call_line_render_for(name: &str, arguments: &str) -> CallLineRender {
+    let Ok(kind) = BuiltinKind::from_str(name) else {
+        return CallLineRender::generic_json_summary(arguments);
+    };
+    match kind {
+        BuiltinKind::Read => ReadTool::call_line_render(arguments),
+        BuiltinKind::Edit => EditTool::call_line_render(arguments),
+        BuiltinKind::Patch => PatchTool::call_line_render(arguments),
+        BuiltinKind::Skill => SkillTool::call_line_render(arguments),
+        BuiltinKind::Grep => GrepTool::call_line_render(arguments),
+        BuiltinKind::Glob => GlobTool::call_line_render(arguments),
+        BuiltinKind::Http => HttpTool::call_line_render(arguments),
+        BuiltinKind::Nu => NuTool::call_line_render(arguments),
+        BuiltinKind::TmuxSession => TmuxSessionTool::call_line_render(arguments),
+        BuiltinKind::TmuxWindow => TmuxWindowTool::call_line_render(arguments),
+        BuiltinKind::TmuxPane => TmuxPaneTool::call_line_render(arguments),
+        BuiltinKind::TmuxLayout => TmuxLayoutTool::call_line_render(arguments),
+        BuiltinKind::AstQuery => AstQueryTool::call_line_render(arguments),
+        BuiltinKind::AstNodes => AstNodesTool::call_line_render(arguments),
+        BuiltinKind::AstRefs => AstRefsTool::call_line_render(arguments),
+        BuiltinKind::AstTree => AstTreeTool::call_line_render(arguments),
+        BuiltinKind::SpawnAgent
+        | BuiltinKind::TerminateAgent
+        | BuiltinKind::SendMessage
+        | BuiltinKind::ListAgents => CallLineRender::generic_json_summary(arguments),
+    }
+}
+
 /// Maps tool names to their call-line render functions. Populated at
 /// registration time, where the concrete tool type is known, and consulted
 /// when a tool call starts to build the transcript call line.
@@ -57,12 +90,13 @@ impl ToolRenderRegistry {
         self.fns.insert(name.to_string(), f);
     }
 
-    /// Render the call line for `name` with `arguments`. Unknown names fall
-    /// back to the generic JSON summary.
+    /// Render the call line for `name` with `arguments`. A registered render
+    /// function wins; otherwise the shared [`call_line_render_for`] dispatch
+    /// resolves the builtin render, falling back to the generic JSON summary.
     pub fn render(&self, name: &str, arguments: &str) -> CallLineRender {
         match self.fns.get(name) {
             Some(f) => f(arguments),
-            None => CallLineRender::generic_json_summary(arguments),
+            None => call_line_render_for(name, arguments),
         }
     }
 }
