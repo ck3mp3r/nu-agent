@@ -277,6 +277,11 @@ pub struct InteractivePermissionResolver {
     pub closure_registry: Arc<ClosureRegistry>,
     pub mcp_registry: Arc<McpToolRegistry>,
     bus: crate::bus::Bus,
+    /// Working directory used to resolve relative paths when building the
+    /// pre-authorize preview. Must match the cwd the tool handlers use —
+    /// `std::env::current_dir()` is the plugin process cwd, which is frozen at
+    /// plugin spawn and diverges from the Nushell session cwd after a `cd`.
+    cwd: std::path::PathBuf,
     /// Keys (`"{tool_name}\n{arguments}"`) for which a pre-authorize preview
     /// was published to the user during `resolve()`. Consumed (removed) by
     /// [`AsyncPermissionResolver::take_previewed`] once `HookChain` checks
@@ -297,6 +302,9 @@ impl InteractivePermissionResolver {
     /// - `mcp_registry`: registry of MCP tools.
     /// - `bus`: the shared signal bus; permission events are published on
     ///   `bus.ui_event()`.
+    /// - `cwd`: the working directory used to resolve relative paths when
+    ///   building the pre-authorize preview. Pass the same cwd the tool
+    ///   handlers use (the runtime's engine cwd).
     pub fn new(
         pending: Arc<StdMutex<HashMap<String, OneshotTx<ProtocolPermissionDecision>>>>,
         permissions: Arc<PermissionsConfig>,
@@ -304,6 +312,7 @@ impl InteractivePermissionResolver {
         closure_registry: Arc<ClosureRegistry>,
         mcp_registry: Arc<McpToolRegistry>,
         bus: crate::bus::Bus,
+        cwd: std::path::PathBuf,
     ) -> Self {
         Self {
             pending,
@@ -312,6 +321,7 @@ impl InteractivePermissionResolver {
             closure_registry,
             mcp_registry,
             bus,
+            cwd,
             previewed: Arc::new(StdMutex::new(std::collections::HashSet::new())),
         }
     }
@@ -341,6 +351,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
         let pending = Arc::clone(&self.pending);
         let bus = self.bus.clone();
         let previewed = Arc::clone(&self.previewed);
+        let cwd = self.cwd.clone();
 
         async move {
             let args_json: JsonValue = serde_json::from_str(&arguments)
@@ -348,10 +359,9 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
             let call_id = tool_call_id.unwrap_or_else(|| "synthetic".to_string());
             let source = resolve_tool_source(&tool_name, &closure_registry, &mcp_registry);
             // Build the pre-authorize preview (e.g. an edit diff) so the Ask
-            // prompt below can show it before the user decides. The cwd here
-            // only matters for relative paths; edit args are already resolved
-            // to absolute paths by the model in normal operation.
-            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            // prompt below can show it before the user decides. The cwd is the
+            // runtime's engine cwd — the same one the tool handlers use — so
+            // relative paths resolve identically here and at execution time.
             let ask_context = tool_name
                 .parse::<BuiltinKind>()
                 .ok()

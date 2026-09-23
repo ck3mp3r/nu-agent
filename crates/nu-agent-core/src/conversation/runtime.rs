@@ -248,6 +248,7 @@ where
                     Arc::clone(&closure_registry),
                     Arc::clone(&mcp_registry),
                     self.bus.clone(),
+                    self.cwd.clone(),
                 );
                 executor
                     .execute(

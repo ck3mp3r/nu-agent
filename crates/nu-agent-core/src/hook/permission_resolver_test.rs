@@ -22,7 +22,19 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 // ---------------------------------------------------------------------------
 
 /// Build a resolver pair for interactive tests: resolver + bus.
+///
+/// Uses the process cwd — fine for tests that pass absolute paths. Tests that
+/// depend on relative-path resolution must use `make_interactive_with_cwd`.
 fn make_interactive(permissions: PermissionsConfig) -> (InteractivePermissionResolver, Bus) {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    make_interactive_with_cwd(permissions, cwd)
+}
+
+/// Build a resolver pair for interactive tests with an explicit cwd.
+fn make_interactive_with_cwd(
+    permissions: PermissionsConfig,
+    cwd: std::path::PathBuf,
+) -> (InteractivePermissionResolver, Bus) {
     let bus = Bus::default();
     let resolver = InteractivePermissionResolver {
         pending: Arc::new(StdMutex::new(HashMap::new())),
@@ -31,6 +43,7 @@ fn make_interactive(permissions: PermissionsConfig) -> (InteractivePermissionRes
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         bus: bus.clone(),
+        cwd,
         previewed: Arc::new(StdMutex::new(std::collections::HashSet::new())),
     };
     (resolver, bus)
@@ -935,4 +948,86 @@ async fn interactive_resolver_take_previewed_is_false_without_a_preview() {
         !resolver_clone.take_previewed("nu", r#"{"command": "ls"}"#),
         "nu never shows a preview; take_previewed must report false"
     );
+}
+
+// ---------------------------------------------------------------------------
+// cwd source: the resolver must use the cwd passed to `new()`, not the plugin
+// process cwd (`std::env::current_dir()`), which is frozen at plugin spawn.
+// ---------------------------------------------------------------------------
+
+/// Regression test: a relative-path edit-apply call with no `expected_version`
+/// must produce a preview when the file exists under the resolver's cwd — even
+/// though that cwd differs from `std::env::current_dir()`.
+///
+/// Before the fix, `resolve()` read the file relative to the plugin process
+/// cwd, the read failed, `preview_version` was None, and
+/// `plan_search_replace_edit` returned `Err(MissingExpectedVersion)` — so the
+/// `PermissionRequested` event carried no preview.
+#[tokio::test]
+async fn interactive_resolver_uses_passed_cwd_not_process_cwd() -> Result<()> {
+    // -- Setup & Fixtures
+    let tmp = tempfile::tempdir()?;
+    let target = tmp.path().join("existing.txt");
+    std::fs::write(&target, "hello\nworld\n")?;
+    let process_cwd = std::env::current_dir()?;
+    assert_ne!(
+        process_cwd,
+        tmp.path(),
+        "test is vacuous if the process cwd equals the tempdir"
+    );
+    let (resolver, bus) = make_interactive_with_cwd(
+        ask_global_with_read_allowed_config(),
+        tmp.path().to_path_buf(),
+    );
+    let mut permission_rx = bus.ui_event().subscribe();
+    let resolver_clone = resolver.clone();
+    let args = serde_json::json!({
+        "path": "existing.txt",
+        "mode": "apply",
+        "operation": {
+            "type": "search_replace",
+            "search": "world",
+            "replacement": "there"
+        }
+    })
+    .to_string();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move { resolver.resolve("edit", &args, None, &bus).await }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::Deny);
+    let _decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    let UiEvent::PermissionRequested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    let display = context
+        .pre_authorize_display
+        .as_ref()
+        .ok_or("relative-path edit must resolve against the resolver's cwd")?;
+    let section = display
+        .sections
+        .first()
+        .ok_or("pre-authorize display should have one section")?;
+    assert_eq!(section.language, "diff");
+    assert!(
+        section.content.contains("-world") && section.content.contains("+there"),
+        "diff must contain the replacement, got: {:?}",
+        section.content
+    );
+    Ok(())
 }

@@ -1040,6 +1040,7 @@ async fn on_tool_call_publishes_tool_started_before_permission_requested() -> Re
         Arc::new(crate::tools::closure::ClosureRegistry::default()),
         Arc::new(crate::tools::handler::McpToolRegistry::empty()),
         bus.clone(),
+        temp_dir.path().to_path_buf(),
     );
     let resolver_clone = resolver.clone();
     // The hook's `on_model_select` routes every turn to `shared_model`, so the
