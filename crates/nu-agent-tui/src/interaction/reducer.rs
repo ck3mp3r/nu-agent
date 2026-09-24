@@ -381,6 +381,7 @@ fn handle_escape_confirm(
             controller.request_cancel();
         }
         state.cancel_and_restore_pending_to_input();
+        state.enter_insert_mode();
         state.transcript.push_spacer();
         state.status.message.clear();
         return true;

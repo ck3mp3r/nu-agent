@@ -1908,12 +1908,9 @@ async fn global_abort_cancels_active_and_pending_and_new_submit_starts_fresh() -
     // After abort, the restored text from the cancelled prompt is applied to
     // the textarea by the render loop's terminal arm on the next terminal
     // event. In the real loop the first prompt was already handed to the
-    // orchestrator, so only "b" is restored. The Esc-Esc abort leaves the
-    // input in Normal mode, so the loop re-enters Insert mode with 'i' before
-    // typing resumes.
-    driver
-        .advance(&[key(TerminalKey::Char('i')), key(TerminalKey::Char('c'))])
-        .await?;
+    // orchestrator, so only "b" is restored. The Esc-Esc abort returns the
+    // input to Insert mode, so typing resumes without an 'i' chord.
+    driver.advance(&[key(TerminalKey::Char('c'))]).await?;
     assert_eq!(
         driver.coordinator_mut().textarea.lines().join("\n"),
         "bc",

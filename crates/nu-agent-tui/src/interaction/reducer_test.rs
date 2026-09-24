@@ -159,6 +159,8 @@ fn esc_then_esc_confirm_moves_into_abort_requested_without_unlocking() {
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
+    assert_eq!(state.input.mode, InputMode::Insert);
+    assert_eq!(state.scroll.pane_focus, PaneFocus::Input);
     assert!(state.status.message.status_line().is_empty());
     // cancel pushes a closing spacer
     assert_eq!(state.transcript.entries.len(), before_markers + 1);

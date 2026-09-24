@@ -67,6 +67,7 @@ fn first_escape_in_busy_normal_sets_abort_pending_with_exact_status_text() {
     assert!(changed);
     assert_eq!(state.phase, UiPhase::AbortPending);
     assert!(state.abort.pending);
+    assert_eq!(state.input.mode, InputMode::Normal);
     assert_eq!(state.status.message.status_line(), ESC_ABORT_CONFIRM_STATUS);
     assert!(!cancel_controller.is_cancel_requested());
 }
@@ -89,6 +90,7 @@ fn second_escape_in_abort_pending_after_busy_normal_toggles_cancel_requested() {
 
     assert!(changed);
     assert!(cancel_controller.is_cancel_requested());
+    assert_eq!(state.input.mode, InputMode::Insert);
     assert!(state.status.message.status_line().is_empty());
 }
 
