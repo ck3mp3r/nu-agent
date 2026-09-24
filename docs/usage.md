@@ -594,6 +594,12 @@ CLI flags override config.toml, which overrides built-in defaults.
 - Compaction result artifacts remain transcript-visible (for example, compaction summary/source/count rows).
 - Input soft-wraps at word boundaries; the input box grows up to 6 rows, then scrolls internally keeping the caret visible.
 
+### Prompt queue and cancel-on-empty-Enter
+
+- Submitting a prompt while a turn is busy queues it; the queued prompts run after the active turn completes.
+- Pressing Enter on empty input while a turn is busy and at least one prompt is queued cancels the active turn. The queued prompts then run through the normal drain path.
+- Pressing Enter on empty input while idle, or while busy with no queued prompts, does nothing.
+
 ### Model picker and switch semantics
 
 - `/models` opens an inline model picker in TUI.

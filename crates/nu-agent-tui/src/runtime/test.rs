@@ -416,6 +416,91 @@ async fn coordinator_esc_then_esc_requests_cancel_signal() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn enter_on_empty_input_while_busy_cancels_turn_and_submits_queued_prompt() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
+
+    // Start a turn so the phase is Busy.
+    driver
+        .advance(&[key(TerminalKey::Char('x')), key(TerminalKey::Enter)])
+        .await?;
+    assert_eq!(driver.state().phase, UiPhase::Busy);
+
+    // Queue a second prompt while the turn is busy.
+    let script: Vec<DriveEvent> = "queued"
+        .chars()
+        .map(|c| key(TerminalKey::Char(c)))
+        .chain(std::iter::once(key(TerminalKey::Enter)))
+        .collect();
+    driver.advance(&script).await?;
+    assert_eq!(
+        driver.state().pending_prompt_count(),
+        1,
+        "second prompt must stay queued while the turn is busy"
+    );
+
+    // -- Exec: press Enter on empty input.
+    driver.advance(&[key(TerminalKey::Enter)]).await?;
+
+    // -- Check: the coordinator requested cancel and the queued prompt is
+    // still pending (not restored to the input).
+    assert!(
+        driver.coordinator().take_cancel_requested(),
+        "empty Enter while busy with a queued prompt must request cancel"
+    );
+    assert_eq!(
+        driver.state().pending_prompt_count(),
+        1,
+        "queued prompt must stay queued for the drain path"
+    );
+
+    // -- Exec: simulate the cancelled turn completing.
+    driver
+        .advance(&[DriveEvent::UiEvent(Box::new(UiEvent::Completed {
+            tool_calls: 0,
+        }))])
+        .await?;
+
+    // -- Check: the queued prompt was submitted through the drain path.
+    assert!(
+        driver.orchestrator_events().iter().any(
+            |event| matches!(event, OrchestratorEvent::PromptSubmitted { text } if text == "queued")
+        ),
+        "queued prompt must be submitted after the turn cancels"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn enter_on_empty_input_does_not_cancel_without_queued_prompts() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
+
+    // -- Exec & Check: idle empty Enter must not request cancel.
+    driver.advance(&[key(TerminalKey::Enter)]).await?;
+    assert_eq!(driver.state().phase, UiPhase::Idle);
+    assert!(
+        !driver.coordinator().take_cancel_requested(),
+        "idle empty Enter must not request cancel"
+    );
+
+    // -- Exec & Check: busy empty Enter with no queued prompts must not
+    // request cancel either.
+    driver
+        .advance(&[key(TerminalKey::Char('x')), key(TerminalKey::Enter)])
+        .await?;
+    assert_eq!(driver.state().phase, UiPhase::Busy);
+    assert_eq!(driver.state().pending_prompt_count(), 0);
+    driver.advance(&[key(TerminalKey::Enter)]).await?;
+    assert!(
+        !driver.coordinator().take_cancel_requested(),
+        "busy empty Enter without queued prompts must not request cancel"
+    );
+    assert_eq!(driver.state().phase, UiPhase::Busy);
+    Ok(())
+}
+
 #[test]
 fn runtime_renderer_reuses_eventing_and_preserves_emit_passthrough() {
     let inner = FakeRenderer::default();

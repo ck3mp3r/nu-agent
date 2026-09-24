@@ -487,6 +487,16 @@ impl RuntimeCoordinator {
             // Submit — read textarea, clear it, dispatch submit
             TerminalKey::Enter => {
                 let text = self.textarea.lines().join("\n");
+                // Empty input while busy with queued prompts: cancel the running
+                // turn so the existing drain path submits the queue.
+                if text.is_empty()
+                    && self.state.phase == crate::state::UiPhase::Busy
+                    && self.state.pending_prompt_count() > 0
+                {
+                    self.cancel_controller.request_cancel();
+                    self.mark_render_needed();
+                    return true;
+                }
                 self.replace_textarea(Vec::new());
                 self.state.input.pending_submit_text = Some(text);
                 let changed = dispatch_terminal_event(
