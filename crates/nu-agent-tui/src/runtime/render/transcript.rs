@@ -6,15 +6,14 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
 
+use crate::runtime::render::expand_to_visual_rows;
 use crate::runtime::transcript_entries_for_render;
-use crate::tui_renderer::TuiRenderer;
+use crate::tui_renderer::layout;
 use crate::{
-    runtime::{render::expand_to_visual_rows, render::frame::current_time_millis},
+    runtime::render::frame::current_time_millis,
     state::{InputMode, PaneFocus},
 };
-use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::{Renderable, TranscriptEntry};
-use nu_agent_core::transcript::renderer::RenderContext;
+use nu_agent_core::transcript::ir::{BlockSource, Fill, MessageRole};
 
 use crate::runtime::RuntimeCoordinator;
 
@@ -29,9 +28,6 @@ impl RuntimeCoordinator {
         rendered_scroll_offset: &mut Option<usize>,
     ) {
         let now_millis = current_time_millis();
-        let renderer = TuiRenderer {
-            theme: self.theme.clone(),
-        };
 
         frame.render_widget(Clear, transcript_content_area);
         frame.render_widget(
@@ -42,26 +38,15 @@ impl RuntimeCoordinator {
             let width = transcript_list_area.width as usize;
             let viewport_height = transcript_list_area.height as usize;
 
-            // Recompute entry visual info when dirty (entries added, evicted, or resize)
-            if self.state.transcript.visual_info_dirty
-                || self.state.scroll.entry_visual_info.is_empty()
-            {
-                self.state
-                    .transcript
-                    .recompute_entry_visual_info(&mut self.state.scroll, width);
-                self.state.transcript.visual_info_dirty = false;
+            // Rebuild the height index when stale (entries added, evicted, or resize)
+            if !self.state.transcript.height_index_valid_for(width) {
+                self.state.transcript.rebuild_height_index(width);
             }
 
-            let entries_for_render = transcript_entries_for_render(&self.state).to_vec();
+            let blocks = transcript_entries_for_render(&self.state).to_vec();
 
-            // Compute total visual rows from entry_visual_info
-            let total_visual_rows = self
-                .state
-                .scroll
-                .entry_visual_info
-                .last()
-                .map(|i| i.start_visual_row + i.visual_row_count)
-                .unwrap_or(0);
+            // Total visual rows from the measure()-based height index.
+            let total_visual_rows = self.state.transcript.total_visual_rows();
 
             self.state.scroll.viewport_height = viewport_height;
             let max_scroll = self.state.scroll.sync_after_render(total_visual_rows);
@@ -75,55 +60,98 @@ impl RuntimeCoordinator {
             // last visual row; when not tailing, cursor_visual_row is
             // user-controlled — untouched.
 
-            // Binary search for visible entries
-            let first_visible = self.state.scroll.entry_visual_info.partition_point(|info| {
-                info.start_visual_row + info.visual_row_count <= effective_offset
-            });
-            let last_visible =
-                self.state.scroll.entry_visual_info.partition_point(|info| {
-                    info.start_visual_row < effective_offset + viewport_height
-                });
+            // Binary search for visible entries via the height index.
+            let (first_visible, last_visible) = self
+                .state
+                .transcript
+                .visible_window(effective_offset, viewport_height);
 
-            // Only render visible entries
+            // Only render visible blocks, inserting the separator rows the
+            // state machine decides between adjacent blocks. The machine is
+            // seeded from the block just above the first visible one so a
+            // scrolled view keeps the same separation as a full view.
             let mut all_lines: Vec<Line<'static>> = Vec::new();
-            let mut entry_indices: Vec<usize> = Vec::new();
-            let mut code_block_flags: Vec<bool> = Vec::new();
+            let mut block_indices: Vec<usize> = Vec::new();
+            // Per-line full-width background override for separator rows.
+            // `None` means "resolve from the block via full_width_background";
+            // `Some(color)` pins the row (used so a user prompt's background
+            // bleeds across its neighbouring separator rows, preserving the
+            // pre-refactor Fill bleed — Fill behavior is out of scope here).
+            let mut line_bgs: Vec<Option<ratatui::style::Color>> = Vec::new();
 
-            let visible_end = last_visible.min(entries_for_render.len());
-            for (rel_idx, entry) in entries_for_render[first_visible..visible_end]
-                .iter()
-                .enumerate()
-            {
+            let mut sm = match first_visible.checked_sub(1).and_then(|i| blocks.get(i)) {
+                Some(prev) => crate::state::spacer::SpacerStateMachine::seeded(
+                    prev.source.family(),
+                    prev.has_filled_content(),
+                ),
+                None => crate::state::spacer::SpacerStateMachine::default(),
+            };
+
+            let visible_end = last_visible.min(blocks.len());
+            for (rel_idx, block) in blocks[first_visible..visible_end].iter().enumerate() {
                 let idx = first_visible + rel_idx;
-                let block = entry.to_render_block();
-                let item_status = entry.status;
-                let ctx = RenderContext {
+                let separators =
+                    sm.separators_for(block.source.family(), block.has_filled_content());
+                // Separator rows keep the pre-refactor bleed: the first row of
+                // a run bleeds the user background when the preceding block is
+                // a user turn; the last row bleeds when the incoming block is a
+                // user turn. Other rows stay on the base background.
+                let prev_is_user = idx
+                    .checked_sub(1)
+                    .and_then(|i| blocks.get(i))
+                    .is_some_and(is_user_block);
+                let incoming_is_user = is_user_block(block);
+                for s in 0..separators {
+                    let bleed =
+                        (s == 0 && prev_is_user) || (s == separators - 1 && incoming_is_user);
+                    let bg = if bleed {
+                        self.theme.row_user_bg
+                    } else {
+                        self.theme.base
+                    };
+                    all_lines.push(Line::from(""));
+                    block_indices.push(idx);
+                    line_bgs.push(Some(bg));
+                }
+                let ctx = nu_agent_core::transcript::renderer::FrameContext {
                     width,
+                    now_millis,
                     cursor: false,
                     selected: false,
-                    status: item_status,
-                    now_millis,
                 };
-                let entry_lines = renderer.render_cached(
-                    &block,
-                    &ctx,
-                    self.state.transcript.assistant_projection_cache_mut(),
-                );
-                let flags = crate::state::code_block::code_block_line_flags(
-                    entry,
-                    width,
-                    item_status.is_some(),
-                );
-                // Inject one untinted margin row above and below each filled
-                // code-block region so the block does not touch surrounding
-                // content (matching the user-block breathing room).
-                let (entry_lines, flags) =
-                    crate::state::code_block::with_margin_rows(entry_lines, flags);
-                for (line_idx, _) in entry_lines.iter().enumerate() {
-                    entry_indices.push(idx);
-                    code_block_flags.push(flags.get(line_idx).copied().unwrap_or(false));
+                let entry_lines = layout(block, &ctx);
+                for _ in 0..entry_lines.len() {
+                    block_indices.push(idx);
+                    line_bgs.push(None);
                 }
                 all_lines.extend(entry_lines);
+            }
+
+            // Trailing separator rows after the final block, but only when the
+            // viewport reaches the end of the transcript. A user turn relies on
+            // separators for its visual margin (`Fill::Full` has no margin
+            // rows), so a user block that is the last block keeps a closing
+            // blank row below it (task 670e0292). When the viewport is scrolled
+            // short of the end, the following block's leading separators
+            // provide the gap instead, so no trailing row is emitted here. The
+            // trailing row maps to the final block and bleeds the user
+            // background, matching the separator-row paint above.
+            if visible_end == blocks.len() && visible_end > 0 {
+                let trailing = sm.trailing_separators();
+                if trailing > 0 {
+                    let last_idx = visible_end - 1;
+                    let last_is_user = blocks.get(last_idx).is_some_and(is_user_block);
+                    let bg = if last_is_user {
+                        self.theme.row_user_bg
+                    } else {
+                        self.theme.base
+                    };
+                    for _ in 0..trailing {
+                        all_lines.push(Line::from(""));
+                        block_indices.push(last_idx);
+                        line_bgs.push(Some(bg));
+                    }
+                }
             }
 
             // Bottom-align when content is shorter than viewport.
@@ -135,62 +163,60 @@ impl RuntimeCoordinator {
                 let bottom_padding = padding - top_padding;
                 let mut padded_lines = Vec::with_capacity(viewport_height);
                 let mut padded_indices = Vec::with_capacity(viewport_height);
-                let mut padded_flags = Vec::with_capacity(viewport_height);
+                let mut padded_bgs = Vec::with_capacity(viewport_height);
                 for _ in 0..top_padding {
                     padded_lines.push(Line::from(""));
                     padded_indices.push(0);
-                    padded_flags.push(false);
+                    padded_bgs.push(None);
                 }
                 padded_lines.append(&mut all_lines);
-                padded_indices.append(&mut entry_indices);
-                padded_flags.append(&mut code_block_flags);
+                padded_indices.append(&mut block_indices);
+                padded_bgs.append(&mut line_bgs);
                 for _ in 0..bottom_padding {
                     padded_lines.push(Line::from(""));
                     padded_indices.push(0);
-                    padded_flags.push(false);
+                    padded_bgs.push(None);
                 }
                 all_lines = padded_lines;
-                entry_indices = padded_indices;
-                code_block_flags = padded_flags;
+                block_indices = padded_indices;
+                line_bgs = padded_bgs;
             }
 
-            // Expand entry_indices to visual rows for cursor/selection mapping
-            let expanded_entry_indices = expand_to_visual_rows(entry_indices, &all_lines, width);
-            self.state.scroll.entry_indices = expanded_entry_indices;
-            let expanded_code_block_flags =
-                expand_code_block_flags(code_block_flags, &all_lines, width);
-
-            let partial_offset = effective_offset.saturating_sub(
-                self.state
-                    .scroll
-                    .entry_visual_info
-                    .get(first_visible)
-                    .map(|i| i.start_visual_row)
-                    .unwrap_or(0),
-            );
+            // Expand block_indices to visual rows for cursor/selection mapping
+            let expanded_block_indices = expand_to_visual_rows(block_indices, &all_lines, width);
+            self.state.scroll.entry_indices = expanded_block_indices;
+            // Expand the per-line background overrides to visual rows the same
+            // way, so a wrapped line's every visual row keeps its pinned
+            // background.
+            let expanded_line_bgs =
+                crate::runtime::render::expand_bgs_to_visual_rows(&line_bgs, &all_lines, width);
+            let partial_offset =
+                effective_offset.saturating_sub(self.state.transcript.start_row_of(first_visible));
             let paragraph = Paragraph::new(ratatui::text::Text::from(all_lines))
                 .wrap(Wrap::default())
                 .scroll((partial_offset.min(u16::MAX as usize) as u16, 0));
             frame.render_widget(paragraph, transcript_list_area);
 
             // Fill user prompt rows (and adjacent spacers) and code-block rows
-            // with full-width background.
-            let user_bg = self.theme.row_user_bg;
-            let code_block_bg = self.theme.surface0;
+            // with full-width background. Colors resolve from the theme: the
+            // code surface from `surface0`, the user rail from `row_user_bg`.
+            let full_width_bg = self.theme.row_user_bg;
+            let code_surface_bg = self.theme.surface0;
             for row in 0..viewport_height {
-                let Some(&entry_idx) = self.state.scroll.entry_indices.get(partial_offset + row)
+                let Some(&block_idx) = self.state.scroll.entry_indices.get(partial_offset + row)
                 else {
                     continue;
                 };
-                let is_code_block = expanded_code_block_flags
+                // A pinned separator-row background takes precedence; otherwise
+                // resolve from the block's fill/adjacency.
+                let bg = expanded_line_bgs
                     .get(partial_offset + row)
                     .copied()
-                    .unwrap_or(false);
-                let bg = if is_code_block {
-                    code_block_bg
-                } else if row_needs_user_bg(&entries_for_render, entry_idx) {
-                    user_bg
-                } else {
+                    .flatten()
+                    .or_else(|| {
+                        full_width_background(&blocks, block_idx, full_width_bg, code_surface_bg)
+                    });
+                let Some(bg) = bg else {
                     continue;
                 };
                 let row_screen_y = transcript_list_area.y + row as u16;
@@ -275,48 +301,41 @@ impl RuntimeCoordinator {
     }
 }
 
-/// Whether the entry at `entry_idx` should receive the user-row background.
-/// True when the entry itself is a User turn, or when it is a Separator
-/// (Spacer) adjacent to a User turn.
-pub(super) fn row_needs_user_bg(entries: &[TranscriptEntry], entry_idx: usize) -> bool {
-    let Some(entry) = entries.get(entry_idx) else {
-        return false;
-    };
-    if entry.role() == Role::User {
-        return true;
+/// Full-width background color for the block at `block_idx`, or `None` when
+/// the block needs no full-width paint. Type-driven: `Fill::Code` → code
+/// surface; a User turn, or a Spacer adjacent to a User turn, → user
+/// background. Everything else → `None`. The two theme colors are passed in
+/// by the caller so the decision stays independent of theme wiring.
+pub(super) fn full_width_background(
+    blocks: &[nu_agent_core::transcript::ir::Block],
+    block_idx: usize,
+    full_width_bg: ratatui::style::Color,
+    code_surface_bg: ratatui::style::Color,
+) -> Option<ratatui::style::Color> {
+    let block = blocks.get(block_idx)?;
+    match block.fill {
+        Fill::Code => return Some(code_surface_bg),
+        Fill::Full => return Some(full_width_bg),
+        Fill::None => {}
     }
-    if entry.role() != Role::Separator {
-        return false;
+    // Fill::None Spacer: only paints when adjacent to a User turn.
+    if !matches!(block.source, BlockSource::Spacer) {
+        return None;
     }
-    // Spacer: check neighboring entries for a User turn.
-    let prev_is_user = entry_idx
+    let prev_is_user = block_idx
         .checked_sub(1)
-        .and_then(|i| entries.get(i))
-        .is_some_and(|e| e.role() == Role::User);
-    let next_is_user = entries
-        .get(entry_idx + 1)
-        .is_some_and(|e| e.role() == Role::User);
-    prev_is_user || next_is_user
+        .and_then(|i| blocks.get(i))
+        .is_some_and(is_user_block);
+    let next_is_user = blocks.get(block_idx + 1).is_some_and(is_user_block);
+    (prev_is_user || next_is_user).then_some(full_width_bg)
 }
 
-/// Compute per-rendered-line flags indicating whether each line of the entry's
-/// rendered block is a code-block content row that should receive the
-/// full-width background fill. Returns one flag per rendered line (pre-wrap).
-///
-/// Expand per-rendered-line code-block flags to per-visual-row flags, matching
-/// the wrap expansion used for `entry_indices`.
-pub(super) fn expand_code_block_flags(
-    flags: Vec<bool>,
-    lines: &[Line<'static>],
-    width: usize,
-) -> Vec<bool> {
-    let mut expanded = Vec::with_capacity(lines.len().max(flags.len()));
-    for (i, line) in lines.iter().enumerate() {
-        let flag = *flags.get(i).unwrap_or(&false);
-        let visual_rows = crate::runtime::render::single_line_visual_row_count(line, width);
-        for _ in 0..visual_rows {
-            expanded.push(flag);
+fn is_user_block(block: &nu_agent_core::transcript::ir::Block) -> bool {
+    matches!(
+        block.source,
+        BlockSource::Markdown {
+            role: MessageRole::User,
+            ..
         }
-    }
-    expanded
+    )
 }

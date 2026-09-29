@@ -9,6 +9,7 @@ mod tty_test;
 use nu_agent_core::protocol::event::{ToolDisplay, UiEvent};
 use nu_agent_core::renderer::UiRenderer;
 use nu_agent_core::transcript::ir::StyleHint;
+use nu_agent_core::transcript::items::annotate_diff_hint;
 use std::io::Write;
 use std::time::{Duration, Instant};
 
@@ -89,7 +90,10 @@ impl<W: Write> StderrUiRenderer<W> {
         let _ = self.writer.write_all(b"\n");
     }
 
-    /// Render a tool's diff/title/stats content with ANSI colors.
+    /// Render a tool's diff/title/stats content with ANSI colors. Diff
+    /// annotation routes through the shared `annotate_diff_hint` helper —
+    /// the same function the transcript renderer (layout) uses — so both
+    /// paths style diff lines identically (hunk, file-meta, add, remove).
     fn render_tool_display(&mut self, display: &ToolDisplay) {
         if self.policy.quiet {
             return;
@@ -98,14 +102,7 @@ impl<W: Write> StderrUiRenderer<W> {
         let _ = self.writer.write_all(b"\n");
         for section in &display.sections {
             for line in section.content.lines() {
-                let hint = if line.starts_with('+') {
-                    StyleHint::DiffAdd
-                } else if line.starts_with('-') {
-                    StyleHint::DiffRemove
-                } else {
-                    StyleHint::Normal
-                };
-                let styled = style_text(line, &hint, self.use_color);
+                let styled = style_text(line, &annotate_diff_hint(line), self.use_color);
                 self.write_line(&styled);
             }
             if let Some(stats) = &section.stats {
@@ -141,9 +138,12 @@ impl<W: Write> StderrUiRenderer<W> {
             let frame = self.spinner.current_frame();
             if let Some(tool_name) = &self.active_tool_name {
                 let args = self.active_tool_args.as_deref().unwrap_or("{}");
-                let _ = self
-                    .writer
-                    .write_all(format!("[{frame}] tool {tool_name} → {args}").as_bytes());
+                let line = if args.is_empty() {
+                    format!("[{frame}] tool {tool_name}")
+                } else {
+                    format!("[{frame}] tool {tool_name} → {args}")
+                };
+                let _ = self.writer.write_all(line.as_bytes());
             } else {
                 let _ = self.writer.write_all(frame.as_bytes());
             }

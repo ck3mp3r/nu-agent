@@ -1,9 +1,9 @@
 //! Scroll/viewport/pane-focus domain state: transcript scroll offset,
 //! tail-follow, cursor row, viewport metrics, rendered-line capture for yank,
-//! transcript selection, entry visual info, and pane focus.
+//! transcript selection, entry index mapping, and pane focus.
 
+use super::StatusState;
 use super::selection::TranscriptSelection;
-use super::{EntryVisualInfo, StatusState};
 use crate::interaction::reducer::VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS;
 
 const TRANSCRIPT_PAGE_LINES: usize = 8;
@@ -32,7 +32,6 @@ pub struct ScrollState {
     pub rendered_line_text: Vec<String>,
     pub rendered_line_start_row: usize,
     pub selection: Option<TranscriptSelection>,
-    pub entry_visual_info: Vec<EntryVisualInfo>,
     pub pane_focus: PaneFocus,
 }
 
@@ -49,7 +48,6 @@ impl Default for ScrollState {
             rendered_line_text: Vec::new(),
             rendered_line_start_row: 0,
             selection: None,
-            entry_visual_info: Vec::new(),
             pane_focus: PaneFocus::Input,
         }
     }

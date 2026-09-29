@@ -1,6 +1,7 @@
 use crate::state::*;
-use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
+use nu_agent_core::transcript::ir::{Block, BlockSource, MessageRole};
+use nu_agent_core::transcript::items::Message;
+use nu_agent_core::transcript::renderer::Renderable;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -186,19 +187,18 @@ fn enqueue_external_prompt_adds_user_transcript_line() -> Result<()> {
 
     state.enqueue_external_prompt("hello from parent".to_string());
 
-    // starting spacer + user + closing spacer
-    assert!(!state.transcript.entries.is_empty());
+    // [User] — no leading or trailing spacer under the unified spacer rule
+    assert!(!state.transcript.blocks().is_empty());
     assert!(matches!(
-        state.transcript.entries[0].kind,
-        TranscriptEntryKind::Spacer(_)
+        state.transcript.blocks()[0].source,
+        BlockSource::Markdown { .. }
     ));
-    assert_eq!(state.transcript.entries[1].role(), Role::User);
     let last = state
         .transcript
-        .entries
+        .blocks()
         .last()
-        .ok_or("should have last transcript entry")?;
-    assert!(matches!(last.kind, TranscriptEntryKind::Spacer(_)));
+        .ok_or("should have last transcript block")?;
+    assert!(matches!(last.source, BlockSource::Markdown { .. }));
     Ok(())
 }
 
@@ -233,9 +233,9 @@ fn enqueue_external_prompt_not_returned_by_take_submitted_prompt() {
 fn enqueue_prompt_does_not_add_transcript_entry() {
     let mut state = AppState::default();
     state.enqueue_external_prompt("first".to_string());
-    let before = state.transcript.entries.len();
+    let before = state.transcript.len();
     state.enqueue_prompt("second".to_string());
-    assert_eq!(state.transcript.entries.len(), before);
+    assert_eq!(state.transcript.len(), before);
 }
 
 #[test]
@@ -264,24 +264,17 @@ fn activate_next_prompt_adds_user_entry_to_transcript() -> Result<()> {
     state.enqueue_external_prompt("first".to_string());
     state.enqueue_prompt("second".to_string());
     state.complete_active_prompt();
-    let before = state.transcript.entries.len();
+    let before = state.transcript.len();
     state.activate_next_prompt();
-    // starting spacer + user + closing spacer
-    assert_eq!(state.transcript.entries.len(), before + 3);
-    assert!(matches!(
-        state.transcript.entries.get(before).map(|e| &e.kind),
-        Some(TranscriptEntryKind::Spacer(_))
-    ));
-    assert!(matches!(
-        state.transcript.entries.get(before + 1).map(|e| &e.kind),
-        Some(TranscriptEntryKind::User(_))
-    ));
+    // [User] — one new content block. Separators are a render-time concern
+    // (SpacerStateMachine), so the store grows by exactly one block.
+    assert_eq!(state.transcript.len(), before + 1);
     let last = state
         .transcript
-        .entries
+        .blocks()
         .last()
-        .ok_or("should have last transcript entry")?;
-    assert!(matches!(last.kind, TranscriptEntryKind::Spacer(_)));
+        .ok_or("should have last transcript block")?;
+    assert!(matches!(last.source, BlockSource::Markdown { .. }));
     Ok(())
 }
 
@@ -498,20 +491,39 @@ fn clear_insert_exit_pending_j_resets_to_false() {
 }
 
 #[test]
-fn push_spacer_adds_spacer_when_last_is_not_spacer() {
+fn push_block_grows_store_by_one_content_block() {
     let mut state = AppState::default();
-    state.transcript.push_transcript_item(TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::User(ProseMessage {
-            markdown: "hi".into(),
-        }),
+    let msg = Message {
+        role: MessageRole::User,
+        markdown: "hi".to_string(),
+    };
+    state.transcript.push_block(Block {
+        source: msg.source(),
+        lane: msg.lane(),
+        fill: msg.fill(),
         status: None,
     });
-    state.transcript.push_spacer();
-    assert_eq!(state.transcript.entries.len(), 2);
+    // Second push: the store holds content blocks only — no auto-inserted
+    // Spacer blocks. Separators are decided at render time by the
+    // SpacerStateMachine.
+    let msg2 = Message {
+        role: MessageRole::Assistant,
+        markdown: "reply".to_string(),
+    };
+    state.transcript.push_block(Block {
+        source: msg2.source(),
+        lane: msg2.lane(),
+        fill: msg2.fill(),
+        status: None,
+    });
+    assert_eq!(state.transcript.len(), 2);
     assert!(matches!(
-        state.transcript.entries[1].kind,
-        TranscriptEntryKind::Spacer(_)
+        state.transcript.blocks()[0].source,
+        BlockSource::Markdown { .. }
+    ));
+    assert!(matches!(
+        state.transcript.blocks()[1].source,
+        BlockSource::Markdown { .. }
     ));
 }
 

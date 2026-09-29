@@ -18,7 +18,8 @@ use super::tmux_window::TmuxWindowTool;
 use super::tree_sitter::{AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool};
 use super::{ToolErrorKind, ToolHandlerError};
 use crate::bus::Bus;
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::event::ToolDisplay;
+use crate::protocol::tool_args::CallLine;
 use crate::tools::limits::truncate_tool_output;
 use crate::types::ToolDefinition;
 use rig::tool::server::ToolServerHandle;
@@ -33,24 +34,34 @@ pub trait BuiltinTool: Sized {
     ) -> impl std::future::Future<Output = Result<JsonValue, ToolHandlerError>> + Send;
 
     /// Render the call line for this tool's arguments. The default is the
-    /// generic JSON summary; tools override it to show a tailored summary
-    /// or a code block.
-    fn call_line_render(arguments: &str) -> CallLineRender {
-        CallLineRender::generic_json_summary(arguments)
+    /// generic JSON summary; tools override it to show a tailored summary.
+    fn call_line_render(arguments: &str) -> CallLine {
+        CallLine::from_json_summary(arguments)
+    }
+}
+
+/// Tools that produce a pre-execution preview display. `EditTool` returns
+/// `Some` with `ContentKind::Diff`; `NuTool` returns `Some` with
+/// `ContentKind::Code`; all other tools use the default (`None`). The
+/// preview is shown at the permission gate before the tool runs.
+pub trait Previewable: BuiltinTool {
+    fn preview(args: &JsonValue, cwd: &Path) -> Option<ToolDisplay> {
+        let _ = (args, cwd);
+        None
     }
 }
 
 /// A tool's call-line render function.
-pub type RenderFn = fn(&str) -> CallLineRender;
+pub type RenderFn = fn(&str) -> CallLine;
 
 /// Render the call line for a builtin tool by name. This is the single
 /// source of truth for builtin call-line rendering: it maps the name to its
 /// `BuiltinKind` and delegates to that tool's `call_line_render`. Unknown
 /// names and builtins without a tailored render fall back to the generic
 /// JSON summary.
-pub fn call_line_render_for(name: &str, arguments: &str) -> CallLineRender {
+pub fn call_line_render_for(name: &str, arguments: &str) -> CallLine {
     let Ok(kind) = BuiltinKind::from_str(name) else {
-        return CallLineRender::generic_json_summary(arguments);
+        return CallLine::from_json_summary(arguments);
     };
     match kind {
         BuiltinKind::Read => ReadTool::call_line_render(arguments),
@@ -72,7 +83,7 @@ pub fn call_line_render_for(name: &str, arguments: &str) -> CallLineRender {
         BuiltinKind::SpawnAgent
         | BuiltinKind::TerminateAgent
         | BuiltinKind::SendMessage
-        | BuiltinKind::ListAgents => CallLineRender::generic_json_summary(arguments),
+        | BuiltinKind::ListAgents => CallLine::from_json_summary(arguments),
     }
 }
 
@@ -93,7 +104,7 @@ impl ToolRenderRegistry {
     /// Render the call line for `name` with `arguments`. A registered render
     /// function wins; otherwise the shared [`call_line_render_for`] dispatch
     /// resolves the builtin render, falling back to the generic JSON summary.
-    pub fn render(&self, name: &str, arguments: &str) -> CallLineRender {
+    pub fn render(&self, name: &str, arguments: &str) -> CallLine {
         match self.fns.get(name) {
             Some(f) => f(arguments),
             None => call_line_render_for(name, arguments),

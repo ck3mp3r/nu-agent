@@ -22,10 +22,12 @@ fn test_scroll_state_defaults_follow_tail_with_input_focus() {
     assert!(scroll.rendered_line_text.is_empty());
     assert_eq!(scroll.rendered_line_start_row, 0);
     assert!(scroll.selection.is_none());
-    assert!(scroll.entry_visual_info.is_empty());
-    // The visual-info dirty flag moved with the transcript domain: a fresh
-    // transcript store starts dirty so the renderer computes visual info.
-    assert!(crate::state::TranscriptStore::default().visual_info_dirty);
+    // The height index is owned by the transcript domain: a fresh store has
+    // no index width yet (the renderer rebuilds it at the first frame).
+    assert_eq!(
+        crate::state::TranscriptStore::default().height_index_width,
+        None
+    );
     assert_eq!(scroll.pane_focus, PaneFocus::Input);
 }
 

@@ -1,119 +1,22 @@
 use ratatui::{
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span as RatatuiSpan},
 };
 
-use std::collections::HashMap;
-
-use crate::rendering::theme::TuiTheme;
-use nu_agent_core::transcript::{
-    ir::{ContentLine, RenderBlock, Role, StyleHint},
-    renderer::{BlockRenderer, ItemStatus, RenderContext},
-};
-
-const IN_PROGRESS_SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+use crate::rendering::theme::{TuiTheme, hint_to_style};
+use nu_agent_core::transcript::ir::{Block, ContentLine, Lane};
+use nu_agent_core::transcript::renderer::{FrameContext, ItemStatus};
 
 pub struct TuiRenderer {
     pub theme: TuiTheme,
 }
 
-impl BlockRenderer for TuiRenderer {
-    type Output = Vec<Line<'static>>;
-
-    fn render(&self, block: &RenderBlock, ctx: &RenderContext) -> Self::Output {
-        // Project markdown at render time using the available canvas width.
-        // This ensures tables and other width-sensitive constructs can use the
-        // actual terminal width rather than a fixed size baked in at construction.
-        let projected_lines: Vec<ContentLine>;
-        let content_lines: &[ContentLine] = if let Some(md) = &block.markdown {
-            let canvas_width = u16::try_from(ctx.width).unwrap_or(u16::MAX);
-            projected_lines = crate::markdown::render_markdown_lines(md, Some(canvas_width));
-            &projected_lines
-        } else {
-            &block.lines
-        };
-
-        // Handle empty content as single empty line
-        let empty_fallback = [ContentLine::empty()];
-        let content_lines = if content_lines.is_empty() {
-            empty_fallback.as_slice()
-        } else {
-            content_lines
-        };
-
-        let mut result = Vec::new();
-
-        // Pre-wrap prose so no emitted Line exceeds the pane width; ratatui's
-        // Paragraph wrap then never re-wraps, and every visual row keeps its
-        // lane prefix (alignment column 4 on continuation rows too). The status
-        // indicator occupies 2 columns on row 0, so the content budget shrinks
-        // by that much when a status is present — otherwise row 0 overflows the
-        // pane and ratatui re-wraps it into an extra visual row the row
-        // accounting misses. Shared with the accounting via
-        // state::code_block::content_wrap_width so both agree by construction.
-        let wrap_width =
-            crate::state::code_block::content_wrap_width(ctx.width, ctx.status.is_some());
-
-        for (index, content_line) in content_lines.iter().enumerate() {
-            let is_first = index == 0;
-            let wrapped_rows = self.wrapped_row_spans(content_line, &block.role, wrap_width);
-
-            for (row_idx, row_spans) in wrapped_rows.into_iter().enumerate() {
-                // Build prefix for first row of the first ContentLine; every
-                // other row is a continuation: no cursor, no status indicator,
-                // and (except for the user rail) a blank role label so the
-                // icon never repeats on wrapped rows.
-                let is_row_zero = is_first && row_idx == 0;
-                let mut spans = if is_row_zero {
-                    let mut spans =
-                        self.lane_prefix(block.role.clone(), ctx.cursor, block.suppress_prefix);
-
-                    // Add status indicator if present
-                    if let Some(status) = &ctx.status {
-                        let indicator = Self::indicator_char(status, ctx.now_millis);
-                        let style = self.indicator_style(status);
-                        spans.push(RatatuiSpan::styled(format!("{indicator} "), style));
-                    }
-
-                    spans
-                } else {
-                    self.lane_prefix_continuation(block.role.clone(), block.suppress_prefix)
-                };
-
-                // Add the wrapped content spans for this row
-                spans.extend(row_spans);
-
-                // Center the line if requested
-                if block.center {
-                    let line_char_width: usize =
-                        spans.iter().map(|s| s.content.chars().count()).sum();
-                    let padding = ctx.width.saturating_sub(line_char_width) / 2;
-                    if padding > 0 {
-                        let mut padded =
-                            vec![RatatuiSpan::styled(" ".repeat(padding), Style::default())];
-                        padded.append(&mut spans);
-                        spans = padded;
-                    }
-                }
-
-                // Apply row overlays (selection highlighting, etc.)
-                let row_style = self.row_style(&block.role);
-                let spans = self.apply_row_overlays(spans, row_style, ctx.selected);
-
-                result.push(Line::from(spans));
-            }
-        }
-
-        result
-    }
-}
-
 pub fn lane_prefix_width() -> usize {
-    // cursor_str (2 chars: "> " or "  ") + label (2 chars: role icon + space)
+    // cursor_str (2 chars: "> " or "  ") + label (2 chars: lane icon + space)
     4
 }
 
-/// Pre-wrap a single prose row at `width` display columns so no rendered
+/// Pre-wrap a single text row at `width` display columns so no rendered
 /// [`Line`] ever exceeds the pane width and ratatui never re-wraps (which
 /// would discard the per-row lane prefix). Greedy first-fit on ASCII spaces,
 /// matching ratatui's default word wrapper. Returns at least one row, so an
@@ -125,9 +28,184 @@ pub(crate) fn wrap_prose(text: &str, width: usize) -> Vec<std::borrow::Cow<'_, s
     )
 }
 
-// region:    --- Support
+/// The pure-function renderer (task 6a7a3916): projects the Block's source at
+/// `ctx.width`, wraps at the shared wrap budget, applies the lane prefix on
+/// row 0 (blank label on continuations, user rail on every row), the status
+/// indicator, and the fill (Full → user bg on content rows, Code → margin
+/// rows + surface0 bg, None → nothing). Pure: same inputs, same outputs.
+pub fn layout(block: &Block, ctx: &FrameContext) -> Vec<Line<'static>> {
+    let renderer = TuiRenderer {
+        theme: TuiTheme::default(),
+    };
+    renderer.render_block(block, ctx)
+}
+
+/// Row-count twin of [`layout`] (task 53279c82): the exact number of visual
+/// rows [`layout`] would produce for the same Block at the same width —
+/// projection, per-line wrapping at the shared wrap budget (status indicator
+/// included), and the 2 margin rows for Fill::Code. Used by the render loop
+/// for scroll math; must stay in lockstep with [`TuiRenderer::render_block`]
+/// by construction.
+pub fn measure(block: &Block, width: usize) -> usize {
+    let renderer = TuiRenderer {
+        theme: TuiTheme::default(),
+    };
+    renderer.measure_block(block, width)
+}
 
 impl TuiRenderer {
+    /// Row-count mirror of [`TuiRenderer::render_block`]: projects the same
+    /// source, wraps each ContentLine at the same wrap budget (status-indicator
+    /// shrink included — the indicator sits on row 0 only, so only row 0's
+    /// ContentLine wraps with the reduced budget), and adds the Fill::Code
+    /// margin rows. Same inputs, same count as `render_block(..).len()`.
+    fn measure_block(&self, block: &Block, width: usize) -> usize {
+        let mut content_lines = block.source.project(width);
+        if content_lines.is_empty() {
+            content_lines.push(ContentLine::empty());
+        }
+
+        let has_status = block.status.is_some();
+        let wrap_width = crate::state::code_block::content_wrap_width(width, has_status);
+
+        let lane = LaneContext::from(block);
+        let mut content_rows = 0usize;
+        for content_line in &content_lines {
+            let is_row_zero = content_rows == 0;
+            let wrapped = self.wrapped_row_count(content_line, &lane, wrap_width, is_row_zero);
+            content_rows += wrapped;
+        }
+
+        // Fill::Code injects one filled margin row above and below the block.
+        let margin = block.fill.margin_row_count();
+
+        content_rows + margin
+    }
+
+    /// Visual row count a single ContentLine wraps into. Row 0 uses the wrap
+    /// budget that already accounts for the status indicator (mirroring
+    /// `render_block`, which renders row 0 without a lane-marker slot);
+    /// continuations use the plain budget.
+    fn wrapped_row_count(
+        &self,
+        content_line: &ContentLine,
+        lane: &LaneContext,
+        wrap_width: usize,
+        is_row_zero: bool,
+    ) -> usize {
+        let _ = lane;
+        let _ = is_row_zero;
+        let spans = &content_line.spans;
+        let hang_indent = content_line.hang_indent.min(wrap_width.saturating_sub(1));
+        let text_width = wrap_width - hang_indent;
+
+        let rows = if spans.len() == 1 {
+            wrap_prose(&spans[0].text, text_width).len()
+        } else {
+            let full_text: String = spans.iter().map(|s| s.text.as_str()).collect();
+            wrap_prose(&full_text, text_width).len()
+        };
+        rows.max(1)
+    }
+
+    fn render_block(&self, block: &Block, ctx: &FrameContext) -> Vec<Line<'static>> {
+        let mut content_lines = block.source.project(ctx.width);
+        if content_lines.is_empty() {
+            content_lines.push(ContentLine::empty());
+        }
+
+        let has_status = block.status.is_some();
+        let wrap_width = crate::state::code_block::content_wrap_width(ctx.width, has_status);
+
+        let lane = LaneContext::from(block);
+        let mut result = Vec::new();
+
+        for content_line in &content_lines {
+            let is_first_content_row = result.is_empty();
+            let wrapped_rows = self.wrapped_row_spans(content_line, &lane, wrap_width);
+
+            for (row_idx, row_spans) in wrapped_rows.into_iter().enumerate() {
+                let is_row_zero = is_first_content_row && row_idx == 0;
+                let mut spans = if is_row_zero {
+                    let mut spans = self.lane_prefix(&lane, ctx.cursor);
+
+                    if let Some(status) = &block.status {
+                        let indicator = status.indicator_char(ctx.now_millis);
+                        let style = self.indicator_style(status);
+                        spans.push(RatatuiSpan::styled(format!("{indicator} "), style));
+                    }
+
+                    spans
+                } else {
+                    self.lane_prefix_continuation(&lane)
+                };
+
+                spans.extend(row_spans);
+
+                // Center banner lines. Centering follows the lane: only
+                // `Lane::SystemBlank` (which `Banner::lane()` returns) is
+                // centered, so the renderer never inspects `block.source`
+                // for layout. `Banner` is the only type that returns this
+                // lane.
+                if block.lane == Lane::SystemBlank {
+                    let line_char_width: usize =
+                        spans.iter().map(|s| s.content.chars().count()).sum();
+                    let padding = ctx.width.saturating_sub(line_char_width) / 2;
+                    if padding > 0 {
+                        let mut padded =
+                            vec![RatatuiSpan::styled(" ".repeat(padding), Style::default())];
+                        padded.append(&mut spans);
+                        spans = padded;
+                    }
+                }
+
+                let row_style = self.row_style_for(block, &lane, is_row_zero);
+                let spans = self.apply_row_overlays(spans, row_style, ctx.selected);
+
+                result.push(Line::from(spans));
+            }
+        }
+
+        if result.is_empty() {
+            result.push(Line::from(""));
+        }
+
+        // Fill::Code inserts a margin row above and below the block so the
+        // code surface has internal padding. Each margin row carries an empty
+        // span styled with surface0 — a bare `Line::from("")` has no span, so
+        // the full-width paint in the render loop would skip it (task
+        // 69bd5698). `Fill` owns the count (2 for Code, 0 otherwise); the
+        // renderer owns the colour and placement. Every other fill inserts
+        // no margins.
+        if block.fill.margin_row_count() > 0 {
+            result = Self::with_margin_rows(result, self.theme.surface0);
+        }
+
+        result
+    }
+
+    /// Insert one filled margin row above and below `lines` so a code/diff
+    /// block has internal padding around its text. Each margin row carries a
+    /// single empty span styled with `bg` — a bare `Line::from("")` has no
+    /// span, so the render loop's full-width paint would skip it and the
+    /// margin would render unfilled (task 69bd5698).
+    fn with_margin_rows(
+        lines: Vec<Line<'static>>,
+        bg: ratatui::style::Color,
+    ) -> Vec<Line<'static>> {
+        let margin = || {
+            Line::from(vec![RatatuiSpan::styled(
+                String::new(),
+                Style::default().bg(bg),
+            )])
+        };
+        let mut out = Vec::with_capacity(lines.len() + 2);
+        out.push(margin());
+        out.extend(lines);
+        out.push(margin());
+        out
+    }
+
     /// Wrap a ContentLine at `wrap_width` display columns and reconstruct the
     /// styled spans of every wrapped row.
     ///
@@ -139,7 +217,7 @@ impl TuiRenderer {
     fn wrapped_row_spans(
         &self,
         content_line: &ContentLine,
-        role: &Role,
+        lane: &LaneContext,
         wrap_width: usize,
     ) -> Vec<Vec<RatatuiSpan<'static>>> {
         let spans = &content_line.spans;
@@ -147,7 +225,7 @@ impl TuiRenderer {
         let text_width = wrap_width - hang_indent;
 
         if spans.len() == 1 {
-            let style = self.hint_to_style(&spans[0].hint, role);
+            let style = hint_to_style(&spans[0].hint, lane.role_style, &self.theme);
             return wrap_prose(&spans[0].text, text_width)
                 .iter()
                 .enumerate()
@@ -192,7 +270,7 @@ impl TuiRenderer {
                 };
                 let end = start + row.len();
                 cursor = end;
-                row_spans.extend(self.sliced_row_spans(spans, role, start, end));
+                row_spans.extend(self.sliced_row_spans(spans, lane, start, end));
                 row_spans
             })
             .collect()
@@ -202,7 +280,7 @@ impl TuiRenderer {
     fn sliced_row_spans(
         &self,
         spans: &[nu_agent_core::transcript::ir::Span],
-        role: &Role,
+        lane: &LaneContext,
         start: usize,
         end: usize,
     ) -> Vec<RatatuiSpan<'static>> {
@@ -220,137 +298,29 @@ impl TuiRenderer {
             let text = &span.text[from - span_start..to - span_start];
             result.push(RatatuiSpan::styled(
                 text.to_string(),
-                self.hint_to_style(&span.hint, role),
+                hint_to_style(&span.hint, lane.role_style, &self.theme),
             ));
         }
         result
     }
-}
 
-// endregion: --- Support
-
-impl TuiRenderer {
-    fn lane_prefix(
-        &self,
-        role: Role,
-        cursor: bool,
-        suppress_prefix: bool,
-    ) -> Vec<RatatuiSpan<'static>> {
+    fn lane_prefix(&self, lane: &LaneContext, cursor: bool) -> Vec<RatatuiSpan<'static>> {
         let cursor_str = if cursor { "> " } else { "  " };
-        let (label, style) = if suppress_prefix {
-            ("  ", self.theme.role_system)
-        } else {
-            match role {
-                Role::User => ("▏ ", self.theme.lane_prefix_user),
-                Role::Assistant => ("  ", self.theme.lane_prefix_assistant),
-                Role::Tool => ("⚙ ", self.theme.lane_prefix_tool),
-                Role::ToolDisplay => ("  ", self.theme.lane_prefix_assistant),
-                Role::Compaction => ("~ ", self.theme.lane_prefix_compaction),
-                Role::System => ("· ", self.theme.lane_prefix_system),
-                Role::Separator => ("  ", self.theme.role_separator),
-            }
-        };
         vec![
             RatatuiSpan::styled(cursor_str.to_string(), Style::default()),
-            RatatuiSpan::styled(label.to_string(), style),
+            RatatuiSpan::styled(lane.marker.clone(), lane.marker_style),
         ]
     }
 
     /// Lane prefix for wrapped continuation rows: identical lane styling but
-    /// a blank 2-char role label, except the user rail which stays on every
-    /// row (task 7bd175d2).
-    fn lane_prefix_continuation(
-        &self,
-        role: Role,
-        suppress_prefix: bool,
-    ) -> Vec<RatatuiSpan<'static>> {
-        let (label, style) = if suppress_prefix {
-            ("  ", self.theme.role_system)
-        } else {
-            match role {
-                Role::User => ("▏ ", self.theme.lane_prefix_user),
-                Role::Assistant => ("  ", self.theme.lane_prefix_assistant),
-                Role::Tool => ("  ", self.theme.lane_prefix_tool),
-                Role::ToolDisplay => ("  ", self.theme.lane_prefix_assistant),
-                Role::Compaction => ("  ", self.theme.lane_prefix_compaction),
-                Role::System => ("  ", self.theme.lane_prefix_system),
-                Role::Separator => ("  ", self.theme.role_separator),
-            }
-        };
+    /// a blank marker — except the user rail, which stays on every row so a
+    /// multi-row user block keeps a constant gutter (task 667e4926, task
+    /// 7bd175d2).
+    fn lane_prefix_continuation(&self, lane: &LaneContext) -> Vec<RatatuiSpan<'static>> {
         vec![
             RatatuiSpan::styled("  ".to_string(), Style::default()),
-            RatatuiSpan::styled(label.to_string(), style),
+            RatatuiSpan::styled(lane.continuation_marker.to_string(), lane.marker_style),
         ]
-    }
-
-    fn role_style(&self, role: &Role) -> Style {
-        match role {
-            Role::User => self.theme.role_user,
-            Role::Assistant => self.theme.role_assistant,
-            Role::Tool => self.theme.role_tool,
-            Role::ToolDisplay => self.theme.role_assistant,
-            Role::Compaction => self.theme.role_compaction,
-            Role::System => self.theme.role_system,
-            Role::Separator => self.theme.role_separator,
-        }
-    }
-
-    fn row_style(&self, role: &Role) -> Style {
-        match role {
-            Role::User => self.theme.row_user.bg(self.theme.row_user_bg),
-            Role::Assistant => self.theme.row_assistant,
-            Role::Tool => self.theme.row_tool,
-            Role::ToolDisplay => self.theme.row_assistant,
-            Role::Compaction => self.theme.row_compaction,
-            Role::System => self.theme.row_system,
-            Role::Separator => Style::default(),
-        }
-    }
-
-    fn hint_to_style(&self, hint: &StyleHint, role: &Role) -> Style {
-        match hint {
-            StyleHint::Normal | StyleHint::Emphasis => self.role_style(role),
-            StyleHint::Meta | StyleHint::Muted => self.theme.tool_meta,
-            StyleHint::Success => self.theme.status_done,
-            StyleHint::Error => self.theme.status_failed,
-            StyleHint::DiffAdd => self.theme.status_done,
-            StyleHint::DiffRemove => self.theme.status_failed,
-            StyleHint::DiffHunk => self.theme.role_system.add_modifier(Modifier::BOLD),
-            StyleHint::Cancelled => self
-                .role_style(role)
-                .add_modifier(self.theme.cancelled_modifier),
-            StyleHint::MdBold => Style::default().add_modifier(Modifier::BOLD),
-            StyleHint::MdItalic => Style::default().add_modifier(Modifier::ITALIC),
-            StyleHint::MdBoldItalic => Style::default()
-                .add_modifier(Modifier::BOLD)
-                .add_modifier(Modifier::ITALIC),
-            StyleHint::MdInlineCode => self.theme.inline_code,
-            StyleHint::MdCodeKeyword => self.theme.syntax_keyword,
-            StyleHint::MdCodeType => self.theme.syntax_type,
-            StyleHint::MdCodeFunction => self.theme.syntax_function,
-            StyleHint::MdCodeVariable => self.theme.syntax_variable,
-            StyleHint::MdCodeConstant => self.theme.syntax_constant,
-            StyleHint::MdCodeString => self.theme.syntax_string,
-            StyleHint::MdCodeNumber => self.theme.syntax_number,
-            StyleHint::MdCodeOperator => self.theme.syntax_operator,
-            StyleHint::MdCodePunctuation => self.theme.syntax_punctuation,
-            StyleHint::MdCodeComment => self.theme.syntax_comment,
-            StyleHint::MdCodePlain => self.theme.row_assistant,
-        }
-    }
-
-    fn indicator_char(status: &ItemStatus, now_millis: u128) -> &'static str {
-        match status {
-            ItemStatus::InProgress => {
-                let idx = ((now_millis / 100) % IN_PROGRESS_SPINNER_FRAMES.len() as u128) as usize;
-                IN_PROGRESS_SPINNER_FRAMES[idx]
-            }
-            ItemStatus::Done => "✓",
-            ItemStatus::Failed => "✕",
-            ItemStatus::Queued => "•",
-            ItemStatus::Cancelled => "✕",
-            ItemStatus::Unknown => "?",
-        }
     }
 
     fn indicator_style(&self, status: &ItemStatus) -> Style {
@@ -361,6 +331,25 @@ impl TuiRenderer {
             ItemStatus::Queued => self.theme.status_queued,
             ItemStatus::Cancelled => self.theme.status_cancelled,
             ItemStatus::Unknown => self.theme.status_queued,
+        }
+    }
+
+    /// Row style for a rendered row. `Fill::Code` paints the surface0
+    /// background on content rows only — row 0 (the call line plus any status
+    /// indicator) keeps the lane's own row style so the header stays untinted.
+    /// Fill::Full and Fill::None always defer to [`LaneContext::row_style`],
+    /// which carries the user background for the user lane and the per-role
+    /// row style (row_assistant/row_tool/row_compaction/row_system) otherwise.
+    ///
+    /// The fill *colour* (surface0) lives here, not on `Fill`: `Fill` is in
+    /// nu-agent-core, which has no theme. `Fill` owns "do I have a code
+    /// background"; the renderer owns "code background is surface0, and only
+    /// content rows get it".
+    fn row_style_for(&self, block: &Block, lane: &LaneContext, is_row_zero: bool) -> Style {
+        use nu_agent_core::transcript::ir::Fill;
+        match block.fill {
+            Fill::Code if !is_row_zero => Style::default().bg(self.theme.surface0),
+            Fill::Code | Fill::Full | Fill::None => lane.row_style,
         }
     }
 
@@ -385,28 +374,89 @@ impl TuiRenderer {
             })
             .collect()
     }
+}
 
-    pub fn render_cached(
-        &self,
-        block: &RenderBlock,
-        ctx: &RenderContext,
-        cache: &mut HashMap<String, Vec<ContentLine>>,
-    ) -> Vec<Line<'static>> {
-        let block = if let Some(md) = &block.markdown {
-            let content_lines = cache.entry(md.clone()).or_insert_with(|| {
-                let canvas_width = u16::try_from(ctx.width).unwrap_or(u16::MAX);
-                crate::markdown::render_markdown_lines(md, Some(canvas_width))
-            });
-            RenderBlock {
-                role: block.role.clone(),
-                lines: content_lines.clone(),
-                markdown: None,
-                center: block.center,
-                suppress_prefix: block.suppress_prefix,
+// region:    --- Support
+
+/// Lane styling context derived from a Block at construction time. Replaces
+/// the old `Role`-based match in the renderer: the lane was already decided,
+/// so the renderer only reads it. Carries the two style dimensions the old
+/// renderer had: `role_style` (text foreground via `hint_to_style`) and
+/// `row_style` (row background via `apply_row_overlays`).
+struct LaneContext {
+    /// The 2-char marker slot for row 0 (icon + space, or blanks).
+    marker: String,
+    /// The marker slot for continuation rows (blank unless user rail).
+    continuation_marker: &'static str,
+    marker_style: Style,
+    role_style: Style,
+    row_style: Style,
+}
+
+impl LaneContext {
+    /// Lane styling from the lane variant alone — the renderer never inspects
+    /// `block.source`. A block's lane is frozen at construction time and
+    /// already encodes the styling the source needs (task 46ca79fe).
+    fn from(block: &Block) -> Self {
+        let theme = TuiTheme::default();
+        match block.lane {
+            Lane::Marker(icon) => {
+                let (marker_style, role_style, row_style) = match icon {
+                    "▏" => (
+                        theme.lane_prefix_user,
+                        theme.role_user,
+                        theme.row_user.bg(theme.row_user_bg),
+                    ),
+                    "⚙" => (theme.lane_prefix_tool, theme.role_tool, theme.row_tool),
+                    "~" => (
+                        theme.lane_prefix_compaction,
+                        theme.role_compaction,
+                        theme.row_compaction,
+                    ),
+                    "·" => (
+                        theme.lane_prefix_system,
+                        theme.role_system,
+                        theme.row_system,
+                    ),
+                    _ => (
+                        theme.lane_prefix_system,
+                        theme.role_system,
+                        theme.row_system,
+                    ),
+                };
+                // The user rail stays on every row (the pre-refactor
+                // `Role::User => "▏ "` continuation label); other marker
+                // lanes render a blank continuation slot. This keeps a
+                // constant gutter down a multi-row user block (task 667e4926).
+                let continuation_marker = if icon == "▏" { "▏ " } else { "  " };
+                Self {
+                    marker: format!("{icon} "),
+                    continuation_marker,
+                    marker_style,
+                    role_style,
+                    row_style,
+                }
             }
-        } else {
-            block.clone()
-        };
-        self.render(&block, ctx)
+            // Assistant prose and spacers: blank prefix, assistant styling.
+            Lane::Blank => Self {
+                marker: "  ".to_string(),
+                continuation_marker: "  ",
+                marker_style: theme.lane_prefix_assistant,
+                role_style: theme.role_assistant,
+                row_style: theme.row_assistant,
+            },
+            // Banner (startup logo): blank prefix, system styling — the old
+            // Logo `Role::System` (`role_system` text, `row_system` row, and
+            // the suppressed prefix span in `role_system`).
+            Lane::SystemBlank => Self {
+                marker: "  ".to_string(),
+                continuation_marker: "  ",
+                marker_style: theme.role_system,
+                role_style: theme.role_system,
+                row_style: theme.row_system,
+            },
+        }
     }
 }
+
+// endregion: --- Support

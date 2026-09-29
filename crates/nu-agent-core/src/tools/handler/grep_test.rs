@@ -1,6 +1,6 @@
 use super::*;
 use crate::bus::Bus;
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::tool_args::CallLine;
 use std::io::Write;
 use tempfile::tempdir;
 
@@ -187,7 +187,7 @@ fn grep_call_line_render_shows_quoted_pattern_and_glob_when_path_is_dot() -> Res
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ \"fn main\" *.rs".to_string(),
         }
     );
@@ -205,7 +205,7 @@ fn grep_call_line_render_combines_path_and_glob() -> Result<()> {
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ \"fn main\" /src/*.rs".to_string(),
         }
     );
@@ -223,7 +223,7 @@ fn grep_call_line_render_shows_path_without_glob() -> Result<()> {
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ \"fn main\" /src".to_string(),
         }
     );
@@ -241,7 +241,7 @@ fn grep_call_line_render_shows_pattern_only_without_location() -> Result<()> {
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ \"fn main\"".to_string(),
         }
     );
@@ -257,6 +257,6 @@ fn grep_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
     let render = GrepTool::call_line_render(args);
 
     // -- Check
-    assert_eq!(render, CallLineRender::generic_json_summary(args));
+    assert_eq!(render, CallLine::from_json_summary(args));
     Ok(())
 }

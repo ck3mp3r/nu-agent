@@ -6,7 +6,9 @@
 use crate::interaction::reducer::{ReducerInput, UserAction, reduce_with_cancel_controller};
 use crate::state::{AppState, InputState, StatusMessageKind, UiPhase};
 use nu_agent_core::bus::TurnEvent;
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
+use nu_agent_core::transcript::ir::{Block, BlockSource, MessageRole};
+use nu_agent_core::transcript::items::Message;
+use nu_agent_core::transcript::renderer::Renderable;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -15,30 +17,34 @@ fn finalize_turn(state: &mut AppState) {
 }
 
 #[test]
-fn finalize_pushes_closing_spacer() -> Result<()> {
+fn finalize_keeps_last_block_content_for_unified_rule() -> Result<()> {
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("prompt".to_string()),
         ..Default::default()
     };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
-    state.transcript.push_transcript_item(TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::Assistant(ProseMessage {
-            markdown: "response".to_string(),
-        }),
+    let msg = Message {
+        role: MessageRole::Assistant,
+        markdown: "response".to_string(),
+    };
+    state.transcript.push_block(Block {
+        source: msg.source(),
+        lane: msg.lane(),
+        fill: msg.fill(),
         status: None,
     });
 
     // Dispatch the turn Completed event which calls finalize
     finalize_turn(&mut state);
 
+    // No explicit spacer is pushed at finalize; the last block stays content.
     let last = state
         .transcript
-        .entries
+        .blocks()
         .last()
-        .ok_or("should have last transcript entry")?;
-    assert!(matches!(last.kind, TranscriptEntryKind::Spacer(_)));
+        .ok_or("should have last transcript block")?;
+    assert!(matches!(last.source, BlockSource::Markdown { .. }));
     Ok(())
 }
 

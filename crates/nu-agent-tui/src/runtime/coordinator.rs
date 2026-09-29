@@ -154,8 +154,7 @@ impl RuntimeCoordinator {
         self.theme = name.resolve();
         self.state.theme = self.theme.clone();
         self.state.theme_name = name;
-        self.state.transcript.clear_assistant_projection_cache();
-        self.state.transcript.visual_info_dirty = true;
+        self.state.transcript.invalidate_height_index();
         self.mark_render_needed();
     }
 
@@ -380,8 +379,7 @@ impl RuntimeCoordinator {
         self.pickup_restored_input_text();
 
         if let TerminalEvent::Resize(resize) = event {
-            self.state.transcript.clear_assistant_projection_cache();
-            self.state.transcript.visual_info_dirty = true;
+            self.state.transcript.invalidate_height_index();
             let side_margin = if resize.columns >= 8 {
                 MAIN_SIDE_MARGIN
             } else {
@@ -963,9 +961,9 @@ impl RuntimeCoordinator {
             || self
                 .state
                 .transcript
-                .entries
+                .blocks()
                 .iter()
-                .any(|e| e.status == Some(ItemStatus::InProgress))
+                .any(|block| block.status == Some(ItemStatus::InProgress))
     }
 
     pub(crate) fn expire_status_message_if_due(&mut self, now: Instant) -> bool {

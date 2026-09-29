@@ -1,7 +1,7 @@
 use super::*;
 use crate::protocol::event::ToolDisplay;
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::tool_args::CallLine;
 
 #[test]
 fn tool_start_converts_to_tool_start() {
@@ -9,7 +9,7 @@ fn tool_start_converts_to_tool_start() {
         name: "read".to_string(),
         source: "user".to_string(),
         arguments: "{}".to_string(),
-        call_line: CallLineRender::generic_json_summary("{}"),
+        call_line: CallLine::from_json_summary("{}"),
     };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(
@@ -18,7 +18,7 @@ fn tool_start_converts_to_tool_start() {
             name: "read".to_string(),
             source: "user".to_string(),
             arguments: "{}".to_string(),
-            call_line: CallLineRender::generic_json_summary("{}"),
+            call_line: CallLine::from_json_summary("{}"),
         })
     );
 }
@@ -259,6 +259,7 @@ fn session_switched_dropped() {
 fn make_permission_context() -> PermissionRequestContext {
     PermissionRequestContext {
         tool: "write".to_string(),
+        tool_key: "write\n{}".to_string(),
         source: "user".to_string(),
         mode: Some("edit".to_string()),
         matched_rule_identity: "identity".to_string(),

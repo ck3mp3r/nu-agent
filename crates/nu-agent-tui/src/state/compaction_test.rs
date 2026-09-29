@@ -6,8 +6,8 @@
 use crate::interaction::reducer::{ReducerInput, UserAction, reduce_with_cancel_controller};
 use crate::state::{AppState, InputState};
 use nu_agent_core::bus::CompactionEvent;
+use nu_agent_core::transcript::ir::BlockSource;
 use nu_agent_core::transcript::ir::StyleHint;
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntryKind};
 
 fn busy_state_with_clean_transcript() -> AppState {
     let mut state = AppState {
@@ -16,19 +16,23 @@ fn busy_state_with_clean_transcript() -> AppState {
     };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
-    state.transcript.entries.clear();
+    state.transcript.clear();
     // Simulate handle_llm_start which sets the lock
     state.input_locked = true;
     state
 }
 
 fn reduce_compaction(state: &mut AppState, event: CompactionEvent) -> bool {
-    state.compaction.reduce_compaction_event(
+    let mut evicted = 0usize;
+    let changed = state.compaction.reduce_compaction_event(
         &mut state.transcript,
         &mut state.status,
         &mut state.scroll,
         event,
-    )
+        &mut evicted,
+    );
+    state.shift_bookkeeping_after_eviction(evicted);
+    changed
 }
 
 fn started(source: &str) -> CompactionEvent {
@@ -68,9 +72,9 @@ fn compaction_summary_is_rendered_in_transcript() {
 
     let lines = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.text())
+        .map(|line| line.source.plain_text())
         .collect::<Vec<_>>();
     assert!(lines.contains(&"Compaction".to_string()));
     assert!(lines.contains(&"full summary body".to_string()));
@@ -88,18 +92,18 @@ fn compaction_artifact_renders_as_single_markdown_block() {
     // Raw text for non-markdown entries (Compaction header is a SystemMessage)
     let raw_texts: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.text())
+        .map(|line| line.source.plain_text())
         .collect();
     assert!(raw_texts.contains(&"Compaction".to_string()));
 
     // Project markdown entries to verify heading renders as "Summary"
     let projected_texts: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert!(
@@ -125,9 +129,9 @@ fn compaction_artifact_does_not_double_wrap_summary_heading() {
     // Project all entries and count how many contain "Summary" text
     let summary_count = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .filter(|projected| projected.trim() == "Summary")
         .count();
@@ -146,9 +150,9 @@ fn compaction_artifact_preserves_bullets_without_duplication() {
     // Project all entries and check bullet items appear exactly once
     let projected_texts: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert_eq!(
@@ -181,16 +185,16 @@ fn compaction_block_completion_hides_source_and_explanatory_copy() {
 
     let raw_texts: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.text())
+        .map(|line| line.source.plain_text())
         .collect();
 
     let projected_texts: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -224,9 +228,9 @@ fn compaction_block_header_is_concise_without_artifact_label() {
 
     let lines = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.text())
+        .map(|line| line.source.plain_text())
         .collect::<Vec<_>>();
     assert!(lines.contains(&"Compaction".to_string()));
     assert!(!lines.contains(&"Compaction artifact".to_string()));
@@ -245,9 +249,9 @@ fn compaction_block_summary_rendering_remains_clean_after_copy_removal() {
     // Project all entries and check projected output
     let projected_texts: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert_eq!(
@@ -287,16 +291,16 @@ fn compaction_metadata_not_included_in_future_prompt_history() {
     );
 
     assert_eq!(
-        state.transcript.entries[0].text(),
+        state.transcript.blocks()[0].source.plain_text(),
         "Compaction",
         "metadata is transcript UI chrome, not session system summary payload"
     );
     assert!(
         state
             .transcript
-            .entries
+            .blocks()
             .iter()
-            .any(|line| line.text() == "persisted summary body")
+            .any(|line| line.source.plain_text() == "persisted summary body")
     );
 }
 
@@ -312,9 +316,9 @@ fn compaction_noop_does_not_claim_persisted_summary() {
 
     let lines = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.text())
+        .map(|line| line.source.plain_text())
         .collect::<Vec<_>>();
 
     assert!(lines.contains(&"(empty summary)".to_string()));
@@ -341,9 +345,9 @@ fn compaction_block_renders_for_slash_and_auto_triggers() {
 
     let lines = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.text())
+        .map(|line| line.source.plain_text())
         .collect::<Vec<_>>();
     assert!(lines.contains(&"summary from slash_compact".to_string()));
     assert!(lines.contains(&"summary from auto_threshold".to_string()));
@@ -406,7 +410,7 @@ fn compaction_streaming_renders_progressively() {
 
     // Stream 3 chunks with growing aggregated text
     reduce_compaction(&mut state, chunk("auto", "Hello", "Hello"));
-    let after_chunk1 = state.transcript.entries.len();
+    let after_chunk1 = state.transcript.len();
     assert!(after_chunk1 > 1, "should have header + content");
 
     reduce_compaction(&mut state, chunk("auto", " world", "Hello world"));
@@ -422,9 +426,9 @@ fn compaction_streaming_renders_progressively() {
     // Verify content is present and block is finished
     let lines: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|item| item.text())
+        .map(|line| line.source.plain_text())
         .collect();
     assert!(lines.iter().any(|l| l.contains("Hello world done")));
 }
@@ -445,9 +449,9 @@ fn compaction_streaming_truncates_and_reprojects() {
     // The re-projection replaces, not appends
     let lines: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|item| item.text())
+        .map(|line| line.source.plain_text())
         .collect();
     let first_only_count = lines
         .iter()
@@ -461,13 +465,13 @@ fn compaction_streaming_empty_chunks_ignored() {
     let mut state = AppState::default();
 
     reduce_compaction(&mut state, started("auto"));
-    let after_start = state.transcript.entries.len();
+    let after_start = state.transcript.len();
 
     // Empty chunk
     reduce_compaction(&mut state, chunk("auto", "", ""));
 
     // Should not have added any content lines
-    assert_eq!(state.transcript.entries.len(), after_start);
+    assert_eq!(state.transcript.len(), after_start);
     assert!(state.transcript.summary_stream_start.is_none());
 }
 
@@ -489,18 +493,18 @@ fn compaction_completed_clears_streaming_state() {
 
 // region:    --- Raw markdown projection (moved from task_4a_tests)
 
-/// Return raw markdown strings stored in all Assistant ProseMessage entries.
+/// Return raw markdown strings stored in all assistant markdown blocks.
 fn assistant_markdown_entries(state: &AppState) -> Vec<String> {
     state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter_map(|e| {
-            if let TranscriptEntryKind::Assistant(ProseMessage { markdown }) = &e.kind {
-                Some(markdown.clone())
-            } else {
-                None
-            }
+        .filter_map(|b| match &b.source {
+            BlockSource::Markdown {
+                role: nu_agent_core::transcript::ir::MessageRole::Assistant,
+                markdown,
+            } => Some(markdown.clone()),
+            _ => None,
         })
         .collect()
 }

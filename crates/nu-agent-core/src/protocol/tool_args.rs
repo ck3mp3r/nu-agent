@@ -1,34 +1,22 @@
 use serde_json::Value as JsonValue;
 
-/// How a tool call's arguments render on the transcript call line.
+/// A tool call's transcript call line: the rendered summary text.
+/// One string — no variants, no language tag. Preview content (diffs, code)
+/// comes through `Previewable::preview()` → `Display`, not from this type.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CallLineRender {
-    /// A single-line summary, e.g. `→ {"path":"a.rs"}`.
-    Inline { summary: String },
-    /// A fenced code block with a language tag, e.g. a nu command.
-    CodeBlock { language: String, code: String },
+pub struct CallLine {
+    pub summary: String,
 }
 
-impl CallLineRender {
-    /// Fallback render for tools without a tailored call line: the
-    /// arrow-prefixed, truncated JSON arguments as an inline summary.
-    pub fn generic_json_summary(arguments: &str) -> Self {
-        Self::Inline {
-            summary: format!("→ {}", summarize_tool_arguments(arguments)),
-        }
-    }
-
-    /// Flatten to the plain text a line-oriented renderer shows. Inline
-    /// summaries drop the leading arrow so callers that add their own arrow
-    /// do not double it; code blocks yield the raw code.
+impl CallLine {
+    /// Flatten to the plain text a line-oriented renderer shows. The leading
+    /// arrow is dropped so callers that add their own arrow do not double it
+    /// (behavior carried over from the pre-Block-model enum).
     pub fn to_plain_text(&self) -> String {
-        match self {
-            Self::Inline { summary } => summary
-                .strip_prefix("→ ")
-                .unwrap_or(summary.as_str())
-                .to_string(),
-            Self::CodeBlock { code, .. } => code.clone(),
-        }
+        self.summary
+            .strip_prefix("→ ")
+            .unwrap_or(&self.summary)
+            .to_string()
     }
 }
 

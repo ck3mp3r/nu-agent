@@ -6,7 +6,7 @@ use super::channel::{
 };
 use crate::bus::create_bus;
 use crate::protocol::event::UiEvent;
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::tool_args::CallLine;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -167,7 +167,7 @@ async fn bus_default_uses_no_metrics() -> Result<()> {
             name: "read".into(),
             source: "user".into(),
             arguments: "{}".into(),
-            call_line: CallLineRender::generic_json_summary("{}"),
+            call_line: CallLine::from_json_summary("{}"),
         })
         .await?;
     let event = rx.recv().await?;

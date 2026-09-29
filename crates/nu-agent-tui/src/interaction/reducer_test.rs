@@ -13,11 +13,26 @@ use crate::{
 use nu_agent_core::protocol::event::{
     PermissionRequestContext, ToolDisplay, ToolDisplaySection, UiEvent,
 };
-use nu_agent_core::protocol::tool_args::CallLineRender;
-use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
+use nu_agent_core::protocol::tool_args::CallLine;
+use nu_agent_core::transcript::ir::{Block, BlockSource, MessageRole};
+use nu_agent_core::transcript::items::Message;
+use nu_agent_core::transcript::renderer::Renderable;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// Push one user Message block via the store's sole push API.
+fn push_user_line(state: &mut AppState, text: impl Into<String>) {
+    let msg = Message {
+        role: MessageRole::User,
+        markdown: text.into(),
+    };
+    state.transcript.push_block(Block {
+        source: msg.source(),
+        lane: msg.lane(),
+        fill: msg.fill(),
+        status: None,
+    });
+}
 
 /// Convenience: wraps a UiEvent into a boxed ReducerInput::Event.
 fn event_input(e: UiEvent) -> ReducerInput {
@@ -61,7 +76,7 @@ fn busy_state_with_clean_transcript() -> AppState {
     };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
-    state.transcript.entries.clear();
+    state.transcript.clear();
     // Simulate handle_llm_start which sets the lock
     state.input_locked = true;
     state
@@ -78,10 +93,12 @@ fn submit_transition_is_deterministic_and_keeps_input_editable() {
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(!state.input_locked);
     let _ = state.take_next_prompt_for_execution();
-    // starting spacer + user + closing spacer
-    assert_eq!(state.transcript.entries.len(), 3);
-    assert_eq!(state.transcript.entries[1].role(), Role::User);
-    assert_eq!(state.transcript.entries[1].text(), "status pods");
+    // [User] — no leading or trailing spacer under the unified spacer rule
+    assert_eq!(state.transcript.len(), 1);
+    assert_eq!(
+        state.transcript.blocks()[0].source.plain_text(),
+        "status pods"
+    );
 }
 
 #[test]
@@ -100,7 +117,7 @@ fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
-            call_line: CallLineRender::generic_json_summary("{}"),
+            call_line: CallLine::from_json_summary("{}"),
         },
         UiEvent::ToolCompleted {
             name: "k8s__list_pods".to_string(),
@@ -155,15 +172,15 @@ fn esc_then_esc_confirm_moves_into_abort_requested_without_unlocking() {
     assert!(state.abort.pending);
     assert_eq!(state.status.message.status_line(), ESC_ABORT_CONFIRM_STATUS);
 
-    let before_markers = state.transcript.entries.len();
+    let before_markers = state.transcript.len();
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
     assert_eq!(state.input.mode, InputMode::Insert);
     assert_eq!(state.scroll.pane_focus, PaneFocus::Input);
     assert!(state.status.message.status_line().is_empty());
-    // cancel pushes a closing spacer
-    assert_eq!(state.transcript.entries.len(), before_markers + 1);
+    // cancel no longer pushes a spacer — the unified rule separates blocks
+    assert_eq!(state.transcript.len(), before_markers);
 }
 
 #[test]
@@ -202,10 +219,12 @@ fn locked_input_prevents_typing_and_submission() {
     // Activate both prompts coalesced
     let result = state.take_next_prompt_for_execution();
     assert_eq!(result, Some("first\n\nsecond".to_string()));
-    // starting spacer + user + closing spacer
-    assert_eq!(state.transcript.entries.len(), 3);
-    assert_eq!(state.transcript.entries[1].role(), Role::User);
-    assert_eq!(state.transcript.entries[1].text(), "first\n\nsecond");
+    // [User] — no leading or trailing spacer under the unified spacer rule
+    assert_eq!(state.transcript.len(), 1);
+    assert_eq!(
+        state.transcript.blocks()[0].source.plain_text(),
+        "first\n\nsecond"
+    );
     // Complete first (active) prompt — other prompt is already Done
     state.complete_active_prompt();
     let result = state.take_next_prompt_for_execution();
@@ -223,7 +242,7 @@ fn submit_whitespace_only_prompt_is_noop() {
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
-    assert!(state.transcript.entries.is_empty());
+    assert!(state.transcript.blocks().is_empty());
 }
 
 #[test]
@@ -246,11 +265,11 @@ fn race_completion_before_second_escape_prevents_reentry_into_abort_pending() {
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
 
-    let transcript_before = state.transcript.entries.clone();
+    let transcript_before = state.transcript.blocks().to_vec();
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
-    assert_eq!(state.transcript.entries, transcript_before);
+    assert_eq!(state.transcript.blocks(), transcript_before);
 }
 
 #[test]
@@ -337,9 +356,9 @@ fn turn_error_leaves_ui_in_recoverable_state() {
     // Error message preserved in transcript
     let has_error_in_transcript = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .any(|line| line.text().contains("test error"));
+        .any(|line| line.source.plain_text().contains("test error"));
     assert!(
         has_error_in_transcript,
         "Expected error message in transcript"
@@ -356,9 +375,9 @@ fn turn_error_leaves_ui_in_recoverable_state() {
     assert!(
         state
             .transcript
-            .entries
+            .blocks()
             .iter()
-            .any(|line| line.text() == "retry"),
+            .any(|line| line.source.plain_text() == "retry"),
         "Second prompt should appear in transcript"
     );
 
@@ -397,7 +416,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 name: "k8s__list_pods".to_string(),
                 source: "mcp".to_string(),
                 arguments: r#"{"namespace":"prod"}"#.to_string(),
-                call_line: CallLineRender::generic_json_summary(r#"{"namespace":"prod"}"#),
+                call_line: CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
             }),
             None,
         );
@@ -431,7 +450,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 name: "k8s__list_pods".to_string(),
                 source: "mcp".to_string(),
                 arguments: "{}".to_string(),
-                call_line: CallLineRender::generic_json_summary("{}"),
+                call_line: CallLine::from_json_summary("{}"),
             },
             pre: busy_empty_status,
         },
@@ -505,14 +524,12 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 assert!(state.status.message.status_line().is_empty());
             }
             "tool_end_updates_tool_line_without_status" => {
-                // [Spacer, Tool] — starting spacer then the tool, no closing spacer
-                assert_eq!(state.transcript.entries.len(), 2);
+                // [Tool] — no leading spacer under the unified spacer rule
+                assert_eq!(state.transcript.len(), 1);
                 assert!(matches!(
-                    state.transcript.entries[0].kind,
-                    TranscriptEntryKind::Spacer(_)
+                    state.transcript.blocks()[0].source,
+                    BlockSource::Tool { .. }
                 ));
-                assert_eq!(state.transcript.entries[1].role(), Role::Tool);
-                assert_eq!(state.transcript.entries[1].text(), "k8s__list_pods");
                 assert!(state.status.message.status_line().is_empty());
             }
             "llm_end_records_tokens_without_status_message" => {
@@ -529,16 +546,24 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             }
             "assistant_message_trims_and_appends" => {
                 // After the raw-markdown refactor, a single AssistantMessage
-                // produces one ProseMessage. The raw text is trimmed before
+                // produces one markdown block. The raw text is trimmed before
                 // storage, so leading/trailing whitespace is dropped.
                 let assistant_entries: Vec<_> = state
                     .transcript
-                    .entries
+                    .blocks()
                     .iter()
-                    .filter(|e| e.role() == Role::Assistant)
-                    .map(|e| e.text())
+                    .filter(|b| {
+                        matches!(
+                            b.source,
+                            BlockSource::Markdown {
+                                role: nu_agent_core::transcript::ir::MessageRole::Assistant,
+                                ..
+                            }
+                        )
+                    })
+                    .map(|block| block.source.plain_text())
                     .collect();
-                assert_eq!(assistant_entries.len(), 1, "one ProseMessage per block");
+                assert_eq!(assistant_entries.len(), 1, "one assistant block");
                 let text = &assistant_entries[0];
                 assert!(text.contains("line 1"), "raw md should contain 'line 1'");
                 assert!(text.contains("line 2"), "raw md should contain 'line 2'");
@@ -562,7 +587,8 @@ fn permission_request_focuses_transcript_for_immediate_prompt_visibility() {
     state.scroll.pane_focus = crate::state::PaneFocus::Input;
 
     let context = PermissionRequestContext {
-        tool: "edit".to_string(),
+        tool: "edit(file=foo.rs)".to_string(),
+        tool_key: "edit\n{\"file\":\"foo.rs\"}".to_string(),
         source: "closure".to_string(),
         mode: Some("apply".to_string()),
         matched_rule_identity: "tool:edit".to_string(),
@@ -596,7 +622,7 @@ fn permission_requested_dispatch_orders_tool_before_diff_preview_and_follows_tai
             name: "edit".to_string(),
             source: "builtin".to_string(),
             arguments: "{}".to_string(),
-            call_line: CallLineRender::generic_json_summary("{}"),
+            call_line: CallLine::from_json_summary("{}"),
         },
     );
     dispatch_ui_event(
@@ -605,6 +631,7 @@ fn permission_requested_dispatch_orders_tool_before_diff_preview_and_follows_tai
             request_id: "perm-1".to_string(),
             context: PermissionRequestContext {
                 tool: "edit".to_string(),
+                tool_key: "edit\n{}".to_string(),
                 source: "builtin".to_string(),
                 mode: None,
                 matched_rule_identity: "tool:edit".to_string(),
@@ -616,7 +643,9 @@ fn permission_requested_dispatch_orders_tool_before_diff_preview_and_follows_tai
                     title: "file (diff)".to_string(),
                     sections: vec![ToolDisplaySection {
                         label: "diff".to_string(),
-                        language: "diff".to_string(),
+                        kind: nu_agent_core::transcript::ir::ContentKind::Diff {
+                            language: "diff".to_string(),
+                        },
                         content: "--- a\n+++ b\n".to_string(),
                         stats: None,
                     }],
@@ -626,21 +655,30 @@ fn permission_requested_dispatch_orders_tool_before_diff_preview_and_follows_tai
     );
 
     // -- Check
-    let tool_index = state
+    // The preview is its own ToolDisplay block pushed directly after the
+    // pending Tool block, so there are exactly two blocks.
+    assert_eq!(
+        state.transcript.len(),
+        2,
+        "preview must push its own ToolDisplay block"
+    );
+    let tool_block = state
         .transcript
-        .entries
-        .iter()
-        .position(|entry| entry.role() == Role::Tool);
-    let preview_index = state
-        .transcript
-        .entries
-        .iter()
-        .position(|entry| entry.role() == Role::ToolDisplay);
-    let tool_index = tool_index.ok_or("tool entry should exist")?;
-    let preview_index = preview_index.ok_or("diff preview entry should exist")?;
+        .blocks()
+        .first()
+        .ok_or("tool block should exist")?;
     assert!(
-        tool_index < preview_index,
-        "tool entry ({tool_index}) must precede diff preview ({preview_index})"
+        matches!(tool_block.source, BlockSource::Tool { preview: None, .. }),
+        "the Tool block must keep preview None"
+    );
+    let preview_block = state
+        .transcript
+        .blocks()
+        .get(1)
+        .ok_or("preview block should exist")?;
+    assert!(
+        matches!(preview_block.source, BlockSource::ToolDisplay { .. }),
+        "the preview must be a ToolDisplay block"
     );
     assert!(
         state.permission.has_prompt(),
@@ -859,20 +897,8 @@ mod visual_selection_tests {
         // Populate transcript with entries that render as multiple lines
         // Entry 0: multi-line markdown (renders as 3 visual rows)
         // Entry 1: multi-line markdown (renders as 2 visual rows)
-        state.transcript.push_transcript_item(TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::User(ProseMessage {
-                markdown: "line 0\nextra\nmore".to_string(),
-            }),
-            status: None,
-        });
-        state.transcript.push_transcript_item(TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::User(ProseMessage {
-                markdown: "line 1\nextra".to_string(),
-            }),
-            status: None,
-        });
+        push_user_line(&mut state, "line 0\nextra\nmore");
+        push_user_line(&mut state, "line 1\nextra");
         // Scroll offset = 2 means we've scrolled past entry 0's 3 lines
         // (offset 0, 1, 2 are all entry 0's visual rows)
         // The first visible entry should be entry 1
@@ -964,13 +990,7 @@ mod visual_selection_tests {
             ..Default::default()
         };
         for i in 0..5 {
-            state.transcript.push_transcript_item(TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::User(ProseMessage {
-                    markdown: format!("line {i}"),
-                }),
-                status: None,
-            });
+            push_user_line(&mut state, format!("line {i}"));
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -1182,13 +1202,7 @@ mod visual_selection_tests {
             ..Default::default()
         };
         for i in 0..5 {
-            state.transcript.push_transcript_item(TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::User(ProseMessage {
-                    markdown: format!("line {i}"),
-                }),
-                status: None,
-            });
+            push_user_line(&mut state, format!("line {i}"));
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -1215,13 +1229,7 @@ mod visual_selection_tests {
             ..Default::default()
         };
         for i in 0..20 {
-            state.transcript.push_transcript_item(TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::User(ProseMessage {
-                    markdown: format!("line {i}"),
-                }),
-                status: None,
-            });
+            push_user_line(&mut state, format!("line {i}"));
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -1249,13 +1257,7 @@ mod visual_selection_tests {
             ..Default::default()
         };
         for i in 0..20 {
-            state.transcript.push_transcript_item(TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::User(ProseMessage {
-                    markdown: format!("line {i}"),
-                }),
-                status: None,
-            });
+            push_user_line(&mut state, format!("line {i}"));
         }
         // scroll_margin = 3, viewport_bottom = 0+10-3 = 7
         // cursor moves 6→7, visual_row=7 >= 7, viewport scrolls
@@ -1286,13 +1288,7 @@ mod visual_selection_tests {
         };
         // 20 entries, 1 visual row each
         for i in 0..20 {
-            state.transcript.push_transcript_item(TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::User(ProseMessage {
-                    markdown: format!("line {i}"),
-                }),
-                status: None,
-            });
+            push_user_line(&mut state, format!("line {i}"));
         }
         // scroll_margin = 10/3 = 3
         // viewport shows rows 0-9 (scroll_offset=0, viewport_height=10)
@@ -1330,13 +1326,7 @@ mod visual_selection_tests {
             ..Default::default()
         };
         for i in 0..60 {
-            state.transcript.push_transcript_item(TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::User(ProseMessage {
-                    markdown: format!("line {i}"),
-                }),
-                status: None,
-            });
+            push_user_line(&mut state, format!("line {i}"));
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -1368,13 +1358,7 @@ mod visual_selection_tests {
             ..Default::default()
         };
         for i in 0..30 {
-            state.transcript.push_transcript_item(TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::User(ProseMessage {
-                    markdown: format!("line {i}"),
-                }),
-                status: None,
-            });
+            push_user_line(&mut state, format!("line {i}"));
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -1405,13 +1389,7 @@ mod visual_selection_tests {
             ..Default::default()
         };
         for i in 0..30 {
-            state.transcript.push_transcript_item(TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::User(ProseMessage {
-                    markdown: format!("line {i}"),
-                }),
-                status: None,
-            });
+            push_user_line(&mut state, format!("line {i}"));
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -1443,13 +1421,7 @@ mod visual_selection_tests {
             ..Default::default()
         };
         for i in 0..30 {
-            state.transcript.push_transcript_item(TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::User(ProseMessage {
-                    markdown: format!("line {i}"),
-                }),
-                status: None,
-            });
+            push_user_line(&mut state, format!("line {i}"));
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -1479,13 +1451,7 @@ mod visual_selection_tests {
             ..Default::default()
         };
         for i in 0..30 {
-            state.transcript.push_transcript_item(TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::User(ProseMessage {
-                    markdown: format!("line {i}"),
-                }),
-                status: None,
-            });
+            push_user_line(&mut state, format!("line {i}"));
         }
         reduce_with_cancel_controller(
             &mut state,
@@ -1513,11 +1479,14 @@ fn cancel_pushes_closing_spacer() -> Result<()> {
         Some(&cancel_controller),
     );
     let _ = state.take_next_prompt_for_execution();
-    state.transcript.push_transcript_item(TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::Assistant(ProseMessage {
-            markdown: "partial".to_string(),
-        }),
+    let partial = Message {
+        role: MessageRole::Assistant,
+        markdown: "partial".to_string(),
+    };
+    state.transcript.push_block(Block {
+        source: partial.source(),
+        lane: partial.lane(),
+        fill: partial.fill(),
         status: None,
     });
 
@@ -1535,9 +1504,17 @@ fn cancel_pushes_closing_spacer() -> Result<()> {
 
     let last = state
         .transcript
-        .entries
+        .blocks()
         .last()
-        .ok_or("should have last transcript entry")?;
-    assert!(matches!(last.kind, TranscriptEntryKind::Spacer(_)));
+        .ok_or("should have last transcript block")?;
+    // cancel no longer pushes a spacer — the partial assistant block stays
+    // as the last block.
+    assert!(matches!(
+        last.source,
+        BlockSource::Markdown {
+            role: MessageRole::Assistant,
+            ..
+        }
+    ));
     Ok(())
 }

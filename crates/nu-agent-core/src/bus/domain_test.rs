@@ -18,6 +18,7 @@ async fn ui_event_request_permission_sends_requested_and_returns_id() -> Result<
     let mut ui_event_rx = bus.ui_event().subscribe();
     let context = PermissionRequestContext {
         tool: "edit".to_string(),
+        tool_key: "edit\n{}".to_string(),
         source: "closure".to_string(),
         mode: Some("apply".to_string()),
         matched_rule_identity: "tool:edit".to_string(),
@@ -71,6 +72,7 @@ async fn ui_event_request_permission_fails_when_no_receiver() -> Result<()> {
     let tx = super::channel::UiEventTx::new("ui_event", 64);
     let context = PermissionRequestContext {
         tool: "edit".to_string(),
+        tool_key: "edit\n{}".to_string(),
         source: "closure".to_string(),
         mode: Some("apply".to_string()),
         matched_rule_identity: "tool:edit".to_string(),

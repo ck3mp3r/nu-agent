@@ -22,14 +22,19 @@ pub fn format_tool_start(
 ) -> String {
     match verbosity {
         Verbosity::Quiet | Verbosity::Normal => format!("tool {name}"),
+        Verbosity::Verbose if arguments.is_empty() => format!("→ tool {name} ({source})"),
         Verbosity::Verbose => format!(
             "→ tool {name} ({source}) → {}",
             truncate_with_ellipsis(arguments, VERBOSE_LIMIT)
         ),
+        Verbosity::VeryVerbose if arguments.is_empty() => {
+            format!("→ tool {name} ({source})")
+        }
         Verbosity::VeryVerbose => format!(
             "→ tool {name} ({source})\nargs:\n{}",
             truncate_with_ellipsis(arguments, VERY_VERBOSE_LIMIT)
         ),
+        Verbosity::Trace if arguments.is_empty() => format!("→ tool {name} ({source})"),
         Verbosity::Trace => format!(
             "→ tool {name} ({source})\nargs:\n{}",
             truncate_with_ellipsis(arguments, TRACE_HARD_LIMIT)

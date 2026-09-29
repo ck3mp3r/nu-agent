@@ -223,6 +223,10 @@ struct AskContextCapture {
     pub captured_context: Option<PermissionRequestContext>,
     /// The authz decision captured from the sentinel run (used to write the cache key).
     pub captured_auth_decision: Option<crate::tools::authz::PermissionDecision>,
+    /// Raw JSON arguments string of the tool call, as passed to `resolve()`.
+    /// The hook only receives the parsed `JsonValue`, so the exact key the TUI
+    /// uses for the pending call must be carried in from the caller.
+    pub raw_arguments: String,
 }
 
 #[async_trait]
@@ -238,6 +242,7 @@ impl AskApprovalHook for AskContextCapture {
         self.was_called = true;
         self.captured_context = Some(PermissionRequestContext {
             tool: display_tool_name(tool_name, args),
+            tool_key: format!("{tool_name}\n{}", self.raw_arguments),
             source: source.to_string(),
             mode: args
                 .get("mode")
@@ -378,6 +383,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 was_called: false,
                 captured_context: None,
                 captured_auth_decision: None,
+                raw_arguments: arguments.clone(),
             };
 
             let deny_reason = {
@@ -405,6 +411,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                         .captured_context
                         .unwrap_or_else(|| PermissionRequestContext {
                             tool: tool_name.clone(),
+                            tool_key: format!("{tool_name}\n{arguments}"),
                             source: "unknown".to_string(),
                             mode: None,
                             matched_rule_identity: "unknown".to_string(),

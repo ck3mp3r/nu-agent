@@ -1,11 +1,14 @@
-//! Compaction domain: compaction block rendering and the compaction-event
 //! reducer.
 
 use nu_agent_core::bus::CompactionEvent;
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
+use nu_agent_core::transcript::ir::Block;
+use nu_agent_core::transcript::items::Message;
+use nu_agent_core::transcript::renderer::Renderable;
 
 use super::transcript_store::TranscriptStore;
-use super::{AppState, CompactionLine, CompactionStatus, ScrollState, StatusState, TranscriptRole};
+use super::{AppState, CompactionLine, CompactionStatus, ScrollState, StatusState};
+use nu_agent_core::transcript::ir::NoticeKind;
+use nu_agent_core::transcript::items::Notice;
 
 /// Compaction-domain state extracted from `AppState`: the compaction block
 /// rows tracked per source.
@@ -16,36 +19,44 @@ pub struct CompactionState {
 
 impl CompactionState {
     /// Reduce a compaction lifecycle event. Returns whether the TUI changed.
+    /// The evicted count from any block push inside is returned via `evicted`
+    /// so the top-level caller can shift domain bookkeeping.
     pub fn reduce_compaction_event(
         &mut self,
         store: &mut TranscriptStore,
         status: &mut StatusState,
         scroll: &mut ScrollState,
         event: CompactionEvent,
+        evicted: &mut usize,
     ) -> bool {
         match event {
             // A compaction request is acted on by the orchestrator only; the
             // TUI does not render it.
             CompactionEvent::Requested { .. } => false,
             CompactionEvent::Started { source } => {
-                self.start_block(store, &source);
+                self.start_block(store, &source, evicted);
                 true
             }
             CompactionEvent::SummaryChunk {
                 source, aggregated, ..
-            } => self.summary_chunk(store, scroll, &source, aggregated),
+            } => self.summary_chunk(store, scroll, &source, aggregated, evicted),
             CompactionEvent::Completed {
                 source,
                 summary_preview: _,
                 summary_body,
-            } => self.completed(store, status, &source, summary_body),
+            } => self.completed(store, status, &source, summary_body, evicted),
             CompactionEvent::Failed { source, message } => {
-                self.failed(store, status, &source, message)
+                self.failed(store, status, &source, message, evicted)
             }
         }
     }
 
-    pub(crate) fn start_block(&mut self, store: &mut TranscriptStore, source: &str) {
+    pub(crate) fn start_block(
+        &mut self,
+        store: &mut TranscriptStore,
+        source: &str,
+        evicted: &mut usize,
+    ) {
         if self
             .blocks
             .iter()
@@ -53,19 +64,19 @@ impl CompactionState {
         {
             return;
         }
-        if !store.is_empty() {
-            if !store.last_is_spacer() {
-                store.push_spacer(); // closing spacer for previous block
-            }
-            store.push_spacer(); // starting spacer for compaction block
-        }
-        store.push_transcript_line(TranscriptRole::System, "Compaction".to_string());
-        let entry_id = store.last_entry_id();
-        store.push_spacer(); // gap between header and summary body
+        let header = Notice {
+            kind: NoticeKind::Compaction,
+            text: "Compaction".to_string(),
+        };
+        *evicted += store.push_block(Block {
+            source: header.source(),
+            lane: header.lane(),
+            fill: header.fill(),
+            status: None,
+        });
         self.blocks.push(CompactionLine {
             source: source.to_string(),
             status: CompactionStatus::InProgress,
-            entry_id,
         });
     }
 
@@ -104,6 +115,7 @@ impl CompactionState {
         scroll: &mut ScrollState,
         source: &str,
         text: String,
+        evicted: &mut usize,
     ) -> bool {
         let trimmed = text.trim();
         if trimmed.is_empty() {
@@ -111,7 +123,7 @@ impl CompactionState {
         }
 
         // Ensure compaction block is started (idempotent)
-        self.start_block(store, source);
+        self.start_block(store, source, evicted);
 
         // Track streaming start position
         if store.summary_stream_start.is_none() {
@@ -121,16 +133,18 @@ impl CompactionState {
         // Remove previous rendering of this streaming message
         if let Some(start) = store.summary_stream_start {
             store.truncate(start);
-            store.clear_assistant_projection_cache();
         }
 
         // Store raw markdown — projected at render time with canvas width
         scroll.scroll_transcript_to_bottom();
-        store.push_transcript_item(TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::Assistant(ProseMessage {
-                markdown: crate::markdown::unwrap_single_fenced_block(trimmed),
-            }),
+        let msg = Message {
+            role: nu_agent_core::transcript::ir::MessageRole::Assistant,
+            markdown: crate::markdown::unwrap_single_fenced_block(trimmed),
+        };
+        *evicted += store.push_block(Block {
+            source: msg.source(),
+            lane: msg.lane(),
+            fill: msg.fill(),
             status: None,
         });
         true
@@ -142,8 +156,9 @@ impl CompactionState {
         status: &mut StatusState,
         source: &str,
         summary_body: String,
+        evicted: &mut usize,
     ) -> bool {
-        self.start_block(store, source);
+        self.start_block(store, source, evicted);
         self.finish_block(source, CompactionStatus::Done);
         let body = if summary_body.trim().is_empty() {
             "(empty summary)".to_string()
@@ -157,16 +172,18 @@ impl CompactionState {
         }
 
         if !body.trim().is_empty() {
-            store.push_transcript_item(TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::Assistant(ProseMessage {
-                    markdown: crate::markdown::unwrap_single_fenced_block(&body),
-                }),
+            let msg = Message {
+                role: nu_agent_core::transcript::ir::MessageRole::Assistant,
+                markdown: crate::markdown::unwrap_single_fenced_block(&body),
+            };
+            *evicted += store.push_block(Block {
+                source: msg.source(),
+                lane: msg.lane(),
+                fill: msg.fill(),
                 status: None,
             });
         }
         store.summary_stream_start = None;
-        store.push_spacer();
         status.message.clear();
         // Reset displayed token % — context was freed; wait for next LlmCompleted to update.
         status.tokens.latest_total_tokens = None;
@@ -179,26 +196,38 @@ impl CompactionState {
         status: &mut StatusState,
         source: &str,
         message: String,
+        evicted: &mut usize,
     ) -> bool {
-        self.start_block(store, source);
+        self.start_block(store, source, evicted);
         self.finish_block(source, CompactionStatus::Failed);
-        store.push_transcript_line(
-            TranscriptRole::System,
-            format!("Compaction failed deterministically: {message}"),
-        );
+        let failure = Notice {
+            kind: NoticeKind::System,
+            text: format!("Compaction failed deterministically: {message}"),
+        };
+        *evicted += store.push_block(Block {
+            source: failure.source(),
+            lane: failure.lane(),
+            fill: failure.fill(),
+            status: None,
+        });
         status.message.clear();
         true
     }
 }
 
 /// Single dispatch seam for the compaction domain: owns the
-/// (`CompactionState`, `TranscriptStore`, `StatusState`, `ScrollState`)
-/// borrow split so both event paths share it.
+/// (`CompactionState`, `TranscriptStore`, `ScrollState`)
+/// borrow split so both event paths share it. Any eviction caused by the
+/// event's pushes shifts the domain block_index bookkeeping.
 pub(crate) fn dispatch_compaction_event(state: &mut AppState, event: CompactionEvent) -> bool {
-    state.compaction.reduce_compaction_event(
+    let mut evicted = 0usize;
+    let changed = state.compaction.reduce_compaction_event(
         &mut state.transcript,
         &mut state.status,
         &mut state.scroll,
         event,
-    )
+        &mut evicted,
+    );
+    state.shift_bookkeeping_after_eviction(evicted);
+    changed
 }

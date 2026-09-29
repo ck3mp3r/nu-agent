@@ -4,6 +4,7 @@ use nu_protocol::Span;
 use serde_json::json;
 
 use super::*;
+use crate::transcript::ir::ContentKind;
 use crate::types::{ToolCall, ToolCallId, ToolFunction};
 
 // Test-support nu_plugin::EngineInterface implementation. The real
@@ -36,9 +37,10 @@ fn make_tool_call(name: &str, arguments: serde_json::Value) -> ToolCall {
 }
 
 #[test]
-fn test_pre_authorize_tool_call_nu_with_string_command_defaults() -> Result<()> {
+fn test_pre_authorize_tool_call_nu_with_string_command_produces_code_preview() -> Result<()> {
     // -- Setup & Fixtures
-    let tool_call = make_tool_call("nu", json!({"command": "ls | where size > 1mb"}));
+    let command = "ls | where size > 1mb";
+    let tool_call = make_tool_call("nu", json!({"command": command}));
 
     // -- Exec
     let output = pre_authorize_tool_call(
@@ -50,17 +52,23 @@ fn test_pre_authorize_tool_call_nu_with_string_command_defaults() -> Result<()> 
     );
 
     // -- Check
-    // The nu preview block was removed (task 6a581540): the nu command is
-    // rendered highlighted in the tool status row instead, so pre-authorize
-    // must return the default output for nu.
-    assert!(
-        output.display.is_none(),
-        "nu must not produce a pre-authorize display"
+    let display = output
+        .display
+        .ok_or("nu with a command must produce a pre-authorize display")?;
+    assert_eq!(display.title, "nu");
+    let section = display.sections.first().ok_or("should have one section")?;
+    assert_eq!(
+        section.kind,
+        ContentKind::Code {
+            language: "nu".to_string()
+        }
     );
-    assert!(
-        output.ask_context.pre_authorize_display.is_none(),
-        "nu must not populate ask_context.pre_authorize_display"
-    );
+    assert_eq!(section.content, command);
+    let ask_display = output
+        .ask_context
+        .pre_authorize_display
+        .ok_or("nu must populate ask_context.pre_authorize_display")?;
+    assert_eq!(ask_display, display);
     Ok(())
 }
 
@@ -188,9 +196,9 @@ fn test_pre_authorize_tool_call_unknown_source_defaults() -> Result<()> {
 
 #[test]
 fn test_pre_authorize_fs_tool_edit_apply_produces_diff_preview() -> Result<()> {
-    // Regression guard (task 6a581540): removing the nu preview must not
-    // touch the edit preview path. A valid create-mode edit produces a
-    // pre-authorize diff ToolDisplay in both slots.
+    // Regression guard: the nu preview arm must not touch the edit preview
+    // path. A valid create-mode edit produces a pre-authorize diff
+    // ToolDisplay in both slots.
     // -- Setup & Fixtures
     let tmp = tempfile::tempdir()?;
     let target = tmp.path().join("new-file.txt");
@@ -216,7 +224,11 @@ fn test_pre_authorize_fs_tool_edit_apply_produces_diff_preview() -> Result<()> {
         .display
         .ok_or("edit apply must produce a pre-authorize display")?;
     let section = display.sections.first().ok_or("should have one section")?;
-    assert_eq!(section.language, "diff");
+    assert!(
+        matches!(section.kind, ContentKind::Diff { .. }),
+        "section kind must be Diff, got {:?}",
+        section.kind
+    );
     assert!(
         section.content.contains("+hello"),
         "diff must contain the created content, got: {:?}",
@@ -268,7 +280,11 @@ fn test_pre_authorize_fs_tool_edit_apply_search_replace_without_expected_version
         .display
         .ok_or("search_replace without expected_version must produce a display")?;
     let section = display.sections.first().ok_or("should have one section")?;
-    assert_eq!(section.language, "diff");
+    assert!(
+        matches!(section.kind, ContentKind::Diff { .. }),
+        "section kind must be Diff, got {:?}",
+        section.kind
+    );
     assert!(
         section.content.contains("-world") && section.content.contains("+there"),
         "diff must contain the replacement, got: {:?}",
@@ -318,7 +334,11 @@ fn test_pre_authorize_fs_tool_edit_apply_search_replace_with_stale_expected_vers
         .display
         .ok_or("stale expected_version must still produce a display")?;
     let section = display.sections.first().ok_or("should have one section")?;
-    assert_eq!(section.language, "diff");
+    assert!(
+        matches!(section.kind, ContentKind::Diff { .. }),
+        "section kind must be Diff, got {:?}",
+        section.kind
+    );
     assert!(output.ask_context.pre_authorize_display.is_some());
     Ok(())
 }

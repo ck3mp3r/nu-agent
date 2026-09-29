@@ -6,31 +6,208 @@
 use crate::interaction::reducer::apply_permission_request_display;
 use crate::state::AppState;
 use nu_agent_core::bus::ToolEvent;
+use nu_agent_core::protocol::contracts::UiMessageSnapshot;
 use nu_agent_core::protocol::event::{ToolDisplay, ToolDisplaySection};
-use nu_agent_core::protocol::tool_args::CallLineRender;
-use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::TranscriptEntryKind;
+use nu_agent_core::protocol::tool_args::CallLine;
+use nu_agent_core::transcript::ir::{BlockSource, ContentKind};
 use nu_agent_core::transcript::renderer::ItemStatus;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+use nu_agent_core::transcript::ir::Fill;
 use nu_agent_core::transcript::ir::StyleHint;
+use nu_agent_core::transcript::ir::{Display, DisplaySection};
 
-/// Collect the StyleHints of all pushed ToolDisplay lines for the last diff
-/// section (one entry per line, each single-span via project_diff_lines).
+// ---------------------------------------------------------------------------
+// In-place tool block mutation (task 7ab65c6a)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn start_tool_call_creates_exactly_one_block() {
+    let mut state = AppState::default();
+
+    let mut evicted = 0usize;
+    state.tool.start_tool_call(
+        &mut state.transcript,
+        "k8s__list_pods",
+        r#"{"namespace":"prod"}"#,
+        CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
+        &mut evicted,
+    );
+
+    // One Block only — no separate spacer, no separate display entry.
+    assert_eq!(state.transcript.len(), 1);
+    assert!(matches!(
+        state.transcript.blocks()[0].source,
+        BlockSource::Tool { .. }
+    ));
+}
+
+#[test]
+fn set_tool_preview_pushes_adjacent_tool_display_block() -> Result<()> {
+    let mut state = AppState::default();
+
+    let mut evicted = 0usize;
+    state.tool.start_tool_call(
+        &mut state.transcript,
+        "edit",
+        r#"{"path":"a.rs"}"#,
+        CallLine::from_json_summary(r#"{"path":"a.rs"}"#),
+        &mut evicted,
+    );
+    let preview = Display {
+        title: "edit a.rs".to_string(),
+        sections: vec![DisplaySection {
+            label: "changes".to_string(),
+            kind: ContentKind::Diff {
+                language: "diff".to_string(),
+            },
+            content: "--- a\n+++ b\n".to_string(),
+            stats: None,
+        }],
+    };
+    let mut preview_evicted = 0usize;
+    state.tool.set_tool_preview(
+        &mut state.transcript,
+        "edit",
+        r#"{"path":"a.rs"}"#,
+        preview,
+        &mut preview_evicted,
+    );
+
+    // -- Check: the Tool block keeps no preview and no fill; the preview is a
+    // separate ToolDisplay block pushed directly after it.
+    assert_eq!(
+        state.transcript.len(),
+        2,
+        "preview must push its own block after the Tool block"
+    );
+    let tool_block = state
+        .transcript
+        .blocks()
+        .first()
+        .ok_or("should have tool block")?;
+    assert!(
+        matches!(tool_block.source, BlockSource::Tool { preview: None, .. }),
+        "the Tool block must keep preview None"
+    );
+    assert_eq!(
+        tool_block.fill,
+        Fill::None,
+        "the Tool block must keep Fill::None so the call line stays untinted"
+    );
+
+    let preview_block = state
+        .transcript
+        .blocks()
+        .get(1)
+        .ok_or("should have preview block")?;
+    assert!(
+        matches!(preview_block.source, BlockSource::ToolDisplay { .. }),
+        "the preview must be a ToolDisplay block"
+    );
+    assert_eq!(
+        preview_block.fill,
+        Fill::Code,
+        "a diff preview block must carry Fill::Code"
+    );
+    assert!(
+        tool_display_lines(preview_block).contains("+++ b"),
+        "the preview block must carry the projected diff content"
+    );
+    Ok(())
+}
+
+#[test]
+fn set_tool_preview_invalidates_height_index() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    let width = 80usize;
+
+    let mut evicted = 0usize;
+    state.tool.start_tool_call(
+        &mut state.transcript,
+        "edit",
+        r#"{"path":"a.rs"}"#,
+        CallLine::from_json_summary(r#"{"path":"a.rs"}"#),
+        &mut evicted,
+    );
+    // Build the height index so it is valid, then push the preview block.
+    state.transcript.rebuild_height_index(width);
+    assert!(
+        state.transcript.height_index_valid_for(width),
+        "precondition: index must be valid before the preview push"
+    );
+
+    // -- Exec
+    let preview = Display {
+        title: "edit a.rs".to_string(),
+        sections: vec![DisplaySection {
+            label: "changes".to_string(),
+            kind: ContentKind::Diff {
+                language: "diff".to_string(),
+            },
+            content: "--- a\n+++ b\n".to_string(),
+            stats: None,
+        }],
+    };
+    let mut preview_evicted = 0usize;
+    state.tool.set_tool_preview(
+        &mut state.transcript,
+        "edit",
+        r#"{"path":"a.rs"}"#,
+        preview,
+        &mut preview_evicted,
+    );
+
+    // -- Check: the push added rows, so the index is stale.
+    assert!(
+        !state.transcript.height_index_valid_for(width),
+        "set_tool_preview must invalidate the height index"
+    );
+    Ok(())
+}
+
+#[test]
+fn finish_tool_call_mutates_status_on_existing_block() {
+    let mut state = AppState::default();
+
+    let mut evicted = 0usize;
+    state.tool.start_tool_call(
+        &mut state.transcript,
+        "read",
+        "{}",
+        CallLine::from_json_summary("{}"),
+        &mut evicted,
+    );
+    state
+        .tool
+        .finish_tool_call(&mut state.transcript, "read", "{}", Some(true));
+
+    assert_eq!(
+        state.transcript.len(),
+        1,
+        "finish must not push a new block"
+    );
+    assert_eq!(state.transcript.blocks()[0].status, Some(ItemStatus::Done));
+}
+
+/// Collect the StyleHints of all ToolDisplay blocks' stored ContentLines —
+/// one block per section, pushed with pre-projected spans.
 fn diff_section_hints(state: &AppState) -> Vec<StyleHint> {
     state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|entry| entry.role() == Role::ToolDisplay)
-        .flat_map(|entry| match &entry.kind {
-            TranscriptEntryKind::ToolResult(result) => result
-                .lines
+        .filter_map(|b| match &b.source {
+            BlockSource::ToolDisplay { lines } => Some(lines.clone()),
+            _ => None,
+        })
+        .flat_map(|lines| {
+            lines
                 .iter()
                 .flat_map(|line| line.spans.iter().map(|s| s.hint.clone()))
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -55,7 +232,9 @@ fn tool_display_diff_section_produces_diff_hints() -> Result<()> {
                 title: "edit sample.txt".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "sample.txt".to_string(),
-                    language: "diff".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: content.to_string(),
                     stats: None,
                 }],
@@ -110,7 +289,9 @@ fn tool_display_diff_section_keeps_line_number_prefixes() -> Result<()> {
                 title: "edit sample.txt".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "sample.txt".to_string(),
-                    language: "diff".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: content.to_string(),
                     stats: None,
                 }],
@@ -122,7 +303,7 @@ fn tool_display_diff_section_keeps_line_number_prefixes() -> Result<()> {
 
     let lines: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -160,7 +341,9 @@ fn tool_display_non_diff_code_section_still_produces_code_hints() -> Result<()> 
                 title: "nu sample.rs".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "sample.rs".to_string(),
-                    language: "rust".to_string(),
+                    kind: ContentKind::Code {
+                        language: "rust".to_string(),
+                    },
                     content: content.to_string(),
                     stats: None,
                 }],
@@ -186,10 +369,8 @@ fn tool_display_non_diff_code_section_still_produces_code_hints() -> Result<()> 
 /// rows in the transcript.
 #[test]
 fn edit_display_renders_one_visual_row_per_line_without_blank_rows() -> Result<()> {
-    use crate::rendering::theme::TuiTheme;
-    use nu_agent_core::transcript::items::Renderable;
-    use nu_agent_core::transcript::renderer::BlockRenderer;
-    use nu_agent_core::transcript::renderer::RenderContext;
+    use crate::tui_renderer::layout;
+    use nu_agent_core::transcript::renderer::FrameContext;
 
     let content = "--- a/README.md\n+++ b/README.md\n@@ -1,4 +1,6 @@\n # Title\n \n+```rust\n fn a() {}\n+```\n tail\n";
     let mut state = AppState::default();
@@ -206,7 +387,9 @@ fn edit_display_renders_one_visual_row_per_line_without_blank_rows() -> Result<(
                 title: "edit README.md".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "README.md".to_string(),
-                    language: "diff".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: content.to_string(),
                     stats: None,
                 }],
@@ -218,34 +401,29 @@ fn edit_display_renders_one_visual_row_per_line_without_blank_rows() -> Result<(
 
     let diff_rows: Vec<_> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|entry| entry.role() == Role::ToolDisplay)
+        .filter(|b| matches!(b.source, BlockSource::ToolDisplay { .. }))
         .cloned()
         .collect();
     let display_line_count: usize = diff_rows
         .iter()
-        .map(|entry| extract_all_text_from_entry(entry).len())
+        .map(|b| extract_all_text_from_entry(b).len())
         .sum();
     assert!(
         display_line_count >= 8,
         "edit display must push every diff line; got {display_line_count}"
     );
 
-    let renderer = crate::tui_renderer::TuiRenderer {
-        theme: TuiTheme::default(),
-    };
-    let ctx = RenderContext {
+    let ctx = FrameContext {
         width: 120,
+        now_millis: 0,
         cursor: false,
         selected: false,
-        status: None,
-        now_millis: 0,
     };
     let mut rendered_rows = 0usize;
-    for entry in &diff_rows {
-        let block = entry.to_render_block();
-        rendered_rows += renderer.render(&block, &ctx).len();
+    for block in &diff_rows {
+        rendered_rows += layout(block, &ctx).len();
     }
     assert_eq!(
         rendered_rows, display_line_count,
@@ -253,8 +431,8 @@ fn edit_display_renders_one_visual_row_per_line_without_blank_rows() -> Result<(
     );
 
     // No stored display line may carry a raw trailing newline.
-    for entry in &diff_rows {
-        for text in extract_all_text_from_entry(entry) {
+    for block in &diff_rows {
+        for text in extract_all_text_from_entry(block) {
             assert!(
                 !text.ends_with('\n'),
                 "display line text must not embed a trailing newline; got {text:?}"
@@ -264,26 +442,52 @@ fn edit_display_renders_one_visual_row_per_line_without_blank_rows() -> Result<(
     Ok(())
 }
 
-fn extract_all_text_from_entry(
-    entry: &nu_agent_core::transcript::items::TranscriptEntry,
-) -> Vec<String> {
-    match &entry.kind {
-        TranscriptEntryKind::ToolResult(result) => result
-            .lines
+// region:    --- Test Support
+
+fn tool_display_lines(block: &nu_agent_core::transcript::ir::Block) -> String {
+    match &block.source {
+        BlockSource::ToolDisplay { lines } => lines
             .iter()
             .map(|line| {
                 line.spans
                     .iter()
-                    .map(|span| span.text.as_str())
+                    .map(|s| s.text.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+/// Flatten a block's source text for assertions. A Tool block contributes its
+/// call summary only — previews are their own ToolDisplay blocks.
+fn extract_all_text_from_entry(block: &nu_agent_core::transcript::ir::Block) -> Vec<String> {
+    match &block.source {
+        BlockSource::Tool { call, .. } => vec![call.summary.clone()],
+        BlockSource::ToolDisplay { lines } => lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.text.as_str())
                     .collect::<String>()
             })
             .collect(),
-        _ => vec![entry.text()],
+        BlockSource::Notice { text, .. } => vec![text.clone()],
+        BlockSource::Markdown { markdown, .. } => vec![markdown.clone()],
+        BlockSource::Banner { text } => vec![text.clone()],
+        BlockSource::Spacer => vec![String::new()],
     }
 }
 
 fn reduce_tool(state: &mut AppState, event: ToolEvent) -> bool {
-    state.tool.reduce_tool_event(&mut state.transcript, event)
+    let mut evicted = 0usize;
+    let changed = state
+        .tool
+        .reduce_tool_event(&mut state.transcript, event, &mut evicted);
+    state.shift_bookkeeping_after_eviction(evicted);
+    changed
 }
 
 fn started(name: &str, arguments: &str) -> ToolEvent {
@@ -291,11 +495,11 @@ fn started(name: &str, arguments: &str) -> ToolEvent {
         name: name.to_string(),
         source: "mcp".to_string(),
         arguments: arguments.to_string(),
-        call_line: CallLineRender::generic_json_summary(arguments),
+        call_line: CallLine::from_json_summary(arguments),
     }
 }
 
-fn started_with_call_line(name: &str, arguments: &str, call_line: CallLineRender) -> ToolEvent {
+fn started_with_call_line(name: &str, arguments: &str, call_line: CallLine) -> ToolEvent {
     ToolEvent::Started {
         name: name.to_string(),
         source: "mcp".to_string(),
@@ -304,13 +508,7 @@ fn started_with_call_line(name: &str, arguments: &str, call_line: CallLineRender
     }
 }
 
-/// Flatten a `CallLineRender` to its display text for assertions.
-fn call_line_text(call_line: &CallLineRender) -> String {
-    match call_line {
-        CallLineRender::Inline { summary } => summary.clone(),
-        CallLineRender::CodeBlock { code, .. } => code.clone(),
-    }
-}
+// endregion: --- Test Support
 
 #[test]
 fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
@@ -333,21 +531,13 @@ fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
         },
     );
 
-    // [Spacer, Tool] — ToolStarted pushed a starting spacer, ToolCompleted pushed no display
-    assert_eq!(state.transcript.entries.len(), 2);
-    assert!(matches!(
-        state.transcript.entries[0].kind,
-        TranscriptEntryKind::Spacer(_)
-    ));
-    let entry = &state.transcript.entries[1];
-    assert_eq!(entry.role(), Role::Tool);
-    assert_eq!(entry.text(), "k8s__list_pods");
-    // Check the call line for status and content
-    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        let text = call_line_text(&invocation.call_line);
-        assert!(text.contains("namespace"));
-        assert!(!text.contains("api-0"));
-        assert!(!text.contains("[{"));
+    // [Tool] — no leading spacer under the unified spacer rule
+    assert_eq!(state.transcript.len(), 1);
+    let block = &state.transcript.blocks()[0];
+    if let BlockSource::Tool { call, .. } = &block.source {
+        assert!(call.summary.contains("namespace"));
+        assert!(!call.summary.contains("api-0"));
+        assert!(!call.summary.contains("[{"));
     } else {
         panic!("Expected Tool variant");
     }
@@ -362,22 +552,15 @@ fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status(
         started("k8s__list_pods", r#"{"namespace":"prod"}"#),
     );
 
-    // handle_tool_start pushes a starting spacer before the tool
-    assert_eq!(state.transcript.entries.len(), 2);
-    assert!(matches!(
-        state.transcript.entries[0].kind,
-        TranscriptEntryKind::Spacer(_)
-    ));
-    let entry = &state.transcript.entries[1];
-    assert_eq!(entry.role(), Role::Tool);
-    assert_eq!(entry.text(), "k8s__list_pods");
-    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        assert!(call_line_text(&invocation.call_line).contains("namespace"));
+    assert_eq!(state.transcript.len(), 1);
+    let block = &state.transcript.blocks()[0];
+    if let BlockSource::Tool { call, .. } = &block.source {
+        assert!(call.summary.contains("namespace"));
     } else {
         panic!("Expected Tool variant");
     }
     assert_eq!(
-        state.transcript.entries[1].status,
+        state.transcript.blocks()[0].status,
         Some(ItemStatus::InProgress)
     );
 }
@@ -393,23 +576,17 @@ fn tool_start_nu_sets_call_line_to_code_block_with_raw_command() {
         started_with_call_line(
             "nu",
             r#"{"command":"ls | select name type size"}"#,
-            CallLineRender::CodeBlock {
-                language: "nu".to_string(),
-                code: "ls | select name type size".to_string(),
+            CallLine {
+                summary: String::new(),
             },
         ),
     );
 
-    // -- Check
-    let entry = &state.transcript.entries[1];
-    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        assert_eq!(
-            invocation.call_line,
-            CallLineRender::CodeBlock {
-                language: "nu".to_string(),
-                code: "ls | select name type size".to_string(),
-            }
-        );
+    // -- Check: the command renders in the preview block, so the call line
+    // carries no summary.
+    let block = &state.transcript.blocks()[0];
+    if let BlockSource::Tool { call, .. } = &block.source {
+        assert_eq!(call.summary, String::new());
     } else {
         panic!("Expected Tool variant");
     }
@@ -419,7 +596,6 @@ fn tool_start_nu_sets_call_line_to_code_block_with_raw_command() {
 fn tool_start_nu_multi_line_command_preserves_newlines_in_call_line() {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    let command = "ls | where size > 1mb\n| select name type\n| sort-by modified";
 
     // -- Exec
     reduce_tool(
@@ -427,17 +603,16 @@ fn tool_start_nu_multi_line_command_preserves_newlines_in_call_line() {
         started_with_call_line(
             "nu",
             r#"{"command":"ls | where size > 1mb\n| select name type\n| sort-by modified"}"#,
-            CallLineRender::CodeBlock {
-                language: "nu".to_string(),
-                code: command.to_string(),
+            CallLine {
+                summary: String::new(),
             },
         ),
     );
 
-    // -- Check
-    let entry = &state.transcript.entries[1];
-    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        assert_eq!(call_line_text(&invocation.call_line), command);
+    // -- Check: a multi-line command does not leak onto the call line either.
+    let block = &state.transcript.blocks()[0];
+    if let BlockSource::Tool { call, .. } = &block.source {
+        assert_eq!(call.summary, String::new());
     } else {
         panic!("Expected Tool variant");
     }
@@ -452,12 +627,12 @@ fn tool_start_nu_without_command_key_falls_back_to_summary_arrow() {
     reduce_tool(&mut state, started("nu", r#"{"timeout_seconds":5}"#));
 
     // -- Check
-    let entry = &state.transcript.entries[1];
-    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        let text = call_line_text(&invocation.call_line);
+    let block = &state.transcript.blocks()[0];
+    if let BlockSource::Tool { call, .. } = &block.source {
         assert!(
-            text.starts_with("→ "),
-            "fallback must use the arrow summary, got: {text:?}"
+            call.summary.starts_with("→ "),
+            "fallback must use the arrow summary, got: {:?}",
+            call.summary
         );
     } else {
         panic!("Expected Tool variant");
@@ -476,9 +651,9 @@ fn tool_start_non_nu_keeps_args_summary_arrow() {
     );
 
     // -- Check
-    let entry = &state.transcript.entries[1];
-    if let TranscriptEntryKind::Tool(invocation) = &entry.kind {
-        assert!(call_line_text(&invocation.call_line).starts_with("→ "));
+    let block = &state.transcript.blocks()[0];
+    if let BlockSource::Tool { call, .. } = &block.source {
+        assert!(call.summary.starts_with("→ "));
     } else {
         panic!("Expected Tool variant");
     }
@@ -503,14 +678,9 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
         },
     );
 
-    // [Spacer, Tool] — starting spacer then the tool
-    assert_eq!(state.transcript.entries.len(), 2);
-    assert!(matches!(
-        state.transcript.entries[0].kind,
-        TranscriptEntryKind::Spacer(_)
-    ));
-    assert_eq!(state.transcript.entries[1].text(), "gh__get_pr");
-    assert_eq!(state.transcript.entries[1].status, Some(ItemStatus::Done));
+    // [Tool] — no leading spacer under the unified spacer rule
+    assert_eq!(state.transcript.len(), 1);
+    assert_eq!(state.transcript.blocks()[0].status, Some(ItemStatus::Done));
 
     let mut failed = AppState::default();
     reduce_tool(&mut failed, started("gh__get_pr", r#"{"number":2}"#));
@@ -527,13 +697,9 @@ fn tool_end_transitions_same_row_to_done_or_failed_status() {
             message: Some("boom".to_string()),
         },
     );
-    assert_eq!(failed.transcript.entries.len(), 2);
-    assert!(matches!(
-        failed.transcript.entries[0].kind,
-        TranscriptEntryKind::Spacer(_)
-    ));
+    assert_eq!(failed.transcript.len(), 1);
     assert_eq!(
-        failed.transcript.entries[1].status,
+        failed.transcript.blocks()[0].status,
         Some(ItemStatus::Failed)
     );
 }
@@ -572,18 +738,12 @@ fn tool_start_truncates_long_args_summary_with_ellipsis() {
 
     reduce_tool(&mut state, started("k8s__describe", &long_args));
 
-    // [Spacer, Tool] — starting spacer then the tool
-    assert_eq!(state.transcript.entries.len(), 2);
-    assert!(matches!(
-        state.transcript.entries[0].kind,
-        TranscriptEntryKind::Spacer(_)
-    ));
-    assert_eq!(state.transcript.entries[1].text(), "k8s__describe");
-    if let TranscriptEntryKind::Tool(invocation) = &state.transcript.entries[1].kind {
-        let text = call_line_text(&invocation.call_line);
-        assert!(text.starts_with("→ "));
-        assert!(text.ends_with('…'));
-        assert!(text.chars().count() < 180);
+    // [Tool] — no leading spacer under the unified spacer rule
+    assert_eq!(state.transcript.len(), 1);
+    if let BlockSource::Tool { call, .. } = &state.transcript.blocks()[0].source {
+        assert!(call.summary.starts_with("→ "));
+        assert!(call.summary.ends_with('…'));
+        assert!(call.summary.chars().count() < 180);
     } else {
         panic!("Expected Tool variant");
     }
@@ -607,7 +767,9 @@ fn tool_display_renders_diff_sections_as_dedicated_code_blocks() {
                 title: "edit sample.txt".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "sample.txt".to_string(),
-                    language: "diff".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
                         .to_string(),
                     stats: None,
@@ -620,7 +782,7 @@ fn tool_display_renders_diff_sections_as_dedicated_code_blocks() {
 
     let lines: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -653,7 +815,9 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
                 title: "edit sample.txt".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "sample.txt".to_string(),
-                    language: "diff".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
                         .to_string(),
                     stats: None,
@@ -666,22 +830,19 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
 
     let call_row = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .find(|entry| matches!(&entry.kind, TranscriptEntryKind::Tool(t) if t.name == "edit"))
+        .find(|b| matches!(&b.source, BlockSource::Tool { .. }))
         .ok_or("should have tool call row")?;
-    assert_eq!(call_row.role(), Role::Tool);
+    assert!(matches!(call_row.source, BlockSource::Tool { .. }));
 
     let display_rows: Vec<_> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|entry| match &entry.kind {
-            TranscriptEntryKind::ToolResult(result) => result.lines.iter().any(|line| {
-                let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
-                text.contains("--- a/sample.txt") || text.contains("+++ b/sample.txt")
-            }),
-            _ => false,
+        .filter(|b| {
+            matches!(b.source, BlockSource::ToolDisplay { .. })
+                && tool_display_lines(b).contains("--- a/sample.txt")
         })
         .collect();
 
@@ -689,7 +850,7 @@ fn tool_display_body_lines_are_unprefixed_while_tool_call_line_remains_prefixed(
     assert!(
         display_rows
             .iter()
-            .all(|entry| entry.role() == Role::ToolDisplay)
+            .all(|b| matches!(b.source, BlockSource::ToolDisplay { .. }))
     );
     Ok(())
 }
@@ -712,7 +873,9 @@ fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
                 title: "edit sample.txt".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "sample.txt".to_string(),
-                    language: "diff".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
                         .to_string(),
                     stats: None,
@@ -725,16 +888,12 @@ fn tool_display_diff_block_highlighting_remains_after_prefix_hygiene_fix() {
 
     let diff_rows: Vec<_> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|entry| match &entry.kind {
-            TranscriptEntryKind::ToolResult(result) if entry.role() == Role::ToolDisplay => {
-                result.lines.iter().any(|line| {
-                    let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
-                    text.contains("--- a/sample.txt") || text.contains("+++ b/sample.txt")
-                })
-            }
-            _ => false,
+        .filter(|b| {
+            matches!(b.source, BlockSource::ToolDisplay { .. })
+                && (tool_display_lines(b).contains("--- a/sample.txt")
+                    || tool_display_lines(b).contains("+++ b/sample.txt"))
         })
         .collect();
 
@@ -760,7 +919,9 @@ fn diff_display_preserves_hunk_line_range_context() {
                 title: "edit sample.txt".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "sample.txt".to_string(),
-                    language: "diff".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -10,3 +10,4 @@\n line-a\n-line-b\n+line-c\n line-d\n"
                         .to_string(),
                     stats: None,
@@ -771,15 +932,13 @@ fn diff_display_preserves_hunk_line_range_context() {
         },
     );
 
-    assert!(state.transcript.entries.iter().any(|entry| {
-        match &entry.kind {
-            TranscriptEntryKind::ToolResult(result) => result.lines.iter().any(|line| {
-                let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
-                text.contains("@@ -10,3 +10,4 @@")
-            }),
-            _ => false,
-        }
-    }));
+    assert!(
+        state
+            .transcript
+            .blocks()
+            .iter()
+            .any(|b| tool_display_lines(b).contains("@@ -10,3 +10,4 @@"))
+    );
 }
 
 #[test]
@@ -800,7 +959,9 @@ fn diff_display_supports_line_number_readability_without_breaking_highlighting()
                 title: "edit sample.txt".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "sample.txt".to_string(),
-                    language: "diff".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -3,2 +3,2 @@\n alpha\n-beta\n+omega\n"
                         .to_string(),
                     stats: None,
@@ -813,19 +974,18 @@ fn diff_display_supports_line_number_readability_without_breaking_highlighting()
 
     let diff_rows: Vec<_> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|entry| entry.role() == Role::ToolDisplay)
+        .filter(|b| matches!(b.source, BlockSource::ToolDisplay { .. }))
         .collect();
 
-    assert!(diff_rows.iter().any(|entry| match &entry.kind {
-        TranscriptEntryKind::ToolResult(result) => result.lines.iter().any(|line| {
-            let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
-            text.contains("│alpha") || text.contains("│beta") || text.contains("│omega")
-        }),
-        _ => false,
-    }));
-    // TranscriptEntry no longer has a `.rendered` field - removed assertion
+    assert!(
+        diff_rows
+            .iter()
+            .any(|b| tool_display_lines(b).contains("│alpha")
+                || tool_display_lines(b).contains("│beta")
+                || tool_display_lines(b).contains("│omega"))
+    );
 }
 
 #[test]
@@ -846,7 +1006,9 @@ fn edit_preview_display_omits_redundant_edit_path_header() {
                 title: "edit sample.txt".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "sample.txt".to_string(),
-                    language: "diff".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
                         .to_string(),
                     stats: None,
@@ -859,7 +1021,7 @@ fn edit_preview_display_omits_redundant_edit_path_header() {
 
     let lines: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -868,6 +1030,61 @@ fn edit_preview_display_omits_redundant_edit_path_header() {
         !lines.contains(&"sample.txt (diff)".to_string()),
         "the call line already shows the path, so the section label is redundant"
     );
+}
+
+/// The completed-edit display suppression decision must be typed: the tool
+/// name arrives on the event as `"edit"` and maps to `BuiltinKind::Edit` —
+/// never a title-text prefix probe, which any title (including a user-visible
+/// path like `edit notes/todo.md`) can false-match.
+#[test]
+fn completed_edit_display_suppresses_title_from_typed_tool_name_not_title_text() -> Result<()> {
+    let mut state = AppState::default();
+
+    reduce_tool(
+        &mut state,
+        started("edit", r#"{\"path\":\"notes/todo.md\"}"#),
+    );
+    reduce_tool(
+        &mut state,
+        ToolEvent::Completed {
+            name: "edit".to_string(),
+            source: "mcp".to_string(),
+            arguments: r#"{\"path\":\"notes/todo.md\"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit notes/todo.md".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "notes/todo.md".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
+                    content: "--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        },
+    );
+
+    let lines: Vec<String> = state
+        .transcript
+        .blocks()
+        .iter()
+        .flat_map(extract_all_text_from_entry)
+        .collect();
+    assert!(
+        !lines.iter().any(|line| line.contains("edit notes/todo.md")),
+        "typed edit identity must suppress the redundant title row; got {lines:?}"
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("notes/todo.md (diff)")),
+        "single-section edit display must also skip the redundant section label; got {lines:?}"
+    );
+    Ok(())
 }
 
 #[test]
@@ -889,14 +1106,18 @@ fn edit_display_with_multiple_sections_keeps_section_labels() {
                 sections: vec![
                     ToolDisplaySection {
                         label: "sample.txt".to_string(),
-                        language: "diff".to_string(),
+                        kind: ContentKind::Diff {
+                            language: "diff".to_string(),
+                        },
                         content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
                             .to_string(),
                         stats: None,
                     },
                     ToolDisplaySection {
                         label: "other.txt".to_string(),
-                        language: "diff".to_string(),
+                        kind: ContentKind::Diff {
+                            language: "diff".to_string(),
+                        },
                         content: "--- a/other.txt\n+++ b/other.txt\n@@ -1 +1 @@\n-a\n+b\n"
                             .to_string(),
                         stats: None,
@@ -910,16 +1131,16 @@ fn edit_display_with_multiple_sections_keeps_section_labels() {
 
     let lines: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
     assert!(
-        lines.contains(&"sample.txt (diff)".to_string()),
+        lines.iter().any(|line| line.contains("sample.txt (diff)")),
         "multi-section displays must keep every section label; got {lines:?}"
     );
     assert!(
-        lines.contains(&"other.txt (diff)".to_string()),
+        lines.iter().any(|line| line.contains("other.txt (diff)")),
         "multi-section displays must keep every section label; got {lines:?}"
     );
 }
@@ -942,7 +1163,9 @@ fn non_diff_single_section_display_keeps_section_label() {
                 title: "nu sample.rs".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "sample.rs".to_string(),
-                    language: "rust".to_string(),
+                    kind: ContentKind::Code {
+                        language: "rust".to_string(),
+                    },
                     content: "fn main() {}\n".to_string(),
                     stats: None,
                 }],
@@ -954,12 +1177,12 @@ fn non_diff_single_section_display_keeps_section_label() {
 
     let lines: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
     assert!(
-        lines.contains(&"sample.rs (rust)".to_string()),
+        lines.iter().any(|line| line.contains("sample.rs (rust)")),
         "non-diff single-section displays must keep the section label; got {lines:?}"
     );
 }
@@ -982,7 +1205,9 @@ fn edit_preview_display_omits_redundant_single_file_stats_line() {
                 title: "edit sample.txt".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "sample.txt".to_string(),
-                    language: "diff".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
                         .to_string(),
                     stats: Some(nu_agent_core::protocol::event::ToolDisplayStats {
@@ -1002,22 +1227,23 @@ fn edit_preview_display_omits_redundant_single_file_stats_line() {
 
     let lines = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.text())
+        .map(|block| block.source.plain_text())
         .collect::<Vec<_>>();
     assert!(!lines.iter().any(|line| line.starts_with("files=")));
     assert!(!lines.iter().any(|line| line.contains("+3 -1")));
 }
 
 #[test]
-fn permission_requested_with_display_pushes_to_transcript() {
+fn permission_requested_with_display_pushes_to_transcript() -> Result<()> {
     let mut state = AppState::default();
 
     reduce_tool(&mut state, started("edit", r#"{"file":"foo.rs"}"#));
 
     let context = nu_agent_core::protocol::event::PermissionRequestContext {
-        tool: "edit".to_string(),
+        tool: "edit(file=foo.rs)".to_string(),
+        tool_key: "edit\n{\"file\":\"foo.rs\"}".to_string(),
         source: "closure".to_string(),
         mode: Some("apply".to_string()),
         matched_rule_identity: "tool:edit".to_string(),
@@ -1029,7 +1255,9 @@ fn permission_requested_with_display_pushes_to_transcript() {
             title: "edit foo.rs".to_string(),
             sections: vec![ToolDisplaySection {
                 label: "changes".to_string(),
-                language: "diff".to_string(),
+                kind: ContentKind::Diff {
+                    language: "diff".to_string(),
+                },
                 content: "+new content".to_string(),
                 stats: None,
             }],
@@ -1037,21 +1265,161 @@ fn permission_requested_with_display_pushes_to_transcript() {
     };
     apply_permission_request_display(&mut state, &context);
 
-    let lines: Vec<String> = state
+    // The preview is its own ToolDisplay block pushed directly after the
+    // pending Tool block, so the store holds exactly two blocks.
+    assert_eq!(state.transcript.len(), 2);
+    let tool_block = state
         .transcript
-        .entries
-        .iter()
-        .flat_map(extract_all_text_from_entry)
-        .collect();
+        .blocks()
+        .first()
+        .ok_or("should have tool block")?;
+    let BlockSource::Tool { call, preview, .. } = &tool_block.source else {
+        panic!("expected Tool block");
+    };
+    assert!(
+        call.summary.contains("foo.rs"),
+        "call line must show the tool summary, got: {call:?}"
+    );
+    assert!(
+        preview.is_none(),
+        "the Tool block must keep preview None after the preview push"
+    );
+    assert_eq!(
+        tool_block.fill,
+        Fill::None,
+        "the Tool block must keep Fill::None so the call line stays untinted"
+    );
 
+    let preview_block = state
+        .transcript
+        .blocks()
+        .get(1)
+        .ok_or("should have preview block")?;
     assert!(
-        !lines.iter().any(|line| line.contains("changes (diff)")),
-        "the call line already shows the path, so the section label is redundant"
+        matches!(preview_block.source, BlockSource::ToolDisplay { .. }),
+        "the preview must be a ToolDisplay block"
+    );
+    assert_eq!(
+        preview_block.fill,
+        Fill::Code,
+        "a diff preview block must carry Fill::Code"
     );
     assert!(
-        lines.iter().any(|line| line.contains("+new content")),
-        "Expected to find '+new content' in transcript"
+        tool_display_lines(preview_block).contains("+new content"),
+        "the preview block must carry the display content, got: {}",
+        tool_display_lines(preview_block)
     );
+    Ok(())
+}
+
+/// The request context carries the exact call key, so a decorated display name
+/// in `tool` cannot break the match. This is the production shape: `tool` is
+/// `edit(path=..., operation={...})` while the pending call key is
+/// `edit\n{...}`.
+#[test]
+fn permission_requested_with_decorated_tool_name_attaches_preview_via_tool_key() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    let arguments =
+        r#"{"path":"foo.rs","mode":"apply","operation":{"type":"create","content":"hi\n"}}"#;
+    reduce_tool(&mut state, started("edit", arguments));
+
+    let context = nu_agent_core::protocol::event::PermissionRequestContext {
+        tool: "edit(mode=apply, operation={...}, path=foo.rs)".to_string(),
+        tool_key: format!("edit\n{arguments}"),
+        source: "builtin".to_string(),
+        mode: Some("apply".to_string()),
+        matched_rule_identity: "tool:edit".to_string(),
+        scope: "tool".to_string(),
+        target_field: None,
+        pattern: "edit".to_string(),
+        summary: "→ {...}".to_string(),
+        pre_authorize_display: Some(ToolDisplay {
+            title: "edit foo.rs".to_string(),
+            sections: vec![ToolDisplaySection {
+                label: "changes".to_string(),
+                kind: ContentKind::Diff {
+                    language: "diff".to_string(),
+                },
+                content: "+hi".to_string(),
+                stats: None,
+            }],
+        }),
+    };
+
+    // -- Exec
+    apply_permission_request_display(&mut state, &context);
+
+    // -- Check
+    assert_eq!(
+        state.transcript.len(),
+        2,
+        "preview must push its own ToolDisplay block"
+    );
+    let tool_block = state
+        .transcript
+        .blocks()
+        .first()
+        .ok_or("should have tool block")?;
+    assert!(
+        matches!(tool_block.source, BlockSource::Tool { preview: None, .. }),
+        "the Tool block must keep preview None"
+    );
+    let preview_block = state
+        .transcript
+        .blocks()
+        .get(1)
+        .ok_or("should have preview block")?;
+    assert!(
+        tool_display_lines(preview_block).contains("+hi"),
+        "decorated tool name must still attach the preview via tool_key, got: {}",
+        tool_display_lines(preview_block)
+    );
+    Ok(())
+}
+
+/// A request whose `tool_key` matches no pending call must leave the
+/// transcript untouched — no preview attached to an unrelated call.
+#[test]
+fn permission_requested_with_unmatched_tool_key_leaves_transcript_unchanged() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    reduce_tool(&mut state, started("edit", r#"{"path":"foo.rs"}"#));
+
+    let context = nu_agent_core::protocol::event::PermissionRequestContext {
+        tool: "edit(path=other.rs)".to_string(),
+        tool_key: "edit\n{\"path\":\"other.rs\"}".to_string(),
+        source: "builtin".to_string(),
+        mode: Some("apply".to_string()),
+        matched_rule_identity: "tool:edit".to_string(),
+        scope: "tool".to_string(),
+        target_field: None,
+        pattern: "edit".to_string(),
+        summary: "→ {...}".to_string(),
+        pre_authorize_display: Some(ToolDisplay {
+            title: "edit other.rs".to_string(),
+            sections: vec![],
+        }),
+    };
+
+    // -- Exec
+    apply_permission_request_display(&mut state, &context);
+
+    // -- Check
+    assert_eq!(state.transcript.len(), 1);
+    let block = state
+        .transcript
+        .blocks()
+        .first()
+        .ok_or("should have tool block")?;
+    let BlockSource::Tool { preview, .. } = &block.source else {
+        panic!("expected Tool block");
+    };
+    assert!(
+        preview.is_none(),
+        "an unmatched tool_key must not attach a preview"
+    );
+    Ok(())
 }
 
 /// Non-duplication is no longer this layer's job: `HookChain::on_tool_result`
@@ -1067,7 +1435,8 @@ fn tool_end_after_previewed_permission_with_source_suppressed_display_shows_once
     reduce_tool(&mut state, started("edit", r#"{"file":"bar.rs"}"#));
 
     let context = nu_agent_core::protocol::event::PermissionRequestContext {
-        tool: "edit".to_string(),
+        tool: "edit(file=bar.rs)".to_string(),
+        tool_key: "edit\n{\"file\":\"bar.rs\"}".to_string(),
         source: "closure".to_string(),
         mode: Some("apply".to_string()),
         matched_rule_identity: "tool:edit".to_string(),
@@ -1079,7 +1448,9 @@ fn tool_end_after_previewed_permission_with_source_suppressed_display_shows_once
             title: "edit bar.rs".to_string(),
             sections: vec![ToolDisplaySection {
                 label: "changes".to_string(),
-                language: "diff".to_string(),
+                kind: ContentKind::Diff {
+                    language: "diff".to_string(),
+                },
                 content: "+new content".to_string(),
                 stats: None,
             }],
@@ -1105,7 +1476,7 @@ fn tool_end_after_previewed_permission_with_source_suppressed_display_shows_once
 
     let lines: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -1133,7 +1504,8 @@ fn tool_end_renders_whatever_display_it_is_given_no_local_dedup() {
     reduce_tool(&mut state, started("edit", r#"{"file":"bar.rs"}"#));
 
     let context = nu_agent_core::protocol::event::PermissionRequestContext {
-        tool: "edit".to_string(),
+        tool: "edit(file=bar.rs)".to_string(),
+        tool_key: "edit\n{\"file\":\"bar.rs\"}".to_string(),
         source: "closure".to_string(),
         mode: Some("apply".to_string()),
         matched_rule_identity: "tool:edit".to_string(),
@@ -1145,7 +1517,9 @@ fn tool_end_renders_whatever_display_it_is_given_no_local_dedup() {
             title: "edit bar.rs".to_string(),
             sections: vec![ToolDisplaySection {
                 label: "changes".to_string(),
-                language: "diff".to_string(),
+                kind: ContentKind::Diff {
+                    language: "diff".to_string(),
+                },
                 content: "+new content".to_string(),
                 stats: None,
             }],
@@ -1165,7 +1539,9 @@ fn tool_end_renders_whatever_display_it_is_given_no_local_dedup() {
                 title: "edit bar.rs".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "changes".to_string(),
-                    language: "diff".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: "+new content".to_string(),
                     stats: None,
                 }],
@@ -1177,7 +1553,7 @@ fn tool_end_renders_whatever_display_it_is_given_no_local_dedup() {
 
     let lines: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -1197,21 +1573,23 @@ fn tool_end_renders_whatever_display_it_is_given_no_local_dedup() {
 fn tool_end_without_prior_permission_pushes_display_normally() {
     let mut state = AppState::default();
 
-    reduce_tool(&mut state, started("nu", r#"{"command":"ls"}"#));
+    reduce_tool(&mut state, started("edit", r#"{"path":"bar.rs"}"#));
 
     reduce_tool(
         &mut state,
         ToolEvent::Completed {
-            name: "nu".to_string(),
+            name: "edit".to_string(),
             source: "mcp".to_string(),
-            arguments: r#"{"command":"ls"}"#.to_string(),
+            arguments: r#"{"path":"bar.rs"}"#.to_string(),
             success: true,
             result: "{}".to_string(),
             display: Some(ToolDisplay {
                 title: "edit bar.rs".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "changes".to_string(),
-                    language: "diff".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: "+new content".to_string(),
                     stats: None,
                 }],
@@ -1223,7 +1601,7 @@ fn tool_end_without_prior_permission_pushes_display_normally() {
 
     let lines: Vec<String> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -1238,16 +1616,67 @@ fn tool_end_without_prior_permission_pushes_display_normally() {
     );
 }
 
+/// The suppression decision is keyed on the TYPED tool identity: a NON-edit
+/// tool whose display happens to carry an edit-shaped single diff section
+/// (or an edit-prefixed title) must keep its title and section label — the
+/// display shape alone never triggers suppression.
+#[test]
+fn non_edit_tool_with_edit_shaped_display_keeps_title_and_label() {
+    let mut state = AppState::default();
+
+    reduce_tool(&mut state, started("nu", r#"{"command":"ls"}"#));
+
+    reduce_tool(
+        &mut state,
+        ToolEvent::Completed {
+            name: "nu".to_string(),
+            source: "mcp".to_string(),
+            arguments: r#"{"command":"ls"}"#.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: "edit bar.rs".to_string(),
+                sections: vec![ToolDisplaySection {
+                    label: "changes".to_string(),
+                    kind: ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
+                    content: "+new content".to_string(),
+                    stats: None,
+                }],
+            }),
+            error_kind: None,
+            message: None,
+        },
+    );
+
+    let lines: Vec<String> = state
+        .transcript
+        .blocks()
+        .iter()
+        .flat_map(extract_all_text_from_entry)
+        .collect();
+    assert!(
+        lines.iter().any(|line| line.contains("edit bar.rs")),
+        "non-edit tool identity must keep the display title; got {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("changes (diff)")),
+        "non-edit tool identity must keep the section label; got {lines:?}"
+    );
+}
+
 #[test]
 fn permission_requested_without_display_does_not_add_transcript_entries() {
     let mut state = AppState::default();
 
     reduce_tool(&mut state, started("nu", r#"{"command":"ls"}"#));
 
-    let len_after_start = state.transcript.entries.len();
+    let len_after_start = state.transcript.len();
 
     let context = nu_agent_core::protocol::event::PermissionRequestContext {
-        tool: "nu".to_string(),
+        tool: "nu(command=ls)".to_string(),
+        tool_key: "nu\n{\"command\":\"ls\"}".to_string(),
         source: "mcp".to_string(),
         mode: None,
         matched_rule_identity: "tool:nu".to_string(),
@@ -1265,28 +1694,24 @@ fn permission_requested_without_display_does_not_add_transcript_entries() {
         });
 
     assert_eq!(
-        state.transcript.entries.len(),
+        state.transcript.len(),
         len_after_start,
         "PermissionRequested without display should not add transcript entries"
     );
 }
 
 #[test]
-fn handle_tool_start_pushes_starting_spacer() {
+fn handle_tool_start_pushes_tool_block_without_leading_spacer() {
     let mut state = AppState::default();
     reduce_tool(&mut state, started("read", "{}"));
     assert!(matches!(
-        state.transcript.entries[0].kind,
-        TranscriptEntryKind::Spacer(_)
-    ));
-    assert!(matches!(
-        state.transcript.entries[1].kind,
-        TranscriptEntryKind::Tool(_)
+        state.transcript.blocks()[0].source,
+        BlockSource::Tool { .. }
     ));
 }
 
 #[test]
-fn handle_tool_end_does_not_push_spacer_between_tool_calls() {
+fn handle_tool_end_stores_two_content_blocks_without_separators() {
     let mut state = AppState::default();
     // Two tool calls within the same block
     for name in ["read", "write"] {
@@ -1306,107 +1731,108 @@ fn handle_tool_end_does_not_push_spacer_between_tool_calls() {
         );
     }
 
-    // transcript: [Spacer, Tool, Tool] — no spacer between the two tool calls
-    assert_eq!(state.transcript.entries.len(), 3);
+    // transcript: [Tool, Tool] — the store holds content blocks only;
+    // separators are a render-time concern (SpacerStateMachine).
+    assert_eq!(state.transcript.len(), 2);
     assert!(matches!(
-        state.transcript.entries[0].kind,
-        TranscriptEntryKind::Spacer(_)
+        state.transcript.blocks()[0].source,
+        BlockSource::Tool { .. }
     ));
     assert!(matches!(
-        state.transcript.entries[1].kind,
-        TranscriptEntryKind::Tool(_)
-    ));
-    assert!(matches!(
-        state.transcript.entries[2].kind,
-        TranscriptEntryKind::Tool(_)
+        state.transcript.blocks()[1].source,
+        BlockSource::Tool { .. }
     ));
 }
 
 #[test]
-fn tool_start_nu_after_plain_tool_pushes_spacer_between_blocks() {
+fn tool_start_nu_after_plain_tool_stores_two_content_blocks() {
     let mut state = AppState::default();
     // Plain tool call (no background block)
     reduce_tool(&mut state, started("read", "{}"));
-    // nu tool call (renders a background block) — must get a spacer between them
+    // nu tool call (renders a background block)
     reduce_tool(&mut state, started("nu", r#"{"command":"ls"}"#));
 
-    // transcript: [Spacer, Tool(read), Spacer, Tool(nu)]
-    assert_eq!(state.transcript.entries.len(), 4);
+    // transcript: [Tool(read), Tool(nu)] — no Spacer blocks in the store.
+    assert_eq!(state.transcript.len(), 2);
     assert!(matches!(
-        state.transcript.entries[2].kind,
-        TranscriptEntryKind::Spacer(_)
+        state.transcript.blocks()[0].source,
+        BlockSource::Tool { .. }
     ));
     assert!(matches!(
-        state.transcript.entries[3].kind,
-        TranscriptEntryKind::Tool(_)
+        state.transcript.blocks()[1].source,
+        BlockSource::Tool { .. }
     ));
 }
 
 #[test]
-fn tool_start_plain_after_nu_pushes_spacer_between_blocks() {
+fn tool_start_plain_after_nu_stores_two_content_blocks() {
     let mut state = AppState::default();
     // nu tool call (renders a background block)
     reduce_tool(&mut state, started("nu", r#"{"command":"ls"}"#));
-    // plain tool call after nu — must get a spacer between them
+    // plain tool call after nu
     reduce_tool(&mut state, started("read", "{}"));
 
-    // transcript: [Spacer, Tool(nu), Spacer, Tool(read)]
-    assert_eq!(state.transcript.entries.len(), 4);
+    // transcript: [Tool(nu), Tool(read)] — no Spacer blocks in the store.
+    assert_eq!(state.transcript.len(), 2);
     assert!(matches!(
-        state.transcript.entries[2].kind,
-        TranscriptEntryKind::Spacer(_)
+        state.transcript.blocks()[0].source,
+        BlockSource::Tool { .. }
     ));
     assert!(matches!(
-        state.transcript.entries[3].kind,
-        TranscriptEntryKind::Tool(_)
+        state.transcript.blocks()[1].source,
+        BlockSource::Tool { .. }
     ));
 }
 
 #[test]
-fn tool_start_two_plain_tools_keep_no_spacer_between() {
+fn tool_start_two_plain_tools_store_two_content_blocks() {
     let mut state = AppState::default();
     reduce_tool(&mut state, started("read", "{}"));
     reduce_tool(&mut state, started("write", "{}"));
 
-    // transcript: [Spacer, Tool(read), Tool(write)] — no spacer between plain tools
-    assert_eq!(state.transcript.entries.len(), 3);
+    // transcript: [Tool(read), Tool(write)] — no Spacer blocks in the store.
+    assert_eq!(state.transcript.len(), 2);
     assert!(matches!(
-        state.transcript.entries[1].kind,
-        TranscriptEntryKind::Tool(_)
+        state.transcript.blocks()[0].source,
+        BlockSource::Tool { .. }
     ));
     assert!(matches!(
-        state.transcript.entries[2].kind,
-        TranscriptEntryKind::Tool(_)
+        state.transcript.blocks()[1].source,
+        BlockSource::Tool { .. }
     ));
 }
 
 #[test]
 fn bookkeeping_start_finish_tracks_row_status() {
     let mut state = AppState::default();
+    let mut evicted = 0usize;
     state.tool.start_tool_call(
         &mut state.transcript,
         "k8s__list_pods",
         r#"{"namespace":"prod"}"#,
-        CallLineRender::generic_json_summary(r#"{"namespace":"prod"}"#),
+        CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
+        &mut evicted,
     );
-    assert_eq!(state.transcript.entries.len(), 1);
+    assert_eq!(state.transcript.len(), 1);
     state.tool.finish_tool_call(
         &mut state.transcript,
         "k8s__list_pods",
         r#"{"namespace":"prod"}"#,
         Some(true),
     );
-    assert_eq!(state.transcript.entries[0].status, Some(ItemStatus::Done));
+    assert_eq!(state.transcript.blocks()[0].status, Some(ItemStatus::Done));
 }
 
 #[test]
 fn bookkeeping_start_finish_unknown_renders_unknown_status() {
     let mut state = AppState::default();
+    let mut evicted = 0usize;
     state.tool.start_tool_call(
         &mut state.transcript,
         "k8s__list_pods",
         r#"{"namespace":"prod"}"#,
-        CallLineRender::generic_json_summary(r#"{"namespace":"prod"}"#),
+        CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
+        &mut evicted,
     );
     state.tool.finish_tool_call(
         &mut state.transcript,
@@ -1415,7 +1841,7 @@ fn bookkeeping_start_finish_unknown_renders_unknown_status() {
         None,
     );
     assert_eq!(
-        state.transcript.entries[0].status,
+        state.transcript.blocks()[0].status,
         Some(ItemStatus::Unknown),
         "flag-absent tool rows must render unknown, not guessed success"
     );
@@ -1426,27 +1852,31 @@ fn concurrent_same_name_tool_calls_get_correct_statuses() {
     let mut state = AppState::default();
 
     // Start two tool calls with the same name but different arguments
+    let mut evicted = 0usize;
     state.tool.start_tool_call(
         &mut state.transcript,
         "k8s__get_pod",
         r#"{"name":"api-0"}"#,
-        CallLineRender::generic_json_summary(r#"{"name":"api-0"}"#),
+        CallLine::from_json_summary(r#"{"name":"api-0"}"#),
+        &mut evicted,
     );
     state.tool.start_tool_call(
         &mut state.transcript,
         "k8s__get_pod",
         r#"{"name":"api-1"}"#,
-        CallLineRender::generic_json_summary(r#"{"name":"api-1"}"#),
+        CallLine::from_json_summary(r#"{"name":"api-1"}"#),
+        &mut evicted,
     );
 
-    // Both should be InProgress
-    assert_eq!(state.transcript.entries.len(), 2);
+    // Both should be InProgress. The store holds two content blocks; no
+    // Separator blocks are inserted.
+    assert_eq!(state.transcript.len(), 2);
     assert_eq!(
-        state.transcript.entries[0].status,
+        state.transcript.blocks()[0].status,
         Some(ItemStatus::InProgress)
     );
     assert_eq!(
-        state.transcript.entries[1].status,
+        state.transcript.blocks()[1].status,
         Some(ItemStatus::InProgress)
     );
 
@@ -1465,6 +1895,86 @@ fn concurrent_same_name_tool_calls_get_correct_statuses() {
     );
 
     // Each should get the correct status
-    assert_eq!(state.transcript.entries[0].status, Some(ItemStatus::Failed));
-    assert_eq!(state.transcript.entries[1].status, Some(ItemStatus::Done));
+    assert_eq!(
+        state.transcript.blocks()[0].status,
+        Some(ItemStatus::Failed)
+    );
+    assert_eq!(state.transcript.blocks()[1].status, Some(ItemStatus::Done));
+}
+
+// ---------------------------------------------------------------------------
+// Hydrated tool-call bookkeeping (task 53012ecc rework)
+// ---------------------------------------------------------------------------
+
+/// Hydration records an already-finished call. A later LIVE call with the
+/// same name+arguments key must complete its OWN block — the hydrated entry
+/// must not sit InProgress in the active deque and steal the finish.
+#[test]
+fn hydrated_call_does_not_steal_finish_from_later_live_call_with_same_key() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    let mut status = crate::state::StatusState::default();
+    let mut compaction = crate::state::CompactionState::default();
+
+    // Hydrated session: one finished `read` call → block 0 (status Done),
+    // bookkeeping entry recorded for later key lookups.
+    state.transcript.hydrate_from_messages(
+        vec![
+            UiMessageSnapshot::new("tool", "→ \"a.rs\"")
+                .with_tool_name("read".to_string())
+                .with_tool_details(Some(r#"{"path":"a.rs"}"#.to_string()), None, Some(true)),
+        ],
+        None,
+        &mut status,
+        &mut state.tool,
+        &mut compaction,
+    );
+    assert_eq!(
+        state.transcript.blocks()[0].status,
+        Some(ItemStatus::Done),
+        "hydrated block starts Done"
+    );
+
+    // Live session continues: a NEW `read` call with the same arguments.
+    reduce_tool(&mut state, started("read", r#"{"path":"a.rs"}"#));
+    let live_block = state
+        .transcript
+        .len()
+        .checked_sub(1)
+        .ok_or("should have live block")?;
+    assert_eq!(
+        state.transcript.blocks()[live_block].status,
+        Some(ItemStatus::InProgress),
+        "live block starts InProgress"
+    );
+
+    // -- Exec
+    reduce_tool(
+        &mut state,
+        ToolEvent::Completed {
+            name: "read".to_string(),
+            source: "mcp".to_string(),
+            arguments: r#"{"path":"a.rs"}"#.to_string(),
+            success: true,
+            result: "contents".to_string(),
+            display: None,
+            error_kind: None,
+            message: None,
+        },
+    );
+
+    // -- Check
+    // The LIVE block is the one that finishes.
+    assert_eq!(
+        state.transcript.blocks()[live_block].status,
+        Some(ItemStatus::Done),
+        "live call with same key must complete its own block"
+    );
+    // The hydrated block keeps its terminal status from hydration.
+    assert_eq!(
+        state.transcript.blocks()[0].status,
+        Some(ItemStatus::Done),
+        "hydrated block's terminal status must not be overwritten"
+    );
+    Ok(())
 }

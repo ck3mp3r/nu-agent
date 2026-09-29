@@ -1,4 +1,5 @@
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::tool_args::CallLine;
+use crate::transcript::ir::ContentKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolDisplay {
@@ -9,7 +10,7 @@ pub struct ToolDisplay {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolDisplaySection {
     pub label: String,
-    pub language: String,
+    pub kind: ContentKind,
     pub content: String,
     pub stats: Option<ToolDisplayStats>,
 }
@@ -44,6 +45,10 @@ impl PermissionDecision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionRequestContext {
     pub tool: String,
+    /// Exact tool-call key (`{tool_name}\n{raw_arguments}`) for the call this
+    /// request refers to. `tool` is a decorated display name and cannot be
+    /// matched against call keys; this field carries the key as data.
+    pub tool_key: String,
     pub source: String,
     pub mode: Option<String>,
     pub matched_rule_identity: String,
@@ -76,7 +81,7 @@ pub enum UiEvent {
         name: String,
         source: String,
         arguments: String,
-        call_line: CallLineRender,
+        call_line: CallLine,
     },
     ToolCompleted {
         name: String,

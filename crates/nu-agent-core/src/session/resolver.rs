@@ -8,7 +8,7 @@ use crate::session::{CompactionMarker, Session, SessionStore, StoreEntry};
 use crate::types::{AssistantContent, Message, ToolCallId, ToolResultContent, UserContent};
 use std::collections::HashMap;
 
-use crate::tools::handler::build_direct_tool_display;
+use crate::tools::handler::tool_display_from_result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionRequest {
@@ -311,7 +311,7 @@ pub(crate) fn hydrate_single_message(
                                 .join("\n");
                             if let Ok(json) =
                                 serde_json::from_str::<serde_json::Value>(&result_text)
-                                && let Some(display) = build_direct_tool_display(tool_name, &json)
+                                && let Some(display) = tool_display_from_result(tool_name, &json)
                             {
                                 snapshots.push(
                                     UiMessageSnapshot::new("tool_display", String::new())

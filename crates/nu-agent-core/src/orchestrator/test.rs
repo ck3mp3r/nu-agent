@@ -1,7 +1,8 @@
 use super::test_shared::*;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::{PermissionDecisionSubmission, UiEvent};
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::tool_args::CallLine;
+use crate::transcript::ir::ContentKind;
 
 type TResult = core::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -773,7 +774,7 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
                 name: "edit".to_string(),
                 source: "closure".to_string(),
                 arguments: "{}".to_string(),
-                call_line: CallLineRender::generic_json_summary("{}"),
+                call_line: CallLine::from_json_summary("{}"),
             })
             .await;
         let _ = self
@@ -790,7 +791,9 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
                     title: "edit file.txt".to_string(),
                     sections: vec![ToolDisplaySection {
                         label: "file.txt".to_string(),
-                        language: "diff".to_string(),
+                        kind: ContentKind::Diff {
+                            language: "diff".to_string(),
+                        },
                         content: "--- a/file.txt\n+++ b/file.txt\n".to_string(),
                         stats: None,
                     }],
@@ -974,6 +977,7 @@ impl CoreRuntime for PermissionGateRuntime {
         let request_id = self.request_id.clone();
         let context = crate::protocol::event::PermissionRequestContext {
             tool: "nu".to_string(),
+            tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
             source: "closure".to_string(),
             mode: Some("apply".to_string()),
             matched_rule_identity: self.rule_identity.clone(),
@@ -1012,7 +1016,7 @@ impl CoreRuntime for PermissionGateRuntime {
                     name: "nu".to_string(),
                     source: "closure".to_string(),
                     arguments: r#"{"command":"echo hi"}"#.to_string(),
-                    call_line: CallLineRender::generic_json_summary(r#"{"command":"echo hi"}"#),
+                    call_line: CallLine::from_json_summary(r#"{"command":"echo hi"}"#),
                 })
                 .await;
         }

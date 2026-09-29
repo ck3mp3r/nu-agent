@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex};
 
 use super::StderrUiRenderer;
 use nu_agent_core::protocol::event::UiEvent;
-use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::renderer::UiRenderer;
 
 use crate::policy::{UiPolicy, Verbosity};
@@ -66,7 +65,7 @@ fn run_mock_flow<R: UiRenderer>(renderer: &mut R) {
         name: "t".to_string(),
         source: "closure".to_string(),
         arguments: "{}".to_string(),
-        call_line: CallLineRender::generic_json_summary("{}"),
+        call_line: nu_agent_core::protocol::tool_args::CallLine::from_json_summary("{}"),
     });
     renderer.emit(&UiEvent::ToolCompleted {
         name: "t".to_string(),
@@ -277,7 +276,7 @@ fn spinner_pauses_for_persistent_lines_and_stops_on_completion() {
             name: "t".to_string(),
             source: "closure".to_string(),
             arguments: "{}".to_string(),
-            call_line: CallLineRender::generic_json_summary("{}"),
+            call_line: nu_agent_core::protocol::tool_args::CallLine::from_json_summary("{}"),
         });
 
         renderer.emit(&UiEvent::Completed { tool_calls: 0 });
@@ -287,6 +286,46 @@ fn spinner_pauses_for_persistent_lines_and_stops_on_completion() {
     let out = String::from_utf8(stderr_bytes).expect("utf8");
     assert!(out.contains("tool t → {}"), "tool spinner should render");
     assert!(out.contains("✓ completed"), "completed line should render");
+}
+
+#[test]
+fn spinner_omits_arrow_when_call_line_summary_is_empty() {
+    let mut stderr_bytes = Vec::<u8>::new();
+    {
+        let mut renderer = StderrUiRenderer::new(
+            &mut stderr_bytes,
+            UiPolicy {
+                quiet: false,
+                verbosity: Verbosity::Normal,
+            },
+            true,
+        );
+
+        renderer.emit(&UiEvent::LlmStarted);
+
+        renderer.emit(&UiEvent::Tick);
+
+        renderer.emit(&UiEvent::ToolStarted {
+            name: "nu".to_string(),
+            source: "builtin".to_string(),
+            arguments: r#"{"command":"ls"}"#.to_string(),
+            call_line: nu_agent_core::protocol::tool_args::CallLine {
+                summary: String::new(),
+            },
+        });
+
+        renderer.flush();
+    }
+
+    let out = String::from_utf8(stderr_bytes).expect("utf8");
+    assert!(
+        out.contains("tool nu"),
+        "tool spinner should render, got: {out}"
+    );
+    assert!(
+        !out.contains('→'),
+        "empty summary must not render a dangling arrow, got: {out}"
+    );
 }
 
 #[test]
@@ -306,7 +345,7 @@ fn default_tool_lifecycle_is_single_completion_line_with_result_block() {
         name: "gh__list_prs".to_string(),
         source: "mcp".to_string(),
         arguments: "{}".to_string(),
-        call_line: CallLineRender::generic_json_summary("{}"),
+        call_line: nu_agent_core::protocol::tool_args::CallLine::from_json_summary("{}"),
     });
     renderer.emit(&UiEvent::ToolCompleted {
         name: "gh__list_prs".to_string(),
@@ -343,7 +382,7 @@ fn default_tool_lifecycle_prints_non_empty_payloads() {
             name: "gh__list_prs".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
-            call_line: CallLineRender::generic_json_summary("{}"),
+            call_line: nu_agent_core::protocol::tool_args::CallLine::from_json_summary("{}"),
         });
         renderer.emit(&UiEvent::ToolCompleted {
             name: "gh__list_prs".to_string(),

@@ -4,7 +4,9 @@ use std::collections::VecDeque;
 
 use nu_agent_core::orchestrator::{OrchestratorEvent, UiRequest, UiStateEvent};
 use nu_agent_core::protocol::contracts::SharedUiAction;
-use nu_agent_core::transcript::items::{TranscriptEntry, TranscriptEntryKind};
+use nu_agent_core::transcript::ir::Block;
+use nu_agent_core::transcript::items::Banner;
+use nu_agent_core::transcript::renderer::Renderable;
 
 use super::compaction::CompactionState;
 use super::input::InputState;
@@ -23,12 +25,6 @@ use crate::interaction::reducer::{ReducerInput, reduce_with_cancel_controller};
 use crate::rendering::theme::{ThemeName, TuiTheme};
 
 const STARTUP_LOGOS: &[&str] = &[include_str!("../logos/00.txt")];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EntryVisualInfo {
-    pub start_visual_row: usize,
-    pub visual_row_count: usize,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiPhase {
@@ -74,7 +70,6 @@ pub enum CompactionStatus {
 pub struct CompactionLine {
     pub source: String,
     pub status: CompactionStatus,
-    pub entry_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,7 +198,6 @@ pub struct QueuedPrompt {
     pub id: u64,
     pub prompt_text: String,
     pub status: PromptStatus,
-    pub entry_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,7 +205,7 @@ pub struct ToolCallLine {
     pub id: u64,
     pub status: ToolCallStatus,
     pub key: String,
-    pub entry_id: Option<u64>,
+    pub block_index: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -322,8 +316,7 @@ impl AppState {
                     if let Some(theme_name) = ThemeName::from_name(&name) {
                         self.theme = theme_name.resolve();
                         self.theme_name = theme_name;
-                        self.transcript.clear_assistant_projection_cache();
-                        self.transcript.visual_info_dirty = true;
+                        self.transcript.invalidate_height_index();
                         self.pending_theme_persist.push_back(name);
                     }
                 }
@@ -488,11 +481,16 @@ impl AppState {
         use rand::RngExt;
         let idx = rand::rng().random_range(0..STARTUP_LOGOS.len());
         let logo = STARTUP_LOGOS[idx];
-        self.transcript.push_transcript_item(TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::Logo(logo.to_string()),
+        let banner = Banner {
+            text: logo.to_string(),
+        };
+        let evicted = self.transcript.push_block(Block {
+            source: banner.source(),
+            lane: banner.lane(),
+            fill: banner.fill(),
             status: None,
         });
+        self.shift_bookkeeping_after_eviction(evicted);
     }
 
     /// Clears the transcript (store) and resets the scroll position and token
@@ -504,7 +502,29 @@ impl AppState {
         self.status.tokens.latest_input_tokens = None;
         self.status.tokens.latest_output_tokens = None;
         self.status.tokens.latest_total_tokens = None;
-        self.scroll.entry_visual_info.clear();
-        self.transcript.visual_info_dirty = true;
+        self.scroll.entry_indices.clear();
+    }
+
+    /// Shift tool-call `block_index` bookkeeping after transcript-cap
+    /// eviction: tool calls store indices into [`TranscriptStore::blocks`],
+    /// and eviction moves every surviving block down by the evicted count. An
+    /// index below the evicted range points at a removed block and becomes
+    /// `None`. Streaming cursors are shifted by the store itself.
+    pub fn shift_bookkeeping_after_eviction(&mut self, evicted_count: usize) {
+        if evicted_count == 0 {
+            return;
+        }
+        let shift = |n: Option<usize>| {
+            n.and_then(|idx| {
+                if idx >= evicted_count {
+                    Some(idx - evicted_count)
+                } else {
+                    None
+                }
+            })
+        };
+        for call in &mut self.tool.calls {
+            call.block_index = shift(call.block_index);
+        }
     }
 }

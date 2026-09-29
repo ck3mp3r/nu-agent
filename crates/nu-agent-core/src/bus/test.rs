@@ -1,6 +1,6 @@
 use super::*;
 use crate::protocol::event::UiEvent;
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::tool_args::CallLine;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -36,7 +36,7 @@ async fn publish_tool_reaches_multiple_subscribers() -> Result<()> {
             name: "read".into(),
             source: "user".into(),
             arguments: "{}".into(),
-            call_line: CallLineRender::generic_json_summary("{}"),
+            call_line: CallLine::from_json_summary("{}"),
         })
         .await
         .map_err(|e| format!("send should succeed: {e:?}"))?;
@@ -75,7 +75,7 @@ async fn subscriber_only_receives_its_channel() {
             name: "write".into(),
             source: "system".into(),
             arguments: "{}".into(),
-            call_line: CallLineRender::generic_json_summary("{}"),
+            call_line: CallLine::from_json_summary("{}"),
         })
         .await;
 

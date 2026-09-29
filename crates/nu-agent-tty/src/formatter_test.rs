@@ -1,6 +1,28 @@
 use crate::formatter::{ToolEndView, format_tool_start};
 use crate::policy::Verbosity;
 
+/// An empty call summary (the `nu` tool's call line) renders the tool name
+/// alone at every verbosity: no dangling trailing `→ ` separator and no empty
+/// `args:` header.
+#[test]
+fn empty_call_summary_renders_no_dangling_separator_at_any_verbosity() {
+    for verbosity in [Verbosity::Verbose, Verbosity::VeryVerbose, Verbosity::Trace] {
+        let start = format_tool_start(verbosity, "nu", "builtin", "");
+        assert!(
+            !start.trim_end().ends_with('→'),
+            "empty summary must not render a dangling arrow at {verbosity:?}, got: {start}"
+        );
+        assert!(
+            !start.contains("args:"),
+            "empty summary must not render an empty args header at {verbosity:?}, got: {start}"
+        );
+        assert!(
+            start.contains("tool nu"),
+            "tool name must render at {verbosity:?}, got: {start}"
+        );
+    }
+}
+
 #[test]
 fn default_level_shows_tool_name_and_status_only() {
     let start = format_tool_start(Verbosity::Normal, "gh__list_prs", "mcp", "{\"q\":\"x\"}");

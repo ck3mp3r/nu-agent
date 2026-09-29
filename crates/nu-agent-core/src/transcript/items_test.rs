@@ -1,340 +1,155 @@
-use super::ir::*;
+use super::ir::{
+    BlockSource, ContentKind, Display, DisplaySection, Fill, Lane, MessageRole, NoticeKind,
+    StyleHint, Tool, ToolName,
+};
 use super::items::*;
-use super::renderer::ItemStatus;
-use crate::protocol::tool_args::CallLineRender;
+use super::renderer::Renderable;
+use crate::protocol::tool_args::CallLine;
 
-// ── ProseMessage stores raw markdown ─────────────────────────────────────────
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+// ── Message stores raw markdown ──────────────────────────────────────────────
 
 #[test]
-fn prose_message_stores_raw_markdown() {
-    let msg = ProseMessage {
+fn message_stores_role_and_raw_markdown() {
+    // -- Setup & Fixtures
+    let msg = Message {
+        role: MessageRole::User,
         markdown: "# Hello".to_string(),
     };
+
+    // -- Exec & Check
+    assert_eq!(msg.role, MessageRole::User);
     assert_eq!(msg.markdown, "# Hello");
 }
 
 #[test]
-fn prose_message_clone_is_equal() {
-    let msg = ProseMessage {
+fn message_clone_is_equal() {
+    // -- Setup & Fixtures
+    let msg = Message {
+        role: MessageRole::Assistant,
         markdown: "**bold**".to_string(),
     };
+
+    // -- Exec & Check
     assert_eq!(msg, msg.clone());
 }
 
-// ── to_render_block: User / Assistant carry markdown field ───────────────────
+// ── Message: user carries marker lane and full fill ─────────────────────────
 
 #[test]
-fn user_message_produces_user_role_block_with_markdown() {
-    let block = TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::User(ProseMessage {
+fn user_message_lanes_marker_and_fills_full() {
+    // -- Setup & Fixtures
+    let msg = Message {
+        role: MessageRole::User,
+        markdown: "hi".to_string(),
+    };
+
+    // -- Exec & Check
+    assert_eq!(msg.lane(), Lane::Marker("▏"));
+    assert_eq!(msg.fill(), Fill::Full);
+    assert_eq!(
+        msg.source(),
+        BlockSource::Markdown {
+            role: MessageRole::User,
             markdown: "hi".to_string(),
-        }),
-        status: None,
-    }
-    .to_render_block();
-    assert_eq!(block.role, Role::User);
-    // Lines are empty — projection happens at render time in TuiRenderer
-    assert!(block.lines.is_empty());
-    assert_eq!(block.markdown.as_deref(), Some("hi"));
+        }
+    );
 }
 
+// ── Message: assistant carries blank lane and no fill ────────────────────────
+
 #[test]
-fn assistant_chunk_produces_assistant_role_block_with_markdown() {
-    let block = TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::Assistant(ProseMessage {
+fn assistant_message_lanes_blank_and_fills_none() {
+    // -- Setup & Fixtures
+    let msg = Message {
+        role: MessageRole::Assistant,
+        markdown: "hello".to_string(),
+    };
+
+    // -- Exec & Check
+    assert_eq!(msg.lane(), Lane::Blank);
+    assert_eq!(msg.fill(), Fill::None);
+    assert_eq!(
+        msg.source(),
+        BlockSource::Markdown {
+            role: MessageRole::Assistant,
             markdown: "hello".to_string(),
-        }),
-        status: None,
-    }
-    .to_render_block();
-    assert_eq!(block.role, Role::Assistant);
-    assert!(block.lines.is_empty());
-    assert_eq!(block.markdown.as_deref(), Some("hello"));
-}
-
-// ── Non-prose blocks have markdown: None ─────────────────────────────────────
-
-#[test]
-fn tool_invocation_other_tool_produces_three_spans() {
-    // -- Setup & Fixtures
-    let block = ToolInvocation {
-        name: "run".to_string(),
-        source: "builtin".to_string(),
-        call_line: CallLineRender::Inline {
-            summary: "→ {\"cmd\":\"ls\"}".to_string(),
-        },
-    }
-    .to_render_block();
-
-    // -- Check
-    assert_eq!(block.role, Role::Tool);
-    assert!(block.markdown.is_none());
-    assert_eq!(block.lines[0].spans.len(), 3);
-    assert_eq!(block.lines[0].spans[0], Span::emphasis("run".to_string()));
-    assert_eq!(block.lines[0].spans[1], Span::meta("builtin".to_string()));
-    assert_eq!(
-        block.lines[0].spans[2],
-        Span::muted(" → {\"cmd\":\"ls\"}".to_string())
-    );
-}
-
-#[test]
-fn tool_invocation_nu_renders_status_row_and_code_block() {
-    // -- Setup & Fixtures
-    let block = ToolInvocation {
-        name: "nu".to_string(),
-        source: "builtin".to_string(),
-        call_line: CallLineRender::CodeBlock {
-            language: "nu".to_string(),
-            code: "ls | select name type size".to_string(),
-        },
-    }
-    .to_render_block();
-
-    // -- Check
-    assert_eq!(block.role, Role::Tool);
-    assert!(block.markdown.is_none());
-
-    // Status row: name + source only, no command text, no arrow.
-    assert_eq!(block.lines.len(), 2, "status row + one code row");
-    assert_eq!(block.lines[0].spans.len(), 2, "name + source only");
-    assert_eq!(block.lines[0].spans[0], Span::emphasis("nu".to_string()));
-    assert_eq!(block.lines[0].spans[1], Span::meta("builtin".to_string()));
-    let row_text: String = block.lines[0]
-        .spans
-        .iter()
-        .map(|s| s.text.as_str())
-        .collect();
-    assert!(
-        !row_text.contains("ls"),
-        "status row carries no command text"
-    );
-    assert!(!row_text.contains("→"), "status row carries no arrow");
-
-    // Code row: highlighted command, no leading indent span (sits at lane col).
-    let code_text: String = block.lines[1]
-        .spans
-        .iter()
-        .map(|s| s.text.as_str())
-        .collect();
-    assert_eq!(code_text, "ls | select name type size");
-    assert!(
-        block.lines[1]
-            .spans
-            .iter()
-            .any(|s| is_md_code_hint(&s.hint)),
-        "code row must carry MdCode* hints, got: {:?}",
-        block.lines[1]
-            .spans
-            .iter()
-            .map(|s| s.hint.clone())
-            .collect::<Vec<_>>()
-    );
-    assert!(
-        !block.lines[1]
-            .spans
-            .iter()
-            .any(|s| matches!(s.hint, StyleHint::Muted)),
-        "code row must not be Muted"
-    );
-}
-
-#[test]
-fn tool_invocation_nu_multi_line_command_renders_one_code_row_per_line() {
-    // -- Setup & Fixtures
-    let block = ToolInvocation {
-        name: "nu".to_string(),
-        source: "".to_string(),
-        call_line: CallLineRender::CodeBlock {
-            language: "nu".to_string(),
-            code: "ls | where size > 1mb\n| select name type\n| sort-by modified".to_string(),
-        },
-    }
-    .to_render_block();
-
-    // -- Check
-    assert_eq!(block.lines.len(), 4, "status row + 3 command lines");
-    let row_text =
-        |line: &ContentLine| -> String { line.spans.iter().map(|s| s.text.as_str()).collect() };
-    assert_eq!(block.lines[0].spans.len(), 2, "name + source only");
-    assert_eq!(row_text(&block.lines[1]), "ls | where size > 1mb");
-    assert_eq!(row_text(&block.lines[2]), "| select name type");
-    assert_eq!(row_text(&block.lines[3]), "| sort-by modified");
-    for line in block.lines.iter().skip(1) {
-        assert!(
-            line.spans.iter().any(|s| is_md_code_hint(&s.hint)),
-            "every code row must carry MdCode* hints"
-        );
-    }
-}
-
-#[test]
-fn tool_invocation_nu_empty_args_renders_status_row_only() {
-    // -- Setup & Fixtures
-    let block = ToolInvocation {
-        name: "nu".to_string(),
-        source: "".to_string(),
-        call_line: CallLineRender::CodeBlock {
-            language: "nu".to_string(),
-            code: String::new(),
-        },
-    }
-    .to_render_block();
-
-    // -- Check
-    assert_eq!(block.lines.len(), 1, "status row only");
-    assert_eq!(block.lines[0].spans.len(), 2, "name + source only");
-}
-
-#[test]
-fn tool_invocation_non_nu_keeps_three_span_muted_rendering() {
-    // -- Setup & Fixtures
-    let block = ToolInvocation {
-        name: "edit".to_string(),
-        source: "builtin".to_string(),
-        call_line: CallLineRender::Inline {
-            summary: "→ {\"path\":\"a.rs\"}".to_string(),
-        },
-    }
-    .to_render_block();
-
-    // -- Check
-    assert_eq!(block.lines.len(), 1);
-    assert_eq!(block.lines[0].spans.len(), 3);
-    assert_eq!(block.lines[0].spans[0], Span::emphasis("edit".to_string()));
-    assert_eq!(block.lines[0].spans[1], Span::meta("builtin".to_string()));
-    assert_eq!(
-        block.lines[0].spans[2],
-        Span::muted(" → {\"path\":\"a.rs\"}".to_string())
-    );
-}
-
-#[test]
-fn tool_result_empty_lines_uses_name_with_success_hint() {
-    let block = ToolResult {
-        name: "x".to_string(),
-        success: true,
-        lines: vec![],
-    }
-    .to_render_block();
-    assert!(block.markdown.is_none());
-    assert_eq!(block.lines.len(), 1);
-    assert_eq!(block.lines[0].spans[0].text, "x");
-    assert_eq!(block.lines[0].spans[0].hint, StyleHint::Success);
-}
-
-#[test]
-fn tool_result_empty_lines_uses_name_with_error_hint() {
-    let block = ToolResult {
-        name: "x".to_string(),
-        success: false,
-        lines: vec![],
-    }
-    .to_render_block();
-    assert_eq!(block.lines[0].spans[0].hint, StyleHint::Error);
-}
-
-#[test]
-fn tool_result_maps_content_lines_to_render_block() {
-    let block = ToolResult {
-        name: "t".to_string(),
-        success: true,
-        lines: vec![
-            ContentLine::single("+added".to_string(), StyleHint::DiffAdd),
-            ContentLine::single("-removed".to_string(), StyleHint::DiffRemove),
-        ],
-    }
-    .to_render_block();
-    assert_eq!(block.lines.len(), 2);
-    assert_eq!(block.lines[0].spans[0].text, "+added");
-    assert_eq!(block.lines[0].spans[0].hint, StyleHint::DiffAdd);
-    assert_eq!(block.lines[1].spans[0].text, "-removed");
-    assert_eq!(block.lines[1].spans[0].hint, StyleHint::DiffRemove);
-}
-
-#[test]
-fn compaction_notice_has_four_spans() {
-    let block = CompactionNotice {
-        source: "ctx".to_string(),
-        summarized: 5,
-        kept: 10,
-        summary: "done".to_string(),
-    }
-    .to_render_block();
-    assert_eq!(block.role, Role::Compaction);
-    assert!(block.markdown.is_none());
-    assert_eq!(block.lines[0].spans.len(), 4);
-    assert_eq!(block.lines[0].spans[0], Span::meta("ctx".to_string()));
-    assert_eq!(block.lines[0].spans[1], Span::normal("5".to_string()));
-    assert_eq!(block.lines[0].spans[2], Span::normal("10".to_string()));
-    assert_eq!(block.lines[0].spans[3], Span::normal("done".to_string()));
-}
-
-#[test]
-fn transcript_entry_user_delegates_correctly() {
-    let direct = TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::User(ProseMessage {
-            markdown: "z".to_string(),
-        }),
-        status: None,
-    }
-    .to_render_block();
-    let via_enum = TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::User(ProseMessage {
-            markdown: "z".to_string(),
-        }),
-        status: None,
-    }
-    .to_render_block();
-    assert_eq!(direct, via_enum);
-}
-
-#[test]
-fn transcript_entry_role_returns_correct_role() {
-    assert_eq!(
-        TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::User(ProseMessage {
-                markdown: "x".to_string(),
-            }),
-            status: None,
         }
-        .role(),
-        Role::User
     );
+}
+
+// ── Notice ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn notice_compaction_lanes_tilde_marker() {
+    // -- Setup & Fixtures
+    let notice = Notice {
+        kind: NoticeKind::Compaction,
+        text: "compacted 5 blocks".to_string(),
+    };
+
+    // -- Exec & Check
+    assert_eq!(notice.lane(), Lane::Marker("~"));
+    assert_eq!(notice.fill(), Fill::None);
     assert_eq!(
-        TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::Tool(ToolInvocation {
-                name: "t".to_string(),
-                source: "".to_string(),
-                call_line: CallLineRender::generic_json_summary(""),
-            }),
-            status: None,
+        notice.source(),
+        BlockSource::Notice {
+            kind: NoticeKind::Compaction,
+            text: "compacted 5 blocks".to_string(),
         }
-        .role(),
-        Role::Tool
     );
 }
 
 #[test]
-fn transcript_entry_text_returns_markdown_source() {
-    assert_eq!(
-        TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::User(ProseMessage {
-                markdown: "hello world".to_string(),
-            }),
-            status: None,
-        }
-        .text(),
-        "hello world"
-    );
+fn notice_system_lanes_dot_marker() {
+    // -- Setup & Fixtures
+    let notice = Notice {
+        kind: NoticeKind::System,
+        text: "system note".to_string(),
+    };
+
+    // -- Exec & Check
+    assert_eq!(notice.lane(), Lane::Marker("·"));
+    assert_eq!(notice.fill(), Fill::None);
 }
+
+// ── Spacer / Banner ──────────────────────────────────────────────────────────
+
+#[test]
+fn spacer_is_blank_lane_with_no_fill() {
+    // -- Setup & Fixtures
+    let spacer = Spacer;
+
+    // -- Exec & Check
+    assert!(matches!(spacer.source(), BlockSource::Spacer));
+    assert_eq!(spacer.lane(), Lane::Blank);
+    assert_eq!(spacer.fill(), Fill::None);
+}
+
+#[test]
+fn banner_is_system_blank_lane_with_no_fill() {
+    // -- Setup & Fixtures
+    let banner = Banner {
+        text: "line1\nline2".to_string(),
+    };
+
+    // -- Exec & Check
+    assert!(matches!(banner.source(), BlockSource::Banner { .. }));
+    assert_eq!(banner.lane(), Lane::SystemBlank);
+    assert_eq!(banner.fill(), Fill::None);
+}
+
+// ── CallLine::from_json_summary ──────────────────────────────────────────────
+
+#[test]
+fn call_line_from_json_summary_prefixes_arrow() {
+    // -- Exec & Check
+    let line = crate::protocol::tool_args::CallLine::from_json_summary(r#"{"path":"a.rs"}"#);
+    assert_eq!(line.summary, r#"→ {"path":"a.rs"}"#);
+}
+
+// ── annotate_diff_hint ───────────────────────────────────────────────────────
 
 #[test]
 fn annotate_diff_hint_identifies_plus_lines() {
@@ -352,124 +167,212 @@ fn annotate_diff_hint_identifies_hunk_lines() {
 }
 
 #[test]
+fn annotate_diff_hint_identifies_file_headers() {
+    assert_eq!(annotate_diff_hint("--- a.rs"), StyleHint::Meta);
+    assert_eq!(annotate_diff_hint("+++ b.rs"), StyleHint::Meta);
+}
+
+#[test]
 fn annotate_diff_hint_returns_normal_for_plain() {
     assert_eq!(annotate_diff_hint("plain"), StyleHint::Normal);
 }
 
+// ── Tool: fill from preview content kind ────────────────────────────────────
+
 #[test]
-fn user_and_assistant_render_blocks_differ_only_in_role() {
-    let user_block = TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::User(ProseMessage {
-            markdown: "hi".to_string(),
-        }),
-        status: None,
-    }
-    .to_render_block();
-    let assistant_block = TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::Assistant(ProseMessage {
-            markdown: "hi".to_string(),
-        }),
-        status: None,
-    }
-    .to_render_block();
-    assert_eq!(user_block.markdown, assistant_block.markdown);
-    assert_eq!(user_block.role, Role::User);
-    assert_eq!(assistant_block.role, Role::Assistant);
+fn tool_name_is_edit_is_true_only_for_the_edit_builtin() {
+    // -- Exec & Check: typed identity from the built-in name table.
+    assert!(ToolName("edit".to_string()).is_edit());
+    assert!(!ToolName("read".to_string()).is_edit());
+    assert!(!ToolName("nu".to_string()).is_edit());
+    // A title-like string is not a tool name; never a prefix probe.
+    assert!(!ToolName("edit notes/todo.md".to_string()).is_edit());
+    assert!(!ToolName(String::new()).is_edit());
+
+    // -- Exec & Check: `is_nu` is the same typed identity, for the `nu`
+    // built-in only.
+    assert!(ToolName("nu".to_string()).is_nu());
+    assert!(!ToolName("edit".to_string()).is_nu());
+    assert!(!ToolName("read".to_string()).is_nu());
+    assert!(!ToolName("edit notes/todo.md".to_string()).is_nu());
+    assert!(!ToolName(String::new()).is_nu());
 }
 
 #[test]
-fn user_message_text_accessor_returns_raw_markdown() {
-    let entry = TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::User(ProseMessage {
-            markdown: "hello **world**\nagain".to_string(),
-        }),
-        status: None,
+fn tool_source_carries_tool_name() -> Result<()> {
+    // -- Setup & Fixtures
+    let tool = Tool {
+        name: ToolName("grep".to_string()),
+        call: CallLine {
+            summary: "→ pattern in src".to_string(),
+        },
+        preview: None,
+        result: None,
+        status: super::renderer::ItemStatus::InProgress,
     };
-    assert_eq!(entry.text(), "hello **world**\nagain");
-}
 
-#[test]
-fn logo_entry_has_system_role_with_center_and_suppress_prefix() {
-    let block = TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::Logo("test".to_string()),
-        status: None,
-    }
-    .to_render_block();
-    assert_eq!(block.role, Role::System);
-    assert!(block.center, "logo must be centered");
-    assert!(block.suppress_prefix, "logo must suppress lane prefix");
-    assert!(block.markdown.is_none());
-    assert!(!block.lines.is_empty());
-}
+    // -- Exec
+    let source = tool.source();
 
-#[test]
-fn logo_entry_text_returns_raw_text() {
-    let entry = TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::Logo("line1\nline2".to_string()),
-        status: None,
+    // -- Check
+    let BlockSource::Tool { name, call, .. } = source else {
+        return Err("Tool must project to BlockSource::Tool".into());
     };
-    assert_eq!(entry.text(), "line1\nline2");
+    assert_eq!(name, ToolName("grep".to_string()));
+    assert_eq!(call.summary, "→ pattern in src");
+    Ok(())
 }
 
 #[test]
-fn logo_entry_role_is_system() {
+fn tool_without_preview_fills_none() {
+    // -- Setup & Fixtures
+    let tool = Tool {
+        name: ToolName("edit".to_string()),
+        call: CallLine {
+            summary: "→ a.rs (diff)".to_string(),
+        },
+        preview: None,
+        result: None,
+        status: super::renderer::ItemStatus::InProgress,
+    };
+
+    // -- Exec & Check
+    assert_eq!(tool.fill(), Fill::None);
+    assert_eq!(tool.lane(), Lane::Marker("⚙"));
     assert_eq!(
-        TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::Logo("x".to_string()),
-            status: None,
+        tool.source(),
+        BlockSource::Tool {
+            name: ToolName("edit".to_string()),
+            call: tool.call.clone(),
+            preview: None,
         }
-        .role(),
-        Role::System
     );
 }
 
 #[test]
-fn transcript_entry_carries_status() {
-    let entry = TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::User(ProseMessage {
-            markdown: "hi".to_string(),
+fn tool_with_diff_preview_fills_code() {
+    // -- Setup & Fixtures
+    let tool = Tool {
+        name: ToolName("edit".to_string()),
+        call: CallLine {
+            summary: String::new(),
+        },
+        preview: Some(Display {
+            title: "edit a.rs".to_string(),
+            sections: vec![DisplaySection {
+                label: "a.rs".to_string(),
+                kind: ContentKind::Diff {
+                    language: "diff".to_string(),
+                },
+                content: "diff".to_string(),
+                stats: None,
+            }],
         }),
-        status: Some(ItemStatus::Done),
+        result: None,
+        status: super::renderer::ItemStatus::InProgress,
     };
-    assert_eq!(entry.status, Some(ItemStatus::Done));
+
+    // -- Exec & Check
+    assert_eq!(tool.fill(), Fill::Code);
 }
 
 #[test]
-fn transcript_entry_defaults_to_none_status() {
-    let entry = TranscriptEntry {
-        id: 0,
-        kind: TranscriptEntryKind::User(ProseMessage {
-            markdown: "hi".to_string(),
+fn tool_with_code_preview_fills_code() {
+    // -- Setup & Fixtures
+    let tool = Tool {
+        name: ToolName("nu".to_string()),
+        call: CallLine {
+            summary: String::new(),
+        },
+        preview: Some(Display {
+            title: "nu".to_string(),
+            sections: vec![DisplaySection {
+                label: "nu".to_string(),
+                kind: ContentKind::Code {
+                    language: "nu".to_string(),
+                },
+                content: "ls".to_string(),
+                stats: None,
+            }],
         }),
-        status: None,
+        result: None,
+        status: super::renderer::ItemStatus::InProgress,
     };
-    assert!(entry.status.is_none());
+
+    // -- Exec & Check
+    assert_eq!(tool.fill(), Fill::Code);
 }
 
-// region:    --- Test Support
+#[test]
+fn tool_with_plain_preview_fills_none() {
+    // -- Setup & Fixtures
+    let tool = Tool {
+        name: ToolName("custom".to_string()),
+        call: CallLine {
+            summary: String::new(),
+        },
+        preview: Some(Display {
+            title: "custom".to_string(),
+            sections: vec![DisplaySection {
+                label: "output".to_string(),
+                kind: ContentKind::Plain,
+                content: "some result".to_string(),
+                stats: None,
+            }],
+        }),
+        result: None,
+        status: super::renderer::ItemStatus::InProgress,
+    };
 
-fn is_md_code_hint(hint: &StyleHint) -> bool {
-    matches!(
-        hint,
-        StyleHint::MdCodeKeyword
-            | StyleHint::MdCodeType
-            | StyleHint::MdCodeFunction
-            | StyleHint::MdCodeVariable
-            | StyleHint::MdCodeConstant
-            | StyleHint::MdCodeString
-            | StyleHint::MdCodeNumber
-            | StyleHint::MdCodeOperator
-            | StyleHint::MdCodePunctuation
-            | StyleHint::MdCodeComment
-            | StyleHint::MdCodePlain
-    )
+    // -- Exec & Check
+    assert_eq!(tool.fill(), Fill::None);
 }
 
-// endregion: --- Test Support
+#[test]
+fn display_has_code_or_diff_true_for_diff_and_code_only() {
+    // -- Setup & Fixtures
+    let diff_display = Display {
+        title: "d".to_string(),
+        sections: vec![DisplaySection {
+            label: "s".to_string(),
+            kind: ContentKind::Diff {
+                language: "diff".to_string(),
+            },
+            content: String::new(),
+            stats: None,
+        }],
+    };
+    let plain_display = Display {
+        title: "d".to_string(),
+        sections: vec![DisplaySection {
+            label: "s".to_string(),
+            kind: ContentKind::Plain,
+            content: String::new(),
+            stats: None,
+        }],
+    };
+    let empty_display = Display {
+        title: "d".to_string(),
+        sections: vec![],
+    };
+
+    // -- Exec & Check
+    assert!(diff_display.has_code_or_diff());
+    assert!(!plain_display.has_code_or_diff());
+    assert!(!empty_display.has_code_or_diff());
+}
+
+// ── Notice: both kinds (pre-existing, kept as regression guard) ─────────────
+
+#[test]
+fn notice_compaction_lanes_tilde_marker_regression() {
+    // -- Setup & Fixtures
+    let notice = Notice {
+        kind: NoticeKind::Compaction,
+        text: "compacted".to_string(),
+    };
+
+    // -- Exec & Check
+    assert_eq!(notice.lane(), Lane::Marker("~"));
+    assert_eq!(notice.fill(), Fill::None);
+}

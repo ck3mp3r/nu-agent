@@ -1,6 +1,6 @@
 use super::*;
 use crate::bus::Bus;
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::tool_args::CallLine;
 use crate::tools::fs::core::version_token;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -141,7 +141,7 @@ fn patch_call_line_render_shows_path_and_operation_count() -> Result<()> {
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ /tmp/f.txt (2 ops)".to_string(),
         }
     );
@@ -157,6 +157,6 @@ fn patch_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> 
     let render = PatchTool::call_line_render(args);
 
     // -- Check
-    assert_eq!(render, CallLineRender::generic_json_summary(args));
+    assert_eq!(render, CallLine::from_json_summary(args));
     Ok(())
 }

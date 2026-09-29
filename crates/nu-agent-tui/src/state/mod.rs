@@ -11,6 +11,7 @@ mod picker;
 mod prompt_queue;
 mod scroll;
 pub mod selection;
+pub(crate) mod spacer;
 mod status;
 mod tool;
 mod tool_calls;

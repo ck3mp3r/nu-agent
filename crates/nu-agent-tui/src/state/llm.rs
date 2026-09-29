@@ -3,8 +3,9 @@
 //! diff-regurgitation dedup.
 
 use nu_agent_core::bus::LlmEvent;
-use nu_agent_core::transcript::ir::{ContentLine, Role};
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
+use nu_agent_core::transcript::ir::{Block, ContentLine, MessageRole};
+use nu_agent_core::transcript::items::Message;
+use nu_agent_core::transcript::renderer::Renderable;
 
 use super::transcript_store::TranscriptStore;
 use super::{AppState, ScrollState, StatusState, UiPhase};
@@ -17,7 +18,9 @@ use super::{AppState, ScrollState, StatusState, UiPhase};
 pub struct LlmState;
 
 impl LlmState {
-    /// Reduce an LLM lifecycle event. Returns whether the TUI changed.
+    /// Reduce an LLM lifecycle event. Returns `(changed, evicted)` — whether
+    /// the TUI changed and the evicted count from any block push inside, so
+    /// the top-level caller can shift domain bookkeeping.
     pub fn reduce_llm_event(
         &mut self,
         store: &mut TranscriptStore,
@@ -26,8 +29,9 @@ impl LlmState {
         phase: &mut UiPhase,
         input_locked: &mut bool,
         event: LlmEvent,
-    ) -> bool {
-        match event {
+    ) -> (bool, usize) {
+        let mut evicted = 0usize;
+        let changed = match event {
             LlmEvent::Started => self.handle_start(store, phase, input_locked),
             LlmEvent::Completed {
                 input_tokens,
@@ -37,10 +41,11 @@ impl LlmState {
             } => handle_llm_end(status, input_tokens, output_tokens, total_tokens),
             LlmEvent::AssistantMessage { text } => {
                 log::trace!("reducer: AssistantMessage text_len={}", text.len());
-                self.assistant_message(store, scroll, &text)
+                self.assistant_message(store, scroll, &text, &mut evicted)
             }
-            LlmEvent::Stopped { reason } => self.stopped(store, scroll, &reason),
-        }
+            LlmEvent::Stopped { reason } => self.stopped(store, scroll, &reason, &mut evicted),
+        };
+        (changed, evicted)
     }
 
     /// Render a hook-stop reason as a closing notice. The reason is APPENDED
@@ -54,6 +59,7 @@ impl LlmState {
         store: &mut TranscriptStore,
         scroll: &mut ScrollState,
         reason: &str,
+        evicted: &mut usize,
     ) -> bool {
         let trimmed = reason.trim();
         if trimmed.is_empty() {
@@ -63,23 +69,23 @@ impl LlmState {
             // of leaving it orphaned next to the retry's output.
             if let Some(start) = store.assistant_stream_start {
                 store.truncate(start);
-                store.clear_assistant_projection_cache();
             }
             store.assistant_stream_start = None;
             return false;
         }
-        // Close the in-progress streamed block: a spacer separates it from
-        // the notice, and the cursor resets so nothing later truncates it.
-        if !store.is_empty() && !store.last_is_spacer() {
-            store.push_spacer();
-        }
+        // Close the in-progress streamed block: push_block's unified spacer
+        // rule separates it from the notice, and the cursor resets so nothing
+        // later truncates it.
         store.assistant_stream_start = None;
         scroll.scroll_transcript_to_bottom();
-        store.push_transcript_item(TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::Assistant(ProseMessage {
-                markdown: trimmed.to_string(),
-            }),
+        let msg = Message {
+            role: MessageRole::Assistant,
+            markdown: trimmed.to_string(),
+        };
+        *evicted += store.push_block(Block {
+            source: msg.source(),
+            lane: msg.lane(),
+            fill: msg.fill(),
             status: None,
         });
         true
@@ -105,54 +111,42 @@ impl LlmState {
         store: &mut TranscriptStore,
         scroll: &mut ScrollState,
         text: &str,
+        evicted: &mut usize,
     ) -> bool {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return false;
         }
 
-        // If this is the first delta, push closing spacer for previous block (if not
-        // already a Spacer) + starting spacer, and record where the message starts.
+        // If this is the first delta, record where the message starts.
+        // push_block's unified spacer rule separates the streamed block from
+        // whatever precedes it (tool block or previous turn).
         if store.assistant_stream_start.is_none() {
-            // Check if previous block was a tool block (skip spacers to find last content)
-            let prev_is_tool_block = matches!(
-                store.last_content_role(),
-                Some(Role::Tool) | Some(Role::ToolDisplay)
-            );
-
-            if prev_is_tool_block {
-                // Only ONE spacer between tool block and assistant
-                store.push_spacer();
-            } else {
-                // Two spacers (closing + starting) for all other transitions
-                // Only push a closing spacer if there is a previous block to close.
-                if !store.is_empty() && !store.last_is_spacer() {
-                    store.push_spacer(); // closing spacer for previous block
-                }
-                store.push_spacer(); // starting spacer for assistant block
-            }
             store.assistant_stream_start = Some(store.len());
         }
 
         // Remove previous rendering of this message
         if let Some(start) = store.assistant_stream_start {
             store.truncate(start);
-            store.clear_assistant_projection_cache();
         }
 
-        // Project the full accumulated text through markdown
-        let projected_for_dedup = store.project_assistant_markdown_lines(trimmed);
+        // Project the full accumulated text through markdown for the dedup
+        // check against the latest tool-display diff.
+        let projected_for_dedup = crate::markdown::render_markdown_lines(trimmed, None);
         if assistant_diff_regurgitation_is_redundant(store, &projected_for_dedup) {
             return false;
         }
 
         // Always follow tail with ListState
         scroll.scroll_transcript_to_bottom();
-        store.push_transcript_item(TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::Assistant(ProseMessage {
-                markdown: trimmed.to_string(),
-            }),
+        let msg = Message {
+            role: MessageRole::Assistant,
+            markdown: trimmed.to_string(),
+        };
+        *evicted += store.push_block(Block {
+            source: msg.source(),
+            lane: msg.lane(),
+            fill: msg.fill(),
             status: None,
         });
         true
@@ -179,7 +173,7 @@ fn handle_llm_end(
 /// no-op when the phase transition did not happen).
 pub(crate) fn dispatch_llm_event(state: &mut AppState, event: LlmEvent) -> bool {
     if matches!(event, LlmEvent::Started) {
-        let changed = state.llm.reduce_llm_event(
+        let (changed, evicted) = state.llm.reduce_llm_event(
             &mut state.transcript,
             &mut state.status,
             &mut state.scroll,
@@ -188,16 +182,19 @@ pub(crate) fn dispatch_llm_event(state: &mut AppState, event: LlmEvent) -> bool 
             event,
         );
         state.ensure_invariants();
+        state.shift_bookkeeping_after_eviction(evicted);
         return changed;
     }
-    state.llm.reduce_llm_event(
+    let (changed, evicted) = state.llm.reduce_llm_event(
         &mut state.transcript,
         &mut state.status,
         &mut state.scroll,
         &mut state.phase,
         &mut state.input_locked,
         event,
-    )
+    );
+    state.shift_bookkeeping_after_eviction(evicted);
+    changed
 }
 
 // region:    --- Support
@@ -242,6 +239,8 @@ fn assistant_diff_regurgitation_is_redundant(
     })
 }
 
+// endregion: --- Support
+
 fn normalize_diff_line_for_comparison(line: &str) -> String {
     if let Some((_, rhs)) = line.split_once('│') {
         let rhs = rhs.trim_start();
@@ -259,11 +258,12 @@ fn normalize_diff_line_for_comparison(line: &str) -> String {
 
 fn latest_tool_display_diff_lines(store: &TranscriptStore) -> Option<Vec<String>> {
     let mut lines = Vec::new();
-    for entry in store.entries().iter().rev() {
-        if entry.role() == Role::ToolDisplay {
-            lines.push(entry.text());
+    for block in store.blocks().iter().rev() {
+        let text = block.source.plain_text();
+        if text.trim().is_empty() {
             continue;
         }
+        lines.push(text);
 
         if !lines.is_empty() {
             break;

@@ -1,6 +1,8 @@
 use super::*;
 use crate::bus::Bus;
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::tool_args::CallLine;
+use crate::tools::handler::builtin_tool::{BuiltinTool, Previewable};
+use crate::transcript::ir::ContentKind;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -185,6 +187,88 @@ async fn edit_json_shape_preserved() -> Result<()> {
     Ok(())
 }
 
+// === Previewable ===
+
+#[test]
+fn edit_preview_create_operation_returns_diff_display() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("new-file.txt");
+    let args = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "operation": {"type": "create", "content": "hello\n"}
+    });
+
+    // -- Exec
+    let display = EditTool::preview(&args, dir.path());
+
+    // -- Check
+    let display = display.ok_or("preview must produce a display for a valid create")?;
+    assert_eq!(display.title, format!("edit {}", path.to_string_lossy()));
+    assert_eq!(display.sections.len(), 1);
+    let section = &display.sections[0];
+    assert!(
+        matches!(section.kind, ContentKind::Diff { .. }),
+        "section kind must be Diff, got {:?}",
+        section.kind
+    );
+    assert!(
+        section.content.contains("+hello"),
+        "diff must contain the created content, got: {:?}",
+        section.content
+    );
+    let stats = section
+        .stats
+        .clone()
+        .ok_or("diff section must carry stats")?;
+    assert_eq!(stats.files_changed, Some(1));
+    Ok(())
+}
+
+#[test]
+fn edit_preview_search_replace_returns_diff_display() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("existing.txt");
+    std::fs::write(&path, "hello\nworld\n")?;
+    let args = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "mode": "apply",
+        "operation": {
+            "type": "search_replace",
+            "search": "world",
+            "replacement": "there"
+        }
+    });
+
+    // -- Exec
+    let display = EditTool::preview(&args, dir.path());
+
+    // -- Check
+    let display = display.ok_or("preview must produce a display")?;
+    let section = &display.sections[0];
+    assert!(
+        section.content.contains("-world") && section.content.contains("+there"),
+        "diff must contain the replacement, got: {:?}",
+        section.content
+    );
+    Ok(())
+}
+
+#[test]
+fn edit_preview_invalid_args_returns_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::tempdir()?;
+    let args = serde_json::json!({"path": "nowhere.txt"});
+
+    // -- Exec & Check
+    assert!(
+        EditTool::preview(&args, dir.path()).is_none(),
+        "invalid edit arguments must produce no preview"
+    );
+    Ok(())
+}
+
 // === call_line_render ===
 
 #[test]
@@ -198,7 +282,7 @@ fn edit_call_line_render_shows_path_and_diff_marker() -> Result<()> {
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ /tmp/f.txt (diff)".to_string(),
         }
     );
@@ -214,6 +298,6 @@ fn edit_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
     let render = EditTool::call_line_render(args);
 
     // -- Check
-    assert_eq!(render, CallLineRender::generic_json_summary(args));
+    assert_eq!(render, CallLine::from_json_summary(args));
     Ok(())
 }

@@ -454,7 +454,14 @@ fn test_tool_result_edit_creates_display_snapshot() {
     let display = display.unwrap();
     assert_eq!(display.title, "edit /tmp/test.rs");
     assert_eq!(display.sections.len(), 1);
-    assert_eq!(display.sections[0].language, "diff");
+    assert!(
+        matches!(
+            display.sections[0].kind,
+            crate::transcript::ir::ContentKind::Diff { .. }
+        ),
+        "section kind must be Diff, got {:?}",
+        display.sections[0].kind
+    );
 }
 
 #[test]

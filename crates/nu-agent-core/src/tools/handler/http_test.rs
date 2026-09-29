@@ -1,6 +1,6 @@
 use super::http::{HttpArgs, HttpTool, process_body};
 use crate::bus::Bus;
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::tool_args::CallLine;
 use crate::tools::handler::builtin_tool::BuiltinTool;
 
 const DEFAULT_MAX_LENGTH: usize = 12000;
@@ -175,7 +175,7 @@ fn http_call_line_render_shows_explicit_method_and_url() {
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ POST https://example.com".to_string(),
         }
     );
@@ -192,7 +192,7 @@ fn http_call_line_render_defaults_method_to_get() {
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ GET https://example.com".to_string(),
         }
     );
@@ -207,5 +207,5 @@ fn http_call_line_render_falls_back_to_generic_on_invalid_json() {
     let render = HttpTool::call_line_render(args);
 
     // -- Check
-    assert_eq!(render, CallLineRender::generic_json_summary(args));
+    assert_eq!(render, CallLine::from_json_summary(args));
 }

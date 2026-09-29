@@ -3,9 +3,14 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 
-use super::{ToolHandlerError, builtin_tool::BuiltinTool};
+use super::{
+    ToolHandlerError,
+    builtin_tool::{BuiltinTool, Previewable},
+};
 use crate::bus::Bus;
-use crate::protocol::tool_args::{CallLineRender, nu_command_from_args};
+use crate::protocol::event::{ToolDisplay, ToolDisplaySection};
+use crate::protocol::tool_args::{CallLine, nu_command_from_args};
+use crate::transcript::ir::ContentKind;
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 300;
 
@@ -21,13 +26,14 @@ pub struct NuTool;
 impl BuiltinTool for NuTool {
     const NAME: &'static str = "nu";
 
-    fn call_line_render(arguments: &str) -> CallLineRender {
-        let Some(code) = nu_command_from_args(arguments) else {
-            return CallLineRender::generic_json_summary(arguments);
-        };
-        CallLineRender::CodeBlock {
-            language: "nu".to_string(),
-            code,
+    fn call_line_render(arguments: &str) -> CallLine {
+        if nu_command_from_args(arguments).is_none() {
+            return CallLine::from_json_summary(arguments);
+        }
+        // The command renders in the preview block, so the call line carries
+        // no summary and row 0 shows the tool name alone.
+        CallLine {
+            summary: String::new(),
         }
     }
 
@@ -117,6 +123,30 @@ impl BuiltinTool for NuTool {
             "stderr": stderr,
             "exit_code": exit_code,
         }))
+    }
+}
+
+impl Previewable for NuTool {
+    /// Pre-execution code preview for the permission gate: the nu command
+    /// the call is about to run, tagged as `ContentKind::Code` with the
+    /// `nu` language. Returns `None` when the command is missing or empty.
+    fn preview(args: &JsonValue, _cwd: &Path) -> Option<ToolDisplay> {
+        let command = args.get("command")?.as_str()?;
+        if command.is_empty() {
+            return None;
+        }
+        let command = command.replace("\r\n", "\n").replace('\r', "\n");
+        Some(ToolDisplay {
+            title: "nu".to_string(),
+            sections: vec![ToolDisplaySection {
+                label: "nu".to_string(),
+                kind: ContentKind::Code {
+                    language: "nu".to_string(),
+                },
+                content: command,
+                stats: None,
+            }],
+        })
     }
 }
 

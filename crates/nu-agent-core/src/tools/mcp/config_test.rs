@@ -9,14 +9,14 @@ transport = "sse"
 url = "http://0.0.0.0:3737/mcp"
 enabled = true
 
-[nu]
+[nu-server]
 transport = "stdio"
 command = "nu-mcp"
 cwd = "/tmp"
 args = ["--add-path", "/tmp"]
 enabled = false
 
-[nu.env]
+[nu-server.env]
 GIT_PAGER = ""
 "#,
     )
@@ -33,16 +33,19 @@ GIT_PAGER = ""
     assert_eq!(c5t.url.as_deref(), Some("http://0.0.0.0:3737/mcp"));
     assert!(c5t.enabled);
 
-    let nu = parsed
+    let nu_server = parsed
         .mcp
         .iter()
-        .find(|s| s.name == "nu")
-        .expect("nu server exists");
-    assert_eq!(nu.command.as_deref(), Some("nu-mcp"));
-    assert_eq!(nu.cwd.as_deref(), Some("/tmp"));
-    assert_eq!(nu.args, vec!["--add-path".to_string(), "/tmp".to_string()]);
-    assert_eq!(nu.env.get("GIT_PAGER").map(String::as_str), Some(""));
-    assert!(!nu.enabled);
+        .find(|s| s.name == "nu-server")
+        .expect("nu-server fixture exists");
+    assert_eq!(nu_server.command.as_deref(), Some("nu-mcp"));
+    assert_eq!(nu_server.cwd.as_deref(), Some("/tmp"));
+    assert_eq!(
+        nu_server.args,
+        vec!["--add-path".to_string(), "/tmp".to_string()]
+    );
+    assert_eq!(nu_server.env.get("GIT_PAGER").map(String::as_str), Some(""));
+    assert!(!nu_server.enabled);
 }
 
 #[test]

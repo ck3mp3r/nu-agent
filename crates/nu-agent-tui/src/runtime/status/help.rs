@@ -1,9 +1,8 @@
-use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use nu_agent_core::transcript::ir::{ContentLine, StyleHint};
+use nu_agent_core::transcript::ir::ContentLine;
 
-use crate::rendering::theme::TuiTheme;
+use crate::rendering::theme::{TuiTheme, hint_to_style};
 use crate::state::{AppState, PickerPayload, PickerRenderKind};
 
 use super::content::build_status_lines;
@@ -22,39 +21,16 @@ fn content_line_to_ratatui_line(line: ContentLine, theme: &TuiTheme) -> Line<'st
     Line::from(
         line.spans
             .into_iter()
-            .map(|span| ratatui::text::Span::styled(span.text, hint_to_style(&span.hint, theme)))
+            .map(|span| {
+                ratatui::text::Span::styled(
+                    span.text,
+                    // The help panel is role-free prose: subtle_meta is the
+                    // text style for Normal/Emphasis hints here.
+                    hint_to_style(&span.hint, theme.subtle_meta, theme),
+                )
+            })
             .collect::<Vec<_>>(),
     )
-}
-
-fn hint_to_style(hint: &StyleHint, theme: &TuiTheme) -> Style {
-    match hint {
-        StyleHint::Normal | StyleHint::Emphasis => theme.subtle_meta,
-        StyleHint::Meta | StyleHint::Muted => theme.tool_meta,
-        StyleHint::Success => theme.status_done,
-        StyleHint::Error => theme.status_failed,
-        StyleHint::DiffAdd => theme.status_done,
-        StyleHint::DiffRemove => theme.status_failed,
-        StyleHint::DiffHunk => theme.role_system.add_modifier(Modifier::BOLD),
-        StyleHint::Cancelled => theme.role_system.add_modifier(theme.cancelled_modifier),
-        StyleHint::MdBold => Style::default().add_modifier(Modifier::BOLD),
-        StyleHint::MdItalic => Style::default().add_modifier(Modifier::ITALIC),
-        StyleHint::MdBoldItalic => Style::default()
-            .add_modifier(Modifier::BOLD)
-            .add_modifier(Modifier::ITALIC),
-        StyleHint::MdInlineCode => theme.inline_code,
-        StyleHint::MdCodeKeyword => theme.syntax_keyword,
-        StyleHint::MdCodeType => theme.syntax_type,
-        StyleHint::MdCodeFunction => theme.syntax_function,
-        StyleHint::MdCodeVariable => theme.syntax_variable,
-        StyleHint::MdCodeConstant => theme.syntax_constant,
-        StyleHint::MdCodeString => theme.syntax_string,
-        StyleHint::MdCodeNumber => theme.syntax_number,
-        StyleHint::MdCodeOperator => theme.syntax_operator,
-        StyleHint::MdCodePunctuation => theme.syntax_punctuation,
-        StyleHint::MdCodeComment => theme.syntax_comment,
-        StyleHint::MdCodePlain => Style::default(),
-    }
 }
 
 pub(super) fn help_panel_markdown_source() -> &'static str {

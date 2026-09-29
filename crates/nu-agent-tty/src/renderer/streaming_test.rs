@@ -309,7 +309,9 @@ fn tool_display_renders_diff_with_stats() {
         title: "edit file".to_string(),
         sections: vec![nu_agent_core::protocol::event::ToolDisplaySection {
             label: "diff".to_string(),
-            language: "diff".to_string(),
+            kind: nu_agent_core::transcript::ir::ContentKind::Diff {
+                language: "diff".to_string(),
+            },
             content: "+added\n-removed\nunchanged".to_string(),
             stats: Some(nu_agent_core::protocol::event::ToolDisplayStats {
                 files_changed: Some(2),

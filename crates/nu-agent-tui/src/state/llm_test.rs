@@ -7,8 +7,8 @@ use crate::interaction::reducer::{ReducerInput, UserAction, reduce_with_cancel_c
 use crate::state::{AppState, InputState, UiPhase};
 use nu_agent_core::bus::LlmEvent;
 use nu_agent_core::protocol::event::{ToolDisplay, ToolDisplaySection};
-use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntryKind};
+use nu_agent_core::protocol::tool_args::CallLine;
+use nu_agent_core::transcript::ir::BlockSource;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -19,21 +19,33 @@ fn busy_state_with_clean_transcript() -> AppState {
     };
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     let _ = state.activate_next_prompt();
-    state.transcript.entries.clear();
+    state.transcript.clear();
     // Simulate handle_llm_start which sets the lock
     state.input_locked = true;
     state
 }
 
+fn is_assistant_block(block: &nu_agent_core::transcript::ir::Block) -> bool {
+    matches!(
+        block.source,
+        BlockSource::Markdown {
+            role: nu_agent_core::transcript::ir::MessageRole::Assistant,
+            ..
+        }
+    )
+}
+
 fn reduce_llm(state: &mut AppState, event: LlmEvent) -> bool {
-    state.llm.reduce_llm_event(
+    let (changed, evicted) = state.llm.reduce_llm_event(
         &mut state.transcript,
         &mut state.status,
         &mut state.scroll,
         &mut state.phase,
         &mut state.input_locked,
         event,
-    )
+    );
+    state.shift_bookkeeping_after_eviction(evicted);
+    changed
 }
 
 fn assistant_message(text: &str) -> LlmEvent {
@@ -134,21 +146,25 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() {
     reduce_llm(&mut state, assistant_message("pong"));
 
     assert!(!state.input_locked);
-    // Transcript: [Spacer, User, Spacer, Spacer, Assistant]
+    // Transcript: [User, Assistant] — the store holds content blocks only;
+    // separators are a render-time concern (SpacerStateMachine).
     assert_eq!(
         state
             .transcript
-            .entries
+            .blocks()
             .iter()
-            .map(|entry| entry.text())
+            .map(|b| b.source.plain_text())
             .collect::<Vec<_>>(),
-        vec!["", "ping", "", "", "pong"]
+        vec!["ping", "pong"]
     );
-    assert_eq!(state.transcript.entries[0].role(), Role::Separator); // starting spacer before prompt
-    assert_eq!(state.transcript.entries[1].role(), Role::User);
-    assert_eq!(state.transcript.entries[2].role(), Role::Separator); // closing spacer after prompt
-    assert_eq!(state.transcript.entries[3].role(), Role::Separator); // starting spacer before assistant
-    assert_eq!(state.transcript.entries[4].role(), Role::Assistant);
+    assert!(matches!(
+        state.transcript.blocks()[0].source,
+        BlockSource::Markdown {
+            role: nu_agent_core::transcript::ir::MessageRole::User,
+            ..
+        }
+    ));
+    assert!(is_assistant_block(&state.transcript.blocks()[1]));
 
     // Turn completion unlocks via the turn domain.
     use nu_agent_core::bus::TurnEvent;
@@ -170,7 +186,7 @@ fn assistant_message_whitespace_only_is_noop() {
 
     reduce_llm(&mut state, assistant_message(" \n\t\n"));
 
-    assert!(state.transcript.entries.is_empty());
+    assert!(state.transcript.blocks().is_empty());
 }
 
 #[test]
@@ -180,16 +196,16 @@ fn assistant_message_trims_and_appends() {
     reduce_llm(&mut state, assistant_message("\nline 1\nline 2\n"));
 
     // After the raw-markdown refactor, a single AssistantMessage
-    // produces one ProseMessage. The raw text is trimmed before
+    // produces one markdown block. The raw text is trimmed before
     // storage, so leading/trailing whitespace is dropped.
     let assistant_entries: Vec<_> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|e| e.role() == Role::Assistant)
-        .map(|e| e.text())
+        .filter(|b| is_assistant_block(b))
+        .map(|b| b.source.plain_text())
         .collect();
-    assert_eq!(assistant_entries.len(), 1, "one ProseMessage per block");
+    assert_eq!(assistant_entries.len(), 1, "one assistant block");
     let text = &assistant_entries[0];
     assert!(text.contains("line 1"), "raw md should contain 'line 1'");
     assert!(text.contains("line 2"), "raw md should contain 'line 2'");
@@ -218,9 +234,9 @@ fn streaming_replaces_not_appends() -> Result<()> {
     // Verify transcript has ONE message block with "hello world", not two separate entries
     let assistant_entries: Vec<_> = state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|entry| entry.role() == Role::Assistant)
+        .filter(|b| is_assistant_block(b))
         .collect();
 
     // Should have exactly one "hello world" message, not "hello" and "hello world"
@@ -229,15 +245,15 @@ fn streaming_replaces_not_appends() -> Result<()> {
         1,
         "Expected exactly one assistant message block (replaced, not appended)"
     );
-    assert_eq!(assistant_entries[0].text(), "hello world");
+    assert_eq!(assistant_entries[0].source.plain_text(), "hello world");
 
     // Verify no "hello" without "world" exists
     assert!(
         !state
             .transcript
-            .entries
+            .blocks()
             .iter()
-            .any(|entry| entry.text() == "hello"),
+            .any(|b| b.source.plain_text() == "hello"),
         "Should not have standalone 'hello' entry - it should be replaced"
     );
     Ok(())
@@ -269,17 +285,10 @@ fn streaming_message_start_reset_on_llm_start() {
 }
 
 #[test]
-fn handle_assistant_message_pushes_starting_spacer() {
+fn handle_assistant_message_pushes_assistant_block_without_leading_spacer() {
     let mut state = AppState::default();
     reduce_llm(&mut state, assistant_message("hello"));
-    assert!(matches!(
-        state.transcript.entries[0].kind,
-        TranscriptEntryKind::Spacer(_)
-    ));
-    assert!(matches!(
-        state.transcript.entries[1].kind,
-        TranscriptEntryKind::Assistant(_)
-    ));
+    assert!(is_assistant_block(&state.transcript.blocks()[0]));
 }
 
 #[test]
@@ -287,16 +296,16 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
     let mut state = AppState::default();
 
     // Direct tool display via the tool domain
+    let mut evicted = 0usize;
     state.tool.reduce_tool_event(
         &mut state.transcript,
         nu_agent_core::bus::ToolEvent::Started {
             name: "edit".to_string(),
             source: "closure".to_string(),
             arguments: r#"{"path":"sample.txt"}"#.to_string(),
-            call_line: nu_agent_core::protocol::tool_args::CallLineRender::generic_json_summary(
-                r#"{"path":"sample.txt"}"#,
-            ),
+            call_line: CallLine::from_json_summary(r#"{"path":"sample.txt"}"#),
         },
+        &mut evicted,
     );
     state.tool.reduce_tool_event(
         &mut state.transcript,
@@ -310,7 +319,9 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
                 title: "edit sample.txt".to_string(),
                 sections: vec![ToolDisplaySection {
                     label: "sample.txt".to_string(),
-                    language: "diff".to_string(),
+                    kind: nu_agent_core::transcript::ir::ContentKind::Diff {
+                        language: "diff".to_string(),
+                    },
                     content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
                         .to_string(),
                     stats: None,
@@ -319,9 +330,10 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
             error_kind: None,
             message: None,
         },
+        &mut evicted,
     );
 
-    let before = state.transcript.entries.len();
+    let before = state.transcript.len();
     reduce_llm(
         &mut state,
         assistant_message(
@@ -330,14 +342,8 @@ fn assistant_dry_run_diff_regurgitation_is_suppressed_when_direct_display_presen
     );
 
     // Assistant message is processed and projected through markdown
-    assert!(state.transcript.entries.len() > before);
-    assert!(
-        state
-            .transcript
-            .entries
-            .iter()
-            .any(|entry| entry.role() == Role::Assistant)
-    );
+    assert!(state.transcript.len() > before);
+    assert!(state.transcript.blocks().iter().any(is_assistant_block));
 }
 
 #[test]
@@ -351,30 +357,24 @@ fn normal_assistant_response_remains_when_no_direct_display_is_present() {
         ),
     );
 
-    assert!(!state.transcript.entries.is_empty());
-    assert!(
-        state
-            .transcript
-            .entries
-            .iter()
-            .any(|entry| entry.role() == Role::Assistant)
-    );
+    assert!(!state.transcript.blocks().is_empty());
+    assert!(state.transcript.blocks().iter().any(is_assistant_block));
 }
 
 // region:    --- Raw markdown projection (moved from task_4a_tests)
 
-/// Return raw markdown strings stored in all Assistant ProseMessage entries.
+/// Return raw markdown strings stored in all assistant markdown blocks.
 fn assistant_markdown_entries(state: &AppState) -> Vec<String> {
     state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter_map(|e| {
-            if let TranscriptEntryKind::Assistant(ProseMessage { markdown }) = &e.kind {
-                Some(markdown.clone())
-            } else {
-                None
-            }
+        .filter_map(|b| match &b.source {
+            BlockSource::Markdown {
+                role: nu_agent_core::transcript::ir::MessageRole::Assistant,
+                markdown,
+            } => Some(markdown.clone()),
+            _ => None,
         })
         .collect()
 }
@@ -408,7 +408,7 @@ fn assistant_streaming_truncates_prior_render() {
     for text in ["hello", "hello world"] {
         reduce_llm(&mut state, assistant_message(text));
     }
-    // After streaming, there should be a single ProseMessage with the final text
+    // After streaming, there should be a single assistant block with the final text
     let markdowns = assistant_markdown_entries(&state);
     let concat: String = markdowns.join("");
     assert!(concat.contains("hello world"));
@@ -438,10 +438,10 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     assert!(
         state
             .transcript
-            .entries
+            .blocks()
             .iter()
-            .any(|entry| entry.role() == Role::Assistant
-                && entry.text().contains("repeated text continues")),
+            .any(|b| is_assistant_block(b)
+                && b.source.plain_text().contains("repeated text continues")),
         "the streamed block must exist before the stop"
     );
 
@@ -459,24 +459,22 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     assert!(
         state
             .transcript
-            .entries
+            .blocks()
             .iter()
-            .any(|entry| entry.role() == Role::Assistant
-                && entry.text().contains("repeated text continues")),
+            .any(|b| is_assistant_block(b)
+                && b.source.plain_text().contains("repeated text continues")),
         "the streamed block must survive the stop notice"
     );
     // The reason is appended as a NEW entry after the streamed block.
     let last = state
         .transcript
-        .entries
+        .blocks()
         .last()
-        .ok_or("should have transcript entries")?;
-    let reason_appended = match &last.kind {
-        TranscriptEntryKind::Assistant(ProseMessage { markdown }) => {
-            markdown.contains("Output repetition stopped")
-        }
-        _ => false,
-    };
+        .ok_or("should have transcript blocks")?;
+    let reason_appended = last
+        .source
+        .plain_text()
+        .contains("Output repetition stopped");
     assert!(
         reason_appended,
         "the stop reason must be appended as a new entry, got {last:?}"
@@ -513,11 +511,7 @@ fn stopped_event_with_empty_reason_resets_stream_start() -> Result<()> {
     // -- Check
     assert!(!changed, "an empty reason renders nothing");
     assert!(
-        !state
-            .transcript
-            .entries
-            .iter()
-            .any(|entry| entry.role() == Role::Assistant),
+        !state.transcript.blocks().iter().any(is_assistant_block),
         "an empty reason must discard the provisional assistant block"
     );
     assert!(
@@ -542,10 +536,9 @@ fn stopped_with_empty_reason_truncates_in_progress_block() -> Result<()> {
     assert!(
         state
             .transcript
-            .entries
+            .blocks()
             .iter()
-            .any(|entry| entry.role() == Role::Assistant
-                && entry.text().contains("provisional text")),
+            .any(|b| is_assistant_block(b) && b.source.plain_text().contains("provisional text")),
         "the provisional block must exist before the discard"
     );
 
@@ -560,16 +553,12 @@ fn stopped_with_empty_reason_truncates_in_progress_block() -> Result<()> {
     // -- Check
     assert!(!changed, "a silent discard renders nothing");
     assert_eq!(
-        state.transcript.entries.len(),
+        state.transcript.len(),
         start,
         "the provisional block must be truncated back to its start index"
     );
     assert!(
-        !state
-            .transcript
-            .entries
-            .iter()
-            .any(|entry| entry.role() == Role::Assistant),
+        !state.transcript.blocks().iter().any(is_assistant_block),
         "the provisional assistant block must be gone"
     );
     assert!(
@@ -585,7 +574,7 @@ fn stopped_with_empty_reason_truncates_in_progress_block() -> Result<()> {
 fn stopped_with_empty_reason_does_not_push_notice() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = busy_state_with_clean_transcript();
-    assert!(state.transcript.entries.is_empty());
+    assert!(state.transcript.blocks().is_empty());
 
     // -- Exec
     let changed = reduce_llm(
@@ -598,7 +587,7 @@ fn stopped_with_empty_reason_does_not_push_notice() -> Result<()> {
     // -- Check
     assert!(!changed, "a silent discard renders nothing");
     assert!(
-        state.transcript.entries.is_empty(),
+        state.transcript.blocks().is_empty(),
         "an empty reason must not push a spacer or notice"
     );
 

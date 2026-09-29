@@ -2,12 +2,16 @@ use crate::{
     interaction::cancel::CancelController,
     state::{
         ActivePicker, AppState, CommandPaletteAction, InputMode, PickerOption, PickerPayload,
-        PickerRenderKind, ScrollAction, SubmitAction, SwitchRequest, TranscriptRole, UiPhase,
+        PickerRenderKind, ScrollAction, SubmitAction, SwitchRequest, UiPhase,
     },
 };
 use nu_agent_core::protocol::contracts::SharedUiAction;
 use nu_agent_core::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
 use nu_agent_core::protocol::slash::{SlashParseResult, extract_session_id, parse_slash_command};
+use nu_agent_core::transcript::ir::Block;
+use nu_agent_core::transcript::ir::NoticeKind;
+use nu_agent_core::transcript::items::Notice;
+use nu_agent_core::transcript::renderer::Renderable;
 
 pub(crate) const ESC_ABORT_CONFIRM_STATUS: &str = "Esc again to cancel";
 
@@ -382,7 +386,6 @@ fn handle_escape_confirm(
         }
         state.cancel_and_restore_pending_to_input();
         state.enter_insert_mode();
-        state.transcript.push_spacer();
         state.status.message.clear();
         return true;
     }
@@ -494,13 +497,17 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
         }
         UiEvent::Tick => true,
         UiEvent::TurnError { message } => {
-            if !state.transcript.last_is_spacer() && !state.transcript.is_empty() {
-                state.transcript.push_spacer();
-            }
-            state.transcript.push_spacer();
-            state
-                .transcript
-                .push_transcript_line(TranscriptRole::System, format!("Error: {message}"));
+            let error = Notice {
+                kind: NoticeKind::System,
+                text: format!("Error: {message}"),
+            };
+            let evicted = state.transcript.push_block(Block {
+                source: error.source(),
+                lane: error.lane(),
+                fill: error.fill(),
+                status: None,
+            });
+            state.shift_bookkeeping_after_eviction(evicted);
             crate::state::dispatch_turn_event(state, TurnEvent::Completed { tool_calls: 0 });
             true
         }
@@ -534,5 +541,6 @@ pub(crate) fn apply_permission_request_display(
     state: &mut AppState,
     context: &PermissionRequestContext,
 ) {
-    crate::state::note_permission_request_display(&mut state.transcript, context);
+    let evicted = crate::state::note_permission_request_display(state, context);
+    state.shift_bookkeeping_after_eviction(evicted);
 }

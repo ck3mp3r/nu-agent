@@ -585,18 +585,20 @@ async fn policy_resolver_allow_decision_has_no_reason_payload() {
 }
 
 // ---------------------------------------------------------------------------
-// Nu preview removed (task 6a581540): nu Ask-path requests carry no
-// pre_authorize_display — the command renders in the tool status row instead.
+// Nu preview (task 69af3012): nu Ask-path requests carry a pre_authorize_display
+// code block built from the tool-call arguments alone.
 // ---------------------------------------------------------------------------
 
-/// A nu Builtin call on the Ask path publishes a context with no
-/// pre_authorize_display.
+/// A nu Builtin call on the Ask path publishes a context whose
+/// pre_authorize_display is a single `ContentKind::Code { language: "nu" }`
+/// section carrying the command.
 #[tokio::test]
-async fn interactive_resolver_nu_call_has_no_pre_authorize_display() -> Result<()> {
+async fn interactive_resolver_nu_call_carries_pre_authorize_display() -> Result<()> {
     // -- Setup & Fixtures
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
     let mut permission_rx = bus.ui_event().subscribe();
     let resolver_clone = resolver.clone();
+    let command = "ls | where size > 1mb";
 
     // -- Exec
     let resolve_fut = tokio::spawn({
@@ -628,9 +630,69 @@ async fn interactive_resolver_nu_call_has_no_pre_authorize_display() -> Result<(
     let UiEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
-    assert!(
-        context.pre_authorize_display.is_none(),
-        "nu Ask-path context must not carry a pre-authorize display"
+    let display = context
+        .pre_authorize_display
+        .as_ref()
+        .ok_or("nu Ask-path context must carry a pre-authorize display")?;
+    assert_eq!(display.title, "nu");
+    let section = display
+        .sections
+        .first()
+        .ok_or("pre-authorize display should have one section")?;
+    assert_eq!(
+        section.kind,
+        crate::transcript::ir::ContentKind::Code {
+            language: "nu".to_string()
+        }
+    );
+    assert_eq!(section.content, command);
+    Ok(())
+}
+
+/// The Ask-path context must carry the exact call key
+/// (`{tool_name}\n{raw_arguments}`) so the TUI can match the pending call
+/// byte-for-byte. `tool` is a decorated display name and cannot be used for
+/// that match.
+#[tokio::test]
+async fn interactive_resolver_ask_path_context_carries_exact_tool_key() -> Result<()> {
+    // -- Setup & Fixtures
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.ui_event().subscribe();
+    let resolver_clone = resolver.clone();
+    let arguments = r#"{"command": "ls | where size > 1mb"}"#;
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        let arguments = arguments.to_string();
+        async move { resolver.resolve("nu", &arguments, None, &bus).await }
+    });
+
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::Deny);
+    let _decision = resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    let UiEvent::PermissionRequested { context, .. } = &event else {
+        panic!("Expected PermissionRequested event")
+    };
+    assert_eq!(
+        context.tool_key,
+        format!("nu\n{arguments}"),
+        "tool_key must be the exact `{{tool_name}}\\n{{raw_arguments}}` key"
+    );
+    assert_ne!(
+        context.tool, context.tool_key,
+        "tool is the decorated display name, not the call key"
     );
     Ok(())
 }
@@ -769,7 +831,14 @@ async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display(
         .sections
         .first()
         .ok_or("pre-authorize display should have one section")?;
-    assert_eq!(section.language, "diff");
+    assert!(
+        matches!(
+            section.kind,
+            crate::transcript::ir::ContentKind::Diff { .. }
+        ),
+        "section kind must be Diff, got {:?}",
+        section.kind
+    );
     assert!(
         section.content.contains("+hello"),
         "diff must contain the created content, got: {:?}",
@@ -833,7 +902,14 @@ async fn interactive_resolver_edit_apply_search_replace_without_expected_version
         .sections
         .first()
         .ok_or("pre-authorize display should have one section")?;
-    assert_eq!(section.language, "diff");
+    assert!(
+        matches!(
+            section.kind,
+            crate::transcript::ir::ContentKind::Diff { .. }
+        ),
+        "section kind must be Diff, got {:?}",
+        section.kind
+    );
     assert!(
         section.content.contains("-world") && section.content.contains("+there"),
         "diff must contain the replacement, got: {:?}",
@@ -917,14 +993,15 @@ async fn interactive_resolver_take_previewed_is_true_once_after_edit_preview() -
     Ok(())
 }
 
-/// A call that never shows a preview (nu, or edit under an explicit-allow
-/// policy with no Ask) leaves `take_previewed` false — nothing to consume.
+/// A nu Ask-path call that carried a preview reports `take_previewed` true
+/// exactly once for that `(tool_name, arguments)` pair, then false.
 #[tokio::test]
-async fn interactive_resolver_take_previewed_is_false_without_a_preview() {
+async fn interactive_resolver_take_previewed_is_true_once_after_nu_preview() -> Result<()> {
     // -- Setup & Fixtures
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
     let mut permission_rx = bus.ui_event().subscribe();
     let resolver_clone = resolver.clone();
+    let args = r#"{"command": "ls"}"#;
 
     // -- Exec
     let resolve_fut = tokio::spawn({
@@ -935,19 +1012,64 @@ async fn interactive_resolver_take_previewed_is_false_without_a_preview() {
                 .await
         }
     });
-    let event = permission_rx.recv().await.expect("Requested event");
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
         UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
-    resolve_fut.await.expect("resolve task panicked");
+    resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
 
     // -- Check
     assert!(
-        !resolver_clone.take_previewed("nu", r#"{"command": "ls"}"#),
-        "nu never shows a preview; take_previewed must report false"
+        resolver_clone.take_previewed("nu", args),
+        "a preview was shown for this exact call; take_previewed must report true"
     );
+    assert!(
+        !resolver_clone.take_previewed("nu", args),
+        "take_previewed must be single-use: false on the second call"
+    );
+    Ok(())
+}
+
+/// A nu call whose arguments carry no command produces no preview, so
+/// `take_previewed` stays false — nothing to consume.
+#[tokio::test]
+async fn interactive_resolver_take_previewed_is_false_without_a_nu_preview() -> Result<()> {
+    // -- Setup & Fixtures
+    let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
+    let mut permission_rx = bus.ui_event().subscribe();
+    let resolver_clone = resolver.clone();
+
+    // -- Exec
+    let resolve_fut = tokio::spawn({
+        let bus = bus.clone();
+        async move { resolver.resolve("nu", "{}", None, &bus).await }
+    });
+    let event = permission_rx
+        .recv()
+        .await
+        .map_err(|_| "Expected PermissionRequested event")?;
+    let request_id = match &event {
+        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        other => panic!("Expected PermissionRequested, got {other:?}"),
+    };
+    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    resolve_fut
+        .await
+        .map_err(|e| format!("resolve task panicked: {e:?}"))?;
+
+    // -- Check
+    assert!(
+        !resolver_clone.take_previewed("nu", "{}"),
+        "a nu call without a command shows no preview; take_previewed must report false"
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1023,7 +1145,14 @@ async fn interactive_resolver_uses_passed_cwd_not_process_cwd() -> Result<()> {
         .sections
         .first()
         .ok_or("pre-authorize display should have one section")?;
-    assert_eq!(section.language, "diff");
+    assert!(
+        matches!(
+            section.kind,
+            crate::transcript::ir::ContentKind::Diff { .. }
+        ),
+        "section kind must be Diff, got {:?}",
+        section.kind
+    );
     assert!(
         section.content.contains("-world") && section.content.contains("+there"),
         "diff must contain the replacement, got: {:?}",

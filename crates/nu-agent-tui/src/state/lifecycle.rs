@@ -2,6 +2,10 @@ use nu_agent_core::protocol::slash::filter_inline_slash_suggestions;
 
 use super::*;
 
+use nu_agent_core::transcript::ir::{Block, MessageRole};
+use nu_agent_core::transcript::items::Message;
+use nu_agent_core::transcript::renderer::Renderable;
+
 impl AppState {
     pub fn new_with_sender(
         event_tx: tokio::sync::mpsc::Sender<nu_agent_core::orchestrator::OrchestratorEvent>,
@@ -32,34 +36,27 @@ impl AppState {
     }
 
     pub fn enqueue_external_prompt(&mut self, text: String) {
-        self.push_user_block_start_spacers();
-        self.transcript
-            .push_transcript_line(TranscriptRole::User, text.clone());
-        let entry_id = self.transcript.last_entry_id();
-        self.transcript.push_spacer(); // closing spacer for user block
+        let msg = Message {
+            role: MessageRole::User,
+            markdown: text.clone(),
+        };
+        let evicted = self.transcript.push_block(Block {
+            source: msg.source(),
+            lane: msg.lane(),
+            fill: msg.fill(),
+            status: None,
+        });
+        self.shift_bookkeeping_after_eviction(evicted);
         let id = self.next_prompt_id;
         self.next_prompt_id = self.next_prompt_id.saturating_add(1);
         self.prompt_items.push(QueuedPrompt {
             id,
             prompt_text: text,
             status: PromptStatus::InProgress,
-            entry_id,
         });
         self.active_prompt_id = Some(id);
         self.phase = UiPhase::Busy;
         self.active_cycle = true;
-    }
-
-    /// Push the closing spacer for the previous block (if not already a Spacer)
-    /// followed by the starting spacer for a new user block. Two adjacent blocks
-    /// get two spacers between them (closing + starting).
-    fn push_user_block_start_spacers(&mut self) {
-        let prev_is_spacer = self.transcript.last_is_spacer();
-        // Only push a closing spacer if there is a previous block to close.
-        if !self.transcript.is_empty() && !prev_is_spacer {
-            self.transcript.push_spacer(); // closing spacer for previous block
-        }
-        self.transcript.push_spacer(); // starting spacer for user block
     }
 
     pub fn enqueue_prompt(&mut self, submitted_text: String) -> u64 {
@@ -101,14 +98,17 @@ impl AppState {
             .find(|p| p.id == active_id)
             .map(|p| p.prompt_text.clone())
             .unwrap_or_default();
-        self.push_user_block_start_spacers();
-        self.transcript
-            .push_transcript_line(TranscriptRole::User, prompt_text);
-        let entry_id = self.transcript.last_entry_id();
-        self.transcript.push_spacer(); // closing spacer for user block
-        if let Some(prompt) = self.prompt_items.iter_mut().find(|p| p.id == active_id) {
-            prompt.entry_id = entry_id;
-        }
+        let msg = Message {
+            role: MessageRole::User,
+            markdown: prompt_text.clone(),
+        };
+        let evicted = self.transcript.push_block(Block {
+            source: msg.source(),
+            lane: msg.lane(),
+            fill: msg.fill(),
+            status: None,
+        });
+        self.shift_bookkeeping_after_eviction(evicted);
 
         self.phase = UiPhase::Busy;
         self.active_cycle = true;
@@ -137,16 +137,17 @@ impl AppState {
         }
 
         let combined = texts.join("\n\n");
-        self.push_user_block_start_spacers();
-        self.transcript
-            .push_transcript_line(TranscriptRole::User, combined.clone());
-        let entry_id = self.transcript.last_entry_id();
-        self.transcript.push_spacer(); // closing spacer for user block
-        if let Some(active_id) = self.active_prompt_id
-            && let Some(prompt) = self.prompt_items.iter_mut().find(|p| p.id == active_id)
-        {
-            prompt.entry_id = entry_id;
-        }
+        let msg = Message {
+            role: MessageRole::User,
+            markdown: combined.clone(),
+        };
+        let evicted = self.transcript.push_block(Block {
+            source: msg.source(),
+            lane: msg.lane(),
+            fill: msg.fill(),
+            status: None,
+        });
+        self.shift_bookkeeping_after_eviction(evicted);
 
         self.phase = UiPhase::Busy;
         self.active_cycle = true;

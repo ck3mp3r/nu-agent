@@ -1,44 +1,89 @@
-use super::ir::{ContentLine, RenderBlock, Role, Span, StyleHint};
-use super::renderer::ItemStatus;
-use crate::protocol::tool_args::CallLineRender;
+use super::ir::{BlockSource, Fill, Lane, MessageRole, NoticeKind, StyleHint, ToolName};
+use super::renderer::Renderable;
+use crate::protocol::tool_args::CallLine;
+use crate::tools::handler::builtin_kinds::BuiltinKind;
 
-pub trait Renderable {
-    fn to_render_block(&self) -> RenderBlock;
+// Re-export the tool block type for the TUI's constructors.
+pub use super::ir::Tool;
+
+impl ToolName {
+    /// Whether this name identifies the built-in `edit` tool. Tool-kind
+    /// knowledge lives in the tool layer (`items.rs`), not in the transcript
+    /// IR (`ir.rs`) — so the IR never imports `BuiltinKind`. Typed identity,
+    /// never a title-text prefix probe.
+    pub fn is_edit(&self) -> bool {
+        matches!(self.0.parse::<BuiltinKind>(), Ok(BuiltinKind::Edit))
+    }
+
+    /// Whether this name identifies the built-in `nu` tool. Same typed
+    /// identity rule as [`ToolName::is_edit`]: the name type owns its own
+    /// classification, so the transcript IR never imports `BuiltinKind`.
+    pub fn is_nu(&self) -> bool {
+        matches!(self.0.parse::<BuiltinKind>(), Ok(BuiltinKind::Nu))
+    }
 }
 
-/// Markdown-projected prose authored by the user or assistant.
-/// The role (and therefore lane prefix/background) is determined by which
-/// `TranscriptEntry` variant wraps this value, not by the message itself.
-///
-/// Stores raw markdown source. Projection to `ContentLine` happens at render
-/// time so the available canvas width can be taken into account.
+/// Markdown-projected prose authored by the user or assistant. The role is
+/// carried on the type, so the same struct drives both the user lane/fill and
+/// the assistant lane/fill. Stores raw markdown source; projection to lines
+/// happens at render time so the canvas width can be taken into account.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProseMessage {
+pub struct Message {
+    pub role: MessageRole,
     pub markdown: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolInvocation {
-    pub name: String,
-    pub source: String,
-    pub call_line: CallLineRender,
+impl Renderable for Message {
+    fn source(&self) -> BlockSource {
+        BlockSource::Markdown {
+            role: self.role,
+            markdown: self.markdown.clone(),
+        }
+    }
+
+    fn lane(&self) -> Lane {
+        match self.role {
+            MessageRole::User => Lane::Marker("▏"),
+            MessageRole::Assistant => Lane::Blank,
+        }
+    }
+
+    fn fill(&self) -> Fill {
+        match self.role {
+            MessageRole::User => Fill::Full,
+            MessageRole::Assistant => Fill::None,
+        }
+    }
 }
 
+/// A compaction or system notice block.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolResult {
-    pub name: String,
-    pub success: bool,
-    pub lines: Vec<ContentLine>,
+pub struct Notice {
+    pub kind: NoticeKind,
+    pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompactionNotice {
-    pub source: String,
-    pub summarized: usize,
-    pub kept: usize,
-    pub summary: String,
+impl Renderable for Notice {
+    fn source(&self) -> BlockSource {
+        BlockSource::Notice {
+            kind: self.kind,
+            text: self.text.clone(),
+        }
+    }
+
+    fn lane(&self) -> Lane {
+        match self.kind {
+            NoticeKind::Compaction => Lane::Marker("~"),
+            NoticeKind::System => Lane::Marker("·"),
+        }
+    }
+
+    fn fill(&self) -> Fill {
+        Fill::None
+    }
 }
 
+/// A plain system text line rendered on the system lane.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemMessage {
     pub text: String,
@@ -47,198 +92,75 @@ pub struct SystemMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spacer;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TranscriptEntryKind {
-    User(ProseMessage),
-    Assistant(ProseMessage),
-    Tool(ToolInvocation),
-    ToolResult(ToolResult),
-    Compaction(CompactionNotice),
-    System(SystemMessage),
-    Spacer(Spacer),
-    Logo(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TranscriptEntry {
-    pub id: u64,
-    pub kind: TranscriptEntryKind,
-    pub status: Option<ItemStatus>,
-}
-
-impl Renderable for ToolInvocation {
-    fn to_render_block(&self) -> RenderBlock {
-        let lines = match &self.call_line {
-            CallLineRender::Inline { summary } => {
-                vec![ContentLine::from_spans(vec![
-                    Span::emphasis(self.name.clone()),
-                    Span::meta(self.source.clone()),
-                    Span::muted(format!(" {summary}")),
-                ])]
-            }
-            CallLineRender::CodeBlock { language, code } => {
-                let mut lines = vec![ContentLine::from_spans(vec![
-                    Span::emphasis(self.name.clone()),
-                    Span::meta(self.source.clone()),
-                ])];
-                if !code.is_empty() {
-                    lines.extend(crate::transcript::markdown::project_code_block_lines(
-                        language, code,
-                    ));
-                }
-                lines
-            }
-        };
-        RenderBlock {
-            role: Role::Tool,
-            lines,
-            markdown: None,
-            center: false,
-            suppress_prefix: false,
-        }
-    }
-}
-
-impl Renderable for ToolResult {
-    fn to_render_block(&self) -> RenderBlock {
-        let lines = if self.lines.is_empty() {
-            vec![ContentLine::single(
-                self.name.clone(),
-                if self.success {
-                    StyleHint::Success
-                } else {
-                    StyleHint::Error
-                },
-            )]
-        } else {
-            self.lines.clone()
-        };
-        RenderBlock {
-            role: Role::ToolDisplay,
-            lines,
-            markdown: None,
-            center: false,
-            suppress_prefix: false,
-        }
-    }
-}
-
-impl Renderable for CompactionNotice {
-    fn to_render_block(&self) -> RenderBlock {
-        RenderBlock {
-            role: Role::Compaction,
-            lines: vec![ContentLine::from_spans(vec![
-                Span::meta(self.source.clone()),
-                Span::normal(self.summarized.to_string()),
-                Span::normal(self.kept.to_string()),
-                Span::normal(self.summary.clone()),
-            ])],
-            markdown: None,
-            center: false,
-            suppress_prefix: false,
-        }
-    }
-}
-
-impl Renderable for SystemMessage {
-    fn to_render_block(&self) -> RenderBlock {
-        RenderBlock {
-            role: Role::System,
-            lines: vec![ContentLine::single(self.text.clone(), StyleHint::Normal)],
-            markdown: None,
-            center: false,
-            suppress_prefix: false,
-        }
-    }
-}
 impl Renderable for Spacer {
-    fn to_render_block(&self) -> RenderBlock {
-        RenderBlock {
-            role: Role::Separator,
-            lines: vec![ContentLine::single(String::new(), StyleHint::Normal)],
-            markdown: None,
-            center: false,
-            suppress_prefix: false,
+    fn source(&self) -> BlockSource {
+        BlockSource::Spacer
+    }
+
+    fn lane(&self) -> Lane {
+        Lane::Blank
+    }
+
+    fn fill(&self) -> Fill {
+        Fill::None
+    }
+}
+
+/// Centered banner text (e.g. startup ASCII art), one row per line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Banner {
+    pub text: String,
+}
+
+impl Renderable for Banner {
+    fn source(&self) -> BlockSource {
+        BlockSource::Banner {
+            text: self.text.clone(),
+        }
+    }
+
+    fn lane(&self) -> Lane {
+        // System styling, blank prefix. The lane variant carries the styling
+        // so the renderer needs no source inspection (task 46ca79fe).
+        Lane::SystemBlank
+    }
+
+    fn fill(&self) -> Fill {
+        Fill::None
+    }
+}
+
+/// Fallback call line for tools without a tailored summary: the
+/// arrow-prefixed, truncated JSON arguments.
+impl CallLine {
+    pub fn from_json_summary(arguments: &str) -> Self {
+        Self {
+            summary: format!(
+                "→ {}",
+                crate::protocol::tool_args::summarize_tool_arguments(arguments)
+            ),
         }
     }
 }
 
-impl Renderable for TranscriptEntryKind {
-    fn to_render_block(&self) -> RenderBlock {
-        match self {
-            Self::User(m) => RenderBlock {
-                role: Role::User,
-                lines: vec![],
-                markdown: Some(m.markdown.clone()),
-                center: false,
-                suppress_prefix: false,
-            },
-            Self::Assistant(m) => RenderBlock {
-                role: Role::Assistant,
-                lines: vec![],
-                markdown: Some(m.markdown.clone()),
-                center: false,
-                suppress_prefix: false,
-            },
-            Self::Tool(t) => t.to_render_block(),
-            Self::ToolResult(r) => r.to_render_block(),
-            Self::Compaction(c) => c.to_render_block(),
-            Self::System(s) => s.to_render_block(),
-            Self::Spacer(s) => s.to_render_block(),
-            Self::Logo(text) => RenderBlock {
-                role: Role::System,
-                lines: text
-                    .lines()
-                    .map(|line| ContentLine::single(line.to_string(), StyleHint::Normal))
-                    .collect(),
-                markdown: None,
-                center: true,
-                suppress_prefix: true,
-            },
-        }
-    }
-}
-
-impl Renderable for TranscriptEntry {
-    fn to_render_block(&self) -> RenderBlock {
-        self.kind.to_render_block()
-    }
-}
-
-impl TranscriptEntryKind {
-    pub fn role(&self) -> Role {
-        match self {
-            Self::User(_) => Role::User,
-            Self::Assistant(_) => Role::Assistant,
-            Self::Tool(_) => Role::Tool,
-            Self::ToolResult(_) => Role::ToolDisplay,
-            Self::Compaction(_) => Role::Compaction,
-            Self::System(_) => Role::System,
-            Self::Spacer(_) => Role::Separator,
-            Self::Logo(_) => Role::System,
+impl Renderable for Tool {
+    fn source(&self) -> BlockSource {
+        BlockSource::Tool {
+            name: self.name.clone(),
+            call: self.call.clone(),
+            preview: self.preview.clone(),
         }
     }
 
-    pub fn text(&self) -> String {
-        match self {
-            Self::User(m) | Self::Assistant(m) => m.markdown.clone(),
-            Self::Tool(t) => t.name.clone(),
-            Self::ToolResult(r) => r.name.clone(),
-            Self::Compaction(c) => c.summary.clone(),
-            Self::System(s) => s.text.clone(),
-            Self::Spacer(_) => String::new(),
-            Self::Logo(text) => text.clone(),
+    fn lane(&self) -> Lane {
+        Lane::Marker("⚙")
+    }
+
+    fn fill(&self) -> Fill {
+        match &self.preview {
+            Some(display) if display.has_code_or_diff() => Fill::Code,
+            _ => Fill::None,
         }
-    }
-}
-
-impl TranscriptEntry {
-    pub fn role(&self) -> Role {
-        self.kind.role()
-    }
-
-    pub fn text(&self) -> String {
-        self.kind.text()
     }
 }
 

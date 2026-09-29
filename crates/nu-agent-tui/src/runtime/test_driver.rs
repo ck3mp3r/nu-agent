@@ -16,8 +16,7 @@ use std::time::Duration;
 use nu_agent_core::bus::Bus;
 use nu_agent_core::orchestrator::OrchestratorEvent;
 use nu_agent_core::protocol::event::UiEvent;
-use nu_agent_core::protocol::tool_args::CallLineRender;
-use nu_agent_core::transcript::items::TranscriptEntryKind;
+use nu_agent_core::protocol::tool_args::CallLine;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -301,20 +300,20 @@ async fn render_loop_driver_routes_tool_event_through_bus_ui_event_arm() -> Resu
             name: "sentinel_tool".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
-            call_line: CallLineRender::generic_json_summary("{}"),
+            call_line: CallLine::from_json_summary("{}"),
         }))])
         .await?;
 
     // -- Check: the loop's ui_event arm reduced the event (the transcript
-    // records the tool).
+    // records the tool). The Block model carries the call summary, not the
+    // tool name, so assert a Tool block materialized with in-progress status.
     assert!(
-        driver
-            .state()
-            .transcript
-            .entries
-            .iter()
-            .any(|entry| matches!(entry.kind, TranscriptEntryKind::Tool(_))
-                && entry.text().contains("sentinel_tool")),
+        driver.state().transcript.blocks().iter().any(|block| {
+            matches!(
+                block.source,
+                nu_agent_core::transcript::ir::BlockSource::Tool { .. }
+            ) && block.status == Some(nu_agent_core::transcript::renderer::ItemStatus::InProgress)
+        }),
         "tool event must reach the coordinator through the real bus arm"
     );
     Ok(())

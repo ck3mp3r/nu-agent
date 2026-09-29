@@ -35,7 +35,8 @@ impl TurnState {
         status: &mut StatusState,
         input_locked: &mut bool,
     ) -> bool {
-        store.push_spacer();
+        // No explicit spacer: push_block's unified rule separates the next
+        // turn's blocks from this one.
         *input_locked = false;
         // Clear only Neutral status messages. Warning-kind messages survive
         // turn finalize and expire via their own 15 s TTL — a repetition-stop

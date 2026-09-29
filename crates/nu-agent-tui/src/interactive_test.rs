@@ -69,7 +69,8 @@ fn permission_event_requested_opens_permission_prompt() -> Result<()> {
     let event = nu_agent_core::bus::PermissionEvent::Requested {
         request_id: "ask-0000000000000001".to_string(),
         context: Box::new(nu_agent_core::protocol::event::PermissionRequestContext {
-            tool: "nu".to_string(),
+            tool: "nu(command=echo hi)".to_string(),
+            tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
             source: "closure".to_string(),
             mode: Some("apply".to_string()),
             matched_rule_identity: "nested:nu.command:*".to_string(),

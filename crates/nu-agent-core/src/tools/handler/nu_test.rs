@@ -1,8 +1,9 @@
 use crate::bus::{Bus, CancelEvent};
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::tool_args::CallLine;
 use crate::tools::handler::ToolErrorKind;
-use crate::tools::handler::builtin_tool::BuiltinTool;
+use crate::tools::handler::builtin_tool::{BuiltinTool, Previewable};
 use crate::tools::handler::nu::NuTool;
+use crate::transcript::ir::ContentKind;
 use std::path::Path;
 use std::time::Duration;
 
@@ -177,22 +178,73 @@ async fn nu_cancellation_kills_process_quickly() {
     assert!(result.unwrap_err().message.contains("cancelled"));
 }
 
+// === Previewable ===
+
+#[test]
+fn nu_preview_returns_code_display() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = serde_json::json!({"command": "ls | select name"});
+
+    // -- Exec
+    let display = NuTool::preview(&args, Path::new("/tmp"));
+
+    // -- Check
+    let display = display.ok_or("preview must produce a display for a valid command")?;
+    assert_eq!(display.title, "nu");
+    assert_eq!(display.sections.len(), 1);
+    let section = &display.sections[0];
+    assert!(
+        matches!(section.kind, ContentKind::Code { ref language } if language == "nu"),
+        "section kind must be Code(nu), got {:?}",
+        section.kind
+    );
+    assert_eq!(section.content, "ls | select name");
+    assert!(section.stats.is_none(), "code preview carries no stats");
+    Ok(())
+}
+
+#[test]
+fn nu_preview_empty_command_returns_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = serde_json::json!({"command": ""});
+
+    // -- Exec & Check
+    assert!(
+        NuTool::preview(&args, Path::new("/tmp")).is_none(),
+        "empty command must produce no preview"
+    );
+    Ok(())
+}
+
+#[test]
+fn nu_preview_missing_command_returns_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = serde_json::json!({});
+
+    // -- Exec & Check
+    assert!(
+        NuTool::preview(&args, Path::new("/tmp")).is_none(),
+        "missing command must produce no preview"
+    );
+    Ok(())
+}
+
 // === call_line_render ===
 
 #[test]
-fn nu_call_line_render_returns_nu_code_block() -> Result<()> {
+fn nu_call_line_render_returns_command_summary() -> Result<()> {
     // -- Setup & Fixtures
     let args = r#"{"command":"ls"}"#;
 
     // -- Exec
     let render = NuTool::call_line_render(args);
 
-    // -- Check
+    // -- Check: the command renders in the preview block, so the call line
+    // carries no summary and row 0 shows the tool name alone.
     assert_eq!(
         render,
-        CallLineRender::CodeBlock {
-            language: "nu".to_string(),
-            code: "ls".to_string(),
+        CallLine {
+            summary: String::new()
         }
     );
     Ok(())
@@ -207,6 +259,23 @@ fn nu_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
     let render = NuTool::call_line_render(args);
 
     // -- Check
-    assert_eq!(render, CallLineRender::generic_json_summary(args));
+    assert_eq!(render, CallLine::from_json_summary(args));
+    Ok(())
+}
+
+#[test]
+fn nu_call_line_render_falls_back_to_generic_on_missing_or_empty_command() -> Result<()> {
+    // -- Setup & Fixtures
+    let missing = r#"{"timeout_seconds":5}"#;
+    let empty = r#"{"command":""}"#;
+
+    // -- Exec & Check
+    for args in [missing, empty] {
+        assert_eq!(
+            NuTool::call_line_render(args),
+            CallLine::from_json_summary(args),
+            "args without a usable command must keep the generic summary: {args}"
+        );
+    }
     Ok(())
 }

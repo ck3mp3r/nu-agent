@@ -1,6 +1,6 @@
 use super::*;
 use crate::bus::Bus;
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::tool_args::CallLine;
 use tempfile::tempdir;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -137,7 +137,7 @@ fn glob_call_line_render_shows_pattern_when_path_is_dot() -> Result<()> {
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ **/*.rs".to_string(),
         }
     );
@@ -155,7 +155,7 @@ fn glob_call_line_render_combines_path_and_pattern() -> Result<()> {
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ /src/**/*.rs".to_string(),
         }
     );
@@ -171,6 +171,6 @@ fn glob_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
     let render = GlobTool::call_line_render(args);
 
     // -- Check
-    assert_eq!(render, CallLineRender::generic_json_summary(args));
+    assert_eq!(render, CallLine::from_json_summary(args));
     Ok(())
 }

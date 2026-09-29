@@ -1,6 +1,6 @@
 use super::*;
 use crate::bus::Bus;
-use crate::protocol::tool_args::CallLineRender;
+use crate::protocol::tool_args::CallLine;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -99,7 +99,7 @@ fn read_call_line_render_shows_path_only() -> Result<()> {
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ /tmp/f.txt".to_string(),
         }
     );
@@ -117,7 +117,7 @@ fn read_call_line_render_shows_offset_limit_range() -> Result<()> {
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ /tmp/f.txt:50-100".to_string(),
         }
     );
@@ -135,7 +135,7 @@ fn read_call_line_render_shows_path_only_when_offset_without_limit() -> Result<(
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ /tmp/f.txt".to_string(),
         }
     );
@@ -151,7 +151,7 @@ fn read_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
     let render = ReadTool::call_line_render(args);
 
     // -- Check
-    assert_eq!(render, CallLineRender::generic_json_summary(args));
+    assert_eq!(render, CallLine::from_json_summary(args));
     Ok(())
 }
 
@@ -166,7 +166,7 @@ fn read_call_line_render_saturates_offset_plus_limit_overflow() -> Result<()> {
     // -- Check
     assert_eq!(
         render,
-        CallLineRender::Inline {
+        CallLine {
             summary: "→ /tmp/f.txt:18446744073709551615-18446744073709551615".to_string(),
         }
     );

@@ -272,11 +272,12 @@ TUI rendering guardrails:
 
 Nu command rendering:
 
+- Each tool call row starts with the tool name (for example `edit`, `read`, `nu`) followed by the call summary. The name carries the tool lane's emphasis style; the summary carries the muted style. The `nu` call line carries no summary — the command renders only in the preview block below it.
 - When the agent calls the `nu` tool, the transcript shows the command as a syntax-highlighted code block under the tool status row, on a full-width background block (with one blank margin row above and below) that separates it from the transcript. The command appears at `ToolEvent::Started` — before the permission decision and before completion.
-- There is no separate permission-time preview block for `nu`: nothing executes before you approve, and the status row is built from the tool-call arguments alone.
+- At the permission gate, the `nu` command also renders as a code preview block (language `nu`) directly under the tool row, so you see the exact command before you approve. The preview is built from the tool-call arguments alone — nothing executes before you approve.
 - The edit tool's diff display renders in the same full-width background block style (with margin rows).
 - Consecutive tool blocks get one spacer line between them when either renders a background block.
-- Other tools keep their existing previews (edit shows a diff) or none.
+- Other tools keep their existing previews (edit shows a diff, nu shows the command) or none.
 - See `./contribution-guardrails.md` for the pre-authorize zero-write rules behind the edit preview.
 
 Lifecycle events emitted by runtime/UI path (all delivered on the single `ui_event` bus channel):

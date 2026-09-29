@@ -8,6 +8,9 @@ pub mod state;
 pub mod tui_renderer;
 
 #[cfg(test)]
+mod architecture_test;
+
+#[cfg(test)]
 mod tui_renderer_test;
 
 #[cfg(test)]

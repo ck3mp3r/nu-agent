@@ -1,15 +1,16 @@
-use serde_json::Value as JsonValue;
 use std::path::Path;
+
+use serde_json::Value as JsonValue;
 
 use super::{
     ToolErrorKind, ToolHandlerError,
-    builtin_tool::BuiltinTool,
-    result::{attach_display_payload, build_edit_preview_display},
-    types::EditPreviewDisplayPayload,
+    builtin_tool::{BuiltinTool, Previewable},
 };
 use crate::bus::Bus;
-use crate::protocol::tool_args::{CallLineRender, parse_json_string_field};
+use crate::protocol::event::{ToolDisplay, ToolDisplaySection};
+use crate::protocol::tool_args::{CallLine, parse_json_string_field};
 use crate::tools::fs::core::apply_search_replace_edit;
+use crate::transcript::ir::ContentKind;
 
 #[derive(Debug, serde::Deserialize)]
 pub(super) struct EditArgs {
@@ -106,27 +107,102 @@ fn make_edit_diagnostic(class: &str, message: impl Into<String>) -> JsonValue {
     })
 }
 
-pub(super) fn build_edit_preview_display_payload(
+// region:    --- Support
+
+/// Embed a tool display into a tool result JSON under the `display` key, so
+/// the TUI/TTY layers can project it without re-deriving it from the raw
+/// result payload.
+fn embed_display_payload(response: &mut JsonValue, display: &ToolDisplay) {
+    let sections = display
+        .sections
+        .iter()
+        .map(|section| {
+            let mut section_obj = serde_json::Map::new();
+            section_obj.insert(
+                "label".to_string(),
+                JsonValue::String(section.label.clone()),
+            );
+            section_obj.insert(
+                "language".to_string(),
+                JsonValue::String(section.kind.language().to_string()),
+            );
+            section_obj.insert(
+                "content".to_string(),
+                JsonValue::String(section.content.clone()),
+            );
+            if let Some(stats) = &section.stats {
+                let mut stats_obj = serde_json::Map::new();
+                if let Some(files_changed) = stats.files_changed {
+                    stats_obj.insert("files_changed".to_string(), JsonValue::from(files_changed));
+                }
+                if let Some(insertions) = stats.insertions {
+                    stats_obj.insert("insertions".to_string(), JsonValue::from(insertions));
+                }
+                if let Some(deletions) = stats.deletions {
+                    stats_obj.insert("deletions".to_string(), JsonValue::from(deletions));
+                }
+                if let Some(diff_truncated) = stats.diff_truncated {
+                    stats_obj.insert(
+                        "diff_truncated".to_string(),
+                        JsonValue::Bool(diff_truncated),
+                    );
+                }
+                if let Some(omitted_files) = stats.omitted_files {
+                    stats_obj.insert("omitted_files".to_string(), JsonValue::from(omitted_files));
+                }
+                if let Some(omitted_hunks) = stats.omitted_hunks {
+                    stats_obj.insert("omitted_hunks".to_string(), JsonValue::from(omitted_hunks));
+                }
+                section_obj.insert("stats".to_string(), JsonValue::Object(stats_obj));
+            }
+            JsonValue::Object(section_obj)
+        })
+        .collect::<Vec<_>>();
+
+    let mut display_obj = serde_json::Map::new();
+    display_obj.insert(
+        "title".to_string(),
+        JsonValue::String(display.title.clone()),
+    );
+    display_obj.insert("sections".to_string(), JsonValue::Array(sections));
+
+    if let Some(obj) = response.as_object_mut() {
+        obj.insert("display".to_string(), JsonValue::Object(display_obj));
+    }
+}
+
+// endregion: --- Support
+
+/// Build the edit diff preview display from an edit plan. Shared by the
+/// permission-gate preview (`Previewable::preview`) and the tool response
+/// payload.
+pub(super) fn edit_preview_display(
     path: &str,
     plan: &crate::tools::fs::core::EditPlan,
-) -> EditPreviewDisplayPayload {
+) -> ToolDisplay {
     let diff = crate::tools::fs::diff::compute_edit_unified_diff(
         std::path::Path::new("file"),
         &plan.previous_content,
         &plan.new_content,
     );
 
-    EditPreviewDisplayPayload {
-        path: path.to_string(),
-        diff: diff.text,
-        stats: crate::protocol::event::ToolDisplayStats {
-            files_changed: Some(diff.stats.files_changed),
-            insertions: Some(diff.stats.insertions),
-            deletions: Some(diff.stats.deletions),
-            diff_truncated: Some(diff.truncated),
-            omitted_files: Some(diff.omitted_files),
-            omitted_hunks: Some(diff.omitted_hunks),
-        },
+    ToolDisplay {
+        title: format!("edit {path}"),
+        sections: vec![ToolDisplaySection {
+            label: path.to_string(),
+            kind: ContentKind::Diff {
+                language: "diff".to_string(),
+            },
+            content: diff.text,
+            stats: Some(crate::protocol::event::ToolDisplayStats {
+                files_changed: Some(diff.stats.files_changed),
+                insertions: Some(diff.stats.insertions),
+                deletions: Some(diff.stats.deletions),
+                diff_truncated: Some(diff.truncated),
+                omitted_files: Some(diff.omitted_files),
+                omitted_hunks: Some(diff.omitted_hunks),
+            }),
+        }],
     }
 }
 
@@ -352,11 +428,11 @@ pub struct EditTool;
 impl BuiltinTool for EditTool {
     const NAME: &'static str = "edit";
 
-    fn call_line_render(arguments: &str) -> CallLineRender {
+    fn call_line_render(arguments: &str) -> CallLine {
         let Some(path) = parse_json_string_field(arguments, "path") else {
-            return CallLineRender::generic_json_summary(arguments);
+            return CallLine::from_json_summary(arguments);
         };
-        CallLineRender::Inline {
+        CallLine {
             summary: format!("→ {path} (diff)"),
         }
     }
@@ -432,12 +508,7 @@ impl BuiltinTool for EditTool {
                             cwd,
                         )
                         .and_then(|output| output.display)
-                        .unwrap_or_else(|| {
-                            build_edit_preview_display(build_edit_preview_display_payload(
-                                &edit_args.path,
-                                &plan,
-                            ))
-                        });
+                        .unwrap_or_else(|| edit_preview_display(&edit_args.path, &plan));
 
                         if plan.conflict || !plan.would_change {
                             let mut response = build_edit_contract_response(
@@ -447,7 +518,7 @@ impl BuiltinTool for EditTool {
                                 false,
                                 None,
                             );
-                            attach_display_payload(&mut response, &preview_display);
+                            embed_display_payload(&mut response, &preview_display);
                             return Ok(response);
                         }
 
@@ -473,7 +544,7 @@ impl BuiltinTool for EditTool {
                                                 map_edit_contract_error(&mapped),
                                                 mapped.message,
                                             );
-                                            attach_display_payload(&mut response, &preview_display);
+                                            embed_display_payload(&mut response, &preview_display);
                                             return Ok(response);
                                         }
                                     };
@@ -484,7 +555,7 @@ impl BuiltinTool for EditTool {
                                     false,
                                     None,
                                 );
-                                attach_display_payload(&mut response, &preview_display);
+                                embed_display_payload(&mut response, &preview_display);
                                 return Ok(response);
                             }
                             Err(err) => {
@@ -495,7 +566,7 @@ impl BuiltinTool for EditTool {
                                     map_edit_contract_error(&mapped),
                                     mapped.message,
                                 );
-                                attach_display_payload(&mut response, &preview_display);
+                                embed_display_payload(&mut response, &preview_display);
                                 return Ok(response);
                             }
                         };
@@ -516,7 +587,7 @@ impl BuiltinTool for EditTool {
                                             map_edit_contract_error(&mapped),
                                             mapped.message,
                                         );
-                                        attach_display_payload(&mut response, &preview_display);
+                                        embed_display_payload(&mut response, &preview_display);
                                         return Ok(response);
                                     }
                                 };
@@ -527,7 +598,7 @@ impl BuiltinTool for EditTool {
                                 false,
                                 None,
                             );
-                            attach_display_payload(&mut response, &preview_display);
+                            embed_display_payload(&mut response, &preview_display);
                             return Ok(response);
                         }
 
@@ -538,7 +609,7 @@ impl BuiltinTool for EditTool {
                             true,
                             Some(&summary),
                         );
-                        attach_display_payload(&mut response, &preview_display);
+                        embed_display_payload(&mut response, &preview_display);
                         Ok(response)
                     }
                 }
@@ -582,12 +653,7 @@ impl BuiltinTool for EditTool {
                             cwd,
                         )
                         .and_then(|output| output.display)
-                        .unwrap_or_else(|| {
-                            build_edit_preview_display(build_edit_preview_display_payload(
-                                &edit_args.path,
-                                &plan,
-                            ))
-                        });
+                        .unwrap_or_else(|| edit_preview_display(&edit_args.path, &plan));
 
                         if plan.conflict {
                             let mut response = build_edit_contract_response(
@@ -597,7 +663,7 @@ impl BuiltinTool for EditTool {
                                 false,
                                 None,
                             );
-                            attach_display_payload(&mut response, &preview_display);
+                            embed_display_payload(&mut response, &preview_display);
                             return Ok(response);
                         }
 
@@ -614,7 +680,7 @@ impl BuiltinTool for EditTool {
                                     map_edit_contract_error(&mapped),
                                     mapped.message,
                                 );
-                                attach_display_payload(&mut response, &preview_display);
+                                embed_display_payload(&mut response, &preview_display);
                                 return Ok(response);
                             }
                         };
@@ -633,7 +699,7 @@ impl BuiltinTool for EditTool {
                                         map_edit_contract_error(&mapped),
                                         mapped.message,
                                     );
-                                    attach_display_payload(&mut response, &preview_display);
+                                    embed_display_payload(&mut response, &preview_display);
                                     return Ok(response);
                                 }
                             };
@@ -644,7 +710,7 @@ impl BuiltinTool for EditTool {
                                 false,
                                 None,
                             );
-                            attach_display_payload(&mut response, &preview_display);
+                            embed_display_payload(&mut response, &preview_display);
                             return Ok(response);
                         }
 
@@ -655,12 +721,53 @@ impl BuiltinTool for EditTool {
                             true,
                             Some(&summary),
                         );
-                        attach_display_payload(&mut response, &preview_display);
+                        embed_display_payload(&mut response, &preview_display);
                         Ok(response)
                     }
                 }
             }
         }
+    }
+}
+
+impl Previewable for EditTool {
+    /// Pre-execution diff preview for the permission gate. Parses the edit
+    /// arguments, resolves the operation, plans the change against the file
+    /// on disk, and renders the unified diff. Returns `None` for arguments
+    /// that do not form a valid apply-mode operation.
+    fn preview(args: &JsonValue, cwd: &Path) -> Option<ToolDisplay> {
+        let edit_args: EditArgs = serde_json::from_value(args.clone()).ok()?;
+        let mode = parse_edit_mode(edit_args.mode.as_deref()).ok()?;
+        if mode != EditToolMode::Apply {
+            return None;
+        }
+
+        let operation = resolve_edit_operation(&edit_args).ok()?;
+        let resolved_path = super::resolve_fs_path_for_cwd(&edit_args.path, cwd);
+        let plan = match &operation {
+            ResolvedEditOperation::SearchReplace(sr_op) => {
+                let preview_version = match edit_args.expected_version.as_deref() {
+                    Some(version) => Some(version.to_string()),
+                    None => std::fs::read_to_string(&resolved_path)
+                        .ok()
+                        .map(|content| crate::tools::fs::core::version_token(&content)),
+                };
+                crate::tools::fs::core::plan_search_replace_edit(
+                    &resolved_path,
+                    preview_version.as_deref(),
+                    sr_op,
+                )
+                .ok()?
+            }
+            ResolvedEditOperation::Create { content } => {
+                if !resolved_path.parent().is_some_and(|p| p.exists()) {
+                    return None;
+                }
+                crate::tools::fs::core::plan_create_file(&resolved_path, content).ok()?
+            }
+        };
+
+        Some(edit_preview_display(&edit_args.path, &plan))
     }
 }
 

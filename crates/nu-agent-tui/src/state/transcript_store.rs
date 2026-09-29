@@ -1,140 +1,180 @@
-//! Transcript domain store: the transcript entry list, the streaming
-//! cursors, and the assistant markdown projection cache.
+//! Transcript domain store: the block list, the streaming cursors, the
+//! measure()-based height index, and hydration.
 //!
 //! The streaming cursors ([`TranscriptStore::assistant_stream_start`] and
 //! [`TranscriptStore::summary_stream_start`]) are indices into
-//! [`TranscriptStore::entries`], so they live here: every entry push can
+//! [`TranscriptStore::blocks`], so they live here: every block push can
 //! trigger cap eviction, and eviction shifts both cursors in one place
 //! (see [`TranscriptStore::shift_indices_after_eviction`]). The LLM,
 //! compaction, and turn domain reducers decide when the cursors are set,
 //! truncated, and cleared; the store owns their storage and the eviction
 //! bookkeeping.
 
-use std::collections::HashMap;
-
 use nu_agent_core::protocol::contracts::UiMessageSnapshot;
-use nu_agent_core::protocol::tool_args::CallLineRender;
-use nu_agent_core::transcript::ir::{ContentLine, Role};
-use nu_agent_core::transcript::items::{
-    ProseMessage, Spacer as SpacerItem, SystemMessage, ToolInvocation,
-    ToolResult as TranscriptToolResult, TranscriptEntry, TranscriptEntryKind, annotate_diff_hint,
-};
+use nu_agent_core::transcript::ir::{Block, BlockSource, Fill, MessageRole, NoticeKind, ToolName};
+use nu_agent_core::transcript::items::{Message, Notice, Tool};
+use nu_agent_core::transcript::renderer::{ItemStatus, Renderable};
 
-use super::{
-    CompactionState, CompactionStatus, EntryVisualInfo, ScrollState, StatusState, ToolState,
-    TranscriptRole,
-};
+use super::{CompactionState, CompactionStatus, StatusState, ToolState};
 use crate::state::tool_parsing::{extract_tool_name, parse_persisted_tool_status_line};
 
-const MAX_TRANSCRIPT_ENTRIES: usize = 2000;
+const MAX_TRANSCRIPT_BLOCKS: usize = 2000;
 
-/// Transcript entry storage shared by every domain reducer. Every entry push
-/// marks the visual-info cache dirty; eviction shifts the streaming cursors.
-#[derive(Debug, Clone)]
-pub struct TranscriptStore {
-    pub(crate) entries: Vec<TranscriptEntry>,
-    pub(crate) assistant_projection_cache: HashMap<String, Vec<ContentLine>>,
-    pub(crate) visual_info_dirty: bool,
-    pub(crate) assistant_stream_start: Option<usize>,
-    pub(crate) summary_stream_start: Option<usize>,
-    next_entry_id: u64,
+/// Per-block row count, rebuilt from `measure(block, width)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HeightEntry {
+    /// Number of visual rows the block renders to at the indexed width.
+    rows: usize,
 }
 
-impl Default for TranscriptStore {
-    fn default() -> Self {
+/// Cumulative row offsets over the block list, for O(log n) viewport-window
+/// queries. Rebuilt wholesale from `measure(block, width)` — no incremental
+/// bookkeeping to keep in lockstep with pushes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct HeightIndex {
+    /// Cumulative start row for block i is `starts[i]`; block i spans
+    /// `starts[i]..starts[i] + entries[i].rows`.
+    starts: Vec<usize>,
+    entries: Vec<HeightEntry>,
+    total_rows: usize,
+}
+
+impl HeightIndex {
+    /// Rebuild the index by measuring every block at `width`.
+    ///
+    /// Separator rows are a rendering concern (see
+    /// [`crate::state::spacer::SpacerStateMachine`]); the store holds content
+    /// blocks only. Each block's row count therefore includes the separator
+    /// rows the renderer emits *before* it, so `total_visual_rows` and
+    /// `visible_window` stay in lockstep with the rendered output. The leading
+    /// separator rows belong to the incoming block's span, matching the render
+    /// loop's emission order. After the last block, the trailing separator rows
+    /// (a user turn closes with one) are added to `total_rows` so the total
+    /// still matches the rendered output (task 670e0292).
+    fn rebuild(blocks: &[Block], width: usize) -> Self {
+        let mut starts = Vec::with_capacity(blocks.len());
+        let mut entries = Vec::with_capacity(blocks.len());
+        let mut total = 0usize;
+        let mut sm = crate::state::spacer::SpacerStateMachine::default();
+        for block in blocks {
+            starts.push(total);
+            let separators = sm.separators_for(block.source.family(), block.has_filled_content());
+            let rows = separators + crate::tui_renderer::measure(block, width);
+            entries.push(HeightEntry { rows });
+            total += rows;
+        }
+        // Trailing separator rows after the final block (task 670e0292).
+        total += sm.trailing_separators();
         Self {
-            entries: Vec::new(),
-            assistant_projection_cache: HashMap::new(),
-            visual_info_dirty: true,
-            assistant_stream_start: None,
-            summary_stream_start: None,
-            next_entry_id: 1,
+            starts,
+            entries,
+            total_rows: total,
         }
     }
+
+    /// Binary-search the block index range covering visual rows
+    /// `offset..offset + viewport_height`. Returns `(first, last)` as an
+    /// exclusive-end range; both are 0 when nothing is visible.
+    fn visible_window(&self, offset: usize, viewport_height: usize) -> (usize, usize) {
+        if self.entries.is_empty() || viewport_height == 0 {
+            return (0, 0);
+        }
+        let end_row = offset.saturating_add(viewport_height);
+        // First block whose end row extends past `offset` — earlier blocks
+        // end at or above the viewport top and are scrolled out.
+        let first = self
+            .starts
+            .partition_point(|&start| start <= offset)
+            .saturating_sub(1);
+        // First block that starts at or past `end_row` — it and everything
+        // after are below the viewport.
+        let last = self.starts.partition_point(|&start| start < end_row);
+        (first, last)
+    }
+}
+
+/// Transcript block storage shared by every domain reducer. Every push marks
+/// the height index dirty; eviction shifts the streaming cursors.
+#[derive(Debug, Clone, Default)]
+pub struct TranscriptStore {
+    pub(crate) blocks: Vec<Block>,
+    pub(crate) height_index: HeightIndex,
+    pub(crate) height_index_width: Option<usize>,
+    pub(crate) assistant_stream_start: Option<usize>,
+    pub(crate) summary_stream_start: Option<usize>,
 }
 
 impl TranscriptStore {
-    pub fn push_transcript_line(&mut self, role: TranscriptRole, line: impl Into<String>) {
-        let text = line.into();
-        let entry = match role {
-            TranscriptRole::User => TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::User(ProseMessage { markdown: text }),
-                status: None,
-            },
-            TranscriptRole::Assistant => TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::Assistant(ProseMessage { markdown: text }),
-                status: None,
-            },
-            TranscriptRole::Tool => TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::Tool(ToolInvocation {
-                    name: String::new(),
-                    source: String::new(),
-                    call_line: CallLineRender::Inline { summary: text },
-                }),
-                status: None,
-            },
-            TranscriptRole::ToolDisplay => TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::ToolResult(TranscriptToolResult {
-                    name: String::new(),
-                    success: true,
-                    lines: vec![ContentLine::single(text.clone(), annotate_diff_hint(&text))],
-                }),
-                status: None,
-            },
-            TranscriptRole::Compaction => TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::System(SystemMessage { text }),
-                status: None,
-            },
-            TranscriptRole::System => TranscriptEntry {
-                id: 0,
-                kind: TranscriptEntryKind::System(SystemMessage { text }),
-                status: None,
-            },
-        };
-        self.push_transcript_item(entry);
+    /// Push a content block. The store holds content only — separator rows
+    /// are a rendering concern decided by
+    /// [`crate::state::spacer::SpacerStateMachine`] at render time, not
+    /// insertion time. Returns the number of blocks evicted by the cap
+    /// enforcement (0 when nothing was evicted) so the caller can shift its
+    /// `block_index` bookkeeping by that amount.
+    pub fn push_block(&mut self, block: Block) -> usize {
+        self.blocks.push(block);
+        self.height_index_width = None;
+        self.enforce_transcript_cap()
     }
 
-    /// Push a tool-display entry whose lines are already-projected ContentLines
-    /// carrying StyleHints (e.g. code highlighting).
-    pub fn push_tool_display_lines(&mut self, lines: Vec<ContentLine>) {
-        let entry = TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::ToolResult(TranscriptToolResult {
-                name: String::new(),
-                success: true,
-                lines,
-            }),
-            status: None,
-        };
-        self.push_transcript_item(entry);
+    /// Insert a content block at `index`, shifting every later block up by
+    /// one. Used when a block must land adjacent to an existing one (a tool
+    /// preview block directly after its Tool block) rather than at the tail.
+    /// Returns the number of blocks evicted by the cap enforcement (0 when
+    /// nothing was evicted) so the caller can shift its `block_index`
+    /// bookkeeping by that amount.
+    pub fn insert_block_at(&mut self, index: usize, block: Block) -> usize {
+        let index = index.min(self.blocks.len());
+        self.blocks.insert(index, block);
+        self.height_index_width = None;
+        self.enforce_transcript_cap()
     }
 
-    pub fn project_assistant_markdown_lines(&mut self, markdown: &str) -> Vec<ContentLine> {
-        crate::markdown::render_markdown_lines(markdown, None)
+    /// Rebuild the height index from `measure(block, width)` for every block.
+    pub(crate) fn rebuild_height_index(&mut self, width: usize) {
+        self.height_index = HeightIndex::rebuild(&self.blocks, width);
+        self.height_index_width = Some(width);
     }
 
-    pub fn clear_assistant_projection_cache(&mut self) {
-        self.assistant_projection_cache.clear();
+    /// Mark the height index stale — the next `rebuild_height_index` must
+    /// re-measure. Called when the width changes or content mutates outside
+    /// `push_block`/`truncate` (theme switch, resize).
+    pub(crate) fn invalidate_height_index(&mut self) {
+        self.height_index_width = None;
     }
 
-    pub(crate) fn assistant_projection_cache_mut(
-        &mut self,
-    ) -> &mut HashMap<String, Vec<ContentLine>> {
-        &mut self.assistant_projection_cache
+    /// Whether the index is valid for `width`.
+    pub(crate) fn height_index_valid_for(&self, width: usize) -> bool {
+        self.height_index_width == Some(width)
+            && self.height_index.entries.len() == self.blocks.len()
     }
 
-    pub(crate) fn enforce_transcript_cap(&mut self) {
-        let overflow = self.entries.len().saturating_sub(MAX_TRANSCRIPT_ENTRIES);
+    /// Cumulative start row of block `index` in the height index.
+    pub(crate) fn start_row_of(&self, index: usize) -> usize {
+        self.height_index.starts.get(index).copied().unwrap_or(0)
+    }
+
+    /// Total visual rows across all blocks at the indexed width.
+    pub(crate) fn total_visual_rows(&self) -> usize {
+        self.height_index.total_rows
+    }
+
+    /// Block index range covering visual rows `offset..offset + viewport`
+    /// (exclusive end), via binary search over the height index.
+    pub(crate) fn visible_window(&self, offset: usize, viewport: usize) -> (usize, usize) {
+        self.height_index.visible_window(offset, viewport)
+    }
+
+    /// Enforce the transcript block cap: drain the oldest overflow blocks and
+    /// shift the streaming cursors. Returns the evicted count.
+    pub(crate) fn enforce_transcript_cap(&mut self) -> usize {
+        let overflow = self.blocks.len().saturating_sub(MAX_TRANSCRIPT_BLOCKS);
         if overflow > 0 {
-            self.entries.drain(..overflow);
+            self.blocks.drain(..overflow);
             self.shift_indices_after_eviction(overflow);
-            self.visual_info_dirty = true;
+            self.height_index_width = None;
         }
+        overflow
     }
 
     pub(crate) fn shift_indices_after_eviction(&mut self, evicted_count: usize) {
@@ -159,129 +199,29 @@ impl TranscriptStore {
         });
     }
 
-    pub fn push_transcript_item(&mut self, mut entry: TranscriptEntry) {
-        entry.id = self.next_entry_id;
-        self.next_entry_id = self.next_entry_id.saturating_add(1);
-        self.entries.push(entry);
-        self.visual_info_dirty = true;
-        self.enforce_transcript_cap();
-    }
-
-    /// Push a spacer (empty line) unconditionally.
-    /// Used to explicitly start and close transcript blocks.
-    /// Two adjacent blocks have two spacers between them (closing + starting).
-    pub fn push_spacer(&mut self) {
-        self.entries.push(TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::Spacer(SpacerItem),
-            status: None,
-        });
-        self.visual_info_dirty = true;
-        self.enforce_transcript_cap();
-    }
-
-    pub(crate) fn recompute_entry_visual_info(&mut self, scroll: &mut ScrollState, width: usize) {
-        use nu_agent_core::transcript::items::Renderable;
-
-        let mut info = Vec::with_capacity(self.entries.len());
-        let mut start = 0usize;
-        for entry in &self.entries {
-            let block = entry.to_render_block();
-            let content_lines: Vec<ContentLine> = if let Some(md) = &block.markdown {
-                if let Some(cached) = self.assistant_projection_cache.get(md) {
-                    cached.clone()
-                } else {
-                    let projected = crate::markdown::render_markdown_lines(md, Some(width as u16));
-                    self.assistant_projection_cache
-                        .insert(md.clone(), projected.clone());
-                    projected
-                }
-            } else {
-                block.lines
-            };
-            let has_status = entry.status.is_some();
-            let effective_width = crate::state::code_block::content_wrap_width(width, has_status);
-            // Same wrap_prose call (and hang-indent budget) as the renderer, so
-            // row counts match rendering exactly. The renderer shrinks the wrap
-            // budget by the 2-column status indicator on row 0 when a status is
-            // present; mirror that here so the row count agrees.
-            let visual_rows: usize = content_lines
-                .iter()
-                .map(|line| {
-                    let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
-                    let text_width = effective_width.saturating_sub(line.hang_indent).max(1);
-                    crate::tui_renderer::wrap_prose(&text, text_width)
-                        .len()
-                        .max(1)
-                })
-                .sum::<usize>()
-                .max(1);
-            // The renderer injects one blank margin row above and below each
-            // contiguous run of filled code-block rows (with_margin_rows).
-            // Count those same rows here so total_visual_rows matches the
-            // rendered output and the tail never clips content under the input
-            // box. Both sides derive the count from the shared
-            // code_block_line_flags, so they agree by construction.
-            let flags = crate::state::code_block::code_block_line_flags(entry, width, has_status);
-            let visual_rows = visual_rows + crate::state::code_block::margin_row_count(&flags);
-            info.push(EntryVisualInfo {
-                start_visual_row: start,
-                visual_row_count: visual_rows,
-            });
-            start += visual_rows;
-        }
-        scroll.entry_visual_info = info;
-    }
-
     pub(crate) fn clear(&mut self) {
-        self.entries.clear();
-        self.clear_assistant_projection_cache();
+        self.blocks.clear();
+        self.height_index = HeightIndex::default();
+        self.height_index_width = None;
     }
 
     // region:    --- Accessors
 
-    pub(crate) fn entries(&self) -> &[TranscriptEntry] {
-        &self.entries
+    pub(crate) fn blocks(&self) -> &[Block] {
+        &self.blocks
     }
 
-    pub(crate) fn entries_mut(&mut self) -> &mut [TranscriptEntry] {
-        &mut self.entries
+    pub(crate) fn blocks_mut(&mut self) -> &mut [Block] {
+        &mut self.blocks
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    pub(crate) fn last(&self) -> Option<&TranscriptEntry> {
-        self.entries.last()
-    }
-
-    pub(crate) fn last_entry_id(&self) -> Option<u64> {
-        self.entries.last().map(|e| e.id)
-    }
-
-    pub(crate) fn last_is_spacer(&self) -> bool {
-        self.entries
-            .last()
-            .is_some_and(|last| matches!(last.kind, TranscriptEntryKind::Spacer(_)))
-    }
-
-    /// Role of the last non-spacer entry, if any.
-    pub(crate) fn last_content_role(&self) -> Option<Role> {
-        self.entries
-            .iter()
-            .rev()
-            .find(|e| !matches!(e.kind, TranscriptEntryKind::Spacer(_)))
-            .map(|e| e.role())
+        self.blocks.len()
     }
 
     pub(crate) fn truncate(&mut self, len: usize) {
-        self.entries.truncate(len);
-        self.visual_info_dirty = true;
+        self.blocks.truncate(len);
+        self.height_index_width = None;
     }
 
     // endregion: --- Accessors
@@ -296,7 +236,7 @@ impl TranscriptStore {
         tool: &mut ToolState,
         compaction: &mut CompactionState,
     ) {
-        for mut message in messages {
+        for message in messages {
             if let Some(usage) = message.usage() {
                 status.tokens.hydrate_usage(
                     usage.input_tokens(),
@@ -304,146 +244,194 @@ impl TranscriptStore {
                     usage.total_tokens(),
                 );
             }
-            if let Some(display) = message.take_tool_display() {
-                crate::state::append_direct_tool_display(self, display);
-                continue;
-            }
-            let role = match message.role() {
-                "user" => TranscriptRole::User,
-                "assistant" => TranscriptRole::Assistant,
-                "tool" => TranscriptRole::Tool,
-                "compaction" => TranscriptRole::Compaction,
-                _ => TranscriptRole::System,
+            // The resolver emits a persisted result display as a STANDALONE
+            // "tool_display" snapshot (empty content, no tool fields) that
+            // follows the tool call's own snapshot; attach it to the most
+            // recent Tool block as its preview. Read immutably so the
+            // content borrow below stays live.
+            let preview_display = message.tool_display().cloned();
+            let message_role = match message.role() {
+                "user" => Some(MessageRole::User),
+                "assistant" => Some(MessageRole::Assistant),
+                _ => None,
             };
             let message_content = message.content();
 
-            if role == TranscriptRole::Compaction {
-                compaction.start_block(self, "history");
+            if message.role() == "compaction" {
+                let mut hydration_evicted = 0usize;
+                compaction.start_block(self, "history", &mut hydration_evicted);
                 compaction.finish_block("history", CompactionStatus::Done);
 
                 if !message_content.trim().is_empty() {
-                    self.push_transcript_item(TranscriptEntry {
-                        id: 0,
-                        kind: TranscriptEntryKind::Assistant(ProseMessage {
-                            markdown: crate::markdown::unwrap_single_fenced_block(message_content),
-                        }),
+                    let msg = Message {
+                        role: MessageRole::Assistant,
+                        markdown: crate::markdown::unwrap_single_fenced_block(message_content),
+                    };
+                    // Hydration rebuilds domain state from scratch; the
+                    // evicted count carries no information for it.
+                    let _ = self.push_block(Block {
+                        source: msg.source(),
+                        lane: msg.lane(),
+                        fill: msg.fill(),
                         status: None,
                     });
                 }
-                self.push_spacer();
+                continue;
+            }
+
+            // A standalone "tool_display" snapshot (empty content, no tool
+            // fields) hydrates as its own ToolDisplay block directly after the
+            // most recent Tool block — the same two-block shape the live
+            // preview path produces. The empty-content guard below would
+            // otherwise drop it.
+            if message.role() == "tool_display" {
+                if let Some(display) = preview_display {
+                    let display = crate::state::tool::preview_to_display(&display);
+                    // The preceding Tool block owns the tool identity, so the
+                    // hydrated preview gets the same redundant-row suppression
+                    // the live preview path applies.
+                    let tool_index = self
+                        .blocks
+                        .iter()
+                        .rposition(|block| matches!(block.source, BlockSource::Tool { .. }));
+                    let name = tool_index
+                        .and_then(|index| self.blocks.get(index))
+                        .and_then(|block| match &block.source {
+                            BlockSource::Tool { name, .. } => Some(name.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| ToolName(String::new()));
+                    let lines = display.project_lines(&name);
+                    let fill = Fill::from_preview(&Some(display));
+                    let insert_at = tool_index
+                        .map(|index| index + 1)
+                        .unwrap_or(self.blocks.len());
+                    // Hydration rebuilds domain state from scratch; the
+                    // evicted count carries no information for it.
+                    let _ = self.insert_block_at(
+                        insert_at,
+                        Block {
+                            source: BlockSource::ToolDisplay { lines },
+                            lane: nu_agent_core::transcript::ir::Lane::Blank,
+                            fill,
+                            status: None,
+                        },
+                    );
+                }
                 continue;
             }
 
             if message_content.trim().is_empty() {
                 continue;
             }
-            if role == TranscriptRole::Assistant {
-                self.push_hydrate_block_start_spacers(role);
-                self.push_transcript_item(TranscriptEntry {
-                    id: 0,
-                    kind: TranscriptEntryKind::Assistant(ProseMessage {
+            if let Some(role) = message_role {
+                if role == MessageRole::Assistant {
+                    // Assistant prose hydrates as one whole block so
+                    // multi-line markdown (tables, lists) projects intact.
+                    let msg = Message {
+                        role,
                         markdown: message_content.trim().to_string(),
-                    }),
-                    status: None,
-                });
-                self.push_spacer();
+                    };
+                    let _ = self.push_block(Block {
+                        source: msg.source(),
+                        lane: msg.lane(),
+                        fill: msg.fill(),
+                        status: None,
+                    });
+                } else {
+                    // User prompts hydrate one block per non-blank line,
+                    // matching the old per-line push behavior.
+                    for line in message_content.lines() {
+                        if !line.trim().is_empty() {
+                            let msg = Message {
+                                role,
+                                markdown: line.to_string(),
+                            };
+                            let _ = self.push_block(Block {
+                                source: msg.source(),
+                                lane: msg.lane(),
+                                fill: msg.fill(),
+                                status: None,
+                            });
+                        }
+                    }
+                }
                 continue;
             }
 
-            if role == TranscriptRole::Tool {
+            if message.role() == "tool" {
                 let persisted = message_content.trim();
-                if let Some(arguments) = message.tool_arguments() {
-                    let name = message
-                        .tool_name()
-                        .unwrap_or_else(|| extract_tool_name(persisted));
-                    self.push_hydrate_tool_block_start_spacers();
-                    tool.start_tool_call(
-                        self,
-                        name,
-                        arguments,
-                        nu_agent_core::tools::handler::builtin_tool::call_line_render_for(
-                            name, arguments,
-                        ),
-                    );
-                    tool.finish_tool_call(self, name, arguments, message.tool_success());
+                // Resolve the (name, arguments, success) triple for the tool
+                // call: explicit tool fields first, then the persisted
+                // status-line format `tool[name] → args · done`.
+                let resolved = message
+                    .tool_arguments()
+                    .map(|arguments| {
+                        (
+                            message
+                                .tool_name()
+                                .unwrap_or_else(|| extract_tool_name(persisted))
+                                .to_string(),
+                            arguments.to_string(),
+                            message.tool_success(),
+                        )
+                    })
+                    .or_else(|| {
+                        parse_persisted_tool_status_line(persisted).map(
+                            |(name, arguments, success)| {
+                                (name.to_string(), arguments.to_string(), Some(success))
+                            },
+                        )
+                    });
+                let Some((name, arguments, success)) = resolved else {
                     continue;
-                }
-                if let Some((name, arguments, success)) =
-                    parse_persisted_tool_status_line(persisted)
-                {
-                    self.push_hydrate_tool_block_start_spacers();
-                    tool.start_tool_call(
-                        self,
-                        name,
-                        arguments,
-                        nu_agent_core::tools::handler::builtin_tool::call_line_render_for(
-                            name, arguments,
-                        ),
-                    );
-                    tool.finish_tool_call(self, name, arguments, Some(success));
-                    continue;
-                }
+                };
+                let status = match success {
+                    Some(true) => ItemStatus::Done,
+                    Some(false) => ItemStatus::Failed,
+                    None => ItemStatus::Unknown,
+                };
+                let item = Tool {
+                    name: ToolName(name.clone()),
+                    call: nu_agent_core::tools::handler::builtin_tool::call_line_render_for(
+                        &name, &arguments,
+                    ),
+                    preview: None,
+                    result: None,
+                    status,
+                };
+                // Hydration rebuilds domain state from scratch; this push's
+                // eviction already happened before the fresh index below is
+                // recorded, so the count needs no propagation.
+                let _ = self.push_block(Block {
+                    source: item.source(),
+                    lane: item.lane(),
+                    fill: item.fill(),
+                    status: Some(status),
+                });
+                // The fresh hydrated index is relative to the CURRENT store
+                // (post-eviction); no shift is needed for it.
+                tool.record_hydrated_call(&name, &arguments, self.len().saturating_sub(1), success);
                 continue;
             }
 
-            self.push_hydrate_block_start_spacers(role);
-            for line in message_content.lines() {
-                if !line.trim().is_empty() {
-                    self.push_transcript_line(role, line.to_string());
-                }
-            }
-            self.push_spacer();
-        }
-
-        if self.hydrate_tool_block_is_open() {
-            self.push_spacer();
+            // Fallback: the old store mapped unknown roles to a system line
+            // per message line; preserve that via a System notice.
+            let notice = Notice {
+                kind: NoticeKind::System,
+                text: message_content.trim().to_string(),
+            };
+            let _ = self.push_block(Block {
+                source: notice.source(),
+                lane: notice.lane(),
+                fill: notice.fill(),
+                status: None,
+            });
         }
 
         if let Some(tokens) = last_total_tokens {
             status.tokens.hydrate_latest_total_tokens(tokens);
         }
-    }
-
-    fn push_hydrate_block_start_spacers(&mut self, role: TranscriptRole) {
-        let last_content = self.last_content_role();
-        let prev_is_tool_block = matches!(last_content, Some(Role::Tool) | Some(Role::ToolDisplay));
-
-        if role == TranscriptRole::Assistant && prev_is_tool_block {
-            self.push_spacer();
-            return;
-        }
-
-        let prev_is_spacer = self.last_is_spacer();
-        if !self.entries.is_empty() && !prev_is_spacer {
-            self.push_spacer();
-        }
-        self.push_spacer();
-    }
-
-    fn push_hydrate_tool_block_start_spacers(&mut self) {
-        if self.hydrate_tool_block_is_open() {
-            return;
-        }
-        let last_content = self.last_content_role();
-        let prev_is_assistant = matches!(last_content, Some(Role::Assistant));
-
-        if prev_is_assistant {
-            if !self.last_is_spacer() {
-                self.push_spacer();
-            }
-            return;
-        }
-
-        self.push_hydrate_block_start_spacers(TranscriptRole::Tool);
-    }
-
-    fn hydrate_tool_block_is_open(&self) -> bool {
-        self.entries.last().is_some_and(|last| {
-            matches!(
-                last.kind,
-                TranscriptEntryKind::Tool(_) | TranscriptEntryKind::ToolResult(_)
-            )
-        })
     }
 
     // endregion: --- Hydration

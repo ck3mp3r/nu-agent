@@ -70,6 +70,26 @@ pub(super) fn expand_to_visual_rows(
     expanded
 }
 
+/// Expand a per-line background override vector to visual rows, mirroring
+/// [`expand_to_visual_rows`]: each pre-wrap line replicates its background
+/// for every visual row the line wraps into. Used so a pinned separator-row
+/// background survives wrapping.
+pub(super) fn expand_bgs_to_visual_rows(
+    line_bgs: &[Option<ratatui::style::Color>],
+    lines: &[Line<'static>],
+    width: usize,
+) -> Vec<Option<ratatui::style::Color>> {
+    let mut expanded = Vec::with_capacity(lines.len());
+    for (i, line) in lines.iter().enumerate() {
+        let bg = line_bgs.get(i).copied().flatten();
+        let visual_rows = single_line_visual_row_count(line, width);
+        for _ in 0..visual_rows {
+            expanded.push(bg);
+        }
+    }
+    expanded
+}
+
 /// Count how many visual rows a single Line will occupy after wrapping at `width`.
 pub(crate) fn single_line_visual_row_count(line: &Line<'_>, width: usize) -> usize {
     if width < 1 {

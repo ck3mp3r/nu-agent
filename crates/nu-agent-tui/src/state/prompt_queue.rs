@@ -31,7 +31,6 @@ impl<'a> PromptQueueLifecycle<'a> {
             id,
             prompt_text: submitted_text,
             status: PromptStatus::Queued,
-            entry_id: None,
         });
         self.pending_prompt_ids.push_back(id);
         id

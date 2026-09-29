@@ -21,7 +21,6 @@ use super::slash::{
 use crate::bus::PermissionEvent;
 use crate::compaction::CompactionStrategy;
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
-use crate::protocol::tool_args::CallLineRender;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -275,7 +274,7 @@ fn ui_event_contract_exposes_required_variants() {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: "{}".to_string(),
-            call_line: CallLineRender::generic_json_summary("{}"),
+            call_line: super::tool_args::CallLine::from_json_summary("{}"),
         },
         UiEvent::ToolCompleted {
             name: "k8s__list_pods".to_string(),
@@ -290,7 +289,8 @@ fn ui_event_contract_exposes_required_variants() {
         UiEvent::PermissionRequested {
             request_id: "ask-0000000000000001".to_string(),
             context: PermissionRequestContext {
-                tool: "nu".to_string(),
+                tool: "nu(command=echo hi)".to_string(),
+                tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
                 source: "closure".to_string(),
                 mode: Some("apply".to_string()),
                 matched_rule_identity: "nested:nu.command:*".to_string(),
@@ -348,6 +348,7 @@ fn permission_event_field_shape_is_explicit_and_stable() {
         request_id: "ask-0000000000000001".to_string(),
         context: Box::new(PermissionRequestContext {
             tool: "nu(command=echo hi)".to_string(),
+            tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
             source: "closure".to_string(),
             mode: Some("apply".to_string()),
             matched_rule_identity: "nested:nu.command:*".to_string(),
@@ -556,21 +557,14 @@ fn parse_json_array_len_returns_none_for_non_array() -> Result<()> {
 }
 
 #[test]
-fn generic_json_summary_prefixes_arrow_and_truncates() -> Result<()> {
+fn call_line_stores_summary_string() {
     // -- Setup & Fixtures
-    let args = r#"{"path":"a.rs"}"#;
+    let line = super::tool_args::CallLine {
+        summary: "→ {\"path\":\"a.rs\"}".to_string(),
+    };
 
-    // -- Exec
-    let render = super::tool_args::CallLineRender::generic_json_summary(args);
-
-    // -- Check
-    match render {
-        super::tool_args::CallLineRender::Inline { summary } => {
-            assert_eq!(summary, r#"→ {"path":"a.rs"}"#);
-        }
-        other => return Err(format!("expected Inline render, got {other:?}").into()),
-    }
-    Ok(())
+    // -- Exec & Check
+    assert_eq!(line.summary, "→ {\"path\":\"a.rs\"}");
 }
 
 // === Tests: skills ===

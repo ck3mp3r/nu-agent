@@ -8,7 +8,7 @@ use crate::{
     rendering::theme::TuiTheme,
     state::{AppState, PickerPayload},
 };
-use nu_agent_core::transcript::items::TranscriptEntry;
+use nu_agent_core::transcript::ir::Block;
 
 pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect, theme: &TuiTheme) {
     let controls = Line::from(vec![
@@ -23,8 +23,8 @@ pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect,
     frame.render_widget(widget, area);
 }
 
-pub(super) fn transcript_entries_for_render(state: &AppState) -> &[TranscriptEntry] {
-    state.transcript.entries()
+pub(super) fn transcript_entries_for_render(state: &AppState) -> &[Block] {
+    state.transcript.blocks()
 }
 
 pub(super) fn wrapped_visual_rows_for_rendered_line(

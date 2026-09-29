@@ -1,3 +1,4 @@
+use nu_agent_core::transcript::ir::StyleHint;
 use ratatui::style::{Color, Modifier, Style};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -328,5 +329,40 @@ impl TuiTheme {
 impl Default for TuiTheme {
     fn default() -> Self {
         Self::catppuccin_mocha()
+    }
+}
+
+/// The single style mapping from a [`StyleHint`] to a ratatui [`Style`],
+/// shared by the transcript renderer and the status/help panel (task
+/// 7eb16881). `role_style` is the per-context lane text style: the
+/// transcript passes the block's lane style (`LaneContext::role_style`);
+/// theme-only callers (help panel) pass `theme.subtle_meta`.
+pub fn hint_to_style(hint: &StyleHint, role_style: Style, theme: &TuiTheme) -> Style {
+    match hint {
+        StyleHint::Normal | StyleHint::Emphasis => role_style,
+        StyleHint::Meta | StyleHint::Muted => theme.tool_meta,
+        StyleHint::Success => theme.status_done,
+        StyleHint::Error => theme.status_failed,
+        StyleHint::DiffAdd => theme.status_done,
+        StyleHint::DiffRemove => theme.status_failed,
+        StyleHint::DiffHunk => theme.role_system.add_modifier(Modifier::BOLD),
+        StyleHint::Cancelled => role_style.add_modifier(theme.cancelled_modifier),
+        StyleHint::MdBold => Style::default().add_modifier(Modifier::BOLD),
+        StyleHint::MdItalic => Style::default().add_modifier(Modifier::ITALIC),
+        StyleHint::MdBoldItalic => Style::default()
+            .add_modifier(Modifier::BOLD)
+            .add_modifier(Modifier::ITALIC),
+        StyleHint::MdInlineCode => theme.inline_code,
+        StyleHint::MdCodeKeyword => theme.syntax_keyword,
+        StyleHint::MdCodeType => theme.syntax_type,
+        StyleHint::MdCodeFunction => theme.syntax_function,
+        StyleHint::MdCodeVariable => theme.syntax_variable,
+        StyleHint::MdCodeConstant => theme.syntax_constant,
+        StyleHint::MdCodeString => theme.syntax_string,
+        StyleHint::MdCodeNumber => theme.syntax_number,
+        StyleHint::MdCodeOperator => theme.syntax_operator,
+        StyleHint::MdCodePunctuation => theme.syntax_punctuation,
+        StyleHint::MdCodeComment => theme.syntax_comment,
+        StyleHint::MdCodePlain => theme.row_assistant,
     }
 }

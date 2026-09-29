@@ -6,6 +6,9 @@ use crate::tools::authz::AskContext;
 
 use super::ToolSource;
 use super::builtin_kinds::BuiltinKind;
+use super::builtin_tool::Previewable;
+use super::edit::EditTool;
+use super::nu::NuTool;
 use super::resolve::resolve_fs_path_generic;
 use crate::tools::closure::EngineInterfaceLike;
 
@@ -15,50 +18,22 @@ pub struct PreAuthorizeOutput {
     pub display: Option<ToolDisplay>,
 }
 
+/// Build the pre-execution preview for a builtin tool. `edit` produces its
+/// diff; `nu` produces a code block of the command it is about to run. Both
+/// previews come straight from the tool type's `Previewable::preview` and
+/// read only the tool-call arguments (plus, for `edit`, a planned diff of
+/// the target file) — no writes, no process spawn.
 pub fn pre_authorize_fs_tool(
     kind: Option<BuiltinKind>,
     arguments: &JsonValue,
     cwd: &std::path::Path,
 ) -> Option<PreAuthorizeOutput> {
-    match kind {
-        Some(BuiltinKind::Edit) => {}
+    let preview_display = match kind? {
+        BuiltinKind::Edit => EditTool::preview(arguments, cwd)?,
+        BuiltinKind::Nu => NuTool::preview(arguments, cwd)?,
         _ => return None,
-    }
-
-    let args: super::edit::EditArgs = serde_json::from_value(arguments.clone()).ok()?;
-    let mode = super::edit::parse_edit_mode(args.mode.as_deref()).ok()?;
-    if mode != super::edit::EditToolMode::Apply {
-        return None;
-    }
-
-    let operation = super::edit::resolve_edit_operation(&args).ok()?;
-    let resolved_path = super::resolve_fs_path_for_cwd(&args.path, cwd);
-    let plan = match &operation {
-        super::edit::ResolvedEditOperation::SearchReplace(sr_op) => {
-            let preview_version = match args.expected_version.as_deref() {
-                Some(version) => Some(version.to_string()),
-                None => std::fs::read_to_string(&resolved_path)
-                    .ok()
-                    .map(|content| crate::tools::fs::core::version_token(&content)),
-            };
-            crate::tools::fs::core::plan_search_replace_edit(
-                &resolved_path,
-                preview_version.as_deref(),
-                sr_op,
-            )
-            .ok()?
-        }
-        super::edit::ResolvedEditOperation::Create { content } => {
-            if !resolved_path.parent().is_some_and(|p| p.exists()) {
-                return None;
-            }
-            crate::tools::fs::core::plan_create_file(&resolved_path, content).ok()?
-        }
     };
 
-    let preview_display = super::result::build_edit_preview_display(
-        super::edit::build_edit_preview_display_payload(&args.path, &plan),
-    );
     Some(PreAuthorizeOutput {
         ask_context: AskContext {
             pre_authorize_display: Some(preview_display.clone()),

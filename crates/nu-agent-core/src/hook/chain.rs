@@ -409,7 +409,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         // 1. Parse result JSON and extract display
         let display = serde_json::from_str::<serde_json::Value>(&result_text)
             .ok()
-            .and_then(|json| crate::tools::handler::build_direct_tool_display(tool_name, &json));
+            .and_then(|json| crate::tools::handler::tool_display_from_result(tool_name, &json));
 
         // Suppress the display if a pre-authorize preview of it was already
         // shown to the user before the tool ran (the Ask-path edit diff).

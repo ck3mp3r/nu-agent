@@ -1140,7 +1140,7 @@ async fn on_tool_call_publishes_tool_started_before_permission_requested() -> Re
 // ---------------------------------------------------------------------------
 
 /// `HookChain::on_tool_call` consults its `ToolRenderRegistry` and publishes
-/// the tailored `CallLineRender` on `UiEvent::ToolStarted`. A registered
+/// the tailored `CallLine` on `UiEvent::ToolStarted`. A registered
 /// `read` tool renders `→ /tmp/f`; the raw JSON arguments never reach the
 /// event.
 #[tokio::test]
@@ -1235,7 +1235,7 @@ async fn on_tool_call_publishes_registry_rendered_call_line() -> Result<()> {
     // -- Check
     assert_eq!(
         call_line,
-        crate::protocol::tool_args::CallLineRender::Inline {
+        crate::protocol::tool_args::CallLine {
             summary: "→ /tmp/f".to_string(),
         },
         "ToolStarted must carry the registry-rendered call line"

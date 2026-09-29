@@ -456,8 +456,8 @@ impl super::BuiltinTool for PlainRenderTool {
 }
 
 /// A tool with no `call_line_render` override falls back to the generic
-/// JSON summary: an `Inline` render whose summary is the arrow-prefixed
-/// truncated arguments.
+/// JSON summary: a call line whose summary is the arrow-prefixed truncated
+/// arguments.
 #[test]
 fn call_line_render_defaults_to_generic_json_summary() -> TestResult<()> {
     // -- Setup & Fixtures
@@ -469,17 +469,13 @@ fn call_line_render_defaults_to_generic_json_summary() -> TestResult<()> {
     // -- Check
     assert_eq!(
         render,
-        crate::protocol::tool_args::CallLineRender::generic_json_summary(arguments)
+        crate::protocol::tool_args::CallLine::from_json_summary(arguments)
     );
-    match render {
-        crate::protocol::tool_args::CallLineRender::Inline { summary } => {
-            assert!(
-                summary.starts_with('→'),
-                "generic summary must start with the arrow marker, got: {summary}"
-            );
-        }
-        other => return Err(format!("expected Inline render, got {other:?}").into()),
-    }
+    assert!(
+        render.summary.starts_with('→'),
+        "generic summary must start with the arrow marker, got: {}",
+        render.summary
+    );
     Ok(())
 }
 
@@ -488,7 +484,7 @@ fn call_line_render_defaults_to_generic_json_summary() -> TestResult<()> {
 // ================================================================
 
 /// A registered tool's render fn is looked up by name and produces the
-/// tool's tailored `CallLineRender`.
+/// tool's tailored `CallLine`.
 #[test]
 fn tool_render_registry_renders_registered_tool() -> TestResult<()> {
     // -- Setup & Fixtures
@@ -501,7 +497,7 @@ fn tool_render_registry_renders_registered_tool() -> TestResult<()> {
     // -- Check
     assert_eq!(
         render,
-        crate::protocol::tool_args::CallLineRender::Inline {
+        crate::protocol::tool_args::CallLine {
             summary: "→ /tmp/f".to_string(),
         }
     );
@@ -521,7 +517,7 @@ fn tool_render_registry_unknown_name_returns_generic() -> TestResult<()> {
     // -- Check
     assert_eq!(
         render,
-        crate::protocol::tool_args::CallLineRender::generic_json_summary(arguments)
+        crate::protocol::tool_args::CallLine::from_json_summary(arguments)
     );
     Ok(())
 }
@@ -530,9 +526,10 @@ fn tool_render_registry_unknown_name_returns_generic() -> TestResult<()> {
 // call_line_render_for: name-based dispatch
 // ================================================================
 
-/// The `nu` name dispatches to the nu tool's tailored code-block render.
+/// The `nu` name dispatches to the nu tool's tailored call line, which
+/// carries no summary: the command renders in the preview block instead.
 #[test]
-fn call_line_render_for_nu_returns_code_block() -> TestResult<()> {
+fn call_line_render_for_nu_returns_command_summary() -> TestResult<()> {
     // -- Setup & Fixtures
     let arguments = r#"{"command":"ls | select name"}"#;
 
@@ -542,9 +539,8 @@ fn call_line_render_for_nu_returns_code_block() -> TestResult<()> {
     // -- Check
     assert_eq!(
         render,
-        crate::protocol::tool_args::CallLineRender::CodeBlock {
-            language: "nu".to_string(),
-            code: "ls | select name".to_string(),
+        crate::protocol::tool_args::CallLine {
+            summary: String::new(),
         }
     );
     Ok(())
@@ -562,7 +558,7 @@ fn call_line_render_for_edit_returns_tailored_inline() -> TestResult<()> {
     // -- Check
     assert_eq!(
         render,
-        crate::protocol::tool_args::CallLineRender::Inline {
+        crate::protocol::tool_args::CallLine {
             summary: "→ a.rs (diff)".to_string(),
         }
     );
@@ -581,7 +577,7 @@ fn call_line_render_for_unknown_name_returns_generic() -> TestResult<()> {
     // -- Check
     assert_eq!(
         render,
-        crate::protocol::tool_args::CallLineRender::generic_json_summary(arguments)
+        crate::protocol::tool_args::CallLine::from_json_summary(arguments)
     );
     Ok(())
 }
@@ -599,7 +595,7 @@ fn call_line_render_for_builtin_without_tailored_render_returns_generic() -> Tes
     // -- Check
     assert_eq!(
         render,
-        crate::protocol::tool_args::CallLineRender::generic_json_summary(arguments)
+        crate::protocol::tool_args::CallLine::from_json_summary(arguments)
     );
     Ok(())
 }

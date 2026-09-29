@@ -1,7 +1,5 @@
 use serde_json::Value as JsonValue;
 
-use crate::protocol::event::ToolDisplayStats;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolSource {
     Closure,
@@ -81,13 +79,6 @@ pub struct ToolFailureOutcome {
     pub error_kind: ToolErrorKind,
     pub message: String,
     pub details: Option<JsonValue>,
-}
-
-#[derive(Debug, Clone)]
-pub struct EditPreviewDisplayPayload {
-    pub path: String,
-    pub diff: String,
-    pub stats: ToolDisplayStats,
 }
 
 #[derive(Debug, Clone)]

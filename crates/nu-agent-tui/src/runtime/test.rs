@@ -37,13 +37,54 @@ use nu_agent_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapsh
 use nu_agent_core::protocol::event::{
     PermissionDecision, PermissionRequestContext, ToolDisplay, UiEvent,
 };
-use nu_agent_core::protocol::tool_args::CallLineRender;
 use nu_agent_core::renderer::UiRenderer;
-use nu_agent_core::transcript::ir::Role;
-use nu_agent_core::transcript::items::{ProseMessage, TranscriptEntry, TranscriptEntryKind};
-use nu_agent_core::transcript::renderer::ItemStatus;
+use nu_agent_core::transcript::ir::{Block, BlockSource, MessageRole, NoticeKind};
+use nu_agent_core::transcript::items::Message;
+use nu_agent_core::transcript::renderer::{ItemStatus, Renderable};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// Push one Message block via the store's sole push API.
+fn push_message_line(
+    state: &mut crate::state::AppState,
+    role: MessageRole,
+    text: impl Into<String>,
+) {
+    let msg = Message {
+        role,
+        markdown: text.into(),
+    };
+    state.transcript.push_block(Block {
+        source: msg.source(),
+        lane: msg.lane(),
+        fill: msg.fill(),
+        status: None,
+    });
+}
+
+/// Map a block to the transcript role its source corresponds to.
+fn block_to_role(block: &nu_agent_core::transcript::ir::Block) -> TranscriptRole {
+    use nu_agent_core::transcript::ir::BlockSource as Bs;
+    match &block.source {
+        Bs::Markdown {
+            role: MessageRole::User,
+            ..
+        } => TranscriptRole::User,
+        Bs::Markdown {
+            role: MessageRole::Assistant,
+            ..
+        } => TranscriptRole::Assistant,
+        Bs::Tool { .. } => TranscriptRole::Tool,
+        Bs::ToolDisplay { .. } => TranscriptRole::ToolDisplay,
+        Bs::Notice {
+            kind: NoticeKind::Compaction,
+            ..
+        } => TranscriptRole::Compaction,
+        Bs::Notice { .. } => TranscriptRole::System,
+        Bs::Banner { .. } => TranscriptRole::System,
+        Bs::Spacer => TranscriptRole::System,
+    }
+}
 
 impl RuntimeCoordinator {
     pub(crate) fn new_for_test_with_watchdog(
@@ -201,10 +242,19 @@ async fn coordinator_submit_handoff_keeps_input_editable_and_preserves_transcrip
             .take_next_prompt_for_execution(),
         None
     );
-    // starting spacer + user + closing spacer
-    assert_eq!(driver.state().transcript.entries.len(), 3);
-    assert_eq!(driver.state().transcript.entries[1].role(), Role::User);
-    assert_eq!(driver.state().transcript.entries[1].text(), "x");
+    // [User] — no leading or trailing spacer under the unified spacer rule
+    assert_eq!(driver.state().transcript.len(), 1);
+    assert!(matches!(
+        driver.state().transcript.blocks()[0].source,
+        BlockSource::Markdown {
+            role: MessageRole::User,
+            ..
+        }
+    ));
+    assert_eq!(
+        driver.state().transcript.blocks()[0].source.plain_text(),
+        "x"
+    );
     Ok(())
 }
 
@@ -240,7 +290,7 @@ async fn slash_commands_do_not_append_command_text_to_transcript() -> Result<()>
     assert_eq!(driver.state().phase, UiPhase::Idle);
     assert_eq!(driver.state().pending_prompt_count(), 0);
     assert!(driver.state().prompt_items().is_empty());
-    assert!(driver.state().transcript.entries.is_empty());
+    assert!(driver.state().transcript.blocks().is_empty());
     Ok(())
 }
 
@@ -274,7 +324,7 @@ async fn compact_result_artifact_is_visible_without_slash_command_echo() -> Resu
             .take_next_prompt_for_execution(),
         None
     );
-    assert!(driver.state().transcript.entries.is_empty());
+    assert!(driver.state().transcript.blocks().is_empty());
 
     driver
         .coordinator_mut()
@@ -295,9 +345,9 @@ async fn compact_result_artifact_is_visible_without_slash_command_echo() -> Resu
     let lines = driver
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.text())
+        .map(|block| block.source.plain_text())
         .collect::<Vec<_>>();
     assert!(lines.contains(&"Compaction".to_string()));
     assert!(lines.contains(&"summary body".to_string()));
@@ -611,14 +661,13 @@ async fn submit_reaches_orchestrator_channel_through_render_loop_terminal_arm() 
         None
     );
     // And the transcript shows the user turn was started.
-    assert!(
-        driver
-            .state()
-            .transcript
-            .entries
-            .iter()
-            .any(|entry| entry.role() == Role::User && entry.text() == "hi")
-    );
+    assert!(driver.state().transcript.blocks().iter().any(|b| matches!(
+        b.source,
+        BlockSource::Markdown {
+            role: MessageRole::User,
+            ..
+        }
+    ) && b.source.plain_text() == "hi"));
     Ok(())
 }
 
@@ -662,25 +711,33 @@ fn assistant_message_event_is_appended_to_tui_transcript() {
     coordinator.drain_transport();
 
     // After the raw-markdown refactor, a single AssistantMessage event produces
-    // exactly one ProseMessage entry (the entire text is stored as raw markdown).
+    // exactly one assistant markdown block (the entire text is stored as raw markdown).
     let assistant_entries: Vec<_> = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|e| e.role() == Role::Assistant)
+        .filter(|b| {
+            matches!(
+                b.source,
+                BlockSource::Markdown {
+                    role: MessageRole::Assistant,
+                    ..
+                }
+            )
+        })
         .collect();
     assert_eq!(
         assistant_entries.len(),
         1,
-        "one ProseMessage per message block"
+        "one assistant block per message block"
     );
     assert!(
-        assistant_entries[0].text().contains("hello"),
+        assistant_entries[0].source.plain_text().contains("hello"),
         "raw markdown should contain 'hello'"
     );
     assert!(
-        assistant_entries[0].text().contains("world"),
+        assistant_entries[0].source.plain_text().contains("world"),
         "raw markdown should contain 'world'"
     );
 }
@@ -698,12 +755,12 @@ fn assistant_markdown_message_is_projected_before_transcript_append() {
     let raw_texts: Vec<String> = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|entry| entry.text())
+        .map(|block| block.source.plain_text())
         .collect();
 
-    // The entire markdown is stored in a single ProseMessage.
+    // The entire markdown is stored in a single assistant block.
     // Project it and verify the list markers appear.
     let projected: Vec<String> = raw_texts
         .iter()
@@ -763,26 +820,15 @@ async fn user_then_assistant_flows_without_turn_separator() -> Result<()> {
         driver
             .state()
             .transcript
-            .entries
+            .blocks()
             .iter()
-            .map(|line| {
-                let role = match line.role() {
-                    nu_agent_core::transcript::ir::Role::User => TranscriptRole::User,
-                    nu_agent_core::transcript::ir::Role::Assistant => TranscriptRole::Assistant,
-                    nu_agent_core::transcript::ir::Role::Tool => TranscriptRole::Tool,
-                    nu_agent_core::transcript::ir::Role::ToolDisplay => TranscriptRole::ToolDisplay,
-                    nu_agent_core::transcript::ir::Role::System => TranscriptRole::System,
-                    nu_agent_core::transcript::ir::Role::Compaction => TranscriptRole::Compaction,
-                    nu_agent_core::transcript::ir::Role::Separator => TranscriptRole::System,
-                };
-                (role, line.text())
+            .map(|block| {
+                let role = block_to_role(block);
+                (role, block.source.plain_text())
             })
             .collect::<Vec<_>>(),
         vec![
-            (TranscriptRole::System, "".to_string()), // starting spacer before prompt
             (TranscriptRole::User, "h".to_string()),
-            (TranscriptRole::System, "".to_string()), // closing spacer after prompt
-            (TranscriptRole::System, "".to_string()), // starting spacer before assistant
             (TranscriptRole::Assistant, "world".to_string()),
         ]
     );
@@ -1529,37 +1575,20 @@ fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
         None,
     );
 
-    let lines = coordinator.state().transcript.entries.clone();
+    let lines = coordinator.state().transcript.blocks().to_vec();
     assert_eq!(
         lines
             .iter()
-            .map(|line| {
-                let role = match line.role() {
-                    nu_agent_core::transcript::ir::Role::User => TranscriptRole::User,
-                    nu_agent_core::transcript::ir::Role::Assistant => TranscriptRole::Assistant,
-                    nu_agent_core::transcript::ir::Role::Tool => TranscriptRole::Tool,
-                    nu_agent_core::transcript::ir::Role::ToolDisplay => TranscriptRole::ToolDisplay,
-                    nu_agent_core::transcript::ir::Role::System => TranscriptRole::System,
-                    nu_agent_core::transcript::ir::Role::Compaction => TranscriptRole::Compaction,
-                    nu_agent_core::transcript::ir::Role::Separator => TranscriptRole::System,
-                };
-                (role, line.text())
-            })
+            .map(|block| (block_to_role(block), block.source.plain_text()))
             .collect::<Vec<_>>(),
         vec![
-            // user block: starting spacer + line1 + line2 + closing spacer
-            (TranscriptRole::System, String::new()),
+            // user block: line1, line2 — content blocks only, no Spacers
             (TranscriptRole::User, "line1".to_string()),
             (TranscriptRole::User, "line2".to_string()),
-            (TranscriptRole::System, String::new()),
-            // assistant block: starting spacer + reply + closing spacer
-            (TranscriptRole::System, String::new()),
+            // assistant block: reply
             (TranscriptRole::Assistant, "reply".to_string()),
-            (TranscriptRole::System, String::new()),
-            // system block: starting spacer + fallback + closing spacer
-            (TranscriptRole::System, String::new()),
+            // system block: fallback
             (TranscriptRole::System, "system fallback".to_string()),
-            (TranscriptRole::System, String::new()),
         ]
     );
 }
@@ -1578,17 +1607,16 @@ fn hydrated_tool_history_matches_live_tool_row_shape() {
         None,
     );
 
-    // Tool block: starting spacer + tool + closing spacer (block is open at end)
-    assert_eq!(coordinator.state().transcript.entries.len(), 3);
-    assert_eq!(coordinator.state().transcript.entries[1].role(), Role::Tool);
-    assert_eq!(
-        coordinator.state().transcript.entries[1].text(),
-        "k8s__list_pods"
-    );
-    assert_eq!(
-        coordinator.state().transcript.entries[1].status,
-        Some(ItemStatus::Done)
-    );
+    // Tool block: no leading spacer under the unified spacer rule
+    assert_eq!(coordinator.state().transcript.len(), 1);
+    let tool_block = &coordinator.state().transcript.blocks()[0];
+    assert!(matches!(tool_block.source, BlockSource::Tool { .. }));
+    if let BlockSource::Tool { call, .. } = &tool_block.source {
+        assert!(call.summary.contains("namespace"));
+    } else {
+        panic!("Expected Tool variant");
+    }
+    assert_eq!(tool_block.status, Some(ItemStatus::Done));
 }
 
 #[test]
@@ -1608,20 +1636,18 @@ fn hydrated_nu_tool_row_call_line_contains_command() {
         None,
     );
 
-    // -- Check
-    let entry = &coordinator.state().transcript.entries[1];
-    assert_eq!(entry.role(), Role::Tool);
-    let TranscriptEntryKind::Tool(invocation) = &entry.kind else {
+    // -- Check: the nu tool's tailored call line carries no summary — the
+    // command renders in the preview block.
+    let block = &coordinator.state().transcript.blocks()[0];
+    if let BlockSource::Tool { call, .. } = &block.source {
+        assert_eq!(
+            call.summary,
+            String::new(),
+            "hydrated nu row must use the nu tool's tailored call line"
+        );
+    } else {
         panic!("Expected Tool variant");
-    };
-    assert_eq!(
-        invocation.call_line,
-        CallLineRender::CodeBlock {
-            language: "nu".to_string(),
-            code: "ls | select name type size".to_string(),
-        },
-        "hydrated nu row must use the nu tool's tailored code-block call line"
-    );
+    }
 }
 
 #[test]
@@ -1642,17 +1668,16 @@ fn hydrated_edit_tool_row_call_line_uses_edit_tailored_render() {
     );
 
     // -- Check
-    let entry = &coordinator.state().transcript.entries[1];
-    let TranscriptEntryKind::Tool(invocation) = &entry.kind else {
+    let block = &coordinator.state().transcript.blocks()[0];
+    if let BlockSource::Tool { call, .. } = &block.source {
+        assert_eq!(
+            call.summary,
+            "→ a.rs (diff)".to_string(),
+            "hydrated edit row must use the edit tool's tailored inline call line"
+        );
+    } else {
         panic!("Expected Tool variant");
-    };
-    assert_eq!(
-        invocation.call_line,
-        CallLineRender::Inline {
-            summary: "→ a.rs (diff)".to_string(),
-        },
-        "hydrated edit row must use the edit tool's tailored inline call line"
-    );
+    }
 }
 
 #[test]
@@ -1685,25 +1710,14 @@ fn coordinator_hydration_projects_both_user_and_assistant_markdown() {
         None,
     );
 
-    // After the raw-markdown refactor: text() returns raw markdown source.
+    // After the raw-markdown refactor: the block source is raw markdown.
     // Project to verify the rendered content.
     let raw_lines: Vec<(TranscriptRole, String)> = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| {
-            let role = match line.role() {
-                nu_agent_core::transcript::ir::Role::User => TranscriptRole::User,
-                nu_agent_core::transcript::ir::Role::Assistant => TranscriptRole::Assistant,
-                nu_agent_core::transcript::ir::Role::Tool => TranscriptRole::Tool,
-                nu_agent_core::transcript::ir::Role::ToolDisplay => TranscriptRole::ToolDisplay,
-                nu_agent_core::transcript::ir::Role::System => TranscriptRole::System,
-                nu_agent_core::transcript::ir::Role::Compaction => TranscriptRole::Compaction,
-                nu_agent_core::transcript::ir::Role::Separator => TranscriptRole::System,
-            };
-            (role, line.text())
-        })
+        .map(|block| (block_to_role(block), block.source.plain_text()))
         .collect();
 
     // User message: raw markdown stored as-is
@@ -1764,7 +1778,7 @@ fn assistant_markdown_projection_is_memoized_across_repeated_messages() {
 }
 
 #[tokio::test]
-async fn resize_and_redraw_paths_do_not_retokenize_assistant_projection_cache() -> Result<()> {
+async fn resize_and_redraw_paths_reproject_at_new_width() -> Result<()> {
     // -- Setup & Fixtures
     let mut driver = RenderLoopDriver::new(120, 30);
     let markdown = markdown_fixture("fenced_code_blocks.md");
@@ -1784,7 +1798,7 @@ async fn resize_and_redraw_paths_do_not_retokenize_assistant_projection_cache() 
 
     // Resize clears the projection cache so width-aware re-projection occurs
     // on the next render pass. No assertion on cache misses — the counter was
-    // removed when caching was moved to render_cached.
+    // removed when render-time caching moved into the projection layer.
     Ok(())
 }
 
@@ -1797,15 +1811,23 @@ fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transc
         None,
     );
 
-    // After the raw-markdown refactor, the entry stores raw markdown.
+    // After the raw-markdown refactor, the block stores raw markdown.
     // Project it to verify the rendered content is readable.
     let projected_lines: Vec<String> = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .filter(|b| {
+            matches!(
+                b.source,
+                BlockSource::Markdown {
+                    role: MessageRole::Assistant,
+                    ..
+                }
+            )
+        })
+        .flat_map(|b| crate::markdown::render_markdown_lines(&b.source.plain_text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -1843,16 +1865,24 @@ fn coordinator_hydration_handles_malformed_assistant_markdown_without_dropping_m
     let assistant_entries = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
+        .filter(|b| {
+            matches!(
+                b.source,
+                BlockSource::Markdown {
+                    role: MessageRole::Assistant,
+                    ..
+                }
+            )
+        })
         .collect::<Vec<_>>();
 
     assert!(!assistant_entries.is_empty());
     // Raw markdown is stored; check projected output contains the expected text
     let projected_text: String = assistant_entries
         .iter()
-        .flat_map(|entry| crate::markdown::render_markdown_lines(&entry.text(), None))
+        .flat_map(|b| crate::markdown::render_markdown_lines(&b.source.plain_text(), None))
         .flat_map(|l| l.spans.into_iter())
         .map(|s| s.text)
         .collect();
@@ -1871,15 +1901,23 @@ fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_tra
     });
     coordinator.drain_transport();
 
-    // After the raw-markdown refactor, the raw markdown is stored in the ProseMessage.
+    // After the raw-markdown refactor, the raw markdown is stored in the block.
     // Sanitization happens at projection time (render_markdown_lines). Verify by projecting.
     let projected_lines: Vec<String> = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|line| matches!(line.role(), nu_agent_core::transcript::ir::Role::Assistant))
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .filter(|b| {
+            matches!(
+                b.source,
+                BlockSource::Markdown {
+                    role: MessageRole::Assistant,
+                    ..
+                }
+            )
+        })
+        .flat_map(|b| crate::markdown::render_markdown_lines(&b.source.plain_text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -1915,16 +1953,16 @@ fn coordinator_hydration_regression_no_duplicate_lines_on_single_call() {
     let user_count = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|line| line.text() == "dup-check")
+        .filter(|b| b.source.plain_text() == "dup-check")
         .count();
     let assistant_count = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|line| line.text() == "dup-check-reply")
+        .filter(|b| b.source.plain_text() == "dup-check-reply")
         .count();
 
     assert_eq!(user_count, 1);
@@ -1937,7 +1975,7 @@ fn coordinator_hydrate_with_empty_message_snapshot_leaves_empty_session_behavior
     coordinator.hydrate_transcript_from_messages(Vec::<UiMessageSnapshot>::new(), None);
 
     let state = coordinator.state();
-    assert!(state.transcript.entries.is_empty());
+    assert!(state.transcript.blocks().is_empty());
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
 }
@@ -4316,9 +4354,9 @@ fn hydration_compaction_creates_block_structure() {
     let has_compaction_header = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .any(|line| line.text() == "Compaction");
+        .any(|b| b.source.plain_text() == "Compaction");
     assert!(
         has_compaction_header,
         "expected compaction block header in transcript"
@@ -4342,9 +4380,9 @@ fn hydration_compaction_renders_markdown_body() {
     let projected_texts: Vec<String> = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -4382,9 +4420,9 @@ fn hydration_compaction_fenced_body_renders_markdown_not_raw() {
     let projected_texts: Vec<String> = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -4411,9 +4449,9 @@ fn hydration_compaction_empty_summary_shows_block_only() {
     let texts: Vec<String> = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.text())
+        .map(|block| block.source.plain_text())
         .collect();
 
     // The compaction header should exist
@@ -4422,17 +4460,25 @@ fn hydration_compaction_empty_summary_shows_block_only() {
         "expected compaction block header: {texts:?}"
     );
 
-    // Only the header line should be present — no body content lines
-    let compaction_lines: Vec<_> = coordinator
+    // Only the header should be present — no body content: the Notice header
+    // block is the only Compaction-role block and it carries just the header
+    // text.
+    let compaction_blocks: Vec<_> = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|line| line.role() == Role::Compaction)
+        .filter(|b| block_to_role(b) == TranscriptRole::Compaction)
         .collect();
-    assert!(
-        compaction_lines.is_empty(),
-        "empty summary should produce no Compaction-role body lines: {compaction_lines:?}"
+    assert_eq!(
+        compaction_blocks.len(),
+        1,
+        "empty summary should produce the header block only: {compaction_blocks:?}"
+    );
+    assert_eq!(
+        compaction_blocks[0].source.plain_text(),
+        "Compaction",
+        "the compaction header block must carry only the header text"
     );
 }
 
@@ -4463,16 +4509,16 @@ fn hydration_compaction_matches_live_rendering() {
     let live_texts: Vec<String> = live
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.text())
+        .map(|block| block.source.plain_text())
         .collect();
     let hydrated_texts: Vec<String> = hydrated
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.text())
+        .map(|block| block.source.plain_text())
         .collect();
 
     assert_eq!(
@@ -4480,19 +4526,19 @@ fn hydration_compaction_matches_live_rendering() {
         "live and hydrated transcript texts should match"
     );
 
-    let live_roles: Vec<Role> = live
+    let live_roles: Vec<TranscriptRole> = live
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.role())
+        .map(block_to_role)
         .collect();
-    let hydrated_roles: Vec<Role> = hydrated
+    let hydrated_roles: Vec<TranscriptRole> = hydrated
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.role())
+        .map(block_to_role)
         .collect();
 
     assert_eq!(
@@ -4576,14 +4622,20 @@ fn render_if_needed_fires_when_dirty_and_elapsed() {
 // ── has_active_animation tests ──
 
 fn push_entry(coord: &mut RuntimeCoordinator, status: Option<ItemStatus>) {
+    use nu_agent_core::transcript::items::Message;
+    use nu_agent_core::transcript::renderer::Renderable;
+
+    let msg = Message {
+        role: MessageRole::Assistant,
+        markdown: "hi".to_string(),
+    };
     coord
         .state
         .transcript
-        .push_transcript_item(TranscriptEntry {
-            id: 0,
-            kind: TranscriptEntryKind::Assistant(ProseMessage {
-                markdown: "hi".to_string(),
-            }),
+        .push_block(nu_agent_core::transcript::ir::Block {
+            source: msg.source(),
+            lane: msg.lane(),
+            fill: msg.fill(),
             status,
         });
 }
@@ -4612,10 +4664,11 @@ fn has_active_animation_true_when_abort_pending() {
 fn has_active_animation_true_when_compaction_in_progress() {
     // -- Setup & Fixtures
     let mut coord = RuntimeCoordinator::new(80, 24, None);
+    let mut evicted = 0usize;
     coord
         .state
         .compaction
-        .start_block(&mut coord.state.transcript, "test");
+        .start_block(&mut coord.state.transcript, "test", &mut evicted);
 
     // -- Exec & Check
     assert!(coord.has_active_animation());
@@ -4736,9 +4789,9 @@ fn drain_transport_coalesces_consecutive_assistant_messages() {
     let texts: Vec<String> = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .map(|line| line.text())
+        .map(|block| block.source.plain_text())
         .collect();
     assert!(
         texts.contains(&"abcde".to_string()),
@@ -4770,10 +4823,18 @@ fn drain_transport_preserves_order_with_mixed_events() {
     let texts: Vec<String> = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|line| line.role() == Role::Assistant)
-        .map(|line| line.text())
+        .filter(|b| {
+            matches!(
+                b.source,
+                BlockSource::Markdown {
+                    role: MessageRole::Assistant,
+                    ..
+                }
+            )
+        })
+        .map(|block| block.source.plain_text())
         .collect();
     assert_eq!(texts, vec!["world"]);
 }
@@ -4790,10 +4851,18 @@ fn drain_transport_single_assistant_message_not_affected() {
     let texts: Vec<String> = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|line| line.role() == Role::Assistant)
-        .map(|line| line.text())
+        .filter(|b| {
+            matches!(
+                b.source,
+                BlockSource::Markdown {
+                    role: MessageRole::Assistant,
+                    ..
+                }
+            )
+        })
+        .map(|block| block.source.plain_text())
         .collect();
     assert_eq!(texts, vec!["solo"]);
 }
@@ -4891,17 +4960,14 @@ fn hydrate_assistant_message_with_bold_emits_md_bold_span() {
     let has_bold = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter_map(|e| {
-            if let nu_agent_core::transcript::items::TranscriptEntryKind::Assistant(
-                nu_agent_core::transcript::items::ProseMessage { markdown },
-            ) = &e.kind
-            {
-                Some(markdown.as_str())
-            } else {
-                None
-            }
+        .filter_map(|b| match &b.source {
+            BlockSource::Markdown {
+                role: MessageRole::Assistant,
+                markdown,
+            } => Some(markdown.as_str()),
+            _ => None,
         })
         .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
         .flat_map(|l| l.spans.into_iter())
@@ -4921,17 +4987,14 @@ fn hydrate_compaction_message_with_italic_emits_md_italic_span() {
     let has_italic = coordinator
         .state()
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter_map(|e| {
-            if let nu_agent_core::transcript::items::TranscriptEntryKind::Assistant(
-                nu_agent_core::transcript::items::ProseMessage { markdown },
-            ) = &e.kind
-            {
-                Some(markdown.as_str())
-            } else {
-                None
-            }
+        .filter_map(|b| match &b.source {
+            BlockSource::Markdown {
+                role: MessageRole::Assistant,
+                markdown,
+            } => Some(markdown.as_str()),
+            _ => None,
         })
         .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
         .flat_map(|l| l.spans.into_iter())
@@ -5552,74 +5615,58 @@ fn should_scan_for_yank_visual_mode_returns_true() {
     assert!(super::render::should_scan_for_yank(InputMode::Visual));
 }
 
-// ========== entry_visual_info tests ==========
+// ========== height index tests ==========
 
 #[test]
-fn entry_visual_info_computed_on_new_entry() {
+fn height_index_computed_on_new_entry() {
     let mut state = crate::state::AppState::default();
-    state
-        .transcript
-        .push_transcript_line(crate::state::TranscriptRole::User, "hello".to_string());
-    state
-        .transcript
-        .recompute_entry_visual_info(&mut state.scroll, 80);
-    assert_eq!(state.scroll.entry_visual_info.len(), 1);
-    assert_eq!(state.scroll.entry_visual_info[0].start_visual_row, 0);
-    assert!(state.scroll.entry_visual_info[0].visual_row_count >= 1);
+    push_message_line(&mut state, MessageRole::User, "hello");
+    state.transcript.rebuild_height_index(80);
+    assert!(state.transcript.height_index_valid_for(80));
+    assert!(state.transcript.total_visual_rows() >= 1);
 }
 
 #[test]
-fn total_visual_rows_from_entry_visual_info() {
+fn total_visual_rows_sums_measure_per_block_plus_separators() {
     let mut state = crate::state::AppState::default();
-    state
+    push_message_line(&mut state, MessageRole::User, "a");
+    push_message_line(&mut state, MessageRole::Assistant, "b\nc\nd");
+    push_message_line(&mut state, MessageRole::User, "e");
+    state.transcript.rebuild_height_index(80);
+    // Content blocks only: [User "a", Assistant, User "e"].
+    // measure sum = 1 + 3 + 1 = 5; SM separators = 0 + 2 + 2 = 4; the final
+    // block is a user turn, so it closes with 1 trailing separator row
+    // (task 670e0292).
+    let measured: usize = state
         .transcript
-        .push_transcript_line(crate::state::TranscriptRole::User, "a".to_string());
-    state.transcript.push_transcript_line(
-        crate::state::TranscriptRole::Assistant,
-        "b\nc\nd".to_string(),
-    );
-    state
-        .transcript
-        .push_transcript_line(crate::state::TranscriptRole::User, "e".to_string());
-    state
-        .transcript
-        .recompute_entry_visual_info(&mut state.scroll, 80);
-    // No reactive spacers — just the 3 entries
-    assert_eq!(state.scroll.entry_visual_info.len(), 3);
-    assert_eq!(state.scroll.entry_visual_info[0].visual_row_count, 1); // User "a"
-    // "b\nc\nd" projects to 3 ContentLines (one per line)
-    assert_eq!(state.scroll.entry_visual_info[1].visual_row_count, 3); // Assistant
-    assert_eq!(state.scroll.entry_visual_info[2].visual_row_count, 1); // User "e"
-    let total = state
-        .scroll
-        .entry_visual_info
-        .last()
-        .map(|i| i.start_visual_row + i.visual_row_count)
-        .unwrap_or(0);
-    assert_eq!(total, 5);
+        .blocks()
+        .iter()
+        .map(|block| crate::tui_renderer::measure(block, 80))
+        .sum();
+    let expected = measured + 4 + 1;
+    assert_eq!(state.transcript.total_visual_rows(), expected);
+    // 5 content rows + 4 separator rows + 1 trailing row = 10 visual rows
+    assert_eq!(state.transcript.total_visual_rows(), 10);
 }
 
 #[test]
-fn entry_visual_info_cleared_on_clear_transcript() {
+fn height_index_invalidated_on_clear_transcript() {
     let mut state = crate::state::AppState::default();
-    state
-        .transcript
-        .push_transcript_line(crate::state::TranscriptRole::User, "hello".to_string());
-    state
-        .transcript
-        .recompute_entry_visual_info(&mut state.scroll, 80);
-    assert!(!state.scroll.entry_visual_info.is_empty());
+    push_message_line(&mut state, MessageRole::User, "hello");
+    state.transcript.rebuild_height_index(80);
+    assert!(state.transcript.height_index_valid_for(80));
     state.clear_transcript();
-    assert!(state.scroll.entry_visual_info.is_empty());
+    assert!(!state.transcript.height_index_valid_for(80));
+    assert_eq!(state.transcript.total_visual_rows(), 0);
 }
 
 #[test]
 fn push_startup_logo_adds_logo_entry_to_transcript() {
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
     coordinator.state.push_startup_logo();
-    let entries = &coordinator.state.transcript.entries;
-    assert_eq!(entries.len(), 1);
-    assert!(matches!(entries[0].kind, TranscriptEntryKind::Logo(_)));
+    let blocks = coordinator.state.transcript.blocks();
+    assert_eq!(blocks.len(), 1);
+    assert!(matches!(blocks[0].source, BlockSource::Banner { .. }));
 }
 
 #[test]
@@ -5630,9 +5677,9 @@ fn startup_logo_not_pushed_during_hydration() {
     let has_logo = coordinator
         .state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .any(|e| matches!(e.kind, TranscriptEntryKind::Logo(_)));
+        .any(|b| matches!(b.source, BlockSource::Banner { .. }));
     assert!(!has_logo, "hydration must not push a logo");
 }
 
@@ -5645,17 +5692,13 @@ fn bottom_align_pads_content_when_shorter_than_viewport() {
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
     // Push a single logo entry — total_visual_rows will be small
     coordinator.state.push_startup_logo();
-    // AppState.entry_visual_info_dirty is a public field — no setter method exists.
     // Force a render to trigger the bottom-align logic.
-    coordinator.state.transcript.visual_info_dirty = true;
+    coordinator.state.transcript.invalidate_height_index();
     // The actual padding happens in render_transcript_pane which we can't easily unit-test
     // without a full Frame. Instead, verify the state is set up correctly for bottom-align:
     // viewport_height > total_visual_rows should be true for a single logo on a 40-row terminal.
-    coordinator
-        .state
-        .transcript
-        .recompute_entry_visual_info(&mut coordinator.state.scroll, 120);
-    let total = coordinator.state.scroll.total_visual_rows;
+    coordinator.state.transcript.rebuild_height_index(120);
+    let total = coordinator.state.transcript.total_visual_rows();
     let vp = coordinator.state.scroll.viewport_height;
     // On a 40-row terminal, a single logo entry should be much shorter
     assert!(
@@ -5702,12 +5745,9 @@ fn ui_event_turn_error_falls_through_to_transcript_and_finalize() {
 
     // -- Check
     assert!(handled, "TurnError must fall through and be handled");
-    let error_line = coordinator
-        .state
-        .transcript
-        .entries
-        .iter()
-        .any(|entry| entry.role() == Role::System && entry.text().contains("Error: boom"));
+    let error_line = coordinator.state.transcript.blocks().iter().any(|b| {
+        block_to_role(b) == TranscriptRole::System && b.source.plain_text().contains("Error: boom")
+    });
     assert!(error_line, "TurnError must land on the transcript");
     assert_eq!(
         coordinator.state.phase,
@@ -5784,7 +5824,7 @@ fn reduce_ui_state_event_status_variants_route_through_status_state() {
 fn reduce_ui_state_event_non_status_variants_fall_back_to_app_state() {
     // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
-    assert!(coordinator.state.transcript.entries.is_empty());
+    assert!(coordinator.state.transcript.blocks().is_empty());
 
     // -- Exec
     // PushStartupLogo is not status-owned: StatusState returns false and
@@ -5795,9 +5835,9 @@ fn reduce_ui_state_event_non_status_variants_fall_back_to_app_state() {
     let has_logo = coordinator
         .state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .any(|e| matches!(e.kind, TranscriptEntryKind::Logo(_)));
+        .any(|b| matches!(b.source, BlockSource::Banner { .. }));
     assert!(
         has_logo,
         "non-status UiStateEvent must fall through to AppState"
@@ -5815,7 +5855,8 @@ fn ui_event_permission_requested_applies_all_effects() {
     let event = UiEvent::PermissionRequested {
         request_id: "ask-0000000000000001".to_string(),
         context: PermissionRequestContext {
-            tool: "nu".to_string(),
+            tool: "nu(command=echo hi)".to_string(),
+            tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
             source: "closure".to_string(),
             mode: Some("apply".to_string()),
             matched_rule_identity: "nested:nu.command:*".to_string(),
@@ -5902,8 +5943,17 @@ fn ui_event_permission_decision_variants_skip_effects() {
 fn ui_event_permission_pre_authorize_display_applied_before_reduce() {
     // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
+    // The preview attaches to a pending tool call, so start one first — the
+    // same sequence the runtime produces for previewable tools.
+    coordinator.reduce_ui_event(UiEvent::ToolStarted {
+        name: "write".to_string(),
+        source: "user".to_string(),
+        arguments: "{}".to_string(),
+        call_line: nu_agent_core::protocol::tool_args::CallLine::from_json_summary("{}"),
+    });
     let context = PermissionRequestContext {
         tool: "write".to_string(),
+        tool_key: "write\n{}".to_string(),
         source: "user".to_string(),
         mode: Some("edit".to_string()),
         matched_rule_identity: "identity".to_string(),
@@ -5927,22 +5977,17 @@ fn ui_event_permission_pre_authorize_display_applied_before_reduce() {
 
     // -- Check
     assert!(handled, "PermissionRequested must reduce to true");
-    let display_applied = coordinator
+    // The preview is pushed as its own ToolDisplay block directly after the
+    // pending Tool block.
+    let preview_pushed = coordinator
         .state
         .transcript
-        .entries
+        .blocks()
         .iter()
-        .filter(|entry| entry.role() == Role::ToolDisplay)
-        .any(|entry| {
-            matches!(&entry.kind, TranscriptEntryKind::ToolResult(result)
-            if result.lines.iter().any(|line| {
-                let text: String = line.spans.iter().map(|s| s.text.as_str()).collect();
-                text.contains("preview-title")
-            }))
-        });
+        .any(|b| matches!(b.source, BlockSource::ToolDisplay { .. }));
     assert!(
-        display_applied,
-        "pre_authorize_display must be applied to the transcript before reduce"
+        preview_pushed,
+        "pre_authorize_display must be pushed as a ToolDisplay block before reduce"
     );
     assert!(
         coordinator.state.permission.has_prompt(),
@@ -6178,11 +6223,11 @@ async fn every_rendered_cell_has_an_explicit_background() -> Result<()> {
 async fn theme_picker_popup_does_not_bleed_transcript_glyphs() -> Result<()> {
     // -- Setup & Fixtures
     let mut driver = RenderLoopDriver::new(120, 30);
-    driver
-        .coordinator_mut()
-        .state
-        .transcript
-        .push_transcript_line(TranscriptRole::User, "bleed-sentinel".to_string());
+    push_message_line(
+        &mut driver.coordinator_mut().state,
+        MessageRole::User,
+        "bleed-sentinel",
+    );
     driver.coordinator_mut().state.set_picker_options(
         ActivePicker::Theme,
         vec![PickerOption {

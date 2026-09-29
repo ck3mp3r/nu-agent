@@ -12,7 +12,6 @@ use crate::{
 };
 use nu_agent_core::protocol::contracts::SharedUiAction;
 use nu_agent_core::protocol::event::PermissionDecision;
-use nu_agent_core::transcript::ir::Role;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -135,10 +134,9 @@ fn typing_remains_available_while_prompt_is_active() {
     );
 
     assert!(!changed);
-    // starting spacer + user + closing spacer
-    assert_eq!(state.transcript.entries.len(), 3);
-    assert_eq!(state.transcript.entries[1].role(), Role::User);
-    assert_eq!(state.transcript.entries[1].text(), "f");
+    // [User] — no leading or trailing spacer under the unified spacer rule
+    assert_eq!(state.transcript.len(), 1);
+    assert_eq!(state.transcript.blocks()[0].source.plain_text(), "f");
 }
 
 #[test]
@@ -155,10 +153,9 @@ fn submit_path_appends_prompt_and_keeps_input_editable() {
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(!state.input_locked);
     let _ = state.take_next_prompt_for_execution();
-    // starting spacer + user + closing spacer
-    assert_eq!(state.transcript.entries.len(), 3);
-    assert_eq!(state.transcript.entries[1].role(), Role::User);
-    assert_eq!(state.transcript.entries[1].text(), "s");
+    // [User] — no leading or trailing spacer under the unified spacer rule
+    assert_eq!(state.transcript.len(), 1);
+    assert_eq!(state.transcript.blocks()[0].source.plain_text(), "s");
 }
 
 #[test]
@@ -562,7 +559,7 @@ fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::AltEnter), None);
     assert!(!changed);
     assert_eq!(state.phase, UiPhase::Idle);
-    assert!(state.transcript.entries.is_empty());
+    assert!(state.transcript.blocks().is_empty());
 
     // Enter still submits via pending_submit_text
     state.input.pending_submit_text = Some("h".to_string());
@@ -571,9 +568,9 @@ fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
     assert!(changed);
     assert_eq!(state.phase, UiPhase::Busy);
     let _ = state.take_next_prompt_for_execution();
-    // starting spacer + user + closing spacer
-    assert_eq!(state.transcript.entries.len(), 3);
-    assert_eq!(state.transcript.entries[1].text().trim(), "h");
+    // [User] — no leading or trailing spacer under the unified spacer rule
+    assert_eq!(state.transcript.len(), 1);
+    assert_eq!(state.transcript.blocks()[0].source.plain_text().trim(), "h");
 }
 
 #[test]
@@ -1260,7 +1257,7 @@ fn inline_slash_enter_on_compact_triggers_compaction_path() {
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert!(changed);
-    assert!(state.transcript.entries.is_empty());
+    assert!(state.transcript.blocks().is_empty());
     assert_eq!(
         state.take_next_prompt_for_execution(),
         Some("/compact".to_string())

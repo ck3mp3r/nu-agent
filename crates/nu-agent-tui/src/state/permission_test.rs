@@ -1,7 +1,56 @@
 use crate::state::*;
 use nu_agent_core::protocol::event::PermissionDecision;
+use nu_agent_core::protocol::tool_args::CallLine;
+use nu_agent_core::transcript::ir::Block;
+use nu_agent_core::transcript::ir::MessageRole;
+use nu_agent_core::transcript::items::{Message, Tool};
+use nu_agent_core::transcript::renderer::Renderable;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+fn push_user(state: &mut AppState, text: &str) {
+    let msg = Message {
+        role: MessageRole::User,
+        markdown: text.to_string(),
+    };
+    state.transcript.push_block(Block {
+        source: msg.source(),
+        lane: msg.lane(),
+        fill: msg.fill(),
+        status: None,
+    });
+}
+
+fn push_assistant(state: &mut AppState, text: &str) {
+    let msg = Message {
+        role: MessageRole::Assistant,
+        markdown: text.to_string(),
+    };
+    state.transcript.push_block(Block {
+        source: msg.source(),
+        lane: msg.lane(),
+        fill: msg.fill(),
+        status: None,
+    });
+}
+
+fn push_tool_summary(state: &mut AppState, summary: &str) {
+    let tool = Tool {
+        name: nu_agent_core::transcript::ir::ToolName("read".to_string()),
+        call: CallLine {
+            summary: summary.to_string(),
+        },
+        preview: None,
+        result: None,
+        status: nu_agent_core::transcript::renderer::ItemStatus::Done,
+    };
+    state.transcript.push_block(Block {
+        source: tool.source(),
+        lane: tool.lane(),
+        fill: tool.fill(),
+        status: Some(tool.status),
+    });
+}
 
 #[test]
 fn permission_prompt_open_sets_presence() {
@@ -24,15 +73,9 @@ fn permission_prompt_open_sets_presence() {
 #[test]
 fn permission_prompt_open_does_not_scroll() {
     let mut state = AppState::default();
-    state
-        .transcript
-        .push_transcript_line(TranscriptRole::User, "msg1".to_string());
-    state
-        .transcript
-        .push_transcript_line(TranscriptRole::Assistant, "msg2".to_string());
-    state
-        .transcript
-        .push_transcript_line(TranscriptRole::Tool, "tool1".to_string());
+    push_user(&mut state, "msg1");
+    push_assistant(&mut state, "msg2");
+    push_tool_summary(&mut state, "tool1");
     state.scroll.scroll_transcript_to_top();
     assert!(!state.scroll.following_tail);
 
