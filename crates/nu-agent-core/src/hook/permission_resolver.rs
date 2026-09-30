@@ -14,7 +14,7 @@ use serde_json::Value as JsonValue;
 use crate::bus::OneshotTx;
 
 use crate::protocol::event::{
-    PermissionDecision as ProtocolPermissionDecision, PermissionRequestContext,
+    PermissionDecision as ProtocolPermissionDecision, PermissionRequestContext, UiEvent,
 };
 use crate::tools::authz::{
     AskApprovalHook, AskChoice, AskContext, PermissionsConfig, SessionGrantCache, apply_ask_choice,
@@ -402,7 +402,24 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 // Policy had an explicit Allow or Deny — no user interaction needed.
                 match deny_reason {
                     Some(reason) => PermissionDecision::Deny { reason },
-                    None => PermissionDecision::Allow,
+                    None => {
+                        // Auto-approved: the user never sees a prompt, so the
+                        // pre-authorize preview built above has no other way to
+                        // reach the UI. Publish it and record the key so
+                        // `take_previewed` suppresses the completion copy.
+                        if let Some(display) = flow_context.ask_context.pre_authorize_display {
+                            let tool_key = format!("{tool_name}\n{arguments}");
+                            previewed
+                                .lock()
+                                .expect("previewed lock")
+                                .insert(tool_key.clone());
+                            let _ = bus
+                                .ui_event()
+                                .send(UiEvent::ToolPreview { tool_key, display })
+                                .await;
+                        }
+                        PermissionDecision::Allow
+                    }
                 }
             } else {
                 // Policy said Ask — publish event on the bus and await user decision.

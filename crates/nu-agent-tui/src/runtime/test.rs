@@ -1582,9 +1582,8 @@ fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
             .map(|block| (block_to_role(block), block.source.plain_text()))
             .collect::<Vec<_>>(),
         vec![
-            // user block: line1, line2 — content blocks only, no Spacers
-            (TranscriptRole::User, "line1".to_string()),
-            (TranscriptRole::User, "line2".to_string()),
+            // user block: one whole block, blank lines preserved
+            (TranscriptRole::User, "line1\n\nline2".to_string()),
             // assistant block: reply
             (TranscriptRole::Assistant, "reply".to_string()),
             // system block: fallback

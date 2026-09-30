@@ -39,7 +39,7 @@ fn mocha_palette_matches_official_values() {
     assert_eq!(p.overlay0, Color::Rgb(108, 112, 134));
     assert_eq!(p.overlay1, Color::Rgb(127, 132, 156));
     assert_eq!(p.overlay2, Color::Rgb(147, 153, 178));
-    assert_eq!(p.surface0, Color::Rgb(49, 50, 68));
+    assert_eq!(p.surface0, Color::Rgb(43, 44, 61));
     assert_eq!(p.surface1, Color::Rgb(69, 71, 90));
     assert_eq!(p.surface2, Color::Rgb(88, 91, 112));
     assert_eq!(p.base, Color::Rgb(30, 30, 46));
@@ -71,7 +71,7 @@ fn latte_palette_matches_official_values() {
     assert_eq!(p.overlay0, Color::Rgb(156, 160, 176));
     assert_eq!(p.overlay1, Color::Rgb(140, 143, 161));
     assert_eq!(p.overlay2, Color::Rgb(124, 127, 147));
-    assert_eq!(p.surface0, Color::Rgb(204, 208, 218));
+    assert_eq!(p.surface0, Color::Rgb(196, 200, 212));
     assert_eq!(p.surface1, Color::Rgb(188, 192, 204));
     assert_eq!(p.surface2, Color::Rgb(172, 176, 190));
     assert_eq!(p.base, Color::Rgb(239, 241, 245));
@@ -103,7 +103,7 @@ fn frappe_palette_matches_official_values() {
     assert_eq!(p.overlay0, Color::Rgb(115, 121, 148));
     assert_eq!(p.overlay1, Color::Rgb(131, 139, 167));
     assert_eq!(p.overlay2, Color::Rgb(148, 156, 187));
-    assert_eq!(p.surface0, Color::Rgb(65, 69, 89));
+    assert_eq!(p.surface0, Color::Rgb(59, 63, 82));
     assert_eq!(p.surface1, Color::Rgb(81, 87, 109));
     assert_eq!(p.surface2, Color::Rgb(98, 104, 128));
     assert_eq!(p.base, Color::Rgb(48, 52, 70));
@@ -135,7 +135,7 @@ fn macchiato_palette_matches_official_values() {
     assert_eq!(p.overlay0, Color::Rgb(110, 115, 141));
     assert_eq!(p.overlay1, Color::Rgb(128, 135, 162));
     assert_eq!(p.overlay2, Color::Rgb(147, 154, 183));
-    assert_eq!(p.surface0, Color::Rgb(54, 58, 79));
+    assert_eq!(p.surface0, Color::Rgb(48, 52, 72));
     assert_eq!(p.surface1, Color::Rgb(73, 77, 100));
     assert_eq!(p.surface2, Color::Rgb(91, 96, 120));
     assert_eq!(p.base, Color::Rgb(36, 39, 58));
@@ -175,7 +175,7 @@ fn existing_role_and_status_channels_remain_unchanged() {
     assert_eq!(theme.status_done.fg, Some(MOCHA_GREEN));
     assert_eq!(theme.status_failed.fg, Some(MOCHA_RED));
     assert_eq!(theme.status_cancelled.fg, Some(MOCHA_OVERLAY0));
-    assert_eq!(theme.row_user_bg, theme.surface0);
+    assert_eq!(theme.row_user_bg, Color::Rgb(43, 44, 61));
 }
 
 #[test]
@@ -299,14 +299,14 @@ fn catppuccin_latte_maps_to_latte_palette() {
     assert_eq!(theme.role_assistant.fg, Some(Color::Rgb(114, 135, 253)));
     assert_eq!(theme.status_failed.fg, Some(Color::Rgb(210, 15, 57)));
     assert_eq!(theme.status_done.fg, Some(Color::Rgb(64, 160, 43)));
-    assert_eq!(theme.row_user_bg, theme.surface0);
+    assert_eq!(theme.row_user_bg, Color::Rgb(196, 200, 212));
 }
 
 #[test]
 fn mocha_surface0_feeds_code_block_background() {
     let theme = TuiTheme::catppuccin_mocha();
 
-    assert_eq!(theme.surface0, Color::Rgb(49, 50, 68));
+    assert_eq!(theme.surface0, Color::Rgb(43, 44, 61));
 }
 
 #[test]
@@ -321,12 +321,46 @@ fn base_matches_palette_base_for_both_flavors() {
 }
 
 #[test]
-fn row_user_bg_equals_surface0_for_both_flavors() {
-    let mocha = TuiTheme::catppuccin_mocha();
-    let latte = TuiTheme::catppuccin_latte();
+fn row_user_bg_uses_darkened_surface0_for_all_flavors() {
+    // (theme, expected darkened surface0, official Catppuccin surface0)
+    let cases = [
+        (
+            TuiTheme::catppuccin_mocha(),
+            Color::Rgb(43, 44, 61),
+            Color::Rgb(49, 50, 68),
+        ),
+        (
+            TuiTheme::catppuccin_latte(),
+            Color::Rgb(196, 200, 212),
+            Color::Rgb(204, 208, 218),
+        ),
+        (
+            TuiTheme::catppuccin_frappe(),
+            Color::Rgb(59, 63, 82),
+            Color::Rgb(65, 69, 89),
+        ),
+        (
+            TuiTheme::catppuccin_macchiato(),
+            Color::Rgb(48, 52, 72),
+            Color::Rgb(54, 58, 79),
+        ),
+    ];
 
-    assert_eq!(mocha.row_user_bg, mocha.surface0);
-    assert_eq!(latte.row_user_bg, latte.surface0);
+    for (theme, expected, official) in cases {
+        assert_eq!(theme.surface0, expected);
+        assert_eq!(theme.row_user_bg, expected);
+        assert!(
+            is_strictly_darker(expected, official),
+            "darkened surface0 {expected:?} must be darker than the official {official:?}"
+        );
+    }
+}
+
+fn is_strictly_darker(darker: Color, lighter: Color) -> bool {
+    let (Color::Rgb(dr, dg, db), Color::Rgb(lr, lg, lb)) = (darker, lighter) else {
+        return false;
+    };
+    dr < lr && dg < lg && db < lb
 }
 
 #[test]

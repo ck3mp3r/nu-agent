@@ -220,6 +220,7 @@ impl<W: Write> StderrUiRenderer<W> {
                     )
                 }
             }
+            UiEvent::ToolPreview { .. } => None,
             UiEvent::PermissionRequested {
                 request_id,
                 context,

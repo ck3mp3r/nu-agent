@@ -809,6 +809,75 @@ fn hydration_attaches_tool_display_as_preview_on_tool_block() -> Result<()> {
     Ok(())
 }
 
+/// WHEN `hydrate_from_messages` receives one role-"user" snapshot with
+/// multi-line content, THE TranscriptStore SHALL hold exactly one User block
+/// whose rail is contiguous on every rendered row.
+#[test]
+fn hydration_user_multi_line_message_hydrates_one_block_with_contiguous_rail() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    let mut status = crate::state::StatusState::default();
+    let mut tool = crate::state::ToolState::default();
+    let mut compaction = crate::state::CompactionState::default();
+
+    // -- Exec
+    state.transcript.hydrate_from_messages(
+        vec![UiMessageSnapshot::new("user", "line1\n\nline2")],
+        None,
+        &mut status,
+        &mut tool,
+        &mut compaction,
+    );
+
+    // -- Check
+    assert_eq!(
+        state.transcript.len(),
+        1,
+        "a multi-line user message must hydrate as one block"
+    );
+    let block = state
+        .transcript
+        .blocks()
+        .first()
+        .ok_or("should have user block")?;
+    assert!(
+        matches!(
+            block.source,
+            BlockSource::Markdown {
+                role: MessageRole::User,
+                ..
+            }
+        ),
+        "expected one User markdown block, got {:?}",
+        block.source
+    );
+    assert_eq!(block.lane, nu_agent_core::transcript::ir::Lane::Marker("▏"));
+    assert_eq!(block.fill, nu_agent_core::transcript::ir::Fill::Full);
+    assert_eq!(block.source.plain_text(), "line1\n\nline2");
+
+    let ctx = FrameContext {
+        width: 80,
+        now_millis: 0,
+        cursor: false,
+        selected: false,
+    };
+    let lines = crate::tui_renderer::layout(block, &ctx);
+    assert!(
+        lines.len() >= 2,
+        "fixture must render more than one row; got {}",
+        lines.len()
+    );
+    for (idx, line) in lines.iter().enumerate() {
+        let marker = line.spans.get(1).ok_or("marker span must exist")?;
+        assert!(
+            marker.content.contains('▏'),
+            "row {idx} must carry the user rail; got {:?}",
+            marker.content
+        );
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Eviction shifts domain block_index bookkeeping (task 7f67b85b)
 // ---------------------------------------------------------------------------

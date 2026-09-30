@@ -325,37 +325,19 @@ impl TranscriptStore {
                 continue;
             }
             if let Some(role) = message_role {
-                if role == MessageRole::Assistant {
-                    // Assistant prose hydrates as one whole block so
-                    // multi-line markdown (tables, lists) projects intact.
-                    let msg = Message {
-                        role,
-                        markdown: message_content.trim().to_string(),
-                    };
-                    let _ = self.push_block(Block {
-                        source: msg.source(),
-                        lane: msg.lane(),
-                        fill: msg.fill(),
-                        status: None,
-                    });
-                } else {
-                    // User prompts hydrate one block per non-blank line,
-                    // matching the old per-line push behavior.
-                    for line in message_content.lines() {
-                        if !line.trim().is_empty() {
-                            let msg = Message {
-                                role,
-                                markdown: line.to_string(),
-                            };
-                            let _ = self.push_block(Block {
-                                source: msg.source(),
-                                lane: msg.lane(),
-                                fill: msg.fill(),
-                                status: None,
-                            });
-                        }
-                    }
-                }
+                // Prose hydrates as one whole block so multi-line markdown
+                // (tables, lists) projects intact and the user rail stays
+                // contiguous on every row.
+                let msg = Message {
+                    role,
+                    markdown: message_content.trim().to_string(),
+                };
+                let _ = self.push_block(Block {
+                    source: msg.source(),
+                    lane: msg.lane(),
+                    fill: msg.fill(),
+                    status: None,
+                });
                 continue;
             }
 

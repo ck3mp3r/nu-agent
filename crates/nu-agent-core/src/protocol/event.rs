@@ -93,6 +93,14 @@ pub enum UiEvent {
         error_kind: Option<String>,
         message: Option<String>,
     },
+    /// A pre-authorize preview published without a permission prompt (the
+    /// policy auto-approved the call). `tool_key` is the exact
+    /// `{tool_name}\n{raw_arguments}` call key, the same contract as
+    /// [`PermissionRequestContext::tool_key`].
+    ToolPreview {
+        tool_key: String,
+        display: ToolDisplay,
+    },
     PermissionRequested {
         request_id: String,
         context: PermissionRequestContext,

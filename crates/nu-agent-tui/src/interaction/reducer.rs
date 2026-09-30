@@ -528,6 +528,11 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
             }
             true
         }
+        UiEvent::ToolPreview { tool_key, display } => {
+            let evicted = crate::state::note_tool_preview(state, &tool_key, &display);
+            state.shift_bookkeeping_after_eviction(evicted);
+            true
+        }
         UiEvent::Warning { message } => state
             .status
             .reduce_warning_event(WarningEvent::Message { message }),

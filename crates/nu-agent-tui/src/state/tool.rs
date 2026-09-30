@@ -237,15 +237,27 @@ pub(crate) fn note_permission_request_display(
     let Some(display) = &context.pre_authorize_display else {
         return 0;
     };
-    // The request context carries the exact call key (`{name}\n{arguments}`),
-    // so the pending call is matched byte-for-byte. `context.tool` is a
-    // decorated display name and never equals a call key.
+    note_tool_preview(state, &context.tool_key, display)
+}
+
+/// Attach a pre-authorize tool display to the pending tool call identified by
+/// `tool_key` (`{tool_name}\n{raw_arguments}`). Returns the number of blocks
+/// evicted by the push so the caller can shift domain bookkeeping. A key that
+/// matches no pending call pushes nothing.
+pub(crate) fn note_tool_preview(
+    state: &mut AppState,
+    tool_key: &str,
+    display: &ToolDisplay,
+) -> usize {
+    // The key is the exact call key (`{name}\n{arguments}`), so the pending
+    // call is matched byte-for-byte. A decorated display name never equals a
+    // call key.
     let Some(pending) = state
         .tool
         .calls
         .iter()
         .rev()
-        .find(|call| call.status == ToolCallStatus::InProgress && call.key == context.tool_key)
+        .find(|call| call.status == ToolCallStatus::InProgress && call.key == tool_key)
     else {
         return 0;
     };
@@ -253,7 +265,7 @@ pub(crate) fn note_permission_request_display(
         .key
         .split_once('\n')
         .map(|(n, a)| (n.to_string(), a.to_string()))
-        .unwrap_or((context.tool.clone(), String::new()));
+        .unwrap_or((tool_key.to_string(), String::new()));
     let mut evicted = 0usize;
     state.tool.set_tool_preview(
         &mut state.transcript,

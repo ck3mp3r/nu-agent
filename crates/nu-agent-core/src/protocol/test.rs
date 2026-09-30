@@ -286,6 +286,13 @@ fn ui_event_contract_exposes_required_variants() {
             error_kind: None,
             message: None,
         },
+        UiEvent::ToolPreview {
+            tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
+            display: crate::protocol::event::ToolDisplay {
+                title: "nu".to_string(),
+                sections: vec![],
+            },
+        },
         UiEvent::PermissionRequested {
             request_id: "ask-0000000000000001".to_string(),
             context: PermissionRequestContext {
@@ -339,7 +346,7 @@ fn ui_event_contract_exposes_required_variants() {
         UiEvent::Completed { tool_calls: 1 },
     ];
 
-    assert_eq!(events.len(), 16);
+    assert_eq!(events.len(), 17);
 }
 
 #[test]

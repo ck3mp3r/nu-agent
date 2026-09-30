@@ -31,6 +31,7 @@ impl UiRenderer for FakeRenderer {
             UiEvent::LlmCompleted { .. } => "llm_end",
             UiEvent::ToolStarted { .. } => "tool_start",
             UiEvent::ToolCompleted { .. } => "tool_end",
+            UiEvent::ToolPreview { .. } => "tool_preview",
             UiEvent::PermissionRequested { .. } => "permission_requested",
             UiEvent::PermissionDecisionSubmitted { .. } => "permission_decision_submitted",
             UiEvent::PermissionDecisionTimedOut { .. } => "permission_decision_timed_out",
