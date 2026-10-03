@@ -20,6 +20,7 @@ type GetResponseMap = HashMap<String, Result<Vec<u8>, A2aError>>;
 pub struct MockHttpClient {
     post_responses: Arc<RwLock<PostResponseMap>>,
     get_responses: Arc<RwLock<GetResponseMap>>,
+    last_post_body: Arc<RwLock<Option<Value>>>,
 }
 
 impl Default for MockHttpClient {
@@ -27,6 +28,7 @@ impl Default for MockHttpClient {
         Self {
             post_responses: Arc::new(RwLock::new(HashMap::new())),
             get_responses: Arc::new(RwLock::new(HashMap::new())),
+            last_post_body: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -83,10 +85,18 @@ impl MockHttpClient {
     pub fn expect_get_error(&self, url: &str, error: A2aError) {
         self.expect_get(url, Err(error));
     }
+
+    /// Return the JSON body of the most recent POST request.
+    pub fn last_post_body(&self) -> Option<Value> {
+        self.last_post_body.read().ok().and_then(|b| b.clone())
+    }
 }
 
 impl A2aHttpClient for MockHttpClient {
-    async fn post_json(&self, url: &str, _body: Value) -> Result<Value, A2aError> {
+    async fn post_json(&self, url: &str, body: Value) -> Result<Value, A2aError> {
+        if let Ok(mut last) = self.last_post_body.write() {
+            *last = Some(body);
+        }
         let key = format!("POST {url}");
         let map = self
             .post_responses

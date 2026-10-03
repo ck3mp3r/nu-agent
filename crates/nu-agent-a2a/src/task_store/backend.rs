@@ -13,7 +13,6 @@ pub trait TaskStoreBackend: Send + Sync {
     /// Create a new task in `Submitted` state.
     fn create_task(
         &self,
-        session_id: Option<String>,
         context_id: Option<String>,
         parent_task_id: Option<String>,
         metadata: Option<HashMap<String, Value>>,
@@ -66,7 +65,6 @@ pub trait TaskStoreBackend: Send + Sync {
     fn create_task_with_idempotency(
         &self,
         key: &str,
-        session_id: Option<String>,
         context_id: Option<String>,
         parent_task_id: Option<String>,
         metadata: Option<HashMap<String, Value>>,

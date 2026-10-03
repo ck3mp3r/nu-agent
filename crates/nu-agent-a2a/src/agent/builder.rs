@@ -23,6 +23,7 @@ pub struct AgentBuilder {
     mesh_key: String,
     card: Option<AgentCard>,
     discovery_impl: Option<PeerDiscoveryImpl>,
+    blocking_timeout: Duration,
 }
 
 impl AgentBuilder {
@@ -37,6 +38,7 @@ impl AgentBuilder {
             mesh_key: String::new(),
             card: None,
             discovery_impl: None,
+            blocking_timeout: DEFAULT_BLOCKING_TIMEOUT,
         }
     }
 
@@ -61,6 +63,14 @@ impl AgentBuilder {
     /// Set the mesh key for discovery.
     pub fn mesh_key(mut self, key: String) -> Self {
         self.mesh_key = key;
+        self
+    }
+
+    /// Set the deadline for blocking `message:send` requests (spec §3.2.2).
+    ///
+    /// Defaults to [`DEFAULT_BLOCKING_TIMEOUT`].
+    pub fn blocking_timeout(mut self, timeout: Duration) -> Self {
+        self.blocking_timeout = timeout;
         self
     }
 
@@ -110,7 +120,7 @@ impl AgentBuilder {
                 supported_interfaces: vec![AgentInterface {
                     url: "http://127.0.0.1:0".into(),
                     protocol_version: "1.0".into(),
-                    protocol_binding: "HTTP+JSON".into(),
+                    protocol_binding: crate::PROTOCOL_BINDING.into(),
                 }],
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 capabilities: AgentCapabilities::default(),
@@ -128,7 +138,14 @@ impl AgentBuilder {
         // ── A2A completion event channel ──────────────────────────────────
         let (completion_tx, completion_rx) = mpsc::channel::<A2aCompletionEvent>(64);
 
-        let server = match A2aServer::start(card.clone(), cache.clone(), self.port).await {
+        let server = match A2aServer::start_with_blocking_timeout(
+            card.clone(),
+            cache.clone(),
+            self.port,
+            self.blocking_timeout,
+        )
+        .await
+        {
             Ok(s) => s,
             Err(e) => return Err((e, None)),
         };

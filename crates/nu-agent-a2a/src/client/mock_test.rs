@@ -12,7 +12,7 @@ async fn test_mock_expect_post_ok() -> Result<()> {
     let mock = MockHttpClient::default();
     mock.expect_post_ok(
         "http://example.com/message:send",
-        serde_json::json!({"task": {"id": "task-1", "status": {"state": "WORKING", "timestamp": "2026-01-01T00:00:00Z"}, "artifacts": []}}),
+        serde_json::json!({"task": {"id": "task-1", "status": {"state": "TASK_STATE_WORKING", "timestamp": "2026-01-01T00:00:00Z"}, "artifacts": []}}),
     );
 
     let result = mock
@@ -28,12 +28,15 @@ async fn test_mock_expect_post_ok() -> Result<()> {
 async fn test_mock_expect_post_error() {
     let mock = MockHttpClient::default();
     mock.expect_post_error(
-        "http://example.com/tasks:list",
+        "http://example.com/tasks/task-1/cancel",
         A2aError::TaskNotFound("no tasks".into()),
     );
 
     let result = mock
-        .post_json("http://example.com/tasks:list", serde_json::json!({}))
+        .post_json(
+            "http://example.com/tasks/task-1/cancel",
+            serde_json::json!({}),
+        )
         .await;
     assert!(
         matches!(result, Err(A2aError::TaskNotFound(_))),
@@ -138,7 +141,7 @@ async fn test_send_task_with_mock() -> Result<()> {
             "task": {
                 "id": "00000000-0000-0000-0000-000000000001",
                 "status": {
-                    "state": "WORKING",
+                    "state": "TASK_STATE_WORKING",
                     "timestamp": "2026-01-01T00:00:00Z"
                 },
                 "artifacts": []
@@ -156,7 +159,7 @@ async fn test_send_task_with_mock() -> Result<()> {
         metadata: None,
     };
 
-    let task = send_task(&mock, "http://example.com", msg, None, None)
+    let task = send_task(&mock, "http://example.com", msg, None, None, None)
         .await
         .map_err(|e| format!("{e:?}"))?;
     assert_eq!(task.id, "00000000-0000-0000-0000-000000000001");
@@ -172,7 +175,7 @@ async fn test_get_task_with_mock() -> Result<()> {
         "task": {
             "id": "task-1",
             "status": {
-                "state": "WORKING",
+                "state": "TASK_STATE_WORKING",
                 "timestamp": "2026-01-01T00:00:00Z"
             },
             "artifacts": []

@@ -40,12 +40,11 @@ impl Default for InMemoryTaskStore {
 impl TaskStoreBackend for InMemoryTaskStore {
     fn create_task(
         &self,
-        session_id: Option<String>,
         context_id: Option<String>,
         parent_task_id: Option<String>,
         metadata: Option<HashMap<String, Value>>,
     ) -> Task {
-        InMemoryTaskStore::create_task(self, session_id, context_id, parent_task_id, metadata)
+        InMemoryTaskStore::create_task(self, context_id, parent_task_id, metadata)
     }
 
     fn get_task(&self, id: &str) -> Result<Task, A2aError> {
@@ -84,9 +83,16 @@ impl TaskStoreBackend for InMemoryTaskStore {
         };
         let filtered_total = filtered.len();
 
-        // Sort by creation order
+        // Sort by status timestamp descending (spec §3.1.4), with the task ID
+        // as an ascending tiebreaker so equal timestamps still order
+        // deterministically (HashMap iteration order is not stable).
         let mut sorted = filtered;
-        sorted.sort_by_key(|a| a.created_at);
+        sorted.sort_by(|a, b| {
+            b.status
+                .timestamp
+                .cmp(&a.status.timestamp)
+                .then_with(|| a.id.cmp(&b.id))
+        });
 
         // Apply cursor-based pagination
         if let Some(cursor_id) = next_page_token
@@ -126,7 +132,6 @@ impl TaskStoreBackend for InMemoryTaskStore {
     fn create_task_with_idempotency(
         &self,
         key: &str,
-        session_id: Option<String>,
         context_id: Option<String>,
         parent_task_id: Option<String>,
         metadata: Option<HashMap<String, Value>>,
@@ -136,7 +141,6 @@ impl TaskStoreBackend for InMemoryTaskStore {
         match InMemoryTaskStore::create_task_with_idempotency_impl(
             self,
             key,
-            session_id,
             context_id,
             parent_task_id,
             metadata,
@@ -171,7 +175,6 @@ impl InMemoryTaskStore {
     fn create_task_with_idempotency_impl(
         &self,
         key: &str,
-        session_id: Option<String>,
         context_id: Option<String>,
         parent_task_id: Option<String>,
         metadata: Option<HashMap<String, Value>>,
@@ -183,7 +186,7 @@ impl InMemoryTaskStore {
             return Err(Box::new(task)); // Found duplicate
         }
 
-        let task = self.create_task(session_id, context_id, parent_task_id, metadata);
+        let task = self.create_task(context_id, parent_task_id, metadata);
         keys.insert(key.to_string(), task.id.clone());
         Ok(task)
     }
@@ -332,6 +335,9 @@ impl InMemoryTaskStore {
     }
 
     /// Send push notifications to all registered webhooks for a task.
+    ///
+    /// The payload uses the StreamResponse format (spec §4.3.3), matching the
+    /// SSE handlers: `{"statusUpdate": {...}}` or `{"artifactUpdate": {...}}`.
     fn notify_push_configs(&self, _task_id: &str, event: &TaskEvent) {
         let configs = self.push_configs.read().expect("push_configs lock");
         let task_id = match event {
@@ -339,7 +345,13 @@ impl InMemoryTaskStore {
             TaskEvent::ArtifactAdded { task_id, .. } => task_id,
         };
         if let Some(entries) = configs.get(task_id) {
-            let payload = serde_json::json!(event);
+            let context_id = self
+                .tasks
+                .read()
+                .expect("tasks lock")
+                .get(task_id)
+                .and_then(|t| t.context_id.clone());
+            let payload = task_event_to_stream_response(event, &context_id);
             for config in entries {
                 let config = config.clone();
                 let payload = payload.clone();
@@ -364,7 +376,6 @@ impl InMemoryTaskStore {
     /// Create a new task in `Submitted` state.
     pub fn create_task(
         &self,
-        session_id: Option<String>,
         context_id: Option<String>,
         parent_task_id: Option<String>,
         metadata: Option<std::collections::HashMap<String, serde_json::Value>>,
@@ -374,7 +385,6 @@ impl InMemoryTaskStore {
             id: id.clone(),
             context_id,
             parent_task_id,
-            session_id,
             status: TaskStatus {
                 state: TaskState::Submitted,
                 timestamp: Utc::now(),
@@ -397,7 +407,6 @@ impl InMemoryTaskStore {
     pub fn create_task_with_idempotency(
         &self,
         key: &str,
-        session_id: Option<String>,
         context_id: Option<String>,
         parent_task_id: Option<String>,
         metadata: Option<std::collections::HashMap<String, serde_json::Value>>,
@@ -411,7 +420,7 @@ impl InMemoryTaskStore {
         }
 
         // Create new task
-        let task = self.create_task(session_id, context_id, parent_task_id, metadata);
+        let task = self.create_task(context_id, parent_task_id, metadata);
         keys.insert(key.to_string(), task.id.clone());
         Ok(task)
     }
@@ -486,13 +495,14 @@ impl InMemoryTaskStore {
         }
     }
 
-    /// List tasks with optional status filtering and cursor-based pagination.
+    /// List tasks with optional status/context filtering and cursor-based pagination.
     ///
     /// Returns a tuple of `(tasks, next_page_token)` where `next_page_token` is
     /// `Some(task_id)` if there are more results beyond the requested `limit`.
     pub fn list_tasks_filtered(
         &self,
         status: Option<TaskState>,
+        context_id: Option<&str>,
         limit: usize,
         cursor: Option<&str>,
     ) -> (Vec<Task>, Option<String>) {
@@ -504,8 +514,20 @@ impl InMemoryTaskStore {
             filtered.retain(|t| t.status.state == *state);
         }
 
-        // Sort by creation order
-        filtered.sort_by_key(|a| a.created_at);
+        // Filter by context ID if provided (spec §11.5)
+        if let Some(ctx) = context_id {
+            filtered.retain(|t| t.context_id.as_deref() == Some(ctx));
+        }
+
+        // Sort by status timestamp descending (spec §3.1.4), with the task ID
+        // as an ascending tiebreaker so equal timestamps still order
+        // deterministically (HashMap iteration order is not stable).
+        filtered.sort_by(|a, b| {
+            b.status
+                .timestamp
+                .cmp(&a.status.timestamp)
+                .then_with(|| a.id.cmp(&b.id))
+        });
 
         // Apply cursor-based pagination
         if let Some(cursor_id) = cursor
@@ -604,6 +626,37 @@ impl InMemoryTaskStore {
 
         task.history.get_or_insert_with(Vec::new).push(message);
         Ok(task.clone())
+    }
+}
+
+/// Convert an internal [`TaskEvent`] into the A2A StreamResponse JSON format
+/// (spec §4.2.1, §4.2.2, §4.3.3).
+///
+/// `TaskEvent::StatusChanged` becomes `{"statusUpdate": {...}}` and
+/// `TaskEvent::ArtifactAdded` becomes `{"artifactUpdate": {...}}` — the same
+/// shape the SSE handlers emit. `context_id` is included when the task has one.
+pub fn task_event_to_stream_response(event: &TaskEvent, context_id: &Option<String>) -> Value {
+    match event {
+        TaskEvent::StatusChanged { task_id, status } => {
+            let mut update = serde_json::json!({
+                "taskId": task_id,
+                "status": status,
+            });
+            if let Some(ctx) = context_id {
+                update["contextId"] = serde_json::json!(ctx);
+            }
+            serde_json::json!({ "statusUpdate": update })
+        }
+        TaskEvent::ArtifactAdded { task_id, artifact } => {
+            let mut update = serde_json::json!({
+                "taskId": task_id,
+                "artifact": artifact,
+            });
+            if let Some(ctx) = context_id {
+                update["contextId"] = serde_json::json!(ctx);
+            }
+            serde_json::json!({ "artifactUpdate": update })
+        }
     }
 }
 

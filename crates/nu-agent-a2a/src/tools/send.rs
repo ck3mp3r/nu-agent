@@ -12,8 +12,8 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
         .get("text")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "Missing required parameter: 'text'".to_string())?;
-    let session_id = params
-        .get("sessionId")
+    let context_id = params
+        .get("contextId")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
@@ -32,12 +32,20 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
         metadata: None,
     };
 
+    // Fire-and-forget: the SSE watcher below reports completion, so the
+    // request must not block (spec §3.2.2).
+    let configuration = SendMessageConfiguration {
+        return_immediately: Some(true),
+        accepted_output_modes: None,
+    };
+
     let task = send_task(
         &ctx.client,
         &peer.url,
         message,
-        session_id,
         Some(ctx.own_card.url.clone()),
+        context_id,
+        Some(configuration),
     )
     .await
     .map_err(|e| format!("A2A error: {e}"))?;
@@ -61,6 +69,7 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
                             agent_name: agent_name.clone(),
                             result,
                             status: final_task.status.state,
+                            context_id: final_task.context_id,
                         };
                         if let Err(e) = completion_tx.send(event).await {
                             log::warn!("failed to send A2A completion event: {e}");
@@ -77,6 +86,7 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
                                     agent_name: agent_name.clone(),
                                     result,
                                     status: task.status.state,
+                                    context_id: task.context_id,
                                 };
                                 let _ = completion_tx.send(event).await;
                                 break;
@@ -104,6 +114,7 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
 
     Ok(serde_json::json!({
         "taskId": task.id,
+        "contextId": task.context_id,
         "status": "sent",
         "message": format!("Task sent to {target}. You will be notified when it completes."),
     }))

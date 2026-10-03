@@ -1,4 +1,4 @@
-use crate::bus::{CompactionEvent, TurnEvent};
+use crate::bus::{CancelEvent, CompactionEvent, TurnEvent};
 use crate::orchestrator::stages::{OrchestrationContext, SlashHandler};
 use crate::orchestrator::{UiStateEvent, WorkerCommand};
 use crate::protocol::contracts::SharedUiAction;
@@ -103,14 +103,25 @@ impl SlashHandler for SlashStage {
                     .await;
             }
             SlashParseResult::NotSlash => {
-                // Regular prompt: dispatch to worker
+                // Regular prompt: dispatch to worker. An A2A task or completion
+                // event that queued this prompt sets `pending_a2a_task_id`, so
+                // the turn is attributed to that task instead of a user submit.
+                let task_id = ctx.pending_a2a_task_id.take();
+                if let Some(task_id) = task_id.as_deref() {
+                    *ctx.active_external_prompt = Some(prompt.clone());
+                    *ctx.active_external_task_id = Some(task_id.to_string());
+                    if ctx.pending_external_cancel.as_deref() == Some(task_id) {
+                        *ctx.pending_external_cancel = None;
+                        let _ = ctx.bus.cancel().send(CancelEvent::Requested).await;
+                    }
+                }
                 // Control-plane turn-start event: stays on `bus.turn()`, not rendered.
                 let _ = ctx
                     .bus
                     .turn()
                     .send(TurnEvent::Started {
                         prompt: prompt.clone(),
-                        task_id: None,
+                        task_id,
                     })
                     .await;
                 match ctx

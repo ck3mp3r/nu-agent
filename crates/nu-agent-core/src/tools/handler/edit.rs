@@ -390,6 +390,48 @@ fn build_edit_contract_error_response(
     })
 }
 
+/// Build the handler error for a search_replace plan that cannot be applied:
+/// a version conflict or a no-op (search string not found, or replacement
+/// identical to the search string). The contract response rides in `details`
+/// so the model sees the same envelope (path, mode, would_change, conflict,
+/// noop, diagnostics) it would see on the success path, and the message names
+/// the reason.
+fn noop_or_conflict_error(
+    path: &str,
+    mode: EditToolMode,
+    plan: crate::tools::fs::core::EditPlan,
+) -> ToolHandlerError {
+    let message = if plan.conflict {
+        format!(
+            "edit conflict: '{path}' was modified since it was read (expected version '{}', current '{}')",
+            plan.expected_version, plan.previous_version
+        )
+    } else if plan.replacements == 0 {
+        format!("edit no change: search string not found in '{path}'")
+    } else {
+        format!("edit no change: replacement is identical to the search string in '{path}'")
+    };
+
+    ToolHandlerError {
+        kind: ToolErrorKind::Validation,
+        message,
+        details: Some(build_edit_contract_response(path, mode, plan, false, None)),
+    }
+}
+
+/// Build the handler error for a create plan whose target file already exists.
+fn create_conflict_error(
+    path: &str,
+    mode: EditToolMode,
+    plan: crate::tools::fs::core::EditPlan,
+) -> ToolHandlerError {
+    ToolHandlerError {
+        kind: ToolErrorKind::Validation,
+        message: format!("edit conflict: file already exists: '{path}'"),
+        details: Some(build_edit_contract_response(path, mode, plan, false, None)),
+    }
+}
+
 pub(crate) fn map_mutate_error(error: crate::tools::fs::core::MutateError) -> ToolHandlerError {
     use crate::tools::fs::core::MutateError;
 
@@ -502,6 +544,10 @@ impl BuiltinTool for EditTool {
                         None,
                     )),
                     EditToolMode::Apply => {
+                        if plan.conflict || !plan.would_change {
+                            return Err(noop_or_conflict_error(&edit_args.path, mode, plan));
+                        }
+
                         let preview_display = super::pre_authorize::pre_authorize_fs_tool(
                             Some(super::builtin_kinds::BuiltinKind::Edit),
                             args,
@@ -509,18 +555,6 @@ impl BuiltinTool for EditTool {
                         )
                         .and_then(|output| output.display)
                         .unwrap_or_else(|| edit_preview_display(&edit_args.path, &plan));
-
-                        if plan.conflict || !plan.would_change {
-                            let mut response = build_edit_contract_response(
-                                &edit_args.path,
-                                mode,
-                                plan,
-                                false,
-                                None,
-                            );
-                            embed_display_payload(&mut response, &preview_display);
-                            return Ok(response);
-                        }
 
                         let summary = match apply_search_replace_edit(
                             &resolved_path,
@@ -548,15 +582,11 @@ impl BuiltinTool for EditTool {
                                             return Ok(response);
                                         }
                                     };
-                                let mut response = build_edit_contract_response(
+                                return Err(noop_or_conflict_error(
                                     &edit_args.path,
                                     mode,
                                     refreshed_plan,
-                                    false,
-                                    None,
-                                );
-                                embed_display_payload(&mut response, &preview_display);
-                                return Ok(response);
+                                ));
                             }
                             Err(err) => {
                                 let mapped = map_mutate_error(err);
@@ -591,15 +621,11 @@ impl BuiltinTool for EditTool {
                                         return Ok(response);
                                     }
                                 };
-                            let mut response = build_edit_contract_response(
+                            return Err(noop_or_conflict_error(
                                 &edit_args.path,
                                 mode,
                                 refreshed_plan,
-                                false,
-                                None,
-                            );
-                            embed_display_payload(&mut response, &preview_display);
-                            return Ok(response);
+                            ));
                         }
 
                         let mut response = build_edit_contract_response(
@@ -647,6 +673,10 @@ impl BuiltinTool for EditTool {
                         None,
                     )),
                     EditToolMode::Apply => {
+                        if plan.conflict {
+                            return Err(create_conflict_error(&edit_args.path, mode, plan));
+                        }
+
                         let preview_display = super::pre_authorize::pre_authorize_fs_tool(
                             Some(super::builtin_kinds::BuiltinKind::Edit),
                             args,
@@ -654,18 +684,6 @@ impl BuiltinTool for EditTool {
                         )
                         .and_then(|output| output.display)
                         .unwrap_or_else(|| edit_preview_display(&edit_args.path, &plan));
-
-                        if plan.conflict {
-                            let mut response = build_edit_contract_response(
-                                &edit_args.path,
-                                mode,
-                                plan,
-                                false,
-                                None,
-                            );
-                            embed_display_payload(&mut response, &preview_display);
-                            return Ok(response);
-                        }
 
                         let summary = match crate::tools::fs::core::apply_create_file(
                             &resolved_path,
@@ -703,15 +721,11 @@ impl BuiltinTool for EditTool {
                                     return Ok(response);
                                 }
                             };
-                            let mut response = build_edit_contract_response(
+                            return Err(create_conflict_error(
                                 &edit_args.path,
                                 mode,
                                 refreshed_plan,
-                                false,
-                                None,
-                            );
-                            embed_display_payload(&mut response, &preview_display);
-                            return Ok(response);
+                            ));
                         }
 
                         let mut response = build_edit_contract_response(
@@ -734,7 +748,9 @@ impl Previewable for EditTool {
     /// Pre-execution diff preview for the permission gate. Parses the edit
     /// arguments, resolves the operation, plans the change against the file
     /// on disk, and renders the unified diff. Returns `None` for arguments
-    /// that do not form a valid apply-mode operation.
+    /// that do not form a valid apply-mode operation, and for plans that
+    /// would not change the file (no-op or version conflict) — there is no
+    /// diff to approve, so the gate prompts bare.
     fn preview(args: &JsonValue, cwd: &Path) -> Option<ToolDisplay> {
         let edit_args: EditArgs = serde_json::from_value(args.clone()).ok()?;
         let mode = parse_edit_mode(edit_args.mode.as_deref()).ok()?;
@@ -766,6 +782,10 @@ impl Previewable for EditTool {
                 crate::tools::fs::core::plan_create_file(&resolved_path, content).ok()?
             }
         };
+
+        if plan.noop || plan.conflict {
+            return None;
+        }
 
         Some(edit_preview_display(&edit_args.path, &plan))
     }

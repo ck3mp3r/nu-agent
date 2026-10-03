@@ -84,6 +84,15 @@ pub struct AgentProvider {
 // AgentInterface
 // ---------------------------------------------------------------------------
 
+/// The `protocolBinding` value advertised in the agent card.
+///
+/// The A2A v1.0.0 HTTP+JSON binding uses colon-suffix actions on parameterised
+/// paths (e.g. `POST /tasks/{id}:cancel`). axum 0.8 requires a path parameter
+/// to be a complete path segment, so colon-suffix actions cannot be expressed.
+/// This binding therefore uses a sub-path segment for those actions
+/// (`POST /tasks/{id}/cancel`). The fragment documents that deviation.
+pub const PROTOCOL_BINDING: &str = "https://a2a-protocol.org/bindings/http+json/v1#subpath-actions";
+
 /// An A2A protocol interface exposed by the agent.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

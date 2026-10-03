@@ -5,6 +5,7 @@ use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use tokio::sync::mpsc;
 
 use super::*;
+use crate::TEST_BLOCKING_TIMEOUT;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -573,7 +574,9 @@ async fn test_card_fetch_roundtrip() {
     };
 
     let cache = Arc::new(PeerCache::default());
-    let server = A2aServer::start(card, cache, 0).await.unwrap();
+    let server = A2aServer::start_with_blocking_timeout(card, cache, 0, TEST_BLOCKING_TIMEOUT)
+        .await
+        .unwrap();
     let url = format!("{}/.well-known/agent-card.json", server.local_url);
 
     let resp = reqwest::get(&url).await.unwrap();

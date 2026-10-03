@@ -6,7 +6,6 @@ use std::str::FromStr;
 pub enum BuiltinKind {
     Read,
     Edit,
-    Patch,
     Skill,
     SpawnAgent,
     TerminateAgent,
@@ -32,7 +31,6 @@ impl BuiltinKind {
         match self {
             Self::Read => "read",
             Self::Edit => "edit",
-            Self::Patch => "patch",
             Self::Skill => "skill",
             Self::SpawnAgent => "spawn_agent",
             Self::TerminateAgent => "terminate_agent",
@@ -62,7 +60,6 @@ impl FromStr for BuiltinKind {
         match s {
             "read" => Ok(Self::Read),
             "edit" => Ok(Self::Edit),
-            "patch" => Ok(Self::Patch),
             "skill" => Ok(Self::Skill),
             "spawn_agent" => Ok(Self::SpawnAgent),
             "terminate_agent" => Ok(Self::TerminateAgent),

@@ -4,6 +4,15 @@ use crate::*;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+/// Non-blocking configuration: these tests assert on the in-progress task, so
+/// the server must not wait for a terminal state (spec §3.2.2).
+fn non_blocking() -> Option<SendMessageConfiguration> {
+    Some(SendMessageConfiguration {
+        return_immediately: Some(true),
+        accepted_output_modes: None,
+    })
+}
+
 // The workspace reqwest is built with `rustls-no-provider`, meaning the
 // application must install a crypto provider before constructing a Client.
 static CRYPTO_INIT: std::sync::Once = std::sync::Once::new();
@@ -26,6 +35,7 @@ async fn test_agent_start_shutdown() -> Result<()> {
         .description("A test agent")
         .port(0)
         .mesh_key("test-mesh".into())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT)
         .build()
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -79,6 +89,7 @@ async fn test_agent_card_reflects_persona() -> Result<()> {
         .skills(skills)
         .port(0)
         .mesh_key("test-mesh".into())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT)
         .build()
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -110,6 +121,7 @@ async fn test_agent_empty_skills() -> Result<()> {
         .description("Has no explicit skills")
         .port(0)
         .mesh_key("test-mesh".into())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT)
         .build()
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -131,6 +143,7 @@ async fn test_agent_no_description() -> Result<()> {
     let handle = AgentBuilder::new("no-desc")
         .port(0)
         .mesh_key("test-mesh".into())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT)
         .build()
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -165,6 +178,7 @@ async fn test_agent_start_with_card() -> Result<()> {
         .with_card(card)
         .port(0)
         .mesh_key("test-mesh".into())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT)
         .build()
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -195,6 +209,7 @@ async fn test_two_agents_start_independently() -> Result<()> {
         .description("First agent")
         .port(0)
         .mesh_key("test-mesh".into())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT)
         .build()
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -202,6 +217,7 @@ async fn test_two_agents_start_independently() -> Result<()> {
         .description("Second agent")
         .port(0)
         .mesh_key("test-mesh".into())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT)
         .build()
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -247,12 +263,26 @@ async fn test_two_agents_start_independently() -> Result<()> {
         metadata: None,
     };
 
-    let task_a = send_task(&client, &agent_a.server.local_url, msg_a, None, None)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    let task_b = send_task(&client, &agent_b.server.local_url, msg_b, None, None)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    let task_a = send_task(
+        &client,
+        &agent_a.server.local_url,
+        msg_a,
+        None,
+        None,
+        non_blocking(),
+    )
+    .await
+    .map_err(|e| format!("{e:?}"))?;
+    let task_b = send_task(
+        &client,
+        &agent_b.server.local_url,
+        msg_b,
+        None,
+        None,
+        non_blocking(),
+    )
+    .await
+    .map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(task_a.status.state, TaskState::Working);
     assert_eq!(task_b.status.state, TaskState::Working);
@@ -284,6 +314,7 @@ async fn test_agent_discovers_self() -> Result<()> {
         .description("An agent that knows itself")
         .port(0)
         .mesh_key("test-mesh".to_string())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT)
         .build()
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -341,7 +372,8 @@ async fn test_mdns_name_appends_port_when_auto() -> Result<()> {
 
     let builder = AgentBuilder::new("researcher")
         .port(0)
-        .mesh_key("test".to_string());
+        .mesh_key("test".to_string())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT);
     let handle = builder.build().await.map_err(|e| format!("{e:?}"))?;
     let suffix = format!("-{}", handle.server.port);
     assert!(
@@ -360,7 +392,8 @@ async fn test_mdns_name_uses_exact_name_when_explicit() -> Result<()> {
     let builder = AgentBuilder::new("my-custom-agent")
         .has_explicit_name(true)
         .port(0)
-        .mesh_key("test".to_string());
+        .mesh_key("test".to_string())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT);
     let handle = builder.build().await.map_err(|e| format!("{e:?}"))?;
     assert_eq!(
         handle.card().name,
@@ -382,6 +415,7 @@ async fn reregister_token_is_set_after_build() -> Result<()> {
         .discovery(PeerDiscoveryImpl::Noop)
         .port(0)
         .mesh_key("test".into())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT)
         .build()
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -397,6 +431,7 @@ async fn reregister_task_does_not_block_startup() -> Result<()> {
         .discovery(PeerDiscoveryImpl::Noop)
         .port(0)
         .mesh_key("test".into())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT)
         .build()
         .await
         .map_err(|e| format!("{e:?}"))?;
@@ -416,6 +451,7 @@ async fn shutdown_cancels_reregister_without_panic() -> Result<()> {
         .discovery(PeerDiscoveryImpl::Noop)
         .port(0)
         .mesh_key("test".into())
+        .blocking_timeout(TEST_BLOCKING_TIMEOUT)
         .build()
         .await
         .map_err(|e| format!("{e:?}"))?;

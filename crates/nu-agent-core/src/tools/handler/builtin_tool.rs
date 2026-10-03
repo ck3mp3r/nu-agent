@@ -8,7 +8,6 @@ use super::glob::GlobTool;
 use super::grep::GrepTool;
 use super::http::HttpTool;
 use super::nu::NuTool;
-use super::patch::PatchTool;
 use super::read::ReadTool;
 use super::skill::SkillTool;
 use super::tmux_layout::TmuxLayoutTool;
@@ -66,7 +65,6 @@ pub fn call_line_render_for(name: &str, arguments: &str) -> CallLine {
     match kind {
         BuiltinKind::Read => ReadTool::call_line_render(arguments),
         BuiltinKind::Edit => EditTool::call_line_render(arguments),
-        BuiltinKind::Patch => PatchTool::call_line_render(arguments),
         BuiltinKind::Skill => SkillTool::call_line_render(arguments),
         BuiltinKind::Grep => GrepTool::call_line_render(arguments),
         BuiltinKind::Glob => GlobTool::call_line_render(arguments),
@@ -181,10 +179,6 @@ pub async fn register_builtin(
         BuiltinKind::Edit => {
             render_registry.register(&def.name, EditTool::call_line_render);
             make_dynamic_tool::<EditTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::Patch => {
-            render_registry.register(&def.name, PatchTool::call_line_render);
-            make_dynamic_tool::<PatchTool>(def, cwd, max_bytes, bus)
         }
         BuiltinKind::Skill => {
             render_registry.register(&def.name, SkillTool::call_line_render);

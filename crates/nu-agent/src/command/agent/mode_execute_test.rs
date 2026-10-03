@@ -11,7 +11,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Helper: create a task in Working state (the only state that can transition to Completed).
 fn setup_working_task(store: &InMemoryTaskStore) -> Result<String> {
-    let task = store.create_task(None, None, None, None);
+    let task = store.create_task(None, None, None);
     let task_id = task.id.clone();
     store
         .update_status(&task_id, TaskState::Working, None)

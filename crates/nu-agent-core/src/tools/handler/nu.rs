@@ -9,10 +9,10 @@ use super::{
 };
 use crate::bus::Bus;
 use crate::protocol::event::{ToolDisplay, ToolDisplaySection};
-use crate::protocol::tool_args::{CallLine, nu_command_from_args};
+use crate::protocol::tool_args::{CallLine, nu_command_from_args, parse_json_usize_field};
 use crate::transcript::ir::ContentKind;
 
-const DEFAULT_TIMEOUT_SECONDS: u64 = 300;
+const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
 
 #[derive(Debug, serde::Deserialize)]
 struct NuArgs {
@@ -31,9 +31,11 @@ impl BuiltinTool for NuTool {
             return CallLine::from_json_summary(arguments);
         }
         // The command renders in the preview block, so the call line carries
-        // no summary and row 0 shows the tool name alone.
+        // only the timeout the command is allowed to run for.
+        let timeout = parse_json_usize_field(arguments, "timeout_seconds")
+            .unwrap_or(DEFAULT_TIMEOUT_SECONDS as usize);
         CallLine {
-            summary: String::new(),
+            summary: format!("⏱ {timeout}s"),
         }
     }
 

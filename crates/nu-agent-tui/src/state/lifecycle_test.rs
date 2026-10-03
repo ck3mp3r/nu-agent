@@ -1,4 +1,5 @@
 use crate::state::*;
+use nu_agent_core::orchestrator::UiStateEvent;
 use nu_agent_core::transcript::ir::{Block, BlockSource, MessageRole};
 use nu_agent_core::transcript::items::Message;
 use nu_agent_core::transcript::renderer::Renderable;
@@ -164,77 +165,44 @@ fn record_token_usage_tracks_latest_and_accumulates_session_total() {
 }
 
 #[test]
-fn enqueue_external_prompt_creates_in_progress_prompt_without_pending() {
+fn enqueue_prompt_does_not_add_transcript_entry() {
+    let mut state = AppState::default();
+    let before = state.transcript.len();
+    state.enqueue_prompt("second".to_string());
+    assert_eq!(state.transcript.len(), before);
+}
+
+#[test]
+fn reduce_ui_state_event_enqueue_external_prompt_queues_prompt() {
+    // -- Setup & Fixtures
     let mut state = AppState::default();
 
-    state.enqueue_external_prompt("mailbox message".to_string());
+    // -- Exec
+    state.reduce_ui_state_event(UiStateEvent::EnqueueExternalPrompt {
+        text: "mailbox message".to_string(),
+    });
 
+    // -- Check
     assert_eq!(state.phase, UiPhase::Busy);
-    assert!(state.is_active_cycle());
     assert_eq!(state.prompt_items().len(), 1);
-    assert_eq!(state.prompt_items()[0].status, PromptStatus::InProgress);
+    assert_eq!(state.prompt_items()[0].status, PromptStatus::Queued);
     assert_eq!(state.prompt_items()[0].prompt_text, "mailbox message");
-    assert_eq!(active_prompt_id(&state), Some(1));
-    assert!(
-        pending_prompt_ids(&state).is_empty(),
-        "external prompt must NOT appear in pending_prompt_ids"
-    );
-}
-
-#[test]
-fn enqueue_external_prompt_adds_user_transcript_line() -> Result<()> {
-    let mut state = AppState::default();
-
-    state.enqueue_external_prompt("hello from parent".to_string());
-
-    // [User] — no leading or trailing spacer under the unified spacer rule
-    assert!(!state.transcript.blocks().is_empty());
-    assert!(matches!(
-        state.transcript.blocks()[0].source,
-        BlockSource::Markdown { .. }
-    ));
-    let last = state
-        .transcript
-        .blocks()
-        .last()
-        .ok_or("should have last transcript block")?;
-    assert!(matches!(last.source, BlockSource::Markdown { .. }));
-    Ok(())
-}
-
-#[test]
-fn enqueue_external_prompt_completes_via_complete_active_prompt() {
-    let mut state = AppState::default();
-
-    state.enqueue_external_prompt("external task".to_string());
-    assert_eq!(state.prompt_items()[0].status, PromptStatus::InProgress);
-
-    state.complete_active_prompt();
-
-    assert_eq!(state.prompt_items()[0].status, PromptStatus::Done);
-    assert_eq!(state.phase, UiPhase::Idle);
-    assert!(!state.is_active_cycle());
+    assert_eq!(pending_prompt_ids(&state), vec![1]);
     assert_eq!(active_prompt_id(&state), None);
 }
 
 #[test]
-fn enqueue_external_prompt_not_returned_by_take_submitted_prompt() {
+fn reduce_ui_state_event_enqueue_external_prompt_does_not_grow_transcript() {
+    // -- Setup & Fixtures
     let mut state = AppState::default();
-
-    state.enqueue_external_prompt("external".to_string());
-
-    // take_next_prompt_for_execution should NOT return the external prompt
-    // because it's already active (not pending)
-    let taken = state.take_next_prompt_for_execution();
-    assert_eq!(taken, None, "external prompt must not be re-dispatched");
-}
-
-#[test]
-fn enqueue_prompt_does_not_add_transcript_entry() {
-    let mut state = AppState::default();
-    state.enqueue_external_prompt("first".to_string());
     let before = state.transcript.len();
-    state.enqueue_prompt("second".to_string());
+
+    // -- Exec
+    state.reduce_ui_state_event(UiStateEvent::EnqueueExternalPrompt {
+        text: "mailbox message".to_string(),
+    });
+
+    // -- Check
     assert_eq!(state.transcript.len(), before);
 }
 
@@ -261,7 +229,8 @@ fn clear_transcript_resets_token_fields() {
 #[test]
 fn activate_next_prompt_adds_user_entry_to_transcript() -> Result<()> {
     let mut state = AppState::default();
-    state.enqueue_external_prompt("first".to_string());
+    state.enqueue_prompt("first".to_string());
+    let _ = state.take_next_prompt_for_execution();
     state.enqueue_prompt("second".to_string());
     state.complete_active_prompt();
     let before = state.transcript.len();
@@ -532,7 +501,8 @@ fn user_prompt_queued_during_external_prompt_not_double_delivered() {
     let mut state = AppState::default();
 
     // External prompt arrives and is active
-    state.enqueue_external_prompt("external task".to_string());
+    state.enqueue_prompt("external task".to_string());
+    let _ = state.take_next_prompt_for_execution();
     assert_eq!(active_prompt_id(&state), Some(1));
 
     // User submits a prompt while external is running

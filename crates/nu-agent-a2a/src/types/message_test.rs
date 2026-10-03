@@ -26,7 +26,7 @@ fn message_roundtrip() {
     };
 
     let json = serde_json::to_value(&msg).expect("serialize");
-    assert_eq!(json["role"], "USER");
+    assert_eq!(json["role"], "ROLE_USER");
     assert_eq!(json["parts"][0]["text"], "Hello");
     assert!(
         json["parts"][0].get("type").is_none(),
@@ -41,7 +41,7 @@ fn message_roundtrip() {
 #[test]
 fn message_exact_json() {
     let json_str =
-        r#"{"role":"AGENT","parts":[{"type":"text","text":"Sure!"}],"messageId":"msg-1"}"#;
+        r#"{"role":"ROLE_AGENT","parts":[{"type":"text","text":"Sure!"}],"messageId":"msg-1"}"#;
     let msg: Message = serde_json::from_str(json_str).expect("deserialize");
     assert_eq!(msg.role, Role::Agent);
     assert_eq!(msg.parts.len(), 1);

@@ -23,7 +23,7 @@ fn agent_card_full_roundtrip() {
         supported_interfaces: vec![AgentInterface {
             url: "https://example.com/agent".to_string(),
             protocol_version: "1.0".to_string(),
-            protocol_binding: "HTTP+JSON".to_string(),
+            protocol_binding: PROTOCOL_BINDING.to_string(),
         }],
         capabilities: AgentCapabilities {
             streaming: false,
@@ -366,12 +366,12 @@ fn agent_interface_roundtrip() {
     let iface = AgentInterface {
         url: "http://127.0.0.1:8080".to_string(),
         protocol_version: "1.0".to_string(),
-        protocol_binding: "HTTP+JSON".to_string(),
+        protocol_binding: PROTOCOL_BINDING.to_string(),
     };
     let json = serde_json::to_value(&iface).expect("serialize");
     assert_eq!(json["url"], "http://127.0.0.1:8080");
     assert_eq!(json["protocolVersion"], "1.0");
-    assert_eq!(json["protocolBinding"], "HTTP+JSON");
+    assert_eq!(json["protocolBinding"], PROTOCOL_BINDING);
     let back: AgentInterface = serde_json::from_value(json).expect("deserialize");
     assert_eq!(back, iface);
 }

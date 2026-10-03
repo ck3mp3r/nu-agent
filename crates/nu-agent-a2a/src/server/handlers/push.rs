@@ -13,7 +13,12 @@ pub async fn handle_create_push_config(
 ) -> impl IntoResponse {
     let url = body.get("url").and_then(|v| v.as_str()).unwrap_or("");
     if url.is_empty() {
-        let err = a2a_error(400, "BAD_REQUEST", "Missing required field: 'url'");
+        let err = a2a_error(
+            400,
+            "BAD_REQUEST",
+            "INVALID_ARGUMENT",
+            "Missing required field: 'url'",
+        );
         return (StatusCode::BAD_REQUEST, a2a_json_response(err));
     }
     let auth = body
@@ -32,6 +37,24 @@ pub async fn handle_list_push_configs(
         StatusCode::OK,
         a2a_json_response(json!({ "configs": configs })),
     )
+}
+
+pub async fn handle_get_push_config(
+    State(state): State<AppState>,
+    axum::extract::Path((id, config_id)): axum::extract::Path<(String, String)>,
+) -> impl IntoResponse {
+    match state.task_store.get_push_config(&id, &config_id) {
+        Some(config) => (StatusCode::OK, a2a_json_response(json!(config))),
+        None => {
+            let err = a2a_error(
+                404,
+                "NOT_FOUND",
+                "TASK_NOT_FOUND",
+                "The specified push notification config does not exist",
+            );
+            (StatusCode::NOT_FOUND, a2a_json_response(err))
+        }
+    }
 }
 
 pub async fn handle_delete_push_config(

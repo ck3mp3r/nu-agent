@@ -17,8 +17,7 @@ pub use events::{
 
 // Re-export handlers privately for internal use by the loop_impl module.
 pub(crate) use handlers::{
-    dispatch_compaction, handle_external_cancel, handle_external_prompt, handle_worker_result,
-    recv_or_pending,
+    dispatch_compaction, handle_external_cancel, handle_worker_result, recv_or_pending,
 };
 #[cfg(test)]
 pub(crate) use loop_impl::{

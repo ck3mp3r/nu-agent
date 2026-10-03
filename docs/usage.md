@@ -272,7 +272,7 @@ TUI rendering guardrails:
 
 Nu command rendering:
 
-- Each tool call row starts with the tool name (for example `edit`, `read`, `nu`) followed by the call summary. The name carries the tool lane's emphasis style; the summary carries the muted style. The `nu` call line carries no summary — the command renders only in the preview block below it.
+- Each tool call row starts with the tool name (for example `edit`, `read`, `nu`) followed by the call summary. The name carries the tool lane's emphasis style; the summary carries the muted style. The `nu` call line carries the applied timeout as `⏱ {timeout}s` (120s when the call omits `timeout_seconds`) — the command renders only in the preview block below it.
 - When the agent calls the `nu` tool, the transcript shows the command as a syntax-highlighted code block under the tool status row, on a full-width background block (with one blank margin row above and below) that separates it from the transcript. The command appears at `ToolEvent::Started` — before the permission decision and before completion.
 - At the permission gate, the `nu` command also renders as a code preview block (language `nu`) directly under the tool row, so you see the exact command before you approve. The preview is built from the tool-call arguments alone — nothing executes before you approve.
 - The edit tool's diff display renders in the same full-width background block style (with margin rows).
@@ -309,7 +309,6 @@ The agent exposes the following built-in tools (no MCP server required):
 **Filesystem (CAS-safe):**
 - `read` — read file content with optional line windowing
 - `edit` — search/replace or create files with CAS guard
-- `patch` — line-range batch edits with CAS guard
 
 **Search:**
 - `grep` — recursive regex search (ripgrep-style)
@@ -356,14 +355,13 @@ These names are unprefixed and exact. There are no builtin aliases like
 
 `read` is non-mutating and **bypasses** the permission system entirely — it is always allowed.
 
-`edit` and `patch` are filesystem-mutating and **require permission approval**, exactly like MCP or closure tools. Use the permissions DSL to control their behavior per persona:
+`edit` is filesystem-mutating and **requires permission approval**, exactly like MCP or closure tools. Use the permissions DSL to control its behavior per persona:
 
 ```nu
-# Developer persona — allow edit/patch without prompting
+# Developer persona — allow edit without prompting
 permissions:
   "*": "ask"
   "edit": "allow"
-  "patch": "allow"
 ```
 
 ```nu
@@ -371,11 +369,10 @@ permissions:
 permissions:
   "*": "ask"
   "edit": "deny"
-  "patch": "deny"
 ```
 
 ```nu
-# Default (safe) — prompt before every edit/patch
+# Default (safe) — prompt before every edit
 permissions:
   "*": "ask"
 ```
@@ -383,8 +380,8 @@ permissions:
 Via CLI:
 
 ```nu
-# Allow edit/patch for this run
-let perms = { "*": "ask", "edit": "allow", "patch": "allow" }
+# Allow edit for this run
+let perms = { "*": "ask", "edit": "allow" }
 "refactor the code" | agent --permissions $perms
 ```
 
@@ -394,7 +391,7 @@ The default for unmatched tools is `ask` (interactive prompt in TUI, deny in non
 
 - `read` is non-mutating and returns file content plus metadata, including
   `version` (content hash token).
-- `edit` and `patch` are mutating operations and **require**
+- `edit` is a mutating operation and **requires**
   `expected_version`.
 - `expected_version` is compared against the current file version (CAS guard)
   to prevent blind overwrites.
@@ -473,6 +470,12 @@ Deterministic diagnostic classes used by the edit contract:
 - `conflict`
 - `internal`
 
+No-op and conflict results:
+
+- An apply-mode `edit` that would not change the file fails the tool call. The tool returns an error whose message names the reason (`no change` for an unmatched search or an identical replacement, `conflict` for a stale `expected_version` or an existing create target) and whose details carry the same contract envelope (`applied: false`, `would_change: false`, `noop` or `conflict: true`, `diff: ""`).
+- The permission gate shows no diff block for these plans — there is nothing to approve, so the prompt renders bare.
+- The failed disposition marks the tool row as failed in the TUI instead of done.
+
 ### `edit` with `operation.type: "create"` (new file creation)
 
 To create a new file, use `operation.type: "create"` with a `content` field:
@@ -493,35 +496,17 @@ To create a new file, use `operation.type: "create"` with a `content` field:
 Notes:
 
 - `expected_version` is not needed for create operations.
-- If the file already exists, returns a conflict diagnostic. Use `search_replace` instead.
+- If the file already exists, the call fails with an `already exists` conflict error. Use `search_replace` instead.
 - Parent directory must exist. The tool does not create intermediate directories.
-
-### `patch` example (line-range batch)
-
-```json
-{
-  "tool": "patch",
-  "arguments": {
-    "path": "src/lib.rs",
-    "expected_version": "<version-from-read>",
-    "operations": [
-      {
-        "range": { "start": 10, "end": 12 },
-        "replacement": "new block\n"
-      }
-    ]
-  }
-}
-```
 
 ### CAS conflict recovery flow (required)
 
-When `edit`/`patch` detect a version mismatch, do not retry with stale args.
+When `edit` detects a version mismatch, do not retry with stale args.
 Use this flow:
 
 1. `read` the file again to get latest `content` and `version`
 2. recompute your intended change against that latest content
-3. retry `edit`/`patch` with the new `expected_version`
+3. retry `edit` with the new `expected_version`
 
 Short form: **read -> recompute change -> retry with latest version**.
 
@@ -674,7 +659,6 @@ should never be available:
 "*" = "ask"
 "nu" = "deny"
 edit = "deny"
-patch = "deny"
 ```
 
 ## Flag reference

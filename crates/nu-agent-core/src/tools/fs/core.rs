@@ -47,43 +47,6 @@ pub struct ApplyMutationSummary {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PatchRange {
-    pub start: usize,
-    pub end: usize,
-}
-
-impl PatchRange {
-    pub fn new(start: usize, end: usize) -> Self {
-        Self { start, end }
-    }
-
-    pub fn single(line: usize) -> Self {
-        Self::new(line, line)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PatchOp {
-    pub range: PatchRange,
-    pub replacement: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PatchSummary {
-    pub operation_count: usize,
-    pub applied_ranges: Vec<PatchRange>,
-    pub wrote: bool,
-    pub changed: bool,
-    pub noop: bool,
-    pub conflict: bool,
-    pub expected_version: String,
-    pub previous_version: String,
-    pub new_version: String,
-    pub previous_lines: usize,
-    pub new_lines: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditMatchMode {
     Literal,
     Regex,
@@ -140,21 +103,6 @@ pub enum MutateError {
     Conflict(#[from] ConflictError),
     #[error(transparent)]
     Io(#[from] io::Error),
-    #[error("invalid patch range: start must be >= 1 and <= end (start={start}, end={end})")]
-    InvalidPatchRangeShape { start: usize, end: usize },
-    #[error("patch range out of bounds: start={start} end={end} total_lines={total_lines}")]
-    PatchRangeOutOfBounds {
-        start: usize,
-        end: usize,
-        total_lines: usize,
-    },
-    #[error("patch ranges overlap: [{first_start},{first_end}] with [{second_start},{second_end}]")]
-    OverlappingPatchRanges {
-        first_start: usize,
-        first_end: usize,
-        second_start: usize,
-        second_end: usize,
-    },
     #[error("invalid regex pattern '{pattern}': {message}")]
     InvalidRegexPattern { pattern: String, message: String },
 }
@@ -231,58 +179,6 @@ pub fn apply_full_content_mutation(
         new_version: version_token(new_content),
         previous_bytes,
         new_bytes,
-        previous_lines,
-        new_lines,
-    })
-}
-
-pub fn apply_line_range_patch_batch(
-    path: &Path,
-    expected_version: Option<&str>,
-    operations: Vec<PatchOp>,
-) -> Result<PatchSummary, MutateError> {
-    let expected = expected_version.ok_or(MutateError::MissingExpectedVersion)?;
-    let current_content = fs::read_to_string(path)?;
-    let current_version = version_token(&current_content);
-    let previous_lines = split_lines_preserving_terminators(&current_content).len();
-
-    if expected != current_version {
-        return Ok(PatchSummary {
-            operation_count: 0,
-            applied_ranges: Vec::new(),
-            wrote: false,
-            changed: false,
-            noop: false,
-            conflict: true,
-            expected_version: expected.to_string(),
-            previous_version: current_version.clone(),
-            new_version: current_version,
-            previous_lines,
-            new_lines: previous_lines,
-        });
-    }
-
-    validate_patch_operations(&operations, previous_lines)?;
-
-    let patched_content = apply_patch_operations_in_reverse(&current_content, &operations)?;
-    let new_version = version_token(&patched_content);
-    let changed = patched_content != current_content;
-    let new_lines = split_lines_preserving_terminators(&patched_content).len();
-
-    if changed {
-        atomic_overwrite(path, patched_content.as_bytes())?;
-    }
-
-    Ok(PatchSummary {
-        operation_count: operations.len(),
-        applied_ranges: operations.iter().map(|op| op.range).collect(),
-        wrote: changed,
-        changed,
-        noop: !changed,
-        conflict: false,
-        expected_version: expected.to_string(),
-        previous_version: current_version,
-        new_version,
         previous_lines,
         new_lines,
     })
@@ -471,46 +367,6 @@ pub fn apply_create_file(path: &Path, content: &str) -> Result<EditSummary, Muta
     })
 }
 
-fn validate_patch_operations(
-    operations: &[PatchOp],
-    total_lines: usize,
-) -> Result<(), MutateError> {
-    for op in operations {
-        if op.range.start == 0 || op.range.start > op.range.end {
-            return Err(MutateError::InvalidPatchRangeShape {
-                start: op.range.start,
-                end: op.range.end,
-            });
-        }
-
-        if op.range.end > total_lines {
-            return Err(MutateError::PatchRangeOutOfBounds {
-                start: op.range.start,
-                end: op.range.end,
-                total_lines,
-            });
-        }
-    }
-
-    let mut sorted_ranges = operations.iter().map(|op| op.range).collect::<Vec<_>>();
-    sorted_ranges.sort_by_key(|range| (range.start, range.end));
-
-    for pair in sorted_ranges.windows(2) {
-        let first = pair[0];
-        let second = pair[1];
-        if second.start <= first.end {
-            return Err(MutateError::OverlappingPatchRanges {
-                first_start: first.start,
-                first_end: first.end,
-                second_start: second.start,
-                second_end: second.end,
-            });
-        }
-    }
-
-    Ok(())
-}
-
 fn compile_regex(pattern: &str) -> Result<Regex, MutateError> {
     Regex::new(pattern).map_err(|error| MutateError::InvalidRegexPattern {
         pattern: pattern.to_string(),
@@ -574,38 +430,6 @@ fn compute_edit_result(
             }
         }
     }
-}
-
-fn apply_patch_operations_in_reverse(
-    content: &str,
-    operations: &[PatchOp],
-) -> Result<String, MutateError> {
-    let mut lines = split_lines_preserving_terminators(content)
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-    let mut sorted_ops: Vec<&PatchOp> = operations.iter().collect();
-    sorted_ops.sort_by_key(|b| std::cmp::Reverse(b.range.start));
-
-    for op in sorted_ops {
-        let start_index = op.range.start - 1;
-        let end_exclusive = op.range.end;
-        if end_exclusive > lines.len() {
-            return Err(MutateError::PatchRangeOutOfBounds {
-                start: op.range.start,
-                end: op.range.end,
-                total_lines: lines.len(),
-            });
-        }
-        let replacement_lines = split_lines_preserving_terminators(&op.replacement)
-            .into_iter()
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        lines.splice(start_index..end_exclusive, replacement_lines);
-    }
-
-    Ok(lines.into_iter().collect())
 }
 
 fn split_lines_preserving_terminators(content: &str) -> Vec<&str> {

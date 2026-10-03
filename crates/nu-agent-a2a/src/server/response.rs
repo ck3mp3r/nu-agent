@@ -11,7 +11,10 @@ pub fn a2a_ok(task: Value) -> Value {
 }
 
 /// Build an A2A error response body (spec §11.6).
-pub fn a2a_error(code: u16, status: &str, message: &str) -> Value {
+///
+/// `status` is the HTTP-ish status string; `reason` is the A2A error type in
+/// UPPER_SNAKE_CASE without the "Error" suffix (spec §5.4, §11.6).
+pub fn a2a_error(code: u16, status: &str, reason: &str, message: &str) -> Value {
     json!({
         "error": {
             "code": code,
@@ -19,7 +22,7 @@ pub fn a2a_error(code: u16, status: &str, message: &str) -> Value {
             "message": message,
             "details": [{
                 "@type": "type.googleapis.com/google.rpc.ErrorInfo",
-                "reason": status,
+                "reason": reason,
                 "domain": "a2a-protocol.org",
             }],
         }
@@ -27,7 +30,13 @@ pub fn a2a_error(code: u16, status: &str, message: &str) -> Value {
 }
 
 /// Build an A2A error response with metadata.
-pub fn a2a_error_with_meta(code: u16, status: &str, message: &str, metadata: Value) -> Value {
+pub fn a2a_error_with_meta(
+    code: u16,
+    status: &str,
+    reason: &str,
+    message: &str,
+    metadata: Value,
+) -> Value {
     json!({
         "error": {
             "code": code,
@@ -35,7 +44,7 @@ pub fn a2a_error_with_meta(code: u16, status: &str, message: &str, metadata: Val
             "message": message,
             "details": [{
                 "@type": "type.googleapis.com/google.rpc.ErrorInfo",
-                "reason": status,
+                "reason": reason,
                 "domain": "a2a-protocol.org",
                 "metadata": metadata,
             }],

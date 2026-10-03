@@ -6,6 +6,7 @@ pub mod error;
 pub mod mesh_key;
 pub mod peer;
 pub mod server;
+pub mod session_key;
 pub mod task_store;
 pub mod tools;
 pub mod types;
@@ -17,6 +18,7 @@ pub use discovery::*;
 pub use error::*;
 pub use peer::*;
 pub use server::*;
+pub use session_key::*;
 pub use task_store::*;
 pub use tools::*;
 pub use types::*;
@@ -29,3 +31,5 @@ mod error_test;
 mod mesh_key_test;
 #[cfg(test)]
 mod peer_test;
+#[cfg(test)]
+mod session_key_test;

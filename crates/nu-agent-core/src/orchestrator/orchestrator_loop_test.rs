@@ -2,8 +2,11 @@ use nu_agent_a2a::{A2aCompletionEvent, IncomingTask, Message, Part, Role, TaskSt
 use nu_protocol::{LabeledError, Span, Value};
 use tokio::sync::mpsc;
 
-use crate::bus::{Bus, CompactionEvent, CompactionRx, ExternalEvent, ExternalRx, create_bus};
+use crate::bus::{
+    Bus, CompactionEvent, CompactionRx, ExternalEvent, ExternalRx, TurnEvent, create_bus,
+};
 use crate::conversation::runtime::PendingPermissions;
+use crate::orchestrator::stages::slash::SlashStage;
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
 };
@@ -136,6 +139,7 @@ pub(crate) struct CtxState {
     pub(crate) active_external_prompt: Option<String>,
     pub(crate) active_external_task_id: Option<String>,
     pub(crate) pending_external_cancel: Option<String>,
+    pub(crate) pending_a2a_task_id: Option<String>,
 }
 
 pub(crate) struct HarnessParts<'a> {
@@ -206,6 +210,7 @@ impl Harness {
                 active_external_prompt: None,
                 active_external_task_id: None,
                 pending_external_cancel: None,
+                pending_a2a_task_id: None,
             },
         }
     }
@@ -248,6 +253,7 @@ pub(crate) fn make_ctx<'a>(
         active_external_prompt: &mut state.active_external_prompt,
         active_external_task_id: &mut state.active_external_task_id,
         pending_external_cancel: &mut state.pending_external_cancel,
+        pending_a2a_task_id: &mut state.pending_a2a_task_id,
         bus,
     }
 }
@@ -289,6 +295,49 @@ fn make_sources<'a>(
         task_cancel_rx: task_cancel_rx.take(),
         a2a_task_rx: None,
         a2a_completion_rx: None,
+    }
+}
+
+/// Receive the next `WorkerCommand` with a timeout, or fail with `what`.
+async fn recv_worker_command(
+    worker_rx: &mut Option<mpsc::Receiver<WorkerCommand>>,
+    what: &str,
+) -> Result<WorkerCommand> {
+    let rx = worker_rx.as_mut().ok_or("worker_rx present")?;
+    let cmd = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .map_err(|_| format!("{what} should be dispatched"))?
+        .ok_or("worker channel should not close")?;
+    Ok(cmd)
+}
+
+/// Build an `IncomingTask` with a single text part and no `contextId`.
+fn incoming_task(task_id: &str, text: &str) -> IncomingTask {
+    IncomingTask {
+        task_id: task_id.to_string(),
+        message: Message {
+            role: Role::User,
+            parts: vec![Part::Text {
+                text: text.to_string(),
+            }],
+            message_id: format!("msg-{task_id}"),
+            extensions: None,
+            metadata: None,
+        },
+        sender_url: "http://a.local".to_string(),
+        context_id: None,
+        parent_task_id: None,
+    }
+}
+
+/// Build a completed `A2aCompletionEvent` with no `contextId`.
+fn completion_event(task_id: &str, result: &str) -> A2aCompletionEvent {
+    A2aCompletionEvent {
+        task_id: task_id.to_string(),
+        agent_name: "agent-b".to_string(),
+        result: result.to_string(),
+        status: TaskState::Completed,
+        context_id: None,
     }
 }
 
@@ -1130,7 +1179,7 @@ async fn quit_allowed_when_idle_and_no_pending() {
 async fn external_prompt_dispatches_turn_when_idle() -> Result<()> {
     let mut h = Harness::new();
     let HarnessParts {
-        event_tx: _,
+        event_tx,
         event_rx,
         worker_tx,
         worker_rx,
@@ -1146,21 +1195,27 @@ async fn external_prompt_dispatches_turn_when_idle() -> Result<()> {
         bus,
         state,
     } = h.parts();
-    let mut slash = MockSlash::new();
+    let mut slash = SlashStage;
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     let mut session = MockSession::new();
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut turn_rx = bus.turn().subscribe();
 
+    // The external prompt is enqueued on the UI bus; the TUI answers with a
+    // `PromptSubmitted` once the prompt reaches the front of its queue.
     bus.external()
         .send(ExternalEvent::PromptReceived {
             prompt: "external task".to_string(),
             task_id: "task-1".to_string(),
+            context_id: None,
         })
         .await
         .unwrap();
-    worker_result_tx
-        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+    event_tx
+        .send(OrchestratorEvent::PromptSubmitted {
+            text: "external task".to_string(),
+        })
         .await
         .unwrap();
 
@@ -1186,14 +1241,18 @@ async fn external_prompt_dispatches_turn_when_idle() -> Result<()> {
 
     assert!(result.is_ok());
     assert!(
-        !state.worker_active,
-        "worker_active should be false after worker completes"
+        state.worker_active,
+        "worker_active should be true after the turn is dispatched"
     );
     assert_eq!(
         state.active_external_prompt.as_deref(),
         Some("external task")
     );
     assert_eq!(state.active_external_task_id.as_deref(), Some("task-1"));
+    assert_eq!(
+        state.pending_a2a_task_id, None,
+        "the pending task id is consumed by the turn dispatch"
+    );
     let cmd = recv_command(worker_rx).ok_or("ExecuteTurn should be dispatched")?;
     match cmd {
         WorkerCommand::ExecuteTurn { prompt, .. } => {
@@ -1201,6 +1260,20 @@ async fn external_prompt_dispatches_turn_when_idle() -> Result<()> {
         }
         _ => panic!("expected ExecuteTurn"),
     }
+    let started = turn_rx
+        .try_recv()
+        .map_err(|e| format!("TurnEvent::Started should be published: {e:?}"))?;
+    match started {
+        TurnEvent::Started { task_id, .. } => {
+            assert_eq!(
+                task_id.as_deref(),
+                Some("task-1"),
+                "the A2A turn-start event must name task-1"
+            );
+        }
+        _ => panic!("expected TurnEvent::Started"),
+    }
+    let _ = worker_result_tx;
     Ok(())
 }
 
@@ -1286,7 +1359,7 @@ async fn a2a_task_rx_dispatches_turn() -> Result<()> {
     let (a2a_task_tx, a2a_task_rx) = mpsc::channel::<IncomingTask>(16);
 
     let loop_task = tokio::spawn(async move {
-        let mut slash = MockSlash::new();
+        let mut slash = SlashStage;
         let mut permission = MockPermission::new();
         let mut ui_request = MockUiRequest::new();
         let mut session = MockSession::new();
@@ -1334,9 +1407,41 @@ async fn a2a_task_rx_dispatches_turn() -> Result<()> {
                 metadata: None,
             },
             sender_url: "http://a.local".to_string(),
-            session_id: None,
             context_id: None,
             parent_task_id: None,
+        })
+        .await
+        .unwrap();
+
+    let cmd = worker_rx.as_mut().ok_or("worker_rx present")?.recv();
+    let cmd = tokio::time::timeout(std::time::Duration::from_secs(5), cmd)
+        .await
+        .map_err(|_| "AttachA2aContext should be dispatched")?
+        .ok_or("worker channel should not close")?;
+    let context_id = match cmd {
+        WorkerCommand::AttachA2aContext { context_id, prompt } => {
+            assert!(
+                prompt.contains("[A2A] do work"),
+                "attach must carry the incoming prompt, got: {prompt}"
+            );
+            context_id
+        }
+        _ => panic!("expected AttachA2aContext"),
+    };
+    assert!(
+        context_id.len() == 36 && context_id.matches('-').count() == 4,
+        "absent contextId must be replaced by a minted UUID, got: {context_id}"
+    );
+
+    // The router enqueues the formatted prompt on the UI bus; the TUI answers
+    // with a `PromptSubmitted` carrying that same text once the prompt reaches
+    // the front of its queue.
+    let submitted = format!(
+        "[A2A] do work\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result.\n\n---\nTask ID: task-1\nFrom: http://a.local\nContext: {context_id}"
+    );
+    event_tx
+        .send(OrchestratorEvent::PromptSubmitted {
+            text: submitted.clone(),
         })
         .await
         .unwrap();
@@ -1348,9 +1453,478 @@ async fn a2a_task_rx_dispatches_turn() -> Result<()> {
         .ok_or("worker channel should not close")?;
     match cmd {
         WorkerCommand::ExecuteTurn { prompt, .. } => {
+            assert_eq!(prompt, submitted);
+        }
+        _ => panic!("expected ExecuteTurn"),
+    }
+
+    // Make the worker idle, then quit so the loop exits cleanly.
+    worker_result_tx
+        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .await
+        .unwrap();
+    event_tx.send(OrchestratorEvent::Quit).await.unwrap();
+
+    let result = loop_task
+        .await
+        .map_err(|e| format!("loop task should not panic: {e}"))?;
+    assert!(result.is_ok());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a2a_task_rx_queues_second_task_while_worker_busy() -> Result<()> {
+    // -- Setup & Fixtures
+    let h = Harness::new();
+    let Harness {
+        event_tx,
+        event_rx,
+        worker_tx,
+        mut worker_rx,
+        worker_result_tx,
+        mut worker_result_rx,
+        blocking_tx,
+        mut blocking_response_rx,
+        concurrent_tx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        task_cancel_rx: _,
+        bus,
+        mut ctx_state,
+    } = h;
+
+    let (a2a_task_tx, a2a_task_rx) = mpsc::channel::<IncomingTask>(16);
+    let mut turn_rx = bus.turn().subscribe();
+
+    let loop_task = tokio::spawn(async move {
+        let mut slash = SlashStage;
+        let mut permission = MockPermission::new();
+        let mut ui_request = MockUiRequest::new();
+        let mut session = MockSession::new();
+        let mut ctx = make_ctx(
+            &worker_tx,
+            &blocking_tx,
+            &concurrent_tx,
+            &bus,
+            &mut ctx_state,
+        );
+        let mut task_cancel_rx: Option<mpsc::UnboundedReceiver<String>> = None;
+        let mut sources = make_sources(
+            &mut worker_result_rx,
+            &mut blocking_response_rx,
+            &mut concurrent_response_rx,
+            &mut external_rx,
+            &mut compaction_rx,
+            &mut task_cancel_rx,
+        );
+        sources.a2a_task_rx = Some(a2a_task_rx);
+        run_orchestrator_loop(
+            event_rx,
+            sources,
+            Stages {
+                slash: &mut slash,
+                permission: &mut permission,
+                ui_request: &mut ui_request,
+                session: &mut session,
+            },
+            &mut ctx,
+        )
+        .await
+    });
+
+    // -- Exec
+    // First task: the router attaches the session, then the TUI submits the
+    // queued prompt, which dispatches the turn.
+    a2a_task_tx
+        .send(incoming_task("task-1", "first"))
+        .await
+        .map_err(|_| "task-1 send failed")?;
+    let cmd = recv_worker_command(&mut worker_rx, "AttachA2aContext (task-1)").await?;
+    let task1_prompt = match cmd {
+        WorkerCommand::AttachA2aContext { prompt, .. } => {
+            assert!(
+                prompt.contains("[A2A] first"),
+                "attach must carry the task-1 prompt, got: {prompt}"
+            );
+            prompt
+        }
+        _ => panic!("expected AttachA2aContext for task-1"),
+    };
+    event_tx
+        .send(OrchestratorEvent::PromptSubmitted {
+            text: task1_prompt.clone(),
+        })
+        .await
+        .map_err(|_| "task-1 submit failed")?;
+    let cmd = recv_worker_command(&mut worker_rx, "ExecuteTurn (task-1)").await?;
+    match cmd {
+        WorkerCommand::ExecuteTurn { prompt, .. } => {
             assert_eq!(
-                prompt,
-                "[A2A] do work\n\nProcess this request and respond with your answer. Your response will be automatically delivered as the task result.\n\n---\nTask ID: task-1\nFrom: http://a.local"
+                prompt, task1_prompt,
+                "task-1 turn prompt must be the submitted text"
+            );
+        }
+        _ => panic!("expected ExecuteTurn for task-1"),
+    }
+    // Drain task-1's turn-start event so the next one is task-2's.
+    let started = tokio::time::timeout(std::time::Duration::from_secs(5), turn_rx.recv())
+        .await
+        .map_err(|_| "TurnEvent::Started (task-1) should be published")?
+        .map_err(|e| format!("turn channel should not close: {e:?}"))?;
+    match started {
+        TurnEvent::Started { task_id, .. } => {
+            assert_eq!(task_id.as_deref(), Some("task-1"));
+        }
+        _ => panic!("expected TurnEvent::Started for task-1"),
+    }
+
+    // Second task arrives while the worker is busy. The orchestrator holds no
+    // queue: it attaches the session and leaves the prompt in the TUI queue.
+    a2a_task_tx
+        .send(incoming_task("task-2", "second"))
+        .await
+        .map_err(|_| "task-2 send failed")?;
+    let cmd = recv_worker_command(&mut worker_rx, "AttachA2aContext (task-2)").await?;
+    let task2_prompt = match cmd {
+        WorkerCommand::AttachA2aContext { context_id, prompt } => {
+            assert!(
+                prompt.contains("[A2A] second"),
+                "attach must carry the task-2 prompt, got: {prompt}"
+            );
+            assert!(
+                !context_id.is_empty(),
+                "task-2 must attach a non-empty context id"
+            );
+            prompt
+        }
+        _ => panic!("expected AttachA2aContext for task-2"),
+    };
+    assert!(
+        worker_rx
+            .as_mut()
+            .ok_or("worker_rx present")?
+            .try_recv()
+            .is_err(),
+        "task-2 must not dispatch a turn while the worker is busy"
+    );
+
+    // The worker finishes task-1. The TUI now submits task-2's queued prompt.
+    worker_result_tx
+        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .await
+        .map_err(|_| "worker result send failed")?;
+    event_tx
+        .send(OrchestratorEvent::PromptSubmitted {
+            text: task2_prompt.clone(),
+        })
+        .await
+        .map_err(|_| "task-2 submit failed")?;
+
+    // -- Check
+    let cmd = recv_worker_command(&mut worker_rx, "ExecuteTurn (task-2)").await?;
+    match cmd {
+        WorkerCommand::ExecuteTurn { prompt, .. } => {
+            assert_eq!(
+                prompt, task2_prompt,
+                "task-2 turn prompt must be the submitted text"
+            );
+        }
+        _ => panic!("expected ExecuteTurn for task-2"),
+    }
+    // The turn-start event must name the A2A task, not a user submission.
+    let started = tokio::time::timeout(std::time::Duration::from_secs(5), turn_rx.recv())
+        .await
+        .map_err(|_| "TurnEvent::Started should be published")?
+        .map_err(|e| format!("turn channel should not close: {e:?}"))?;
+    match started {
+        TurnEvent::Started { task_id, .. } => {
+            assert_eq!(
+                task_id.as_deref(),
+                Some("task-2"),
+                "the A2A turn-start event must name task-2"
+            );
+        }
+        _ => panic!("expected TurnEvent::Started for task-2"),
+    }
+
+    // Make the worker idle, then quit so the loop exits cleanly.
+    worker_result_tx
+        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .await
+        .map_err(|_| "worker result send failed")?;
+    event_tx
+        .send(OrchestratorEvent::Quit)
+        .await
+        .map_err(|_| "quit send failed")?;
+
+    let result = loop_task
+        .await
+        .map_err(|e| format!("loop task should not panic: {e}"))?;
+    assert!(result.is_ok());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a2a_completion_rx_queues_while_worker_busy() -> Result<()> {
+    // -- Setup & Fixtures
+    let h = Harness::new();
+    let Harness {
+        event_tx,
+        event_rx,
+        worker_tx,
+        mut worker_rx,
+        worker_result_tx,
+        mut worker_result_rx,
+        blocking_tx,
+        mut blocking_response_rx,
+        concurrent_tx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        task_cancel_rx: _,
+        bus,
+        mut ctx_state,
+    } = h;
+
+    let (a2a_completion_tx, a2a_completion_rx) = mpsc::channel::<A2aCompletionEvent>(16);
+
+    let loop_task = tokio::spawn(async move {
+        let mut slash = SlashStage;
+        let mut permission = MockPermission::new();
+        let mut ui_request = MockUiRequest::new();
+        let mut session = MockSession::new();
+        let mut ctx = make_ctx(
+            &worker_tx,
+            &blocking_tx,
+            &concurrent_tx,
+            &bus,
+            &mut ctx_state,
+        );
+        let mut task_cancel_rx: Option<mpsc::UnboundedReceiver<String>> = None;
+        let mut sources = make_sources(
+            &mut worker_result_rx,
+            &mut blocking_response_rx,
+            &mut concurrent_response_rx,
+            &mut external_rx,
+            &mut compaction_rx,
+            &mut task_cancel_rx,
+        );
+        sources.a2a_completion_rx = Some(a2a_completion_rx);
+        run_orchestrator_loop(
+            event_rx,
+            sources,
+            Stages {
+                slash: &mut slash,
+                permission: &mut permission,
+                ui_request: &mut ui_request,
+                session: &mut session,
+            },
+            &mut ctx,
+        )
+        .await
+    });
+
+    // -- Exec
+    // First completion: the orchestrator enqueues the prompt on the UI bus and
+    // the TUI submits it, which dispatches the turn.
+    let completion1 = completion_event("task-1", "first done");
+    let completion1_prompt = completion1.to_prompt();
+    a2a_completion_tx
+        .send(completion1)
+        .await
+        .map_err(|_| "completion-1 send failed")?;
+    event_tx
+        .send(OrchestratorEvent::PromptSubmitted {
+            text: completion1_prompt.clone(),
+        })
+        .await
+        .map_err(|_| "completion-1 submit failed")?;
+    let cmd = recv_worker_command(&mut worker_rx, "ExecuteTurn (completion-1)").await?;
+    match cmd {
+        WorkerCommand::ExecuteTurn { prompt, .. } => {
+            assert_eq!(
+                prompt, completion1_prompt,
+                "completion-1 turn prompt must be the submitted text"
+            );
+        }
+        _ => panic!("expected ExecuteTurn for completion-1"),
+    }
+
+    // Second completion arrives while the worker is busy. The orchestrator holds
+    // no queue: the prompt waits in the TUI queue.
+    let completion2 = completion_event("task-2", "second done");
+    let completion2_prompt = completion2.to_prompt();
+    a2a_completion_tx
+        .send(completion2)
+        .await
+        .map_err(|_| "completion-2 send failed")?;
+    assert!(
+        worker_rx
+            .as_mut()
+            .ok_or("worker_rx present")?
+            .try_recv()
+            .is_err(),
+        "completion-2 must not dispatch while the worker is busy"
+    );
+
+    // The worker finishes completion-1's turn; the TUI now submits completion-2.
+    worker_result_tx
+        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .await
+        .map_err(|_| "worker result send failed")?;
+    event_tx
+        .send(OrchestratorEvent::PromptSubmitted {
+            text: completion2_prompt.clone(),
+        })
+        .await
+        .map_err(|_| "completion-2 submit failed")?;
+
+    // -- Check
+    let cmd = recv_worker_command(&mut worker_rx, "ExecuteTurn (completion-2)").await?;
+    match cmd {
+        WorkerCommand::ExecuteTurn { prompt, .. } => {
+            assert_eq!(
+                prompt, completion2_prompt,
+                "completion-2 turn prompt must be the submitted text"
+            );
+        }
+        _ => panic!("expected ExecuteTurn for completion-2"),
+    }
+
+    // Make the worker idle, then quit so the loop exits cleanly.
+    worker_result_tx
+        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .await
+        .map_err(|_| "worker result send failed")?;
+    event_tx
+        .send(OrchestratorEvent::Quit)
+        .await
+        .map_err(|_| "quit send failed")?;
+
+    let result = loop_task
+        .await
+        .map_err(|e| format!("loop task should not panic: {e}"))?;
+    assert!(result.is_ok());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a2a_task_rx_with_context_id_attaches_that_context() -> Result<()> {
+    let h = Harness::new();
+    let Harness {
+        event_tx,
+        event_rx,
+        worker_tx,
+        mut worker_rx,
+        worker_result_tx,
+        mut worker_result_rx,
+        blocking_tx,
+        mut blocking_response_rx,
+        concurrent_tx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        task_cancel_rx: _,
+        bus,
+        mut ctx_state,
+    } = h;
+
+    let (a2a_task_tx, a2a_task_rx) = mpsc::channel::<IncomingTask>(16);
+
+    let loop_task = tokio::spawn(async move {
+        let mut slash = SlashStage;
+        let mut permission = MockPermission::new();
+        let mut ui_request = MockUiRequest::new();
+        let mut session = MockSession::new();
+        let mut ctx = make_ctx(
+            &worker_tx,
+            &blocking_tx,
+            &concurrent_tx,
+            &bus,
+            &mut ctx_state,
+        );
+        let mut task_cancel_rx: Option<mpsc::UnboundedReceiver<String>> = None;
+        let mut sources = make_sources(
+            &mut worker_result_rx,
+            &mut blocking_response_rx,
+            &mut concurrent_response_rx,
+            &mut external_rx,
+            &mut compaction_rx,
+            &mut task_cancel_rx,
+        );
+        sources.a2a_task_rx = Some(a2a_task_rx);
+        run_orchestrator_loop(
+            event_rx,
+            sources,
+            Stages {
+                slash: &mut slash,
+                permission: &mut permission,
+                ui_request: &mut ui_request,
+                session: &mut session,
+            },
+            &mut ctx,
+        )
+        .await
+    });
+
+    a2a_task_tx
+        .send(IncomingTask {
+            task_id: "task-1".to_string(),
+            message: Message {
+                role: Role::User,
+                parts: vec![Part::Text {
+                    text: "do work".to_string(),
+                }],
+                message_id: "msg-1".to_string(),
+                extensions: None,
+                metadata: None,
+            },
+            sender_url: "http://a.local".to_string(),
+            context_id: Some("ctx-abc".to_string()),
+            parent_task_id: None,
+        })
+        .await
+        .unwrap();
+
+    let cmd = worker_rx.as_mut().ok_or("worker_rx present")?.recv();
+    let cmd = tokio::time::timeout(std::time::Duration::from_secs(5), cmd)
+        .await
+        .map_err(|_| "AttachA2aContext should be dispatched")?
+        .ok_or("worker channel should not close")?;
+    let attach_prompt = match cmd {
+        WorkerCommand::AttachA2aContext { context_id, prompt } => {
+            assert_eq!(context_id, "ctx-abc");
+            assert!(
+                prompt.contains("[A2A] do work"),
+                "attach must carry the incoming prompt, got: {prompt}"
+            );
+            prompt
+        }
+        _ => panic!("expected AttachA2aContext"),
+    };
+
+    // The router enqueues the formatted prompt on the UI bus; the TUI answers
+    // with a `PromptSubmitted` carrying that same text.
+    event_tx
+        .send(OrchestratorEvent::PromptSubmitted {
+            text: attach_prompt.clone(),
+        })
+        .await
+        .unwrap();
+
+    let cmd = worker_rx.as_mut().ok_or("worker_rx present")?.recv();
+    let cmd = tokio::time::timeout(std::time::Duration::from_secs(5), cmd)
+        .await
+        .map_err(|_| "ExecuteTurn should be dispatched")?
+        .ok_or("worker channel should not close")?;
+    match cmd {
+        WorkerCommand::ExecuteTurn { prompt, .. } => {
+            assert_eq!(prompt, attach_prompt);
+            assert!(
+                prompt
+                    .ends_with("\n\n---\nTask ID: task-1\nFrom: http://a.local\nContext: ctx-abc"),
+                "prompt must carry the client contextId, got: {prompt}"
             );
         }
         _ => panic!("expected ExecuteTurn"),
@@ -1394,7 +1968,7 @@ async fn a2a_completion_rx_dispatches_turn() -> Result<()> {
     let (a2a_completion_tx, a2a_completion_rx) = mpsc::channel::<A2aCompletionEvent>(16);
 
     let loop_task = tokio::spawn(async move {
-        let mut slash = MockSlash::new();
+        let mut slash = SlashStage;
         let mut permission = MockPermission::new();
         let mut ui_request = MockUiRequest::new();
         let mut session = MockSession::new();
@@ -1429,12 +2003,20 @@ async fn a2a_completion_rx_dispatches_turn() -> Result<()> {
         .await
     });
 
-    a2a_completion_tx
-        .send(A2aCompletionEvent {
-            task_id: "task-2".to_string(),
-            agent_name: "agent-b".to_string(),
-            result: "all done".to_string(),
-            status: TaskState::Completed,
+    let completion = A2aCompletionEvent {
+        task_id: "task-2".to_string(),
+        agent_name: "agent-b".to_string(),
+        result: "all done".to_string(),
+        status: TaskState::Completed,
+        context_id: None,
+    };
+    let completion_prompt = completion.to_prompt();
+    a2a_completion_tx.send(completion).await.unwrap();
+
+    // The orchestrator enqueues the prompt on the UI bus; the TUI submits it.
+    event_tx
+        .send(OrchestratorEvent::PromptSubmitted {
+            text: completion_prompt.clone(),
         })
         .await
         .unwrap();
@@ -1446,10 +2028,7 @@ async fn a2a_completion_rx_dispatches_turn() -> Result<()> {
         .ok_or("worker channel should not close")?;
     match cmd {
         WorkerCommand::ExecuteTurn { prompt, .. } => {
-            assert_eq!(
-                prompt,
-                "[A2A] Task completed by agent-b: all done\n\n---\nTask ID: task-2\nStatus: TASK_STATE_COMPLETED"
-            );
+            assert_eq!(prompt, completion_prompt);
         }
         _ => panic!("expected ExecuteTurn"),
     }

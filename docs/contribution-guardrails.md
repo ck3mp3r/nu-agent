@@ -50,14 +50,14 @@ Every tool call is classified into one of five `ToolSource` variants before auth
 | Variant | Tools | Permission gating |
 |---|---|---|
 | `Builtin` | `read`, `skill` | **Bypasses** — read-only tools are always allowed |
-| `BuiltinFs` | `edit`, `patch` | **Gated** — filesystem-mutating tools go through the full permission flow |
+| `BuiltinFs` | `edit` | **Gated** — filesystem-mutating tools go through the full permission flow |
 | `Closure` | user-defined Nushell tools | **Gated** |
 | `Mcp` | MCP server tools | **Gated** |
 | `Unknown` | unrecognized tool names | **Gated** |
 
 Security rationale:
 - `Builtin` tools are read-only (`read`, `skill`) — they carry no filesystem mutation risk and bypassing permissions keeps overhead low for safe operations.
-- `BuiltinFs` tools (`edit`, `patch`) mutate the filesystem and must be subject to the same permission policy as MCP/closure tools. They are not implicitly trusted even though they are built-in.
+- `BuiltinFs` tools (`edit`) mutate the filesystem and must be subject to the same permission policy as MCP/closure tools. They are not implicitly trusted even though they are built-in.
 
 See `crates/nu-agent-core/src/tools/handler/types.rs` (`ToolSource`) and `crates/nu-agent-core/src/tools/handler/authz_gate.rs` for the enforcement point.
 
@@ -68,8 +68,8 @@ Keep handler dependencies one-way:
 - `dispatch` orchestrates only.
 - `authz_gate` owns policy/ask/session-grant resolution.
 - `pre_authorize` is side-effect free preview/context generation.
-  - The `nu` tool has a pre-authorize preview: the command renders as a syntax-highlighted code block directly under the tool row, built from the tool-call arguments alone (cwd-free, zero side effects). The command renders only in that preview block; the tool call line shows the tool name alone. The nu code block and the edit diff display both render on a full-width background block (same fill mechanism as user prompt rows) with one blank margin row above and below; consecutive tool blocks get one spacer when either renders a background block. The preview is its own `ToolDisplay` block pushed directly after the Tool block, so the call line never carries the code background or a margin row.
-  - The `edit` preview is built from tool-call arguments plus a planned diff of the target file (no writes). The interactive resolver (`InteractivePermissionResolver`) populates `AskContext.pre_authorize_display` for edit and nu Builtin calls; the TTY/`NoOpAskHook` path renders nothing.
+  - The `nu` tool has a pre-authorize preview: the command renders as a syntax-highlighted code block directly under the tool row, built from the tool-call arguments alone (cwd-free, zero side effects). The command renders only in that preview block; the tool call line shows the tool name plus the applied timeout (`⏱ {timeout}s`, 120s when omitted). The nu code block and the edit diff display both render on a full-width background block (same fill mechanism as user prompt rows) with one blank margin row above and below; consecutive tool blocks get one spacer when either renders a background block. The preview is its own `ToolDisplay` block pushed directly after the Tool block, so the call line never carries the code background or a margin row.
+  - The `edit` preview is built from tool-call arguments plus a planned diff of the target file (no writes). A plan that would not change the file (no-op or version conflict) produces no preview — there is no diff to approve. The interactive resolver (`InteractivePermissionResolver`) populates `AskContext.pre_authorize_display` for edit and nu Builtin calls; the TTY/`NoOpAskHook` path renders nothing.
 - `builtin_kinds` owns builtin tool name parsing and classification.
 - `fs` owns builtin filesystem tool dispatch contracts.
 - `result` owns output/failure shaping.

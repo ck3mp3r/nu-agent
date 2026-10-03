@@ -92,37 +92,6 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "patch".to_string(),
-            description: "Apply line-range patch operations with compare-and-swap guard. Lines are 1-indexed: range {start: 5, end: 10} replaces lines 5 through 10 inclusive. The replacement string replaces the entire range. WARNING: Line numbers MUST come from a prior `read` call — do not guess. Prefer `edit` (search_replace) for most changes — it does not require line numbers. The `expected_version` must match the version returned by the most recent `read`, `edit`, or `patch` call.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "Path to the file to patch." },
-                    "expected_version": { "type": "string", "description": "Version token from the most recent read/edit/patch. Rejects the patch if the file changed since." },
-                    "operations": {
-                        "type": "array",
-                        "description": "Patch operations to apply. Applied in reverse line order to preserve line numbers.",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "range": {
-                                    "type": "object",
-                                    "properties": {
-                                        "start": { "type": "integer", "minimum": 1, "description": "First line to replace (1-indexed, inclusive)" },
-                                        "end": { "type": "integer", "minimum": 1, "description": "Last line to replace (1-indexed, inclusive)" }
-                                    },
-                                    "required": ["start", "end"]
-                                },
-                                "replacement": { "type": "string", "description": "Text that replaces the entire line range." }
-                            },
-                            "required": ["range", "replacement"]
-                        }
-                    }
-                },
-                "required": ["path", "expected_version", "operations"]
-            }),
-        },
-        ToolDefinition {
             name: "skill".to_string(),
             description: "Load skill content by explicit name from local or home skill roots".to_string(),
             parameters: json!({
@@ -276,7 +245,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "nu".to_string(),
-            description: "Execute a Nushell command in a stateless one-shot process. Returns stdout and stderr as text. Use Nushell syntax ONLY (NOT bash/sh/zsh). Each call is independent — no state preserved between calls. Use pipes to chain commands within a single call.".to_string(),
+            description: "Execute a Nushell command in a stateless one-shot process. Returns stdout and stderr as text. Use Nushell syntax ONLY (NOT bash/sh/zsh). Each call is independent — no state preserved between calls. Use pipes to chain commands within a single call. The working directory is already set to the project directory; `cd` has no effect and is never needed.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -287,7 +256,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                     "timeout_seconds": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "Timeout in seconds. Default 300."
+                        "description": "Timeout in seconds. Default 120."
                     }
                 },
                 "required": ["command"]

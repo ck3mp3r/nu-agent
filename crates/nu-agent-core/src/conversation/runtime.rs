@@ -506,6 +506,10 @@ where
         &self.cwd
     }
 
+    fn current_session_id(&self) -> Option<&str> {
+        self.final_session_id.as_deref()
+    }
+
     async fn run_compaction(&mut self, source: &str) -> Result<(), String> {
         let Some(session_id) = self.final_session_id.clone() else {
             return Ok(());
@@ -610,6 +614,30 @@ where
         Ok(crate::session::prefix::filter_sessions_by_cwd(
             sessions, cwd,
         ))
+    }
+
+    async fn attach_session(&mut self, session_id: &str) -> Result<Vec<UiMessageSnapshot>, String> {
+        let store = Arc::clone(&self.store);
+        let sid = session_id.to_string();
+
+        let loaded = store
+            .load(&sid)
+            .await
+            .map_err(|e| format!("Failed to load session '{session_id}': {e}"))?;
+
+        // Switch the runtime to the derived session. Clearing the memory cache
+        // forces the next turn to re-read the session from the store, so a
+        // resumed session continues from its persisted history and a fresh
+        // session starts empty.
+        self.session.clear();
+        self.final_session_id = Some(sid);
+
+        match loaded {
+            Some((_metadata, entries)) => {
+                Ok(crate::session::resolver::hydrate_transcript_from_store_entries(&entries))
+            }
+            None => Ok(Vec::new()),
+        }
     }
 }
 

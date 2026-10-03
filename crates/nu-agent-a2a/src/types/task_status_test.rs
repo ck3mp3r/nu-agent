@@ -4,6 +4,8 @@ use super::*;
 use chrono::{DateTime, Utc};
 use serde_json::json;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -33,7 +35,7 @@ fn task_status_roundtrip_with_message() {
     };
 
     let json = serde_json::to_value(&status).expect("serialize");
-    assert_eq!(json["state"], "COMPLETED");
+    assert_eq!(json["state"], "TASK_STATE_COMPLETED");
     assert!(json.get("timestamp").is_some());
 
     let back: TaskStatus = serde_json::from_value(json).expect("deserialize");
@@ -59,8 +61,81 @@ fn task_status_without_message() {
 }
 
 // ---------------------------------------------------------------------------
-// Artifact
+// TaskStatus timestamp format (spec §5.6.1)
 // ---------------------------------------------------------------------------
+
+#[test]
+fn task_status_timestamp_serializes_with_z_suffix() -> Result<()> {
+    // -- Setup & Fixtures
+    let status = TaskStatus {
+        state: TaskState::Working,
+        timestamp: fixed_time(),
+        message: None,
+    };
+
+    // -- Exec
+    let json = serde_json::to_value(&status)?;
+
+    // -- Check
+    let ts = json["timestamp"].as_str().ok_or("timestamp string")?;
+    assert!(ts.ends_with('Z'), "timestamp must end with 'Z', got: {ts}");
+    assert!(
+        !ts.contains('+'),
+        "timestamp must not contain a timezone offset, got: {ts}"
+    );
+    assert_eq!(ts, "2023-11-14T22:13:20.000Z");
+    Ok(())
+}
+
+#[test]
+fn task_status_timestamp_deserializes_from_z_suffix() -> Result<()> {
+    // -- Setup & Fixtures
+    let json = json!({
+        "state": "TASK_STATE_WORKING",
+        "timestamp": "2023-11-14T22:13:20.000Z"
+    });
+
+    // -- Exec
+    let status: TaskStatus = serde_json::from_value(json)?;
+
+    // -- Check
+    assert_eq!(status.timestamp, fixed_time());
+    Ok(())
+}
+
+#[test]
+fn task_status_timestamp_deserializes_from_offset() -> Result<()> {
+    // -- Setup & Fixtures
+    let json = json!({
+        "state": "TASK_STATE_WORKING",
+        "timestamp": "2023-11-14T22:13:20+00:00"
+    });
+
+    // -- Exec
+    let status: TaskStatus = serde_json::from_value(json)?;
+
+    // -- Check
+    assert_eq!(status.timestamp, fixed_time());
+    Ok(())
+}
+
+#[test]
+fn task_status_timestamp_roundtrip_preserves_value() -> Result<()> {
+    // -- Setup & Fixtures
+    let status = TaskStatus {
+        state: TaskState::Completed,
+        timestamp: fixed_time(),
+        message: None,
+    };
+
+    // -- Exec
+    let json = serde_json::to_value(&status)?;
+    let back: TaskStatus = serde_json::from_value(json)?;
+
+    // -- Check
+    assert_eq!(back.timestamp, status.timestamp);
+    Ok(())
+}
 
 #[test]
 fn artifact_full_roundtrip() {
@@ -120,7 +195,6 @@ fn task_full_roundtrip() {
         id: "task-1".to_string(),
         context_id: Some("ctx-1".to_string()),
         parent_task_id: Some("parent-1".to_string()),
-        session_id: Some("session-1".to_string()),
         status: TaskStatus {
             state: TaskState::Completed,
             timestamp: fixed_time(),
@@ -155,10 +229,9 @@ fn task_full_roundtrip() {
 
     let json = serde_json::to_value(&task).expect("serialize");
     assert_eq!(json["id"], "task-1");
-    assert_eq!(json["sessionId"], "session-1");
     assert_eq!(json["contextId"], "ctx-1");
     assert_eq!(json["parentTaskId"], "parent-1");
-    assert_eq!(json["status"]["state"], "COMPLETED");
+    assert_eq!(json["status"]["state"], "TASK_STATE_COMPLETED");
     assert!(json.get("history").is_some());
     assert_eq!(json["artifacts"][0]["artifactId"], "art-1");
     assert!(json.get("metadata").is_some());
@@ -173,7 +246,6 @@ fn task_minimal() {
         id: "task-2".to_string(),
         context_id: None,
         parent_task_id: None,
-        session_id: None,
         status: TaskStatus {
             state: TaskState::Submitted,
             timestamp: fixed_time(),
@@ -194,7 +266,6 @@ fn task_minimal() {
         json.get("parentTaskId").is_none(),
         "parentTaskId should be absent when None"
     );
-    assert!(json.get("sessionId").is_none());
     assert!(json.get("history").is_none());
     assert!(json.get("metadata").is_none());
 

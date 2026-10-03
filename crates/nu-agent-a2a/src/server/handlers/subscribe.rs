@@ -5,10 +5,10 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::{TaskEvent, TaskState};
+use crate::{TaskEvent, task_event_to_stream_response};
 
 use super::super::AppState;
-use super::super::response::{SseError, a2a_error_with_meta, a2a_json_response};
+use super::super::response::{SseError, a2a_error, a2a_error_with_meta, a2a_json_response};
 use super::SseResult;
 
 // ---------------------------------------------------------------------------
@@ -25,33 +25,30 @@ pub async fn handle_tasks_subscribe(
             let err = a2a_error_with_meta(
                 404,
                 "NOT_FOUND",
+                "TASK_NOT_FOUND",
                 "The specified task ID does not exist or is not accessible",
-                json!({"taskId": id, "timestamp": chrono::Utc::now().to_rfc3339()}),
+                json!({"taskId": id, "timestamp": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)}),
             );
             return Err((StatusCode::NOT_FOUND, a2a_json_response(err)).into());
         }
     };
 
-    // If task is already in a terminal state, send current state and close
-    let is_terminal = matches!(
-        task.status.state,
-        TaskState::Completed | TaskState::Failed | TaskState::Canceled | TaskState::Rejected
-    );
-
-    if is_terminal {
-        // Return the terminal task as a single SSE event.
-        // A channel sender would drop before the event is written,
-        // producing an empty stream. Use tokio_stream::iter instead.
-        let data = serde_json::to_string(&json!({ "task": &task })).unwrap_or_default();
-        let event = Ok(axum::response::sse::Event::default().data(data));
-        return Ok(Sse::new(Box::pin(tokio_stream::iter(std::iter::once(
-            event,
-        )))));
+    // Spec §3.1.6: subscribing to a task in a terminal state is an
+    // UnsupportedOperationError — the stream can never produce further events.
+    if task.status.state.is_terminal() {
+        let err = a2a_error(
+            400,
+            "UNSUPPORTED_OPERATION",
+            "UNSUPPORTED_OPERATION",
+            "Cannot subscribe to a task in a terminal state",
+        );
+        return Err((StatusCode::BAD_REQUEST, a2a_json_response(err)).into());
     }
 
     let task_store = state.task_store.clone();
     let (mut rx, _) = task_store.subscribe(&id);
     let (tx, sse_rx) = mpsc::channel::<SseResult>(16);
+    let context_id = task.context_id.clone();
 
     // Spawn a task that reads from the subscription channel and forwards
     // SSE events in StreamResponse format.
@@ -81,12 +78,13 @@ pub async fn handle_tasks_subscribe(
                             task_id: tid,
                             status,
                         }) => {
-                            let data = json!({
-                                "statusUpdate": {
-                                    "taskId": tid,
-                                    "status": status,
-                                }
-                            });
+                            let data = task_event_to_stream_response(
+                                &TaskEvent::StatusChanged {
+                                    task_id: tid,
+                                    status: status.clone(),
+                                },
+                                &context_id,
+                            );
                             let sent = tx
                                 .send(Ok(axum::response::sse::Event::default()
                                     .data(serde_json::to_string(&data).unwrap_or_default())))
@@ -97,11 +95,7 @@ pub async fn handle_tasks_subscribe(
 
                             // §11.7: resend a final Task snapshot with all
                             // artifacts before closing the stream.
-                            if status.state == TaskState::Completed
-                                || status.state == TaskState::Failed
-                                || status.state == TaskState::Canceled
-                                || status.state == TaskState::Rejected
-                            {
+                            if status.state.is_terminal() {
                                 if let Ok(final_task) = task_store.get_task(&id) {
                                     let data = json!({ "task": final_task });
                                     let _ = tx
@@ -117,12 +111,13 @@ pub async fn handle_tasks_subscribe(
                             task_id: tid,
                             artifact,
                         }) => {
-                            let data = json!({
-                                "artifactUpdate": {
-                                    "taskId": tid,
-                                    "artifact": artifact,
-                                }
-                            });
+                            let data = task_event_to_stream_response(
+                                &TaskEvent::ArtifactAdded {
+                                    task_id: tid,
+                                    artifact,
+                                },
+                                &context_id,
+                            );
                             if tx
                                 .send(Ok(axum::response::sse::Event::default()
                                     .data(serde_json::to_string(&data).unwrap_or_default())))

@@ -83,7 +83,14 @@ pub enum SessionEvent {
 /// An external (e.g. A2A) event.
 #[derive(Debug, Clone)]
 pub enum ExternalEvent {
-    PromptReceived { prompt: String, task_id: String },
+    PromptReceived {
+        prompt: String,
+        task_id: String,
+        /// The A2A `contextId` this prompt belongs to, if known. Used for
+        /// metadata/display; session routing is performed by the forwarder
+        /// before the event is published.
+        context_id: Option<String>,
+    },
 }
 
 /// A compaction lifecycle event.

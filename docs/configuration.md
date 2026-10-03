@@ -256,7 +256,6 @@ read = "allow"
 glob = "allow"
 grep = "allow"
 edit = "ask"
-patch = "ask"
 http = "ask"
 skill = "ask"
 ```

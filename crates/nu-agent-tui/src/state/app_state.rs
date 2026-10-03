@@ -394,7 +394,9 @@ impl AppState {
                     sessions.into_iter().map(PickerOption::from).collect();
                 self.set_picker_options(ActivePicker::Session, tui_options)
             }
-            UiStateEvent::DisplayIncomingMessage(msg) => self.display_incoming_message(&msg),
+            UiStateEvent::EnqueueExternalPrompt { text } => {
+                self.enqueue_prompt(text);
+            }
             UiStateEvent::ExecuteSharedUiAction(action) => {
                 self.execute_shared_ui_action(action);
             }
@@ -402,10 +404,6 @@ impl AppState {
                 self.push_startup_logo();
             }
         }
-    }
-
-    fn display_incoming_message(&mut self, text: &str) {
-        self.enqueue_external_prompt(text.to_string());
     }
 
     fn execute_shared_ui_action(&mut self, action: SharedUiAction) -> bool {

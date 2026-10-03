@@ -299,9 +299,10 @@ fn test_pre_authorize_fs_tool_edit_apply_search_replace_without_expected_version
 }
 
 #[test]
-fn test_pre_authorize_fs_tool_edit_apply_search_replace_with_stale_expected_version_produces_diff_preview()
+fn test_pre_authorize_fs_tool_edit_apply_search_replace_with_stale_expected_version_produces_no_preview()
 -> Result<()> {
-    // A stale version yields a conflict plan, which still previews.
+    // A stale version yields a conflict plan, which has no diff to approve:
+    // the gate prompts bare instead of showing an empty diff block.
     // -- Setup & Fixtures
     let tmp = tempfile::tempdir()?;
     let target = tmp.path().join("existing.txt");
@@ -330,15 +331,49 @@ fn test_pre_authorize_fs_tool_edit_apply_search_replace_with_stale_expected_vers
     );
 
     // -- Check
-    let display = output
-        .display
-        .ok_or("stale expected_version must still produce a display")?;
-    let section = display.sections.first().ok_or("should have one section")?;
     assert!(
-        matches!(section.kind, ContentKind::Diff { .. }),
-        "section kind must be Diff, got {:?}",
-        section.kind
+        output.display.is_none(),
+        "a stale expected_version has no diff to approve; pre-authorize must produce no display"
     );
-    assert!(output.ask_context.pre_authorize_display.is_some());
+    assert!(output.ask_context.pre_authorize_display.is_none());
+    Ok(())
+}
+
+#[test]
+fn test_pre_authorize_fs_tool_edit_apply_noop_produces_no_preview() -> Result<()> {
+    // A replacement identical to the search yields a no-op plan, which has no
+    // diff to approve: the gate prompts bare.
+    // -- Setup & Fixtures
+    let tmp = tempfile::tempdir()?;
+    let target = tmp.path().join("existing.txt");
+    std::fs::write(&target, "hello\nworld\n")?;
+    let tool_call = make_tool_call(
+        "edit",
+        json!({
+            "path": target.to_string_lossy(),
+            "mode": "apply",
+            "operation": {
+                "type": "search_replace",
+                "search": "world",
+                "replacement": "world"
+            }
+        }),
+    );
+
+    // -- Exec
+    let output = pre_authorize_tool_call(
+        &tool_call,
+        ToolSource::Builtin,
+        &TestEngine {
+            cwd: tmp.path().to_path_buf(),
+        },
+    );
+
+    // -- Check
+    assert!(
+        output.display.is_none(),
+        "a no-op plan has no diff to approve; pre-authorize must produce no display"
+    );
+    assert!(output.ask_context.pre_authorize_display.is_none());
     Ok(())
 }

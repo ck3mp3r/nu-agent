@@ -38,17 +38,23 @@ impl Tool {
     pub fn description(&self) -> &'static str {
         match self {
             Tool::Send => {
-                "Send a task to another agent over A2A. Do NOT poll tasks_get or tasks_list for completion — wait for the SSE notification (the tool will inform you when done)."
+                "Send a task to another agent over A2A. The task runs asynchronously: this tool returns immediately with a taskId, and the result arrives later as a new conversation turn. Do NOT poll tasks_get or tasks_list for completion.\n\nSession control: omit contextId to start a fresh session on the target agent; include contextId from a prior response to resume that session.\n\nReturns {taskId, contextId, status, message}. Keep taskId and contextId for tasks_get, tasks_cancel, or follow-up sends."
             }
             Tool::Get => {
-                "Get a completed task from the LOCAL task store by ID (use AFTER the SSE notification arrives, NEVER for polling). Only returns tasks sent TO this agent."
+                "Fetch a task's current state and artifacts from a remote agent. Use after a completion notification to read the full result. Requires taskId (from tasks_send) and target (agent name from agent_list).\n\nReturns {taskId, state, artifacts}. The artifacts array holds the result content; read the text parts."
             }
             Tool::List => {
-                "List LOCAL tasks (use AFTER the SSE notification arrives, NEVER for polling). Only shows tasks sent TO this agent."
+                "List tasks, optionally filtered by status. With target, lists tasks from that remote agent. Without target, lists tasks in the local store (tasks received by this agent).\n\nStatus values: TASK_STATE_UNSPECIFIED, TASK_STATE_SUBMITTED, TASK_STATE_WORKING, TASK_STATE_INPUT_REQUIRED, TASK_STATE_COMPLETED, TASK_STATE_FAILED, TASK_STATE_CANCELED, TASK_STATE_REJECTED, TASK_STATE_AUTH_REQUIRED.\n\nReturns {tasks: [...]}. Do NOT poll for a task you just sent."
             }
-            Tool::Cancel => "Cancel a running task",
-            Tool::AgentList => "List all connected A2A agents and their URLs",
-            Tool::GetCard => "Get the A2A agent card for a specific peer (or the local agent)",
+            Tool::Cancel => {
+                "Cancel a running task on a remote agent. Use when a task is no longer needed or runs too long. Both taskId (from tasks_send) and target (agent name from agent_list) are required.\n\nReturns {taskId, state}. A successful cancel yields TASK_STATE_CANCELED. Canceling an already-terminal task fails."
+            }
+            Tool::AgentList => {
+                "List all connected A2A agents on the network mesh. Call this first to discover which agents you can delegate tasks to. Excludes yourself.\n\nReturns {agents: [{name, url, description, skills}]}. Use name as the target parameter for tasks_send, tasks_get, and tasks_cancel."
+            }
+            Tool::GetCard => {
+                "Fetch the full A2A agent card for one agent. The card holds capabilities (streaming, pushNotifications, stateful), skills with input and output modes, and security requirements. Use it to check detailed capabilities before delegating complex tasks; agent_list already gives name, description, and skill names.\n\nReturns the card JSON, or {name, error} when the fetch fails."
+            }
         }
     }
 
@@ -58,31 +64,32 @@ impl Tool {
             Tool::Send => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "target": {"type": "string", "description": "Name of the target agent"},
-                    "text": {"type": "string", "description": "Task text to send"}
+                    "target": {"type": "string", "description": "Name of the target agent, from agent_list"},
+                    "text": {"type": "string", "description": "Task text to send to the target agent"},
+                    "contextId": {"type": "string", "description": "Optional: include to resume an existing session on the target agent. Omit to start a fresh session."}
                 },
                 "required": ["target", "text"]
             }),
             Tool::Get => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "taskId": {"type": "string", "description": "Task ID to query"},
-                    "target": {"type": "string", "description": "Name of the target agent"}
+                    "taskId": {"type": "string", "description": "Task ID returned by tasks_send"},
+                    "target": {"type": "string", "description": "Name of the agent that owns the task, from agent_list"}
                 },
                 "required": ["taskId", "target"]
             }),
             Tool::List => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "target": {"type": "string", "description": "Optional: filter tasks from a specific agent"},
-                    "status": {"type": "string", "description": "Optional: filter by task state (submitted, working, completed, failed, canceled, rejected)"}
+                    "target": {"type": "string", "description": "Optional: name of a remote agent, from agent_list. Omit to list tasks in the local store."},
+                    "status": {"type": "string", "description": "Optional: filter by task state. Valid values: TASK_STATE_UNSPECIFIED, TASK_STATE_SUBMITTED, TASK_STATE_WORKING, TASK_STATE_INPUT_REQUIRED, TASK_STATE_COMPLETED, TASK_STATE_FAILED, TASK_STATE_CANCELED, TASK_STATE_REJECTED, TASK_STATE_AUTH_REQUIRED"}
                 }
             }),
             Tool::Cancel => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "taskId": {"type": "string", "description": "Task ID to cancel"},
-                    "target": {"type": "string", "description": "Name of the target agent"}
+                    "taskId": {"type": "string", "description": "Task ID returned by tasks_send"},
+                    "target": {"type": "string", "description": "Name of the agent that owns the task, from agent_list"}
                 },
                 "required": ["taskId", "target"]
             }),
@@ -93,7 +100,7 @@ impl Tool {
             Tool::GetCard => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Name of the agent to get the card for"}
+                    "name": {"type": "string", "description": "Name of the agent, from agent_list"}
                 },
                 "required": ["name"]
             }),

@@ -58,7 +58,6 @@
 # glob = "allow"
 # grep = "allow"
 # edit = "ask"   # editing files is destructive
-# patch = "ask"   # patching files is destructive
 # http = "ask"   # network access
 # skill = "ask"
 #

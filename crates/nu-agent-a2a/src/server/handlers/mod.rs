@@ -1,5 +1,6 @@
 mod agent;
 mod files;
+mod output_modes;
 mod push;
 mod send;
 mod send_stream;

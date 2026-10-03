@@ -32,6 +32,11 @@ pub(crate) struct OrchestrationContext<'a> {
     /// Task ID of an external cancel that arrived before the matching prompt was
     /// processed. Checked when an `ExternalPrompt` sets `active_external_task_id`.
     pub pending_external_cancel: &'a mut Option<String>,
+    /// Task ID of an A2A task whose prompt is queued in the TUI prompt queue.
+    /// Set by the `select!` arms when an A2A task or completion arrives; consumed
+    /// by the slash stage when the matching `PromptSubmitted` fires, so the turn
+    /// is attributed to the A2A task instead of a user submission.
+    pub pending_a2a_task_id: &'a mut Option<String>,
     /// Shared signal bus. The session stage publishes turn-completion events.
     pub bus: &'a Bus,
 }

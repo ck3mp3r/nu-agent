@@ -94,7 +94,9 @@ pub enum UiStateEvent {
         names: Vec<String>,
     },
     SetSessionPickerOptions(Vec<SessionInfo>),
-    DisplayIncomingMessage(String),
+    EnqueueExternalPrompt {
+        text: String,
+    },
     ExecuteSharedUiAction(SharedUiAction),
     PushStartupLogo,
 }
@@ -111,6 +113,19 @@ pub enum WorkerCommand {
     },
     RunCompaction {
         source: String,
+    },
+    /// Attach the session derived from an A2A `contextId`.
+    ///
+    /// The worker derives the session-store key as `{prefix}-{context_id}`
+    /// (where `prefix` is the path-hash prefix of the working directory) and
+    /// loads that session, creating it when it does not exist yet.
+    ///
+    /// `prompt` is the incoming A2A message text. The worker displays it on the
+    /// UI bus after the attached session's transcript is hydrated, so the
+    /// message never renders before the previous transcript is replaced.
+    AttachA2aContext {
+        context_id: String,
+        prompt: String,
     },
     ClearSession,
     NewSession,

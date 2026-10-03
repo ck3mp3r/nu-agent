@@ -71,6 +71,67 @@ impl CommandRouter {
                 Self::dispatch_ui_request(request, runtime, &on_agent_switch, response_tx).await;
                 true
             }
+            WorkerCommand::AttachA2aContext { context_id, prompt } => {
+                let prefix = crate::session::prefix::dir_prefix(runtime.cwd());
+                let key = nu_agent_a2a::derive_session_key(&prefix, &context_id);
+                log::info!("Router: AttachA2aContext context_id={context_id} key={key}");
+                // Same-session attach: the transcript already shows this
+                // session. Skip the clear/hydrate cycle so the incoming prompt
+                // does not wipe the visible history.
+                if runtime.current_session_id() == Some(key.as_str()) {
+                    let _ = bus
+                        .ui_state()
+                        .send(crate::orchestrator::UiStateEvent::EnqueueExternalPrompt {
+                            text: prompt,
+                        })
+                        .await;
+                    return true;
+                }
+                match runtime.attach_session(&key).await {
+                    Ok(snapshots) => {
+                        let _ = bus
+                            .session()
+                            .send(crate::bus::SessionEvent::Switched {
+                                from_session_id: None,
+                                to_session_id: key,
+                            })
+                            .await;
+                        // Clear first, then either show the startup logo (fresh
+                        // session — mirrors the `/new` visual) or hydrate the
+                        // stored transcript (resume). hydrate_from_messages does
+                        // not clear, so the clear must precede it.
+                        let _ = bus
+                            .ui_state()
+                            .send(crate::orchestrator::UiStateEvent::ClearTranscript)
+                            .await;
+                        if snapshots.is_empty() {
+                            let _ = bus
+                                .ui_state()
+                                .send(crate::orchestrator::UiStateEvent::PushStartupLogo)
+                                .await;
+                        } else {
+                            let _ = bus
+                                .ui_state()
+                                .send(crate::orchestrator::UiStateEvent::HydrateTranscript {
+                                    messages: snapshots,
+                                    last_total_tokens: None,
+                                })
+                                .await;
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to attach A2A context session '{key}': {e}");
+                    }
+                }
+                // Enqueue the incoming message only after the transcript has
+                // been replaced, so it never renders above the previous
+                // session's history.
+                let _ = bus
+                    .ui_state()
+                    .send(crate::orchestrator::UiStateEvent::EnqueueExternalPrompt { text: prompt })
+                    .await;
+                true
+            }
             WorkerCommand::ClearSession => {
                 log::info!("Router: ClearSession");
                 runtime.clear_session();

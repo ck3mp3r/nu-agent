@@ -17,7 +17,6 @@ fn builtin_tool_registration_contains_exact_unprefixed_names() {
         vec![
             "read",
             "edit",
-            "patch",
             "skill",
             "http",
             "grep",

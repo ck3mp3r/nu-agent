@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use axum::{
-    Json,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
@@ -11,35 +10,42 @@ use serde_json::{Value, json};
 use crate::{A2aError, Message, TaskState};
 
 use super::super::AppState;
-use super::super::response::{a2a_error_with_meta, a2a_json_response, a2a_ok};
+use super::super::response::{a2a_error, a2a_error_with_meta, a2a_json_response, a2a_ok};
 
+/// List tasks (spec §11.3, §11.5).
+///
+/// `GET /tasks` with camelCase query parameters: `status`, `pageSize`,
+/// `pageToken`, `contextId`.
 pub async fn handle_tasks_list(
     State(state): State<AppState>,
-    Json(body): Json<Value>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let status = body
-        .get("status")
-        .and_then(|v| v.as_str())
-        .and_then(|s| match s {
-            "TASK_STATE_SUBMITTED" | "submitted" => Some(TaskState::Submitted),
-            "TASK_STATE_WORKING" | "working" => Some(TaskState::Working),
-            "TASK_STATE_INPUT_REQUIRED" | "inputRequired" => Some(TaskState::InputRequired),
-            "TASK_STATE_COMPLETED" | "completed" => Some(TaskState::Completed),
-            "TASK_STATE_FAILED" | "failed" => Some(TaskState::Failed),
-            "TASK_STATE_CANCELED" | "canceled" => Some(TaskState::Canceled),
-            "TASK_STATE_REJECTED" | "rejected" => Some(TaskState::Rejected),
-            _ => None,
-        });
-    let page_size = body
+    let status = match params.get("status") {
+        None => None,
+        Some(s) => match TaskState::try_from(s.as_str()) {
+            Ok(state) => Some(state),
+            Err(e) => {
+                let err = a2a_error(
+                    400,
+                    "INVALID_ARGUMENT",
+                    "INVALID_ARGUMENT",
+                    &format!("Invalid status: {e}"),
+                );
+                return (StatusCode::BAD_REQUEST, a2a_json_response(err));
+            }
+        },
+    };
+    let page_size = params
         .get("pageSize")
-        .and_then(|v| v.as_u64())
+        .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(50)
-        .min(100) as usize;
-    let page_token = body.get("nextPageToken").and_then(|v| v.as_str());
+        .min(100);
+    let page_token = params.get("pageToken").map(|s| s.as_str());
+    let context_id = params.get("contextId").map(|s| s.as_str());
 
     let (tasks, next_token) = state
         .task_store
-        .list_tasks_filtered(status, page_size, page_token);
+        .list_tasks_filtered(status, context_id, page_size, page_token);
     let total_size = state.task_store.list_tasks(None).len();
 
     let tasks_json: Vec<Value> = tasks
@@ -54,7 +60,7 @@ pub async fn handle_tasks_list(
         "nextPageToken": next_token.unwrap_or_default(),
     });
 
-    a2a_json_response(result)
+    (StatusCode::OK, a2a_json_response(result))
 }
 
 pub async fn handle_tasks_get(
@@ -89,8 +95,9 @@ pub async fn handle_tasks_get(
             let err = a2a_error_with_meta(
                 404,
                 "NOT_FOUND",
+                "TASK_NOT_FOUND",
                 "The specified task ID does not exist or is not accessible",
-                json!({"taskId": id, "timestamp": chrono::Utc::now().to_rfc3339()}),
+                json!({"taskId": id, "timestamp": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)}),
             );
             (StatusCode::NOT_FOUND, a2a_json_response(err))
         }
@@ -113,6 +120,7 @@ pub async fn handle_tasks_cancel(
             let err = a2a_error_with_meta(
                 400,
                 "INVALID_REQUEST",
+                "TASK_NOT_CANCELABLE",
                 &format!("Invalid state transition: {from:?} → {to:?}"),
                 json!({"taskId": id, "from": format!("{from:?}"), "to": format!("{to:?}")}),
             );
@@ -122,8 +130,9 @@ pub async fn handle_tasks_cancel(
             let err = a2a_error_with_meta(
                 404,
                 "NOT_FOUND",
+                "TASK_NOT_FOUND",
                 "The specified task ID does not exist or is not accessible",
-                json!({"taskId": id, "timestamp": chrono::Utc::now().to_rfc3339()}),
+                json!({"taskId": id, "timestamp": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)}),
             );
             (StatusCode::NOT_FOUND, a2a_json_response(err))
         }

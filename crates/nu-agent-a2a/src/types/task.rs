@@ -7,6 +7,7 @@ use serde_json::Value;
 use super::artifact::Artifact;
 use super::message::Message;
 use super::part::Part;
+use super::serde_helpers::{deserialize_opt_rfc3339_flexible, serialize_opt_rfc3339_z};
 use super::task_state::TaskState;
 use super::task_status::TaskStatus;
 
@@ -26,8 +27,6 @@ pub struct IncomingTask {
     pub message: Message,
     /// The `senderUrl` sent by the remote agent (may be empty).
     pub sender_url: String,
-    /// Optional session identifier.
-    pub session_id: Option<String>,
     /// Optional multi-turn conversation context identifier.
     pub context_id: Option<String>,
     /// Optional identifier of the parent task that spawned this one.
@@ -60,6 +59,10 @@ impl IncomingTask {
             prompt.push_str("\nFrom: ");
             prompt.push_str(&self.sender_url);
         }
+        if let Some(context_id) = &self.context_id {
+            prompt.push_str("\nContext: ");
+            prompt.push_str(context_id);
+        }
         prompt
     }
 }
@@ -82,15 +85,24 @@ pub struct A2aCompletionEvent {
     /// artifacts or status message).
     pub result: String,
     pub status: TaskState,
+    /// The multi-turn conversation context identifier of the completed task,
+    /// if the remote agent assigned one. The orchestrator reuses this ID to
+    /// send follow-up tasks into the same session.
+    pub context_id: Option<String>,
 }
 
 impl A2aCompletionEvent {
     /// Formats the completion event as an LLM prompt with a metadata footer.
     pub fn to_prompt(&self) -> String {
-        format!(
+        let mut prompt = format!(
             "[A2A] Task completed by {}: {}\n\n---\nTask ID: {}\nStatus: {}",
             self.agent_name, self.result, self.task_id, self.status
-        )
+        );
+        if let Some(context_id) = &self.context_id {
+            prompt.push_str("\nContext: ");
+            prompt.push_str(context_id);
+        }
+        prompt
     }
 }
 
@@ -117,14 +129,16 @@ pub struct Task {
     pub context_id: Option<String>,
     #[serde(rename = "parentTaskId", skip_serializing_if = "Option::is_none")]
     pub parent_task_id: Option<String>,
-    #[serde(rename = "sessionId", skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
     pub status: TaskStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history: Option<Vec<Message>>,
     pub artifacts: Vec<Artifact>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        serialize_with = "serialize_opt_rfc3339_z",
+        deserialize_with = "deserialize_opt_rfc3339_flexible"
+    )]
     pub created_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<HashMap<String, Value>>,

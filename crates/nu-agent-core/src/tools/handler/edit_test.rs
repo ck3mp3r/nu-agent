@@ -95,11 +95,21 @@ async fn edit_returns_conflict_on_stale_version() -> Result<()> {
             "replacement": "there"
         }
     });
-    let result = EditTool::execute(&args, dir.path(), &Bus::default())
+    let error = EditTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .map_err(|e| format!("{e:?}"))?;
-    assert_eq!(result["conflict"], true);
-    assert_eq!(result["applied"], false);
+        .err()
+        .ok_or("stale expected_version must fail the tool call")?;
+    assert!(
+        error.message.contains("conflict"),
+        "conflict message must name the conflict, got: {}",
+        error.message
+    );
+    let details = error
+        .details
+        .ok_or("conflict error must carry the contract response")?;
+    assert_eq!(details["conflict"], true);
+    assert_eq!(details["applied"], false);
+    assert_eq!(details["diff"], "");
     let content = std::fs::read_to_string(&path).unwrap();
     assert_eq!(content, "hello world\n");
     Ok(())
@@ -120,12 +130,91 @@ async fn edit_noop_when_no_change() -> Result<()> {
             "replacement": "world"
         }
     });
-    let result = EditTool::execute(&args, dir.path(), &Bus::default())
+    let error = EditTool::execute(&args, dir.path(), &Bus::default())
         .await
-        .map_err(|e| format!("{e:?}"))?;
-    assert_eq!(result["noop"], true);
-    assert_eq!(result["applied"], false);
-    assert_eq!(result["changed"], false);
+        .err()
+        .ok_or("a replacement identical to the search must fail the tool call")?;
+    assert!(
+        error.message.contains("no change"),
+        "noop message must name the no-op, got: {}",
+        error.message
+    );
+    let details = error
+        .details
+        .ok_or("noop error must carry the contract response")?;
+    assert_eq!(details["noop"], true);
+    assert_eq!(details["applied"], false);
+    assert_eq!(details["changed"], false);
+    Ok(())
+}
+
+#[tokio::test]
+async fn edit_search_not_found_returns_no_change_error() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("test.txt");
+    std::fs::write(&path, "hello world\n")?;
+    let version = crate::tools::fs::core::version_token("hello world\n");
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "expected_version": version,
+        "operation": {
+            "type": "search_replace",
+            "search": "absent-token",
+            "replacement": "there"
+        }
+    });
+
+    // -- Exec
+    let error = EditTool::execute(&args, dir.path(), &Bus::default())
+        .await
+        .err()
+        .ok_or("a search string that is not found must fail the tool call")?;
+
+    // -- Check
+    assert!(
+        error.message.contains("no change"),
+        "not-found message must name the no-op, got: {}",
+        error.message
+    );
+    let details = error
+        .details
+        .ok_or("not-found error must carry the contract response")?;
+    assert_eq!(details["noop"], true);
+    assert_eq!(details["replacements"], 0);
+    assert_eq!(details["diff"], "");
+    Ok(())
+}
+
+#[tokio::test]
+async fn edit_create_existing_file_returns_already_exists_error() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("existing.txt");
+    std::fs::write(&path, "already here\n")?;
+    let args = serde_json::json!({
+        "path": path.to_str().unwrap(),
+        "operation": {"type": "create", "content": "new content\n"}
+    });
+
+    // -- Exec
+    let error = EditTool::execute(&args, dir.path(), &Bus::default())
+        .await
+        .err()
+        .ok_or("creating an existing file must fail the tool call")?;
+
+    // -- Check
+    assert!(
+        error.message.contains("already exists"),
+        "create-conflict message must name the existing file, got: {}",
+        error.message
+    );
+    let details = error
+        .details
+        .ok_or("create-conflict error must carry the contract response")?;
+    assert_eq!(details["conflict"], true);
+    assert_eq!(details["applied"], false);
+    assert_eq!(std::fs::read_to_string(&path)?, "already here\n");
     Ok(())
 }
 
@@ -265,6 +354,98 @@ fn edit_preview_invalid_args_returns_none() -> Result<()> {
     assert!(
         EditTool::preview(&args, dir.path()).is_none(),
         "invalid edit arguments must produce no preview"
+    );
+    Ok(())
+}
+
+#[test]
+fn edit_preview_noop_returns_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("existing.txt");
+    std::fs::write(&path, "hello\nworld\n")?;
+    let args = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "mode": "apply",
+        "operation": {
+            "type": "search_replace",
+            "search": "world",
+            "replacement": "world"
+        }
+    });
+
+    // -- Exec & Check
+    assert!(
+        EditTool::preview(&args, dir.path()).is_none(),
+        "a no-op plan has no diff to approve; preview must return None"
+    );
+    Ok(())
+}
+
+#[test]
+fn edit_preview_search_not_found_returns_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("existing.txt");
+    std::fs::write(&path, "hello\nworld\n")?;
+    let args = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "mode": "apply",
+        "operation": {
+            "type": "search_replace",
+            "search": "absent-token",
+            "replacement": "there"
+        }
+    });
+
+    // -- Exec & Check
+    assert!(
+        EditTool::preview(&args, dir.path()).is_none(),
+        "an unmatched search has no diff to approve; preview must return None"
+    );
+    Ok(())
+}
+
+#[test]
+fn edit_preview_stale_version_returns_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("existing.txt");
+    std::fs::write(&path, "hello\nworld\n")?;
+    let args = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "mode": "apply",
+        "expected_version": "deadbeef",
+        "operation": {
+            "type": "search_replace",
+            "search": "world",
+            "replacement": "there"
+        }
+    });
+
+    // -- Exec & Check
+    assert!(
+        EditTool::preview(&args, dir.path()).is_none(),
+        "a version conflict has no diff to approve; preview must return None"
+    );
+    Ok(())
+}
+
+#[test]
+fn edit_preview_create_existing_file_returns_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("existing.txt");
+    std::fs::write(&path, "already here\n")?;
+    let args = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "operation": {"type": "create", "content": "new content\n"}
+    });
+
+    // -- Exec & Check
+    assert!(
+        EditTool::preview(&args, dir.path()).is_none(),
+        "creating an existing file has no diff to approve; preview must return None"
     );
     Ok(())
 }

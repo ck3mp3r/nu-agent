@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use axum::{
     Router,
-    routing::{delete, get, post},
+    routing::{get, post},
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -19,6 +19,22 @@ use super::middleware::a2a_version_middleware;
 // Shared state
 // ---------------------------------------------------------------------------
 
+/// Default server-side deadline for blocking `message:send` requests
+/// (spec §3.2.2).
+pub const DEFAULT_BLOCKING_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Blocking deadline used by test servers.
+///
+/// Short so a test that sends without `configuration.return_immediately` does
+/// not stall the suite for the production 60 s deadline (spec §3.2.2).
+pub const TEST_BLOCKING_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// Upper bound on the blocking deadline a test server may use.
+///
+/// A test that needs to block for longer than this is testing the wrong thing:
+/// it should send `return_immediately: true` and assert the non-terminal state.
+pub const MAX_TEST_BLOCKING_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// Shared application state injected into every axum handler.
 #[derive(Clone)]
 pub struct AppState {
@@ -29,6 +45,8 @@ pub struct AppState {
     pub peer_cache: Arc<PeerCache>,
     /// In-memory file storage for file exchange (A2A spec §6.7).
     pub files: Arc<RwLock<HashMap<String, Vec<u8>>>>,
+    /// Deadline for blocking `message:send` requests (spec §3.2.2).
+    pub blocking_timeout: Duration,
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +93,27 @@ impl A2aServer {
         peer_cache: Arc<PeerCache>,
         port: u16,
     ) -> Result<Self, A2aError> {
+        Self::start_with_blocking_timeout(agent_card, peer_cache, port, DEFAULT_BLOCKING_TIMEOUT)
+            .await
+    }
+
+    /// Start the A2A server with an explicit blocking-request deadline.
+    ///
+    /// `blocking_timeout` bounds how long a blocking `message:send` request
+    /// waits for a terminal task state (spec §3.2.2) before returning the
+    /// task in its current state.
+    pub async fn start_with_blocking_timeout(
+        agent_card: AgentCard,
+        peer_cache: Arc<PeerCache>,
+        port: u16,
+        blocking_timeout: Duration,
+    ) -> Result<Self, A2aError> {
+        assert!(
+            !cfg!(test) || blocking_timeout <= MAX_TEST_BLOCKING_TIMEOUT,
+            "test servers must not use a blocking timeout above \
+             {MAX_TEST_BLOCKING_TIMEOUT:?} (got {blocking_timeout:?}); \
+             send `return_immediately: true` instead of blocking"
+        );
         // 1. Bind to all interfaces so the server is reachable on any IP
         //    that mDNS might advertise (i.e. the host's external IP).
         let bind_addr = if port == 0 {
@@ -111,6 +150,7 @@ impl A2aServer {
             task_cancel_tx: cancel_tx,
             peer_cache,
             files,
+            blocking_timeout,
         };
 
         // 5. Spawn restart loop
@@ -146,34 +186,34 @@ impl A2aServer {
                 // complete path segment.  Colon-suffix actions like `{id}:cancel`
                 // are not supported in a single segment, so we use a separate
                 // segment for the colon action when a parameter is present.
+                // This deviation is documented in the AgentCard
+                // `supportedInterfaces[].protocolBinding` field.
                 //
-                // Parameter-less colon paths (message:send, tasks:list, files:upload)
+                // Parameter-less colon paths (message:send, files:upload)
                 // work fine as literal matches.
                 let app = Router::new()
                     .route("/health", get(|| async { "ok" }))
                     // Message endpoints (§11.3.1)
                     .route("/message:send", post(handlers::handle_tasks_send))
                     .route("/message:stream", post(handlers::handle_tasks_send_stream))
-                    // Task endpoints
-                    .route("/tasks:list", post(handlers::handle_tasks_list))
+                    // Task endpoints (§11.3.2)
+                    .route("/tasks", get(handlers::handle_tasks_list))
                     .route(
                         "/tasks/{id}/subscribe",
-                        get(handlers::handle_tasks_subscribe),
+                        post(handlers::handle_tasks_subscribe),
                     )
                     .route("/tasks/{id}/cancel", post(handlers::handle_tasks_cancel))
                     .route("/tasks/{id}", get(handlers::handle_tasks_get))
                     // Push notification configs (§11.3.2)
                     .route(
-                        "/tasks/{id}/push-notifications/create",
-                        post(handlers::handle_create_push_config),
+                        "/tasks/{id}/pushNotificationConfigs",
+                        post(handlers::handle_create_push_config)
+                            .get(handlers::handle_list_push_configs),
                     )
                     .route(
-                        "/tasks/{id}/push-notifications/list",
-                        get(handlers::handle_list_push_configs),
-                    )
-                    .route(
-                        "/tasks/{id}/push-notifications/delete/{config_id}",
-                        delete(handlers::handle_delete_push_config),
+                        "/tasks/{id}/pushNotificationConfigs/{config_id}",
+                        get(handlers::handle_get_push_config)
+                            .delete(handlers::handle_delete_push_config),
                     )
                     // File exchange
                     .route("/files:upload", post(handlers::handle_file_upload))
@@ -188,7 +228,10 @@ impl A2aServer {
                         get(handlers::handle_extended_agent_card),
                     )
                     .with_state(state.clone())
-                    .layer(axum::middleware::from_fn(a2a_version_middleware))
+                    .layer(axum::middleware::from_fn_with_state(
+                        state.clone(),
+                        a2a_version_middleware,
+                    ))
                     .layer(CorsLayer::permissive());
 
                 if let Err(e) = axum::serve(listener, app)

@@ -63,6 +63,10 @@ pub(crate) struct FakeInteractiveUi {
     pub(crate) agent_switch_requests: Arc<Mutex<std::collections::VecDeque<String>>>,
     pub(crate) session_switch_requests: Arc<Mutex<std::collections::VecDeque<String>>>,
     pub(crate) bus: Arc<Mutex<Option<crate::bus::Bus>>>,
+    pub(crate) pending_external_prompts: Arc<Mutex<std::collections::VecDeque<String>>>,
+    pub(crate) turn_active: Arc<AtomicBool>,
+    pub(crate) expected_external_prompts: usize,
+    pub(crate) external_prompts_seen: Arc<AtomicUsize>,
     pub(crate) _bus_task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -90,6 +94,10 @@ impl FakeInteractiveUi {
             agent_switch_requests: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             session_switch_requests: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             bus: Arc::new(Mutex::new(None)),
+            pending_external_prompts: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            turn_active: Arc::new(AtomicBool::new(false)),
+            expected_external_prompts: 0,
+            external_prompts_seen: Arc::new(AtomicUsize::new(0)),
             _bus_task: None,
         }
     }
@@ -101,6 +109,14 @@ impl FakeInteractiveUi {
 
     pub(crate) fn with_min_bus_events(mut self, min_bus_events: usize) -> Self {
         self.min_bus_events = min_bus_events;
+        self
+    }
+
+    /// Require `count` A2A prompts to arrive on the UI bus before the mock's
+    /// quit heuristic may fire. Without this the heuristic can quit on the
+    /// startup metadata events, before the external prompt round-trips.
+    pub(crate) fn with_expected_external_prompts(mut self, count: usize) -> Self {
+        self.expected_external_prompts = count;
         self
     }
 
@@ -131,6 +147,10 @@ impl FakeInteractiveUi {
         let min_bus_events = self.min_bus_events;
         let bus_event_count = Arc::new(AtomicUsize::new(0));
         let compaction_rx_count = Arc::new(AtomicUsize::new(0));
+        let pending_external_prompts = Arc::clone(&self.pending_external_prompts);
+        let turn_active = Arc::clone(&self.turn_active);
+        let expected_external_prompts = self.expected_external_prompts;
+        let external_prompts_seen = Arc::clone(&self.external_prompts_seen);
 
         let mut ui_event_rx = bus.ui_event().subscribe();
         let mut ui_state_rx = bus.ui_state().subscribe();
@@ -142,17 +162,26 @@ impl FakeInteractiveUi {
                     Ok(event) = ui_event_rx.recv() => {
                         let events = bus_event_count.fetch_add(1, Ordering::SeqCst) + 1;
                         match event {
-                            UiEvent::Completed { .. } => {}
+                            UiEvent::Completed { .. } => {
+                                // The turn ended. Clear the flag here rather than
+                                // relying on the spawner, which consumes the same
+                                // broadcast event and may run after this arm.
+                                turn_active.store(false, Ordering::SeqCst);
+                            }
                             UiEvent::Warning { message } | UiEvent::TurnError { message } => {
                                 warnings.lock().expect("warnings lock").push(message);
                             }
                             _ => {}
                         }
                         let submitted_empty = submitted.lock().expect("submitted lock").is_empty();
+                        let external_empty = pending_external_prompts
+                            .lock()
+                            .expect("pending external prompts lock")
+                            .is_empty();
                         let mcp_toggle_empty = mcp_toggle_requests.lock().expect("mcp toggle lock").is_empty();
                         let mcp_details_len = mcp_details.lock().expect("mcp details lock").len();
                         let _shared_actions_len = shared_actions.lock().expect("shared actions lock").len();
-                        if submitted_empty && mcp_toggle_empty && mcp_details_len >= expected_mcp_updates && events > min_bus_events {
+                        if submitted_empty && external_empty && !turn_active.load(Ordering::SeqCst) && external_prompts_seen.load(Ordering::SeqCst) >= expected_external_prompts && mcp_toggle_empty && mcp_details_len >= expected_mcp_updates && events > min_bus_events {
                             quit.store(true, Ordering::SeqCst);
                         }
                     }
@@ -188,12 +217,30 @@ impl FakeInteractiveUi {
                                     .extend(messages);
                                 let _ = last_total_tokens;
                             }
+                            UiStateEvent::EnqueueExternalPrompt { text } => {
+                                // Mirror the TUI: an A2A prompt enters the prompt
+                                // queue and is submitted back to the orchestrator.
+                                // Mark the turn active here, before the spawner
+                                // picks the prompt up, so the quit heuristic below
+                                // cannot fire in the window between enqueue and
+                                // dispatch.
+                                turn_active.store(true, Ordering::SeqCst);
+                                external_prompts_seen.fetch_add(1, Ordering::SeqCst);
+                                pending_external_prompts
+                                    .lock()
+                                    .expect("pending external prompts lock")
+                                    .push_back(text);
+                            }
                             _ => {}
                         }
                         let submitted_empty = submitted.lock().expect("submitted lock").is_empty();
+                        let external_empty = pending_external_prompts
+                            .lock()
+                            .expect("pending external prompts lock")
+                            .is_empty();
                         let mcp_toggle_empty = mcp_toggle_requests.lock().expect("mcp toggle lock").is_empty();
                         let mcp_details_len = mcp_details.lock().expect("mcp details lock").len();
-                        if submitted_empty && mcp_toggle_empty && mcp_details_len >= expected_mcp_updates && events > min_bus_events {
+                        if submitted_empty && external_empty && !turn_active.load(Ordering::SeqCst) && external_prompts_seen.load(Ordering::SeqCst) >= expected_external_prompts && mcp_toggle_empty && mcp_details_len >= expected_mcp_updates && events > min_bus_events {
                             quit.store(true, Ordering::SeqCst);
                         }
                     }
@@ -203,7 +250,7 @@ impl FakeInteractiveUi {
                         let submitted_empty = submitted.lock().expect("submitted lock").is_empty();
                         let mcp_toggle_empty = mcp_toggle_requests.lock().expect("mcp toggle lock").is_empty();
                         let mcp_details_len = mcp_details.lock().expect("mcp details lock").len();
-                        if submitted_empty && mcp_toggle_empty && mcp_details_len >= expected_mcp_updates && compaction_count >= expected_compaction_events && events > min_bus_events {
+                        if submitted_empty && !turn_active.load(Ordering::SeqCst) && external_prompts_seen.load(Ordering::SeqCst) >= expected_external_prompts && mcp_toggle_empty && mcp_details_len >= expected_mcp_updates && compaction_count >= expected_compaction_events && events > min_bus_events {
                             quit.store(true, Ordering::SeqCst);
                         }
                     }
@@ -229,6 +276,8 @@ impl FakeInteractiveUi {
         let agent_switch_requests = Arc::clone(&self.agent_switch_requests);
         let session_switch_requests = Arc::clone(&self.session_switch_requests);
         let mcp_toggle_requests = Arc::clone(&self.mcp_toggle_requests);
+        let pending_external_prompts = Arc::clone(&self.pending_external_prompts);
+        let turn_active = Arc::clone(&self.turn_active);
         let quit = Arc::clone(&self.quit);
         let bus = self
             .bus
@@ -247,10 +296,20 @@ impl FakeInteractiveUi {
                 let mut turn_pending = false;
                 loop {
                     if !turn_pending {
-                        let text = submitted.lock().expect("submitted lock").pop_front();
+                        // An A2A prompt enqueued on the UI bus is submitted back
+                        // to the orchestrator, mirroring the TUI prompt queue.
+                        let external = pending_external_prompts
+                            .lock()
+                            .expect("pending external prompts lock")
+                            .pop_front();
+                        let text = external
+                            .or_else(|| submitted.lock().expect("submitted lock").pop_front());
                         if let Some(text) = text {
                             let is_slash =
                                 !matches!(parse_slash_command(&text), SlashParseResult::NotSlash);
+                            if !is_slash {
+                                turn_active.store(true, Ordering::SeqCst);
+                            }
                             let _ = event_tx
                                 .send(OrchestratorEvent::PromptSubmitted { text })
                                 .await;
@@ -312,6 +371,7 @@ impl FakeInteractiveUi {
                         while let Ok(event) = ui_event_rx.recv().await {
                             if matches!(event, UiEvent::Completed { .. }) {
                                 turn_pending = false;
+                                turn_active.store(false, Ordering::SeqCst);
                                 break;
                             }
                         }

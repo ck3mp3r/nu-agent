@@ -232,7 +232,7 @@ fn nu_preview_missing_command_returns_none() -> Result<()> {
 // === call_line_render ===
 
 #[test]
-fn nu_call_line_render_returns_command_summary() -> Result<()> {
+fn nu_call_line_render_shows_default_timeout_when_omitted() -> Result<()> {
     // -- Setup & Fixtures
     let args = r#"{"command":"ls"}"#;
 
@@ -240,11 +240,29 @@ fn nu_call_line_render_returns_command_summary() -> Result<()> {
     let render = NuTool::call_line_render(args);
 
     // -- Check: the command renders in the preview block, so the call line
-    // carries no summary and row 0 shows the tool name alone.
+    // carries only the applied timeout.
     assert_eq!(
         render,
         CallLine {
-            summary: String::new()
+            summary: "⏱ 120s".to_string()
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn nu_call_line_render_shows_provided_timeout() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = r#"{"command":"ls","timeout_seconds":60}"#;
+
+    // -- Exec
+    let render = NuTool::call_line_render(args);
+
+    // -- Check
+    assert_eq!(
+        render,
+        CallLine {
+            summary: "⏱ 60s".to_string()
         }
     );
     Ok(())

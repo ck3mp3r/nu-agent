@@ -57,6 +57,24 @@ pub(crate) fn auto_complete_a2a_task(store: &InMemoryTaskStore, task_id: &str, r
     }
 }
 
+/// Attach the session derived from an A2A `contextId`.
+///
+/// Derives the session-store key as `{prefix}-{context_id}` (where `prefix` is
+/// the path-hash prefix of the runtime's working directory) and attaches that
+/// session, creating it when it does not exist yet. Logs a warning when the
+/// attach fails; the turn still runs against the current session.
+pub(crate) async fn attach_a2a_context_session(
+    runtime_impl: &mut AgentConversationRuntime,
+    context_id: &str,
+) {
+    let prefix = nu_agent_core::session::prefix::dir_prefix(runtime_impl.cwd());
+    let key = nu_agent_a2a::derive_session_key(&prefix, context_id);
+    log::info!("A2A context {context_id} -> session {key}");
+    if let Err(e) = runtime_impl.attach_session(&key).await {
+        log::warn!("Failed to attach A2A context session '{key}': {e}");
+    }
+}
+
 /// Whether the plugin should call `enter_foreground()` to receive SIGINT.
 /// True for TUI (always needs it) and for stderr mode when stderr is a TTY
 /// (user has a terminal and may press Ctrl+C).
@@ -380,9 +398,14 @@ pub(crate) async fn run_stderr_mode(
 
     // Then check for pending A2A incoming tasks.
     if let Some(rx) = &mut a2a.task_rx
-        && let Ok(incoming) = rx.try_recv()
+        && let Ok(mut incoming) = rx.try_recv()
     {
         let task_id = incoming.task_id.clone();
+        // An absent `contextId` means "start a fresh session" (A2A spec §3.4.1).
+        // Mint a UUID so the client receives a context handle it can resume with.
+        let context_id = nu_agent_a2a::resolve_context_id(incoming.context_id.take());
+        incoming.context_id = Some(context_id.clone());
+        attach_a2a_context_session(runtime_impl, &context_id).await;
         let prompt = incoming.to_prompt();
         let result = run_stderr_turn(
             runtime_impl,

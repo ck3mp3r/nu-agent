@@ -9,11 +9,15 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use url::Url;
 
-use crate::{IncomingTask, Message, Peer, Role, TaskEvent, TaskState};
+use crate::{
+    IncomingTask, Message, Peer, Role, SendMessageConfiguration, TaskEvent, TaskState,
+    task_event_to_stream_response,
+};
 
 use super::super::AppState;
 use super::super::response::{SseError, a2a_error, a2a_error_with_meta, a2a_json_response};
 use super::SseResult;
+use super::output_modes::validate_accepted_output_modes;
 
 pub async fn handle_tasks_send_stream(
     State(state): State<AppState>,
@@ -23,7 +27,12 @@ pub async fn handle_tasks_send_stream(
     let message = match body.get("message") {
         Some(m) if m.is_object() => m,
         _ => {
-            let err = a2a_error(400, "BAD_REQUEST", "Invalid request: missing 'message'");
+            let err = a2a_error(
+                400,
+                "BAD_REQUEST",
+                "INVALID_ARGUMENT",
+                "Invalid request: missing 'message'",
+            );
             return Err((StatusCode::BAD_REQUEST, a2a_json_response(err)).into());
         }
     };
@@ -32,6 +41,7 @@ pub async fn handle_tasks_send_stream(
         let err = a2a_error(
             400,
             "BAD_REQUEST",
+            "INVALID_ARGUMENT",
             "Invalid request: message missing 'role'",
         );
         return Err((StatusCode::BAD_REQUEST, a2a_json_response(err)).into());
@@ -40,15 +50,11 @@ pub async fn handle_tasks_send_stream(
         let err = a2a_error(
             400,
             "BAD_REQUEST",
+            "INVALID_ARGUMENT",
             "Invalid request: message missing 'parts'",
         );
         return Err((StatusCode::BAD_REQUEST, a2a_json_response(err)).into());
     }
-
-    let session_id = body
-        .get("sessionId")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
 
     let context_id = body
         .get("contextId")
@@ -64,6 +70,50 @@ pub async fn handle_tasks_send_stream(
         .get("metadata")
         .filter(|v| v.is_object())
         .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    // Spec §3.2.2: streaming always returns immediately, so `returnImmediately`
+    // has no effect here. A present-but-malformed `configuration` is still a
+    // client error and must be rejected rather than silently ignored.
+    let configuration: SendMessageConfiguration = match body.get("configuration") {
+        None => SendMessageConfiguration::default(),
+        Some(cfg) => match serde_json::from_value(cfg.clone()) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                let err = a2a_error(
+                    400,
+                    "INVALID_ARGUMENT",
+                    "INVALID_ARGUMENT",
+                    &format!("Malformed 'configuration' field: {e}"),
+                );
+                return Err(SseError::new(
+                    (StatusCode::BAD_REQUEST, a2a_json_response(err)).into_response(),
+                ));
+            }
+        },
+    };
+
+    // Spec §3.2.2: reject requests whose acceptedOutputModes do not intersect
+    // the modes this agent advertises in its card.
+    let advertised_modes = state
+        .agent_card
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .default_output_modes
+        .clone();
+    if let Err(message) = validate_accepted_output_modes(
+        configuration.accepted_output_modes.as_deref(),
+        &advertised_modes,
+    ) {
+        let err = a2a_error(
+            400,
+            "INVALID_REQUEST",
+            "CONTENT_TYPE_NOT_SUPPORTED",
+            &message,
+        );
+        return Err(SseError::new(
+            (StatusCode::BAD_REQUEST, a2a_json_response(err)).into_response(),
+        ));
+    }
 
     // Peer cache population (same as handle_tasks_send)
     let sender_url = body
@@ -89,12 +139,9 @@ pub async fn handle_tasks_send_stream(
     }
 
     // Create task in Submitted state
-    let task = state.task_store.create_task(
-        session_id.clone(),
-        context_id.clone(),
-        parent_task_id.clone(),
-        metadata,
-    );
+    let task = state
+        .task_store
+        .create_task(context_id.clone(), parent_task_id.clone(), metadata);
 
     // Subscribe BEFORE transitioning state to catch StatusChanged(Working)
     let (mut rx, _) = state.task_store.subscribe(&task.id);
@@ -107,6 +154,7 @@ pub async fn handle_tasks_send_stream(
         .map_err(|e| {
             let err = a2a_error_with_meta(
                 500,
+                "INTERNAL_ERROR",
                 "INTERNAL_ERROR",
                 &format!("Invalid task state transition: {e}"),
                 serde_json::json!({"taskId": task_id}),
@@ -143,7 +191,6 @@ pub async fn handle_tasks_send_stream(
         task_id: task.id.clone(),
         message: parsed_message,
         sender_url,
-        session_id,
         context_id,
         parent_task_id,
     };
@@ -163,18 +210,20 @@ pub async fn handle_tasks_send_stream(
             .await;
 
         // Forward subscription events as StreamResponse
+        let context_id = task.context_id.clone();
         loop {
             match rx.recv().await {
                 Some(TaskEvent::StatusChanged {
                     task_id: tid,
                     status,
                 }) => {
-                    let data = json!({
-                        "statusUpdate": {
-                            "taskId": tid,
-                            "status": status,
-                        }
-                    });
+                    let data = task_event_to_stream_response(
+                        &TaskEvent::StatusChanged {
+                            task_id: tid,
+                            status: status.clone(),
+                        },
+                        &context_id,
+                    );
                     let sent = tx
                         .send(Ok(axum::response::sse::Event::default()
                             .data(serde_json::to_string(&data).unwrap_or_default())))
@@ -197,12 +246,13 @@ pub async fn handle_tasks_send_stream(
                     task_id: tid,
                     artifact,
                 }) => {
-                    let data = json!({
-                        "artifactUpdate": {
-                            "taskId": tid,
-                            "artifact": artifact,
-                        }
-                    });
+                    let data = task_event_to_stream_response(
+                        &TaskEvent::ArtifactAdded {
+                            task_id: tid,
+                            artifact,
+                        },
+                        &context_id,
+                    );
                     if tx
                         .send(Ok(axum::response::sse::Event::default()
                             .data(serde_json::to_string(&data).unwrap_or_default())))

@@ -1635,13 +1635,12 @@ fn hydrated_nu_tool_row_call_line_contains_command() {
         None,
     );
 
-    // -- Check: the nu tool's tailored call line carries no summary — the
-    // command renders in the preview block.
+    // -- Check: the nu tool's tailored call line carries the applied
+    // timeout — the command renders in the preview block.
     let block = &coordinator.state().transcript.blocks()[0];
     if let BlockSource::Tool { call, .. } = &block.source {
         assert_eq!(
-            call.summary,
-            String::new(),
+            call.summary, "⏱ 120s",
             "hydrated nu row must use the nu tool's tailored call line"
         );
     } else {

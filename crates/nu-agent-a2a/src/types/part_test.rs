@@ -2,30 +2,6 @@ use super::*;
 use serde_json::json;
 
 // ---------------------------------------------------------------------------
-// Role
-// ---------------------------------------------------------------------------
-
-#[test]
-fn role_roundtrip() {
-    use serde_test::{Token, assert_tokens};
-
-    assert_tokens(
-        &Role::User,
-        &[Token::UnitVariant {
-            name: "Role",
-            variant: "USER",
-        }],
-    );
-    assert_tokens(
-        &Role::Agent,
-        &[Token::UnitVariant {
-            name: "Role",
-            variant: "AGENT",
-        }],
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Part
 // ---------------------------------------------------------------------------
 

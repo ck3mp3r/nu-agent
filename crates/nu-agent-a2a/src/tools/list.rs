@@ -4,19 +4,10 @@ use super::{A2aToolContext, ToolResult};
 use crate::*;
 
 pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
-    let status = params
-        .get("status")
-        .and_then(|v| v.as_str())
-        .and_then(|s| match s {
-            "submitted" => Some(TaskState::Submitted),
-            "working" => Some(TaskState::Working),
-            "inputRequired" => Some(TaskState::InputRequired),
-            "completed" => Some(TaskState::Completed),
-            "failed" => Some(TaskState::Failed),
-            "canceled" => Some(TaskState::Canceled),
-            "rejected" => Some(TaskState::Rejected),
-            _ => None,
-        });
+    let status = match params.get("status").and_then(|v| v.as_str()) {
+        None => None,
+        Some(s) => Some(TaskState::try_from(s).map_err(|e| format!("Invalid status: {e}"))?),
+    };
 
     // If targeting a specific agent, delegate to the client
     if let Some(target) = params.get("target").and_then(|v| v.as_str()) {
@@ -35,7 +26,7 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
     // No target: list from local TaskStore via A2aToolContext
     match ctx.task_store.as_ref() {
         Some(store) => {
-            let (tasks, _) = store.list_tasks_filtered(status, 50, None);
+            let (tasks, _) = store.list_tasks_filtered(status, None, 50, None);
             Ok(serde_json::json!({ "tasks": tasks }))
         }
         None => Ok(serde_json::json!({ "tasks": [] })),

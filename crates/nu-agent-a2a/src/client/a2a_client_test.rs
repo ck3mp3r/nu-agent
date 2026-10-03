@@ -4,12 +4,22 @@ use std::time::Duration;
 use tokio::io::{AsyncWriteExt, BufWriter as TokioBufWriter};
 
 use crate::{
-    A2aError, AgentCapabilities, AgentCard, Message, Part, Peer, PeerCache, Role, TaskState,
+    A2aError, AgentCapabilities, AgentCard, Message, Part, Peer, PeerCache, Role,
+    SendMessageConfiguration, TaskState,
 };
 
 use super::{A2aClient, cancel_task, send_task};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// Non-blocking configuration: these tests assert on the in-progress task, so
+/// the server must not wait for a terminal state (spec §3.2.2).
+fn non_blocking() -> Option<SendMessageConfiguration> {
+    Some(SendMessageConfiguration {
+        return_immediately: Some(true),
+        accepted_output_modes: None,
+    })
+}
 
 // The workspace reqwest is built with `rustls-no-provider`, meaning the
 // application must install a crypto provider before constructing a Client.
@@ -78,16 +88,21 @@ async fn test_setup() -> (crate::A2aServer, A2aClient, String) {
         skills: vec![],
         ..Default::default()
     };
-    let server = crate::A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let server = crate::A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        crate::TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
     let client = A2aClient::new().unwrap();
     let url = server.local_url.clone();
     (server, client, url)
 }
 
 #[tokio::test]
-async fn test_subscribe_task_immediate_terminal() -> Result<()> {
+async fn test_subscribe_task_terminal_returns_error() -> Result<()> {
     let (_server, client, url) = test_setup().await;
 
     // Send a task, then cancel it so it's in a terminal state
@@ -100,7 +115,7 @@ async fn test_subscribe_task_immediate_terminal() -> Result<()> {
         extensions: None,
         metadata: None,
     };
-    let sent = send_task(&client, &url, msg, None, None)
+    let sent = send_task(&client, &url, msg, None, None, non_blocking())
         .await
         .map_err(|e| format!("{e:?}"))?;
     let canceled = cancel_task(&client, &url, &sent.id)
@@ -108,13 +123,12 @@ async fn test_subscribe_task_immediate_terminal() -> Result<()> {
         .map_err(|e| format!("{e:?}"))?;
     assert_eq!(canceled.status.state, TaskState::Canceled);
 
-    // Now subscribe — should immediately return the terminal state
-    let result = client
-        .subscribe_task(&url, &sent.id)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    assert_eq!(result.status.state, TaskState::Canceled);
-    assert_eq!(result.id, sent.id);
+    // Spec §3.1.6: subscribing to a terminal task is an UnsupportedOperationError
+    let result = client.subscribe_task(&url, &sent.id).await;
+    assert!(
+        matches!(result, Err(A2aError::JsonRpcError { code: 400, .. })),
+        "Expected a 400 UNSUPPORTED_OPERATION error, got: {result:?}"
+    );
     Ok(())
 }
 
@@ -155,23 +169,31 @@ async fn test_subscribe_task_streams_lifecycle() -> Result<()> {
         extensions: None,
         metadata: None,
     };
-    let sent = send_task(&client, &url, msg, None, None)
+    let sent = send_task(&client, &url, msg, None, None, non_blocking())
         .await
         .map_err(|e| format!("{e:?}"))?;
 
-    // Complete the task directly via the server's task store (no HTTP needed)
+    // Subscribe while the task is still non-terminal, then complete it.
+    // The stream must deliver the terminal statusUpdate.
+    let subscribe_client = client.clone();
+    let subscribe_url = url.clone();
+    let subscribe_id = sent.id.clone();
+    let watcher = tokio::spawn(async move {
+        subscribe_client
+            .subscribe_task(&subscribe_url, &subscribe_id)
+            .await
+    });
+
+    // Give the subscription time to register before completing the task
+    tokio::time::sleep(Duration::from_millis(100)).await;
     server
         .task_store()
         .complete_task(&sent.id, "Task completed successfully")
         .map_err(|e| format!("{e:?}"))?;
 
-    // Give the SSE notification time to propagate
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Subscribe — should get the terminal Completed state
-    let result = client
-        .subscribe_task(&url, &sent.id)
+    let result = watcher
         .await
+        .map_err(|e| format!("watcher join: {e}"))?
         .map_err(|e| format!("{e:?}"))?;
     assert_eq!(result.status.state, TaskState::Completed);
     assert_eq!(result.id, sent.id);
@@ -206,7 +228,7 @@ async fn test_client_sends_a2a_version_header() -> Result<()> {
                 "task": {
                     "id": "00000000-0000-0000-0000-000000000000",
                     "status": {
-                        "state": "WORKING",
+                        "state": "TASK_STATE_WORKING",
                         "timestamp": "2026-01-01T00:00:00Z"
                     },
                     "artifacts": []
@@ -231,7 +253,7 @@ async fn test_client_sends_a2a_version_header() -> Result<()> {
         metadata: None,
     };
 
-    let _ = send_task(&client, &url, msg, None, None).await;
+    let _ = send_task(&client, &url, msg, None, None, non_blocking()).await;
 
     let captured = tokio::time::timeout(Duration::from_secs(2), version_rx.recv())
         .await
@@ -264,7 +286,7 @@ async fn test_subscribe_task_sse_chunk_split_mid_utf8_char_no_data_loss() -> Res
         "task": {
             "id": "sse-split-utf8",
             "status": {
-                "state": "COMPLETED",
+                "state": "TASK_STATE_COMPLETED",
                 "timestamp": "2026-01-01T00:00:00Z"
             },
             "artifacts": [

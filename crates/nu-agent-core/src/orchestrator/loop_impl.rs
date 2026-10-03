@@ -18,8 +18,7 @@ use crate::orchestrator::stages::{
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{
     InteractiveLoopConfig, OrchestratorEvent, UiRequestResponse, UiStateEvent, WorkerCommand,
-    dispatch_compaction, handle_external_cancel, handle_external_prompt, handle_worker_result,
-    recv_or_pending,
+    dispatch_compaction, handle_external_cancel, handle_worker_result, recv_or_pending,
 };
 use crate::protocol::{
     contracts::CoreRuntime,
@@ -117,6 +116,7 @@ where
     let mut active_external_prompt: Option<String> = None;
     let mut active_external_task_id: Option<String> = None;
     let mut pending_external_cancel: Option<String> = None;
+    let mut pending_a2a_task_id: Option<String> = None;
 
     let on_agent_switch = on_agent_switch.clone();
     let worker_bus = bus.clone();
@@ -172,6 +172,7 @@ where
         active_external_prompt: &mut active_external_prompt,
         active_external_task_id: &mut active_external_task_id,
         pending_external_cancel: &mut pending_external_cancel,
+        pending_a2a_task_id: &mut pending_a2a_task_id,
         bus: &bus,
     };
 
@@ -339,8 +340,29 @@ where
 
             recv = sources.external_rx.recv() => {
                 match recv {
-                    Ok(ExternalEvent::PromptReceived { prompt, task_id }) => {
-                        handle_external_prompt(prompt, task_id, ctx).await;
+                    Ok(ExternalEvent::PromptReceived { prompt, task_id, context_id }) => {
+                        // The prompt enters the TUI prompt queue; the slash stage
+                        // picks up `pending_a2a_task_id` when the matching
+                        // `PromptSubmitted` fires.
+                        *ctx.pending_a2a_task_id = Some(task_id);
+                        match context_id {
+                            Some(context_id) => {
+                                let _ = ctx
+                                    .worker_tx
+                                    .send(WorkerCommand::AttachA2aContext {
+                                        context_id,
+                                        prompt,
+                                    })
+                                    .await;
+                            }
+                            None => {
+                                let _ = ctx
+                                    .bus
+                                    .ui_state()
+                                    .send(UiStateEvent::EnqueueExternalPrompt { text: prompt })
+                                    .await;
+                            }
+                        }
                     }
                     Err(ChannelError::Closed) => break,
                     Err(ChannelError::Lagged { .. }) => continue,
@@ -444,15 +466,38 @@ where
             }
 
             incoming = recv_or_pending(&mut a2a_task_rx_opt) => {
-                let Some(incoming) = incoming else { break };
+                let Some(mut incoming) = incoming else { break };
+                // An absent `contextId` means "start a fresh session" (A2A spec
+                // §3.4.1). Mint a UUID so the client receives a context handle
+                // it can resume with on a follow-up task.
+                let context_id = nu_agent_a2a::resolve_context_id(incoming.context_id.take());
+                incoming.context_id = Some(context_id.clone());
                 let prompt = incoming.to_prompt();
-                handle_external_prompt(prompt, incoming.task_id, ctx).await;
+                // The router attaches the session and enqueues the prompt on the
+                // UI bus; the slash stage attributes the resulting turn to this
+                // task via `pending_a2a_task_id`.
+                *ctx.pending_a2a_task_id = Some(incoming.task_id);
+                let _ = ctx
+                    .worker_tx
+                    .send(WorkerCommand::AttachA2aContext {
+                        context_id,
+                        prompt,
+                    })
+                    .await;
             }
 
             event = recv_or_pending(&mut a2a_completion_rx_opt) => {
                 let Some(event) = event else { break };
                 let prompt = event.to_prompt();
-                handle_external_prompt(prompt, event.task_id, ctx).await;
+                // A completion event is a prompt into the orchestrator's own
+                // session — the remote `contextId` is metadata only, so no
+                // session attach is requested here.
+                *ctx.pending_a2a_task_id = Some(event.task_id);
+                let _ = ctx
+                    .bus
+                    .ui_state()
+                    .send(UiStateEvent::EnqueueExternalPrompt { text: prompt })
+                    .await;
             }
         }
     }

@@ -8,7 +8,6 @@ pub mod glob;
 pub mod grep;
 pub mod http;
 pub mod nu;
-pub mod patch;
 pub mod pre_authorize;
 pub mod read;
 mod resolve;

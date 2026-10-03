@@ -20,6 +20,7 @@ struct CtxState {
     active_external_prompt: Option<String>,
     active_external_task_id: Option<String>,
     pending_external_cancel: Option<String>,
+    pending_a2a_task_id: Option<String>,
 }
 
 struct HarnessParts<'a> {
@@ -73,6 +74,7 @@ impl Harness {
                 active_external_prompt: None,
                 active_external_task_id: None,
                 pending_external_cancel: None,
+                pending_a2a_task_id: None,
             },
         }
     }
@@ -110,6 +112,7 @@ fn make_ctx<'a>(
         active_external_prompt: &mut state.active_external_prompt,
         active_external_task_id: &mut state.active_external_task_id,
         pending_external_cancel: &mut state.pending_external_cancel,
+        pending_a2a_task_id: &mut state.pending_a2a_task_id,
         bus,
     }
 }

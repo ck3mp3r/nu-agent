@@ -359,6 +359,21 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
             ok = ui_state_rx.recv() => {
                 if let Ok(event) = ok {
                     coordinator.reduce_ui_state_event(event);
+                    // An A2A prompt arrives as `EnqueueExternalPrompt`, which
+                    // queues it via `enqueue_prompt`. Drain the queue now so the
+                    // prompt is submitted on this tick instead of waiting for the
+                    // next terminal input.
+                    let pending = coordinator.state.take_pending_events(cancel_controller);
+                    for ev in pending {
+                        if event_tx.send(ev).await.is_err() {
+                            return;
+                        }
+                    }
+                    drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
+                    let ui_state_events = coordinator.state.take_pending_ui_state_events();
+                    for ev in ui_state_events {
+                        let _ = bus.ui_state().send(ev).await;
+                    }
                     coordinator.mark_render_needed();
                     let _ = coordinator.render_if_needed(live_terminal);
                 }

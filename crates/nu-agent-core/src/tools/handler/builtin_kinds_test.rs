@@ -5,7 +5,6 @@ use std::str::FromStr;
 fn as_str_returns_correct_string_for_all_variants() {
     assert_eq!(BuiltinKind::Read.as_str(), "read");
     assert_eq!(BuiltinKind::Edit.as_str(), "edit");
-    assert_eq!(BuiltinKind::Patch.as_str(), "patch");
     assert_eq!(BuiltinKind::Skill.as_str(), "skill");
     assert_eq!(BuiltinKind::SpawnAgent.as_str(), "spawn_agent");
     assert_eq!(BuiltinKind::TerminateAgent.as_str(), "terminate_agent");
@@ -29,7 +28,6 @@ fn as_str_returns_correct_string_for_all_variants() {
 fn from_str_returns_some_for_all_valid_strings() {
     assert_eq!(BuiltinKind::from_str("read"), Ok(BuiltinKind::Read));
     assert_eq!(BuiltinKind::from_str("edit"), Ok(BuiltinKind::Edit));
-    assert_eq!(BuiltinKind::from_str("patch"), Ok(BuiltinKind::Patch));
     assert_eq!(BuiltinKind::from_str("skill"), Ok(BuiltinKind::Skill));
     assert_eq!(
         BuiltinKind::from_str("spawn_agent"),

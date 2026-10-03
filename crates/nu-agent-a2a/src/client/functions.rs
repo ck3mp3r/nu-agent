@@ -11,13 +11,14 @@ use super::A2aHttpClient;
 /// Send a task to an A2A agent.
 ///
 /// Posts to `{target_url}/message:send` (spec §11.3.1) with a `message`,
-/// and optionally `sessionId` / `senderUrl`.
+/// and optionally `senderUrl` / `contextId` / `configuration`.
 pub async fn send_task<C: A2aHttpClient>(
     client: &C,
     target_url: &str,
     message: Message,
-    session_id: Option<String>,
     sender_url: Option<String>,
+    context_id: Option<String>,
+    configuration: Option<SendMessageConfiguration>,
 ) -> Result<Task, A2aError> {
     let url = format!("{}/message:send", target_url.trim_end_matches('/'));
 
@@ -27,11 +28,14 @@ pub async fn send_task<C: A2aHttpClient>(
         "message": msg_val,
     });
 
-    if let Some(sid) = session_id {
-        body["sessionId"] = json!(sid);
-    }
     if let Some(su) = sender_url {
         body["senderUrl"] = json!(su);
+    }
+    if let Some(cid) = context_id {
+        body["contextId"] = json!(cid);
+    }
+    if let Some(cfg) = configuration {
+        body["configuration"] = serde_json::to_value(&cfg)?;
     }
 
     let result = client.post_json(&url, body).await?;
@@ -110,23 +114,22 @@ pub async fn cancel_task<C: A2aHttpClient>(
 
 /// List tasks from an A2A agent, optionally filtered by status.
 ///
-/// POSTs to `{target_url}/tasks:list` and parses
+/// GETs `{target_url}/tasks` (spec §11.3, §11.5) with camelCase query
+/// parameters and parses
 /// `{"tasks":[...],"totalSize":N,"pageSize":N,"nextPageToken":"..."}`.
 pub async fn list_tasks<C: A2aHttpClient>(
     client: &C,
     target_url: &str,
     status: Option<TaskState>,
 ) -> Result<Vec<Task>, A2aError> {
-    let url = format!("{}/tasks:list", target_url.trim_end_matches('/'));
-
-    let mut body = json!({});
+    let mut url = format!("{}/tasks", target_url.trim_end_matches('/'));
     if let Some(s) = status {
-        // Send status as string matching what server accepts
-        let status_str = format!("{s}");
-        body["status"] = json!(status_str);
+        // Send status in the spec wire format (Display = "TASK_STATE_*")
+        url.push_str(&format!("?status={s}"));
     }
 
-    let result = client.post_json(&url, body).await?;
+    let bytes = client.get_bytes(&url).await?;
+    let result = super::a2a_client::parse_response_body(&bytes)?;
 
     let tasks_val = result.get("tasks").cloned().unwrap_or_default();
 

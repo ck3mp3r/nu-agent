@@ -72,8 +72,9 @@ impl A2aClient {
 
     /// Subscribe to task status changes via SSE (spec §3.1.6).
     ///
-    /// GETs `{target_url}/tasks/{task_id}/subscribe` and parses the SSE
-    /// stream using the StreamResponse format.
+    /// POSTs to `{target_url}/tasks/{task_id}/subscribe` (sub-path form of the
+    /// spec `{id}:subscribe` colon action) and parses the SSE stream using the
+    /// StreamResponse format.
     ///
     /// Returns the final [`Task`] once a terminal state is reached, or an
     /// error if the stream closes unexpectedly.
@@ -97,13 +98,37 @@ impl A2aClient {
 
         let mut response = self
             .http
-            .get(&url)
+            .post(&url)
+            .header(reqwest::header::CONTENT_TYPE, "application/a2a+json")
+            .body("{}")
             .send()
             .await
             .map_err(map_reqwest_error)?;
 
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(A2aError::TaskNotFound(task_id.to_string()));
+        }
+
+        // A non-success response is an A2A error body, not an SSE stream.
+        // Without this branch a 400 (e.g. UNSUPPORTED_OPERATION for a terminal
+        // task) would be misreported as "SSE stream closed without terminal
+        // state".
+        let status = response.status();
+        if !status.is_success() {
+            let bytes = response
+                .bytes()
+                .await
+                .map_err(|e| A2aError::Internal(format!("read error response: {e}")))?;
+            if let Ok(json) = serde_json::from_slice::<Value>(&bytes)
+                && let Some(error) = json.get("error")
+            {
+                return Err(parse_a2a_error_value(error));
+            }
+            return Err(A2aError::Internal(format!(
+                "HTTP {}: {}",
+                status.as_u16(),
+                String::from_utf8_lossy(&bytes)
+            )));
         }
 
         // ── SSE stream parsing (StreamResponse format) ────────────────────
@@ -200,7 +225,6 @@ impl A2aClient {
                                             id: tid,
                                             context_id: context_id.clone(),
                                             parent_task_id: None,
-                                            session_id: None,
                                             status: ts,
                                             history: None,
                                             artifacts: std::mem::take(&mut artifacts),

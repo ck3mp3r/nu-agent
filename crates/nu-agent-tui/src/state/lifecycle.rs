@@ -35,30 +35,6 @@ impl AppState {
         self.ensure_invariants();
     }
 
-    pub fn enqueue_external_prompt(&mut self, text: String) {
-        let msg = Message {
-            role: MessageRole::User,
-            markdown: text.clone(),
-        };
-        let evicted = self.transcript.push_block(Block {
-            source: msg.source(),
-            lane: msg.lane(),
-            fill: msg.fill(),
-            status: None,
-        });
-        self.shift_bookkeeping_after_eviction(evicted);
-        let id = self.next_prompt_id;
-        self.next_prompt_id = self.next_prompt_id.saturating_add(1);
-        self.prompt_items.push(QueuedPrompt {
-            id,
-            prompt_text: text,
-            status: PromptStatus::InProgress,
-        });
-        self.active_prompt_id = Some(id);
-        self.phase = UiPhase::Busy;
-        self.active_cycle = true;
-    }
-
     pub fn enqueue_prompt(&mut self, submitted_text: String) -> u64 {
         let id = prompt_queue::PromptQueueLifecycle::new(
             &mut self.prompt_items,

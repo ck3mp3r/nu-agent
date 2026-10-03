@@ -28,6 +28,15 @@ pub trait SessionPersistence {
         std::path::Path::new("/")
     }
 
+    /// Returns the session ID the runtime is currently attached to, or `None`
+    /// when no session is active.
+    ///
+    /// Used by the router to detect a same-session A2A attach and skip the
+    /// transcript clear/hydrate cycle.
+    fn current_session_id(&self) -> Option<&str> {
+        None
+    }
+
     /// Run a compaction of the current session with the given `source`
     /// (`"auto"` or `"slash"`).
     ///
@@ -56,5 +65,17 @@ pub trait SessionPersistence {
         _cwd: &std::path::Path,
     ) -> impl std::future::Future<Output = Result<Vec<SessionInfo>, String>> + Send {
         async move { Ok(Vec::new()) }
+    }
+
+    /// Attach the session with `session_id`, creating it when it does not exist.
+    ///
+    /// Returns the transcript snapshots to hydrate when the session already
+    /// existed, or an empty vector when a fresh session was created. The
+    /// runtime's current session becomes `session_id` either way.
+    fn attach_session(
+        &mut self,
+        _session_id: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<UiMessageSnapshot>, String>> + Send {
+        async move { Err("Session attach not supported".to_string()) }
     }
 }

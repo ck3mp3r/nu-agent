@@ -31,6 +31,55 @@ fn test_client() -> reqwest::Client {
         .unwrap()
 }
 
+/// Parse the `data:` payloads of an SSE body into JSON values.
+fn sse_data_events(text: &str) -> Vec<serde_json::Value> {
+    text.lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|data| serde_json::from_str(data).ok())
+        .collect()
+}
+
+/// Assert the error metadata `timestamp` uses the spec §5.6.1 format
+/// `YYYY-MM-DDTHH:mm:ss.sssZ` — a `Z` suffix, never a `+00:00` offset.
+fn assert_timestamp_has_z_suffix(body: &serde_json::Value) {
+    let ts = body["error"]["details"][0]["metadata"]["timestamp"]
+        .as_str()
+        .unwrap_or("");
+    assert!(ts.ends_with('Z'), "timestamp must end with 'Z', got: {ts}");
+    assert!(
+        !ts.contains('+'),
+        "timestamp must not contain a timezone offset, got: {ts}"
+    );
+    assert!(
+        ts.len() == 24 && ts.as_bytes()[10] == b'T' && ts.as_bytes()[19] == b'.',
+        "timestamp must match YYYY-MM-DDTHH:mm:ss.sssZ, got: {ts}"
+    );
+}
+
+/// Assert every timestamp field on a serialized task uses the spec §5.6.1
+/// format `YYYY-MM-DDTHH:mm:ss.sssZ` — a `Z` suffix, never a `+00:00` offset.
+fn assert_task_timestamps_have_z_suffix(task: &serde_json::Value) {
+    let ts = task["status"]["timestamp"].as_str().unwrap_or("");
+    assert!(
+        ts.ends_with('Z'),
+        "status.timestamp must end with 'Z', got: {ts}"
+    );
+    assert!(
+        !ts.contains('+'),
+        "status.timestamp must not contain a timezone offset, got: {ts}"
+    );
+    if let Some(created_at) = task.get("created_at").and_then(|v| v.as_str()) {
+        assert!(
+            created_at.ends_with('Z'),
+            "created_at must end with 'Z', got: {created_at}"
+        );
+        assert!(
+            !created_at.contains('+'),
+            "created_at must not contain a timezone offset, got: {created_at}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // A2aServer
 // ---------------------------------------------------------------------------
@@ -44,9 +93,14 @@ async fn test_server_starts_and_returns_port() {
         url: "http://127.0.0.1:0".to_string(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
     assert!(server.port > 0, "Port should be > 0");
     assert_eq!(
         server.local_url,
@@ -88,8 +142,7 @@ async fn test_a2a_version_response_header() {
 
     // A2A API endpoint
     let resp = client
-        .post(format!("{}/tasks:list", server.local_url))
-        .json(&serde_json::json!({}))
+        .get(format!("{}/tasks", server.local_url))
         .send()
         .await
         .unwrap();
@@ -131,9 +184,14 @@ async fn test_server_cleanup_frees_port() -> Result<()> {
         url: "http://127.0.0.1:0".to_string(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
     let port = server.port;
 
     server.shutdown().await;
@@ -157,6 +215,11 @@ async fn test_server() -> (A2aServer, reqwest::Client) {
         name: "test-agent".into(),
         url: "http://127.0.0.1:0".into(),
         version: "1.0".into(),
+        supported_interfaces: vec![AgentInterface {
+            url: "http://127.0.0.1:0".into(),
+            protocol_version: "1.0".into(),
+            protocol_binding: PROTOCOL_BINDING.into(),
+        }],
         capabilities: AgentCapabilities::default(),
         skills: vec![Skill {
             id: "test-skill".into(),
@@ -167,9 +230,14 @@ async fn test_server() -> (A2aServer, reqwest::Client) {
         }],
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
     let client = test_client();
     (server, client)
 }
@@ -193,6 +261,15 @@ async fn test_agent_card_endpoint() -> Result<()> {
         .ok_or("should have skills array")?;
     assert_eq!(skills.len(), 1);
     assert_eq!(body["skills"][0]["name"], "Test");
+
+    // protocolBinding documents the colon-action sub-path deviation
+    let binding = body["supportedInterfaces"][0]["protocolBinding"]
+        .as_str()
+        .ok_or("should have protocolBinding")?;
+    assert!(
+        binding.contains("subpath-actions"),
+        "protocolBinding should document the sub-path deviation, got: {binding}"
+    );
 
     server.shutdown().await;
     Ok(())
@@ -220,7 +297,479 @@ async fn test_tasks_send_creates_task() -> Result<()> {
     assert!(body.get("task").is_some(), "Should have a task field");
     let task_id = body["task"]["id"].as_str().ok_or("should have task id")?;
     assert!(!task_id.is_empty(), "Task should have an ID");
-    assert_eq!(body["task"]["status"]["state"], "WORKING");
+    assert_eq!(body["task"]["status"]["state"], "TASK_STATE_WORKING");
+
+    server.shutdown().await;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// SendMessageConfiguration / blocking semantics (spec §3.2.2)
+// ---------------------------------------------------------------------------
+
+/// Start a server whose blocking deadline is short enough for tests.
+async fn test_server_with_blocking_timeout(timeout: Duration) -> (A2aServer, reqwest::Client) {
+    let card = AgentCard {
+        name: "test-agent".into(),
+        url: "http://127.0.0.1:0".into(),
+        version: "1.0".into(),
+        ..Default::default()
+    };
+    let server =
+        A2aServer::start_with_blocking_timeout(card, Arc::new(PeerCache::default()), 0, timeout)
+            .await
+            .unwrap();
+    let client = test_client();
+    (server, client)
+}
+
+#[tokio::test]
+async fn test_send_with_return_immediately_returns_working_task() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]},
+            "configuration": {"returnImmediately": true}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["task"]["status"]["state"], "TASK_STATE_WORKING",
+        "non-blocking send must return the in-progress task, got: {body}"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_without_configuration_blocks_until_terminal() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server_with_blocking_timeout(MAX_TEST_BLOCKING_TIMEOUT).await;
+
+    // Cancel the task from another connection while the send request blocks.
+    let store = server.task_store();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        if let Some(task) = store.list_tasks(None).first() {
+            let _ = store.update_status(&task.id, TaskState::Canceled, None);
+        }
+    });
+
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "block me"}]}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["task"]["status"]["state"], "TASK_STATE_CANCELED",
+        "blocking send must return the terminal task, got: {body}"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_blocking_timeout_returns_non_terminal_task() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server_with_blocking_timeout(Duration::from_millis(200)).await;
+
+    let started = std::time::Instant::now();
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "never finishes"}]},
+            "configuration": {"returnImmediately": false}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(
+        started.elapsed() >= Duration::from_millis(200),
+        "blocking send must wait for the deadline, elapsed: {:?}",
+        started.elapsed()
+    );
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["task"]["status"]["state"], "TASK_STATE_WORKING",
+        "timed-out blocking send must return the non-terminal task, got: {body}"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_with_accepted_output_modes_parses_without_error() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]},
+            "configuration": {
+                "returnImmediately": true,
+                "acceptedOutputModes": ["text/plain", "application/json"]
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        body.get("task").is_some(),
+        "acceptedOutputModes must parse without error, got: {body}"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+/// Start a server whose card advertises the given `defaultOutputModes`.
+async fn test_server_with_output_modes(modes: Vec<String>) -> (A2aServer, reqwest::Client) {
+    let card = AgentCard {
+        name: "test-agent".into(),
+        url: "http://127.0.0.1:0".into(),
+        version: "1.0".into(),
+        default_output_modes: modes,
+        ..Default::default()
+    };
+    let server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
+    let client = test_client();
+    (server, client)
+}
+
+#[tokio::test]
+async fn test_send_without_accepted_output_modes_succeeds() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]},
+            "configuration": {"returnImmediately": true}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        body.get("task").is_some(),
+        "absent acceptedOutputModes must not be rejected, got: {body}"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_rejects_unsupported_accepted_output_modes() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]},
+            "configuration": {
+                "returnImmediately": true,
+                "acceptedOutputModes": ["application/json"]
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        400,
+        "acceptedOutputModes with no intersection must be rejected"
+    );
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], 400);
+    assert_eq!(
+        body["error"]["details"][0]["reason"],
+        "CONTENT_TYPE_NOT_SUPPORTED"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_accepts_card_advertised_output_mode() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) =
+        test_server_with_output_modes(vec!["application/json".to_string()]).await;
+
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]},
+            "configuration": {
+                "returnImmediately": true,
+                "acceptedOutputModes": ["application/json"]
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        200,
+        "a mode advertised by the card must be accepted"
+    );
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        body.get("task").is_some(),
+        "should create a task, got: {body}"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_rejects_mode_not_advertised_by_card() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) =
+        test_server_with_output_modes(vec!["application/json".to_string()]).await;
+
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]},
+            "configuration": {
+                "returnImmediately": true,
+                "acceptedOutputModes": ["text/plain"]
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        400,
+        "a mode the card does not advertise must be rejected"
+    );
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["error"]["details"][0]["reason"],
+        "CONTENT_TYPE_NOT_SUPPORTED"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_stream_without_accepted_output_modes_succeeds() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .post(format!("{}/message:stream", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "stream"}]},
+            "configuration": {"returnImmediately": true}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.contains("text/event-stream"),
+        "absent acceptedOutputModes must not be rejected, got: {content_type}"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_stream_accepts_matching_accepted_output_modes() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .post(format!("{}/message:stream", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "stream"}]},
+            "configuration": {
+                "returnImmediately": true,
+                "acceptedOutputModes": ["text/plain"]
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.contains("text/event-stream"),
+        "matching acceptedOutputModes must be accepted, got: {content_type}"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_stream_rejects_unsupported_accepted_output_modes() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .post(format!("{}/message:stream", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "stream"}]},
+            "configuration": {
+                "returnImmediately": true,
+                "acceptedOutputModes": ["application/json"]
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        400,
+        "acceptedOutputModes with no intersection must be rejected"
+    );
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], 400);
+    assert_eq!(
+        body["error"]["details"][0]["reason"],
+        "CONTENT_TYPE_NOT_SUPPORTED"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_stream_accepts_configuration() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .post(format!("{}/message:stream", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "stream"}]},
+            "configuration": {"returnImmediately": true}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.contains("text/event-stream"),
+        "streaming must ignore returnImmediately and stay a stream, got: {content_type}"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_malformed_configuration_returns_400() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]},
+            "configuration": {"returnImmediately": "yes"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.status(),
+        400,
+        "malformed configuration must be rejected, not silently defaulted"
+    );
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], 400);
+    assert_eq!(body["error"]["status"], "INVALID_ARGUMENT");
+    assert_eq!(body["error"]["details"][0]["reason"], "INVALID_ARGUMENT");
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_stream_malformed_configuration_returns_400() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .post(format!("{}/message:stream", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "stream"}]},
+            "configuration": {"returnImmediately": "yes"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.status(),
+        400,
+        "malformed configuration must be rejected, not silently ignored"
+    );
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], 400);
+    assert_eq!(body["error"]["status"], "INVALID_ARGUMENT");
+    assert_eq!(body["error"]["details"][0]["reason"], "INVALID_ARGUMENT");
 
     server.shutdown().await;
     Ok(())
@@ -247,6 +796,8 @@ async fn test_tasks_send_missing_message() {
     );
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(body["error"]["status"], "BAD_REQUEST");
+    assert_eq!(body["error"]["details"][0]["reason"], "INVALID_ARGUMENT");
+    assert_eq!(body["error"]["details"][0]["domain"], "a2a-protocol.org");
 
     server.shutdown().await;
 }
@@ -277,7 +828,8 @@ async fn test_tasks_get_returns_task() -> Result<()> {
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["task"]["id"], task_id);
-    assert_eq!(body["task"]["status"]["state"], "WORKING");
+    assert_eq!(body["task"]["status"]["state"], "TASK_STATE_WORKING");
+    assert_task_timestamps_have_z_suffix(&body["task"]);
 
     server.shutdown().await;
     Ok(())
@@ -298,6 +850,31 @@ async fn test_tasks_get_not_found() {
     assert!(body.get("error").is_some());
     assert_eq!(body["error"]["code"], 404);
     assert_eq!(body["error"]["status"], "NOT_FOUND");
+    assert_eq!(body["error"]["details"][0]["reason"], "TASK_NOT_FOUND");
+    assert_eq!(body["error"]["details"][0]["domain"], "a2a-protocol.org");
+    assert_timestamp_has_z_suffix(&body);
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_tasks_cancel_not_found() {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .post(format!("{}/tasks/nonexistent-id/cancel", server.local_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body.get("error").is_some());
+    assert_eq!(body["error"]["code"], 404);
+    assert_eq!(body["error"]["status"], "NOT_FOUND");
+    assert_eq!(body["error"]["details"][0]["reason"], "TASK_NOT_FOUND");
+    assert_eq!(body["error"]["details"][0]["domain"], "a2a-protocol.org");
+    assert_timestamp_has_z_suffix(&body);
 
     server.shutdown().await;
 }
@@ -329,7 +906,7 @@ async fn test_tasks_cancel() -> Result<()> {
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["task"]["status"]["state"], "CANCELED");
+    assert_eq!(body["task"]["status"]["state"], "TASK_STATE_CANCELED");
 
     server.shutdown().await;
     Ok(())
@@ -370,6 +947,8 @@ async fn test_cancel_completed_fails() -> Result<()> {
     assert!(body.get("error").is_some(), "Second cancel should fail");
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(body["error"]["status"], "INVALID_REQUEST");
+    assert_eq!(body["error"]["details"][0]["reason"], "TASK_NOT_CANCELABLE");
+    assert_eq!(body["error"]["details"][0]["domain"], "a2a-protocol.org");
 
     server.shutdown().await;
     Ok(())
@@ -392,7 +971,7 @@ async fn test_task_lifecycle_full() -> Result<()> {
         .as_str()
         .ok_or("should have task id")?
         .to_string();
-    assert_eq!(send_body["task"]["status"]["state"], "WORKING");
+    assert_eq!(send_body["task"]["status"]["state"], "TASK_STATE_WORKING");
 
     // Get
     let get_resp = client
@@ -401,7 +980,7 @@ async fn test_task_lifecycle_full() -> Result<()> {
         .await
         .unwrap();
     let get_body: serde_json::Value = get_resp.json().await.unwrap();
-    assert_eq!(get_body["task"]["status"]["state"], "WORKING");
+    assert_eq!(get_body["task"]["status"]["state"], "TASK_STATE_WORKING");
 
     // Cancel
     let cancel_resp = client
@@ -410,7 +989,10 @@ async fn test_task_lifecycle_full() -> Result<()> {
         .await
         .unwrap();
     let cancel_body: serde_json::Value = cancel_resp.json().await.unwrap();
-    assert_eq!(cancel_body["task"]["status"]["state"], "CANCELED");
+    assert_eq!(
+        cancel_body["task"]["status"]["state"],
+        "TASK_STATE_CANCELED"
+    );
 
     // Get after cancel
     let get2_resp = client
@@ -419,7 +1001,7 @@ async fn test_task_lifecycle_full() -> Result<()> {
         .await
         .unwrap();
     let get2_body: serde_json::Value = get2_resp.json().await.unwrap();
-    assert_eq!(get2_body["task"]["status"]["state"], "CANCELED");
+    assert_eq!(get2_body["task"]["status"]["state"], "TASK_STATE_CANCELED");
 
     server.shutdown().await;
     Ok(())
@@ -459,7 +1041,10 @@ async fn test_send_stream_returns_sse() -> Result<()> {
 
     let resp = client
         .post(format!("{}/message:stream", server.local_url))
-        .json(&json!({"message": {"role": "user", "parts": [{"type": "text", "text": "stream"}]}}))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "stream"}]},
+            "contextId": "ctx-abc"
+        }))
         .send()
         .await
         .unwrap();
@@ -480,8 +1065,7 @@ async fn test_send_stream_returns_sse() -> Result<()> {
 
     // Look up the task via list to get its ID
     let list_resp = client
-        .post(format!("{}/tasks:list", server.local_url))
-        .json(&json!({}))
+        .get(format!("{}/tasks", server.local_url))
         .send()
         .await
         .unwrap();
@@ -491,7 +1075,7 @@ async fn test_send_stream_returns_sse() -> Result<()> {
         .ok_or("should have tasks array")?;
     let task_id = tasks
         .iter()
-        .find(|t| t["status"]["state"] == "WORKING")
+        .find(|t| t["status"]["state"] == "TASK_STATE_WORKING")
         .and_then(|t| t["id"].as_str())
         .ok_or("should find a working task")?;
 
@@ -515,7 +1099,7 @@ async fn test_send_stream_returns_sse() -> Result<()> {
 
     // Verify the data contains the task in working state
     assert!(
-        text.contains("WORKING"),
+        text.contains("TASK_STATE_WORKING"),
         "Task should be in working state, got: {text}"
     );
 
@@ -524,6 +1108,23 @@ async fn test_send_stream_returns_sse() -> Result<()> {
         text.contains("statusUpdate"),
         "Should have statusUpdate event for cancel, got: {text}"
     );
+
+    // Spec §4.2.1: every statusUpdate event carries the task's contextId
+    let events = sse_data_events(&text);
+    let status_updates: Vec<&serde_json::Value> = events
+        .iter()
+        .filter_map(|e| e.get("statusUpdate"))
+        .collect();
+    assert!(
+        !status_updates.is_empty(),
+        "Should have at least one statusUpdate event, got: {text}"
+    );
+    for update in status_updates {
+        assert_eq!(
+            update["contextId"], "ctx-abc",
+            "statusUpdate must carry the task contextId, got: {update}"
+        );
+    }
 
     server.shutdown().await;
     Ok(())
@@ -566,9 +1167,14 @@ async fn test_incoming_task_channel() -> Result<()> {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let mut server = A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let mut server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
     let mut task_rx = server
         .take_incoming_task_receiver()
         .ok_or("should have incoming task receiver")?;
@@ -589,7 +1195,6 @@ async fn test_incoming_task_channel() -> Result<()> {
         .post(format!("{}/message:send", server.local_url))
         .json(&serde_json::json!({
             "message": serde_json::to_value(&msg).unwrap(),
-            "sessionId": "sess-1",
             "senderUrl": "http://sender.local:12345"
         }))
         .send()
@@ -601,7 +1206,6 @@ async fn test_incoming_task_channel() -> Result<()> {
     let incoming = task_rx.try_recv().map_err(|e| format!("{e:?}"))?;
     assert_eq!(incoming.task_id.len(), 36, "should be UUID");
     assert_eq!(incoming.sender_url, "http://sender.local:12345");
-    assert_eq!(incoming.session_id, Some("sess-1".into()));
 
     // Verify message content
     if let Part::Text { text } = &incoming.message.parts[0] {
@@ -622,9 +1226,14 @@ async fn test_task_cancel_channel_emits_task_id() -> Result<()> {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let mut server = A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let mut server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
     let mut cancel_rx = server
         .take_task_cancel_receiver()
         .ok_or("should have cancel receiver")?;
@@ -653,7 +1262,7 @@ async fn test_task_cancel_channel_emits_task_id() -> Result<()> {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["task"]["status"]["state"], "CANCELED");
+    assert_eq!(body["task"]["status"]["state"], "TASK_STATE_CANCELED");
 
     // Verify the cancel channel received the task ID
     let received = cancel_rx.try_recv().map_err(|e| format!("{e:?}"))?;
@@ -680,7 +1289,10 @@ async fn test_sender_url_populates_peer_cache() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, cache.clone(), 0).await.unwrap();
+    let server =
+        A2aServer::start_with_blocking_timeout(card, cache.clone(), 0, TEST_BLOCKING_TIMEOUT)
+            .await
+            .unwrap();
 
     let client = test_client();
 
@@ -719,7 +1331,10 @@ async fn test_sender_url_empty_does_not_populate_cache() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, cache.clone(), 0).await.unwrap();
+    let server =
+        A2aServer::start_with_blocking_timeout(card, cache.clone(), 0, TEST_BLOCKING_TIMEOUT)
+            .await
+            .unwrap();
 
     let client = test_client();
 
@@ -767,8 +1382,7 @@ async fn test_list_tasks_endpoint() -> Result<()> {
 
     // List tasks
     let resp = client
-        .post(format!("{}/tasks:list", server.local_url))
-        .json(&json!({}))
+        .get(format!("{}/tasks", server.local_url))
         .send()
         .await
         .unwrap();
@@ -819,27 +1433,58 @@ async fn test_list_tasks_endpoint_with_filter() -> Result<()> {
 
     // List with filter: working
     let resp = client
-        .post(format!("{}/tasks:list", server.local_url))
-        .json(&json!({"status": "working"}))
+        .get(format!(
+            "{}/tasks?status=TASK_STATE_WORKING",
+            server.local_url
+        ))
         .send()
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
     let working_tasks = body["tasks"].as_array().ok_or("should have tasks array")?;
     assert_eq!(working_tasks.len(), 1, "Should have 1 working task");
-    assert_eq!(working_tasks[0]["status"]["state"], "WORKING");
+    assert_eq!(working_tasks[0]["status"]["state"], "TASK_STATE_WORKING");
 
     // List with filter: canceled
     let resp = client
-        .post(format!("{}/tasks:list", server.local_url))
-        .json(&json!({"status": "canceled"}))
+        .get(format!(
+            "{}/tasks?status=TASK_STATE_CANCELED",
+            server.local_url
+        ))
         .send()
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
     let canceled_tasks = body["tasks"].as_array().ok_or("should have tasks array")?;
     assert_eq!(canceled_tasks.len(), 1, "Should have 1 canceled task");
-    assert_eq!(canceled_tasks[0]["status"]["state"], "CANCELED");
+    assert_eq!(canceled_tasks[0]["status"]["state"], "TASK_STATE_CANCELED");
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_list_tasks_endpoint_invalid_status_returns_400() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .get(format!("{}/tasks?status=INVALID_BOGUS", server.local_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], 400);
+    assert_eq!(body["error"]["status"], "INVALID_ARGUMENT");
+    let message = body["error"]["message"]
+        .as_str()
+        .ok_or("should have error message")?;
+    assert!(
+        message.contains("INVALID_BOGUS"),
+        "error message should name the invalid status, got: {message}"
+    );
 
     server.shutdown().await;
     Ok(())
@@ -857,7 +1502,10 @@ async fn test_subscribe_stream_receives_events() -> Result<()> {
     // Create a task
     let resp = client
         .post(format!("{}/message:send", server.local_url))
-        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type":"text","text":"hi"}]},
+            "contextId": "ctx-abc"
+        }))
         .send()
         .await
         .unwrap();
@@ -869,7 +1517,7 @@ async fn test_subscribe_stream_receives_events() -> Result<()> {
 
     // Subscribe (opens SSE stream)
     let sse_resp = client
-        .get(format!("{}/tasks/{}/subscribe", server.local_url, task_id))
+        .post(format!("{}/tasks/{}/subscribe", server.local_url, task_id))
         .send()
         .await
         .unwrap();
@@ -908,9 +1556,107 @@ async fn test_subscribe_stream_receives_events() -> Result<()> {
         "Should have statusUpdate event, got: {text}"
     );
     assert!(
-        text.contains("CANCELED"),
+        text.contains("TASK_STATE_CANCELED"),
         "Status should be canceled, got: {text}"
     );
+
+    // Spec §4.2.1: every statusUpdate event carries the task's contextId
+    let events = sse_data_events(&text);
+    let status_updates: Vec<&serde_json::Value> = events
+        .iter()
+        .filter_map(|e| e.get("statusUpdate"))
+        .collect();
+    assert!(
+        !status_updates.is_empty(),
+        "Should have at least one statusUpdate event, got: {text}"
+    );
+    for update in status_updates {
+        assert_eq!(
+            update["contextId"], "ctx-abc",
+            "statusUpdate must carry the task contextId, got: {update}"
+        );
+    }
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_subscribe_stream_artifact_update_carries_context_id() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    // Create a task with a contextId
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type":"text","text":"hi"}]},
+            "contextId": "ctx-abc"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let task_id = body["task"]["id"]
+        .as_str()
+        .ok_or("should have task id")?
+        .to_string();
+
+    // Subscribe (opens SSE stream)
+    let sse_resp = client
+        .post(format!("{}/tasks/{}/subscribe", server.local_url, task_id))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        sse_resp.status().is_success(),
+        "Subscribe should return 200"
+    );
+
+    // Add an artifact — should trigger an artifactUpdate SSE event
+    server
+        .task_store()
+        .add_artifact(
+            &task_id,
+            Artifact {
+                artifact_id: "art-1".to_string(),
+                name: Some("result".to_string()),
+                parts: vec![Part::Text {
+                    text: "output".into(),
+                }],
+                metadata: None,
+            },
+        )
+        .map_err(|e| format!("add_artifact should succeed: {e:?}"))?;
+
+    // Cancel the task to close the SSE stream
+    client
+        .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
+        .send()
+        .await
+        .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let body_bytes = sse_resp.bytes().await.unwrap();
+    let text = String::from_utf8_lossy(&body_bytes);
+
+    // Spec §4.2.2: every artifactUpdate event carries the task's contextId
+    let events = sse_data_events(&text);
+    let artifact_updates: Vec<&serde_json::Value> = events
+        .iter()
+        .filter_map(|e| e.get("artifactUpdate"))
+        .collect();
+    assert!(
+        !artifact_updates.is_empty(),
+        "Should have at least one artifactUpdate event, got: {text}"
+    );
+    for update in artifact_updates {
+        assert_eq!(update["taskId"], task_id);
+        assert_eq!(
+            update["contextId"], "ctx-abc",
+            "artifactUpdate must carry the task contextId, got: {update}"
+        );
+    }
 
     server.shutdown().await;
     Ok(())
@@ -922,7 +1668,7 @@ async fn test_subscribe_task_not_found() {
     let (server, client) = test_server().await;
 
     let resp = client
-        .get(format!("{}/tasks/nonexistent/subscribe", server.local_url))
+        .post(format!("{}/tasks/nonexistent/subscribe", server.local_url))
         .send()
         .await
         .unwrap();
@@ -936,13 +1682,153 @@ async fn test_subscribe_task_not_found() {
     );
     assert_eq!(body["error"]["code"], 404);
     assert_eq!(body["error"]["status"], "NOT_FOUND");
+    assert_eq!(body["error"]["details"][0]["reason"], "TASK_NOT_FOUND");
+    assert_timestamp_has_z_suffix(&body);
 
     server.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_subscribe_terminal_task_returns_400() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    // Create a task, then cancel it so it reaches a terminal state
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({"message": {"role": "user", "parts": [{"type":"text","text":"hi"}]}}))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let task_id = body["task"]["id"]
+        .as_str()
+        .ok_or("should have task id")?
+        .to_string();
+
+    client
+        .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
+        .send()
+        .await
+        .unwrap();
+
+    // Subscribe to the terminal task — spec §3.1.6 requires an error
+    let sse_resp = client
+        .post(format!("{}/tasks/{}/subscribe", server.local_url, task_id))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        sse_resp.status(),
+        400,
+        "subscribe to a terminal task must return 400"
+    );
+
+    let err_body: serde_json::Value = sse_resp.json().await.unwrap();
+    assert_eq!(err_body["error"]["code"], 400);
+    assert_eq!(
+        err_body["error"]["details"][0]["reason"], "UNSUPPORTED_OPERATION",
+        "reason must be UNSUPPORTED_OPERATION, got: {err_body}"
+    );
+
+    server.shutdown().await;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Push notification config endpoints
 // ---------------------------------------------------------------------------
+
+/// Receiver end of the local webhook test server's payload channel.
+type WebhookRx = tokio::sync::mpsc::Receiver<serde_json::Value>;
+
+/// Start a local webhook receiver that forwards each received JSON body to the
+/// returned channel. Returns the receiver's base URL.
+async fn start_webhook_receiver() -> Result<(String, WebhookRx)> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<serde_json::Value>(4);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+
+    let app = axum::Router::new().route(
+        "/hook",
+        axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+            let tx = tx.clone();
+            async move {
+                let _ = tx.send(body).await;
+                axum::Json(serde_json::json!({ "ok": true }))
+            }
+        }),
+    );
+
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    Ok((format!("http://127.0.0.1:{}/hook", addr.port()), rx))
+}
+
+#[tokio::test]
+async fn test_push_notification_payload_is_stream_response_format() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+    let (hook_url, mut hook_rx) = start_webhook_receiver().await?;
+
+    // Create a task with a contextId so the payload can carry it
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type":"text","text":"hi"}]},
+            "contextId": "ctx-push"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let task_id = body["task"]["id"]
+        .as_str()
+        .ok_or("should have task id")?
+        .to_string();
+
+    // Register the webhook
+    let push_resp = client
+        .post(format!(
+            "{}/tasks/{}/pushNotificationConfigs",
+            server.local_url, task_id
+        ))
+        .json(&json!({"url": hook_url}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(push_resp.status(), 200);
+
+    // Trigger a status change
+    client
+        .post(format!("{}/tasks/{}/cancel", server.local_url, task_id))
+        .send()
+        .await
+        .unwrap();
+
+    // The webhook must receive a StreamResponse-shaped payload
+    let payload = tokio::time::timeout(Duration::from_secs(5), hook_rx.recv())
+        .await
+        .map_err(|e| format!("timeout waiting for push notification: {e:?}"))?
+        .ok_or("webhook channel closed")?;
+
+    let update = payload
+        .get("statusUpdate")
+        .ok_or_else(|| format!("payload must use StreamResponse format, got: {payload}"))?;
+    assert_eq!(update["taskId"], task_id);
+    assert_eq!(update["contextId"], "ctx-push");
+    assert_eq!(update["status"]["state"], "TASK_STATE_CANCELED");
+    assert!(
+        payload.get("StatusChanged").is_none(),
+        "internal TaskEvent tag must not be sent to webhooks, got: {payload}"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
 
 #[tokio::test]
 async fn test_push_config_crud_endpoints() -> Result<()> {
@@ -965,7 +1851,7 @@ async fn test_push_config_crud_endpoints() -> Result<()> {
     // Create a push config
     let create_resp = client
         .post(format!(
-            "{}/tasks/{}/push-notifications/create",
+            "{}/tasks/{}/pushNotificationConfigs",
             server.local_url, task_id
         ))
         .json(&json!({"url": "https://hook.example.com/notify"}))
@@ -979,10 +1865,24 @@ async fn test_push_config_crud_endpoints() -> Result<()> {
         .to_string();
     assert_eq!(create_body["url"], "https://hook.example.com/notify");
 
+    // Get the single push config
+    let get_resp = client
+        .get(format!(
+            "{}/tasks/{}/pushNotificationConfigs/{}",
+            server.local_url, task_id, config_id
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(get_resp.status(), 200);
+    let get_body: serde_json::Value = get_resp.json().await.unwrap();
+    assert_eq!(get_body["id"], config_id);
+    assert_eq!(get_body["url"], "https://hook.example.com/notify");
+
     // List push configs
     let list_resp = client
         .get(format!(
-            "{}/tasks/{}/push-notifications/list",
+            "{}/tasks/{}/pushNotificationConfigs",
             server.local_url, task_id
         ))
         .send()
@@ -998,7 +1898,7 @@ async fn test_push_config_crud_endpoints() -> Result<()> {
     // Delete push config
     let del_resp = client
         .delete(format!(
-            "{}/tasks/{}/push-notifications/delete/{}",
+            "{}/tasks/{}/pushNotificationConfigs/{}",
             server.local_url, task_id, config_id
         ))
         .send()
@@ -1009,7 +1909,7 @@ async fn test_push_config_crud_endpoints() -> Result<()> {
     // Verify deleted
     let list2_resp = client
         .get(format!(
-            "{}/tasks/{}/push-notifications/list",
+            "{}/tasks/{}/pushNotificationConfigs",
             server.local_url, task_id
         ))
         .send()
@@ -1043,16 +1943,27 @@ async fn test_push_config_not_found() -> Result<()> {
         .ok_or("should have task id")?
         .to_string();
 
-    // Get nonexistent config (get config endpoint was removed in spec §11.3, test delete instead)
+    // Get a nonexistent config — spec §11.3 GET single config returns 404
     let resp = client
-        .delete(format!(
-            "{}/tasks/{}/push-notifications/delete/nonexistent",
+        .get(format!(
+            "{}/tasks/{}/pushNotificationConfigs/nonexistent",
             server.local_url, task_id
         ))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200); // delete is idempotent, always succeeds
+    assert_eq!(resp.status(), 404);
+
+    // Delete is idempotent, always succeeds
+    let resp = client
+        .delete(format!(
+            "{}/tasks/{}/pushNotificationConfigs/nonexistent",
+            server.local_url, task_id
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
 
     server.shutdown().await;
     Ok(())
@@ -1079,7 +1990,7 @@ async fn test_push_config_missing_url() -> Result<()> {
     // Attempt to create push config without URL
     let resp = client
         .post(format!(
-            "{}/tasks/{}/push-notifications/create",
+            "{}/tasks/{}/pushNotificationConfigs",
             server.local_url, task_id
         ))
         .json(&json!({}))
@@ -1091,6 +2002,10 @@ async fn test_push_config_missing_url() -> Result<()> {
     assert!(resp_body.get("error").is_some());
     assert_eq!(resp_body["error"]["code"], 400);
     assert_eq!(resp_body["error"]["status"], "BAD_REQUEST");
+    assert_eq!(
+        resp_body["error"]["details"][0]["reason"],
+        "INVALID_ARGUMENT"
+    );
 
     server.shutdown().await;
     Ok(())
@@ -1376,8 +2291,7 @@ async fn test_tasks_send_with_context_and_parent() {
         .json(&json!({
             "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
             "contextId": "ctx-123",
-            "parentTaskId": "parent-456",
-            "sessionId": "sess-789"
+            "parentTaskId": "parent-456"
         }))
         .send()
         .await
@@ -1392,9 +2306,34 @@ async fn test_tasks_send_with_context_and_parent() {
         body["task"]["parentTaskId"], "parent-456",
         "parentTaskId should be stored"
     );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_tasks_send_ignores_legacy_session_field() {
+    ensure_crypto_provider();
+    let (server, client) = test_server().await;
+
+    let resp = client
+        .post(format!("{}/message:send", server.local_url))
+        .json(&json!({
+            "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
+            "sessionId": "sess-ignored"
+        }))
+        .send()
+        .await
+        .unwrap();
+
     assert_eq!(
-        body["task"]["sessionId"], "sess-789",
-        "sessionId should be stored"
+        resp.status(),
+        200,
+        "sessionId must be ignored, not rejected"
+    );
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        body["task"].get("sessionId").is_none(),
+        "sessionId must not be echoed back on the task"
     );
 
     server.shutdown().await;
@@ -1450,9 +2389,14 @@ async fn test_extended_agent_card() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
 
     let resp = reqwest::get(format!("{}/extendedAgentCard", server.local_url))
         .await
@@ -1505,6 +2449,10 @@ async fn test_tasks_send_unsupported_content_type() {
         "Should return error for unsupported content type"
     );
     assert_eq!(body["error"]["code"], 400, "Should return BAD_REQUEST");
+    assert_eq!(
+        body["error"]["details"][0]["reason"],
+        "CONTENT_TYPE_NOT_SUPPORTED"
+    );
     assert!(
         body["error"]["message"]
             .as_str()
@@ -1692,7 +2640,7 @@ async fn test_get_task_with_history_length_filter() -> Result<()> {
         .ok_or("should have history")?;
     assert_eq!(history.len(), 1, "historyLength=1 should return 1 entry");
     assert_eq!(
-        history[0]["role"], "USER",
+        history[0]["role"], "ROLE_USER",
         "last entry should be the user turn"
     );
     assert_eq!(history[0]["parts"][0]["text"], "turn 2");
@@ -1804,9 +2752,14 @@ async fn test_incoming_task_channel_with_context_and_parent() -> Result<()> {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let mut server = A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let mut server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
     let mut task_rx = server
         .take_incoming_task_receiver()
         .ok_or("should have incoming task receiver")?;
@@ -1819,8 +2772,7 @@ async fn test_incoming_task_channel_with_context_and_parent() -> Result<()> {
         .json(&json!({
             "message": {"role": "user", "parts": [{"type": "text", "text": "multi-turn"}]},
             "contextId": "ctx-999",
-            "parentTaskId": "parent-888",
-            "sessionId": "sess-777"
+            "parentTaskId": "parent-888"
         }))
         .send()
         .await
@@ -1831,7 +2783,6 @@ async fn test_incoming_task_channel_with_context_and_parent() -> Result<()> {
     let incoming = task_rx.try_recv().map_err(|e| format!("{e:?}"))?;
     assert_eq!(incoming.context_id, Some("ctx-999".into()));
     assert_eq!(incoming.parent_task_id, Some("parent-888".into()));
-    assert_eq!(incoming.session_id, Some("sess-777".into()));
 
     server.shutdown().await;
     Ok(())
@@ -1849,9 +2800,14 @@ async fn test_a2a_version_missing_rejected() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
     let client = reqwest::Client::new(); // no A2A-Version header
 
     let resp = client
@@ -1867,6 +2823,10 @@ async fn test_a2a_version_missing_rejected() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(body["error"]["status"], "INVALID_REQUEST");
+    assert_eq!(
+        body["error"]["details"][0]["reason"],
+        "VERSION_NOT_SUPPORTED"
+    );
     assert!(
         body["error"]["message"]
             .as_str()
@@ -1885,9 +2845,14 @@ async fn test_a2a_version_unsupported_value_rejected() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
     let client = reqwest::Client::builder()
         .default_headers({
             let mut headers = reqwest::header::HeaderMap::new();
@@ -1912,6 +2877,10 @@ async fn test_a2a_version_unsupported_value_rejected() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["error"]["code"], 400);
     assert_eq!(body["error"]["status"], "INVALID_REQUEST");
+    assert_eq!(
+        body["error"]["details"][0]["reason"],
+        "VERSION_NOT_SUPPORTED"
+    );
 
     server.shutdown().await;
 }
@@ -1924,9 +2893,14 @@ async fn test_agent_json_bypasses_version_check() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
     let client = reqwest::Client::new(); // no A2A-Version header
 
     // /.well-known/agent-card.json should work without A2A-Version
@@ -1950,9 +2924,14 @@ async fn test_extended_agent_card_bypasses_version_check() {
         url: "http://127.0.0.1:0".into(),
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
     let client = reqwest::Client::new(); // no A2A-Version header
 
     // /extendedAgentCard should work without A2A-Version
@@ -1990,9 +2969,14 @@ async fn test_agent_card_update_via_handle() -> Result<()> {
         }],
         ..Default::default()
     };
-    let server = A2aServer::start(card, Arc::new(PeerCache::default()), 0)
-        .await
-        .unwrap();
+    let server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .unwrap();
     let client = test_client();
 
     // GET initial card — assert name is "Agent A"
@@ -2045,6 +3029,181 @@ async fn test_agent_card_update_via_handle() -> Result<()> {
     // update the card's url field — AgentBuilder does that after start().
     assert_eq!(body["url"], "http://127.0.0.1:0");
     assert_eq!(body["version"], "1.0");
+
+    server.shutdown().await;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// A2A-Extensions header validation (spec §3.2.6, §14.2.2)
+// ---------------------------------------------------------------------------
+
+/// Start a test server whose agent card declares `extensions`.
+async fn test_server_with_extensions(
+    extensions: Vec<String>,
+) -> Result<(A2aServer, reqwest::Client)> {
+    let card = AgentCard {
+        name: "test-agent".into(),
+        url: "http://127.0.0.1:0".into(),
+        version: "1.0".into(),
+        extensions,
+        ..Default::default()
+    };
+    let server = A2aServer::start_with_blocking_timeout(
+        card,
+        Arc::new(PeerCache::default()),
+        0,
+        TEST_BLOCKING_TIMEOUT,
+    )
+    .await
+    .map_err(|e| format!("server should start: {e:?}"))?;
+    Ok((server, test_client()))
+}
+
+/// POST a minimal `message:send` body with an optional `A2A-Extensions` header.
+async fn send_with_extensions(
+    client: &reqwest::Client,
+    url: &str,
+    extensions: Option<&str>,
+) -> Result<reqwest::Response> {
+    let mut req = client.post(format!("{url}/message:send")).json(&json!({
+        "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}
+    }));
+    if let Some(value) = extensions {
+        req = req.header("A2A-Extensions", value);
+    }
+    req.send()
+        .await
+        .map_err(|e| format!("request should succeed: {e:?}").into())
+}
+
+#[tokio::test]
+async fn test_a2a_extensions_absent_accepted() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server_with_extensions(vec![]).await?;
+
+    let resp = send_with_extensions(&client, &server.local_url, None).await?;
+    assert_eq!(resp.status(), 200);
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_a2a_extensions_empty_value_accepted() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server_with_extensions(vec![]).await?;
+
+    let resp = send_with_extensions(&client, &server.local_url, Some("")).await?;
+    assert_eq!(resp.status(), 200);
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_a2a_extensions_matching_accepted() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server_with_extensions(vec![
+        "https://example.com/ext".into(),
+        "https://example.com/ext2".into(),
+    ])
+    .await?;
+
+    let resp = send_with_extensions(
+        &client,
+        &server.local_url,
+        Some("https://example.com/ext,https://example.com/ext2"),
+    )
+    .await?;
+    assert_eq!(resp.status(), 200);
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_a2a_extensions_whitespace_trimmed() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server_with_extensions(vec![
+        "https://example.com/ext".into(),
+        "https://example.com/ext2".into(),
+    ])
+    .await?;
+
+    let resp = send_with_extensions(
+        &client,
+        &server.local_url,
+        Some(" https://example.com/ext , https://example.com/ext2 "),
+    )
+    .await?;
+    assert_eq!(resp.status(), 200);
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_a2a_extensions_unsupported_rejected() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) =
+        test_server_with_extensions(vec!["https://example.com/ext".into()]).await?;
+
+    let resp = send_with_extensions(
+        &client,
+        &server.local_url,
+        Some("https://example.com/ext,https://example.com/unknown"),
+    )
+    .await?;
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await.map_err(|e| format!("{e:?}"))?;
+    assert_eq!(body["error"]["code"], 400);
+    assert_eq!(
+        body["error"]["details"][0]["reason"],
+        "UNSUPPORTED_OPERATION"
+    );
+    let message = body["error"]["message"]
+        .as_str()
+        .ok_or("should have message")?;
+    assert!(
+        message.contains("https://example.com/unknown"),
+        "message should name the unsupported extension, got: {message}"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_a2a_extensions_empty_card_rejects_any() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server_with_extensions(vec![]).await?;
+
+    let resp =
+        send_with_extensions(&client, &server.local_url, Some("https://example.com/ext")).await?;
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = resp.json().await.map_err(|e| format!("{e:?}"))?;
+    assert_eq!(
+        body["error"]["details"][0]["reason"],
+        "UNSUPPORTED_OPERATION"
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_a2a_extensions_non_a2a_path_skipped() -> Result<()> {
+    ensure_crypto_provider();
+    let (server, client) = test_server_with_extensions(vec![]).await?;
+
+    let resp = client
+        .get(format!("{}/.well-known/agent-card.json", server.local_url))
+        .header("A2A-Extensions", "https://example.com/unknown")
+        .send()
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    assert_eq!(resp.status(), 200);
 
     server.shutdown().await;
     Ok(())

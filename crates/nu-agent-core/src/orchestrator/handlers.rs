@@ -1,12 +1,12 @@
 //! Handler routines for the orchestrator loop: compaction dispatch, worker
-//! result handling, external (A2A) prompt handling, and optional-channel awaits.
+//! result handling, external (A2A) cancellation, and optional-channel awaits.
 
 use tokio::sync::mpsc;
 
-use crate::bus::{CancelEvent, CompactionEvent, TurnEvent};
+use crate::bus::{CancelEvent, CompactionEvent};
+use crate::orchestrator::WorkerCommand;
 use crate::orchestrator::stages::{OrchestrationContext, SessionHandler, UiRequestHandler};
 use crate::orchestrator::turn_outcome::TurnOutcome;
-use crate::orchestrator::{UiStateEvent, WorkerCommand};
 
 /// Dispatch a compaction command to the worker, or queue it if a compaction is
 /// already in flight or the worker is busy running a turn.
@@ -86,44 +86,6 @@ where
     // If a quit was requested while the worker was active and the worker is now
     // idle, exit the loop.
     *quit_pending && !*ctx.worker_active
-}
-
-/// Handle an external (A2A) prompt: dispatch a turn if the worker is idle.
-pub(crate) async fn handle_external_prompt(
-    prompt: String,
-    task_id: String,
-    ctx: &mut OrchestrationContext<'_>,
-) {
-    if !*ctx.worker_active {
-        let _ = ctx
-            .bus
-            .ui_state()
-            .send(UiStateEvent::DisplayIncomingMessage(prompt.clone()))
-            .await;
-        *ctx.active_external_prompt = Some(prompt.clone());
-        *ctx.active_external_task_id = Some(task_id.clone());
-        if ctx.pending_external_cancel.as_deref() == Some(task_id.as_str()) {
-            *ctx.pending_external_cancel = None;
-            let _ = ctx.bus.cancel().send(CancelEvent::Requested).await;
-        }
-        // Control-plane turn-start event: stays on `bus.turn()`, not rendered.
-        let _ = ctx
-            .bus
-            .turn()
-            .send(TurnEvent::Started {
-                prompt: prompt.clone(),
-                task_id: Some(task_id),
-            })
-            .await;
-        let _ = ctx
-            .worker_tx
-            .send(WorkerCommand::ExecuteTurn {
-                prompt,
-                span: ctx.span,
-            })
-            .await;
-        *ctx.worker_active = true;
-    }
 }
 
 /// Handle an external (A2A) task cancellation.

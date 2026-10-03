@@ -8,17 +8,25 @@ use serde::{Deserialize, Serialize};
 
 /// The state of an A2A task.
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TaskState {
     #[default]
+    #[serde(rename = "TASK_STATE_UNSPECIFIED")]
     Unspecified,
+    #[serde(rename = "TASK_STATE_SUBMITTED")]
     Submitted,
+    #[serde(rename = "TASK_STATE_WORKING")]
     Working,
+    #[serde(rename = "TASK_STATE_INPUT_REQUIRED")]
     InputRequired,
+    #[serde(rename = "TASK_STATE_COMPLETED")]
     Completed,
+    #[serde(rename = "TASK_STATE_FAILED")]
     Failed,
+    #[serde(rename = "TASK_STATE_CANCELED")]
     Canceled,
+    #[serde(rename = "TASK_STATE_REJECTED")]
     Rejected,
+    #[serde(rename = "TASK_STATE_AUTH_REQUIRED")]
     AuthRequired,
 }
 
@@ -29,6 +37,21 @@ impl TaskState {
             self,
             TaskState::Completed | TaskState::Failed | TaskState::Canceled | TaskState::Rejected
         )
+    }
+
+    /// Human-readable label for display contexts (TUI, logs).
+    pub fn label(&self) -> &'static str {
+        match self {
+            TaskState::Unspecified => "unspecified",
+            TaskState::Submitted => "submitted",
+            TaskState::Working => "working",
+            TaskState::InputRequired => "input-required",
+            TaskState::Completed => "completed",
+            TaskState::Failed => "failed",
+            TaskState::Canceled => "canceled",
+            TaskState::Rejected => "rejected",
+            TaskState::AuthRequired => "auth-required",
+        }
     }
 }
 
@@ -54,7 +77,6 @@ impl TryFrom<&str> for TaskState {
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
-            // SCREAMING_SNAKE_CASE (spec format)
             "TASK_STATE_UNSPECIFIED" => Ok(TaskState::Unspecified),
             "TASK_STATE_SUBMITTED" => Ok(TaskState::Submitted),
             "TASK_STATE_WORKING" => Ok(TaskState::Working),
@@ -64,14 +86,6 @@ impl TryFrom<&str> for TaskState {
             "TASK_STATE_CANCELED" => Ok(TaskState::Canceled),
             "TASK_STATE_REJECTED" => Ok(TaskState::Rejected),
             "TASK_STATE_AUTH_REQUIRED" => Ok(TaskState::AuthRequired),
-            // Legacy lowercase strings (backward compat)
-            "submitted" => Ok(TaskState::Submitted),
-            "working" => Ok(TaskState::Working),
-            "inputRequired" => Ok(TaskState::InputRequired),
-            "completed" => Ok(TaskState::Completed),
-            "failed" => Ok(TaskState::Failed),
-            "canceled" => Ok(TaskState::Canceled),
-            "rejected" => Ok(TaskState::Rejected),
             _ => Err(format!("unknown task state: {s}")),
         }
     }
