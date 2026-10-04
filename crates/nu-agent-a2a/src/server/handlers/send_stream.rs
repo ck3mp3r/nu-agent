@@ -11,7 +11,7 @@ use url::Url;
 
 use crate::{
     IncomingTask, Message, Peer, Role, SendMessageConfiguration, TaskEvent, TaskState,
-    task_event_to_stream_response,
+    resolve_context_id, task_event_to_stream_response,
 };
 
 use super::super::AppState;
@@ -56,10 +56,11 @@ pub async fn handle_tasks_send_stream(
         return Err((StatusCode::BAD_REQUEST, a2a_json_response(err)).into());
     }
 
-    let context_id = body
-        .get("contextId")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let context_id = Some(resolve_context_id(
+        body.get("contextId")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    ));
 
     let parent_task_id = body
         .get("parentTaskId")

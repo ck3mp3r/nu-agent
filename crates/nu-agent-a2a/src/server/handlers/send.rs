@@ -4,6 +4,7 @@ use url::Url;
 
 use crate::{
     IncomingTask, Message, Peer, Role, SendMessageConfiguration, Task, TaskEvent, TaskState,
+    resolve_context_id,
 };
 
 use super::super::AppState;
@@ -105,10 +106,11 @@ pub async fn handle_tasks_send(
         }
     }
 
-    let context_id = body
-        .get("contextId")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let context_id = Some(resolve_context_id(
+        body.get("contextId")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    ));
 
     let parent_task_id = body
         .get("parentTaskId")

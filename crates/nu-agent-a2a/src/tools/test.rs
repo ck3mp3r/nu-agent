@@ -657,7 +657,7 @@ async fn test_handle_tasks_send_with_context_id_returns_context_id() -> Result<(
 }
 
 #[tokio::test]
-async fn test_handle_tasks_send_without_context_id_returns_null() -> Result<()> {
+async fn test_handle_tasks_send_without_context_id_returns_uuid() -> Result<()> {
     ensure_crypto_provider();
     let card = AgentCard {
         name: "test-agent".into(),
@@ -702,9 +702,16 @@ async fn test_handle_tasks_send_without_context_id_returns_null() -> Result<()> 
         "tool result should always carry a contextId key"
     );
     assert!(
-        result["contextId"].is_null(),
-        "contextId should be null when not provided, got: {}",
+        result["contextId"].is_string(),
+        "contextId should be a string when not provided, got: {}",
         result["contextId"]
+    );
+    let context_id = result["contextId"]
+        .as_str()
+        .ok_or("contextId should be a string")?;
+    assert!(
+        uuid::Uuid::parse_str(context_id).is_ok(),
+        "contextId should be a UUID when not provided, got: {context_id}"
     );
 
     server.shutdown().await;

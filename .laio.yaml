@@ -15,10 +15,52 @@ windows:
       - name: Harness
         flex: 1
         commands:
-          - command: ^opencode
+          - command: agent
             args:
-              - --port
+              - --agent
+              - orchestrator
+              - --a2a-port
+              - 0
 
+  - name: agents
+    flex_direction: row
+    panes:
+      - flex: 1
+        commands:
+          - command: agent
+            args:
+              - --agent
+              - reviewer
+              - --name
+              - jack
+              - --store
+              - jsonl
+              - --a2a-port
+              - 0
+      - flex: 1
+        commands:
+          - command: agent
+            args:
+              - --agent
+              - researcher
+              - --name
+              - lucy
+              - --store
+              - jsonl
+              - --a2a-port
+              - 0
+      - flex: 1
+        commands:
+          - command: agent
+            args:
+              - --agent
+              - developer
+              - --name
+              - bob
+              - --store
+              - jsonl
+              - --a2a-port
+              - 0
   - name: misc
     flex_direction: row
     panes:
