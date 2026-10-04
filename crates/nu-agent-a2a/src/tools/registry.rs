@@ -38,7 +38,7 @@ impl Tool {
     pub fn description(&self) -> &'static str {
         match self {
             Tool::Send => {
-                "Send a task to another agent over A2A. The task runs asynchronously: this tool returns immediately with a taskId, and the result arrives later as a new conversation turn. Do NOT poll tasks_get or tasks_list for completion.\n\nSession control: omit contextId to start a fresh session on the target agent; include contextId from a prior response to resume that session.\n\nReturns {taskId, contextId, status, message}. Keep taskId and contextId for tasks_get, tasks_cancel, or follow-up sends."
+                "Send a task to another agent over A2A. The task runs asynchronously: this tool returns immediately with a taskId, and the result arrives later as a new conversation turn. Do NOT poll tasks_get or tasks_list for completion.\n\nSession control: omit contextId to start a fresh session and lose all prior context; ALWAYS include contextId from a prior response to resume that session.\n\nReturns {taskId, contextId, status, message}. Keep taskId and contextId for follow-up sends."
             }
             Tool::Get => {
                 "Fetch a task's current state and artifacts from a remote agent. Use after a completion notification to read the full result. Requires taskId (from tasks_send) and target (agent name from agent_list).\n\nReturns {taskId, state, artifacts}. The artifacts array holds the result content; read the text parts."
@@ -66,7 +66,7 @@ impl Tool {
                 "properties": {
                     "target": {"type": "string", "description": "Name of the target agent, from agent_list"},
                     "text": {"type": "string", "description": "Task text to send to the target agent"},
-                    "contextId": {"type": "string", "description": "Optional: include to resume an existing session on the target agent. Omit to start a fresh session."}
+                    "contextId": {"type": "string", "description": "Optional: include to resume an existing session on the target agent. Omit to start a fresh session and lose all prior context."}
                 },
                 "required": ["target", "text"]
             }),

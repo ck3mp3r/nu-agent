@@ -261,6 +261,14 @@ fn test_tasks_send_description_documents_async_and_session() -> Result<()> {
         "must explain including contextId resumes a session"
     );
     assert!(
+        d.contains("lose all prior context"),
+        "must state the consequence of omitting contextId"
+    );
+    assert!(
+        d.contains("ALWAYS") && d.contains("contextId"),
+        "must instruct the LLM to always reuse contextId on follow-up tasks"
+    );
+    assert!(
         d.contains("{taskId, contextId, status, message}"),
         "must document the response shape"
     );

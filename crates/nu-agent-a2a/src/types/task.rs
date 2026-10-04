@@ -101,6 +101,10 @@ impl A2aCompletionEvent {
         if let Some(context_id) = &self.context_id {
             prompt.push_str("\nContext: ");
             prompt.push_str(context_id);
+            prompt.push_str(&format!(
+                "\n\nTo continue this session with {}, pass contextId \"{}\" in the next tasks_send call. Omitting contextId starts a fresh session and loses all prior context.",
+                self.agent_name, context_id
+            ));
         }
         prompt
     }

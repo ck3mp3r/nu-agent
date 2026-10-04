@@ -318,7 +318,7 @@ fn test_a2a_completion_event_to_prompt_with_context_id() -> Result<()> {
     // -- Check
     assert!(
         prompt
-            .ends_with("\n\n---\nTask ID: task-2\nStatus: TASK_STATE_COMPLETED\nContext: ctx-abc")
+            .ends_with("\n\n---\nTask ID: task-2\nStatus: TASK_STATE_COMPLETED\nContext: ctx-abc\n\nTo continue this session with agent-b, pass contextId \"ctx-abc\" in the next tasks_send call. Omitting contextId starts a fresh session and loses all prior context.")
     );
     Ok(())
 }
