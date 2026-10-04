@@ -9,7 +9,7 @@ use nu_agent_core::bus::ToolEvent;
 use nu_agent_core::protocol::contracts::UiMessageSnapshot;
 use nu_agent_core::protocol::event::{ToolDisplay, ToolDisplaySection, UiEvent};
 use nu_agent_core::protocol::tool_args::CallLine;
-use nu_agent_core::transcript::ir::{BlockSource, ContentKind};
+use nu_agent_core::transcript::ir::{BlockSource, ContentKind, DiffTint};
 use nu_agent_core::transcript::renderer::ItemStatus;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -17,6 +17,8 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 use nu_agent_core::transcript::ir::Fill;
 use nu_agent_core::transcript::ir::StyleHint;
 use nu_agent_core::transcript::ir::{Display, DisplaySection};
+
+use crate::rendering::theme::TuiTheme;
 
 // ---------------------------------------------------------------------------
 // In-place tool block mutation (task 7ab65c6a)
@@ -212,9 +214,29 @@ fn diff_section_hints(state: &AppState) -> Vec<StyleHint> {
         .collect()
 }
 
-/// Regression (task 6424470b): a `diff` section must carry diff hints
-/// (DiffAdd/DiffRemove/DiffHunk) so the renderer paints green/red/bold —
-/// not syntect MdCode* hints, which lose the diff coloring entirely.
+/// Collect the line-level diff tints of all ToolDisplay blocks' stored
+/// ContentLines.
+fn diff_section_tints(state: &AppState) -> Vec<DiffTint> {
+    state
+        .transcript
+        .blocks()
+        .iter()
+        .filter_map(|b| match &b.source {
+            BlockSource::ToolDisplay { lines } => Some(lines.clone()),
+            _ => None,
+        })
+        .flat_map(|lines| {
+            lines
+                .iter()
+                .filter_map(|line| line.diff_tint.clone())
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// A `diff` section carries the structural hints (DiffHunk for `@@ `, Meta for
+/// `---`/`+++`) and syntax-highlighted bodies with a line-level diff tint —
+/// not whole-line DiffAdd/DiffRemove hints (task 7f931bef).
 #[test]
 fn tool_display_diff_section_produces_diff_hints() -> Result<()> {
     let content = "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n context\n\\ No newline at end of file\n";
@@ -246,14 +268,6 @@ fn tool_display_diff_section_produces_diff_hints() -> Result<()> {
 
     let hints = diff_section_hints(&state);
     assert!(
-        hints.contains(&StyleHint::DiffAdd),
-        "diff section must carry DiffAdd hints for '+' lines; got {hints:?}"
-    );
-    assert!(
-        hints.contains(&StyleHint::DiffRemove),
-        "diff section must carry DiffRemove hints for '-' lines; got {hints:?}"
-    );
-    assert!(
         hints.contains(&StyleHint::DiffHunk),
         "diff section must carry DiffHunk hints for '@@ ' lines; got {hints:?}"
     );
@@ -262,16 +276,28 @@ fn tool_display_diff_section_produces_diff_hints() -> Result<()> {
         "diff section must carry Meta hints for ---/+++ header lines; got {hints:?}"
     );
     assert!(
+        hints.contains(&StyleHint::Muted),
+        "diff body lines must carry a Muted gutter span; got {hints:?}"
+    );
+    assert!(
         !hints
             .iter()
-            .any(|h| matches!(h, StyleHint::MdCodePlain | StyleHint::MdCodeKeyword)),
-        "diff section must NOT be routed through syntect MdCode* hints; got {hints:?}"
+            .any(|h| matches!(h, StyleHint::DiffAdd | StyleHint::DiffRemove)),
+        "diff bodies must not carry whole-line DiffAdd/DiffRemove hints; got {hints:?}"
+    );
+
+    let tints = diff_section_tints(&state);
+    assert!(
+        tints.contains(&DiffTint::Add)
+            && tints.contains(&DiffTint::Remove)
+            && tints.contains(&DiffTint::Context),
+        "diff section must carry Add/Remove/Context line tints; got {tints:?}"
     );
     Ok(())
 }
 
 /// Regression (task 6424470b): diff lines keep the line-number prefixes added
-/// by add_diff_line_number_readability.
+/// by `project_diff_lines`.
 #[test]
 fn tool_display_diff_section_keeps_line_number_prefixes() -> Result<()> {
     let content = "@@ -3,2 +3,2 @@\n alpha\n-beta\n+omega\n";
@@ -423,7 +449,7 @@ fn edit_display_renders_one_visual_row_per_line_without_blank_rows() -> Result<(
     };
     let mut rendered_rows = 0usize;
     for block in &diff_rows {
-        rendered_rows += layout(block, &ctx).len();
+        rendered_rows += layout(block, &ctx, &TuiTheme::default()).len();
     }
     assert_eq!(
         rendered_rows, display_line_count,

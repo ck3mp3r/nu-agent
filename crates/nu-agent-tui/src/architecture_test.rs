@@ -244,7 +244,7 @@ fn lane_context_from_does_not_inspect_block_source() -> Result<()> {
         .ok_or("tui_renderer.rs must exist under crates/")?;
     let source = std::fs::read_to_string(renderer_path)?;
     let fn_idx = source
-        .find("fn from(block: &Block) -> Self")
+        .find("fn from(block: &Block, theme: &TuiTheme) -> Self")
         .ok_or("LaneContext::from must exist")?;
     let body = &source[fn_idx..];
     // The `from` body ends at the impl block's closing brace; search the

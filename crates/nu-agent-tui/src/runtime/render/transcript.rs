@@ -119,10 +119,13 @@ impl RuntimeCoordinator {
                     cursor: false,
                     selected: false,
                 };
-                let entry_lines = layout(block, &ctx);
-                for _ in 0..entry_lines.len() {
+                let entry_lines = layout(block, &ctx, &self.theme);
+                for entry_line in &entry_lines {
                     block_indices.push(idx);
-                    line_bgs.push(None);
+                    // A line whose content spans agree on a background (a
+                    // line-level diff tint) pins that background full-width, so
+                    // the block's fill below cannot clobber it.
+                    line_bgs.push(uniform_content_bg(entry_line));
                 }
                 all_lines.extend(entry_lines);
             }
@@ -299,6 +302,27 @@ impl RuntimeCoordinator {
             }
         }
     }
+}
+
+/// The background shared by every span of `line` that carries one, or `None`
+/// when the line has no backgrounded span or its backgrounded spans disagree.
+/// A line-level diff tint sets the same background on every content span, so
+/// this returns that tint; the renderer pins it full-width so the block's fill
+/// cannot clobber it. Spans without a background (the lane prefix, plain prose)
+/// are ignored.
+fn uniform_content_bg(line: &Line<'static>) -> Option<ratatui::style::Color> {
+    let mut bg = None;
+    for span in &line.spans {
+        let Some(span_bg) = span.style.bg else {
+            continue;
+        };
+        match bg {
+            None => bg = Some(span_bg),
+            Some(existing) if existing == span_bg => {}
+            Some(_) => return None,
+        }
+    }
+    bg
 }
 
 /// Full-width background color for the block at `block_idx`, or `None` when

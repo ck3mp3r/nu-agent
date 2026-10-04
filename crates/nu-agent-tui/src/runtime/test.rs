@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::rendering::layout::wrapped_input_rows;
+use crate::rendering::theme::TuiTheme;
 use crate::runtime::renderer_test::{CapturingRenderer, FakeRenderer};
 use crate::runtime::status::test::{init_repo_with_branch, run_git};
 use crate::runtime::test_driver::{DriveEvent, RenderLoopDriver};
@@ -5639,7 +5640,7 @@ fn total_visual_rows_sums_measure_per_block_plus_separators() {
         .transcript
         .blocks()
         .iter()
-        .map(|block| crate::tui_renderer::measure(block, 80))
+        .map(|block| crate::tui_renderer::measure(block, 80, &TuiTheme::default()))
         .sum();
     let expected = measured + 4 + 1;
     assert_eq!(state.transcript.total_visual_rows(), expected);

@@ -536,6 +536,48 @@ fn content_line_from_spans_preserves_order() {
     assert_eq!(line.spans, spans);
 }
 
+#[test]
+fn content_line_single_defaults_diff_tint_none() {
+    let line = ContentLine::single("hello".to_string(), StyleHint::Normal);
+    assert_eq!(line.diff_tint, None);
+}
+
+#[test]
+fn content_line_from_spans_defaults_diff_tint_none() {
+    let line = ContentLine::from_spans(vec![Span::normal("a".to_string())]);
+    assert_eq!(line.diff_tint, None);
+}
+
+#[test]
+fn content_line_empty_defaults_diff_tint_none() {
+    assert_eq!(ContentLine::empty().diff_tint, None);
+}
+
+#[test]
+fn content_line_default_has_no_diff_tint() {
+    let line = ContentLine::default();
+    assert!(line.spans.is_empty());
+    assert_eq!(line.hang_indent, 0);
+    assert_eq!(line.diff_tint, None);
+}
+
+#[test]
+fn content_line_single_with_tint_stores_tint() {
+    let line =
+        ContentLine::single_with_tint("+added".to_string(), StyleHint::MdCodePlain, DiffTint::Add);
+    assert_eq!(line.spans.len(), 1);
+    assert_eq!(line.spans[0].text, "+added");
+    assert_eq!(line.spans[0].hint, StyleHint::MdCodePlain);
+    assert_eq!(line.diff_tint, Some(DiffTint::Add));
+}
+
+#[test]
+fn diff_tint_variants_are_distinct() {
+    assert_ne!(DiffTint::Add, DiffTint::Remove);
+    assert_ne!(DiffTint::Add, DiffTint::Context);
+    assert_ne!(DiffTint::Remove, DiffTint::Context);
+}
+
 // ── BlockSource::plain_text ──────────────────────────────────────────────────
 
 #[test]
@@ -763,8 +805,22 @@ fn project_tool_diff_and_code_preview_sections() -> Result<()> {
     // directly.
     let expected_diff = crate::transcript::markdown::project_diff_lines(
         "--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n",
+        "diff",
     );
     assert_eq!(diff_projected[1..], expected_diff[..], "diff preview lines");
+    // The diff preview carries the line-level tint and a muted gutter, so the
+    // renderer can paint the diff background while the body keeps syntax
+    // colours (task 7f931bef).
+    let added = diff_projected
+        .iter()
+        .find(|line| line.diff_tint == Some(DiffTint::Add))
+        .ok_or("diff preview must carry an Add-tinted line")?;
+    assert_eq!(added.spans[0].hint, StyleHint::Muted, "gutter span");
+    assert!(
+        added.spans.iter().all(|span| !span.text.ends_with('\n')),
+        "diff body spans must not embed a trailing newline; got {:?}",
+        added.spans
+    );
     // The code display is a `nu` tool with a single code section: its title
     // and section label are suppressed, so the highlighted command lines
     // follow the call line directly.

@@ -3,7 +3,8 @@ use crate::transcript::ir::StyleHint;
 use crate::test_support::markdown_fixture;
 use crate::transcript::{
     highlight::{HighlightRequest, SyntaxTokenChannel, highlight_source_tokens},
-    markdown::project_markdown_to_lines,
+    ir::{ContentLine, DiffTint},
+    markdown::{project_diff_lines, project_markdown_to_lines},
 };
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -982,5 +983,325 @@ fn markdown_projection_unknown_language_stays_plain() -> Result<()> {
             .all(|span| matches!(span.hint, StyleHint::Normal | StyleHint::MdCodePlain)),
         "unknown fence language must produce only Normal/MdCodePlain hints"
     );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// project_diff_lines — syntax-highlighted diff bodies (task 7f931bef)
+// ---------------------------------------------------------------------------
+
+/// The Rust diff fixture used by the projection tests: a file header pair, one
+/// hunk header, a context line, a removed line, and an added line.
+const RUST_DIFF: &str =
+    "--- a/a.rs\n+++ b/a.rs\n@@ -1,2 +1,2 @@\n fn main() {\n-let x = 1;\n+let x = 42;\n";
+
+fn diff_line<'a>(lines: &'a [ContentLine], needle: &str) -> Result<&'a ContentLine> {
+    lines
+        .iter()
+        .find(|line| plain_line(line).contains(needle))
+        .ok_or_else(|| format!("diff line containing {needle:?} should be projected").into())
+}
+
+#[test]
+fn project_diff_lines_added_line_carries_add_tint() -> Result<()> {
+    // -- Setup & Fixtures
+    let lines = project_diff_lines(RUST_DIFF, "diff");
+
+    // -- Exec
+    let added = diff_line(&lines, "let x = 42;")?;
+
+    // -- Check
+    assert_eq!(added.diff_tint, Some(DiffTint::Add));
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_removed_line_carries_remove_tint() -> Result<()> {
+    // -- Setup & Fixtures
+    let lines = project_diff_lines(RUST_DIFF, "diff");
+
+    // -- Exec
+    let removed = diff_line(&lines, "let x = 1;")?;
+
+    // -- Check
+    assert_eq!(removed.diff_tint, Some(DiffTint::Remove));
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_context_line_carries_context_tint() -> Result<()> {
+    // -- Setup & Fixtures
+    let lines = project_diff_lines(RUST_DIFF, "diff");
+
+    // -- Exec
+    let context = diff_line(&lines, "fn main() {")?;
+
+    // -- Check
+    assert_eq!(context.diff_tint, Some(DiffTint::Context));
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_hunk_header_is_diff_hunk_without_tint() -> Result<()> {
+    // -- Setup & Fixtures
+    let lines = project_diff_lines(RUST_DIFF, "diff");
+
+    // -- Exec
+    let hunk = diff_line(&lines, "@@ -1,2 +1,2 @@")?;
+
+    // -- Check
+    assert_eq!(hunk.diff_tint, None);
+    assert_eq!(hunk.spans.len(), 1);
+    assert_eq!(hunk.spans[0].hint, StyleHint::DiffHunk);
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_file_headers_are_meta_without_tint() -> Result<()> {
+    // -- Setup & Fixtures
+    let lines = project_diff_lines(RUST_DIFF, "diff");
+
+    // -- Exec
+    let old_header = diff_line(&lines, "--- a/a.rs")?;
+    let new_header = diff_line(&lines, "+++ b/a.rs")?;
+
+    // -- Check
+    assert_eq!(old_header.diff_tint, None);
+    assert_eq!(old_header.spans[0].hint, StyleHint::Meta);
+    assert_eq!(new_header.diff_tint, None);
+    assert_eq!(new_header.spans[0].hint, StyleHint::Meta);
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_body_spans_carry_syntax_hints_not_diff_hints() -> Result<()> {
+    // -- Setup & Fixtures
+    let lines = project_diff_lines(RUST_DIFF, "diff");
+
+    // -- Exec
+    let added = diff_line(&lines, "let x = 42;")?;
+
+    // -- Check: `let` is a keyword, `42` a number — the body is syntax
+    // highlighted, not flattened to a single DiffAdd span.
+    assert!(
+        added
+            .spans
+            .iter()
+            .any(|span| span.text == "let" && span.hint == StyleHint::MdCodeKeyword),
+        "`let` should carry MdCodeKeyword; got {:?}",
+        added.spans
+    );
+    assert!(
+        added
+            .spans
+            .iter()
+            .any(|span| span.text == "42" && span.hint == StyleHint::MdCodeNumber),
+        "`42` should carry MdCodeNumber; got {:?}",
+        added.spans
+    );
+    assert!(
+        !added
+            .spans
+            .iter()
+            .any(|span| matches!(span.hint, StyleHint::DiffAdd | StyleHint::DiffRemove)),
+        "diff body spans must not carry DiffAdd/DiffRemove hints; got {:?}",
+        added.spans
+    );
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_body_line_starts_with_muted_gutter_span() -> Result<()> {
+    // -- Setup & Fixtures
+    let lines = project_diff_lines(RUST_DIFF, "diff");
+
+    // -- Exec
+    let added = diff_line(&lines, "let x = 42;")?;
+    let gutter = added.spans.first().ok_or("body line should have spans")?;
+
+    // -- Check: the gutter carries the new line number and the pipe separator.
+    // The hunk starts at new line 1; the context line advances it to 2, so the
+    // added line shows new line 2 in the new-number column.
+    assert_eq!(gutter.hint, StyleHint::Muted);
+    assert_eq!(gutter.text, "+        2 │");
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_without_language_falls_back_to_normal_spans() -> Result<()> {
+    // -- Setup & Fixtures: no file header, no language hint.
+    let diff = "@@ -1 +1 @@\n-old\n+new\n";
+
+    // -- Exec
+    let lines = project_diff_lines(diff, "");
+    let added = diff_line(&lines, "new")?;
+
+    // -- Check: the body is one plain span, the gutter still muted.
+    assert_eq!(added.diff_tint, Some(DiffTint::Add));
+    assert_eq!(added.spans[0].hint, StyleHint::Muted);
+    assert!(
+        added.spans[1..]
+            .iter()
+            .all(|span| span.hint == StyleHint::Normal),
+        "unhighlighted body must use Normal hints; got {:?}",
+        added.spans
+    );
+    assert_eq!(plain_line(added), "+        1 │new");
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_body_spans_do_not_embed_trailing_newline() -> Result<()> {
+    // -- Setup & Fixtures
+    let lines = project_diff_lines(RUST_DIFF, "diff");
+
+    // -- Exec
+    let added = diff_line(&lines, "let x = 42;")?;
+
+    // -- Check: a trailing newline would wrap into an extra blank visual row.
+    assert!(
+        added.spans.iter().all(|span| !span.text.ends_with('\n')),
+        "diff body spans must not embed a trailing newline; got {:?}",
+        added.spans
+    );
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_coarse_diff_marker_falls_back_to_normal_spans() -> Result<()> {
+    // -- Setup & Fixtures: the edit display passes the coarse `"diff"` marker
+    // as the language hint, and a headerless diff carries no extension.
+    let diff = "@@ -1 +1 @@\n-old\n+new\n";
+
+    // -- Exec
+    let lines = project_diff_lines(diff, "diff");
+    let added = diff_line(&lines, "new")?;
+
+    // -- Check
+    assert!(
+        added.spans[1..]
+            .iter()
+            .all(|span| span.hint == StyleHint::Normal),
+        "coarse diff marker must not select a grammar; got {:?}",
+        added.spans
+    );
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_gutter_shows_both_numbers_on_context_line() -> Result<()> {
+    // -- Setup & Fixtures
+    let diff = "@@ -10,3 +10,3 @@\n hello\n";
+
+    // -- Exec
+    let lines = project_diff_lines(diff, "");
+    let context = diff_line(&lines, "hello")?;
+
+    // -- Check: space + old (4-col) + space + new (4-col) + pipe + body.
+    assert_eq!(plain_line(context), "   10   10 │hello");
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_gutter_shows_old_number_on_removed_line() -> Result<()> {
+    // -- Setup & Fixtures
+    let diff = "@@ -5,2 +5,2 @@\n-world\n";
+
+    // -- Exec
+    let lines = project_diff_lines(diff, "");
+    let removed = diff_line(&lines, "world")?;
+
+    // -- Check: minus + old (4-col) + 6 spaces + pipe + body.
+    assert_eq!(plain_line(removed), "-   5      │world");
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_gutter_shows_new_number_on_added_line() -> Result<()> {
+    // -- Setup & Fixtures
+    let diff = "@@ -1,2 +8,2 @@\n+foo\n";
+
+    // -- Exec
+    let lines = project_diff_lines(diff, "");
+    let added = diff_line(&lines, "foo")?;
+
+    // -- Check: plus + 5 spaces + new (4-col) + space + pipe + body.
+    assert_eq!(plain_line(added), "+        8 │foo");
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_gutter_counters_advance_per_line_role() -> Result<()> {
+    // -- Setup & Fixtures
+    let diff = "@@ -3,2 +3,2 @@\n alpha\n-beta\n+omega\n";
+
+    // -- Exec
+    let lines = project_diff_lines(diff, "");
+
+    // -- Check: alpha context old=3 new=3; beta removed old=4; omega added new=4.
+    assert_eq!(plain_line(diff_line(&lines, "alpha")?), "    3    3 │alpha");
+    assert_eq!(plain_line(diff_line(&lines, "beta")?), "-   4      │beta");
+    assert_eq!(plain_line(diff_line(&lines, "omega")?), "+        4 │omega");
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_no_newline_marker_passes_through_without_gutter() -> Result<()> {
+    // -- Setup & Fixtures
+    let diff = "@@ -1 +1 @@\n-old\n\\ No newline at end of file\n";
+
+    // -- Exec
+    let lines = project_diff_lines(diff, "");
+    let marker = diff_line(&lines, "No newline at end of file")?;
+
+    // -- Check: the marker is not diff content and gets no gutter.
+    assert_eq!(marker.diff_tint, None);
+    assert_eq!(marker.spans.len(), 1);
+    assert_eq!(marker.spans[0].hint, StyleHint::Meta);
+    assert_eq!(plain_line(marker), "\\ No newline at end of file");
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_second_file_headers_keep_no_gutter() -> Result<()> {
+    // -- Setup & Fixtures: a multi-file diff, so the SECOND file's headers
+    // follow a hunk whose counters are already set.
+    let diff = "--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n--- a/b.rs\n+++ b/b.rs\n@@ -1 +1 @@\n-old\n+new\n";
+
+    // -- Exec
+    let lines = project_diff_lines(diff, "");
+    let headers: Vec<String> = lines
+        .iter()
+        .map(plain_line)
+        .filter(|text| text.starts_with("--- ") || text.starts_with("+++ "))
+        .collect();
+
+    // -- Check: every header stays verbatim — none is hunk content.
+    assert_eq!(
+        headers,
+        vec!["--- a/a.rs", "+++ b/a.rs", "--- a/b.rs", "+++ b/b.rs"]
+    );
+    Ok(())
+}
+
+#[test]
+fn project_diff_lines_blank_body_line_keeps_gutter_and_tint() -> Result<()> {
+    // -- Setup & Fixtures: a context line whose body is empty — a blank line
+    // inside the hunk.
+    let diff = "@@ -1,2 +1,2 @@\n \n+added\n";
+
+    // -- Exec
+    let lines = project_diff_lines(diff, "");
+    let blank = lines
+        .iter()
+        .find(|line| line.diff_tint == Some(DiffTint::Context))
+        .ok_or("blank context line should carry Context tint")?;
+
+    // -- Check: the gutter survives, and the empty body is one Normal span.
+    assert_eq!(blank.spans[0].hint, StyleHint::Muted);
+    assert_eq!(blank.spans[0].text, "    1    1 │");
+    assert_eq!(blank.spans.len(), 2);
+    assert_eq!(blank.spans[1].text, "");
+    assert_eq!(blank.spans[1].hint, StyleHint::Normal);
     Ok(())
 }

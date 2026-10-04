@@ -1,4 +1,4 @@
-use nu_agent_core::transcript::ir::StyleHint;
+use nu_agent_core::transcript::ir::{DiffTint, StyleHint};
 use ratatui::style::{Color, Modifier, Style};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,6 +251,11 @@ pub struct TuiTheme {
     pub syntax_comment: Style,
     pub surface0: Color,
     pub base: Color,
+    /// Line-level diff backgrounds. `Add`/`Remove` are dimmed tints of the
+    /// status green/red; `Context` is optional and defaults to no background.
+    pub diff_add_bg: Color,
+    pub diff_remove_bg: Color,
+    pub diff_context_bg: Option<Color>,
 }
 
 fn fg(color: Color) -> Style {
@@ -259,6 +264,25 @@ fn fg(color: Color) -> Style {
 
 fn fg_dim(color: Color) -> Style {
     fg(color).add_modifier(Modifier::DIM)
+}
+
+/// A dimmed line-level diff tint derived from an accent colour and the theme
+/// base. On a dark base the accent is scaled down so the tint stays a
+/// saturated, low-luminance background; on a light base the accent is blended
+/// toward white so the tint stays light. Either way the syntax foreground
+/// colours remain readable on top.
+fn dimmed_diff_bg(accent: Color, base: Color) -> Color {
+    let (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) = (accent, base) else {
+        return accent;
+    };
+    let base_luma = (u32::from(br) * 299 + u32::from(bg) * 587 + u32::from(bb) * 114) / 1000;
+    if base_luma < 128 {
+        let scale = |channel: u8| ((u32::from(channel) * 20) / 100) as u8;
+        Color::Rgb(scale(ar), scale(ag), scale(ab))
+    } else {
+        let blend = |channel: u8| ((u32::from(channel) * 22 + 255 * 78) / 100) as u8;
+        Color::Rgb(blend(ar), blend(ag), blend(ab))
+    }
 }
 
 impl TuiTheme {
@@ -322,6 +346,9 @@ impl TuiTheme {
             syntax_comment: fg_dim(palette.overlay0),
             surface0: palette.surface0,
             base: palette.base,
+            diff_add_bg: dimmed_diff_bg(palette.green, palette.base),
+            diff_remove_bg: dimmed_diff_bg(palette.red, palette.base),
+            diff_context_bg: None,
         }
     }
 }
@@ -329,6 +356,18 @@ impl TuiTheme {
 impl Default for TuiTheme {
     fn default() -> Self {
         Self::catppuccin_mocha()
+    }
+}
+
+/// The line-level diff background for a [`DiffTint`], or `None` when the tint
+/// carries no background. `Add`/`Remove` always resolve to the theme's dimmed
+/// green/red tints; `Context` resolves to `theme.diff_context_bg`, which is
+/// `None` by default so context lines keep the surrounding surface.
+pub fn diff_tint_to_bg(tint: &DiffTint, theme: &TuiTheme) -> Option<Color> {
+    match tint {
+        DiffTint::Add => Some(theme.diff_add_bg),
+        DiffTint::Remove => Some(theme.diff_remove_bg),
+        DiffTint::Context => theme.diff_context_bg,
     }
 }
 

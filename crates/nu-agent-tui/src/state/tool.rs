@@ -388,23 +388,16 @@ fn append_direct_tool_display_section(
         }
     }
 
-    let section_content = if is_diff_kind(&section.kind) {
-        add_diff_line_number_readability(&section.content)
-    } else {
-        section.content
-    };
-
     // Project the section content directly so ContentLines carry StyleHints
     // instead of being flattened to plain text. Diffs take the dedicated
-    // annotate_diff_hint path (DiffAdd/DiffRemove/DiffHunk) — routing them
-    // through syntect would flatten every line to MdCode* hints and lose the
-    // diff coloring. Non-diff languages keep code-block highlighting. Both
-    // paths avoid the markdown round-trip that could leak literal ``` fence
-    // markers when projection falls back.
+    // syntax-highlighted diff path (per-token syntax hints on the body, a muted
+    // line-number gutter, and a line-level diff tint); non-diff languages keep
+    // code-block highlighting. Both paths avoid the markdown round-trip that
+    // could leak literal ``` fence markers when projection falls back.
     let projected = if is_diff_kind(&section.kind) {
-        crate::markdown::project_diff_lines(&section_content)
+        crate::markdown::project_diff_lines(&section.content, section.kind.language())
     } else {
-        crate::markdown::project_code_block_lines(section.kind.language(), &section_content)
+        crate::markdown::project_code_block_lines(section.kind.language(), &section.content)
     };
     let mut lines = Vec::with_capacity(projected.len());
     for rendered_line in projected {
@@ -430,11 +423,12 @@ fn append_direct_tool_display_section(
 }
 
 /// Push one ToolDisplay block whose lines are projected from a plain text
-/// row (title, section label, or stats line). The markdown projection adds
-/// diff hints so persisted/plain text rows keep their coloring. Returns the
-/// evicted count.
+/// row (title, section label, or stats line). The projection adds diff hints
+/// so persisted/plain text rows keep their coloring. A plain text row carries
+/// no language, so the diff projection falls back to unhighlighted spans.
+/// Returns the evicted count.
 fn push_tool_display_text_block(store: &mut TranscriptStore, text: &str) -> usize {
-    let mut lines = crate::markdown::project_diff_lines(text);
+    let mut lines = crate::markdown::project_diff_lines(text, "");
     if lines.is_empty() {
         lines = vec![nu_agent_core::transcript::ir::ContentLine::single(
             text.to_string(),
@@ -448,91 +442,3 @@ fn push_tool_display_text_block(store: &mut TranscriptStore, text: &str) -> usiz
         status: None,
     })
 }
-
-fn add_diff_line_number_readability(diff: &str) -> String {
-    let mut old_line: Option<usize> = None;
-    let mut new_line: Option<usize> = None;
-    let mut out = String::new();
-
-    for segment in diff.split_inclusive('\n') {
-        let (line, newline) = if let Some(stripped) = segment.strip_suffix('\n') {
-            (stripped, "\n")
-        } else {
-            (segment, "")
-        };
-
-        if line.starts_with("@@") {
-            if let Some((old_start, new_start)) = parse_hunk_header_start(line) {
-                old_line = Some(old_start);
-                new_line = Some(new_start);
-            }
-            out.push_str(line);
-            out.push_str(newline);
-            continue;
-        }
-
-        // Unified-diff file headers and the no-newline marker are structure,
-        // not hunk content — they carry no line numbers.
-        if line.starts_with("--- ") || line.starts_with("+++ ") || line.starts_with("\\ ") {
-            out.push_str(line);
-            out.push_str(newline);
-            continue;
-        }
-
-        let mut chars = line.chars();
-        let prefix = chars.next();
-        let body = chars.as_str();
-
-        // Context lines show both numbers; removed lines advance the old
-        // counter; added lines advance the new counter. Numbers are
-        // right-aligned to 4 columns and the pipe sits against the body.
-        match (prefix, old_line, new_line) {
-            (Some(' '), Some(old), Some(new)) => {
-                out.push_str(&format!(" {old:>4} {new:>4} │{body}{newline}"));
-                old_line = Some(old.saturating_add(1));
-                new_line = Some(new.saturating_add(1));
-            }
-            (Some('-'), Some(old), _) => {
-                out.push_str(&format!("-{old:>4}      │{body}{newline}"));
-                old_line = Some(old.saturating_add(1));
-            }
-            (Some('+'), _, Some(new)) => {
-                out.push_str(&format!("+     {new:>4} │{body}{newline}"));
-                new_line = Some(new.saturating_add(1));
-            }
-            _ => {
-                out.push_str(line);
-                out.push_str(newline);
-            }
-        }
-    }
-
-    out
-}
-
-fn parse_hunk_header_start(line: &str) -> Option<(usize, usize)> {
-    let mut parts = line.split_whitespace();
-    let old = parts.nth(1)?;
-    let new = parts.next()?;
-    let old_start = old
-        .strip_prefix('-')?
-        .split(',')
-        .next()?
-        .parse::<usize>()
-        .ok();
-    let new_start = new
-        .strip_prefix('+')?
-        .split(',')
-        .next()?
-        .parse::<usize>()
-        .ok();
-    Some((old_start?, new_start?))
-}
-
-// region:    --- Tests
-
-#[cfg(test)]
-#[path = "tool_diff_test.rs"]
-mod tool_diff_tests;
-
-// endregion: --- Tests

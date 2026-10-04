@@ -3,7 +3,7 @@ use ratatui::{
     text::{Line, Span as RatatuiSpan},
 };
 
-use crate::rendering::theme::{TuiTheme, hint_to_style};
+use crate::rendering::theme::{TuiTheme, diff_tint_to_bg, hint_to_style};
 use nu_agent_core::transcript::ir::{Block, ContentLine, Lane};
 use nu_agent_core::transcript::renderer::{FrameContext, ItemStatus};
 
@@ -33,9 +33,9 @@ pub(crate) fn wrap_prose(text: &str, width: usize) -> Vec<std::borrow::Cow<'_, s
 /// row 0 (blank label on continuations, user rail on every row), the status
 /// indicator, and the fill (Full → user bg on content rows, Code → margin
 /// rows + surface0 bg, None → nothing). Pure: same inputs, same outputs.
-pub fn layout(block: &Block, ctx: &FrameContext) -> Vec<Line<'static>> {
+pub fn layout(block: &Block, ctx: &FrameContext, theme: &TuiTheme) -> Vec<Line<'static>> {
     let renderer = TuiRenderer {
-        theme: TuiTheme::default(),
+        theme: theme.clone(),
     };
     renderer.render_block(block, ctx)
 }
@@ -46,9 +46,9 @@ pub fn layout(block: &Block, ctx: &FrameContext) -> Vec<Line<'static>> {
 /// included), and the 2 margin rows for Fill::Code. Used by the render loop
 /// for scroll math; must stay in lockstep with [`TuiRenderer::render_block`]
 /// by construction.
-pub fn measure(block: &Block, width: usize) -> usize {
+pub fn measure(block: &Block, width: usize, theme: &TuiTheme) -> usize {
     let renderer = TuiRenderer {
-        theme: TuiTheme::default(),
+        theme: theme.clone(),
     };
     renderer.measure_block(block, width)
 }
@@ -68,7 +68,7 @@ impl TuiRenderer {
         let has_status = block.status.is_some();
         let wrap_width = crate::state::code_block::content_wrap_width(width, has_status);
 
-        let lane = LaneContext::from(block);
+        let lane = LaneContext::from(block, &self.theme);
         let mut content_rows = 0usize;
         for content_line in &content_lines {
             let is_row_zero = content_rows == 0;
@@ -117,7 +117,7 @@ impl TuiRenderer {
         let has_status = block.status.is_some();
         let wrap_width = crate::state::code_block::content_wrap_width(ctx.width, has_status);
 
-        let lane = LaneContext::from(block);
+        let lane = LaneContext::from(block, &self.theme);
         let mut result = Vec::new();
 
         for content_line in &content_lines {
@@ -160,6 +160,17 @@ impl TuiRenderer {
                 }
 
                 let row_style = self.row_style_for(block, &lane, is_row_zero);
+                // A line-level diff tint is a row background: it wins over the
+                // block's fill and covers the lane prefix too, so the whole row
+                // is tinted and the render loop's full-width paint keeps it.
+                let row_style = match content_line
+                    .diff_tint
+                    .as_ref()
+                    .and_then(|tint| diff_tint_to_bg(tint, &self.theme))
+                {
+                    Some(bg) => row_style.bg(bg),
+                    None => row_style,
+                };
                 let spans = self.apply_row_overlays(spans, row_style, ctx.selected);
 
                 result.push(Line::from(spans));
@@ -214,6 +225,10 @@ impl TuiRenderer {
     /// that text (it drops only inter-word whitespace at wrap points and inserts
     /// nothing), so a forward scan from the previous row locates each row's byte
     /// range and the original spans are sliced at that range.
+    ///
+    /// A line-level `DiffTint` is not applied here: it is a row background,
+    /// applied by `render_block` via the row style so it covers the lane prefix
+    /// and survives the render loop's full-width paint.
     fn wrapped_row_spans(
         &self,
         content_line: &ContentLine,
@@ -397,8 +412,7 @@ impl LaneContext {
     /// Lane styling from the lane variant alone — the renderer never inspects
     /// `block.source`. A block's lane is frozen at construction time and
     /// already encodes the styling the source needs (task 46ca79fe).
-    fn from(block: &Block) -> Self {
-        let theme = TuiTheme::default();
+    fn from(block: &Block, theme: &TuiTheme) -> Self {
         match block.lane {
             Lane::Marker(icon) => {
                 let (marker_style, role_style, row_style) = match icon {

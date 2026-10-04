@@ -181,7 +181,7 @@ pub(super) fn edit_preview_display(
     plan: &crate::tools::fs::core::EditPlan,
 ) -> ToolDisplay {
     let diff = crate::tools::fs::diff::compute_edit_unified_diff(
-        std::path::Path::new("file"),
+        std::path::Path::new(path),
         &plan.previous_content,
         &plan.new_content,
     );
@@ -290,7 +290,7 @@ fn build_edit_contract_response(
     summary: Option<&crate::tools::fs::core::EditSummary>,
 ) -> JsonValue {
     let diff = crate::tools::fs::diff::compute_edit_unified_diff(
-        std::path::Path::new("file"),
+        std::path::Path::new(path),
         &plan.previous_content,
         &plan.new_content,
     );

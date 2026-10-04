@@ -16,6 +16,7 @@ use nu_agent_core::transcript::items::{Message, Notice, Tool};
 use nu_agent_core::transcript::renderer::{ItemStatus, Renderable};
 
 use super::{CompactionState, CompactionStatus, StatusState, ToolState};
+use crate::rendering::theme::TuiTheme;
 use crate::state::tool_parsing::{extract_tool_name, parse_persisted_tool_status_line};
 
 const MAX_TRANSCRIPT_BLOCKS: usize = 2000;
@@ -59,7 +60,8 @@ impl HeightIndex {
         for block in blocks {
             starts.push(total);
             let separators = sm.separators_for(block.source.family(), block.has_filled_content());
-            let rows = separators + crate::tui_renderer::measure(block, width);
+            let rows =
+                separators + crate::tui_renderer::measure(block, width, &TuiTheme::default());
             entries.push(HeightEntry { rows });
             total += rows;
         }

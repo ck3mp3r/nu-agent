@@ -274,9 +274,10 @@ impl Display {
                 lines.push(ContentLine::single(stats_line, StyleHint::Muted));
             }
             match &section.kind {
-                ContentKind::Diff { .. } => {
+                ContentKind::Diff { language } => {
                     lines.extend(crate::transcript::markdown::project_diff_lines(
                         &section.content,
+                        language,
                     ));
                 }
                 ContentKind::Code { language } => {
@@ -534,14 +535,26 @@ impl Span {
     }
 }
 
+/// Line-level diff background tint. The renderer applies the tint to the
+/// whole row while each span keeps its own foreground syntax color. `None`
+/// (no tint) is represented by `Option<DiffTint>` being `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiffTint {
+    Add,
+    Remove,
+    Context,
+}
+
 /// A single projected content row. `hang_indent` is the number of display
 /// columns the line's leading marker occupies; when the line wraps, the
 /// renderer indents continuation rows by this amount so list item text stays
-/// aligned under the marker text (task 7bd175d2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// aligned under the marker text (task 7bd175d2). `diff_tint` is the optional
+/// line-level diff background; `None` means no diff background.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ContentLine {
     pub spans: Vec<Span>,
     pub hang_indent: usize,
+    pub diff_tint: Option<DiffTint>,
 }
 
 impl ContentLine {
@@ -549,6 +562,7 @@ impl ContentLine {
         Self {
             spans: vec![Span::new(text, hint)],
             hang_indent: 0,
+            diff_tint: None,
         }
     }
 
@@ -556,6 +570,15 @@ impl ContentLine {
         Self {
             spans,
             hang_indent: 0,
+            diff_tint: None,
+        }
+    }
+
+    pub fn single_with_tint(text: String, hint: StyleHint, diff_tint: DiffTint) -> Self {
+        Self {
+            spans: vec![Span::new(text, hint)],
+            hang_indent: 0,
+            diff_tint: Some(diff_tint),
         }
     }
 
@@ -563,6 +586,7 @@ impl ContentLine {
         Self {
             spans: vec![],
             hang_indent: 0,
+            diff_tint: None,
         }
     }
 }

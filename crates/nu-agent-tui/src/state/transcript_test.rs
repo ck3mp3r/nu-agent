@@ -8,6 +8,8 @@ use nu_agent_core::transcript::ir::{
 use nu_agent_core::transcript::items::{Message, Tool};
 use nu_agent_core::transcript::renderer::{FrameContext, ItemStatus, Renderable};
 
+use crate::rendering::theme::TuiTheme;
+
 /// Construct a Block from a Renderable item in one expression — the direct
 /// construction form the spec mandates for all callers.
 fn block_from_item(item: &impl Renderable) -> Block {
@@ -595,7 +597,7 @@ fn rendered_row_count(markdown: &str, width: usize) -> usize {
         cursor: false,
         selected: false,
     };
-    crate::tui_renderer::layout(&block, &ctx).len()
+    crate::tui_renderer::layout(&block, &ctx, &TuiTheme::default()).len()
 }
 
 #[test]
@@ -616,7 +618,7 @@ fn rebuild_height_index_total_rows_includes_separator_rows() -> Result<()> {
         .transcript
         .blocks()
         .iter()
-        .map(|block| crate::tui_renderer::measure(block, width))
+        .map(|block| crate::tui_renderer::measure(block, width, &TuiTheme::default()))
         .sum();
     let expected = measured + 2;
     assert_eq!(
@@ -861,7 +863,7 @@ fn hydration_user_multi_line_message_hydrates_one_block_with_contiguous_rail() -
         cursor: false,
         selected: false,
     };
-    let lines = crate::tui_renderer::layout(block, &ctx);
+    let lines = crate::tui_renderer::layout(block, &ctx, &TuiTheme::default());
     assert!(
         lines.len() >= 2,
         "fixture must render more than one row; got {}",

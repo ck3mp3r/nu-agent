@@ -3,6 +3,8 @@ use nu_agent_core::protocol::tool_args::CallLine;
 use nu_agent_core::transcript::ir::{BlockSource, Fill, Lane, MessageRole, ToolName};
 use nu_agent_core::transcript::renderer::FrameContext;
 
+use crate::rendering::theme::TuiTheme;
+
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Theme colors used by `full_width_background`; values are opaque — tests
@@ -177,7 +179,7 @@ fn fill_code_layout_includes_margin_rows_matching_accounting() -> Result<()> {
 
     let block = nu_tool_block("ls | where size > 1mb\n| select name type\n| sort-by modified");
     for width in [80usize, 120usize] {
-        let rendered = layout(&block, &frame_ctx(width)).len();
+        let rendered = layout(&block, &frame_ctx(width), &TuiTheme::default()).len();
 
         // -- Exec: run the same accounting the render loop uses
         let mut store = TranscriptStore::default();
@@ -224,7 +226,7 @@ fn status_indicator_wraps_within_pane_width() -> Result<()> {
         status: Some(nu_agent_core::transcript::renderer::ItemStatus::InProgress),
     };
     for width in [80usize, 120usize] {
-        let lines = layout(&block, &frame_ctx(width));
+        let lines = layout(&block, &frame_ctx(width), &TuiTheme::default());
         for line in &lines {
             let line_width: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
             assert!(
@@ -608,8 +610,63 @@ fn render_loop_tool_then_preview_block_leaves_call_line_untinted() -> Result<()>
 }
 
 // ---------------------------------------------------------------------------
-// Filled preview block separates the next tool call (task 59bcffc6)
+// Diff tint survives the render loop's full-width paint (task 669b4dac)
 // ---------------------------------------------------------------------------
+
+/// WHEN the render loop lays out a `Fill::Code` preview block whose lines carry
+/// a `DiffTint::Add`, THE render loop SHALL paint the add tint across the row —
+/// the diff tint SHALL win over the block's surface0 fill.
+#[test]
+fn render_loop_diff_tint_wins_over_code_surface_fill() -> Result<()> {
+    // -- Setup & Fixtures: the production preview shape — a ToolDisplay block
+    // with Fill::Code whose lines are the projected diff.
+    let mut coord = RuntimeCoordinator::new(40, 8, None);
+    let columns = 40u16;
+    let rows = 8u16;
+    let lines = nu_agent_core::transcript::markdown::project_diff_lines(
+        "--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n",
+        "diff",
+    );
+    coord.state.transcript.push_block(Block {
+        source: BlockSource::ToolDisplay { lines },
+        lane: L::Blank,
+        fill: Fill::Code,
+        status: None,
+    });
+
+    // -- Exec
+    let terminal = render_transcript_pane_to_backend(&mut coord, columns, rows, true, 0);
+
+    // -- Check: find the row carrying the added body and assert its cell bg is
+    // the add tint, not surface0.
+    let add_bg = coord.theme.diff_add_bg;
+    let surface0 = coord.theme.surface0;
+    let mut checked = false;
+    for y in 0..rows {
+        let mut row_text = String::new();
+        for x in 0..columns {
+            row_text.push_str(terminal.backend().buffer()[(x, y)].symbol());
+        }
+        if row_text.contains("new") {
+            checked = true;
+            assert_eq!(
+                cell_bg(&terminal, 1, y),
+                Some(add_bg),
+                "the added diff row must paint the add tint full-width, not surface0; row {y}: {row_text:?}"
+            );
+            assert_ne!(
+                cell_bg(&terminal, 1, y),
+                Some(surface0),
+                "the code surface must not clobber the diff tint; row {y}: {row_text:?}"
+            );
+        }
+    }
+    assert!(
+        checked,
+        "the rendered buffer must contain the added diff body"
+    );
+    Ok(())
+}
 
 /// WHEN the render loop lays out a Tool block, a filled ToolDisplay preview
 /// block, and a following Tool block, THE render loop SHALL emit one separator

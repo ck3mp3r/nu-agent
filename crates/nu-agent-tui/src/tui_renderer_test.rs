@@ -37,7 +37,7 @@ fn layout_markdown_fill_none_has_no_background() {
     let block = markdown_block(MessageRole::Assistant, "hello", Fill::None);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     assert!(!lines.is_empty(), "must produce lines");
@@ -62,7 +62,7 @@ fn layout_markdown_fill_full_sets_user_bg_on_all_rows() {
     let block = markdown_block(MessageRole::User, long_text, Fill::Full);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(24));
+    let lines = layout(&block, &frame_ctx(24), &TuiTheme::default());
 
     // -- Check
     assert!(
@@ -110,7 +110,7 @@ fn layout_tool_code_preview_inserts_margins_with_surface0_bg() -> Result<()> {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     // Fill::Code inserts a top margin, the content rows, then a bottom margin.
@@ -215,7 +215,7 @@ fn layout_fill_code_top_margin_has_surface0() -> Result<()> {
     let surface0 = TuiTheme::default().surface0;
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let top = lines.first().ok_or("top margin row must exist")?;
@@ -236,7 +236,7 @@ fn layout_fill_code_bottom_margin_has_surface0() -> Result<()> {
     let surface0 = TuiTheme::default().surface0;
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let bottom = lines.last().ok_or("bottom margin row must exist")?;
@@ -260,7 +260,7 @@ fn layout_fill_code_row_zero_is_untinted() -> Result<()> {
     let theme = TuiTheme::default();
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check: index 0 is the top margin, index 1 is the first content row.
     let row0 = lines.get(1).ok_or("first content row must exist")?;
@@ -301,7 +301,7 @@ fn layout_fill_code_inner_content_rows_have_surface0() -> Result<()> {
     let surface0 = TuiTheme::default().surface0;
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check: rows 2..last are inner content rows (row 1 is row 0).
     let last = lines.len().saturating_sub(1);
@@ -353,7 +353,7 @@ fn layout_tool_preview_diff_renders_diff_lines() {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let text = lines_text(&lines);
@@ -362,9 +362,331 @@ fn layout_tool_preview_diff_renders_diff_lines() {
         "row 0 must carry the call summary; got {text:?}"
     );
     assert!(
-        text.contains("+new") && text.contains("-old"),
-        "diff content must be projected; got {text:?}"
+        text.contains("│new") && text.contains("│old"),
+        "diff content must be projected with its line-number gutter; got {text:?}"
     );
+}
+
+// ========== diff tint background (task 669b4dac) ==========
+
+/// A `Fill::None` tool block whose preview is a single diff section, so the
+/// projected lines carry `DiffTint` backgrounds. The lane is the tool lane
+/// (`⚙`), whose row style has no background — so any background on a diff row
+/// comes from the tint alone.
+fn diff_tint_block(diff: &str) -> Block {
+    let preview = Display {
+        title: "edit a.rs".to_string(),
+        sections: vec![DisplaySection {
+            label: "a.rs".to_string(),
+            kind: ContentKind::Diff {
+                language: "diff".to_string(),
+            },
+            content: diff.to_string(),
+            stats: None,
+        }],
+    };
+    Block {
+        source: BlockSource::Tool {
+            name: ToolName("tool".to_string()),
+            call: CallLine {
+                summary: "→ a.rs (diff)".to_string(),
+            },
+            preview: Some(preview),
+        },
+        lane: Lane::Marker("⚙"),
+        fill: Fill::None,
+        status: None,
+    }
+}
+
+/// The rows of `lines` whose joined text contains `needle`.
+fn rows_containing<'a>(
+    lines: &'a [ratatui::text::Line<'static>],
+    needle: &str,
+) -> Vec<&'a ratatui::text::Line<'static>> {
+    lines
+        .iter()
+        .filter(|line| {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            text.contains(needle)
+        })
+        .collect()
+}
+
+/// The content spans of a rendered row: everything after the 2-span lane
+/// prefix (cursor slot + marker). The lane prefix is renderer chrome, not part
+/// of the `ContentLine`, so it never carries a diff tint.
+fn content_spans<'a>(line: &'a ratatui::text::Line<'static>) -> &'a [ratatui::text::Span<'static>] {
+    line.spans.get(2..).unwrap_or(&[])
+}
+
+/// WHEN a `ContentLine` has `diff_tint: Some(DiffTint::Add)`, THE renderer
+/// SHALL apply `theme.diff_add_bg` as the background of every span in the
+/// line.
+#[test]
+fn layout_diff_add_line_carries_add_background() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = TuiTheme::default();
+    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n");
+
+    // -- Exec
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+
+    // -- Check: the added line's content row carries the add tint on every
+    // span, including the muted gutter span.
+    let added = rows_containing(&lines, "new");
+    assert_eq!(added.len(), 1, "exactly one row must carry the added body");
+    let added = added[0];
+    assert!(
+        content_spans(added).len() >= 2,
+        "a diff body row must carry a gutter span plus body spans; got {added:?}"
+    );
+    for span in content_spans(added) {
+        assert_eq!(
+            span.style.bg,
+            Some(theme.diff_add_bg),
+            "every span of an added line must carry the add tint; span '{}' has {:?}",
+            span.content,
+            span.style.bg
+        );
+    }
+    Ok(())
+}
+
+/// WHEN a `ContentLine` has `diff_tint: Some(DiffTint::Remove)`, THE renderer
+/// SHALL apply `theme.diff_remove_bg` as the background of every span in the
+/// line.
+#[test]
+fn layout_diff_remove_line_carries_remove_background() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = TuiTheme::default();
+    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n");
+
+    // -- Exec
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+
+    // -- Check
+    let removed = rows_containing(&lines, "old");
+    assert_eq!(
+        removed.len(),
+        1,
+        "exactly one row must carry the removed body"
+    );
+    for span in content_spans(removed[0]) {
+        assert_eq!(
+            span.style.bg,
+            Some(theme.diff_remove_bg),
+            "every span of a removed line must carry the remove tint; span '{}' has {:?}",
+            span.content,
+            span.style.bg
+        );
+    }
+    Ok(())
+}
+
+/// WHEN a `ContentLine` has `diff_tint: Some(DiffTint::Context)` and the theme
+/// leaves `diff_context_bg` as `None`, THE renderer SHALL apply no diff
+/// background to the line.
+#[test]
+fn layout_diff_context_line_carries_no_background_by_default() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = TuiTheme::default();
+    assert_eq!(
+        theme.diff_context_bg, None,
+        "the default theme must leave context lines untinted"
+    );
+    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1,2 +1,2 @@\n alpha\n-beta\n+omega\n");
+
+    // -- Exec
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+
+    // -- Check: the context row ('alpha') carries no background.
+    let context = rows_containing(&lines, "alpha");
+    assert_eq!(
+        context.len(),
+        1,
+        "exactly one row must carry the context body"
+    );
+    for span in content_spans(context[0]) {
+        assert_eq!(
+            span.style.bg, None,
+            "a context line must carry no diff background; span '{}' has {:?}",
+            span.content, span.style.bg
+        );
+    }
+    Ok(())
+}
+
+/// WHEN a `ContentLine` has `diff_tint: None`, THE renderer SHALL NOT apply
+/// any diff background (regression check: non-diff lines are unchanged).
+#[test]
+fn layout_non_diff_line_carries_no_diff_background() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = TuiTheme::default();
+    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n");
+
+    // -- Exec
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+
+    // -- Check: the hunk header and the file headers carry no tint.
+    for needle in ["@@", "--- a/a.rs", "+++ b/a.rs"] {
+        let rows = rows_containing(&lines, needle);
+        assert_eq!(rows.len(), 1, "exactly one row must carry {needle:?}");
+        for span in content_spans(rows[0]) {
+            assert_ne!(
+                span.style.bg,
+                Some(theme.diff_add_bg),
+                "non-diff row {needle:?} must not carry the add tint"
+            );
+            assert_ne!(
+                span.style.bg,
+                Some(theme.diff_remove_bg),
+                "non-diff row {needle:?} must not carry the remove tint"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// WHEN a diff line has syntax-highlighted spans, THE renderer SHALL apply the
+/// syntax foreground colour on top of the diff background colour.
+#[test]
+fn layout_diff_line_keeps_syntax_foreground_over_tint() -> Result<()> {
+    // -- Setup & Fixtures: a Rust diff body whose `let` keyword highlights.
+    let theme = TuiTheme::default();
+    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+let x = 1;\n");
+
+    // -- Exec
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+
+    // -- Check: the added body carries a keyword span with the syntax keyword
+    // foreground AND the add tint background.
+    let added = rows_containing(&lines, "let");
+    assert_eq!(added.len(), 1, "exactly one row must carry the added body");
+    let keyword = added[0]
+        .spans
+        .iter()
+        .find(|span| span.content.as_ref() == "let")
+        .ok_or("the added body must carry a `let` keyword span")?;
+    assert_eq!(
+        keyword.style.fg,
+        Some(theme.syntax_keyword.fg.ok_or("keyword fg must be set")?),
+        "the keyword span must keep its syntax foreground"
+    );
+    assert_eq!(
+        keyword.style.bg,
+        Some(theme.diff_add_bg),
+        "the keyword span must carry the add tint background"
+    );
+    Ok(())
+}
+
+/// WHEN a diff line has a gutter span with `StyleHint::Muted`, THE renderer
+/// SHALL apply the muted foreground colour plus the diff background colour.
+#[test]
+fn layout_diff_gutter_span_keeps_muted_foreground_over_tint() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = TuiTheme::default();
+    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n");
+
+    // -- Exec
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+
+    // -- Check: the added row's first span is the muted gutter, carrying the
+    // muted foreground plus the add tint background.
+    let added = rows_containing(&lines, "new");
+    assert_eq!(added.len(), 1, "exactly one row must carry the added body");
+    let gutter = content_spans(added[0])
+        .first()
+        .ok_or("a diff body row must start with a gutter span")?;
+    assert!(
+        gutter.content.contains('│'),
+        "the first content span must be the line-number gutter; got {gutter:?}"
+    );
+    assert_eq!(
+        gutter.style.fg, theme.tool_meta.fg,
+        "the gutter span must keep the muted foreground"
+    );
+    assert_eq!(
+        gutter.style.bg,
+        Some(theme.diff_add_bg),
+        "the gutter span must carry the add tint background"
+    );
+    Ok(())
+}
+
+/// WHEN a single-span `ContentLine` carries a `DiffTint`, THE renderer SHALL
+/// apply the tint background on the single-span fast path too.
+#[test]
+fn layout_single_span_diff_tint_carries_background() -> Result<()> {
+    // -- Setup & Fixtures: a ToolDisplay block whose one line is a single
+    // tinted span (the fast path in `wrapped_row_spans`).
+    let theme = TuiTheme::default();
+    let lines = vec![ContentLine::single_with_tint(
+        "+added".to_string(),
+        StyleHint::MdCodePlain,
+        DiffTint::Add,
+    )];
+    let block = Block {
+        source: BlockSource::ToolDisplay { lines },
+        lane: Lane::Blank,
+        fill: Fill::None,
+        status: None,
+    };
+
+    // -- Exec
+    let rendered = layout(&block, &frame_ctx(80), &TuiTheme::default());
+
+    // -- Check
+    let added = rows_containing(&rendered, "+added");
+    assert_eq!(added.len(), 1, "exactly one row must carry the tinted body");
+    for span in content_spans(added[0]) {
+        assert_eq!(
+            span.style.bg,
+            Some(theme.diff_add_bg),
+            "a single-span tinted line must carry the add tint; span '{}' has {:?}",
+            span.content,
+            span.style.bg
+        );
+    }
+    Ok(())
+}
+
+/// WHEN a diff line sits inside a `Fill::Code` preview block, THE renderer
+/// SHALL keep the diff tint background rather than the surface0 fill — the
+/// tint is more specific than the row fill.
+#[test]
+fn layout_diff_tint_wins_over_code_surface_fill() -> Result<()> {
+    // -- Setup & Fixtures: the production preview shape — a ToolDisplay block
+    // with Fill::Code whose lines are the projected diff.
+    let theme = TuiTheme::default();
+    let lines = nu_agent_core::transcript::markdown::project_diff_lines(
+        "--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n",
+        "diff",
+    );
+    let block = Block {
+        source: BlockSource::ToolDisplay { lines },
+        lane: Lane::Blank,
+        fill: Fill::Code,
+        status: None,
+    };
+
+    // -- Exec
+    let rendered = layout(&block, &frame_ctx(80), &TuiTheme::default());
+
+    // -- Check: the added row keeps the add tint, not surface0.
+    let added = rows_containing(&rendered, "new");
+    assert_eq!(added.len(), 1, "exactly one row must carry the added body");
+    for span in content_spans(added[0]) {
+        assert_eq!(
+            span.style.bg,
+            Some(theme.diff_add_bg),
+            "the diff tint must win over the code surface fill; span '{}' has {:?}",
+            span.content,
+            span.style.bg
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -384,7 +706,7 @@ fn layout_tool_without_preview_renders_call_summary_only() {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let text = lines_text(&lines);
@@ -418,7 +740,7 @@ fn layout_tool_call_line_has_emphasis_name_and_muted_summary() -> Result<()> {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let row0 = lines.first().ok_or("row 0 must exist")?;
@@ -474,7 +796,7 @@ fn layout_nameless_tool_call_line_renders_summary_span_only() -> Result<()> {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let row0 = lines.first().ok_or("row 0 must exist")?;
@@ -502,7 +824,7 @@ fn layout_notice_renders_single_meta_line() {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let text = lines_text(&lines);
@@ -520,7 +842,7 @@ fn layout_spacer_renders_single_blank_line() {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(40));
+    let lines = layout(&block, &frame_ctx(40), &TuiTheme::default());
 
     // -- Check
     assert_eq!(
@@ -547,7 +869,7 @@ fn layout_banner_renders_every_line() {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let text = lines_text(&lines);
@@ -574,7 +896,7 @@ fn layout_tool_in_progress_renders_content() {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let text = lines_text(&lines);
@@ -598,7 +920,7 @@ fn layout_notice_with_status_shows_indicator() {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let text = lines_text(&lines);
@@ -685,10 +1007,11 @@ fn measure_markdown_matches_layout_row_count() {
     // -- Setup & Fixtures
     let block = markdown_block(MessageRole::User, "short line", Fill::None);
     let ctx = frame_ctx(80);
+    let theme = TuiTheme::default();
 
     // -- Exec
-    let measured = measure(&block, 80);
-    let laid_out = layout(&block, &ctx).len();
+    let measured = measure(&block, 80, &theme);
+    let laid_out = layout(&block, &ctx, &theme).len();
 
     // -- Check
     assert_eq!(
@@ -706,10 +1029,11 @@ fn measure_wrapping_prose_matches_layout_row_count() {
         Fill::Full,
     );
     let ctx = frame_ctx(24);
+    let theme = TuiTheme::default();
 
     // -- Exec
-    let measured = measure(&block, 24);
-    let laid_out = layout(&block, &ctx).len();
+    let measured = measure(&block, 24, &theme);
+    let laid_out = layout(&block, &ctx, &theme).len();
 
     // -- Check
     assert!(laid_out >= 2, "prose must wrap at width 24; got {laid_out}");
@@ -728,10 +1052,11 @@ fn measure_tool_code_preview_includes_two_margin_rows() {
     // -- Setup & Fixtures
     let block = tool_code_block("ls | where size > 1mb");
     let ctx = frame_ctx(80);
+    let theme = TuiTheme::default();
 
     // -- Exec
-    let measured = measure(&block, 80);
-    let laid_out = layout(&block, &ctx).len();
+    let measured = measure(&block, 80, &theme);
+    let laid_out = layout(&block, &ctx, &theme).len();
 
     // -- Check: Fill::Code must contribute the 2 margin rows above/below.
     assert_eq!(
@@ -749,10 +1074,11 @@ fn measure_tool_diff_matches_layout_row_count() {
     // -- Setup & Fixtures
     let block = tool_diff_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n");
     let ctx = frame_ctx(80);
+    let theme = TuiTheme::default();
 
     // -- Exec
-    let measured = measure(&block, 80);
-    let laid_out = layout(&block, &ctx).len();
+    let measured = measure(&block, 80, &theme);
+    let laid_out = layout(&block, &ctx, &theme).len();
 
     // -- Check
     assert_eq!(
@@ -766,10 +1092,11 @@ fn measure_spacer_matches_layout_row_count() {
     // -- Setup & Fixtures
     let block = spacer_block();
     let ctx = frame_ctx(40);
+    let theme = TuiTheme::default();
 
     // -- Exec
-    let measured = measure(&block, 40);
-    let laid_out = layout(&block, &ctx).len();
+    let measured = measure(&block, 40, &theme);
+    let laid_out = layout(&block, &ctx, &theme).len();
 
     // -- Check
     assert_eq!(laid_out, 1, "spacer lays out one row");
@@ -797,10 +1124,11 @@ fn measure_with_status_indicator_matches_layout_row_count() {
         status: Some(ItemStatus::InProgress),
     };
     let ctx = frame_ctx(80);
+    let theme = TuiTheme::default();
 
     // -- Exec
-    let measured = measure(&block, 80);
-    let laid_out = layout(&block, &ctx).len();
+    let measured = measure(&block, 80, &theme);
+    let laid_out = layout(&block, &ctx, &theme).len();
 
     // -- Check
     assert_eq!(
@@ -837,7 +1165,7 @@ fn layout_banner_text_uses_role_system_not_assistant() -> Result<()> {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let span = span_containing(&lines, "NUAGENT").ok_or("banner content span must exist")?;
@@ -864,7 +1192,7 @@ fn layout_assistant_markdown_content_uses_role_assistant() -> Result<()> {
     let block = markdown_block(MessageRole::Assistant, "hello world", Fill::None);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let span = span_containing(&lines, "hello world").ok_or("assistant content span must exist")?;
@@ -898,7 +1226,7 @@ fn layout_tool_without_preview_row_bg_matches_row_tool() -> Result<()> {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let span = span_containing(&lines, "\u{2192} a").ok_or("tool call span must exist")?;
@@ -924,7 +1252,7 @@ fn layout_compaction_notice_row_bg_matches_row_compaction() -> Result<()> {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let span = span_containing(&lines, "compacted 5 blocks").ok_or("notice span must exist")?;
@@ -950,7 +1278,7 @@ fn layout_system_notice_row_bg_matches_row_system() -> Result<()> {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let span = span_containing(&lines, "system note").ok_or("notice span must exist")?;
@@ -968,7 +1296,7 @@ fn layout_user_markdown_row_bg_matches_row_user_bg() -> Result<()> {
     let block = markdown_block(MessageRole::User, "hi", Fill::Full);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let span = span_containing(&lines, "hi").ok_or("user content span must exist")?;
@@ -1005,7 +1333,7 @@ fn layout_blank_lane_banner_uses_assistant_style_proving_lane_decides() -> Resul
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let span = span_containing(&lines, "NOTALOGO").ok_or("banner content span must exist")?;
@@ -1034,7 +1362,7 @@ fn layout_system_blank_lane_uses_role_system() -> Result<()> {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let span = span_containing(&lines, "LOGOART").ok_or("banner content span must exist")?;
@@ -1072,7 +1400,7 @@ fn layout_system_blank_multi_line_banner_rows_use_row_system() -> Result<()> {
     );
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     for (idx, span) in lines.iter().flat_map(|l| &l.spans).enumerate() {
@@ -1103,7 +1431,7 @@ fn layout_non_banner_source_on_system_blank_lane_is_centered() -> Result<()> {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check: centering prepends left padding, so row 0 carries more leading
     // whitespace than the bare lane prefix.
@@ -1132,7 +1460,7 @@ fn layout_banner_source_on_blank_lane_is_not_centered() -> Result<()> {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check: no centering padding is inserted, so the only leading
     // whitespace is the lane prefix itself.
@@ -1160,7 +1488,7 @@ fn layout_banner_on_system_blank_lane_is_centered() -> Result<()> {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let leading = leading_spaces(lines.first().ok_or("row 0 must exist")?);
@@ -1201,7 +1529,7 @@ fn layout_system_notice_content_uses_normal_hint_with_lane_role_style() -> Resul
     let expected = hint_to_style(&StyleHint::Normal, theme.role_system, &theme);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check: the full style (fg + modifiers), not just the fg — `Meta`
     // shares a fg with some role styles but adds DIM.
@@ -1238,7 +1566,7 @@ fn layout_compaction_notice_content_uses_normal_hint_with_lane_role_style() -> R
     let expected = hint_to_style(&StyleHint::Normal, theme.role_compaction, &theme);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check: full-style equality. `role_compaction` and `tool_meta` share
     // the same fg but differ by the DIM modifier, so only the full style
@@ -1290,7 +1618,7 @@ fn layout_tool_marker_and_done_indicator_have_space_between() -> Result<()> {
     let block = tool_block_with_status(Some(ItemStatus::Done));
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let row0 = lines.first().ok_or("row 0 must exist")?;
@@ -1312,7 +1640,7 @@ fn layout_tool_marker_and_in_progress_indicator_have_space_between() -> Result<(
     let block = tool_block_with_status(Some(ItemStatus::InProgress));
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let row0 = lines.first().ok_or("row 0 must exist")?;
@@ -1334,7 +1662,7 @@ fn layout_tool_marker_without_status_is_two_chars() -> Result<()> {
     let block = tool_block_with_status(None);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let marker = row_zero_marker(&lines).ok_or("marker span must exist")?;
@@ -1375,7 +1703,7 @@ fn layout_every_marker_lane_renders_two_char_marker() -> Result<()> {
         (&compaction, "~ "),
         (&system, "\u{00b7} "),
     ] {
-        let lines = layout(block, &frame_ctx(80));
+        let lines = layout(block, &frame_ctx(80), &TuiTheme::default());
         let marker = row_zero_marker(&lines).ok_or("marker span must exist")?;
         assert_eq!(
             marker.content.as_ref(),
@@ -1392,7 +1720,7 @@ fn lane_prefix_width_matches_rendered_prefix_width() -> Result<()> {
     let block = tool_block_with_status(None);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
     let row0 = lines.first().ok_or("row 0 must exist")?;
     let cursor = row0.spans.first().ok_or("cursor span must exist")?;
     let marker = row_zero_marker(&lines).ok_or("marker span must exist")?;
@@ -1428,7 +1756,7 @@ fn layout_user_multi_content_line_rows_all_carry_rail() -> Result<()> {
     let block = markdown_block(MessageRole::User, "first line\nsecond line", Fill::Full);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     assert!(
@@ -1457,7 +1785,7 @@ fn layout_user_wrapped_continuation_rows_carry_rail() -> Result<()> {
     let block = markdown_block(MessageRole::User, long_text, Fill::Full);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(24));
+    let lines = layout(&block, &frame_ctx(24), &TuiTheme::default());
 
     // -- Check
     assert!(
@@ -1496,7 +1824,7 @@ fn layout_tool_wrapped_continuation_rows_have_blank_marker() -> Result<()> {
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check: row 0 carries ⚙; every continuation row's marker is blank.
     assert!(lines.len() >= 2, "summary must wrap; got {}", lines.len());
@@ -1531,7 +1859,7 @@ fn layout_compaction_wrapped_continuation_rows_have_blank_marker() -> Result<()>
     };
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check: row 0 carries ~; every continuation row's marker is blank.
     assert!(lines.len() >= 2, "notice must wrap; got {}", lines.len());
@@ -1575,7 +1903,7 @@ fn layout_consumes_block_source_project_output() -> Result<()> {
 
     // -- Exec
     let projected = block.source.project(80);
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check: the projection is the renderer's content source.
     let proj_row0 = projected.first().ok_or("projection row 0 must exist")?;
@@ -1604,7 +1932,7 @@ fn layout_markdown_content_is_project_output() -> Result<()> {
 
     // -- Exec
     let projected = block.source.project(80);
-    let lines = layout(&block, &frame_ctx(80));
+    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
 
     // -- Check
     let proj_text: String = projected
@@ -1620,6 +1948,86 @@ fn layout_markdown_content_is_project_output() -> Result<()> {
     assert!(
         rendered.contains("hello project"),
         "rendered content must include the projected markdown; got {rendered:?}"
+    );
+    Ok(())
+}
+
+// ========== active theme threading (task 7bd4c724) ==========
+
+/// WHEN `layout()` receives a non-default theme, THE syntax/diff colours SHALL
+/// resolve from that theme, not from `TuiTheme::default()`.
+#[test]
+fn layout_uses_caller_provided_theme_for_diff_tint() -> Result<()> {
+    // -- Setup & Fixtures
+    let mocha = TuiTheme::default();
+    let latte = TuiTheme::catppuccin_latte();
+    assert_ne!(
+        mocha.diff_add_bg, latte.diff_add_bg,
+        "fixture requires the two themes to differ on the add tint"
+    );
+    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n");
+
+    // -- Exec
+    let lines = layout(&block, &frame_ctx(80), &latte);
+
+    // -- Check: the added row carries the Latte tint, not the Mocha default.
+    let added = rows_containing(&lines, "new");
+    assert_eq!(added.len(), 1, "exactly one row must carry the added body");
+    for span in content_spans(added[0]) {
+        assert_eq!(
+            span.style.bg,
+            Some(latte.diff_add_bg),
+            "added line must carry the caller-provided theme's tint; span '{}' has {:?}",
+            span.content,
+            span.style.bg
+        );
+    }
+    Ok(())
+}
+
+/// WHEN `layout()` receives a non-default theme, THE lane row styles SHALL
+/// derive from that theme, not from `TuiTheme::default()`.
+#[test]
+fn layout_uses_caller_provided_theme_for_lane_row_style() -> Result<()> {
+    // -- Setup & Fixtures
+    let mocha = TuiTheme::default();
+    let latte = TuiTheme::catppuccin_latte();
+    assert_ne!(
+        mocha.row_user_bg, latte.row_user_bg,
+        "fixture requires the two themes to differ on the user row background"
+    );
+    let block = markdown_block(MessageRole::User, "hi", Fill::Full);
+
+    // -- Exec
+    let lines = layout(&block, &frame_ctx(80), &latte);
+
+    // -- Check
+    let span = span_containing(&lines, "hi").ok_or("user content span must exist")?;
+    assert_eq!(
+        span.style.bg,
+        Some(latte.row_user_bg),
+        "user row must carry the caller-provided theme's row background"
+    );
+    Ok(())
+}
+
+/// WHEN `measure()` receives a non-default theme, THE row count SHALL equal
+/// the count `layout()` produces for the same theme.
+#[test]
+fn measure_uses_caller_provided_theme() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = TuiTheme::catppuccin_frappe();
+    let block = tool_code_block("ls | where size > 1mb");
+    let ctx = frame_ctx(80);
+
+    // -- Exec
+    let measured = measure(&block, 80, &theme);
+    let laid_out = layout(&block, &ctx, &theme).len();
+
+    // -- Check
+    assert_eq!(
+        measured, laid_out,
+        "measure() must match layout() row count for the caller-provided theme"
     );
     Ok(())
 }
