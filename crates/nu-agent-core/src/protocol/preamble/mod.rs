@@ -9,4 +9,5 @@ pub use model_family::*;
 pub use resolve::{UserPreambleInput, resolve_preamble};
 
 #[cfg(test)]
+#[path = "../../../test/protocol/preamble/test.rs"]
 mod test;

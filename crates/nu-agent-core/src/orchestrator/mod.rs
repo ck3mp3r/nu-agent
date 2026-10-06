@@ -17,7 +17,8 @@ pub use events::{
 
 // Re-export handlers privately for internal use by the loop_impl module.
 pub(crate) use handlers::{
-    dispatch_compaction, handle_external_cancel, handle_worker_result, recv_or_pending,
+    dispatch_compaction, fail_busy_completion, handle_external_cancel, handle_worker_result,
+    recv_or_pending, reject_busy_task,
 };
 #[cfg(test)]
 pub(crate) use loop_impl::{
@@ -29,14 +30,17 @@ pub use loop_impl::{
 };
 
 #[cfg(test)]
-#[path = "orchestrator_loop_test.rs"]
+#[path = "../../test/orchestrator/orchestrator_loop.rs"]
 mod orchestrator_loop_test;
 #[cfg(test)]
-#[path = "stage_test.rs"]
+#[path = "../../test/orchestrator/stage.rs"]
 mod stage_test;
 #[cfg(test)]
+#[path = "../../test/orchestrator/test.rs"]
 mod test;
 #[cfg(test)]
+#[path = "../../test/orchestrator/shared.rs"]
 mod test_shared;
 #[cfg(test)]
+#[path = "../../test/orchestrator/turn_outcome.rs"]
 mod turn_outcome_test;

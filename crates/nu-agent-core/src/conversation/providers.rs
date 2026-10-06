@@ -3,13 +3,18 @@ use std::time::Duration;
 use nu_protocol::LabeledError;
 
 use crate::config::{Config, defaults};
+use crate::utils::crypto::ensure_crypto_provider;
+use crate::utils::env_map::{EnvMap, process_env};
 
 /// Build a shared HTTP client with a connect timeout and optional read timeout.
 ///
 /// Read timeout: defaults to 120s — fires only when no bytes received for the duration.
 ///   Pass `Some(0)` to disable. This is safe for long active LLM responses.
 /// Uses system certificate store via rustls-native-certs (supports corporate CAs).
-fn build_http_client(read_timeout_secs: Option<u64>) -> Result<reqwest::Client, LabeledError> {
+pub(crate) fn build_http_client(
+    read_timeout_secs: Option<u64>,
+) -> Result<reqwest::Client, LabeledError> {
+    ensure_crypto_provider();
     let read_timeout = read_timeout_secs.unwrap_or(defaults::READ_TIMEOUT_SECS);
     let mut builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
@@ -33,6 +38,18 @@ fn build_http_client(read_timeout_secs: Option<u64>) -> Result<reqwest::Client, 
 pub(super) fn build_copilot_client(
     config: &Config,
 ) -> Result<rig::providers::copilot::Client, LabeledError> {
+    build_copilot_client_with(config, &process_env(), None)
+}
+
+/// Build a GitHub Copilot client against an explicit environment map.
+///
+/// `token_dir` overrides the directory rig-core uses for its cached OAuth
+/// access-token and api-key files. `None` keeps rig-core's platform default.
+pub(super) fn build_copilot_client_with(
+    config: &Config,
+    env: &EnvMap,
+    token_dir: Option<&std::path::Path>,
+) -> Result<rig::providers::copilot::Client, LabeledError> {
     let auth_err = |e: rig::http_client::Error| {
         LabeledError::new(format!(
             "Copilot auth failed: {e}. Run `agent auth login` to authenticate."
@@ -45,16 +62,8 @@ pub(super) fn build_copilot_client(
     let base_url = config
         .base_url
         .clone()
-        .or_else(|| {
-            std::env::var("GITHUB_COPILOT_API_BASE")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-        })
-        .or_else(|| {
-            std::env::var("COPILOT_BASE_URL")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-        });
+        .or_else(|| non_empty(env, "GITHUB_COPILOT_API_BASE"))
+        .or_else(|| non_empty(env, "COPILOT_BASE_URL"));
 
     // 1. Explicit api_key from --api-key flag or plugin config
     if let Some(key) = &config.api_key {
@@ -63,39 +72,34 @@ pub(super) fn build_copilot_client(
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
-        return b
-            .api_key::<rig::providers::copilot::CopilotAuth>(key.clone())
-            .build()
-            .map_err(auth_err);
+        let b = b.api_key::<rig::providers::copilot::CopilotAuth>(key.clone());
+        return with_token_dir(b, token_dir).build().map_err(auth_err);
     }
 
     // 2. GITHUB_COPILOT_API_KEY / COPILOT_API_KEY env var
-    if let Ok(key) =
-        std::env::var("GITHUB_COPILOT_API_KEY").or_else(|_| std::env::var("COPILOT_API_KEY"))
-        && !key.trim().is_empty()
+    if let Some(key) =
+        non_empty(env, "GITHUB_COPILOT_API_KEY").or_else(|| non_empty(env, "COPILOT_API_KEY"))
     {
         log::debug!("Copilot auth: using GITHUB_COPILOT_API_KEY");
         let mut b = rig::providers::copilot::Client::builder().http_client(http_client.clone());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
-        return b
-            .api_key::<rig::providers::copilot::CopilotAuth>(key)
-            .build()
-            .map_err(auth_err);
+        let b = b.api_key::<rig::providers::copilot::CopilotAuth>(key);
+        return with_token_dir(b, token_dir).build().map_err(auth_err);
     }
 
     // 3. COPILOT_GITHUB_ACCESS_TOKEN / GITHUB_TOKEN env var
-    if let Ok(token) =
-        std::env::var("COPILOT_GITHUB_ACCESS_TOKEN").or_else(|_| std::env::var("GITHUB_TOKEN"))
-        && !token.trim().is_empty()
+    if let Some(token) =
+        non_empty(env, "COPILOT_GITHUB_ACCESS_TOKEN").or_else(|| non_empty(env, "GITHUB_TOKEN"))
     {
         log::debug!("Copilot auth: using COPILOT_GITHUB_ACCESS_TOKEN/GITHUB_TOKEN");
         let mut b = rig::providers::copilot::Client::builder().http_client(http_client.clone());
         if let Some(url) = &base_url {
             b = b.base_url(url.clone());
         }
-        return b.github_access_token(token).build().map_err(auth_err);
+        let b = b.github_access_token(token);
+        return with_token_dir(b, token_dir).build().map_err(auth_err);
     }
 
     // 4. OAuth — delegate the full lifecycle to rig-core: reads cached access-token,
@@ -105,7 +109,34 @@ pub(super) fn build_copilot_client(
     if let Some(url) = &base_url {
         b = b.base_url(url.clone());
     }
-    b.oauth().build().map_err(auth_err)
+    let b = b.oauth();
+    with_token_dir(b, token_dir).build().map_err(auth_err)
+}
+
+/// A Copilot client builder that has already resolved its auth source.
+type CopilotAuthedBuilder = rig::client::ClientBuilder<
+    rig::providers::copilot::CopilotBuilder,
+    rig::providers::copilot::CopilotAuth,
+    reqwest::Client,
+>;
+
+/// Point rig-core's cached OAuth token files at `token_dir` when one is given.
+fn with_token_dir(
+    builder: CopilotAuthedBuilder,
+    token_dir: Option<&std::path::Path>,
+) -> CopilotAuthedBuilder {
+    match token_dir {
+        Some(dir) => builder.token_dir(dir),
+        None => builder,
+    }
+}
+
+/// Look up `key`, treating an empty value as absent.
+fn non_empty(env: &EnvMap, key: &str) -> Option<String> {
+    env.get(key)
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Build an OpenAI client using rig's builder pattern.
@@ -316,5 +347,5 @@ impl CachedProviderClient {
 pub type ClientCacheKey = (String, Option<String>, Option<String>, Option<u64>);
 
 #[cfg(test)]
-#[path = "providers_test.rs"]
+#[path = "../../test/conversation/providers.rs"]
 mod providers_test;

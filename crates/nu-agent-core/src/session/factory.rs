@@ -208,29 +208,29 @@ impl SessionStore for SessionStoreBackend {
 /// For `Jsonl`, uses `xdg::cache_dir().join("nu-agent").join("sessions")` as the base path.
 /// For `Sqlite`, uses `xdg::cache_dir().join("nu-agent").join("sessions.db")` as the database path.
 pub async fn create_store(store_type: StoreType) -> Result<SessionStoreBackend, StoreError> {
+    let cache_dir = crate::utils::xdg::cache_dir().map_err(|e| {
+        StoreError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Failed to resolve XDG cache directory: {e}"),
+        ))
+    })?;
+    create_store_in(store_type, &cache_dir).await
+}
+
+/// Create a session store rooted at an explicit cache directory.
+///
+/// `Memory` ignores `cache_dir` entirely — it never touches the filesystem.
+pub async fn create_store_in(
+    store_type: StoreType,
+    cache_dir: &std::path::Path,
+) -> Result<SessionStoreBackend, StoreError> {
     match store_type {
         StoreType::Jsonl => {
-            let path = crate::utils::xdg::cache_dir()
-                .map_err(|e| {
-                    StoreError::Io(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("Failed to resolve XDG cache directory: {e}"),
-                    ))
-                })?
-                .join("nu-agent")
-                .join("sessions");
+            let path = cache_dir.join("nu-agent").join("sessions");
             Ok(SessionStoreBackend::Fs(FsSessionStore::new(path)))
         }
         StoreType::Sqlite => {
-            let path = crate::utils::xdg::cache_dir()
-                .map_err(|e| {
-                    StoreError::Io(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("Failed to resolve XDG cache directory: {e}"),
-                    ))
-                })?
-                .join("nu-agent")
-                .join("sessions.db");
+            let path = cache_dir.join("nu-agent").join("sessions.db");
             let path_str = path
                 .to_str()
                 .ok_or_else(|| {

@@ -4,9 +4,9 @@ pub use list::AgentModelsList;
 pub use sync::AgentModelsSync;
 
 #[cfg(test)]
-#[path = "sync_test.rs"]
+#[path = "../../../test/command/models/sync.rs"]
 mod sync_test;
 
 #[cfg(test)]
-#[path = "list_test.rs"]
+#[path = "../../../test/command/models/list.rs"]
 mod list_test;

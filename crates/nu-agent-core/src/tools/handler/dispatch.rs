@@ -30,5 +30,5 @@ pub fn llm_visible_tool_definitions(
 }
 
 #[cfg(test)]
-#[path = "dispatch_test.rs"]
+#[path = "../../../test/tools/handler/dispatch.rs"]
 mod dispatch_test;

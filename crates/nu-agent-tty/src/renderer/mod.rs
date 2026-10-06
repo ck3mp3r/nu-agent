@@ -1,9 +1,12 @@
 #[cfg(test)]
+#[path = "../../test/renderer/contract.rs"]
 mod contract_test;
 #[cfg(test)]
+#[path = "../../test/renderer/streaming.rs"]
 mod streaming_test;
 pub mod tty;
 #[cfg(test)]
+#[path = "../../test/renderer/tty.rs"]
 mod tty_test;
 
 use nu_agent_core::protocol::event::{ToolDisplay, UiEvent};

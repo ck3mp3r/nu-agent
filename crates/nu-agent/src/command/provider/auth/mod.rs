@@ -7,13 +7,13 @@ pub use logout::AgentProviderAuthLogout;
 pub use status::AgentProviderAuthStatus;
 
 #[cfg(test)]
-#[path = "login_test.rs"]
+#[path = "../../../../test/command/provider/auth/login.rs"]
 mod login_test;
 
 #[cfg(test)]
-#[path = "logout_test.rs"]
+#[path = "../../../../test/command/provider/auth/logout.rs"]
 mod logout_test;
 
 #[cfg(test)]
-#[path = "status_test.rs"]
+#[path = "../../../../test/command/provider/auth/status.rs"]
 mod status_test;

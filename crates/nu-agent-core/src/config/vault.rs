@@ -541,7 +541,7 @@ impl StateStore for VaultStateStore {
 // region:    --- Tests
 
 #[cfg(test)]
-#[path = "vault_test.rs"]
+#[path = "../../test/config/vault.rs"]
 mod vault_test;
 
 // endregion: --- Tests

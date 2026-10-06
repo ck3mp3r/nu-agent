@@ -46,5 +46,5 @@ fn message_char_count(msg: &Message) -> usize {
 }
 
 #[cfg(test)]
-#[path = "token_estimate_test.rs"]
+#[path = "../../../test/conversation/turn/token_estimate.rs"]
 mod test;

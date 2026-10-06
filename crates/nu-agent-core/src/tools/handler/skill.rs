@@ -46,5 +46,5 @@ impl BuiltinTool for SkillTool {
 }
 
 #[cfg(test)]
-#[path = "skill_test.rs"]
+#[path = "../../../test/tools/handler/skill.rs"]
 mod tests;

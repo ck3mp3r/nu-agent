@@ -57,6 +57,52 @@ pub(crate) fn auto_complete_a2a_task(store: &InMemoryTaskStore, task_id: &str, r
     }
 }
 
+/// Auto-fail an A2A task with the turn's error message.
+///
+/// Mirrors [`auto_complete_a2a_task`]: transitions the task to `Failed` with
+/// `error` as the status message. Logs a warning if the transition fails.
+pub(crate) fn auto_fail_a2a_task(store: &InMemoryTaskStore, task_id: &str, error: &str) {
+    if let Err(e) = store.fail_task(task_id, error) {
+        log::warn!("Failed to auto-fail A2A task {task_id}: {e}");
+    }
+}
+
+/// Apply a turn-outcome event to the A2A task store.
+///
+/// `TaskCompleted` completes the task with the turn output; `TaskFailed` fails
+/// it with the error text. Every other variant is ignored. Store errors are
+/// logged, never propagated.
+pub(crate) fn apply_turn_event_to_store(store: &InMemoryTaskStore, event: &TurnEvent) {
+    match event {
+        TurnEvent::TaskCompleted { output, task_id } => {
+            if let Err(e) = store.complete_task(task_id, output) {
+                log::warn!("auto-complete failed for task {task_id}: {e}");
+            }
+        }
+        TurnEvent::TaskFailed { task_id, error } => {
+            if let Err(e) = store.fail_task(task_id, error) {
+                log::warn!("auto-fail failed for task {task_id}: {e}");
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Apply an A2A turn result to the task store.
+///
+/// A successful turn completes the task; a failed turn fails it with the
+/// error message. Mirrors the TUI listener's outcome handling for stderr mode.
+pub(crate) fn apply_a2a_turn_result(
+    store: &InMemoryTaskStore,
+    task_id: &str,
+    result: &Result<Value, LabeledError>,
+) {
+    match result {
+        Ok(response) => auto_complete_a2a_task(store, task_id, response),
+        Err(error) => auto_fail_a2a_task(store, task_id, &error.msg),
+    }
+}
+
 /// Attach the session derived from an A2A `contextId`.
 ///
 /// Derives the session-store key as `{prefix}-{context_id}` (where `prefix` is
@@ -246,11 +292,12 @@ pub(crate) async fn run_tui_mode(
     let task_cancel_rx = options.a2a.task_cancel_rx;
     let a2a_task_rx = options.a2a.task_rx;
     let a2a_completion_rx = options.a2a.completion_rx;
+    let a2a_task_store = options.a2a.task_store.clone();
 
-    // Auto-complete A2A tasks from turn-completion events on the signal bus.
-    // The session stage publishes `TurnEvent::TaskCompleted` with the task ID after
-    // each external turn completes. A background thread reads these and calls
-    // `store.complete_task()`.
+    // Auto-complete or auto-fail A2A tasks from turn-outcome events on the
+    // signal bus. The session stage publishes `TurnEvent::TaskCompleted` on
+    // success and `TurnEvent::TaskFailed` on error/cancellation, each carrying
+    // the task ID. A background task reads these and transitions the task.
     if let Some(store) = &options.a2a.task_store {
         let store = Arc::clone(store);
         let bus = runtime_impl.bus.clone();
@@ -258,15 +305,7 @@ pub(crate) async fn run_tui_mode(
             let mut turn_rx = bus.turn().subscribe();
             loop {
                 match turn_rx.recv().await {
-                    Ok(TurnEvent::TaskCompleted { output, task_id }) => {
-                        if let Err(e) = store.complete_task(&task_id, &output) {
-                            log::warn!("auto-complete failed for task {task_id}: {e}");
-                        }
-                    }
-                    Ok(TurnEvent::Started { .. }) => {}
-                    // `TurnEvent::Completed` is no longer sent on the turn
-                    // channel (it moved to `ui_event`); ignore it.
-                    Ok(_) => {}
+                    Ok(event) => apply_turn_event_to_store(&store, &event),
                     Err(nu_agent_core::bus::ChannelError::Lagged { .. }) => {}
                     Err(nu_agent_core::bus::ChannelError::Closed) => break,
                     Err(_) => {}
@@ -334,6 +373,7 @@ pub(crate) async fn run_tui_mode(
                 .with_task_cancel_rx(task_cancel_rx)
                 .with_a2a_task_rx(a2a_task_rx)
                 .with_a2a_completion_rx(a2a_completion_rx)
+                .with_task_store(a2a_task_store.clone())
                 .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()));
             if let Some(cb) = on_agent_switch {
                 config = config.with_on_agent_switch(cb);
@@ -346,6 +386,7 @@ pub(crate) async fn run_tui_mode(
                 .with_task_cancel_rx(task_cancel_rx)
                 .with_a2a_task_rx(a2a_task_rx)
                 .with_a2a_completion_rx(a2a_completion_rx)
+                .with_task_store(a2a_task_store.clone())
                 .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()));
             if let Some(cb) = on_agent_switch {
                 config = config.with_on_agent_switch(cb);
@@ -417,11 +458,10 @@ pub(crate) async fn run_stderr_mode(
         )
         .await;
 
-        // Auto-complete the A2A task after the LLM finishes its tool chain
-        if let Some(store) = &a2a.task_store
-            && let Ok(response) = &result
-        {
-            auto_complete_a2a_task(store, &task_id, response);
+        // Auto-complete or auto-fail the A2A task after the LLM finishes its
+        // tool chain. On error the task must not stay in Working.
+        if let Some(store) = &a2a.task_store {
+            apply_a2a_turn_result(store, &task_id, &result);
         }
 
         return result;

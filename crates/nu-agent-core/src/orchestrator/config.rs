@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use nu_agent_a2a::{A2aCompletionEvent, IncomingTask};
+use nu_agent_a2a::{A2aCompletionEvent, InMemoryTaskStore, IncomingTask};
 use nu_protocol::Span;
 use tokio::sync::mpsc;
 
@@ -26,6 +26,9 @@ pub struct InteractiveLoopConfig<F = fn(mpsc::Sender<OrchestratorEvent>)> {
     pub a2a_task_rx: Option<mpsc::Receiver<IncomingTask>>,
     /// Optional channel for receiving A2A completion events directly.
     pub a2a_completion_rx: Option<mpsc::Receiver<A2aCompletionEvent>>,
+    /// Optional A2A task store. When present, tasks that arrive while the
+    /// worker is busy are rejected or failed instead of dispatched.
+    pub task_store: Option<Arc<InMemoryTaskStore>>,
     /// Shared cancellation bus.
     pub bus: Bus,
     /// Optional hydration config for resuming a prior session.
@@ -48,6 +51,7 @@ impl InteractiveLoopConfig<fn(mpsc::Sender<OrchestratorEvent>)> {
             task_cancel_rx: None,
             a2a_task_rx: None,
             a2a_completion_rx: None,
+            task_store: None,
             bus: crate::bus::create_bus(),
             hydration: None,
             on_agent_switch: None,
@@ -81,6 +85,12 @@ impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static> InteractiveLoo
         rx: Option<mpsc::Receiver<A2aCompletionEvent>>,
     ) -> Self {
         self.a2a_completion_rx = rx;
+        self
+    }
+
+    /// Set the A2A task store.
+    pub fn with_task_store(mut self, store: Option<Arc<InMemoryTaskStore>>) -> Self {
+        self.task_store = store;
         self
     }
 
@@ -124,6 +134,7 @@ impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static> InteractiveLoo
             task_cancel_rx,
             a2a_task_rx,
             a2a_completion_rx,
+            task_store,
             bus,
             hydration,
             on_agent_switch,
@@ -135,6 +146,7 @@ impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static> InteractiveLoo
             task_cancel_rx,
             a2a_task_rx,
             a2a_completion_rx,
+            task_store,
             bus,
             hydration,
             on_agent_switch,

@@ -5,6 +5,7 @@ mod sanitize;
 mod unified;
 
 #[cfg(test)]
+#[path = "../../../test/transcript/markdown/test.rs"]
 mod test;
 
 pub use render::{

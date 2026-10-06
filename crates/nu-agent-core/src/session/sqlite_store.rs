@@ -294,6 +294,6 @@ impl SessionStore for SqliteSessionStore {
     }
 }
 
-#[cfg(test)]
-#[path = "sqlite_store_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/session/sqlite_store.rs"]
 mod sqlite_store_test;

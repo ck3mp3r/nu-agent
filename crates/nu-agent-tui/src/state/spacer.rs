@@ -89,7 +89,7 @@ impl SpacerStateMachine {
 // region:    --- Tests
 
 #[cfg(test)]
-#[path = "spacer_test.rs"]
+#[path = "../../test/state/spacer.rs"]
 mod tests;
 
 // endregion: --- Tests

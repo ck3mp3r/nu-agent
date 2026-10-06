@@ -64,5 +64,5 @@ impl Default for McpCircuitBreaker {
 }
 
 #[cfg(test)]
-#[path = "circuit_breaker_test.rs"]
+#[path = "../../../test/tools/mcp/circuit_breaker.rs"]
 mod circuit_breaker_test;

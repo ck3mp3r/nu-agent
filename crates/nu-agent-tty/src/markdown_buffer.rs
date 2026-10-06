@@ -165,5 +165,5 @@ fn count_run(bytes: &[u8], start: usize, c: char) -> usize {
 }
 
 #[cfg(test)]
-#[path = "markdown_buffer_test.rs"]
+#[path = "../test/markdown_buffer.rs"]
 mod markdown_buffer_test;

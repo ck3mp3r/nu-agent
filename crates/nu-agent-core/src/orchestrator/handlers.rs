@@ -8,6 +8,9 @@ use crate::orchestrator::WorkerCommand;
 use crate::orchestrator::stages::{OrchestrationContext, SessionHandler, UiRequestHandler};
 use crate::orchestrator::turn_outcome::TurnOutcome;
 
+/// Reason recorded on a task rejected or failed because the worker was busy.
+pub(crate) const WORKER_BUSY_REASON: &str = "Worker busy: another turn is already running";
+
 /// Dispatch a compaction command to the worker, or queue it if a compaction is
 /// already in flight or the worker is busy running a turn.
 pub(crate) async fn dispatch_compaction(
@@ -94,6 +97,40 @@ pub(crate) async fn handle_external_cancel(task_id: String, ctx: &mut Orchestrat
         let _ = ctx.bus.cancel().send(CancelEvent::Requested).await;
     } else {
         *ctx.pending_external_cancel = Some(task_id);
+    }
+}
+
+/// Reject an incoming A2A task that arrived while the worker was busy.
+///
+/// The server handler already transitioned the task `Submitted`→`Working`, so
+/// leaving it untouched would strand the A2A caller. When no task store is
+/// present the task is logged and dropped.
+pub(crate) fn reject_busy_task(task_id: &str, ctx: &OrchestrationContext<'_>) {
+    let Some(store) = ctx.task_store else {
+        log::warn!(
+            "A2A task {task_id} arrived while the worker was busy; no task store to reject it"
+        );
+        return;
+    };
+    if let Err(e) = store.reject_task(task_id, WORKER_BUSY_REASON) {
+        log::warn!("failed to reject busy A2A task {task_id}: {e}");
+    }
+}
+
+/// Fail an A2A completion event that arrived while the worker was busy.
+///
+/// The completion prompt cannot run while the worker is busy, so the task is
+/// failed rather than left in `Working`. When no task store is present the
+/// event is logged and dropped.
+pub(crate) fn fail_busy_completion(task_id: &str, ctx: &OrchestrationContext<'_>) {
+    let Some(store) = ctx.task_store else {
+        log::warn!(
+            "A2A completion for {task_id} arrived while the worker was busy; no task store to fail it"
+        );
+        return;
+    };
+    if let Err(e) = store.fail_task(task_id, WORKER_BUSY_REASON) {
+        log::warn!("failed to fail busy A2A completion {task_id}: {e}");
     }
 }
 

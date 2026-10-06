@@ -1,0 +1,811 @@
+use super::{InMemoryTaskStore, TaskStoreBackend, task_event_to_stream_response};
+use crate::{
+    A2aError, Artifact, Message, Part, PushAuthScheme, PushAuthenticationInfo, Role, TaskEvent,
+    TaskState, TaskStatus,
+};
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+// ---------------------------------------------------------------------------
+// InMemoryTaskStore
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_create_task() {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    assert!(!task.id.is_empty(), "Task should have an ID");
+    // UUID format: 8-4-4-4-12 hex chars
+    assert_eq!(task.id.len(), 36, "UUID should be 36 chars");
+    assert_eq!(task.status.state, TaskState::Submitted);
+    assert!(task.context_id.is_none());
+    assert!(task.parent_task_id.is_none());
+}
+
+#[test]
+fn test_create_task_with_context_id() {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(Some("ctx-1".to_string()), None, None);
+    assert_eq!(task.context_id, Some("ctx-1".to_string()));
+    assert!(task.parent_task_id.is_none());
+}
+
+#[test]
+fn test_create_task_with_parent_task_id() {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, Some("parent-1".to_string()), None);
+    assert_eq!(task.parent_task_id, Some("parent-1".to_string()));
+    assert!(task.context_id.is_none());
+}
+
+#[test]
+fn test_create_task_with_all_options() {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(
+        Some("ctx-1".to_string()),
+        Some("parent-1".to_string()),
+        None,
+    );
+    assert_eq!(task.context_id, Some("ctx-1".to_string()));
+    assert_eq!(task.parent_task_id, Some("parent-1".to_string()));
+}
+
+#[test]
+fn test_get_task_returns_created() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let created = store.create_task(None, None, None);
+    let retrieved = store.get_task(&created.id).map_err(|e| format!("{e:?}"))?;
+    assert_eq!(retrieved.id, created.id);
+    assert_eq!(retrieved.status.state, created.status.state);
+    Ok(())
+}
+
+#[test]
+fn test_get_task_not_found() {
+    let store = InMemoryTaskStore::default();
+    let result = store.get_task("nonexistent-id");
+    assert!(matches!(result, Err(A2aError::TaskNotFound(_))));
+}
+
+#[test]
+fn test_update_status_valid() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    let updated = store
+        .update_status(&task.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+    assert_eq!(updated.status.state, TaskState::Working);
+    Ok(())
+}
+
+#[test]
+fn test_update_status_invalid() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    store
+        .update_status(&task.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+    let result = store.update_status(&task.id, TaskState::Submitted, None);
+    assert!(matches!(
+        result,
+        Err(A2aError::InvalidStateTransition { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn test_cancel_task() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    let canceled = store.cancel_task(&task.id).map_err(|e| format!("{e:?}"))?;
+    assert_eq!(canceled.status.state, TaskState::Canceled);
+    Ok(())
+}
+
+#[test]
+fn test_cancel_completed_fails() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    store
+        .update_status(&task.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+    store
+        .update_status(&task.id, TaskState::Completed, None)
+        .map_err(|e| format!("{e:?}"))?;
+    let result = store.cancel_task(&task.id);
+    assert!(result.is_err(), "Cannot cancel a completed task");
+    Ok(())
+}
+
+#[test]
+fn test_add_artifact() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    let artifact = Artifact {
+        artifact_id: "art-1".to_string(),
+        name: Some("result.txt".to_string()),
+        parts: vec![],
+        metadata: None,
+    };
+    let updated = store
+        .add_artifact(&task.id, artifact.clone())
+        .map_err(|e| format!("{e:?}"))?;
+    assert_eq!(updated.artifacts.len(), 1);
+    assert_eq!(updated.artifacts[0].artifact_id, "art-1");
+    Ok(())
+}
+
+#[test]
+fn test_list_tasks() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let t1 = store.create_task(None, None, None);
+    let _t2 = store.create_task(None, None, None);
+    let t3 = store.create_task(None, None, None);
+    // Move t1 and t3 to Working
+    store
+        .update_status(&t1.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+    store
+        .update_status(&t3.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+
+    let all = store.list_tasks(None);
+    assert_eq!(all.len(), 3);
+
+    let working = store.list_tasks(Some(TaskState::Working));
+    assert_eq!(working.len(), 2);
+
+    let submitted = store.list_tasks(Some(TaskState::Submitted));
+    assert_eq!(submitted.len(), 1);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_create_task_with_idempotency_new_key() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store
+        .create_task_with_idempotency("key-1", None, None, None)
+        .map_err(|e| format!("{e:?}"))?;
+    assert!(!task.id.is_empty(), "Task should have an ID");
+    assert_eq!(task.status.state, TaskState::Submitted);
+    Ok(())
+}
+
+#[test]
+fn test_create_task_with_idempotency_same_key_returns_same() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task1 = store
+        .create_task_with_idempotency("key-dup", None, None, None)
+        .map_err(|e| format!("{e:?}"))?;
+
+    // Second call with same key should return Err with existing task
+    let result = store.create_task_with_idempotency("key-dup", None, None, None);
+    match result {
+        Err(boxed) => {
+            let (existing, is_dup) = *boxed;
+            assert!(is_dup, "should be marked as duplicate");
+            assert_eq!(existing.id, task1.id, "should return same task");
+        }
+        Ok(_) => panic!("expected duplicate error"),
+    }
+    Ok(())
+}
+
+#[test]
+fn test_create_task_with_idempotency_different_keys_create_different_tasks() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task1 = store
+        .create_task_with_idempotency("key-a", None, None, None)
+        .map_err(|e| format!("{e:?}"))?;
+    let task2 = store
+        .create_task_with_idempotency("key-b", None, None, None)
+        .map_err(|e| format!("{e:?}"))?;
+
+    assert_ne!(
+        task1.id, task2.id,
+        "different keys should create different tasks"
+    );
+    assert_eq!(task1.status.state, TaskState::Submitted);
+    assert_eq!(task2.status.state, TaskState::Submitted);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// is_valid_transition
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_is_valid_transition_all_valid() {
+    // Test every valid transition
+    assert!(super::is_valid_transition(
+        &TaskState::Submitted,
+        &TaskState::Working
+    ));
+    assert!(super::is_valid_transition(
+        &TaskState::Submitted,
+        &TaskState::Canceled
+    ));
+    assert!(super::is_valid_transition(
+        &TaskState::Submitted,
+        &TaskState::Rejected
+    ));
+    assert!(super::is_valid_transition(
+        &TaskState::Working,
+        &TaskState::InputRequired
+    ));
+    assert!(super::is_valid_transition(
+        &TaskState::Working,
+        &TaskState::Completed
+    ));
+    assert!(super::is_valid_transition(
+        &TaskState::Working,
+        &TaskState::Failed
+    ));
+    assert!(super::is_valid_transition(
+        &TaskState::Working,
+        &TaskState::Canceled
+    ));
+    assert!(super::is_valid_transition(
+        &TaskState::Working,
+        &TaskState::Rejected
+    ));
+    assert!(super::is_valid_transition(
+        &TaskState::InputRequired,
+        &TaskState::Working
+    ));
+    assert!(super::is_valid_transition(
+        &TaskState::InputRequired,
+        &TaskState::Canceled
+    ));
+}
+
+#[test]
+fn test_is_valid_transition_all_invalid() {
+    // Terminal states reject everything
+    for terminal in &[
+        TaskState::Completed,
+        TaskState::Failed,
+        TaskState::Canceled,
+        TaskState::Rejected,
+    ] {
+        for target in &[
+            TaskState::Submitted,
+            TaskState::Working,
+            TaskState::InputRequired,
+            TaskState::Completed,
+            TaskState::Failed,
+            TaskState::Canceled,
+            TaskState::Rejected,
+        ] {
+            assert!(
+                !super::is_valid_transition(terminal, target),
+                "{:?} -> {:?} should be invalid",
+                terminal,
+                target
+            );
+        }
+    }
+    // Explicit invalid: Working -> Submitted
+    assert!(!super::is_valid_transition(
+        &TaskState::Working,
+        &TaskState::Submitted
+    ));
+}
+
+#[test]
+fn test_complete_task() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    store
+        .update_status(&task.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+
+    let completed = store
+        .complete_task(&task.id, "result data")
+        .map_err(|e| format!("{e:?}"))?;
+    assert_eq!(completed.status.state, TaskState::Completed);
+    assert_eq!(completed.artifacts.len(), 1);
+    assert_eq!(
+        completed.artifacts[0].parts[0],
+        Part::Text {
+            text: "result data".into()
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn test_complete_submitted_task_fails() {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    let result = store.complete_task(&task.id, "data");
+    assert!(result.is_err(), "Cannot complete a Submitted task directly");
+}
+
+#[test]
+fn test_reject_task_from_submitted() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+
+    let rejected = store
+        .reject_task(&task.id, "busy")
+        .map_err(|e| format!("{e:?}"))?;
+
+    assert_eq!(rejected.status.state, TaskState::Rejected);
+    let message = rejected.status.message.ok_or("should have a message")?;
+    assert_eq!(message.role, Role::Agent);
+    assert_eq!(
+        message.parts,
+        vec![Part::Text {
+            text: "busy".into()
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn test_reject_task_from_working() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    store
+        .update_status(&task.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+
+    let rejected = store
+        .reject_task(&task.id, "busy")
+        .map_err(|e| format!("{e:?}"))?;
+
+    assert_eq!(rejected.status.state, TaskState::Rejected);
+    let message = rejected.status.message.ok_or("should have a message")?;
+    assert_eq!(message.role, Role::Agent);
+    assert_eq!(
+        message.parts,
+        vec![Part::Text {
+            text: "busy".into()
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn test_fail_task_from_working() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    store
+        .update_status(&task.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+
+    let failed = store
+        .fail_task(&task.id, "turn failed")
+        .map_err(|e| format!("{e:?}"))?;
+
+    assert_eq!(failed.status.state, TaskState::Failed);
+    let message = failed.status.message.ok_or("should have a message")?;
+    assert_eq!(message.role, Role::Agent);
+    assert_eq!(
+        message.parts,
+        vec![Part::Text {
+            text: "turn failed".into()
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn test_fail_task_on_terminal_state_fails() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    store
+        .update_status(&task.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+    store
+        .complete_task(&task.id, "done")
+        .map_err(|e| format!("{e:?}"))?;
+
+    let result = store.fail_task(&task.id, "too late");
+    assert!(matches!(
+        result,
+        Err(A2aError::InvalidStateTransition { .. })
+    ));
+    let unchanged = store.get_task(&task.id).map_err(|e| format!("{e:?}"))?;
+    assert_eq!(unchanged.status.state, TaskState::Completed);
+    Ok(())
+}
+
+#[test]
+fn test_reject_task_on_terminal_state_fails() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    store
+        .update_status(&task.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+    store
+        .complete_task(&task.id, "done")
+        .map_err(|e| format!("{e:?}"))?;
+
+    let result = store.reject_task(&task.id, "too late");
+    assert!(matches!(
+        result,
+        Err(A2aError::InvalidStateTransition { .. })
+    ));
+    let unchanged = store.get_task(&task.id).map_err(|e| format!("{e:?}"))?;
+    assert_eq!(unchanged.status.state, TaskState::Completed);
+    Ok(())
+}
+
+#[test]
+fn test_concurrent_writes() {
+    use std::sync::Arc;
+    use std::thread;
+
+    let store = Arc::new(InMemoryTaskStore::default());
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+        let s = store.clone();
+        handles.push(thread::spawn(move || {
+            s.create_task(None, None, None);
+        }));
+    }
+
+    for h in handles {
+        h.join().expect("Thread panicked");
+    }
+
+    assert_eq!(
+        store.list_tasks(None).len(),
+        10,
+        "All 10 concurrent creates should succeed"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// list_tasks_filtered
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_list_tasks_filtered_empty_store() {
+    let store = InMemoryTaskStore::default();
+    let (tasks, token) = store.list_tasks_filtered(None, None, 50, None);
+    assert!(tasks.is_empty());
+    assert!(token.is_none());
+}
+
+#[test]
+fn test_list_tasks_filtered_all() {
+    let store = InMemoryTaskStore::default();
+    store.create_task(None, None, None);
+    store.create_task(None, None, None);
+    store.create_task(None, None, None);
+    let (tasks, token) = store.list_tasks_filtered(None, None, 50, None);
+    assert_eq!(tasks.len(), 3);
+    assert!(token.is_none());
+}
+
+#[test]
+fn test_list_tasks_filtered_by_status() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let t1 = store.create_task(None, None, None);
+    store
+        .update_status(&t1.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+    let _t2 = store.create_task(None, None, None);
+    let (working, _) = store.list_tasks_filtered(Some(TaskState::Working), None, 50, None);
+    let (submitted, _) = store.list_tasks_filtered(Some(TaskState::Submitted), None, 50, None);
+    assert_eq!(working.len(), 1);
+    assert_eq!(submitted.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn test_list_tasks_filtered_by_context_id() {
+    let store = InMemoryTaskStore::default();
+    store.create_task(Some("ctx-a".to_string()), None, None);
+    store.create_task(Some("ctx-a".to_string()), None, None);
+    store.create_task(Some("ctx-b".to_string()), None, None);
+
+    let (ctx_a, _) = store.list_tasks_filtered(None, Some("ctx-a"), 50, None);
+    assert_eq!(ctx_a.len(), 2, "should filter by contextId");
+
+    let (ctx_b, _) = store.list_tasks_filtered(None, Some("ctx-b"), 50, None);
+    assert_eq!(ctx_b.len(), 1);
+
+    let (missing, _) = store.list_tasks_filtered(None, Some("ctx-missing"), 50, None);
+    assert!(missing.is_empty());
+}
+
+#[test]
+fn test_list_tasks_filtered_pagination() {
+    let store = InMemoryTaskStore::default();
+    for _ in 0..10 {
+        store.create_task(None, None, None);
+    }
+    let (page1, token) = store.list_tasks_filtered(None, None, 3, None);
+    assert_eq!(page1.len(), 3);
+    assert!(token.is_some(), "Should have next page token");
+    let (page2, token2) = store.list_tasks_filtered(None, None, 3, token.as_deref());
+    assert_eq!(page2.len(), 3);
+    assert!(token2.is_some());
+}
+
+#[test]
+fn test_list_tasks_filtered_pagination_last_page() {
+    let store = InMemoryTaskStore::default();
+    for _ in 0..3 {
+        store.create_task(None, None, None);
+    }
+    let (page, token) = store.list_tasks_filtered(None, None, 10, None);
+    assert_eq!(page.len(), 3);
+    assert!(token.is_none(), "No more pages when results <= limit");
+}
+
+// ---------------------------------------------------------------------------
+// List ordering (spec §3.1.4 — status timestamp DESC)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_list_tasks_filtered_sorts_by_status_timestamp_desc() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let oldest = store.create_task(None, None, None);
+    let middle = store.create_task(None, None, None);
+    let newest = store.create_task(None, None, None);
+
+    // Update the oldest task last so its status timestamp is the most recent.
+    store
+        .update_status(&middle.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+    store
+        .update_status(&newest.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+    store
+        .update_status(&oldest.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+
+    let (tasks, _) = store.list_tasks_filtered(None, None, 50, None);
+    let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![oldest.id.as_str(), newest.id.as_str(), middle.id.as_str()],
+        "tasks must be sorted by status timestamp descending"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_list_tasks_trait_sorts_by_status_timestamp_desc() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let first = store.create_task(None, None, None);
+    let second = store.create_task(None, None, None);
+
+    store
+        .update_status(&first.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+
+    let (tasks, _, _) = TaskStoreBackend::list_tasks(&store, None, None, None);
+    assert_eq!(tasks.len(), 2);
+    assert_eq!(
+        tasks[0].id, first.id,
+        "most recently updated task must be first"
+    );
+    assert_eq!(tasks[1].id, second.id);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Push payload conversion (spec §4.3.3 — StreamResponse format)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_task_event_to_stream_response_status_update() -> Result<()> {
+    let status = TaskStatus {
+        state: TaskState::Working,
+        timestamp: chrono::Utc::now(),
+        message: None,
+    };
+    let event = TaskEvent::StatusChanged {
+        task_id: "task-1".to_string(),
+        status,
+    };
+
+    let payload = task_event_to_stream_response(&event, &Some("ctx-abc".to_string()));
+
+    let update = payload
+        .get("statusUpdate")
+        .ok_or("payload must have a statusUpdate key")?;
+    assert_eq!(update["taskId"], "task-1");
+    assert_eq!(update["contextId"], "ctx-abc");
+    assert_eq!(update["status"]["state"], "TASK_STATE_WORKING");
+    assert!(
+        payload.get("StatusChanged").is_none(),
+        "internal TaskEvent tag must not leak into the payload"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_task_event_to_stream_response_artifact_update() -> Result<()> {
+    let artifact = Artifact {
+        artifact_id: "art-1".to_string(),
+        name: Some("result".to_string()),
+        parts: vec![Part::Text {
+            text: "output".into(),
+        }],
+        metadata: None,
+    };
+    let event = TaskEvent::ArtifactAdded {
+        task_id: "task-2".to_string(),
+        artifact,
+    };
+
+    let payload = task_event_to_stream_response(&event, &None);
+
+    let update = payload
+        .get("artifactUpdate")
+        .ok_or("payload must have an artifactUpdate key")?;
+    assert_eq!(update["taskId"], "task-2");
+    assert_eq!(update["artifact"]["artifactId"], "art-1");
+    assert!(
+        update.get("contextId").is_none(),
+        "contextId must be omitted when the task has none"
+    );
+    assert!(
+        payload.get("ArtifactAdded").is_none(),
+        "internal TaskEvent tag must not leak into the payload"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Push notification configs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_create_and_list_push_config() {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    let config = store.create_push_config(&task.id, "https://hook.example.com/notify", None);
+    assert_eq!(config.url, "https://hook.example.com/notify");
+    assert_eq!(config.task_id, task.id);
+    assert!(!config.id.is_empty());
+
+    let configs = store.list_push_configs(&task.id);
+    assert_eq!(configs.len(), 1);
+    assert_eq!(configs[0].url, "https://hook.example.com/notify");
+}
+
+#[test]
+fn test_create_push_config_with_bearer_auth() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    let auth = PushAuthenticationInfo {
+        scheme: PushAuthScheme::Bearer {
+            token: "sekret".to_string(),
+        },
+    };
+    let config = store.create_push_config(&task.id, "https://hook.example.com/notify", Some(auth));
+    assert!(config.authentication.is_some());
+    let auth = config.authentication.ok_or("should have authentication")?;
+    match &auth.scheme {
+        PushAuthScheme::Bearer { token } => assert_eq!(token, "sekret"),
+        _ => panic!("expected Bearer auth"),
+    }
+    Ok(())
+}
+
+#[test]
+fn test_delete_push_config() {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    let config = store.create_push_config(&task.id, "https://hook.example.com/notify", None);
+    assert!(!store.list_push_configs(&task.id).is_empty());
+
+    store.delete_push_config(&task.id, &config.id);
+    assert!(store.list_push_configs(&task.id).is_empty());
+}
+
+#[test]
+fn test_get_push_config() -> Result<()> {
+    let store = InMemoryTaskStore::default();
+    let task = store.create_task(None, None, None);
+    let config = store.create_push_config(&task.id, "https://hook.example.com/notify", None);
+
+    let found = store.get_push_config(&task.id, &config.id);
+    assert!(found.is_some());
+    let found = found.ok_or("should find push config")?;
+    assert_eq!(found.id, config.id);
+
+    let not_found = store.get_push_config(&task.id, "nonexistent");
+    assert!(not_found.is_none());
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Trait contract — verify all TaskStoreBackend methods compile and execute
+// through a trait object reference.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_trait_contract_immemory() -> Result<()> {
+    let store: Box<dyn TaskStoreBackend> = Box::new(InMemoryTaskStore::default());
+
+    // create_task
+    let task = store.create_task(None, None, None);
+    assert!(!task.id.is_empty(), "Task should have an ID");
+    assert_eq!(task.status.state, TaskState::Submitted);
+
+    // get_task
+    let retrieved = store.get_task(&task.id).map_err(|e| format!("{e:?}"))?;
+    assert_eq!(retrieved.id, task.id);
+
+    // update_status
+    let updated = store
+        .update_status(&task.id, TaskState::Working, None)
+        .map_err(|e| format!("{e:?}"))?;
+    assert_eq!(updated.status.state, TaskState::Working);
+
+    // add_artifact
+    let artifact = Artifact {
+        artifact_id: "art-1".to_string(),
+        name: Some("test".to_string()),
+        parts: vec![],
+        metadata: None,
+    };
+    let with_artifact = store
+        .add_artifact(&task.id, artifact)
+        .map_err(|e| format!("{e:?}"))?;
+    assert_eq!(with_artifact.artifacts.len(), 1);
+
+    // list_tasks — no filter
+    let (tasks, total, token) = store.list_tasks(None, None, None);
+    assert_eq!(tasks.len(), 1, "should list one task");
+    assert_eq!(total, 1, "total should match");
+    assert!(token.is_none(), "no more pages");
+
+    // list_tasks — with filter
+    let (filtered, ftotal, _) = store.list_tasks(Some(vec![TaskState::Working]), None, None);
+    assert_eq!(filtered.len(), 1, "should find the working task");
+    assert_eq!(ftotal, 1);
+
+    // subscribe
+    let rx = store.subscribe(&task.id);
+    assert!(!rx.is_closed(), "subscription receiver should be open");
+    // Let the receiver drop
+    drop(rx);
+
+    // unregister_subscriber
+    let rx2 = store.subscribe(&task.id);
+    store.unregister_subscriber(&task.id, rx2);
+
+    // append_history
+    let msg = Message {
+        role: Role::User,
+        parts: vec![Part::Text {
+            text: "hello".into(),
+        }],
+        message_id: "msg-1".to_string(),
+        extensions: None,
+        metadata: None,
+    };
+    assert!(store.append_history(&task.id, msg).is_ok());
+
+    // create_task_with_idempotency — new key
+    let new_task = store
+        .create_task_with_idempotency("trait-key-1", None, None, None)
+        .map_err(|e| format!("{e:?}"))?;
+    assert!(!new_task.id.is_empty());
+
+    // create_task_with_idempotency — duplicate key
+    let dup = store.create_task_with_idempotency("trait-key-1", None, None, None);
+    assert!(dup.is_err(), "duplicate key should return Err");
+    let boxed = dup.unwrap_err();
+    let (existing_task, _sender) = *boxed;
+    assert_eq!(
+        existing_task.id, new_task.id,
+        "duplicate should return existing task"
+    );
+    Ok(())
+}

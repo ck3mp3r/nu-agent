@@ -91,5 +91,5 @@ impl BuiltinTool for TmuxSessionTool {
 }
 
 #[cfg(test)]
-#[path = "tmux_session_test.rs"]
+#[path = "../../../test/tools/handler/tmux_session.rs"]
 mod tests;

@@ -267,5 +267,5 @@ impl McpConfig {
     }
 }
 #[cfg(test)]
-#[path = "config_test.rs"]
+#[path = "../../../test/tools/mcp/config.rs"]
 mod config_test;

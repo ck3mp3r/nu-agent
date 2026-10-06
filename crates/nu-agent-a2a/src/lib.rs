@@ -24,12 +24,17 @@ pub use tools::*;
 pub use types::*;
 
 #[cfg(test)]
+#[path = "../test/card.rs"]
 mod card_test;
 #[cfg(test)]
+#[path = "../test/error.rs"]
 mod error_test;
 #[cfg(test)]
+#[path = "../test/mesh_key.rs"]
 mod mesh_key_test;
 #[cfg(test)]
+#[path = "../test/peer.rs"]
 mod peer_test;
 #[cfg(test)]
+#[path = "../test/session_key.rs"]
 mod session_key_test;

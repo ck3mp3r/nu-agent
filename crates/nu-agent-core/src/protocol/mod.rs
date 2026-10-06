@@ -17,7 +17,9 @@ pub mod tool_args;
 pub use tool_args::CallLine;
 
 #[cfg(test)]
+#[path = "../../test/protocol/session_management.rs"]
 mod session_management_test;
 
 #[cfg(test)]
+#[path = "../../test/protocol/test.rs"]
 mod test;

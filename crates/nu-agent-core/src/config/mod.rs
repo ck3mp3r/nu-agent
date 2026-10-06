@@ -15,4 +15,5 @@ pub use types::*;
 pub use vault::{CredentialType, ProviderEntry, Vault, VaultBackendKind, VaultError};
 
 #[cfg(test)]
+#[path = "../../test/config/test.rs"]
 mod test;

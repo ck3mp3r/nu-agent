@@ -67,5 +67,5 @@ impl BuiltinTool for ReadTool {
 }
 
 #[cfg(test)]
-#[path = "read_test.rs"]
+#[path = "../../../test/tools/handler/read.rs"]
 mod tests;

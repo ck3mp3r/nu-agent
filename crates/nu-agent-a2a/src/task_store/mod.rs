@@ -1,6 +1,11 @@
 mod backend;
 mod memory;
 #[cfg(test)]
+#[path = "../../test/task_store/store.rs"]
+mod store_test;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/task_store/test.rs"]
 mod test;
 
 pub use backend::*;

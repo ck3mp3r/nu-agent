@@ -300,5 +300,5 @@ fn normalize(text: &str) -> String {
 // endregion: --- Support
 
 #[cfg(test)]
-#[path = "output_repetition_test.rs"]
+#[path = "../../test/hook/output_repetition.rs"]
 mod output_repetition_test;

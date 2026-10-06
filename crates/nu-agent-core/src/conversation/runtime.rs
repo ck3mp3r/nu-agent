@@ -725,5 +725,5 @@ where
 }
 
 #[cfg(test)]
-#[path = "runtime_test.rs"]
+#[path = "../../test/conversation/runtime.rs"]
 mod runtime_test;

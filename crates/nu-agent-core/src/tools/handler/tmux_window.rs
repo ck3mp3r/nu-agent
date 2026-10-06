@@ -99,5 +99,5 @@ impl BuiltinTool for TmuxWindowTool {
 }
 
 #[cfg(test)]
-#[path = "tmux_window_test.rs"]
+#[path = "../../../test/tools/handler/tmux_window.rs"]
 mod tests;

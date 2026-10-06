@@ -62,6 +62,8 @@ pub enum TurnEvent {
     Completed { tool_calls: usize },
     /// An external (A2A) task completed with its output.
     TaskCompleted { output: String, task_id: String },
+    /// An external (A2A) task failed or was cancelled, with the reason.
+    TaskFailed { task_id: String, error: String },
 }
 
 /// A session lifecycle event.
@@ -266,6 +268,8 @@ impl From<TurnEvent> for Option<UiEvent> {
             TurnEvent::Completed { tool_calls } => Some(UiEvent::Completed { tool_calls }),
             // A2A-only completion — not for the TUI.
             TurnEvent::TaskCompleted { .. } => None,
+            // A2A-only failure — not for the TUI.
+            TurnEvent::TaskFailed { .. } => None,
         }
     }
 }

@@ -153,5 +153,5 @@ impl Previewable for NuTool {
 }
 
 #[cfg(test)]
-#[path = "nu_test.rs"]
+#[path = "../../../test/tools/handler/nu.rs"]
 mod tests;

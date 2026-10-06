@@ -3,6 +3,9 @@ name = "nu-agent-a2a"
 edition.workspace = true
 version.workspace = true
 
+[features]
+integration = []
+
 [dependencies]
 axum = "0.8"
 chrono = { workspace = true }

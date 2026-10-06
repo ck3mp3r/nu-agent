@@ -183,5 +183,5 @@ fn cut_at_char_boundary(s: &str, max_bytes: usize) -> &str {
 // endregion: --- Support
 
 #[cfg(test)]
-#[path = "feedback_test.rs"]
+#[path = "../../../test/conversation/turn/feedback.rs"]
 mod tests;

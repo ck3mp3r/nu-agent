@@ -13,6 +13,7 @@ use crate::{
 };
 
 use super::TaskStoreBackend;
+use crate::discovery::card::ensure_crypto_provider;
 
 /// A thread-safe in-memory store for A2A tasks.
 ///
@@ -554,6 +555,16 @@ impl InMemoryTaskStore {
         self.update_status(id, TaskState::Canceled, None)
     }
 
+    /// Fail a task with a reason (delegates to `update_status`).
+    pub fn fail_task(&self, id: &str, reason: &str) -> Result<Task, A2aError> {
+        self.update_status(id, TaskState::Failed, Some(agent_message(reason)))
+    }
+
+    /// Reject a task with a reason (delegates to `update_status`).
+    pub fn reject_task(&self, id: &str, reason: &str) -> Result<Task, A2aError> {
+        self.update_status(id, TaskState::Rejected, Some(agent_message(reason)))
+    }
+
     /// Complete a task with a result artifact.
     ///
     /// Transitions the task to `Completed` and appends the result as a
@@ -666,6 +677,7 @@ pub fn task_event_to_stream_response(event: &TaskEvent, context_id: &Option<Stri
 /// Custom schemes are not supported for direct webhook delivery and will log
 /// a warning.
 async fn deliver_push(config: PushNotificationConfig, payload: Value) {
+    ensure_crypto_provider();
     let client = reqwest::Client::new();
     let mut req = client.post(&config.url).json(&payload);
 
@@ -692,7 +704,7 @@ async fn deliver_push(config: PushNotificationConfig, payload: Value) {
 ///
 /// Valid transitions:
 /// - `Submitted` → `Working` | `Canceled` | `Rejected`
-/// - `Working` → `InputRequired` | `Completed` | `Failed` | `Canceled`
+/// - `Working` → `InputRequired` | `Completed` | `Failed` | `Canceled` | `Rejected`
 /// - `InputRequired` → `Working` | `Canceled`
 ///
 /// All transitions from terminal states (`Completed`, `Failed`, `Canceled`,
@@ -707,7 +719,21 @@ pub fn is_valid_transition(from: &TaskState, to: &TaskState) -> bool {
             | (TaskState::Working, TaskState::Completed)
             | (TaskState::Working, TaskState::Failed)
             | (TaskState::Working, TaskState::Canceled)
+            | (TaskState::Working, TaskState::Rejected)
             | (TaskState::InputRequired, TaskState::Working)
             | (TaskState::InputRequired, TaskState::Canceled)
     )
+}
+
+/// Build an agent-authored status message carrying `text`.
+fn agent_message(text: &str) -> Message {
+    Message {
+        role: Role::Agent,
+        parts: vec![Part::Text {
+            text: text.to_string(),
+        }],
+        message_id: Uuid::new_v4().to_string(),
+        extensions: None,
+        metadata: None,
+    }
 }

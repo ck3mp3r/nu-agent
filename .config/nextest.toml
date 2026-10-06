@@ -1,0 +1,22 @@
+# cargo-nextest repository configuration
+# https://nexte.st/docs/configuration/
+
+# Unit tests only (no --features integration): fast feedback, high parallelism.
+[profile.default]
+retries = 0
+fail-fast = true
+
+# All tests (--features integration): lower parallelism for server tests,
+# retries for flaky tests.
+[profile.integration]
+retries = 1
+fail-fast = false
+test-threads = 4
+
+# CI: complete run, no retries, JUnit XML report.
+[profile.ci]
+retries = 0
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"

@@ -35,46 +35,61 @@ pub use transcript_store::*;
 pub use turn::*;
 
 #[cfg(test)]
+#[path = "../../test/state/code_block.rs"]
 mod code_block_test;
 
 #[cfg(test)]
+#[path = "../../test/state/selection.rs"]
 mod selection_test;
 
 #[cfg(test)]
+#[path = "../../test/state/transcript.rs"]
 mod transcript_test;
 
 #[cfg(test)]
+#[path = "../../test/state/input.rs"]
 mod input_test;
 
 #[cfg(test)]
+#[path = "../../test/state/scroll.rs"]
 mod scroll_test;
 
 #[cfg(test)]
+#[path = "../../test/state/lifecycle.rs"]
 mod lifecycle_test;
 
 #[cfg(test)]
+#[path = "../../test/state/permission.rs"]
 mod permission_test;
 
 #[cfg(test)]
+#[path = "../../test/state/mcp.rs"]
 mod mcp_test;
 
 #[cfg(test)]
+#[path = "../../test/state/picker.rs"]
 mod picker_test;
 
 #[cfg(test)]
+#[path = "../../test/state/status.rs"]
 mod status_test;
 
 #[cfg(test)]
+#[path = "../../test/state/tool.rs"]
 mod tool_test;
 
 #[cfg(test)]
+#[path = "../../test/state/llm.rs"]
 mod llm_test;
 
 #[cfg(test)]
+#[path = "../../test/state/compaction.rs"]
 mod compaction_test;
 
 #[cfg(test)]
+#[path = "../../test/state/turn.rs"]
 mod turn_test;
 
 #[cfg(test)]
+#[path = "../../test/state/test.rs"]
 mod mod_test;

@@ -28,21 +28,27 @@ pub use terminal::{HybridTerminalEvents, InputSourceDiagnostics, TerminalEventSo
 pub use terminal::{TtyTerminalEvents, open_tty_reader};
 
 #[cfg(test)]
+#[path = "../../test/runtime/test.rs"]
 pub(super) mod test;
 
 #[cfg(test)]
+#[path = "../../test/runtime/driver.rs"]
 pub(super) mod test_driver;
 
 #[cfg(test)]
+#[path = "../../test/runtime/layout.rs"]
 mod layout_test;
 
 #[cfg(test)]
+#[path = "../../test/runtime/panels.rs"]
 mod panels_test;
 
 #[cfg(test)]
+#[path = "../../test/runtime/renderer.rs"]
 mod renderer_test;
 
 #[cfg(test)]
+#[path = "../../test/runtime/session_picker.rs"]
 mod session_picker_test;
 
 #[cfg(test)]

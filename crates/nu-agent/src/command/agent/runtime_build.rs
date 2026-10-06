@@ -32,6 +32,16 @@ pub(crate) fn resolve_theme_name(
     call: &EvaluatedCall,
     plugin_config: &PluginConfig,
 ) -> Result<nu_agent_tui::rendering::theme::ThemeName, LabeledError> {
+    resolve_theme_name_with(call, plugin_config, None)
+}
+
+/// Resolve the effective TUI theme name, reading the saved preference from
+/// `pref_path` when given, or from the default XDG path when `None`.
+pub(crate) fn resolve_theme_name_with(
+    call: &EvaluatedCall,
+    plugin_config: &PluginConfig,
+    pref_path: Option<&std::path::Path>,
+) -> Result<nu_agent_tui::rendering::theme::ThemeName, LabeledError> {
     use nu_agent_tui::rendering::theme::ThemeName;
 
     // 1. CLI flag — highest precedence, validated at parse.
@@ -52,7 +62,11 @@ pub(crate) fn resolve_theme_name(
     }
 
     // 3. Saved preference file.
-    if let Ok(pref) = nu_agent_core::theme_pref::ThemePreference::load()
+    let pref = match pref_path {
+        Some(path) => nu_agent_core::theme_pref::ThemePreference::load_from(path).ok(),
+        None => nu_agent_core::theme_pref::ThemePreference::load().ok(),
+    };
+    if let Some(pref) = pref
         && let Some(raw) = pref.theme.as_deref()
         && let Some(name) = ThemeName::from_name(raw)
     {
@@ -127,6 +141,22 @@ pub fn resolve_with_new_config(
     plugin_config: PluginConfig,
     call: &EvaluatedCall,
 ) -> Result<Config, LabeledError> {
+    resolve_with_new_config_and_env(
+        plugin_config,
+        call,
+        &nu_agent_core::utils::env_map::process_env(),
+    )
+}
+
+/// Resolve configuration against an explicit environment map.
+///
+/// Same resolution order as [`resolve_with_new_config`], but environment
+/// lookups read `env` instead of the process environment.
+pub fn resolve_with_new_config_and_env(
+    plugin_config: PluginConfig,
+    call: &EvaluatedCall,
+    env: &nu_agent_core::utils::env_map::EnvMap,
+) -> Result<Config, LabeledError> {
     // Determine which model role to use (priority: --model flag > models.default)
     let role_config = if let Some(model_flag) = get_string_flag(call, "model") {
         if model_flag.contains('/') {
@@ -160,7 +190,7 @@ pub fn resolve_with_new_config(
 
     // Resolve model to Config using PluginConfig
     let mut config = plugin_config
-        .resolve_model(&role_config)
+        .resolve_model_with(&role_config, env)
         .map_err(|msg| LabeledError::new("Failed to resolve model").with_label(msg, call.head))?;
 
     // Resolve preamble via canonical resolver.
@@ -546,5 +576,5 @@ pub(crate) fn build_runtime(
 }
 
 #[cfg(test)]
-#[path = "runtime_build_test.rs"]
+#[path = "../../../test/command/agent/runtime_build.rs"]
 mod runtime_build_test;

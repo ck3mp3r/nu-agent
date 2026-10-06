@@ -775,5 +775,5 @@ fn path_segment(input: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "authz_test.rs"]
+#[path = "../../test/tools/authz.rs"]
 mod authz_test;

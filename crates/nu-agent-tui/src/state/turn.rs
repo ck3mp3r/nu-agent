@@ -23,8 +23,10 @@ impl TurnState {
         event: TurnEvent,
     ) -> bool {
         match event {
-            // Turn start and A2A task completion are not rendered in the TUI.
-            TurnEvent::Started { .. } | TurnEvent::TaskCompleted { .. } => false,
+            // Turn start and A2A task outcomes are not rendered in the TUI.
+            TurnEvent::Started { .. }
+            | TurnEvent::TaskCompleted { .. }
+            | TurnEvent::TaskFailed { .. } => false,
             TurnEvent::Completed { .. } => self.finalize(store, status, input_locked),
         }
     }

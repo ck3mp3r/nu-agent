@@ -8,4 +8,5 @@ pub mod state;
 pub mod turn;
 
 #[cfg(test)]
+#[path = "../../test/conversation/helpers.rs"]
 pub mod test_helpers;

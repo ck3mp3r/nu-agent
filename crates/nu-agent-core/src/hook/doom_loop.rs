@@ -192,5 +192,5 @@ impl DoomLoopDetector {
 }
 
 #[cfg(test)]
-#[path = "doom_loop_test.rs"]
+#[path = "../../test/hook/doom_loop.rs"]
 mod doom_loop_test;

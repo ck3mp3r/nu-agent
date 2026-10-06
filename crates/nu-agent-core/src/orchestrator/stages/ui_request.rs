@@ -373,5 +373,5 @@ impl UiRequestHandler for UiRequestStage {
 }
 
 #[cfg(test)]
-#[path = "ui_request_test.rs"]
+#[path = "../../../test/orchestrator/stages/ui_request.rs"]
 mod ui_request_test;

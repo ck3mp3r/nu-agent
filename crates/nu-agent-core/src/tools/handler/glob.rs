@@ -101,5 +101,5 @@ fn dispatch_glob(
 }
 
 #[cfg(test)]
-#[path = "glob_test.rs"]
+#[path = "../../../test/tools/handler/glob.rs"]
 mod tests;

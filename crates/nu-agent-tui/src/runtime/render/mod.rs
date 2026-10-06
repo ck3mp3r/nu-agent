@@ -107,12 +107,15 @@ mod modals;
 mod transcript;
 
 #[cfg(test)]
+#[path = "../../../test/runtime/render/frame.rs"]
 pub(super) mod frame_test;
 
 #[cfg(test)]
+#[path = "../../../test/runtime/render/selection_render.rs"]
 pub(super) mod selection_render_test;
 
 #[cfg(test)]
+#[path = "../../../test/runtime/render/transcript.rs"]
 mod transcript_test;
 
 /// Returns true when the buffer should be scanned for yank text.

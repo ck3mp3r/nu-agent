@@ -134,5 +134,5 @@ pub(crate) fn resolve_persona(
 }
 
 #[cfg(test)]
-#[path = "persona_test.rs"]
+#[path = "../../../test/command/agent/persona.rs"]
 mod persona_test;

@@ -7,7 +7,7 @@ use crate::AgentCard;
 
 /// Ensure the rustls crypto provider is installed before creating a reqwest
 /// [`Client`] that uses `rustls-no-provider`.  Safe to call multiple times.
-fn ensure_crypto_provider() {
+pub(crate) fn ensure_crypto_provider() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();

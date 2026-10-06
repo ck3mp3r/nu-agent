@@ -220,5 +220,5 @@ impl CommandRouter {
 }
 
 #[cfg(test)]
-#[path = "router_test.rs"]
+#[path = "../../test/orchestrator/router.rs"]
 mod router_test;

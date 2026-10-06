@@ -1,9 +1,17 @@
 use crate::session::StoreType;
+use crate::utils::env_map::{EnvMap, process_env};
 
 use super::Config;
 
 impl Config {
-    /// Create a Config by reading environment variables.
+    /// Create a Config by reading the real process environment.
+    ///
+    /// Convenience wrapper over [`Config::from_env`] for production callers.
+    pub fn from_process_env(provider: &str, model: &str) -> Self {
+        Self::from_env(&process_env(), provider, model)
+    }
+
+    /// Create a Config by reading environment variables from `env`.
     ///
     /// Looks for:
     /// - `{PROVIDER}_API_KEY` (e.g., `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`)
@@ -11,12 +19,10 @@ impl Config {
     /// - `AGENT_TEMPERATURE`, `AGENT_MAX_TOKENS`, etc. for overrides
     ///
     /// Invalid values are gracefully ignored (set to None).
-    pub fn from_env(provider: &str, model: &str) -> Self {
-        use std::env;
-
-        // Helper to parse environment variable with error handling
-        fn parse_env_var<T: std::str::FromStr>(key: &str) -> Option<T> {
-            env::var(key).ok().and_then(|val| val.parse().ok())
+    pub fn from_env(env: &EnvMap, provider: &str, model: &str) -> Self {
+        // Helper to parse an environment variable with error handling
+        fn parse_env_var<T: std::str::FromStr>(env: &EnvMap, key: &str) -> Option<T> {
+            env.get(key).and_then(|val| val.parse().ok())
         }
 
         // Provider-specific API key
@@ -31,37 +37,38 @@ impl Config {
             // Standard provider-specific API key (e.g., OPENAI_API_KEY)
             let provider_upper = provider.to_uppercase();
             let api_key_var = format!("{provider_upper}_API_KEY");
-            env::var(&api_key_var).ok()
+            env.get(&api_key_var).cloned()
         };
 
         // AGENT_* overrides
-        let base_url = env::var("AGENT_BASE_URL").ok();
-        let temperature = parse_env_var("AGENT_TEMPERATURE");
-        let max_tokens = parse_env_var("AGENT_MAX_TOKENS");
-        let max_context_tokens = parse_env_var("AGENT_MAX_CONTEXT_TOKENS");
-        let max_output_tokens = parse_env_var("AGENT_MAX_OUTPUT_TOKENS");
-        let max_tool_turns = parse_env_var("AGENT_MAX_TOOL_TURNS"); // No default - runtime decides based on mode
-        let max_tool_result_bytes = parse_env_var("AGENT_MAX_TOOL_RESULT_BYTES");
-        let model_context_tokens = parse_env_var("AGENT_MODEL_CONTEXT_TOKENS");
-        let context_warning_threshold = parse_env_var("AGENT_CONTEXT_WARNING_THRESHOLD");
-        let max_tool_calls_per_subturn = parse_env_var("AGENT_MAX_TOOL_CALLS_PER_SUBTURN");
-        let max_retries: Option<u8> = parse_env_var("AGENT_MAX_RETRIES");
-        let retry_base_delay_ms: Option<u64> = parse_env_var("AGENT_RETRY_BASE_DELAY_MS");
-        let output_budget_empty_remedy = env::var("AGENT_OUTPUT_BUDGET_EMPTY_REMEDY").ok();
-        let output_budget_remedy_mode = env::var("AGENT_OUTPUT_BUDGET_REMEDY_MODE").ok();
+        let base_url = env.get("AGENT_BASE_URL").cloned();
+        let temperature = parse_env_var(env, "AGENT_TEMPERATURE");
+        let max_tokens = parse_env_var(env, "AGENT_MAX_TOKENS");
+        let max_context_tokens = parse_env_var(env, "AGENT_MAX_CONTEXT_TOKENS");
+        let max_output_tokens = parse_env_var(env, "AGENT_MAX_OUTPUT_TOKENS");
+        let max_tool_turns = parse_env_var(env, "AGENT_MAX_TOOL_TURNS"); // No default - runtime decides based on mode
+        let max_tool_result_bytes = parse_env_var(env, "AGENT_MAX_TOOL_RESULT_BYTES");
+        let model_context_tokens = parse_env_var(env, "AGENT_MODEL_CONTEXT_TOKENS");
+        let context_warning_threshold = parse_env_var(env, "AGENT_CONTEXT_WARNING_THRESHOLD");
+        let max_tool_calls_per_subturn = parse_env_var(env, "AGENT_MAX_TOOL_CALLS_PER_SUBTURN");
+        let max_retries: Option<u8> = parse_env_var(env, "AGENT_MAX_RETRIES");
+        let retry_base_delay_ms: Option<u64> = parse_env_var(env, "AGENT_RETRY_BASE_DELAY_MS");
+        let output_budget_empty_remedy = env.get("AGENT_OUTPUT_BUDGET_EMPTY_REMEDY").cloned();
+        let output_budget_remedy_mode = env.get("AGENT_OUTPUT_BUDGET_REMEDY_MODE").cloned();
         let output_budget_raise_enabled: Option<bool> =
-            parse_env_var("AGENT_OUTPUT_BUDGET_RAISE_ENABLED");
+            parse_env_var(env, "AGENT_OUTPUT_BUDGET_RAISE_ENABLED");
         let output_budget_raise_multiplier: Option<f64> =
-            parse_env_var("AGENT_OUTPUT_BUDGET_RAISE_MULTIPLIER");
-        let output_budget_raise_cap: Option<u32> = parse_env_var("AGENT_OUTPUT_BUDGET_RAISE_CAP");
-        let repetition_guard: Option<bool> = parse_env_var("AGENT_REPETITION_GUARD");
-        let read_timeout_secs: Option<u64> = parse_env_var("AGENT_READ_TIMEOUT_SECS");
-        let a2a_enabled: Option<bool> = parse_env_var("AGENT_A2A_ENABLED");
+            parse_env_var(env, "AGENT_OUTPUT_BUDGET_RAISE_MULTIPLIER");
+        let output_budget_raise_cap: Option<u32> =
+            parse_env_var(env, "AGENT_OUTPUT_BUDGET_RAISE_CAP");
+        let repetition_guard: Option<bool> = parse_env_var(env, "AGENT_REPETITION_GUARD");
+        let read_timeout_secs: Option<u64> = parse_env_var(env, "AGENT_READ_TIMEOUT_SECS");
+        let a2a_enabled: Option<bool> = parse_env_var(env, "AGENT_A2A_ENABLED");
 
-        let a2a_port: Option<u16> = parse_env_var("AGENT_A2A_PORT");
+        let a2a_port: Option<u16> = parse_env_var(env, "AGENT_A2A_PORT");
 
-        let session_store_type: Option<StoreType> = env::var("AGENT_SESSION_STORE_TYPE")
-            .ok()
+        let session_store_type: Option<StoreType> = env
+            .get("AGENT_SESSION_STORE_TYPE")
             .and_then(|s| s.parse().ok());
 
         log::debug!(

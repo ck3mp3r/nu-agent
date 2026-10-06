@@ -149,5 +149,5 @@ fn dispatch_grep(
 }
 
 #[cfg(test)]
-#[path = "grep_test.rs"]
+#[path = "../../../test/tools/handler/grep.rs"]
 mod tests;

@@ -1,8 +1,9 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::utils::env_map::{EnvMap, process_env};
 use crate::utils::xdg::{self, XdgError};
 
 /// Local cache of the models.dev database.
@@ -85,17 +86,26 @@ impl std::error::Error for ModelsCacheError {}
 
 impl ModelsCache {
     fn path() -> Result<PathBuf, ModelsCacheError> {
-        let dir = xdg::data_dir().map_err(ModelsCacheError::Xdg)?;
+        Self::path_with(&process_env())
+    }
+
+    /// Resolve the cache path using an explicit environment map.
+    fn path_with(env: &EnvMap) -> Result<PathBuf, ModelsCacheError> {
+        let dir = xdg::data_dir_with(env).map_err(ModelsCacheError::Xdg)?;
         Ok(dir.join("nu-agent").join("models.json"))
     }
 
     /// Load the models cache from disk.
     pub fn load() -> Result<Self, ModelsCacheError> {
-        let path = Self::path()?;
+        Self::load_from(&Self::path()?)
+    }
+
+    /// Load the models cache from an explicit path.
+    pub fn load_from(path: &Path) -> Result<Self, ModelsCacheError> {
         if !path.exists() {
-            return Err(ModelsCacheError::NotFound(path));
+            return Err(ModelsCacheError::NotFound(path.to_path_buf()));
         }
-        let contents = std::fs::read_to_string(&path).map_err(ModelsCacheError::Io)?;
+        let contents = std::fs::read_to_string(path).map_err(ModelsCacheError::Io)?;
         let cache: ModelsCache =
             serde_json::from_str(&contents).map_err(ModelsCacheError::Parse)?;
         Ok(cache)
@@ -147,5 +157,5 @@ impl ModelsCache {
 }
 
 #[cfg(test)]
-#[path = "models_cache_test.rs"]
+#[path = "../../test/config/models_cache.rs"]
 mod models_cache_test;

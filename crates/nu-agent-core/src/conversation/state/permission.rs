@@ -105,5 +105,5 @@ impl PermissionState {
 }
 
 #[cfg(test)]
-#[path = "permission_test.rs"]
+#[path = "../../../test/conversation/state/permission.rs"]
 mod permission_test;

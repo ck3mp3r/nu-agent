@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 use super::{A2aToolContext, ToolResult};
+use crate::discovery::card::ensure_crypto_provider;
 
 pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
     let name = params
@@ -14,6 +15,7 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
         .ok_or_else(|| format!("Agent '{name}' not found"))?;
 
     let url = format!("{}/.well-known/agent-card.json", peer.url);
+    ensure_crypto_provider();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()

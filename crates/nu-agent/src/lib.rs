@@ -5,4 +5,5 @@ pub mod plugin;
 pub use plugin::AgentPlugin;
 
 #[cfg(test)]
+#[path = "../test/plugin.rs"]
 mod plugin_test;

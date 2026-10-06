@@ -5,9 +5,14 @@
 //!
 //! Each function checks the appropriate XDG_* environment variable first,
 //! then falls back to the specified default path (except runtime_dir which has no fallback).
+//!
+//! Every resolver has a `*_with` variant taking an explicit [`EnvMap`]. The
+//! bare functions read the real process environment, so production callers keep
+//! their existing call sites while tests inject a map and run in parallel.
 
-use std::env;
 use std::path::PathBuf;
+
+use super::env_map::{EnvMap, process_env};
 
 /// Errors that can occur when resolving XDG directories
 #[derive(Debug)]
@@ -42,12 +47,15 @@ impl std::error::Error for XdgError {}
 /// println!("Data directory: {:?}", data_dir);
 /// ```
 pub fn data_dir() -> Result<PathBuf, XdgError> {
-    if let Ok(val) = env::var("XDG_DATA_HOME")
-        && !val.is_empty()
-    {
+    data_dir_with(&process_env())
+}
+
+/// Get the XDG data directory from an explicit environment map.
+pub fn data_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
+    if let Some(val) = non_empty(env, "XDG_DATA_HOME") {
         return Ok(PathBuf::from(val));
     }
-    let home = env::var("HOME").map_err(|_| XdgError::HomeNotFound)?;
+    let home = home(env)?;
     Ok(PathBuf::from(home).join(".local").join("share"))
 }
 
@@ -64,12 +72,15 @@ pub fn data_dir() -> Result<PathBuf, XdgError> {
 /// println!("Cache directory: {:?}", cache_dir);
 /// ```
 pub fn cache_dir() -> Result<PathBuf, XdgError> {
-    if let Ok(val) = env::var("XDG_CACHE_HOME")
-        && !val.is_empty()
-    {
+    cache_dir_with(&process_env())
+}
+
+/// Get the XDG cache directory from an explicit environment map.
+pub fn cache_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
+    if let Some(val) = non_empty(env, "XDG_CACHE_HOME") {
         return Ok(PathBuf::from(val));
     }
-    let home = env::var("HOME").map_err(|_| XdgError::HomeNotFound)?;
+    let home = home(env)?;
     Ok(PathBuf::from(home).join(".cache"))
 }
 
@@ -86,12 +97,15 @@ pub fn cache_dir() -> Result<PathBuf, XdgError> {
 /// println!("Config directory: {:?}", config_dir);
 /// ```
 pub fn config_dir() -> Result<PathBuf, XdgError> {
-    if let Ok(val) = env::var("XDG_CONFIG_HOME")
-        && !val.is_empty()
-    {
+    config_dir_with(&process_env())
+}
+
+/// Get the XDG config directory from an explicit environment map.
+pub fn config_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
+    if let Some(val) = non_empty(env, "XDG_CONFIG_HOME") {
         return Ok(PathBuf::from(val));
     }
-    let home = env::var("HOME").map_err(|_| XdgError::HomeNotFound)?;
+    let home = home(env)?;
     Ok(PathBuf::from(home).join(".config"))
 }
 
@@ -108,12 +122,15 @@ pub fn config_dir() -> Result<PathBuf, XdgError> {
 /// println!("State directory: {:?}", state_dir);
 /// ```
 pub fn state_dir() -> Result<PathBuf, XdgError> {
-    if let Ok(val) = env::var("XDG_STATE_HOME")
-        && !val.is_empty()
-    {
+    state_dir_with(&process_env())
+}
+
+/// Get the XDG state directory from an explicit environment map.
+pub fn state_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
+    if let Some(val) = non_empty(env, "XDG_STATE_HOME") {
         return Ok(PathBuf::from(val));
     }
-    let home = env::var("HOME").map_err(|_| XdgError::HomeNotFound)?;
+    let home = home(env)?;
     Ok(PathBuf::from(home).join(".local").join("state"))
 }
 
@@ -135,9 +152,22 @@ pub fn state_dir() -> Result<PathBuf, XdgError> {
 /// }
 /// ```
 pub fn runtime_dir() -> Result<PathBuf, XdgError> {
-    env::var("XDG_RUNTIME_DIR")
-        .ok()
-        .filter(|s| !s.is_empty())
+    runtime_dir_with(&process_env())
+}
+
+/// Get the XDG runtime directory from an explicit environment map.
+pub fn runtime_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
+    non_empty(env, "XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .ok_or(XdgError::RuntimeDirNotSet)
+}
+
+/// Look up `key`, treating an empty value as absent.
+fn non_empty<'a>(env: &'a EnvMap, key: &str) -> Option<&'a str> {
+    env.get(key).map(String::as_str).filter(|s| !s.is_empty())
+}
+
+/// Look up HOME, reporting [`XdgError::HomeNotFound`] when absent or empty.
+fn home(env: &EnvMap) -> Result<&str, XdgError> {
+    non_empty(env, "HOME").ok_or(XdgError::HomeNotFound)
 }

@@ -25,22 +25,32 @@ pub use task_state::*;
 pub use task_status::*;
 
 #[cfg(test)]
+#[path = "../../test/types/error.rs"]
 mod error_test;
 #[cfg(test)]
+#[path = "../../test/types/message.rs"]
 mod message_test;
 #[cfg(test)]
+#[path = "../../test/types/part.rs"]
 mod part_test;
 #[cfg(test)]
+#[path = "../../test/types/protocol.rs"]
 mod protocol_test;
 #[cfg(test)]
+#[path = "../../test/types/push.rs"]
 mod push_test;
 #[cfg(test)]
+#[path = "../../test/types/role.rs"]
 mod role_test;
 #[cfg(test)]
+#[path = "../../test/types/send_config.rs"]
 mod send_config_test;
 #[cfg(test)]
+#[path = "../../test/types/task_state.rs"]
 mod task_state_test;
 #[cfg(test)]
+#[path = "../../test/types/task_status.rs"]
 mod task_status_test;
 #[cfg(test)]
+#[path = "../../test/types/task.rs"]
 mod task_test;

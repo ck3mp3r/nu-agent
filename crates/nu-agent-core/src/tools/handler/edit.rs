@@ -792,5 +792,5 @@ impl Previewable for EditTool {
 }
 
 #[cfg(test)]
-#[path = "edit_test.rs"]
+#[path = "../../../test/tools/handler/edit.rs"]
 mod tests;

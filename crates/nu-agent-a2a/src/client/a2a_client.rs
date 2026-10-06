@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use crate::discovery::card::ensure_crypto_provider;
 use crate::*;
 
 // ---------------------------------------------------------------------------
@@ -355,6 +356,7 @@ impl super::A2aHttpClient for A2aClient {
 fn http_client() -> Result<&'static reqwest::Client, A2aError> {
     static CLIENT: OnceLock<Result<reqwest::Client, A2aError>> = OnceLock::new();
     match CLIENT.get_or_init(|| {
+        ensure_crypto_provider();
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::HeaderName::from_static("a2a-version"),

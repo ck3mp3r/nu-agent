@@ -43,5 +43,5 @@ impl BuiltinTool for TmuxLayoutTool {
 }
 
 #[cfg(test)]
-#[path = "tmux_layout_test.rs"]
+#[path = "../../../test/tools/handler/tmux_layout.rs"]
 mod tests;

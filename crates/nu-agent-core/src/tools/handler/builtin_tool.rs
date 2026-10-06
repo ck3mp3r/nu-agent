@@ -255,5 +255,5 @@ fn execution_error_for_kind(kind: ToolErrorKind, message: String) -> ToolExecuti
 // endregion: --- Support
 
 #[cfg(test)]
-#[path = "builtin_tool_test.rs"]
+#[path = "../../../test/tools/handler/builtin_tool.rs"]
 mod tests;

@@ -1,5 +1,6 @@
 pub mod builder;
-#[cfg(test)]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/agent/test.rs"]
 mod test;
 
 mod handle;

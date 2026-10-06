@@ -81,5 +81,5 @@ impl<S: SessionStore + Clone + Send + Sync> SessionManager for MemoryState<S> {
 }
 
 #[cfg(test)]
-#[path = "memory_test.rs"]
+#[path = "../../../test/conversation/state/memory.rs"]
 mod memory_test;

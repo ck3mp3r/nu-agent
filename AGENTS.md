@@ -23,39 +23,98 @@ Never write production code without a failing test first.
 
 ### Test Organization
 
-**No inline tests** - Tests must be in separate files in `src/`:
+**No inline tests** - Tests must be in separate files in a top-level `test/` directory per crate:
 
 ```
-src/
-  lib.rs
-  lib_test.rs
-  plugin.rs
-  plugin_test.rs
-  commands/
-    info.rs
-    info_test.rs
+crates/<crate>/
+  src/
+    lib.rs
+    plugin.rs
+    commands/
+      info.rs
+  test/
+    lib.rs
+    plugin.rs
+    commands/
+      info.rs
 ```
 
-- All tests live in `src/` directory alongside the code they test
+- All test files live in `test/` at the crate root, mirroring the `src/` module hierarchy
+- Test files in `src/` are forbidden — no `*_test.rs` or `test.rs` file may sit next to production code
 - Use the module-aware naming convention:
-  - Single-file module: `foo.rs` with sibling `foo_test.rs`
-  - Multi-file module: `foo/mod.rs` with `foo/test.rs`
-  - Forbidden: mixed `foo.rs` + `foo/test.rs`
+  - Single-file module: `src/foo.rs` with `test/foo.rs`
+  - Multi-file module: `src/foo/mod.rs` with `test/foo/test.rs`
+  - Forbidden: mixed `src/foo.rs` + `test/foo/test.rs`
+- The `mod` declaration name is independent of the filename — `mod foo_test` can point to `test/foo.rs`
+- Test support files (`helpers.rs`, `support.rs`, `shared.rs`, `driver.rs`, `utils.rs`) also live in `test/`
 - Keep test files focused and organized by module
-- When unit tests in a source file become large, split them out:
+- Declare each test module from its production module with `#[cfg(test)]` and a `#[path]` attribute. `#[path]` resolves relative to the declaring file, so the path must escape `src/`:
   ```rust
   // region:    --- Tests
   #[cfg(test)]
-  #[path = "applier_tests.rs"]
-  mod tests;
+  #[path = "../test/foo.rs"]
+  mod foo_test;
   // endregion: --- Tests
   ```
+- From a subdirectory module (`src/foo/mod.rs`), add one more `../`:
+  ```rust
+  // region:    --- Tests
+  #[cfg(test)]
+  #[path = "../../test/foo/test.rs"]
+  mod test;
+  // endregion: --- Tests
+  ```
+- Do not write `#[path = "test/foo.rs"]` from a file in `src/` — that resolves to `src/test/foo.rs`, not the crate-root `test/` directory
+- When unit tests in a source file become large, split them into topical files under `test/` and declare each one
+
+### Test Categorization
+
+Tests are split into **unit** and **integration** categories. Integration tests spin up real servers, bind TCP ports, do network I/O, or are inherently slow. Unit tests are pure logic with no network and no real servers.
+
+Integration test modules are gated behind the `integration` cargo feature:
+
+```rust
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/server/test.rs"]
+mod test;
+```
+
+The feature is defined in `crates/nu-agent-a2a/Cargo.toml`, `crates/nu-agent-core/Cargo.toml`, `crates/nu-agent-tui/Cargo.toml`, and `crates/nu-agent/Cargo.toml`. Enabling it on `nu-agent` or `nu-agent-tui` propagates to `nu-agent-core` and `nu-agent-a2a`.
+
+`cargo nextest` is the test runner. Profiles live in `.config/nextest.toml`:
+
+| Profile | Purpose |
+|---------|---------|
+| `default` | Unit tests only — fast feedback, high parallelism |
+| `integration` | All tests — lower parallelism, one retry for flaky server tests |
+| `ci` | Full suite for CI — no retries, JUnit XML output |
+
+Commands:
+
+```bash
+cargo nextest run                                  # unit tests only (fast)
+cargo nextest run --features integration           # unit + integration
+cargo nextest run --features integration --profile integration  # integration with retries
+cargo nextest run --features integration --profile ci           # CI run, JUnit output
+```
+
+In the Nix dev shell these are wrapped as `tests` (unit only), `tests-all` (unit + integration), and `tests-integration` (integration only, with retries).
+
+The pre-push hook runs the full suite: `cargo clippy --all-features --tests -- -D warnings` lints all test code including integration modules, then `cargo nextest run --features integration --profile ci` runs everything and writes `junit.xml`.
+
+Integration test modules:
+
+- `nu-agent-a2a` — `test/server/`, `test/agent/`, `test/client/a2a_client.rs`, `test/client/functions.rs`, `test/discovery/test.rs`, `test/tools/test.rs`, `test/task_store/test.rs`
+- `nu-agent-core` — `test/conversation/turn/test.rs`, `test/conversation/turn/executor/`, `test/session/sqlite_store.rs`, `test/tools/mcp/oauth_callback.rs`
+- `nu-agent` — `test/command/agent/a2a_card_switch.rs`, `test/command/session/clear.rs`, `test/command/session/inspect.rs`, `test/command/session/list.rs`
+
+All other test modules are unit tests. `nu-agent-tui` and `nu-agent-tty` have no integration test modules.
 
 ### No test-only code in production
 
 **`#[cfg(test)]` on `fn` in production files is banned.**
 
-- ❌ NO: `#[cfg(test)]` on any `fn` in production code (`.rs` files that are not `*_test.rs` / `test.rs`)
+- ❌ NO: `#[cfg(test)]` on any `fn` in production code (`.rs` files that are not in the `test/` directory)
 - ✅ YES: `#[cfg(test)]` on `mod` declarations for test modules (e.g. `#[cfg(test)] mod foo_test;`)
 - ❌ NO: Test-only accessor methods that expose private fields solely for tests
 - ✅ YES: Design public API so tests use the same methods as production code
@@ -77,7 +136,7 @@ src/
 
 ### What counts as production code
 
-Any `.rs` file that is NOT a test file (`*_test.rs`, `test.rs`) is production code. This includes `mod.rs`, `input.rs`, `lifecycle.rs`, `dispatch.rs`, etc. The `#[cfg(test)]` attribute on `fn` in these files is the violation.
+Any `.rs` file that is NOT in the `test/` directory is production code. This includes `mod.rs`, `input.rs`, `lifecycle.rs`, `dispatch.rs`, etc. The `#[cfg(test)]` attribute on `fn` in these files is the violation.
 
 ### Mocking
 
@@ -87,6 +146,21 @@ Any `.rs` file that is NOT a test file (`*_test.rs`, `test.rs`) is production co
 - Mock Nushell's `EngineInterface` when testing commands
 - Use dependency injection to make code testable
 - Prefer trait-based abstractions for mockable interfaces
+
+### Code Coverage
+
+Code coverage is measured with `cargo-llvm-cov` (LLVM source-based instrumentation, stable Rust).
+
+```bash
+cargo install cargo-llvm-cov --locked
+rustup component add llvm-tools-preview
+cargo llvm-cov --workspace --html --output-dir coverage/
+```
+
+- Coverage is a second quality dimension next to clippy: clippy finds suspicious code, coverage finds code no test executes.
+- Test files live in `test/` (singular), which the default exclusion patterns do not cover — pass `--ignore-filename-regex '(/test/|/test$)'` to keep them out of the report.
+- `--fail-under-lines <N>` exits non-zero when total line coverage drops below `N` percent. No threshold is enforced yet.
+- Full workflow, output formats, per-crate runs, and CI integration: `docs/coverage.md`.
 
 ## Code Quality
 
@@ -350,7 +424,7 @@ Every `Option` field on the runtime `Config` struct must have at least one real 
 2. Apply in `resolve_model()` role-level block (`if config.field.is_none()`)
 3. Add env var `AGENT_<FIELD_UPPER>` to `Config::from_env()`
 4. Add CLI flag in `crates/nu-agent/src/command/agent/mod.rs` + apply in `apply_cli_flags()`
-5. Add tests in the sibling `test.rs` / `*_test.rs` file — NO inline tests
+5. Add tests in the corresponding `test/` directory file — NO inline tests
 6. Update `docs/configuration.md`
 ```
 

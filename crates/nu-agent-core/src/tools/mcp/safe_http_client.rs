@@ -53,5 +53,5 @@ pub fn validate_url(url: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[path = "safe_http_client_test.rs"]
+#[path = "../../../test/tools/mcp/safe_http_client.rs"]
 mod safe_http_client_test;

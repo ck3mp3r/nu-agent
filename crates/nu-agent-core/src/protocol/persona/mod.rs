@@ -8,4 +8,5 @@ pub use parser::*;
 pub use resolver::*;
 
 #[cfg(test)]
+#[path = "../../../test/protocol/persona/test.rs"]
 mod test;

@@ -174,5 +174,5 @@ fn map_tool_error(e: ToolError) -> ToolExecutionError {
 // endregion: --- Support
 
 #[cfg(test)]
-#[path = "closure_test.rs"]
+#[path = "../../../test/hook/adapter/closure.rs"]
 mod closure_adapter_test;

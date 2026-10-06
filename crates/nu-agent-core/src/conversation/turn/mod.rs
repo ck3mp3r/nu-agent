@@ -26,8 +26,13 @@ pub(crate) mod token_estimate;
 // endregion: --- Modules
 
 #[cfg(test)]
+#[path = "../../../test/conversation/turn/unit.rs"]
+mod unit_test;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../test/conversation/turn/test.rs"]
 mod test;
 
 #[cfg(test)]
-#[path = "cancel_test.rs"]
+#[path = "../../../test/conversation/turn/cancel.rs"]
 mod cancel_test;

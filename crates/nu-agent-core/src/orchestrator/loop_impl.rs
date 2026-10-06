@@ -18,7 +18,8 @@ use crate::orchestrator::stages::{
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{
     InteractiveLoopConfig, OrchestratorEvent, UiRequestResponse, UiStateEvent, WorkerCommand,
-    dispatch_compaction, handle_external_cancel, handle_worker_result, recv_or_pending,
+    dispatch_compaction, fail_busy_completion, handle_external_cancel, handle_worker_result,
+    recv_or_pending, reject_busy_task,
 };
 use crate::protocol::{
     contracts::CoreRuntime,
@@ -47,6 +48,7 @@ where
         task_cancel_rx,
         a2a_task_rx,
         a2a_completion_rx,
+        task_store,
         bus,
         hydration,
         on_agent_switch,
@@ -174,6 +176,7 @@ where
         pending_external_cancel: &mut pending_external_cancel,
         pending_a2a_task_id: &mut pending_a2a_task_id,
         bus: &bus,
+        task_store: task_store.as_ref(),
     };
 
     let stages = Stages {
@@ -467,6 +470,13 @@ where
 
             incoming = recv_or_pending(&mut a2a_task_rx_opt) => {
                 let Some(mut incoming) = incoming else { break };
+                // The server handler already transitioned the task
+                // Submitted→Working. If the worker is busy, no turn can run for
+                // it, so reject it instead of leaving it stuck in Working.
+                if *ctx.worker_active {
+                    reject_busy_task(&incoming.task_id, ctx);
+                    continue;
+                }
                 // An absent `contextId` means "start a fresh session" (A2A spec
                 // §3.4.1). Mint a UUID so the client receives a context handle
                 // it can resume with on a follow-up task.
@@ -488,10 +498,16 @@ where
 
             event = recv_or_pending(&mut a2a_completion_rx_opt) => {
                 let Some(event) = event else { break };
-                let prompt = event.to_prompt();
                 // A completion event is a prompt into the orchestrator's own
-                // session — the remote `contextId` is metadata only, so no
-                // session attach is requested here.
+                // session. If the worker is busy, the prompt cannot run, so fail
+                // the task instead of leaving it stuck in Working.
+                if *ctx.worker_active {
+                    fail_busy_completion(&event.task_id, ctx);
+                    continue;
+                }
+                let prompt = event.to_prompt();
+                // The remote `contextId` is metadata only, so no session attach
+                // is requested here.
                 *ctx.pending_a2a_task_id = Some(event.task_id);
                 let _ = ctx
                     .bus

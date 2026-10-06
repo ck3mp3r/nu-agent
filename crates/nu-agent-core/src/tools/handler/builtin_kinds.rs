@@ -83,5 +83,5 @@ impl FromStr for BuiltinKind {
 }
 
 #[cfg(test)]
-#[path = "builtin_kinds_test.rs"]
+#[path = "../../../test/tools/handler/builtin_kinds.rs"]
 mod tests;

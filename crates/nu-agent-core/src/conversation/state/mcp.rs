@@ -251,5 +251,5 @@ impl McpState {
 }
 
 #[cfg(test)]
-#[path = "mcp_test.rs"]
+#[path = "../../../test/conversation/state/mcp.rs"]
 mod mcp_test;

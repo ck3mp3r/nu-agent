@@ -69,5 +69,5 @@ Full output could not be saved.]"
 }
 
 #[cfg(test)]
-#[path = "limits_test.rs"]
+#[path = "../../test/tools/limits.rs"]
 mod limits_test;

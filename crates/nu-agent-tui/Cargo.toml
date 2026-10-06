@@ -3,6 +3,9 @@ name = "nu-agent-tui"
 edition.workspace = true
 version.workspace = true
 
+[features]
+integration = ["nu-agent-core/integration"]
+
 [dependencies]
 nu-agent-core = { workspace = true }
 nu-protocol = { workspace = true }
@@ -22,5 +25,4 @@ rand = { workspace = true }
 notify = { workspace = true }
 
 [dev-dependencies]
-serial_test = { workspace = true }
 tempfile = { workspace = true }

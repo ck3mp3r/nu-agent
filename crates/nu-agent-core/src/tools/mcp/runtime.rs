@@ -10,6 +10,7 @@ use crate::tools::mcp::{
     config::{McpAuthConfig, McpServerConfig, McpTransportType},
     namespaced::NamespacedClientHandler,
 };
+use crate::utils::crypto::ensure_crypto_provider;
 
 pub struct McpRuntime {
     sessions: Vec<McpSessionHandle>,
@@ -259,6 +260,7 @@ fn build_http_transport_config(
 }
 
 fn build_mcp_http_client(read_timeout_secs: u64) -> Result<reqwest::Client, String> {
+    ensure_crypto_provider();
     let mut builder = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .pool_max_idle_per_host(0) // match rmcp's default_http_client() — avoids Delayed ACK stall
@@ -539,5 +541,5 @@ fn build_tool_definitions(
 }
 
 #[cfg(test)]
-#[path = "runtime_test.rs"]
+#[path = "../../../test/tools/mcp/runtime.rs"]
 mod runtime_test;

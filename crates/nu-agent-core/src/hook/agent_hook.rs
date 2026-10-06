@@ -49,5 +49,5 @@ pub struct HookState<S: SessionStore + Clone + Send + Sync> {
 }
 
 #[cfg(test)]
-#[path = "agent_hook_test.rs"]
+#[path = "../../test/hook/agent_hook.rs"]
 mod agent_hook_test;

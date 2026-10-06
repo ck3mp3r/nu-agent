@@ -91,5 +91,5 @@ pub async fn enforce_authorization_for_tool_call(
 }
 
 #[cfg(test)]
-#[path = "authz_gate_test.rs"]
+#[path = "../../../test/tools/handler/authz_gate.rs"]
 mod authz_gate_test;

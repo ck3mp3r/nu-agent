@@ -9,6 +9,11 @@ mod registry;
 mod send;
 
 #[cfg(test)]
+#[path = "../../test/tools/defs.rs"]
+mod defs_test;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/tools/test.rs"]
 mod test;
 
 pub use adapter::{A2aToolAdapter, A2aToolContext, A2aToolDef};

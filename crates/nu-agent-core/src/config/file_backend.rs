@@ -8,9 +8,11 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
+
+use crate::utils::env_map::{EnvMap, process_env};
 
 use super::vault::{VaultBackend, VaultError};
 
@@ -54,7 +56,14 @@ impl FileBackend {
     /// Creates the `nu-agent/` subdirectory when missing, then proves
     /// writability by creating and dropping a probe file inside it.
     pub fn probe() -> Result<Self, VaultError> {
-        let path = Self::default_path()?;
+        Self::probe_in(&Self::default_path()?)
+    }
+
+    /// Probe whether `path` is writable.
+    ///
+    /// Creates the parent directory when missing, then proves writability by
+    /// creating and dropping a probe file inside it.
+    pub fn probe_in(path: &Path) -> Result<Self, VaultError> {
         let dir = path.parent().ok_or(VaultError::NoDataDir)?;
         std::fs::create_dir_all(dir).map_err(|_| VaultError::NoDataDir)?;
         tempfile::NamedTempFile::new_in(dir).map_err(|_| VaultError::NoDataDir)?;
@@ -70,7 +79,12 @@ impl FileBackend {
 
     /// Resolve `$XDG_DATA_HOME/nu-agent/secrets.json`.
     pub fn default_path() -> Result<PathBuf, VaultError> {
-        let dir = crate::utils::xdg::data_dir().map_err(|_| VaultError::NoDataDir)?;
+        Self::default_path_with(&process_env())
+    }
+
+    /// Resolve `$XDG_DATA_HOME/nu-agent/secrets.json` from an explicit env map.
+    pub fn default_path_with(env: &EnvMap) -> Result<PathBuf, VaultError> {
+        let dir = crate::utils::xdg::data_dir_with(env).map_err(|_| VaultError::NoDataDir)?;
         Ok(dir.join(DATA_SUBDIR).join(SECRETS_FILE))
     }
 
@@ -187,7 +201,7 @@ impl VaultBackend for FileBackend {
 // region:    --- Tests
 
 #[cfg(test)]
-#[path = "file_backend_test.rs"]
+#[path = "../../test/config/file_backend.rs"]
 mod file_backend_test;
 
 // endregion: --- Tests

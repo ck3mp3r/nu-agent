@@ -9,27 +9,27 @@ pub mod sqlite_store;
 mod store;
 
 #[cfg(test)]
-#[path = "prefix_test.rs"]
+#[path = "../../test/session/prefix.rs"]
 mod prefix_test;
 
 #[cfg(test)]
-#[path = "factory_test.rs"]
+#[path = "../../test/session/factory.rs"]
 mod factory_test;
 
 #[cfg(test)]
-#[path = "store_test.rs"]
+#[path = "../../test/session/store.rs"]
 mod store_test;
 
 #[cfg(test)]
-#[path = "journal_test.rs"]
+#[path = "../../test/session/journal.rs"]
 mod journal_test;
 
 #[cfg(test)]
-#[path = "repair_test.rs"]
+#[path = "../../test/session/repair.rs"]
 mod repair_test;
 
 #[cfg(test)]
-#[path = "resolver_test.rs"]
+#[path = "../../test/session/resolver.rs"]
 mod resolver_test;
 
 pub use factory::{SessionStoreBackend, StoreError, StoreType, create_store};
@@ -39,4 +39,5 @@ pub use model::{Session, SessionMetadata, extract_title};
 pub use store::{CompactionMarker, FsSessionStore, SessionStore, StoreEntry, extract_llm_context};
 
 #[cfg(test)]
+#[path = "../../test/session/tool_session.rs"]
 mod tool_session_test;

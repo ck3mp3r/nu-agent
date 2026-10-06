@@ -31,5 +31,5 @@ pub fn style_text(text: &str, hint: &StyleHint, use_color: bool) -> String {
 }
 
 #[cfg(test)]
-#[path = "ansi_test.rs"]
+#[path = "../test/ansi.rs"]
 mod ansi_test;

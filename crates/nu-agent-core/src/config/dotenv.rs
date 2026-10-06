@@ -4,10 +4,15 @@
 //! `Config::from_env()` can read the values. A variable already present in the
 //! process environment is never overwritten — an inline env var such as
 //! `OPENAI_API_KEY=sk-temp agent run` always wins over a `.env` file.
+//!
+//! The parsing core works on an explicit [`EnvMap`], so tests inject a map and
+//! never touch process-global state.
 
 // region:    --- Modules
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use crate::utils::env_map::{EnvMap, process_env};
 
 // endregion: --- Modules
 
@@ -30,39 +35,69 @@ const DOTENV_FILE: &str = ".env";
 /// process environment. Missing files are ignored. Malformed lines are logged
 /// and skipped — this function never fails.
 pub fn load_env_files() {
-    if let Ok(path) = user_env_path() {
-        load_env_file(&path);
+    let mut env = process_env();
+    let user_config_dir = crate::utils::xdg::config_dir().ok();
+    let applied = load_env_files_into(&mut env, user_config_dir.as_deref(), Path::new("."));
+    for (key, value) in applied {
+        // SAFETY: called once at startup, before the process spawns threads that
+        // read the environment concurrently.
+        unsafe {
+            std::env::set_var(key, value);
+        }
     }
-    load_env_file(Path::new(DOTENV_FILE));
+}
+
+/// Merge the user-level and project-level `.env` files into `env`.
+///
+/// `user_config_dir` is the XDG config directory, or `None` when it cannot be
+/// resolved. `project_dir` holds the project-level `.env`. Entries already
+/// present in `env` are never overwritten. Returns the assignments that were
+/// applied, in load order.
+pub fn load_env_files_into(
+    env: &mut EnvMap,
+    user_config_dir: Option<&Path>,
+    project_dir: &Path,
+) -> Vec<(String, String)> {
+    let mut applied = Vec::new();
+    if let Some(dir) = user_config_dir {
+        applied.extend(load_env_file_into(
+            env,
+            &dir.join(CONFIG_SUBDIR).join(DOTENV_FILE),
+        ));
+    }
+    applied.extend(load_env_file_into(env, &project_dir.join(DOTENV_FILE)));
+    applied
 }
 
 // endregion: --- Public Functions
 
 // region:    --- Support
 
-/// Resolve `$XDG_CONFIG_HOME/nu-agent/.env`.
-fn user_env_path() -> Result<PathBuf, crate::utils::xdg::XdgError> {
-    Ok(crate::utils::xdg::config_dir()?
-        .join(CONFIG_SUBDIR)
-        .join(DOTENV_FILE))
-}
-
-/// Parse one `.env` file and populate unset env vars from it.
-fn load_env_file(path: &Path) {
+/// Parse one `.env` file and fill unset entries in `env`.
+///
+/// Returns the assignments that were applied. A missing file is not an error —
+/// there is simply nothing to load.
+fn load_env_file_into(env: &mut EnvMap, path: &Path) -> Vec<(String, String)> {
     let content = match std::fs::read_to_string(path) {
         Ok(content) => content,
-        // A missing file is not an error — there is simply nothing to load.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
         Err(e) => {
             log::warn!("Failed to read {}: {e}", path.display());
-            return;
+            return Vec::new();
         }
     };
 
+    let mut applied = Vec::new();
     for (index, raw_line) in content.lines().enumerate() {
         let line_number = index + 1;
         match parse_line(raw_line) {
-            Ok(Some((key, value))) => set_if_unset(&key, &value),
+            Ok(Some((key, value))) => {
+                if env.contains_key(&key) {
+                    continue;
+                }
+                env.insert(key.clone(), value.clone());
+                applied.push((key, value));
+            }
             Ok(None) => {}
             Err(reason) => {
                 log::warn!(
@@ -72,6 +107,7 @@ fn load_env_file(path: &Path) {
             }
         }
     }
+    applied
 }
 
 /// Parse a single `.env` line.
@@ -112,24 +148,12 @@ fn strip_quotes(value: &str) -> String {
     value.to_string()
 }
 
-/// Set an env var only when it is not already present.
-fn set_if_unset(key: &str, value: &str) {
-    if std::env::var(key).is_ok() {
-        return;
-    }
-    // SAFETY: called once at startup, before the process spawns threads that
-    // read the environment concurrently.
-    unsafe {
-        std::env::set_var(key, value);
-    }
-}
-
 // endregion: --- Support
 
 // region:    --- Tests
 
 #[cfg(test)]
-#[path = "dotenv_test.rs"]
+#[path = "../../test/config/dotenv.rs"]
 mod dotenv_test;
 
 // endregion: --- Tests

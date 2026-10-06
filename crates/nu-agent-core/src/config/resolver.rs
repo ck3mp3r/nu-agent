@@ -1,3 +1,5 @@
+use crate::utils::env_map::{EnvMap, process_env};
+
 use super::{Config, ModelRoleConfig, PluginConfig};
 
 impl PluginConfig {
@@ -27,6 +29,18 @@ impl PluginConfig {
     /// - Missing `/` separator in model spec
     /// - Empty provider or model name
     pub fn resolve_model(&self, role_config: &ModelRoleConfig) -> Result<Config, String> {
+        self.resolve_model_with(role_config, &process_env())
+    }
+
+    /// Resolve a model role configuration against an explicit environment map.
+    ///
+    /// Same resolution order as [`PluginConfig::resolve_model`], but environment
+    /// lookups read `env` instead of the process environment.
+    pub fn resolve_model_with(
+        &self,
+        role_config: &ModelRoleConfig,
+        env: &EnvMap,
+    ) -> Result<Config, String> {
         let model_spec = &role_config.model;
 
         // Split on first '/' only - provider is first part, model is everything after
@@ -52,7 +66,7 @@ impl PluginConfig {
         );
 
         // Step 1: Start with env-based config for this provider/model (lowest priority)
-        let mut config = Config::from_env(provider_name, model_name);
+        let mut config = Config::from_env(env, provider_name, model_name);
 
         // Step 2: Merge provider-level settings (if provider block exists)
         if let Some(pc) = provider_config
@@ -178,9 +192,9 @@ impl PluginConfig {
         if let Some(api_key) = &config.api_key
             && let Some(var_name) = api_key.strip_prefix("env:")
         {
-            match std::env::var(var_name) {
-                Ok(value) => config.api_key = Some(value),
-                Err(_) => {
+            match env.get(var_name) {
+                Some(value) => config.api_key = Some(value.clone()),
+                None => {
                     log::warn!(
                         "resolve_model: env reference '{var_name}' for provider '{provider_name}' is not set — no api_key"
                     );
@@ -226,7 +240,7 @@ impl PluginConfig {
 // region:    --- Tests
 
 #[cfg(test)]
-#[path = "resolver_test.rs"]
+#[path = "../../test/config/resolver.rs"]
 mod resolver_test;
 
 // endregion: --- Tests

@@ -375,5 +375,5 @@ pub enum McpClientError {
 }
 
 #[cfg(test)]
-#[path = "namespaced_test.rs"]
+#[path = "../../../test/tools/mcp/namespaced.rs"]
 mod namespaced_test;

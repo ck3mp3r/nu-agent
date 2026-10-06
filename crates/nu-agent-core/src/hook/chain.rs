@@ -866,5 +866,5 @@ async fn patch_from_marker(
 // endregion: --- Compaction
 
 #[cfg(test)]
-#[path = "chain_test.rs"]
+#[path = "../../test/hook/chain.rs"]
 mod chain_test;

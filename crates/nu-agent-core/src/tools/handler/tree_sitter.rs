@@ -588,5 +588,5 @@ fn node_to_sexp(
 }
 
 #[cfg(test)]
-#[path = "tree_sitter_test.rs"]
+#[path = "../../../test/tools/handler/tree_sitter.rs"]
 mod tests;

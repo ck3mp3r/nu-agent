@@ -105,5 +105,5 @@ impl ThemePreference {
 }
 
 #[cfg(test)]
-#[path = "theme_pref_test.rs"]
+#[path = "../test/theme_pref.rs"]
 mod theme_pref_test;

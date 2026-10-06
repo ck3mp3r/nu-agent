@@ -3,6 +3,9 @@ name = "nu-agent-core"
 edition.workspace = true
 version.workspace = true
 
+[features]
+integration = []
+
 [dependencies]
 nu-agent-a2a = { workspace = true }
 nu-plugin = { workspace = true }

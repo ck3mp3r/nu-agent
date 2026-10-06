@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use tokio::sync::mpsc;
 
+use nu_agent_a2a::InMemoryTaskStore;
 use nu_protocol::Span;
 
 use crate::bus::Bus;
@@ -39,6 +42,9 @@ pub(crate) struct OrchestrationContext<'a> {
     pub pending_a2a_task_id: &'a mut Option<String>,
     /// Shared signal bus. The session stage publishes turn-completion events.
     pub bus: &'a Bus,
+    /// Optional A2A task store. When present, the loop rejects or fails tasks
+    /// that arrive while the worker is busy instead of dispatching them.
+    pub task_store: Option<&'a Arc<InMemoryTaskStore>>,
 }
 
 /// Stage trait for slash command and prompt handling.

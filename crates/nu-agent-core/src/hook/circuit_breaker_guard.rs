@@ -167,5 +167,5 @@ fn auth_error_from_status(error: &ToolExecutionError, server_name: &str) -> Opti
 // endregion: --- Support
 
 #[cfg(test)]
-#[path = "circuit_breaker_guard_test.rs"]
+#[path = "../../test/hook/circuit_breaker_guard.rs"]
 mod circuit_breaker_guard_test;

@@ -145,5 +145,5 @@ pub(super) fn rebuild_mcp_lifecycle_projection(
 }
 
 #[cfg(test)]
-#[path = "mcp_helpers_test.rs"]
+#[path = "../../test/conversation/mcp_helpers.rs"]
 mod mcp_helpers_test;

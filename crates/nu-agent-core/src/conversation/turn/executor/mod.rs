@@ -16,60 +16,60 @@ pub use core::*;
 pub use error_kind::*;
 pub use response::*;
 
-#[cfg(test)]
-#[path = "test_utils.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/utils.rs"]
 pub(super) mod test_utils;
 
-#[cfg(test)]
-#[path = "executor_test_support.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/executor_support.rs"]
 mod executor_test_support;
 
-#[cfg(test)]
-#[path = "executor_hard_error_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/executor_hard_error.rs"]
 mod executor_hard_error_test;
 
-#[cfg(test)]
-#[path = "executor_cancel_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/executor_cancel.rs"]
 mod executor_cancel_test;
 
-#[cfg(test)]
-#[path = "executor_repair_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/executor_repair.rs"]
 mod executor_repair_test;
 
-#[cfg(test)]
-#[path = "executor_retry_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/executor_retry.rs"]
 mod executor_retry_test;
 
-#[cfg(test)]
-#[path = "executor_feedback_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/executor_feedback.rs"]
 mod executor_feedback_test;
 
-#[cfg(test)]
-#[path = "executor_output_budget_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/executor_output_budget.rs"]
 mod executor_output_budget_test;
 
-#[cfg(test)]
-#[path = "executor_max_turns_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/executor_max_turns.rs"]
 mod executor_max_turns_test;
 
-#[cfg(test)]
-#[path = "executor_repetition_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/executor_repetition.rs"]
 mod executor_repetition_test;
 
-#[cfg(test)]
-#[path = "executor_construction_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/executor_construction.rs"]
 mod executor_construction_test;
 
-#[cfg(test)]
-#[path = "executor_memory_append_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/executor_memory_append.rs"]
 mod executor_memory_append_test;
 
-#[cfg(test)]
-#[path = "executor_log_preview_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/executor_log_preview.rs"]
 mod executor_log_preview_test;
 
-#[cfg(test)]
-#[path = "journey_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../../test/conversation/turn/executor/journey.rs"]
 mod journey_test;
 
 // endregion: --- Modules

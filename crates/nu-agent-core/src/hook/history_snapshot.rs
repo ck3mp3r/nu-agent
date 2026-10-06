@@ -46,5 +46,5 @@ impl Default for HistorySnapshot {
 }
 
 #[cfg(test)]
-#[path = "history_snapshot_test.rs"]
+#[path = "../../test/hook/history_snapshot.rs"]
 mod history_snapshot_test;

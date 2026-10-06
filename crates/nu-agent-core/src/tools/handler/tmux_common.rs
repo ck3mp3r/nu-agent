@@ -180,5 +180,5 @@ pub(crate) fn parse_panes_find(
 }
 
 #[cfg(test)]
-#[path = "tmux_test.rs"]
+#[path = "../../../test/tools/handler/tmux.rs"]
 mod tests;

@@ -16,7 +16,7 @@ use crate::runtime::{HybridTerminalEvents, RuntimeCoordinator, TuiRuntimeRendere
 use crate::state::{ActivePicker, PickerOption};
 
 #[cfg(test)]
-#[path = "interactive_test.rs"]
+#[path = "../test/interactive.rs"]
 mod interactive_test;
 
 pub struct TuiInteractiveUi<R>

@@ -162,7 +162,7 @@ fn map_error(error: keyring::v1::Error) -> VaultError {
 // region:    --- Tests
 
 #[cfg(test)]
-#[path = "keychain_backend_test.rs"]
+#[path = "../../test/config/keychain_backend.rs"]
 mod keychain_backend_test;
 
 // endregion: --- Tests

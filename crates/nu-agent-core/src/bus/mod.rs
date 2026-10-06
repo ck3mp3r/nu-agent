@@ -1,14 +1,15 @@
 mod channel;
 #[cfg(test)]
-#[path = "channel_test.rs"]
+#[path = "../../test/bus/channel.rs"]
 mod channel_test;
 #[cfg(test)]
-#[path = "domain_test.rs"]
+#[path = "../../test/bus/domain.rs"]
 mod domain_test;
 #[cfg(test)]
-#[path = "event_from_test.rs"]
+#[path = "../../test/bus/event_from.rs"]
 mod event_from_test;
 #[cfg(test)]
+#[path = "../../test/bus/test.rs"]
 mod test;
 
 mod domain;

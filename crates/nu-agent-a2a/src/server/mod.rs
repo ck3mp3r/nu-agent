@@ -4,7 +4,8 @@ pub mod handlers;
 mod middleware;
 mod response;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/server/test.rs"]
 mod test;
 
 pub use a2a_server::{

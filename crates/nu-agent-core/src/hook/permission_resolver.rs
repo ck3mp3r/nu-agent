@@ -508,5 +508,5 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
 }
 
 #[cfg(test)]
-#[path = "permission_resolver_test.rs"]
+#[path = "../../test/hook/permission_resolver.rs"]
 mod permission_resolver_test;

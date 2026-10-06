@@ -160,5 +160,5 @@ pub fn resolve_closure_params<E: EngineInterfaceLike>(
 }
 
 #[cfg(test)]
-#[path = "conversion_test.rs"]
+#[path = "../../../test/tools/closure/conversion.rs"]
 mod conversion_test;

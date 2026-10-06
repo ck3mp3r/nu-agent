@@ -63,5 +63,5 @@ pub fn pre_authorize_tool_call<E: EngineInterfaceLike>(
 }
 
 #[cfg(test)]
-#[path = "pre_authorize_test.rs"]
+#[path = "../../../test/tools/handler/pre_authorize.rs"]
 mod tests;

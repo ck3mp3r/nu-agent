@@ -22,6 +22,7 @@ pub mod tree_sitter;
 mod types;
 
 #[cfg(test)]
+#[path = "../../../test/tools/handler/http.rs"]
 mod http_test;
 
 pub use conversion::{json_to_nu_value, nu_value_to_json};

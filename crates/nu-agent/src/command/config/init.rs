@@ -71,8 +71,14 @@ impl SimplePluginCommand for AgentConfigInit {
 const TEMPLATE: &str = include_str!("template.toml");
 
 fn generate_config_content() -> String {
-    let env_provider = std::env::var("AGENT_PROVIDER").unwrap_or_default();
-    let env_model = std::env::var("AGENT_MODEL").unwrap_or_default();
+    generate_config_content_with(&nu_agent_core::utils::env_map::process_env())
+}
+
+/// Generate the starter config, reading `AGENT_PROVIDER` / `AGENT_MODEL` from
+/// `env` instead of the process environment.
+fn generate_config_content_with(env: &nu_agent_core::utils::env_map::EnvMap) -> String {
+    let env_provider = env.get("AGENT_PROVIDER").cloned().unwrap_or_default();
+    let env_model = env.get("AGENT_MODEL").cloned().unwrap_or_default();
 
     let active_model = if !env_provider.is_empty() && !env_model.is_empty() {
         format!("[models.default]\nmodel = \"{env_provider}/{env_model}\"")
@@ -84,5 +90,5 @@ fn generate_config_content() -> String {
 }
 
 #[cfg(test)]
-#[path = "init_test.rs"]
+#[path = "../../../test/command/config/init.rs"]
 mod init_test;

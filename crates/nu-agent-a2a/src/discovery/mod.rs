@@ -12,13 +12,21 @@ pub use impl_enum::PeerDiscoveryImpl;
 pub use service::*;
 
 #[cfg(test)]
+#[path = "../../test/discovery/filter.rs"]
 mod filter_test;
 
 #[cfg(test)]
+#[path = "../../test/discovery/logic.rs"]
+mod logic_test;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/discovery/test.rs"]
 mod test;
 
 #[cfg(test)]
+#[path = "../../test/discovery/mdns_discovery.rs"]
 mod mdns_discovery_test;
 
 #[cfg(test)]
+#[path = "../../test/discovery/impl_enum.rs"]
 mod impl_enum_test;

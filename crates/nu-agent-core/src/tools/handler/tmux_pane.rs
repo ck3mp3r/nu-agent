@@ -189,5 +189,5 @@ impl BuiltinTool for TmuxPaneTool {
 }
 
 #[cfg(test)]
-#[path = "tmux_pane_test.rs"]
+#[path = "../../../test/tools/handler/tmux_pane.rs"]
 mod tests;

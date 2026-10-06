@@ -57,5 +57,5 @@ impl SubTurnCap {
 }
 
 #[cfg(test)]
-#[path = "subturn_cap_test.rs"]
+#[path = "../../test/hook/subturn_cap.rs"]
 mod subturn_cap_test;

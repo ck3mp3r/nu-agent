@@ -1,5 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use crate::utils::env_map::{EnvMap, process_env};
 use crate::utils::xdg;
 use crate::utils::xdg::XdgError;
 
@@ -30,7 +31,12 @@ impl std::error::Error for TomlConfigError {}
 
 /// Returns the path to config.toml: `$XDG_CONFIG_HOME/nu-agent/config.toml`
 pub fn config_path() -> Result<PathBuf, TomlConfigError> {
-    let dir = xdg::config_dir().map_err(TomlConfigError::Xdg)?;
+    config_path_with(&process_env())
+}
+
+/// Returns the path to config.toml using an explicit environment map.
+pub fn config_path_with(env: &EnvMap) -> Result<PathBuf, TomlConfigError> {
+    let dir = xdg::config_dir_with(env).map_err(TomlConfigError::Xdg)?;
     Ok(dir.join("nu-agent").join("config.toml"))
 }
 
@@ -38,11 +44,18 @@ pub fn config_path() -> Result<PathBuf, TomlConfigError> {
 /// Returns `PluginConfig::default()` if the file doesn't exist (not an error).
 /// Returns an error only if the file exists but can't be read or parsed.
 pub fn load() -> Result<PluginConfig, TomlConfigError> {
-    let path = config_path()?;
+    load_from(&config_path()?)
+}
+
+/// Load PluginConfig from an explicit path.
+///
+/// Returns `PluginConfig::default()` if the file doesn't exist (not an error).
+/// Returns an error only if the file exists but can't be read or parsed.
+pub fn load_from(path: &Path) -> Result<PluginConfig, TomlConfigError> {
     if !path.exists() {
         return Ok(PluginConfig::default());
     }
-    let contents = std::fs::read_to_string(&path).map_err(TomlConfigError::Io)?;
+    let contents = std::fs::read_to_string(path).map_err(TomlConfigError::Io)?;
     let config: PluginConfig = toml::from_str(&contents).map_err(TomlConfigError::Parse)?;
     validate_api_keys(&config)?;
     Ok(config)
@@ -69,5 +82,5 @@ fn validate_api_keys(config: &PluginConfig) -> Result<(), TomlConfigError> {
 }
 
 #[cfg(test)]
-#[path = "toml_config_test.rs"]
+#[path = "../../test/config/toml_config.rs"]
 mod toml_config_test;

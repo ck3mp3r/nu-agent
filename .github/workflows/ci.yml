@@ -1,0 +1,42 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Format, lint, and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v23
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Format
+        run: nix develop .#ci --command cargo fmt -- --check
+
+      - name: Clippy
+        run: nix develop .#ci --command cargo clippy --all-features --tests -- -D warnings
+
+      - name: Test
+        run: nix develop .#ci --command cargo nextest run --features integration --profile ci
+
+      # nextest writes the ci profile report to target/nextest/ci/junit.xml
+      - name: Upload JUnit report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-report
+          path: target/nextest/ci/junit.xml

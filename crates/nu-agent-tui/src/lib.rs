@@ -8,12 +8,15 @@ pub mod state;
 pub mod tui_renderer;
 
 #[cfg(test)]
+#[path = "../test/architecture.rs"]
 mod architecture_test;
 
 #[cfg(test)]
-mod tui_renderer_test;
+#[path = "../test/renderer.rs"]
+mod renderer_test;
 
 #[cfg(test)]
+#[path = "../test/support.rs"]
 pub(crate) mod test_support;
 
 // Re-export primary public types

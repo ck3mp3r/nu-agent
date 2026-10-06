@@ -7,13 +7,13 @@ pub use logout::AgentAuthMcpLogout;
 pub use status::AgentAuthMcpStatus;
 
 #[cfg(test)]
-#[path = "login_test.rs"]
+#[path = "../../../../test/command/mcp/auth/login.rs"]
 mod login_test;
 
 #[cfg(test)]
-#[path = "logout_test.rs"]
+#[path = "../../../../test/command/mcp/auth/logout.rs"]
 mod logout_test;
 
 #[cfg(test)]
-#[path = "status_test.rs"]
+#[path = "../../../../test/command/mcp/auth/status.rs"]
 mod status_test;

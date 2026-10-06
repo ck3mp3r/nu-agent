@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use http_body_util::Full;
-use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
@@ -171,8 +170,8 @@ impl Drop for CallbackServer {
     }
 }
 
-async fn handle_request(
-    req: Request<Incoming>,
+async fn handle_request<B>(
+    req: Request<B>,
     pending: Arc<Mutex<HashMap<String, PendingAuth>>>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // Only handle the callback path
@@ -291,6 +290,6 @@ fn internal_error_page(_e: http::Error) -> Result<Response<Full<Bytes>>, Infalli
         }))
 }
 
-#[cfg(test)]
-#[path = "oauth_callback_test.rs"]
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../../test/tools/mcp/oauth_callback.rs"]
 mod oauth_callback_test;

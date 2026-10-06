@@ -548,5 +548,5 @@ impl<'a> AgentRuntimeBuilder<'a> {
 }
 
 #[cfg(test)]
-#[path = "builder_test.rs"]
+#[path = "../../test/conversation/builder.rs"]
 mod builder_test;

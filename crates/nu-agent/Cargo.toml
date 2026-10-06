@@ -7,6 +7,9 @@ version.workspace = true
 name = "nu_plugin_agent"
 path = "src/main.rs"
 
+[features]
+integration = ["nu-agent-a2a/integration", "nu-agent-core/integration"]
+
 [dependencies]
 nu-agent-a2a = { workspace = true }
 nu-agent-core = { workspace = true }
@@ -30,6 +33,5 @@ url = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 nu-parser = { workspace = true }
-serial_test = { workspace = true }
 reqwest = { workspace = true }
 toml = { workspace = true }

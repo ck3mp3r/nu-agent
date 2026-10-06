@@ -74,5 +74,5 @@ fn map_tool_result(result: &ToolResult) -> Result<ToolOutput, ToolExecutionError
 // endregion: --- Support
 
 #[cfg(test)]
-#[path = "proxy_test.rs"]
+#[path = "../../../test/conversation/turn/proxy.rs"]
 mod proxy_test;

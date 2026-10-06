@@ -429,5 +429,5 @@ impl From<rig::agent::StreamingError> for TurnError {
 }
 
 #[cfg(test)]
-#[path = "error_test.rs"]
+#[path = "../../../test/conversation/turn/error.rs"]
 mod error_test;
