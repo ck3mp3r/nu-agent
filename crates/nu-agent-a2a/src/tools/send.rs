@@ -63,11 +63,9 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
             loop {
                 match client.subscribe_task(&url, &task_id).await {
                     Ok(final_task) => {
-                        let result = extract_text_from_task(&final_task);
                         let event = A2aCompletionEvent {
                             task_id: final_task.id,
                             agent_name: agent_name.clone(),
-                            result,
                             status: final_task.status.state,
                             context_id: final_task.context_id,
                         };
@@ -80,11 +78,9 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
                         // Check if the task completed between subscribe failures
                         match get_task(&client, &url, &task_id).await {
                             Ok(task) if task.status.state.is_terminal() => {
-                                let result = extract_text_from_task(&task);
                                 let event = A2aCompletionEvent {
                                     task_id: task.id,
                                     agent_name: agent_name.clone(),
-                                    result,
                                     status: task.status.state,
                                     context_id: task.context_id,
                                 };
@@ -118,20 +114,4 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
         "status": "sent",
         "message": format!("Task sent to {target}. You will be notified when it completes."),
     }))
-}
-
-/// Extract result text from a (presumably completed) task's artifacts.
-///
-/// Collects all [`Part::Text`] parts across all artifacts and joins them
-/// with newlines.
-fn extract_text_from_task(task: &Task) -> String {
-    task.artifacts
-        .iter()
-        .flat_map(|a| a.parts.iter())
-        .filter_map(|p| match p {
-            Part::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }

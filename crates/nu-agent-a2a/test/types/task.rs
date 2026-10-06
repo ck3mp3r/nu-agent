@@ -286,7 +286,6 @@ fn test_a2a_completion_event_to_prompt() -> Result<()> {
     let event = A2aCompletionEvent {
         task_id: "task-2".to_string(),
         agent_name: "agent-b".to_string(),
-        result: "all done".to_string(),
         status: TaskState::Completed,
         context_id: None,
     };
@@ -295,8 +294,10 @@ fn test_a2a_completion_event_to_prompt() -> Result<()> {
     let prompt = event.to_prompt();
 
     // -- Check
-    assert!(prompt.starts_with("[A2A] Task completed by agent-b: all done"));
-    assert!(prompt.ends_with("\n\n---\nTask ID: task-2\nStatus: TASK_STATE_COMPLETED"));
+    assert_eq!(
+        prompt,
+        "[A2A] Task task-2 by agent-b: COMPLETED. Call tasks_get for details."
+    );
     assert!(!prompt.contains("Context:"));
     Ok(())
 }
@@ -307,7 +308,6 @@ fn test_a2a_completion_event_to_prompt_with_context_id() -> Result<()> {
     let event = A2aCompletionEvent {
         task_id: "task-2".to_string(),
         agent_name: "agent-b".to_string(),
-        result: "all done".to_string(),
         status: TaskState::Completed,
         context_id: Some("ctx-abc".to_string()),
     };
@@ -316,10 +316,99 @@ fn test_a2a_completion_event_to_prompt_with_context_id() -> Result<()> {
     let prompt = event.to_prompt();
 
     // -- Check
-    assert!(
-        prompt
-            .ends_with("\n\n---\nTask ID: task-2\nStatus: TASK_STATE_COMPLETED\nContext: ctx-abc\n\nTo continue this session with agent-b, pass contextId \"ctx-abc\" in the next tasks_send call. Omitting contextId starts a fresh session and loses all prior context.")
+    assert_eq!(
+        prompt,
+        "[A2A] Task task-2 by agent-b: COMPLETED. Call tasks_get for details.\n\nContext: ctx-abc (reuse in tasks_send to continue session, omit for new session)"
     );
+    Ok(())
+}
+
+#[test]
+fn test_a2a_completion_event_to_prompt_truncates_ids() -> Result<()> {
+    // -- Setup & Fixtures
+    let event = A2aCompletionEvent {
+        task_id: "afa1fbf3-1111-2222-3333-444444444444".to_string(),
+        agent_name: "lucy".to_string(),
+        status: TaskState::Rejected,
+        context_id: Some("e92008ee-aaaa-bbbb-cccc-dddddddddddd".to_string()),
+    };
+
+    // -- Exec
+    let prompt = event.to_prompt();
+
+    // -- Check
+    assert_eq!(
+        prompt,
+        "[A2A] Task afa1fbf3 by lucy: REJECTED. Call tasks_get for details.\n\nContext: e92008ee (reuse in tasks_send to continue session, omit for new session)"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_a2a_completion_event_to_prompt_state_labels() -> Result<()> {
+    // -- Setup & Fixtures
+    let cases = [
+        (TaskState::Completed, "COMPLETED"),
+        (TaskState::Rejected, "REJECTED"),
+        (TaskState::Failed, "FAILED"),
+        (TaskState::Canceled, "CANCELED"),
+        (TaskState::AuthRequired, "AUTH_REQUIRED"),
+    ];
+
+    // -- Exec & Check
+    for (status, expected) in cases {
+        let event = A2aCompletionEvent {
+            task_id: "task-2".to_string(),
+            agent_name: "agent-b".to_string(),
+            status,
+            context_id: None,
+        };
+        let prompt = event.to_prompt();
+        assert_eq!(
+            prompt,
+            format!("[A2A] Task task-2 by agent-b: {expected}. Call tasks_get for details.")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn test_a2a_completion_event_to_prompt_rejected() -> Result<()> {
+    // -- Setup & Fixtures
+    let event = A2aCompletionEvent {
+        task_id: "task-2".to_string(),
+        agent_name: "agent-b".to_string(),
+        status: TaskState::Rejected,
+        context_id: None,
+    };
+
+    // -- Exec
+    let prompt = event.to_prompt();
+
+    // -- Check
+    assert!(prompt.contains("REJECTED"));
+    assert!(prompt.contains("Call tasks_get for details"));
+    assert!(!prompt.contains("COMPLETED"));
+    Ok(())
+}
+
+#[test]
+fn test_a2a_completion_event_to_prompt_failed() -> Result<()> {
+    // -- Setup & Fixtures
+    let event = A2aCompletionEvent {
+        task_id: "task-2".to_string(),
+        agent_name: "agent-b".to_string(),
+        status: TaskState::Failed,
+        context_id: None,
+    };
+
+    // -- Exec
+    let prompt = event.to_prompt();
+
+    // -- Check
+    assert!(prompt.contains("FAILED"));
+    assert!(prompt.contains("Call tasks_get for details"));
+    assert!(!prompt.contains("COMPLETED"));
     Ok(())
 }
 
@@ -329,7 +418,6 @@ fn test_a2a_completion_event_context_id_none_stays_none() -> Result<()> {
     let event = A2aCompletionEvent {
         task_id: "task-2".to_string(),
         agent_name: "agent-b".to_string(),
-        result: "all done".to_string(),
         status: TaskState::Completed,
         context_id: None,
     };
@@ -348,7 +436,6 @@ fn test_a2a_completion_event_context_id_some_is_preserved() -> Result<()> {
     let event = A2aCompletionEvent {
         task_id: "task-2".to_string(),
         agent_name: "agent-b".to_string(),
-        result: "all done".to_string(),
         status: TaskState::Completed,
         context_id: Some("ctx-abc".to_string()),
     };

@@ -117,23 +117,6 @@ pub(crate) fn reject_busy_task(task_id: &str, ctx: &OrchestrationContext<'_>) {
     }
 }
 
-/// Fail an A2A completion event that arrived while the worker was busy.
-///
-/// The completion prompt cannot run while the worker is busy, so the task is
-/// failed rather than left in `Working`. When no task store is present the
-/// event is logged and dropped.
-pub(crate) fn fail_busy_completion(task_id: &str, ctx: &OrchestrationContext<'_>) {
-    let Some(store) = ctx.task_store else {
-        log::warn!(
-            "A2A completion for {task_id} arrived while the worker was busy; no task store to fail it"
-        );
-        return;
-    };
-    if let Err(e) = store.fail_task(task_id, WORKER_BUSY_REASON) {
-        log::warn!("failed to fail busy A2A completion {task_id}: {e}");
-    }
-}
-
 /// Await the next value from an optional channel, or never complete when the
 /// channel is absent. Returns `None` when the channel is present but closed.
 pub(crate) async fn recv_or_pending<T>(rx: &mut Option<mpsc::Receiver<T>>) -> Option<T> {

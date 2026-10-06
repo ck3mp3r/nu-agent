@@ -9,14 +9,14 @@ use nu_agent_a2a::{
 use nu_protocol::Span;
 use tokio::sync::mpsc;
 
-use crate::bus::{Bus, CompactionRx, ExternalRx, create_bus};
+use crate::bus::{Bus, CompactionRx, ExternalRx, TurnEvent, TurnRx, UiStateRx, create_bus};
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
 };
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{
-    OrchestratorEvent, SourceChannels, UiRequest, UiRequestResponse, WorkerCommand,
+    OrchestratorEvent, SourceChannels, UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand,
 };
 use crate::protocol::event::PermissionDecisionSubmission;
 
@@ -319,6 +319,41 @@ pub(super) async fn recv_worker_command(
     Ok(cmd)
 }
 
+/// Receive the next `EnqueueExternalPrompt` text from the UI-state bus with a
+/// timeout, skipping any other UI-state event.
+pub(super) async fn recv_external_prompt(rx: &mut UiStateRx) -> Result<String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let event = tokio::time::timeout(remaining, rx.recv())
+            .await
+            .map_err(|_| "EnqueueExternalPrompt should be published")?
+            .map_err(|e| format!("ui state channel should not close: {e:?}"))?;
+        if let UiStateEvent::EnqueueExternalPrompt { text } = event {
+            return Ok(text);
+        }
+    }
+}
+
+/// Assert the next `TurnEvent::Started` carries no task attribution, i.e. the
+/// turn is a regular prompt and not an A2A task turn.
+pub(super) async fn assert_unattributed_turn(rx: &mut TurnRx, what: &str) -> Result<()> {
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .map_err(|_| format!("TurnEvent::Started ({what}) should be published"))?
+        .map_err(|e| format!("turn channel should not close: {e:?}"))?;
+    match event {
+        TurnEvent::Started { task_id, .. } => {
+            assert_eq!(
+                task_id, None,
+                "{what} must not attribute the turn to a local task"
+            );
+            Ok(())
+        }
+        _ => Err(format!("expected TurnEvent::Started for {what}").into()),
+    }
+}
+
 /// Build an `IncomingTask` with a single text part and no `contextId`.
 pub(super) fn incoming_task(task_id: &str, text: &str) -> IncomingTask {
     IncomingTask {
@@ -339,11 +374,10 @@ pub(super) fn incoming_task(task_id: &str, text: &str) -> IncomingTask {
 }
 
 /// Build a completed `A2aCompletionEvent` with no `contextId`.
-pub(super) fn completion_event(task_id: &str, result: &str) -> A2aCompletionEvent {
+pub(super) fn completion_event(task_id: &str) -> A2aCompletionEvent {
     A2aCompletionEvent {
         task_id: task_id.to_string(),
         agent_name: "agent-b".to_string(),
-        result: result.to_string(),
         status: TaskState::Completed,
         context_id: None,
     }

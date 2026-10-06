@@ -26,6 +26,8 @@ async fn a2a_completion_rx_dispatches_turn() -> Result<()> {
     } = h;
 
     let (a2a_completion_tx, a2a_completion_rx) = mpsc::channel::<A2aCompletionEvent>(16);
+    let mut turn_rx = bus.turn().subscribe();
+    let mut ui_state_rx = bus.ui_state().subscribe();
 
     let loop_task = tokio::spawn(async move {
         let mut slash = SlashStage;
@@ -66,7 +68,6 @@ async fn a2a_completion_rx_dispatches_turn() -> Result<()> {
     let completion = A2aCompletionEvent {
         task_id: "task-2".to_string(),
         agent_name: "agent-b".to_string(),
-        result: "all done".to_string(),
         status: TaskState::Completed,
         context_id: None,
     };
@@ -74,6 +75,11 @@ async fn a2a_completion_rx_dispatches_turn() -> Result<()> {
     a2a_completion_tx.send(completion).await.unwrap();
 
     // The orchestrator enqueues the prompt on the UI bus; the TUI submits it.
+    let enqueued = recv_external_prompt(&mut ui_state_rx).await?;
+    assert_eq!(
+        enqueued, completion_prompt,
+        "the completion prompt must be enqueued on the UI bus"
+    );
     event_tx
         .send(OrchestratorEvent::PromptSubmitted {
             text: completion_prompt.clone(),
@@ -93,6 +99,22 @@ async fn a2a_completion_rx_dispatches_turn() -> Result<()> {
         _ => panic!("expected ExecuteTurn"),
     }
 
+    // A completion event is a notification about a REMOTE task, so the turn must
+    // not be attributed to a local task.
+    let started = tokio::time::timeout(std::time::Duration::from_secs(5), turn_rx.recv())
+        .await
+        .map_err(|_| "TurnEvent::Started should be published")?
+        .map_err(|e| format!("turn channel should not close: {e:?}"))?;
+    match started {
+        TurnEvent::Started { task_id, .. } => {
+            assert_eq!(
+                task_id, None,
+                "a completion event must not attribute the turn to a local task"
+            );
+        }
+        _ => panic!("expected TurnEvent::Started"),
+    }
+
     // Make the worker idle, then quit so the loop exits cleanly.
     worker_result_tx
         .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
@@ -108,7 +130,7 @@ async fn a2a_completion_rx_dispatches_turn() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a2a_completion_rx_fails_while_worker_busy() -> Result<()> {
+async fn a2a_completion_rx_buffers_while_worker_busy() -> Result<()> {
     // -- Setup & Fixtures
     let h = Harness::new();
     let Harness {
@@ -130,16 +152,8 @@ async fn a2a_completion_rx_fails_while_worker_busy() -> Result<()> {
     } = h;
 
     let (a2a_completion_tx, a2a_completion_rx) = mpsc::channel::<A2aCompletionEvent>(16);
-
-    // The completion's task id refers to a task tracked by the store. Model a
-    // Working task so the busy-fail has something to transition.
-    let store = std::sync::Arc::new(InMemoryTaskStore::default());
-    let task2 = store.create_task(None, None, None);
-    store
-        .update_status(&task2.id, TaskState::Working, None)
-        .map_err(|e| format!("task-2 should reach Working: {e}"))?;
-    let task2_id = task2.id.clone();
-    ctx_state.task_store = Some(std::sync::Arc::clone(&store));
+    let mut ui_state_rx = bus.ui_state().subscribe();
+    let mut turn_rx = bus.turn().subscribe();
 
     let loop_task = tokio::spawn(async move {
         let mut slash = SlashStage;
@@ -180,12 +194,17 @@ async fn a2a_completion_rx_fails_while_worker_busy() -> Result<()> {
     // -- Exec
     // First completion: the orchestrator enqueues the prompt on the UI bus and
     // the TUI submits it, which dispatches the turn.
-    let completion1 = completion_event("task-1", "first done");
+    let completion1 = completion_event("task-1");
     let completion1_prompt = completion1.to_prompt();
     a2a_completion_tx
         .send(completion1)
         .await
         .map_err(|_| "completion-1 send failed")?;
+    let enqueued = recv_external_prompt(&mut ui_state_rx).await?;
+    assert_eq!(
+        enqueued, completion1_prompt,
+        "completion-1 prompt must be enqueued on the UI bus"
+    );
     event_tx
         .send(OrchestratorEvent::PromptSubmitted {
             text: completion1_prompt.clone(),
@@ -202,15 +221,17 @@ async fn a2a_completion_rx_fails_while_worker_busy() -> Result<()> {
         }
         _ => panic!("expected ExecuteTurn for completion-1"),
     }
+    assert_unattributed_turn(&mut turn_rx, "completion-1").await?;
 
     // Second completion arrives while the worker is busy. The orchestrator must
-    // fail the task instead of leaving it stuck in Working.
-    let completion2 = completion_event(&task2_id, "second done");
+    // buffer it: no turn is dispatched and no local task is touched.
+    let completion2 = completion_event("task-2");
+    let completion2_prompt = completion2.to_prompt();
     a2a_completion_tx
         .send(completion2)
         .await
         .map_err(|_| "completion-2 send failed")?;
-    wait_for_task_state(&store, &task2_id, TaskState::Failed).await?;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert!(
         worker_rx
             .as_mut()
@@ -221,10 +242,34 @@ async fn a2a_completion_rx_fails_while_worker_busy() -> Result<()> {
     );
 
     // -- Check
-    let failed = store
-        .get_task(&task2_id)
-        .map_err(|e| format!("task-2 should exist: {e}"))?;
-    assert_eq!(failed.status.state, TaskState::Failed);
+    // Completing the first turn makes the worker idle; the buffered completion
+    // is then drained and enqueued as its own prompt.
+    worker_result_tx
+        .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
+        .await
+        .map_err(|_| "worker result send failed")?;
+    let enqueued = recv_external_prompt(&mut ui_state_rx).await?;
+    assert_eq!(
+        enqueued, completion2_prompt,
+        "the buffered completion must be enqueued after the first turn completes"
+    );
+    event_tx
+        .send(OrchestratorEvent::PromptSubmitted {
+            text: completion2_prompt.clone(),
+        })
+        .await
+        .map_err(|_| "completion-2 submit failed")?;
+    let cmd = recv_worker_command(&mut worker_rx, "ExecuteTurn (completion-2)").await?;
+    match cmd {
+        WorkerCommand::ExecuteTurn { prompt, .. } => {
+            assert_eq!(
+                prompt, completion2_prompt,
+                "completion-2 turn prompt must be the buffered event's prompt"
+            );
+        }
+        _ => panic!("expected ExecuteTurn for completion-2"),
+    }
+    assert_unattributed_turn(&mut turn_rx, "completion-2").await?;
 
     // Make the worker idle, then quit so the loop exits cleanly.
     worker_result_tx

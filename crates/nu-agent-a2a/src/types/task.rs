@@ -71,19 +71,18 @@ impl IncomingTask {
 // A2aCompletionEvent
 // ---------------------------------------------------------------------------
 
-/// A completion event delivered when a remote agent finishes processing
-/// a task that was sent via `tasks.send`.
+/// A signal-only completion notification delivered when a remote agent
+/// finishes processing a task that was sent via `tasks.send`.
 ///
 /// This is produced by a background SSE watcher and delivered to the agent
 /// runtime via a shared channel, so the LLM sees a completion message on
-/// the next turn without having to poll.
+/// the next turn without having to poll. The event carries no result payload:
+/// it tells the LLM that the task reached a terminal state and instructs it
+/// to call `tasks_get` for the full structured result.
 #[derive(Clone, Debug)]
 pub struct A2aCompletionEvent {
     pub task_id: String,
     pub agent_name: String,
-    /// Concatenated text parts from the final task result text (from
-    /// artifacts or status message).
-    pub result: String,
     pub status: TaskState,
     /// The multi-turn conversation context identifier of the completed task,
     /// if the remote agent assigned one. The orchestrator reuses this ID to
@@ -92,21 +91,52 @@ pub struct A2aCompletionEvent {
 }
 
 impl A2aCompletionEvent {
-    /// Formats the completion event as an LLM prompt with a metadata footer.
+    /// Formats the completion event as a compact signal-only LLM prompt.
+    ///
+    /// The prompt names the task and agent with 8-char ID prefixes, states the
+    /// terminal status as an uppercase label, and instructs the LLM to call
+    /// `tasks_get` for the details. A context line is appended when
+    /// `context_id` is set.
     pub fn to_prompt(&self) -> String {
         let mut prompt = format!(
-            "[A2A] Task completed by {}: {}\n\n---\nTask ID: {}\nStatus: {}",
-            self.agent_name, self.result, self.task_id, self.status
+            "[A2A] Task {} by {}: {}. Call tasks_get for details.",
+            short_id(&self.task_id),
+            self.agent_name,
+            state_label(&self.status)
         );
         if let Some(context_id) = &self.context_id {
-            prompt.push_str("\nContext: ");
-            prompt.push_str(context_id);
             prompt.push_str(&format!(
-                "\n\nTo continue this session with {}, pass contextId \"{}\" in the next tasks_send call. Omitting contextId starts a fresh session and loses all prior context.",
-                self.agent_name, context_id
+                "\n\nContext: {} (reuse in tasks_send to continue session, omit for new session)",
+                short_id(context_id)
             ));
         }
         prompt
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Support
+// ---------------------------------------------------------------------------
+
+/// Truncates an ID to its first 8 characters, like a git SHA prefix.
+///
+/// IDs shorter than 8 characters (e.g. `"task-2"`) are returned unchanged.
+fn short_id(id: &str) -> &str {
+    id.get(..id.len().min(8)).unwrap_or(id)
+}
+
+/// Uppercase short state label without the `TASK_STATE_` prefix.
+fn state_label(state: &TaskState) -> &'static str {
+    match state {
+        TaskState::Unspecified => "UNSPECIFIED",
+        TaskState::Submitted => "SUBMITTED",
+        TaskState::Working => "WORKING",
+        TaskState::InputRequired => "INPUT_REQUIRED",
+        TaskState::Completed => "COMPLETED",
+        TaskState::Failed => "FAILED",
+        TaskState::Canceled => "CANCELED",
+        TaskState::Rejected => "REJECTED",
+        TaskState::AuthRequired => "AUTH_REQUIRED",
     }
 }
 

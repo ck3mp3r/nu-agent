@@ -38,13 +38,13 @@ impl Tool {
     pub fn description(&self) -> &'static str {
         match self {
             Tool::Send => {
-                "Send a task to another agent over A2A. The task runs asynchronously: this tool returns immediately with a taskId, and the result arrives later as a new conversation turn. Do NOT poll tasks_get or tasks_list for completion.\n\nSession control: omit contextId to start a fresh session and lose all prior context; ALWAYS include contextId from a prior response to resume that session.\n\nReturns {taskId, contextId, status, message}. Keep taskId and contextId for follow-up sends."
+                "Send a task to another agent over A2A. The task runs asynchronously: this tool returns immediately with a taskId, and the result arrives later as a new conversation turn. Do NOT poll tasks_get or tasks_list for completion.\n\nSession control: omit contextId to start a fresh session and lose all prior context; ALWAYS include contextId from a prior response to resume that session.\n\nReturns {taskId, contextId, status, message}. Keep taskId and contextId for follow-up sends. Check if the agent is busy first with tasks_list(status=\"TASK_STATE_WORKING\", target=name)."
             }
             Tool::Get => {
                 "Fetch a task's current state and artifacts from a remote agent. Use after a completion notification to read the full result. Requires taskId (from tasks_send) and target (agent name from agent_list).\n\nReturns {taskId, state, artifacts}. The artifacts array holds the result content; read the text parts."
             }
             Tool::List => {
-                "List tasks, optionally filtered by status. With target, lists tasks from that remote agent. Without target, lists tasks in the local store (tasks received by this agent).\n\nStatus values: TASK_STATE_UNSPECIFIED, TASK_STATE_SUBMITTED, TASK_STATE_WORKING, TASK_STATE_INPUT_REQUIRED, TASK_STATE_COMPLETED, TASK_STATE_FAILED, TASK_STATE_CANCELED, TASK_STATE_REJECTED, TASK_STATE_AUTH_REQUIRED.\n\nReturns {tasks: [...]}. Do NOT poll for a task you just sent."
+                "List tasks, optionally filtered by status. With target, lists tasks from that remote agent. Without target, lists tasks in the local store (tasks received by this agent).\n\nFilter by any TASK_STATE_* value (e.g. TASK_STATE_WORKING, TASK_STATE_COMPLETED). Use TASK_STATE_WORKING with target to check if an agent is busy.\n\nReturns {tasks: [...]}. Do NOT poll repeatedly for a task you just sent — completion arrives as a new turn."
             }
             Tool::Cancel => {
                 "Cancel a running task on a remote agent. Use when a task is no longer needed or runs too long. Both taskId (from tasks_send) and target (agent name from agent_list) are required.\n\nReturns {taskId, state}. A successful cancel yields TASK_STATE_CANCELED. Canceling an already-terminal task fails."
@@ -82,7 +82,7 @@ impl Tool {
                 "type": "object",
                 "properties": {
                     "target": {"type": "string", "description": "Optional: name of a remote agent, from agent_list. Omit to list tasks in the local store."},
-                    "status": {"type": "string", "description": "Optional: filter by task state. Valid values: TASK_STATE_UNSPECIFIED, TASK_STATE_SUBMITTED, TASK_STATE_WORKING, TASK_STATE_INPUT_REQUIRED, TASK_STATE_COMPLETED, TASK_STATE_FAILED, TASK_STATE_CANCELED, TASK_STATE_REJECTED, TASK_STATE_AUTH_REQUIRED"}
+                    "status": {"type": "string", "description": "Optional: filter by task state. Filter by any TASK_STATE_* value (e.g. TASK_STATE_WORKING, TASK_STATE_COMPLETED)."}
                 }
             }),
             Tool::Cancel => serde_json::json!({

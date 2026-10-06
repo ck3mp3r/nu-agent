@@ -164,11 +164,13 @@ fn test_tasks_list_has_optional_status_param() -> Result<()> {
     );
 
     // Every advertised status value must parse via TaskState::try_from, so the
-    // schema and the strict parser cannot drift apart.
+    // schema and the strict parser cannot drift apart. The wildcard pattern
+    // TASK_STATE_* is stripped first — it is a naming hint, not a value.
     let description = properties["status"]["description"]
         .as_str()
         .ok_or("status should have a description")?;
-    let tokens: Vec<&str> = description
+    let concrete = description.replace("TASK_STATE_*", "");
+    let tokens: Vec<&str> = concrete
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .filter(|t| !t.is_empty())
         .collect();
@@ -223,7 +225,7 @@ fn test_descriptions_avoid_banned_words() -> Result<()> {
 #[test]
 fn test_descriptions_are_within_token_budget() -> Result<()> {
     // -- Setup & Fixtures
-    const MAX_CHARS: usize = 500;
+    const MAX_CHARS: usize = 600;
 
     // -- Exec & Check
     for tool in a2a_tool_defs() {
@@ -310,22 +312,24 @@ fn test_tasks_list_description_documents_both_modes() -> Result<()> {
         d.contains("Without target") && d.contains("local store"),
         "must document the local mode"
     );
-    for value in [
-        "TASK_STATE_UNSPECIFIED",
-        "TASK_STATE_SUBMITTED",
-        "TASK_STATE_WORKING",
-        "TASK_STATE_INPUT_REQUIRED",
-        "TASK_STATE_COMPLETED",
-        "TASK_STATE_FAILED",
-        "TASK_STATE_CANCELED",
-        "TASK_STATE_REJECTED",
-        "TASK_STATE_AUTH_REQUIRED",
-    ] {
+    for value in ["TASK_STATE_WORKING", "TASK_STATE_COMPLETED"] {
         assert!(d.contains(value), "must list status value {value}");
     }
     assert!(
+        d.contains("TASK_STATE_*"),
+        "must document the status naming pattern"
+    );
+    assert!(
         d.contains("{tasks: [...]}"),
         "must document the response shape"
+    );
+    assert!(
+        d.contains("check if an agent is busy"),
+        "must document the busy-check use case"
+    );
+    assert!(
+        d.contains("Do NOT poll"),
+        "must keep the scoped poll guidance"
     );
     Ok(())
 }
@@ -397,7 +401,7 @@ fn test_agent_get_card_description_documents_contents_and_when() -> Result<()> {
 }
 
 #[test]
-fn test_tasks_list_status_schema_lists_all_values() -> Result<()> {
+fn test_tasks_list_status_schema_documents_pattern() -> Result<()> {
     // -- Setup & Fixtures
     let tool = tool_def("tasks_list")?;
     let description = tool.parameters["properties"]["status"]["description"]
@@ -405,17 +409,11 @@ fn test_tasks_list_status_schema_lists_all_values() -> Result<()> {
         .ok_or("status should have a description")?;
 
     // -- Exec & Check
-    for value in [
-        "TASK_STATE_UNSPECIFIED",
-        "TASK_STATE_SUBMITTED",
-        "TASK_STATE_WORKING",
-        "TASK_STATE_INPUT_REQUIRED",
-        "TASK_STATE_COMPLETED",
-        "TASK_STATE_FAILED",
-        "TASK_STATE_CANCELED",
-        "TASK_STATE_REJECTED",
-        "TASK_STATE_AUTH_REQUIRED",
-    ] {
+    assert!(
+        description.contains("TASK_STATE_*"),
+        "status schema must document the TASK_STATE_* pattern, got: {description}"
+    );
+    for value in ["TASK_STATE_WORKING", "TASK_STATE_COMPLETED"] {
         assert!(
             description.contains(value),
             "status schema must list {value}, got: {description}"

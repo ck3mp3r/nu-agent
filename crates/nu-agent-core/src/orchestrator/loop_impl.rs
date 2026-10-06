@@ -2,6 +2,8 @@
 //! points. These functions wire the worker, the stages, the bus channels, and
 //! the render-loop together and drive the orchestrator loop.
 
+use std::collections::VecDeque;
+
 use nu_agent_a2a::{A2aCompletionEvent, IncomingTask};
 use nu_protocol::{LabeledError, Value};
 use tokio::sync::mpsc;
@@ -18,8 +20,8 @@ use crate::orchestrator::stages::{
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{
     InteractiveLoopConfig, OrchestratorEvent, UiRequestResponse, UiStateEvent, WorkerCommand,
-    dispatch_compaction, fail_busy_completion, handle_external_cancel, handle_worker_result,
-    recv_or_pending, reject_busy_task,
+    dispatch_compaction, handle_external_cancel, handle_worker_result, recv_or_pending,
+    reject_busy_task,
 };
 use crate::protocol::{
     contracts::CoreRuntime,
@@ -321,6 +323,9 @@ where
     let mut pending_compaction: Option<String> = None;
     let mut compaction_active = false;
     let mut quit_pending = false;
+    // Completion events that arrived while the worker was busy. Each is drained
+    // one per idle cycle so every completion gets its own turn.
+    let mut pending_completion_events: VecDeque<A2aCompletionEvent> = VecDeque::new();
 
     // The task-cancel source is optional. When absent, select on a dummy
     // receiver that is never closed, so the `select!` arm always exists and the
@@ -421,6 +426,23 @@ where
                 if handle_worker_result(outcome, ctx, ui_request, session, &mut pending_compaction, &mut quit_pending).await {
                     break;
                 }
+                // The worker is now idle. Drain one buffered completion event so
+                // it gets its own turn; the next event waits for the next idle
+                // cycle. `continue` returns to `select!`, so new events can
+                // interleave between buffered completions.
+                if !*ctx.worker_active
+                    && let Some(event) = pending_completion_events.pop_front()
+                {
+                    // A completion event is a notification about a REMOTE task,
+                    // so it carries no local task attribution.
+                    let prompt = event.to_prompt();
+                    let _ = ctx
+                        .bus
+                        .ui_state()
+                        .send(UiStateEvent::EnqueueExternalPrompt { text: prompt })
+                        .await;
+                    continue;
+                }
             }
 
             resp = sources.blocking_response_rx.recv() => {
@@ -499,16 +521,16 @@ where
             event = recv_or_pending(&mut a2a_completion_rx_opt) => {
                 let Some(event) = event else { break };
                 // A completion event is a prompt into the orchestrator's own
-                // session. If the worker is busy, the prompt cannot run, so fail
-                // the task instead of leaving it stuck in Working.
+                // session. If the worker is busy, the prompt cannot run yet, so
+                // buffer the event and drain it once the worker is idle.
                 if *ctx.worker_active {
-                    fail_busy_completion(&event.task_id, ctx);
+                    pending_completion_events.push_back(event);
                     continue;
                 }
                 let prompt = event.to_prompt();
                 // The remote `contextId` is metadata only, so no session attach
-                // is requested here.
-                *ctx.pending_a2a_task_id = Some(event.task_id);
+                // is requested here. The event is a notification about a REMOTE
+                // task, so it carries no local task attribution.
                 let _ = ctx
                     .bus
                     .ui_state()
