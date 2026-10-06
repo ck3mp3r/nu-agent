@@ -1,13 +1,16 @@
 use nu_protocol::LabeledError;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::journal::TOOL_SUCCESS_PARAM;
 use crate::protocol::contracts::UiMessageSnapshot;
+use crate::protocol::event::ToolDisplay;
 use crate::session::{CompactionMarker, Session, SessionStore, StoreEntry};
 use crate::types::{AssistantContent, Message, ToolCallId, ToolResultContent, UserContent};
 use std::collections::HashMap;
 
+use crate::tools::handler::builtin_kinds::BuiltinKind;
+use crate::tools::handler::pre_authorize_fs_tool;
 use crate::tools::handler::tool_display_from_result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,7 +125,10 @@ impl<S: SessionStore + Clone + Send + Sync> SessionResolver for DefaultSessionRe
                     // Convert to UiMessageSnapshots for transcript display.
                     // Token count is not estimated here — rig's CompactingMemory
                     // tracks the context and last_total_tokens stays None on attach.
-                    (hydrate_transcript_from_store_entries(&entries), None)
+                    (
+                        hydrate_transcript_from_store_entries(&entries, &input.cwd),
+                        None,
+                    )
                 } else {
                     (Vec::new(), None)
                 };
@@ -206,17 +212,21 @@ pub fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> Ses
 ///
 /// # Arguments
 /// * `entries` - Slice of StoreEntry from SessionStore::load()
+/// * `cwd` - Working directory the session was executed in; used to
+///   reconstruct tool previews that depend on the filesystem root
 ///
 /// # Returns
 /// Iterator of UiMessageSnapshot ready for transcript hydration
 pub(crate) fn hydrate_transcript_from_store_entries(
     entries: &[StoreEntry],
+    cwd: &Path,
 ) -> Vec<UiMessageSnapshot> {
     // Pass 1: collect call_id → tool_name from all ToolCalls and
     //         call_id → success from all ToolResults. Success comes ONLY
     //         from the persisted verdict flag on the first Text block
     //         (TOOL_SUCCESS_PARAM); rows without the flag stay unknown.
     let mut tool_names: HashMap<ToolCallId, String> = HashMap::new();
+    let mut tool_arguments: HashMap<ToolCallId, String> = HashMap::new();
     let mut tool_success_map: HashMap<ToolCallId, bool> = HashMap::new();
     for entry in entries {
         match entry {
@@ -224,6 +234,11 @@ pub(crate) fn hydrate_transcript_from_store_entries(
                 for item in content.iter() {
                     if let AssistantContent::ToolCall(tc) = item {
                         tool_names.insert(tc.id.clone(), tc.function.name.clone());
+                        tool_arguments.insert(
+                            tc.id.clone(),
+                            serde_json::to_string(&tc.function.arguments)
+                                .unwrap_or_else(|_| "{}".to_string()),
+                        );
                     }
                 }
             }
@@ -253,7 +268,9 @@ pub(crate) fn hydrate_transcript_from_store_entries(
     entries
         .iter()
         .flat_map(|entry| match entry {
-            StoreEntry::Message(msg) => hydrate_single_message(msg, &tool_names, &tool_success_map),
+            StoreEntry::Message(msg) => {
+                hydrate_single_message(msg, &tool_names, &tool_success_map, &tool_arguments, cwd)
+            }
             StoreEntry::Marker(marker) => {
                 vec![UiMessageSnapshot::new(
                     "compaction",
@@ -288,6 +305,8 @@ pub(crate) fn hydrate_single_message(
     msg: &Message,
     tool_names: &HashMap<ToolCallId, String>,
     tool_success_map: &HashMap<ToolCallId, bool>,
+    tool_arguments: &HashMap<ToolCallId, String>,
+    cwd: &Path,
 ) -> Vec<UiMessageSnapshot> {
     let mut snapshots = Vec::new();
 
@@ -311,12 +330,26 @@ pub(crate) fn hydrate_single_message(
                                 .join("\n");
                             if let Ok(json) =
                                 serde_json::from_str::<serde_json::Value>(&result_text)
-                                && let Some(display) = tool_display_from_result(tool_name, &json)
                             {
-                                snapshots.push(
-                                    UiMessageSnapshot::new("tool_display", String::new())
-                                        .with_tool_display(display),
-                                );
+                                // Result-sourced display wins (an embedded
+                                // `display` object, or the edit diff). When the
+                                // result carries none, fall back to the
+                                // argument-sourced preview the live path shows
+                                // at the permission gate — this is what makes a
+                                // `nu` call render its command code block after
+                                // rehydration.
+                                let display =
+                                    tool_display_from_result(tool_name, &json).or_else(|| {
+                                        tool_arguments.get(&tr.call).and_then(|args_json| {
+                                            tool_display_from_arguments(tool_name, args_json, cwd)
+                                        })
+                                    });
+                                if let Some(display) = display {
+                                    snapshots.push(
+                                        UiMessageSnapshot::new("tool_display", String::new())
+                                            .with_tool_display(display),
+                                    );
+                                }
                             }
                         }
                     }
@@ -359,4 +392,19 @@ pub(crate) fn hydrate_single_message(
     }
 
     snapshots
+}
+
+/// Reconstruct the argument-sourced preview for a tool call whose result
+/// carries no display. Mirrors the live permission-gate path: parse the tool
+/// name into a `BuiltinKind`, then ask `pre_authorize_fs_tool` for the
+/// preview. Returns `None` for unparseable arguments, unknown tool names,
+/// and non-Previewable tools — the caller then emits no display snapshot.
+fn tool_display_from_arguments(
+    tool_name: &str,
+    arguments_json: &str,
+    cwd: &Path,
+) -> Option<ToolDisplay> {
+    let arguments: serde_json::Value = serde_json::from_str(arguments_json).ok()?;
+    let kind = tool_name.parse::<BuiltinKind>().ok();
+    pre_authorize_fs_tool(kind, &arguments, cwd).and_then(|output| output.display)
 }

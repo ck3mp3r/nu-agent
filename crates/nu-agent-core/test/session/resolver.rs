@@ -8,14 +8,25 @@ use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 /// Helper function to convert rig messages to UI snapshots for testing.
 /// Delegates to the actual hydrate_single_message function in resolver.rs.
 fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnapshot> {
     let tool_names = std::collections::HashMap::new();
     let tool_success_map = std::collections::HashMap::new();
+    let tool_arguments = std::collections::HashMap::new();
     messages
         .iter()
-        .flat_map(|m| super::resolver::hydrate_single_message(m, &tool_names, &tool_success_map))
+        .flat_map(|m| {
+            super::resolver::hydrate_single_message(
+                m,
+                &tool_names,
+                &tool_success_map,
+                &tool_arguments,
+                std::path::Path::new("."),
+            )
+        })
         .collect()
 }
 
@@ -284,7 +295,8 @@ fn hydrate_store_entries_includes_messages() {
         }),
     ];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 2);
     assert_eq!(snapshots[0].role(), "user");
@@ -315,7 +327,8 @@ fn hydrate_store_entries_includes_markers() {
         }),
     ];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 3);
     assert_eq!(snapshots[0].role(), "user");
@@ -330,7 +343,8 @@ fn hydrate_store_entries_marker_format() {
         Utc::now(),
     ))];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "compaction");
@@ -371,7 +385,8 @@ fn hydrate_store_entries_preserves_order() {
         }),
     ];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 4);
     assert_eq!(snapshots[0].role(), "user");
@@ -390,7 +405,8 @@ fn hydrate_store_entries_empty_summary_marker() {
         Utc::now(),
     ))];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "compaction");
@@ -441,7 +457,8 @@ fn test_tool_result_edit_creates_display_snapshot() {
         }),
     ];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 2);
     assert_eq!(snapshots[0].role(), "tool");
@@ -462,6 +479,266 @@ fn test_tool_result_edit_creates_display_snapshot() {
         "section kind must be Diff, got {:?}",
         display.sections[0].kind
     );
+}
+
+#[test]
+fn test_tool_result_nu_creates_display_snapshot_from_arguments() -> Result<()> {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_nu_1"),
+                provider: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "nu".to_string(),
+                    arguments: json!({"command": "ls | sort"}),
+                },
+            })],
+        }),
+        StoreEntry::Message(Message::User {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_nu_1"),
+                provider: None,
+                name: "nu".into(),
+                content: vec![ToolResultContent::Text(Text {
+                    text: serde_json::to_string(&json!({
+                        "stdout": "",
+                        "stderr": "",
+                        "exit_code": 0
+                    }))?,
+                    additional_params: None,
+                })],
+            })],
+        }),
+    ];
+
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+
+    assert_eq!(
+        snapshots.len(),
+        2,
+        "expected tool call + tool_display snapshots, got {}",
+        snapshots.len()
+    );
+    assert_eq!(snapshots[0].role(), "tool");
+    assert_eq!(snapshots[1].role(), "tool_display");
+
+    let display = snapshots[1]
+        .tool_display()
+        .ok_or("should be tool_display on second snapshot")?;
+    assert_eq!(display.title, "nu");
+    assert_eq!(display.sections.len(), 1);
+    assert!(
+        matches!(
+            display.sections[0].kind,
+            crate::transcript::ir::ContentKind::Code { ref language } if language == "nu"
+        ),
+        "section kind must be Code with language nu, got {:?}",
+        display.sections[0].kind
+    );
+    assert_eq!(display.sections[0].content, "ls | sort");
+    Ok(())
+}
+
+/// An explicit `display` object in the result JSON wins over the
+/// argument-sourced fallback: the `nu` call renders the embedded display,
+/// not the command preview.
+#[test]
+fn test_tool_result_nu_explicit_display_wins_over_fallback() -> Result<()> {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_nu_explicit_1"),
+                provider: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "nu".to_string(),
+                    arguments: json!({"command": "ls | sort"}),
+                },
+            })],
+        }),
+        StoreEntry::Message(Message::User {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_nu_explicit_1"),
+                provider: None,
+                name: "nu".into(),
+                content: vec![ToolResultContent::Text(Text {
+                    text: serde_json::to_string(&json!({
+                        "stdout": "",
+                        "stderr": "",
+                        "exit_code": 0,
+                        "display": {
+                            "title": "custom",
+                            "sections": [{
+                                "label": "output",
+                                "language": "text",
+                                "content": "embedded result"
+                            }]
+                        }
+                    }))?,
+                    additional_params: None,
+                })],
+            })],
+        }),
+    ];
+
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[1].role(), "tool_display");
+
+    let display = snapshots[1]
+        .tool_display()
+        .ok_or("should be tool_display on second snapshot")?;
+    assert_eq!(
+        display.title, "custom",
+        "explicit display must win over the argument-sourced fallback"
+    );
+    assert_eq!(display.sections[0].content, "embedded result");
+    Ok(())
+}
+
+/// A non-Previewable tool (`read`) produces no display: the fallback returns
+/// `None` for every builtin kind except `edit` and `nu`.
+#[test]
+fn test_tool_result_non_previewable_no_display() -> Result<()> {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_read_1"),
+                provider: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "read".to_string(),
+                    arguments: json!({"path": "/tmp/test.txt"}),
+                },
+            })],
+        }),
+        StoreEntry::Message(Message::User {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_read_1"),
+                provider: None,
+                name: "read".into(),
+                content: vec![ToolResultContent::Text(Text {
+                    text: serde_json::to_string(&json!({"data": "ok"}))?,
+                    additional_params: None,
+                })],
+            })],
+        }),
+    ];
+
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "non-previewable tool must not emit a tool_display snapshot"
+    );
+    assert_eq!(snapshots[0].role(), "tool");
+    Ok(())
+}
+
+/// A `nu` call with an empty command produces no display: `NuTool::preview`
+/// returns `None` for an empty command string.
+#[test]
+fn test_tool_result_nu_empty_command_no_display() -> Result<()> {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_nu_empty_1"),
+                provider: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "nu".to_string(),
+                    arguments: json!({"command": ""}),
+                },
+            })],
+        }),
+        StoreEntry::Message(Message::User {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_nu_empty_1"),
+                provider: None,
+                name: "nu".into(),
+                content: vec![ToolResultContent::Text(Text {
+                    text: serde_json::to_string(&json!({
+                        "stdout": "",
+                        "stderr": "",
+                        "exit_code": 0
+                    }))?,
+                    additional_params: None,
+                })],
+            })],
+        }),
+    ];
+
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "empty nu command must not emit a tool_display snapshot"
+    );
+    assert_eq!(snapshots[0].role(), "tool");
+    Ok(())
+}
+
+/// A `nu` call with no `command` key produces no display: `NuTool::preview`
+/// returns `None` when the command field is absent.
+#[test]
+fn test_tool_result_nu_missing_command_no_display() -> Result<()> {
+    let entries = vec![
+        StoreEntry::Message(Message::Assistant {
+            id: None,
+            content: vec![AssistantContent::ToolCall(ToolCall {
+                id: ToolCallId::new_or_mint("call_nu_missing_1"),
+                provider: None,
+                signature: None,
+                additional_params: None,
+                function: ToolFunction {
+                    name: "nu".to_string(),
+                    arguments: json!({}),
+                },
+            })],
+        }),
+        StoreEntry::Message(Message::User {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: ToolCallId::new_or_mint("call_nu_missing_1"),
+                provider: None,
+                name: "nu".into(),
+                content: vec![ToolResultContent::Text(Text {
+                    text: serde_json::to_string(&json!({
+                        "stdout": "",
+                        "stderr": "",
+                        "exit_code": 0
+                    }))?,
+                    additional_params: None,
+                })],
+            })],
+        }),
+    ];
+
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "missing nu command must not emit a tool_display snapshot"
+    );
+    assert_eq!(snapshots[0].role(), "tool");
+    Ok(())
 }
 
 #[test]
@@ -493,7 +770,8 @@ fn test_tool_result_non_json_gracefully_skipped() {
         }),
     ];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     // Only tool invocation snapshot, no display for non-JSON result
     assert_eq!(snapshots.len(), 1);
@@ -539,7 +817,8 @@ fn test_tool_result_with_explicit_display_key() {
         }),
     ];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 2);
 
@@ -594,7 +873,8 @@ fn hydrate_store_entries_marker_shows_summary_body() {
         }),
     ];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     // There are 5 entries: 2 pre-compaction messages, 1 marker, 2 post-compaction messages
     assert_eq!(
@@ -663,7 +943,8 @@ fn hydrate_unflagged_toolset_error_text_rehydrates_as_none() {
         }),
     ];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     // Should produce 1 snapshot: the tool call (tool result is skipped in TUI)
     assert_eq!(snapshots.len(), 1);
@@ -706,7 +987,8 @@ fn hydrate_unflagged_plain_text_rehydrates_as_none() {
         }),
     ];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");
@@ -727,7 +1009,8 @@ fn hydrate_store_entries_marker_shows_full_summary() {
         Utc::now(),
     ))];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 1);
     let content = snapshots[0].content();
@@ -749,7 +1032,8 @@ fn hydrate_store_entries_marker_body_contains_summary() {
         Utc::now(),
     ))];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "compaction");
@@ -791,7 +1075,8 @@ fn hydrate_unflagged_permission_denied_text_rehydrates_as_none() {
         }),
     ];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     // Should produce 1 snapshot: the tool call (tool result is skipped in TUI)
     assert_eq!(snapshots.len(), 1);
@@ -835,7 +1120,8 @@ fn hydrate_unflagged_doom_loop_text_rehydrates_as_none() {
         }),
     ];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     // Should produce 1 snapshot: the tool call (tool result is skipped in TUI)
     assert_eq!(snapshots.len(), 1);
@@ -860,7 +1146,8 @@ fn hydrate_flagged_tool_quote_text_rehydrates_as_true() {
         Some(true),
     );
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 1, "flag must not change snapshot count");
     assert_eq!(snapshots[0].role(), "tool");
@@ -881,7 +1168,8 @@ fn hydrate_unflagged_tool_quote_text_rehydrates_as_none() {
         None,
     );
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");
@@ -902,7 +1190,8 @@ fn hydrate_flagged_failure_rehydrates_as_false() {
         Some(false),
     );
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");
@@ -923,7 +1212,8 @@ fn hydrate_legacy_enriched_denial_rehydrates_as_none() {
         None,
     );
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");
@@ -944,7 +1234,8 @@ fn hydrate_legacy_unmatched_text_rehydrates_as_none() {
         None,
     );
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");
@@ -989,7 +1280,8 @@ fn hydrate_non_boolean_flag_value_rehydrates_as_none() {
         }),
     ];
 
-    let snapshots = super::resolver::hydrate_transcript_from_store_entries(&entries);
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");

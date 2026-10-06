@@ -215,6 +215,33 @@ fn builtin_tmux_pane_definition_has_window_property() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn builtin_path_and_directory_parameters_mention_relative_paths() -> Result<()> {
+    let tools = builtin_tool_definitions();
+
+    for tool in &tools {
+        let properties = tool.parameters["properties"]
+            .as_object()
+            .ok_or("properties object")?;
+
+        for key in ["path", "directory"] {
+            let Some(param) = properties.get(key) else {
+                continue;
+            };
+            let description = param["description"]
+                .as_str()
+                .ok_or("parameter description")?;
+            assert!(
+                description.contains("relative to the working directory"),
+                "{}.{key} description must mention relative paths, got: {description}",
+                tool.name
+            );
+        }
+    }
+
+    Ok(())
+}
+
 // ── messaging_tool_definitions ───────────────────────────────────────────────
 
 #[test]

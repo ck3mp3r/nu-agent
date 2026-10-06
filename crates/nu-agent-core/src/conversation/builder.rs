@@ -59,7 +59,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string" },
+                    "path": { "type": "string", "description": "File path, relative to the working directory." },
                     "offset": { "type": "integer", "minimum": 0 },
                     "limit": { "type": "integer", "minimum": 0 }
                 },
@@ -72,7 +72,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string" },
+                    "path": { "type": "string", "description": "File path, relative to the working directory." },
                     "mode": { "type": "string", "enum": ["preview", "apply"], "default": "apply" },
                     "expected_version": { "type": "string", "description": "CAS version from prior read (required for search_replace on existing files)" },
                     "operation": {
@@ -139,7 +139,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                     },
                     "path": {
                         "type": "string",
-                        "description": "Directory or file to search. Defaults to current working directory."
+                        "description": "Directory or file to search, relative to the working directory. Defaults to the working directory."
                     },
                     "glob": {
                         "type": "string",
@@ -169,7 +169,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                     },
                     "path": {
                         "type": "string",
-                        "description": "Directory to search. Defaults to current working directory."
+                        "description": "Directory to search, relative to the working directory. Defaults to the working directory."
                     }
                 },
                 "required": ["pattern"]
@@ -184,7 +184,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                     "action": { "type": "string", "enum": ["list", "info", "create", "kill"] },
                     "session": { "type": "string", "description": "Session name (required for info/kill)" },
                     "name": { "type": "string", "description": "Name for the new session (required for create)" },
-                    "directory": { "type": "string", "description": "Starting directory for the new session (optional, for create)" },
+                    "directory": { "type": "string", "description": "Starting directory for the new session, relative to the working directory (optional, for create)" },
                     "force": { "type": "boolean", "description": "Must be true to confirm destruction (required for kill)" }
                 },
                 "required": ["action"]
@@ -199,7 +199,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                     "action": { "type": "string", "enum": ["create", "kill"] },
                     "session": { "type": "string", "description": "Session name" },
                     "name": { "type": "string", "description": "Name for the new window (optional, for create)" },
-                    "directory": { "type": "string", "description": "Working directory for the new window (optional, for create)" },
+                    "directory": { "type": "string", "description": "Working directory for the new window, relative to the working directory (optional, for create)" },
                     "index": { "type": "integer", "description": "Target window index (optional, for create)" },
                     "window": { "type": "string", "description": "Window name or index to kill (required for kill action)" },
                     "force": { "type": "boolean", "description": "Must be true to confirm destruction (required for kill)" }
@@ -220,7 +220,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                     "command": { "type": "string", "description": "Command to send to the pane (required for send)" },
                     "direction": { "type": "string", "enum": ["horizontal", "vertical"], "description": "Split direction (optional, for split)" },
                     "size": { "type": "integer", "description": "Size of new pane as percentage (optional, for split)" },
-                    "directory": { "type": "string", "description": "Working directory for the new pane (optional, for split)" },
+                    "directory": { "type": "string", "description": "Working directory for the new pane, relative to the working directory (optional, for split)" },
                     "name": { "type": "string", "description": "Pane name to find (optional, for find)" },
                     "context": { "type": "string", "description": "Context to search for, e.g. directory name or command (optional, for find)" },
                     "lines": { "type": "integer", "description": "Number of lines to capture (optional, for capture)" },
@@ -268,7 +268,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Path to the source file to analyze." },
+                    "path": { "type": "string", "description": "File path, relative to the working directory." },
                     "language": { "type": "string", "description": "Language name (e.g., 'rust', 'go', 'python'). Must match a tree-sitter grammar installed via 'tree-sitter' CLI." },
                     "query": { "type": "string", "description": "Tree-sitter S-expression query string." },
                     "captures": { "type": "array", "items": { "type": "string" }, "description": "Optional list of capture names to filter results by." },
@@ -284,7 +284,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Path to the source file to analyze." },
+                    "path": { "type": "string", "description": "File path, relative to the working directory." },
                     "language": { "type": "string", "description": "Language name (e.g., 'rust', 'go', 'python'). Must match a tree-sitter grammar installed via 'tree-sitter' CLI." },
                     "node_type": { "type": "string", "description": "Tree-sitter node type to find (e.g., 'function_item', 'match_arm'). Use ast_tree to discover valid node types." },
                     "max_matches": { "type": "integer", "description": "Maximum number of nodes to return. Default 200." },
@@ -299,7 +299,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Path to the source file to analyze." },
+                    "path": { "type": "string", "description": "File path, relative to the working directory." },
                     "language": { "type": "string", "description": "Language name (e.g., 'rust', 'go', 'python'). Must match a tree-sitter grammar installed via 'tree-sitter' CLI." },
                     "name": { "type": "string", "description": "Symbol name to search for (e.g., 'Config', 'parse')." },
                     "max_matches": { "type": "integer", "description": "Maximum number of matches to return. Default 100." }
@@ -313,7 +313,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Path to the source file to analyze." },
+                    "path": { "type": "string", "description": "File path, relative to the working directory." },
                     "language": { "type": "string", "description": "Language name (e.g., 'rust', 'go', 'python'). Must match a tree-sitter grammar installed via 'tree-sitter' CLI." },
                     "max_depth": { "type": "integer", "description": "Maximum tree depth to dump. Nodes beyond this depth are shown as '...'." }
                 },

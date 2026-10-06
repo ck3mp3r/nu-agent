@@ -602,7 +602,7 @@ where
         self.session.clear();
         self.final_session_id = Some(metadata.session_id.clone());
 
-        Ok(crate::session::resolver::hydrate_transcript_from_store_entries(&entries))
+        Ok(crate::session::resolver::hydrate_transcript_from_store_entries(&entries, &self.cwd))
     }
 
     async fn list_sessions(&self, cwd: &std::path::Path) -> Result<Vec<SessionInfo>, String> {
@@ -633,9 +633,11 @@ where
         self.final_session_id = Some(sid);
 
         match loaded {
-            Some((_metadata, entries)) => {
-                Ok(crate::session::resolver::hydrate_transcript_from_store_entries(&entries))
-            }
+            Some((_metadata, entries)) => Ok(
+                crate::session::resolver::hydrate_transcript_from_store_entries(
+                    &entries, &self.cwd,
+                ),
+            ),
             None => Ok(Vec::new()),
         }
     }
