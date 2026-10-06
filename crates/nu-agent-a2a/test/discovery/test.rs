@@ -416,7 +416,9 @@ async fn test_card_fetch_roundtrip() {
         .unwrap();
     let url = format!("{}/.well-known/agent-card.json", server.local_url);
 
-    let resp = reqwest::get(&url).await.unwrap();
+    crate::discovery::card::ensure_crypto_provider();
+    let client = reqwest::Client::new();
+    let resp = client.get(&url).send().await.unwrap();
     assert!(resp.status().is_success());
     let fetched: AgentCard = resp.json().await.unwrap();
     assert_eq!(fetched.name, "test-agent");
@@ -424,7 +426,7 @@ async fn test_card_fetch_roundtrip() {
 
     // Verify 404 on old wrong path
     let bad_url = format!("{}/agent.json", server.local_url);
-    let resp = reqwest::get(&bad_url).await.unwrap();
+    let resp = client.get(&bad_url).send().await.unwrap();
     assert_eq!(resp.status().as_u16(), 404);
 
     server.shutdown().await;

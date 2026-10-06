@@ -54,6 +54,7 @@ async fn test_a2a_version_missing_rejected() {
     )
     .await
     .unwrap();
+    crate::discovery::card::ensure_crypto_provider();
     let client = reqwest::Client::new(); // no A2A-Version header
 
     let resp = client
@@ -98,6 +99,7 @@ async fn test_a2a_version_unsupported_value_rejected() {
     )
     .await
     .unwrap();
+    crate::discovery::card::ensure_crypto_provider();
     let client = reqwest::Client::builder()
         .default_headers({
             let mut headers = reqwest::header::HeaderMap::new();
@@ -145,6 +147,7 @@ async fn test_agent_json_bypasses_version_check() {
     )
     .await
     .unwrap();
+    crate::discovery::card::ensure_crypto_provider();
     let client = reqwest::Client::new(); // no A2A-Version header
 
     // /.well-known/agent-card.json should work without A2A-Version
@@ -175,6 +178,7 @@ async fn test_extended_agent_card_bypasses_version_check() {
     )
     .await
     .unwrap();
+    crate::discovery::card::ensure_crypto_provider();
     let client = reqwest::Client::new(); // no A2A-Version header
 
     // /extendedAgentCard should work without A2A-Version

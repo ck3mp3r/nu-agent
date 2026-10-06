@@ -22,7 +22,10 @@ async fn test_server_starts_and_returns_port() {
     );
 
     // Health endpoint responds
-    let resp = reqwest::get(&format!("{}/health", server.local_url))
+    crate::discovery::card::ensure_crypto_provider();
+    let resp = reqwest::Client::new()
+        .get(format!("{}/health", server.local_url))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -197,7 +200,10 @@ async fn test_extended_agent_card() {
     .await
     .unwrap();
 
-    let resp = reqwest::get(format!("{}/extendedAgentCard", server.local_url))
+    crate::discovery::card::ensure_crypto_provider();
+    let resp = reqwest::Client::new()
+        .get(format!("{}/extendedAgentCard", server.local_url))
+        .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);

@@ -8,6 +8,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// Create a [`reqwest::Client`] that sends `A2A-Version: 1.0` on every
 /// request, matching what the middleware expects on A2A API paths.
 pub fn test_client() -> reqwest::Client {
+    crate::discovery::card::ensure_crypto_provider();
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::HeaderName::from_static("a2a-version"),
