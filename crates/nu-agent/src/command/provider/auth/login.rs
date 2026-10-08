@@ -82,19 +82,29 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
         // github-copilot uses the OAuth device-code flow.
         if name == "github-copilot" || name == "copilot" {
             crate::block_on!(plugin, async {
-                let client = rig::providers::copilot::Client::builder()
-                    .oauth()
-                    .on_device_code(|params| {
-                        eprintln!(
-                            "Sign in with GitHub Copilot:\n  1) Visit: {}\n  2) Enter code: {}",
-                            params.verification_uri, params.user_code
-                        );
-                    })
-                    .build()
-                    .map_err(|e| LabeledError::new(format!("Authentication failed: {e}")))?;
+                use rig::providers::copilot::CopilotConfig;
+                use rig::providers::copilot::auth::{
+                    AuthSource, Authenticator, DeviceCodeHandler, default_token_dir,
+                };
 
-                client
-                    .authorize()
+                let handler = DeviceCodeHandler::new(|prompt| {
+                    eprintln!(
+                        "Sign in with GitHub Copilot:\n  1) Visit: {}\n  2) Enter code: {}",
+                        prompt.verification_uri, prompt.user_code
+                    );
+                });
+                let token_dir = default_token_dir();
+                let authenticator = Authenticator::new(
+                    AuthSource::OAuth,
+                    token_dir.as_ref().map(|dir| dir.join("access-token")),
+                    token_dir.as_ref().map(|dir| dir.join("api-key.json")),
+                    handler,
+                    true,
+                );
+
+                CopilotConfig::new("")
+                    .client()
+                    .authenticate(&authenticator)
                     .await
                     .map_err(|e| LabeledError::new(format!("Authentication failed: {e}")))?;
 

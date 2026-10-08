@@ -1,7 +1,7 @@
 use super::*;
 
 // ========================================================================
-// ModelHandle construction regression tests (task 47715fca)
+// DynModel<Completion> construction regression tests (task 47715fca)
 // ========================================================================
 
 /// Build a `Config` for an OpenAI-compatible provider pointed at a wiremock
@@ -71,17 +71,12 @@ fn openai_wiremock_plugin_config(server_uri: &str) -> crate::config::PluginConfi
     plugin_config
 }
 
-/// Drive a single completion through a `ModelHandle` against the wiremock
-/// server, consuming the stream so the request is actually sent.
-async fn drive_completion(handle: &rig::agent::ModelHandle) -> Result<()> {
+/// Drive a single completion through a `DynModel<Completion>` against the
+/// wiremock server, consuming the stream so the request is actually sent.
+async fn drive_completion(model: &rig::DynModel<rig::operation::Completion>) -> Result<()> {
     use futures::StreamExt;
-    use rig::completion::CompletionModel;
-    let model = handle.clone();
     let stream = model
-        .completion_request("hello")
-        .messages(Vec::<crate::types::Message>::new())
-        .stream()
-        .await
+        .stream(rig::completion::CompletionRequest::new("hello"))
         .map_err(|e| format!("completion stream: {e}"))?;
     let mut stream = std::pin::pin!(stream);
     while let Some(item) = stream.next().await {
@@ -135,7 +130,7 @@ async fn switch_model_builds_handle_from_bare_model_name() -> Result<()> {
     // switch_model resolves the spec and invalidates the cache; the canonical
     // constructor then rebuilds the handle from the bare model name.
     let identity = state.switch_model("openai/glm-5.3-flash")?;
-    let handle = state.build_shared_model_handle()?;
+    let handle = state.build_dyn_model()?;
     drive_completion(&handle).await?;
 
     // -- Check
@@ -172,7 +167,7 @@ async fn startup_builds_handle_from_bare_model_name() -> Result<()> {
     let mut state = crate::conversation::state::provider::ProviderState::new(config, None);
 
     // -- Exec
-    let handle = state.build_shared_model_handle()?;
+    let handle = state.build_dyn_model()?;
     drive_completion(&handle).await?;
 
     // -- Check
@@ -210,24 +205,24 @@ async fn switch_agent_rebuilds_shared_handle_when_model_present() -> Result<()> 
             .await;
     }
 
-    // Shared handle, mirroring runtime.rs shared_model: Arc<Mutex<ModelHandle>>.
+    // Shared model, mirroring runtime.rs dyn_model: Arc<Mutex<DynModel<Completion>>>.
     // Start bound to a previous model.
     let mut state = crate::conversation::state::provider::ProviderState::new(
         openai_wiremock_config(&server.uri(), "old-model"),
         Some(openai_wiremock_plugin_config(&server.uri())),
     );
-    let shared_model: std::sync::Arc<std::sync::Mutex<rig::agent::ModelHandle>> =
-        std::sync::Arc::new(std::sync::Mutex::new(state.build_shared_model_handle()?));
+    let shared_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(state.build_dyn_model()?));
 
     // -- Exec
     // Replicate switch_agent's model-rewrite block (runtime.rs:374-377).
     // The persona model field is a "provider/model" spec (resolve_model splits
     // on '/'), so switch_model resolves it and the canonical constructor then
-    // rebuilds the handle from the bare name.
+    // rebuilds the model from the bare name.
     let persona_model = Some("openai/glm-5.3-flash".to_string());
     if let Some(model) = persona_model {
         let _ = state.switch_model(&model);
-        if let Ok(new_model) = state.build_shared_model_handle() {
+        if let Ok(new_model) = state.build_dyn_model() {
             *shared_model
                 .lock()
                 .map_err(|_| "model mutex poisoned".to_string())? = new_model;
@@ -272,15 +267,15 @@ async fn switch_agent_keeps_shared_handle_when_no_model() -> Result<()> {
         openai_wiremock_config(&server.uri(), "glm-5.3-flash"),
         Some(openai_wiremock_plugin_config(&server.uri())),
     );
-    let shared_model: std::sync::Arc<std::sync::Mutex<rig::agent::ModelHandle>> =
-        std::sync::Arc::new(std::sync::Mutex::new(state.build_shared_model_handle()?));
+    let shared_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(state.build_dyn_model()?));
 
     // -- Exec
     // Replicate switch_agent's model-rewrite block with NO persona model.
     let persona_model: Option<String> = None;
     if let Some(model) = persona_model {
         let _ = state.switch_model(&model);
-        if let Ok(new_model) = state.build_shared_model_handle() {
+        if let Ok(new_model) = state.build_dyn_model() {
             *shared_model
                 .lock()
                 .map_err(|_| "model mutex poisoned".to_string())? = new_model;

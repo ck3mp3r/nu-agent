@@ -182,7 +182,7 @@ async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
 /// 1. `on_completion_call(sub-turn 1)` → `Continue`
 /// 2. LLM responds with `tool_call(tc1, "nu__shell")`
 /// 3. `TestNuShellCancellingTool::call()` returns `"Already up to date."` then fires cancel token
-/// 4. `on_tool_result` records `User(ToolResult tc1)` in `new_messages`
+/// 4. `on_outcome` records `User(ToolResult tc1)` in `new_messages`
 /// 5. `on_completion_call(sub-turn 2)` → `is_cancelled()` → `Terminate`
 /// 6. `PromptCancelled { chat_history: [user(prompt), asst(tc1), user(tr1)] }`
 /// 7. Path C: delta = 3 messages persisted

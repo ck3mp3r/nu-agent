@@ -62,7 +62,7 @@ impl ClosureToolAdapter {
         let span = self.span;
         let max_tool_result_bytes = self.max_tool_result_bytes;
 
-        DynamicTool::new(name, description, parameters, move |_context, args| {
+        DynamicTool::new(name, description, parameters, move |args| {
             let resolved = resolved.clone();
             let executor = executor.clone();
             Box::pin(async move {

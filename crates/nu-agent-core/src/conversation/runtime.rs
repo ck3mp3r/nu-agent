@@ -137,11 +137,11 @@ where
     pub session: Sess,
     pub persona: Persona,
     pub multi_agent: Multi,
-    /// Shared runtime model handle. The single point of model identity: both the
-    /// agent (built via `AgentBuilder::from_model_handle`) and the hook's
-    /// `on_model_select` route to this handle's current value. It is constructed
-    /// eagerly at startup and updated on every `switch_model()` call.
-    pub shared_model: Arc<Mutex<rig::agent::ModelHandle>>,
+    /// Shared runtime model. The single point of model identity: the agent is
+    /// built from this model on every turn and the compactor summarizes with
+    /// it. It is constructed eagerly at startup and swapped on every
+    /// `switch_model()` call.
+    pub dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
     /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
     pub compaction: crate::conversation::compaction::CompactionConfig<SessionStoreBackend>,
 }
@@ -231,7 +231,7 @@ where
                     bus: self.bus.clone(),
                     render_registry: self.render_registry.clone(),
                 },
-                Arc::clone(&self.shared_model),
+                Arc::clone(&self.dyn_model),
                 self.compaction.clone(),
             );
 
@@ -361,16 +361,13 @@ where
     fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         let identity = self.provider.switch_model(model_spec)?;
         let max_tokens = self.max_context_tokens();
-        // Erase the newly-cached concrete model into a `ModelHandle` and update
-        // the shared handle. One write updates both the hook (`on_model_select`)
-        // and the compactor (`NuCompactor::from_shared_model`) since they share
-        // this `Arc`. The handle is built from the bare model name via the
-        // canonical constructor.
-        let new_model = self
-            .provider
-            .build_shared_model_handle()
-            .map_err(|e| e.to_string())?;
-        *self.shared_model.lock().expect("model mutex poisoned") = new_model;
+        // Erase the newly-cached concrete model into a `DynModel<Completion>`
+        // and swap it into the shared slot. The next turn builds its agent from
+        // the new model; an in-flight turn keeps the model it already cloned.
+        // The model is built from the bare model name via the canonical
+        // constructor.
+        let new_model = self.provider.build_dyn_model().map_err(|e| e.to_string())?;
+        *self.dyn_model.lock().expect("model mutex poisoned") = new_model;
         Ok((identity, max_tokens))
     }
 
@@ -388,10 +385,10 @@ where
         // If persona specifies a model, attempt to switch (ignore errors)
         if let Some(model) = result.model {
             let _ = self.provider.switch_model(&model);
-            // Rebuild the shared ModelHandle from the bare model name so the
+            // Rebuild the shared model from the bare model name so the
             // persona's model serves the next turn (mirrors switch_model).
-            if let Ok(new_model) = self.provider.build_shared_model_handle() {
-                *self.shared_model.lock().expect("model mutex poisoned") = new_model;
+            if let Ok(new_model) = self.provider.build_dyn_model() {
+                *self.dyn_model.lock().expect("model mutex poisoned") = new_model;
             }
         }
 

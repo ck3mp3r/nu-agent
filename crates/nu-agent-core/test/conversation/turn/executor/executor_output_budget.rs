@@ -440,8 +440,11 @@ async fn prompt_wrapped_empty_output_length_reaches_feedback_retry() -> Result<(
     // Reasoning-only + truncating Length final: rig's `turn_delivered_no_answer`
     // returns true (reasoning is not an answer) and `truncating_finish_reason`
     // returns Length, so the run errors with the ResponseError message.
-    let length_final = rig::streaming::StreamFinal::new("mock", rig::completion::Usage::new())
-        .with_finish_reason(rig::completion::FinishReason::Length);
+    let length_final = rig::operation::Finish {
+        usage: rig::completion::Usage::default(),
+        reason: Some(rig::completion::FinishReason::Length),
+        ..Default::default()
+    };
     let model = MockCompletionModel::from_stream_turns([
         vec![
             MockStreamEvent::reasoning("thinking..."),

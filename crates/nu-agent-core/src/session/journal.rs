@@ -1,5 +1,6 @@
 use super::store::{CompactionMarker, SessionStore, StoreEntry};
 use crate::types::{AdditionalParams, Message, ToolResult, ToolResultContent, UserContent};
+use rig::id::ConversationId;
 use rig::memory::{ConversationMemory, MemoryError};
 use rig::wasm_compat::WasmBoxedFuture;
 use std::collections::{HashMap, HashSet};
@@ -163,9 +164,10 @@ impl<S: SessionStore + Clone + Send + Sync> CachedMemory<S> {
 impl<S: SessionStore + Clone + Send + Sync> ConversationMemory for CachedMemory<S> {
     fn load<'a>(
         &'a self,
-        conversation_id: &'a str,
+        conversation_id: &'a ConversationId,
     ) -> WasmBoxedFuture<'a, Result<Vec<Message>, MemoryError>> {
         Box::pin(async move {
+            let conversation_id = conversation_id.as_str();
             // Check cache first
             {
                 let cache = self.lock_cache()?;
@@ -232,10 +234,11 @@ impl<S: SessionStore + Clone + Send + Sync> ConversationMemory for CachedMemory<
 
     fn append<'a>(
         &'a self,
-        conversation_id: &'a str,
+        conversation_id: &'a ConversationId,
         messages: Vec<Message>,
     ) -> WasmBoxedFuture<'a, Result<(), MemoryError>> {
         Box::pin(async move {
+            let conversation_id = conversation_id.as_str();
             log::trace!(
                 "CachedMemory.append: session={conversation_id} count={}",
                 messages.len()
@@ -291,9 +294,10 @@ impl<S: SessionStore + Clone + Send + Sync> ConversationMemory for CachedMemory<
 
     fn clear<'a>(
         &'a self,
-        conversation_id: &'a str,
+        conversation_id: &'a ConversationId,
     ) -> WasmBoxedFuture<'a, Result<(), MemoryError>> {
         Box::pin(async move {
+            let conversation_id = conversation_id.as_str();
             let mut cache = self.lock_cache()?;
             cache.remove(conversation_id);
             Ok(())
@@ -317,7 +321,7 @@ fn stamp_tool_verdicts(message: &mut Message, verdicts: &mut HashMap<String, boo
         let UserContent::ToolResult(result) = item else {
             continue;
         };
-        let Some(success) = verdicts.remove(result.call.as_str()) else {
+        let Some(success) = verdicts.remove(result.call.wire().as_ref()) else {
             continue;
         };
         stamp_tool_success(result, success);

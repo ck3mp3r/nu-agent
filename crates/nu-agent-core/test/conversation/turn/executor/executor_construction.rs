@@ -20,7 +20,7 @@ fn turn_executor_new_constructs_without_panic() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let mut memory_state = make_memory_state(&temp_dir);
-    let shared_model = super::test_utils::shared_mock_model_handle();
+    let shared_model = super::test_utils::shared_mock_model();
 
     let _executor = make_executor(
         &config,
@@ -36,7 +36,7 @@ fn turn_executor_exposes_memory_state() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let mut memory_state = make_memory_state(&temp_dir);
-    let shared_model = super::test_utils::shared_mock_model_handle();
+    let shared_model = super::test_utils::shared_mock_model();
 
     let executor = make_executor(
         &config,
@@ -54,7 +54,7 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let mut memory_state = make_memory_state(&temp_dir);
-    let shared_model = super::test_utils::shared_mock_model_handle();
+    let shared_model = super::test_utils::shared_mock_model();
 
     let mut executor = make_executor(
         &config,
@@ -258,9 +258,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
         })
         .collect();
     let compactor_model = MockCompletionModel::from_stream_turns(compactor_turns);
-    let compactor_handle = std::sync::Arc::new(std::sync::Mutex::new(
-        rig::agent::ModelHandle::new(compactor_model),
-    ));
+    let compactor_handle = std::sync::Arc::new(std::sync::Mutex::new(compactor_model.erase()));
     // Attach a store to the compactor so it can read/write compaction markers.
     let store_arc = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
     let compactor = crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
@@ -278,7 +276,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
         memory_state
             .inner_memory()
             .append(
-                session_id,
+                &rig::id::ConversationId::from(session_id),
                 vec![crate::types::Message::user(format!("user-{i}"))],
             )
             .await
@@ -286,7 +284,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
         memory_state
             .inner_memory()
             .append(
-                session_id,
+                &rig::id::ConversationId::from(session_id),
                 vec![crate::types::Message::assistant(format!("assistant-{i}"))],
             )
             .await
@@ -386,14 +384,14 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
     Ok(())
 }
 
-/// `on_stream_response_finish` stores the real API token count so the hook's
+/// `on_outcome` stores the real API token count so the hook's
 /// compaction threshold uses real usage, not the chars/4 estimate.
 ///
 /// The `ToolInfra.last_total_tokens` slot starts `None`. After a completed turn
 /// whose model reports `total_tokens > 0`, the hook must populate the slot with
 /// that real count (verified through the public executor boundary).
 #[tokio::test]
-async fn on_stream_response_finish_stores_total_tokens() -> Result<()> {
+async fn on_outcome_stores_total_tokens() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let session_id = "test-hook-total-tokens";
@@ -454,7 +452,7 @@ async fn on_stream_response_finish_stores_total_tokens() -> Result<()> {
             .lock()
             .expect("last_total_tokens mutex poisoned"),
         Some(1234),
-        "hook must store the real total_tokens from on_stream_response_finish"
+        "hook must store the real total_tokens from on_outcome"
     );
 
     Ok(())

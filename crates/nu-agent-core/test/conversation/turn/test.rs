@@ -60,7 +60,6 @@ fn test_compaction_config(
     bus: crate::bus::Bus,
 ) -> crate::conversation::compaction::CompactionConfig<FsSessionStore> {
     use crate::conversation::compaction::compactor::NuCompactor;
-    use rig::agent::ModelHandle;
     use rig::test_utils::MockCompletionModel;
 
     let turns: Vec<Vec<rig::test_utils::MockStreamEvent>> = (0..8)
@@ -74,7 +73,7 @@ fn test_compaction_config(
     let model = MockCompletionModel::from_stream_turns(turns);
     crate::conversation::compaction::CompactionConfig {
         compactor: NuCompactor::from_shared_model(
-            std::sync::Arc::new(std::sync::Mutex::new(ModelHandle::new(model))),
+            std::sync::Arc::new(std::sync::Mutex::new(model.erase())),
             bus.clone(),
             None,
         ),
@@ -108,7 +107,7 @@ impl AsyncPermissionResolver for MockResolver {
 // ---------------------------------------------------------------------------
 
 fn make_turn_context<'a>(
-    shared_model: std::sync::Arc<std::sync::Mutex<rig::agent::ModelHandle>>,
+    dyn_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>>,
     config: &'a Config,
     bus: crate::bus::Bus,
 ) -> TurnContext<'a, FsSessionStore> {
@@ -118,7 +117,7 @@ fn make_turn_context<'a>(
         memory,
         conversation_id: "test-conv".to_string(),
         has_session: true,
-        shared_model,
+        dyn_model,
         compaction: test_compaction_config(bus.clone()),
     };
     let input = TurnInput {
@@ -142,12 +141,12 @@ fn make_turn_context<'a>(
     TurnContext::new(conversation, input, tool_infra, config)
 }
 
-/// Wrap a `MockCompletionModel` in the shared `Arc<Mutex<ModelHandle>>` so
-/// the agent (built from the handle) and the hook route to the scripted model.
+/// Wrap a `MockCompletionModel` in the shared `Arc<Mutex<DynModel<Completion>>>`
+/// so the agent (built from the model) routes to the scripted model.
 fn shared_handle(
     model: MockCompletionModel,
-) -> std::sync::Arc<std::sync::Mutex<rig::agent::ModelHandle>> {
-    std::sync::Arc::new(std::sync::Mutex::new(rig::agent::ModelHandle::new(model)))
+) -> std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>> {
+    std::sync::Arc::new(std::sync::Mutex::new(model.erase()))
 }
 
 // ---------------------------------------------------------------------------
@@ -407,19 +406,17 @@ fn turn_context_uses_compacting_memory() {
 async fn filtered_tool_proxy_cancels_during_execution() -> Result<()> {
     let handle = rig::tool::server::ToolServer::new().run();
     // Register a tool that sleeps so the cancel can fire mid-execution.
-    handle
-        .add_dynamic_tool(rig::tool::DynamicTool::new(
-            "sleeping_tool",
-            "sleeps to allow cancellation",
-            serde_json::json!({}),
-            |_context, _args| {
-                Box::pin(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                    Ok(rig::tool::ToolOutput::text("done"))
-                })
-            },
-        ))
-        .await;
+    handle.add_dynamic_tool(rig::tool::DynamicTool::new(
+        "sleeping_tool",
+        "sleeps to allow cancellation",
+        serde_json::json!({}),
+        |_args| {
+            Box::pin(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                Ok(rig::tool::ToolOutput::text("done"))
+            })
+        },
+    ));
 
     let bus = crate::bus::create_bus();
     let proxy = FilteredToolProxy {
@@ -486,7 +483,7 @@ async fn transient_turn_does_not_write_jsonl() -> Result<()> {
                 .as_millis()
         ),
         has_session: false,
-        shared_model: shared_handle(model),
+        dyn_model: shared_handle(model),
         compaction: test_compaction_config(crate::bus::create_bus()),
     };
     let input = TurnInput {
@@ -548,7 +545,7 @@ async fn persistent_turn_writes_jsonl() -> Result<()> {
         memory,
         conversation_id: session_id.to_string(),
         has_session: true,
-        shared_model: shared_handle(model),
+        dyn_model: shared_handle(model),
         compaction: test_compaction_config(crate::bus::create_bus()),
     };
     let input = TurnInput {

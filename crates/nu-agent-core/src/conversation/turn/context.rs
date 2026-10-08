@@ -20,10 +20,10 @@ pub struct TurnConversation<S: SessionStore + Clone + Send + Sync> {
     /// within its own prompt call, which is exactly correct for a stateless
     /// one-shot invocation.
     pub has_session: bool,
-    /// Shared runtime model handle. The agent is built from this handle and the
-    /// hook's `on_model_select` routes each turn to its current value. It is
-    /// constructed eagerly at startup.
-    pub shared_model: std::sync::Arc<std::sync::Mutex<rig::agent::ModelHandle>>,
+    /// Shared runtime model. The agent is built from this model on every turn
+    /// and `switch_model()` swaps the inner value. It is constructed eagerly at
+    /// startup.
+    pub dyn_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>>,
     /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
     pub compaction: CompactionConfig<S>,
 }

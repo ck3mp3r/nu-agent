@@ -36,14 +36,12 @@ async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -
     let mut memory_state = make_memory_state(&temp_dir);
 
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
-    tool_server_handle
-        .add_dynamic_tool(rig::tool::DynamicTool::new(
-            "echo_tool",
-            "echoes a fixed result",
-            serde_json::json!({"type": "object", "properties": {}}),
-            |_context, _args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
-        ))
-        .await;
+    tool_server_handle.add_dynamic_tool(rig::tool::DynamicTool::new(
+        "echo_tool",
+        "echoes a fixed result",
+        serde_json::json!({"type": "object", "properties": {}}),
+        |_args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
+    ));
 
     // 8 identical tool calls: 5 threshold + 1 first + 2 backoff + 1 stop.
     let turns: Vec<Vec<MockStreamEvent>> = (0..8)

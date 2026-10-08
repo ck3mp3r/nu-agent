@@ -257,9 +257,8 @@ fn user_with_tool_result(id: &str) -> crate::types::Message {
     crate::types::Message::User {
         content: vec![crate::types::UserContent::ToolResult(
             crate::types::ToolResult {
-                call: crate::types::ToolCallId::new_or_mint(id),
-                provider: None,
-                name: "do_thing".into(),
+                call: crate::types::CallId::from_wire(id),
+                name: crate::types::ToolName::new("do_thing").expect("non-empty tool name"),
                 content: vec![crate::types::ToolResultContent::text("result")],
             },
         )],
@@ -276,9 +275,8 @@ fn user_with_mixed_content(id: &str) -> crate::types::Message {
     crate::types::Message::User {
         content: vec![
             crate::types::UserContent::ToolResult(crate::types::ToolResult {
-                call: crate::types::ToolCallId::new_or_mint(id),
-                provider: None,
-                name: "do_thing".into(),
+                call: crate::types::CallId::from_wire(id),
+                name: crate::types::ToolName::new("do_thing").expect("non-empty tool name"),
                 content: vec![crate::types::ToolResultContent::text("result")],
             }),
             crate::types::UserContent::Text(crate::types::Text::new("some text")),

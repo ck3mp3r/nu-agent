@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use crate::types::{ToolCall, ToolCallId, ToolFunction};
+use crate::types::{CallId, ToolCall, ToolFunction, ToolName};
 use serde_json::json;
 
 use super::*;
@@ -9,6 +9,8 @@ use crate::tools::authz::{
 };
 
 use async_trait::async_trait;
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 struct AlwaysDenyHook;
 
@@ -26,15 +28,16 @@ impl crate::tools::authz::AskApprovalHook for AlwaysDenyHook {
     }
 }
 
-fn make_tool_call(name: &str) -> ToolCall {
-    ToolCall::new(
-        ToolCallId::new_or_mint("test-id"),
-        ToolFunction::new(name.to_string(), json!({})),
-    )
+fn make_tool_call(name: &str) -> Result<ToolCall> {
+    let tool_name = ToolName::new(name).map_err(|_| "tool name must not be empty")?;
+    Ok(ToolCall::new(
+        CallId::from_wire("test-id"),
+        ToolFunction::new(tool_name, json!({})),
+    ))
 }
 
 #[tokio::test]
-async fn config_allow_tools_pass_permission_flow() {
+async fn config_allow_tools_pass_permission_flow() -> Result<()> {
     // With safe_defaults(true), `read` is configured as Allow so it passes
     // without prompting, even though the hook would otherwise deny.
     let permissions = PermissionsConfig::safe_defaults(true);
@@ -45,7 +48,7 @@ async fn config_allow_tools_pass_permission_flow() {
     let mut ask_hook = AlwaysDenyHook;
 
     for tool_name in ["read", "glob", "grep"] {
-        let tool_call = make_tool_call(tool_name);
+        let tool_call = make_tool_call(tool_name)?;
         let result = enforce_authorization_for_tool_call(
             &tool_call,
             ToolSource::Builtin,
@@ -61,10 +64,11 @@ async fn config_allow_tools_pass_permission_flow() {
             tool_name,
         );
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn config_ask_tools_prompt_through_permission_flow() {
+async fn config_ask_tools_prompt_through_permission_flow() -> Result<()> {
     // With safe_defaults(true), tools not listed as allow fall through to the
     // global Ask action, so the AlwaysDenyHook denies them.
     let permissions = PermissionsConfig::safe_defaults(true);
@@ -75,7 +79,7 @@ async fn config_ask_tools_prompt_through_permission_flow() {
     let mut ask_hook = AlwaysDenyHook;
 
     for tool_name in ["nu", "edit", "skill", "spawn_agent", "send_message"] {
-        let tool_call = make_tool_call(tool_name);
+        let tool_call = make_tool_call(tool_name)?;
         let result = enforce_authorization_for_tool_call(
             &tool_call,
             ToolSource::Builtin,
@@ -91,10 +95,11 @@ async fn config_ask_tools_prompt_through_permission_flow() {
             tool_name,
         );
     }
+    Ok(())
 }
 
 #[tokio::test]
-async fn non_builtin_tools_go_through_permission_flow() {
+async fn non_builtin_tools_go_through_permission_flow() -> Result<()> {
     let permissions = PermissionsConfig::safe_defaults(true);
     let grant_cache = Arc::new(Mutex::new(SessionGrantCache::default()));
     let flow_context = AuthorizationFlowContext {
@@ -103,7 +108,7 @@ async fn non_builtin_tools_go_through_permission_flow() {
     let mut ask_hook = AlwaysDenyHook;
 
     // An unknown MCP tool with deny hook should be denied
-    let tool_call = make_tool_call("some_mcp_tool");
+    let tool_call = make_tool_call("some_mcp_tool")?;
     let result = enforce_authorization_for_tool_call(
         &tool_call,
         ToolSource::Mcp,
@@ -117,4 +122,5 @@ async fn non_builtin_tools_go_through_permission_flow() {
         result.is_some(),
         "non-builtin tool should go through permission flow and be denied",
     );
+    Ok(())
 }

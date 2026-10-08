@@ -11,9 +11,11 @@
 //! pass them through PromptCancelled -> TurnError::from, and verify all messages are preserved.
 
 use super::*;
-use crate::types::{AssistantContent, ToolCall, ToolCallId, ToolFunction, ToolResultContent};
+use crate::types::{AssistantContent, CallId, ToolCall, ToolFunction, ToolName, ToolResultContent};
 use crate::types::{Message, Text, UserContent};
 use serde_json::json;
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Regression test for rig-core v0.39.0 PR #1899: PromptCancelled::chat_history is NOT empty
 /// after cancellation when tool calls have been made.
@@ -22,7 +24,7 @@ use serde_json::json;
 /// through the PromptCancelled -> TurnError conversion. Before v0.39, tool call history was
 /// lost; after v0.39 it survives cancellation.
 #[test]
-fn prompt_cancelled_preserves_tool_call_history() {
+fn prompt_cancelled_preserves_tool_call_history() -> Result<()> {
     // Build chat_history as rig's AgentSession would provide to PromptCancelled after v0.39.0:
     // A complete tool-use cycle: user(prompt) -> assistant(tool_call) -> user(tool_result)
     let mut chat_history: Vec<Message> = Vec::new();
@@ -39,12 +41,11 @@ fn prompt_cancelled_preserves_tool_call_history() {
     chat_history.push(Message::Assistant {
         id: None,
         content: vec![AssistantContent::ToolCall(ToolCall {
-            id: ToolCallId::new_or_mint("call_abc123"),
-            provider: None,
+            id: CallId::from_wire("call_abc123"),
             signature: None,
             additional_params: None,
             function: ToolFunction {
-                name: "read_file".to_string(),
+                name: ToolName::new("read_file")?,
                 arguments: json!({ "path": "/etc/hosts" }),
             },
         })],
@@ -55,9 +56,8 @@ fn prompt_cancelled_preserves_tool_call_history() {
     chat_history.push(Message::User {
         content: vec![UserContent::ToolResult(
             rig::completion::message::ToolResult {
-                call: ToolCallId::new_or_mint("call_abc123"),
-                provider: None,
-                name: "read_file".into(),
+                call: CallId::from_wire("call_abc123"),
+                name: ToolName::new("read_file")?,
                 content: vec![ToolResultContent::Text(Text {
                     text: "127.0.0.1 localhost\n::1 localhost".to_string(),
                     additional_params: None,
@@ -123,7 +123,7 @@ fn prompt_cancelled_preserves_tool_call_history() {
                 Some(AssistantContent::ToolCall(tc)) => tc,
                 _ => panic!("msg[1] should contain a ToolCall"),
             };
-            assert_eq!(tc.function.name, "read_file");
+            assert_eq!(tc.function.name, ToolName::new("read_file")?);
         }
         _ => panic!("msg[1] must be Assistant with ToolCall"),
     }
@@ -136,10 +136,11 @@ fn prompt_cancelled_preserves_tool_call_history() {
                 Some(UserContent::ToolResult(tr)) => tr,
                 _ => panic!("msg[2] should contain a ToolResult"),
             };
-            assert_eq!(tr.call.as_str(), "call_abc123");
+            assert_eq!(tr.call.wire().as_ref(), "call_abc123");
         }
         _ => panic!("msg[2] must be User with ToolResult"),
     }
+    Ok(())
 }
 
 /// Contrasting test for the older/pre-v0.39 pattern: when chat_history only contained
@@ -149,7 +150,7 @@ fn prompt_cancelled_preserves_tool_call_history() {
 /// This proves we can distinguish between the good state (>=3 messages) and bad state
 /// (fewer tool call messages). It also validates that even minimal chat_history survives.
 #[test]
-fn prompt_cancelled_with_tool_calls_earlier_has_non_empty_history() {
+fn prompt_cancelled_with_tool_calls_earlier_has_non_empty_history() -> Result<()> {
     // Simulate a pre-v0.39 scenario where only 2 messages made it through:
     // user(prompt) + partial assistant text (no tool calls yet, or they were lost).
     let chat_history: Vec<Message> = vec![
@@ -195,4 +196,5 @@ fn prompt_cancelled_with_tool_calls_earlier_has_non_empty_history() {
     // Verify the content types of the preserved messages.
     assert!(matches!(&messages[0], Message::User { .. }));
     assert!(matches!(&messages[1], Message::Assistant { .. }));
+    Ok(())
 }

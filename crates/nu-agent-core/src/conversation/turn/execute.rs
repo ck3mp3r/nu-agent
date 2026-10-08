@@ -19,7 +19,6 @@ use crate::session::SessionStore;
 use crate::session::repair::repair_messages;
 use crate::types::{Message, Text, ToolDefinition, UserContent};
 use rig::memory::ConversationMemory;
-use rig::streaming::StreamingPrompt;
 use rig::tool::DynamicTool;
 
 use super::context::TurnContext;
@@ -100,9 +99,11 @@ where
     // the new-message delta from the error variant's history fields.
     // Cache-first load: no JSONL I/O if the cache is already warm.
     let pre_turn_messages: Vec<Message> = if ctx.conversation.has_session {
+        let conversation_id =
+            rig::id::ConversationId::from(ctx.conversation.conversation_id.clone());
         ctx.conversation
             .memory
-            .load(&ctx.conversation.conversation_id)
+            .load(&conversation_id)
             .await
             .unwrap_or_default()
     } else {
@@ -136,7 +137,6 @@ where
     // Build the hook using HookChain<P> — no HookDriver needed.
     // Cancellation is driven through the shared bus's cancel channel.
     let bus = ctx.tool_infra.bus.clone();
-    let shared_model = Arc::clone(&ctx.conversation.shared_model);
     let hook = HookChain::new(
         bus.clone(),
         permission_resolver,
@@ -149,7 +149,6 @@ where
             doom_state: ctx.tool_infra.doom_state.clone(),
             output_repetition: ctx.tool_infra.output_repetition.clone(),
             repetition_guard: ctx.tool_infra.repetition_guard,
-            shared_model,
             memory: Arc::clone(&ctx.conversation.memory),
             conversation_id: ctx.conversation.conversation_id.clone(),
             compaction: ctx.conversation.compaction.clone(),
@@ -158,7 +157,7 @@ where
     );
 
     // Clone the Arc BEFORE hook moves into config so we can read history after a
-    // CompletionError (when rig does not provide chat_history in TurnError::messages).
+    // ProviderError (when rig does not provide chat_history in TurnError::messages).
     let last_known_history_arc = hook.last_known_history();
 
     // Build the prompt message
@@ -175,12 +174,17 @@ where
     // Build and execute agent with hook
     let config = AgentPromptConfig {
         hook,
+        dyn_model: ctx
+            .conversation
+            .dyn_model
+            .lock()
+            .expect("model mutex poisoned")
+            .clone(),
         preamble: preamble_owned,
         prompt: user_message,
         memory: ctx.conversation.memory,
         conversation_id: ctx.conversation.conversation_id,
         has_session: ctx.conversation.has_session,
-        shared_model: ctx.conversation.shared_model,
         tool_server_handle: ctx.tool_infra.tool_server_handle,
         visible_tool_definitions: ctx.tool_infra.visible_tool_definitions,
         max_turns: ctx.input.max_turns,
@@ -224,7 +228,7 @@ where
 
     // Spawn the completion on the current task.
     // Cancellation note: publishing CancelEvent on the bus fires Terminate on the next
-    // hook entry (on_completion_call, on_text_delta, or on_tool_call), causing rig to
+    // hook entry (on_completion_call, on_text_delta, or on_dispatch), causing rig to
     // yield PromptCancelled { chat_history }. If the HTTP request hangs before any hook
     // fires (e.g. dead network), the stream blocks until the provider's own HTTP client
     // timeout. Ensure timeouts are configured on the client.
@@ -254,7 +258,7 @@ where
     })?;
 
     let response = join_result.map_err(|e| {
-        let err = TurnError::from(e);
+        let err = TurnError::from(*e);
         let ctx = error::TurnContext {
             last_known_history: last_known_history_arc
                 .lock()
@@ -288,6 +292,10 @@ where
 /// Configuration for building and prompting an agent.
 struct AgentPromptConfig<S: SessionStore + Clone + Send + Sync, P: AsyncPermissionResolver> {
     hook: HookChain<P, S>,
+    /// Erased completion model the agent is built from. Cloned out of the
+    /// shared `Arc<Mutex<…>>` so a concurrent `switch_model()` only affects the
+    /// next turn.
+    dyn_model: rig::DynModel<rig::operation::Completion>,
     preamble: Option<String>,
     prompt: Message,
     memory: MemoryOf<S>,
@@ -297,11 +305,6 @@ struct AgentPromptConfig<S: SessionStore + Clone + Send + Sync, P: AsyncPermissi
     /// When `false`, `.memory()` is NOT attached to the rig `AgentBuilder` so
     /// rig never calls `memory.append()` and no JSONL file is written to disk.
     has_session: bool,
-    /// Shared runtime model handle. The agent is built from this handle so the
-    /// hook's `on_model_select` (which routes to the same shared value) stays in
-    /// sync with the model the agent was constructed from. It is constructed
-    /// eagerly at startup.
-    shared_model: std::sync::Arc<std::sync::Mutex<rig::agent::ModelHandle>>,
     tool_server_handle: rig::tool::server::ToolServerHandle,
     visible_tool_definitions: Vec<ToolDefinition>,
     max_turns: Option<u32>,
@@ -330,21 +333,25 @@ struct StreamingTurnResult {
 }
 
 /// Build an agent with a hook and execute a multi-turn streaming prompt loop.
+///
+/// The error is boxed: rig 0.43's `StreamingError` carries an unboxed
+/// `PromptError`, which makes the enum large enough to trip
+/// `clippy::result_large_err`.
 async fn build_agent_and_stream<S, P>(
     config: AgentPromptConfig<S, P>,
-) -> Result<StreamingTurnResult, rig::agent::StreamingError>
+) -> Result<StreamingTurnResult, Box<rig::agent::StreamingError>>
 where
     S: SessionStore + Clone + Send + Sync + 'static,
     P: AsyncPermissionResolver,
 {
     let AgentPromptConfig {
         hook,
+        dyn_model,
         preamble,
         prompt,
         memory,
         conversation_id,
         has_session,
-        shared_model,
         tool_server_handle,
         visible_tool_definitions,
         max_turns,
@@ -368,12 +375,9 @@ where
         })
         .collect();
 
-    // Build the agent from the shared model handle. The agent's model is erased
-    // once into a `ModelHandle`; the hook's `on_model_select` routes each turn to
-    // the same shared handle's current value, so `switch_model()` updates both
-    // the agent's model and the per-turn routing in one place. The handle is
-    // constructed eagerly at startup, so it is always present here.
-    let model_handle = shared_model.lock().expect("model mutex poisoned").clone();
+    // Build the agent from the turn's model. The executor clones the current
+    // model out of the shared `Arc<Mutex<…>>` before each turn, so a
+    // `switch_model()` between turns takes effect on the next turn.
 
     // Only attach memory when this is a persistent session.
     //
@@ -384,12 +388,12 @@ where
     // within its own prompt call, which is exactly correct for a stateless
     // one-shot invocation.
     let mut builder = if has_session {
-        rig::agent::AgentBuilder::from_model_handle(model_handle)
+        rig::agent::AgentBuilder::new(dyn_model.clone())
             .add_hook(hook)
             .memory(memory)
             .dynamic_tools(proxy_tools)
     } else {
-        rig::agent::AgentBuilder::from_model_handle(model_handle)
+        rig::agent::AgentBuilder::new(dyn_model)
             .add_hook(hook)
             .dynamic_tools(proxy_tools)
     };
@@ -410,11 +414,11 @@ where
     let agent = builder.build();
 
     let stream = agent
-        .stream_prompt(prompt)
-        .conversation(&conversation_id)
+        .prompt(prompt)
+        .conversation(conversation_id.as_str())
         .max_turns(effective_max_turns as usize)
         .max_invalid_tool_call_retries(3)
-        .await;
+        .stream();
 
     tokio::pin!(stream);
 
@@ -444,39 +448,49 @@ where
                 rig::agent::MultiTurnStreamItem::StreamAssistantItem(content) => {
                     match content {
                         // TEXT DELTA
-                        rig::streaming::StreamedAssistantContent::Text(delta) => {
-                            text.push_str(&delta.text);
+                        rig::streaming::Item::Event(rig::streaming::StreamEvent::Text {
+                            text: delta,
+                            ..
+                        }) => {
+                            text.push_str(&delta);
                             deltas_emitted = true;
                         }
-                        // TOOL CALL (complete, post-assembly)
-                        // Hook's on_tool_call has already resolved. The hook already
+                        // TOOL CALL ARGUMENTS (complete, post-assembly)
+                        // Hook's on_dispatch has already resolved. The hook already
                         // emitted ToolStarted + permission events.
-                        rig::streaming::StreamedAssistantContent::ToolCall { .. } => {
+                        rig::streaming::Item::Event(rig::streaming::StreamEvent::Arguments {
+                            ..
+                        }) => {
                             tool_call_count += 1;
                         }
-                        // TOOL CALL DELTA (streaming args)
-                        // Hook's on_tool_call_delta already fired — no-op here.
-                        rig::streaming::StreamedAssistantContent::ToolCallDelta { .. } => {}
-                        // REASONING block — ignore for now
-                        rig::streaming::StreamedAssistantContent::Reasoning { .. } => {}
-                        // REASONING DELTA — ignore for now
-                        rig::streaming::StreamedAssistantContent::ReasoningDelta { .. } => {}
-                        // Raw provider final response object — not needed here
-                        rig::streaming::StreamedAssistantContent::Final(_) => {}
+                        // PART STARTED — no v0.42 equivalent, nothing to do
+                        rig::streaming::Item::Event(rig::streaming::StreamEvent::Start {
+                            ..
+                        }) => {
+                            log::trace!("Stream part started");
+                        }
+                        // REASONING fragment — ignore for now
+                        rig::streaming::Item::Event(rig::streaming::StreamEvent::Reasoning {
+                            ..
+                        }) => {}
+                        // PART ENDED — finalized content, not needed here
+                        rig::streaming::Item::Event(rig::streaming::StreamEvent::End {
+                            ..
+                        }) => {}
                         // Unknown provider-specific content — ignore
-                        rig::streaming::StreamedAssistantContent::Unknown(_) => {}
+                        rig::streaming::Item::Unknown(_) => {}
                     }
                 }
 
                 // --- TOOL RESULT (user content fed back to model) ---
-                // The hook's on_tool_result already fired and emitted ToolCompleted.
+                // The hook's on_outcome already fired and emitted ToolCompleted.
                 rig::agent::MultiTurnStreamItem::StreamUserItem(
                     rig::streaming::StreamedUserContent::ToolResult { .. },
                 ) => {}
 
                 // --- PER-SUBCALL USAGE ---
                 rig::agent::MultiTurnStreamItem::CompletionCall(call) => {
-                    last_total_tokens = call.usage.total_tokens;
+                    last_total_tokens = call.usage.total_tokens.unwrap_or(0);
                 }
 
                 // --- FINAL RESPONSE ---
@@ -511,7 +525,7 @@ where
             Some(Err(e)) => {
                 // Check whether rig cancelled the agent loop via the hook's Terminate action.
                 match e {
-                    rig::agent::StreamingError::Prompt(boxed) => match *boxed {
+                    rig::agent::StreamingError::Prompt(prompt_err) => match prompt_err {
                         rig::completion::PromptError::PromptCancelled {
                             reason,
                             chat_history,
@@ -526,10 +540,10 @@ where
                             break;
                         }
                         other => {
-                            return Err(rig::agent::StreamingError::Prompt(Box::new(other)));
+                            return Err(Box::new(rig::agent::StreamingError::Prompt(other)));
                         }
                     },
-                    other => return Err(other),
+                    other => return Err(Box::new(other)),
                 }
             }
             None => {

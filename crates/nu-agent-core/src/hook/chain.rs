@@ -15,10 +15,10 @@
 use std::sync::{Arc, Mutex};
 
 use rig::agent::{
-    AgentHook, CompletionCallAction, CompletionCallEvent, HookContext, InvalidToolCallAction,
-    InvalidToolCallContext, ModelHandle, ModelSelection, ModelSelectionAction, ModelTurnAction,
-    ModelTurnFinished, ObservationAction, RequestPatch, StreamResponseFinish, TextDelta, ToolCall,
-    ToolCallAction, ToolResultAction, ToolResultEvent,
+    AgentHook, CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
+    HookContext, InvalidToolCallAction, InvalidToolCallContext, ModelSelection,
+    ModelSelectionAction, ModelTurnAction, ModelTurnFinished, ObservationAction, OutcomeAction,
+    OutcomeEvent, RequestPatch, TextDelta,
 };
 use rig::core::wasm_compat::WasmCompatSend;
 use rig::message::Message;
@@ -69,13 +69,8 @@ pub struct HookChain<
     closure_registry: Arc<ClosureRegistry>,
     mcp_registry: Arc<McpToolRegistry>,
     /// Per-tool call-line render functions, populated at builtin registration
-    /// time. Consulted in `on_tool_call` to build the transcript call line.
+    /// time. Consulted in `on_dispatch` to build the transcript call line.
     render_registry: ToolRenderRegistry,
-    /// Shared runtime model handle. The single point of model identity: the agent
-    /// is built from this handle and `on_model_select` routes every turn to its
-    /// current value. `switch_model()` is the only writer. It is constructed
-    /// eagerly at startup.
-    shared_model: Arc<Mutex<ModelHandle>>,
     /// Memory backing the conversation, used to read markers and (optionally) reset
     /// the cache after compaction. Shared with the turn executor via `Arc`.
     memory: crate::conversation::state::memory::MemoryOf<S>,
@@ -119,7 +114,6 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChai
             closure_registry,
             mcp_registry,
             render_registry,
-            shared_model: hook_state.shared_model,
             memory: hook_state.memory,
             conversation_id: hook_state.conversation_id,
             compaction: hook_state.compaction,
@@ -130,7 +124,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChai
     /// Return a clone of the `Arc` that holds the most recent history snapshot.
     ///
     /// Callers clone this Arc **before** passing the hook into the agent builder
-    /// (which consumes `self`), then read it back after a `CompletionError`.
+    /// (which consumes `self`), then read it back after a `ProviderError`.
     pub fn last_known_history(&self) -> std::sync::Arc<std::sync::Mutex<Vec<Message>>> {
         self.history.arc()
     }
@@ -157,8 +151,10 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         _ctx: &HookContext,
         _event: ModelSelection<'_>,
     ) -> ModelSelectionAction {
-        let guard = self.shared_model.lock().expect("model mutex poisoned");
-        ModelSelectionAction::select(guard.clone())
+        // The executor builds a fresh agent per turn with the current model
+        // registered as the default, so keeping the default candidate is the
+        // correct selection. Label-based switching is subtask 506682ea.
+        ModelSelectionAction::Continue
     }
 
     fn on_completion_call(
@@ -275,46 +271,56 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         }
     }
 
-    fn on_tool_call(
+    fn on_dispatch(
         &self,
         _ctx: &HookContext,
-        event: ToolCall<'_>,
-    ) -> impl std::future::Future<Output = ToolCallAction> + WasmCompatSend {
-        let tool_name = event.tool_name;
-        let args = event.args;
-        let tool_call_id = event.tool_call_id;
+        event: DispatchEvent<'_>,
+    ) -> impl std::future::Future<Output = DispatchAction> + WasmCompatSend {
+        // `on_dispatch` is unified: it fires for tool calls and completions.
+        // Only tool calls are steered here; a completion dispatch proceeds
+        // without consuming any per-tool state (including the cancel signal).
+        let tool_name = event.tool_name().map(str::to_string);
+        let args = event.tool_args().map(str::to_string);
+        let tool_call_id = event.call_id.map(|id| id.to_string());
 
-        log::trace!("on_tool_call: tool={tool_name}");
-
-        // Pre-compute all synchronous checks and capture values for the async block
-        let cancelled = self.is_cancelled();
-        let subturn_action = self.subturn.check_and_increment(tool_name);
-        let circuit_action = self
-            .circuit
-            .check_server_enabled(tool_name, &self.mcp_registry);
-
-        let source = resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
-            .as_str()
-            .to_string();
+        // Pre-compute all synchronous checks and capture values for the async
+        // block. Each is guarded on `tool_name` so a completion dispatch
+        // neither consumes the cancel event nor advances the sub-turn cap.
+        let cancelled = tool_name.is_some() && self.is_cancelled();
+        let subturn_action = tool_name
+            .as_deref()
+            .and_then(|name| self.subturn.check_and_increment(name));
+        let circuit_action = tool_name
+            .as_deref()
+            .and_then(|name| self.circuit.check_server_enabled(name, &self.mcp_registry));
+        let source = tool_name
+            .as_deref()
+            .map(|name| {
+                resolve_tool_source(name, &self.closure_registry, &self.mcp_registry)
+                    .as_str()
+                    .to_string()
+            })
+            .unwrap_or_default();
 
         let permission = self.permission.clone();
         let bus = self.bus.clone();
-        let tool_name_owned = tool_name.to_string();
-        let args_owned = args.to_string();
-        let source_owned = source.clone();
-        let id_owned = tool_call_id.map(|s| s.to_string());
 
         async move {
+            let Some(tool_name) = tool_name else {
+                return DispatchAction::proceed();
+            };
+            let args = args.unwrap_or_default();
+
+            log::trace!("on_dispatch: tool={tool_name}");
+
             if cancelled {
-                return ToolCallAction::stop("Cancelled by user");
+                return DispatchAction::stop("Cancelled by user");
             }
             if let Some(action) = subturn_action {
                 return action;
             }
             let doom_action = if self.repetition_guard {
-                self.doom
-                    .check_and_record(&tool_name_owned, &args_owned, &bus)
-                    .await
+                self.doom.check_and_record(&tool_name, &args, &bus).await
             } else {
                 None
             };
@@ -325,33 +331,33 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                 return action;
             }
 
-            let call_line = self.render_registry.render(&tool_name_owned, &args_owned);
+            let call_line = self.render_registry.render(&tool_name, &args);
             let _ = bus
                 .ui_event()
                 .send(UiEvent::ToolStarted {
-                    name: tool_name_owned.clone(),
-                    source: source_owned.clone(),
-                    arguments: args_owned.clone(),
+                    name: tool_name.clone(),
+                    source: source.clone(),
+                    arguments: args.clone(),
                     call_line,
                 })
                 .await;
 
             let decision = permission
-                .resolve(&tool_name_owned, &args_owned, id_owned, &bus)
+                .resolve(&tool_name, &args, tool_call_id, &bus)
                 .await;
             match decision {
-                PermissionDecision::Allow => ToolCallAction::run(),
+                PermissionDecision::Allow => DispatchAction::proceed(),
                 PermissionDecision::Deny { reason } => {
-                    // The tool never runs, so on_tool_result never fires to
+                    // The tool never runs, so on_outcome never fires to
                     // consume a previously-recorded preview flag — discard it
                     // here so it doesn't linger.
-                    permission.take_previewed(&tool_name_owned, &args_owned);
+                    permission.take_previewed(&tool_name, &args);
                     let _ = bus
                         .ui_event()
                         .send(UiEvent::ToolCompleted {
-                            name: tool_name_owned,
-                            source: source_owned,
-                            arguments: args_owned,
+                            name: tool_name,
+                            source,
+                            arguments: args,
                             success: false,
                             result: String::new(),
                             display: None,
@@ -359,154 +365,139 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                             message: Some(reason.clone()),
                         })
                         .await;
-                    ToolCallAction::skip(reason)
+                    DispatchAction::skip(reason)
                 }
             }
         }
     }
 
-    fn on_tool_result(
+    fn on_outcome(
         &self,
         _ctx: &HookContext,
-        event: ToolResultEvent<'_>,
-    ) -> impl std::future::Future<Output = ToolResultAction> + WasmCompatSend {
-        let tool_name = event.tool_name;
-        let args = event.args;
-        let result = event.presentation;
-        let result_text = result.render();
-
-        // Structural success: the canonical result disposition decides. A
-        // non-zero `nu` exit arrives as an Error disposition (producers are
-        // honest), and Refused/Skipped never count as success — no result-text
-        // sniffing.
-        let success = event.raw_result.is_success();
-
-        // Record the verdict for persistence: `CachedMemory::append` stamps it
-        // onto the ToolResult with the matching call id when the turn is
-        // written to the session store.
-        if let Some(id) = event.tool_call_id {
-            self.memory.record_tool_verdict(id, success);
-        }
-
-        log::trace!(
-            "on_tool_result: tool={tool_name} success={success} result_len={}",
-            result_text.len(),
-        );
-        if log::log_enabled!(log::Level::Trace) {
-            let preview = if result_text.len() > 2000 {
-                let boundary = result_text.floor_char_boundary(2000);
-                format!(
-                    "{}...<truncated {} bytes>",
-                    &result_text[..boundary],
-                    result_text.len()
-                )
-            } else {
-                result_text.to_string()
-            };
-            log::trace!("  result_body: {preview}");
-        }
-
-        // 1. Parse result JSON and extract display
-        let display = serde_json::from_str::<serde_json::Value>(&result_text)
-            .ok()
-            .and_then(|json| crate::tools::handler::tool_display_from_result(tool_name, &json));
-
-        // Suppress the display if a pre-authorize preview of it was already
-        // shown to the user before the tool ran (the Ask-path edit diff).
-        // `take_previewed` is the single, synchronous source of truth for
-        // this — resolved deterministically inside the same before/after
-        // hook call chain, so there is no event-ordering race to get wrong.
-        let display = suppress_previewed_display(&self.permission, tool_name, args, display);
-
-        // 2. Resolve source
-        let source = resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
-            .as_str()
-            .to_string();
-
-        // 3. Classify error kind from raw result
-        let error_kind = event
-            .raw_result
-            .error()
-            .map(|e| e.kind().as_str().to_string());
-
-        // 4. Emit ToolCompleted (success was computed structurally above)
-        let tool_name_owned = tool_name.to_string();
-        let args_owned = args.to_string();
-        let result_text_owned = result_text.to_string();
-        let source_owned = source;
-        let display_owned = display;
-        let error_kind_owned = error_kind;
+        event: OutcomeEvent<'_>,
+    ) -> impl std::future::Future<Output = OutcomeAction> + WasmCompatSend {
+        // `on_outcome` is unified: it fires for tool results and completions.
+        // A tool result drives the transcript event, the circuit breaker, and
+        // the persisted success verdict; a completion drives usage reporting.
+        // Both proceed.
         let bus = self.bus.clone();
-        let circuit = self.circuit.clone();
-        let mcp_registry = Arc::clone(&self.mcp_registry);
 
         async move {
-            let _ = bus
-                .ui_event()
-                .send(UiEvent::ToolCompleted {
-                    name: tool_name_owned.clone(),
-                    source: source_owned,
-                    arguments: args_owned.clone(),
-                    success,
-                    result: result_text_owned.clone(),
-                    display: display_owned,
-                    error_kind: error_kind_owned,
-                    message: None,
-                })
-                .await;
+            // Tool branch: structural success, persisted verdict, transcript
+            // event, and circuit-breaker tracking.
+            if let Some(result) = event.tool_result() {
+                let tool_name = event.tool_name().unwrap_or_default();
+                let args = event.tool_args().unwrap_or_default();
+                let result_text = result.output().render();
 
-            // 5. Circuit breaker — track transport failures per server
-            circuit
-                .record_result(
-                    &tool_name_owned,
-                    event.raw_result,
-                    success,
-                    &mcp_registry,
-                    &bus,
-                )
-                .await;
+                // Structural success: the canonical result disposition decides. A
+                // non-zero `nu` exit arrives as an Error disposition (producers are
+                // honest), and Refused/Skipped never count as success — no result-text
+                // sniffing.
+                let success = result.is_success();
 
-            ToolResultAction::keep()
-        }
-    }
+                // Record the verdict for persistence: `CachedMemory::append` stamps it
+                // onto the ToolResult with the matching call id when the turn is
+                // written to the session store.
+                if let Some(id) = event.call_id {
+                    self.memory.record_tool_verdict(&id.to_string(), success);
+                }
 
-    fn on_stream_response_finish(
-        &self,
-        _ctx: &HookContext,
-        event: StreamResponseFinish<'_>,
-    ) -> impl std::future::Future<Output = ObservationAction> + WasmCompatSend {
-        let usage = event.usage;
-        let mut tool_calls = 0usize;
-        let completed = if usage.total_tokens > 0 {
-            let mut response_chars = 0usize;
-            for item in event.content.iter() {
-                match item {
-                    rig::message::AssistantContent::Text(text) => {
-                        response_chars += text.text.chars().count();
+                log::trace!(
+                    "on_outcome: tool={tool_name} success={success} result_len={}",
+                    result_text.len(),
+                );
+                if log::log_enabled!(log::Level::Trace) {
+                    let preview = if result_text.len() > 2000 {
+                        let boundary = result_text.floor_char_boundary(2000);
+                        format!(
+                            "{}...<truncated {} bytes>",
+                            &result_text[..boundary],
+                            result_text.len()
+                        )
+                    } else {
+                        result_text.clone()
+                    };
+                    log::trace!("  result_body: {preview}");
+                }
+
+                // 1. Parse result JSON and extract display
+                let display = serde_json::from_str::<serde_json::Value>(&result_text)
+                    .ok()
+                    .and_then(|json| {
+                        crate::tools::handler::tool_display_from_result(tool_name, &json)
+                    });
+
+                // Suppress the display if a pre-authorize preview of it was already
+                // shown to the user before the tool ran (the Ask-path edit diff).
+                // `take_previewed` is the single, synchronous source of truth for
+                // this — resolved deterministically inside the same before/after
+                // hook call chain, so there is no event-ordering race to get wrong.
+                let display =
+                    suppress_previewed_display(&self.permission, tool_name, args, display);
+
+                // 2. Resolve source
+                let source =
+                    resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
+                        .as_str()
+                        .to_string();
+
+                // 3. Classify error kind from raw result
+                let error_kind = result.error().map(|e| e.kind().as_str().to_string());
+
+                // 4. Emit ToolCompleted (success was computed structurally above)
+                let _ = bus
+                    .ui_event()
+                    .send(UiEvent::ToolCompleted {
+                        name: tool_name.to_string(),
+                        source,
+                        arguments: args.to_string(),
+                        success,
+                        result: result_text,
+                        display,
+                        error_kind,
+                        message: None,
+                    })
+                    .await;
+
+                // 5. Circuit breaker — track transport failures per server
+                self.circuit
+                    .record_result(tool_name, result, success, &self.mcp_registry, &bus)
+                    .await;
+            }
+
+            // Completion branch: report usage and store the real token count for
+            // the compaction threshold check.
+            if let Some(response) = event.completion() {
+                let usage = response.usage;
+                if usage.total_tokens.unwrap_or(0) > 0 {
+                    let mut response_chars = 0usize;
+                    let mut tool_calls = 0usize;
+                    for item in response.choice.iter() {
+                        match item {
+                            rig::message::AssistantContent::Text(text) => {
+                                response_chars += text.text.chars().count();
+                            }
+                            rig::message::AssistantContent::ToolCall(_) => tool_calls += 1,
+                            _ => {}
+                        }
                     }
-                    rig::message::AssistantContent::ToolCall(_) => tool_calls += 1,
-                    _ => {}
+                    // Mutex poison is a fatal internal inconsistency — panicking is correct.
+                    *self.last_total_tokens.lock().unwrap() = Some(usage.total_tokens.unwrap_or(0));
+                    let _ = bus
+                        .ui_event()
+                        .send(UiEvent::LlmCompleted {
+                            response_chars,
+                            tool_calls,
+                            input_tokens: usage.input_tokens.unwrap_or(0),
+                            output_tokens: usage.output_tokens.unwrap_or(0),
+                            total_tokens: usage.total_tokens.unwrap_or(0),
+                        })
+                        .await;
                 }
             }
-            // Store the real API token count for the compaction threshold check.
-            // Mutex poison is a fatal internal inconsistency — panicking is correct.
-            *self.last_total_tokens.lock().unwrap() = Some(usage.total_tokens);
-            Some(UiEvent::LlmCompleted {
-                response_chars,
-                tool_calls,
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                total_tokens: usage.total_tokens,
-            })
-        } else {
-            None
-        };
-        let bus = self.bus.clone();
-        async move {
-            if let Some(ui) = completed {
-                let _ = bus.ui_event().send(ui).await;
-            }
-            ObservationAction::continue_run()
+
+            OutcomeAction::proceed()
         }
     }
 
@@ -814,9 +805,9 @@ where
 /// suppressed because a pre-authorize preview of it was already shown to the
 /// user before the tool ran.
 ///
-/// Pulled out as a pure function (rather than inlined in `on_tool_result`'s
+/// Pulled out as a pure function (rather than inlined in `on_outcome`'s
 /// async block) so it's directly unit-testable against a stub resolver,
-/// without needing rig's opaque `ToolResultEvent` type.
+/// without needing rig's opaque `OutcomeEvent` type.
 fn suppress_previewed_display<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
     permission: &P,
     tool_name: &str,

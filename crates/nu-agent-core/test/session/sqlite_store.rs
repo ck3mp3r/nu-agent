@@ -1,7 +1,7 @@
 use super::SqliteSessionStore;
 use crate::session::store::{CompactionMarker, SessionStore, StoreEntry};
 use crate::types::{
-    AdditionalParams, Message, Text, ToolCallId, ToolResult, ToolResultContent, UserContent,
+    AdditionalParams, CallId, Message, Text, ToolName, ToolResult, ToolResultContent, UserContent,
 };
 use chrono::Utc;
 
@@ -762,9 +762,8 @@ async fn sqlite_round_trips_tool_verdict_flag() -> Result<()> {
         .map_err(|e| format!("create store: {e:?}"))?;
     let stamped = Message::User {
         content: vec![UserContent::ToolResult(ToolResult {
-            call: ToolCallId::new_or_mint("tc1"),
-            provider: None,
-            name: "test_tool".into(),
+            call: CallId::from_wire("tc1"),
+            name: ToolName::new("test_tool").expect("non-empty tool name"),
             content: vec![ToolResultContent::Text(Text {
                 text: "the tool failed".to_string(),
                 additional_params: AdditionalParams::from_entries([(

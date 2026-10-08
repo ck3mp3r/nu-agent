@@ -96,7 +96,7 @@ where
                     memory: Arc::clone(self.memory_state.memory()),
                     conversation_id: conversation_id.clone(),
                     has_session: final_session_id.is_some(),
-                    shared_model: self.shared_model.clone(),
+                    dyn_model: self.dyn_model.clone(),
                     compaction: self.compaction.clone(),
                 },
                 TurnInput {

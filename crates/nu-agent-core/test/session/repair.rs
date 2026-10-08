@@ -5,21 +5,23 @@ use super::repair::{
 };
 use super::store_test::assert_msgs_eq;
 use crate::types::{
-    AssistantContent, Message, ToolCall, ToolCallId, ToolFunction, ToolResult, UserContent,
+    AssistantContent, CallId, Message, ToolCall, ToolFunction, ToolName, ToolResult, UserContent,
 };
 
 fn make_tool_call(id: &str, name: &str) -> AssistantContent {
     AssistantContent::ToolCall(ToolCall::new(
-        ToolCallId::new_or_mint(id),
-        ToolFunction::new(name.to_string(), serde_json::json!({})),
+        CallId::from_wire(id),
+        ToolFunction::new(
+            ToolName::new(name).expect("non-empty tool name"),
+            serde_json::json!({}),
+        ),
     ))
 }
 
 fn make_tool_result(id: &str, output: &str) -> UserContent {
     UserContent::ToolResult(ToolResult {
-        call: ToolCallId::new_or_mint(id),
-        provider: None,
-        name: "read_file".into(),
+        call: CallId::from_wire(id),
+        name: ToolName::new("read_file").expect("non-empty tool name"),
         content: vec![crate::types::ToolResultContent::text(output)],
     })
 }
@@ -671,7 +673,7 @@ fn inject_missing_tool_results_inserts_synthetic_result_for_unpaired_call() {
     match &result[2] {
         Message::User { content } => {
             let has_tool_result = content.iter().any(|item| match item {
-                UserContent::ToolResult(tr) => tr.call.as_str() == "x",
+                UserContent::ToolResult(tr) => tr.call.wire().as_ref() == "x",
                 _ => false,
             });
             assert!(
@@ -713,19 +715,19 @@ fn inject_missing_tool_results_groups_two_unpaired_calls_into_one_user_message()
     assert_eq!(result.len(), 3, "one synthetic User message for both calls");
     match &result[2] {
         Message::User { content } => {
-            let result_ids: Vec<&str> = content
+            let result_ids: Vec<String> = content
                 .iter()
                 .filter_map(|item| match item {
-                    UserContent::ToolResult(tr) => Some(tr.call.as_str()),
+                    UserContent::ToolResult(tr) => Some(tr.call.wire().into_owned()),
                     _ => None,
                 })
                 .collect();
             assert!(
-                result_ids.contains(&"a"),
+                result_ids.iter().any(|id| id == "a"),
                 "ToolResult for 'a' must be present"
             );
             assert!(
-                result_ids.contains(&"b"),
+                result_ids.iter().any(|id| id == "b"),
                 "ToolResult for 'b' must be present"
             );
             assert_eq!(
@@ -757,10 +759,10 @@ fn pipeline_no_dangling_tool_call_after_trim() {
         let Message::Assistant { content, .. } = msg else {
             continue;
         };
-        let call_ids: Vec<&str> = content
+        let call_ids: Vec<String> = content
             .iter()
             .filter_map(|item| match item {
-                AssistantContent::ToolCall(tc) => Some(tc.id.as_str()),
+                AssistantContent::ToolCall(tc) => Some(tc.id.wire().into_owned()),
                 _ => None,
             })
             .collect();
@@ -768,11 +770,11 @@ fn pipeline_no_dangling_tool_call_after_trim() {
             continue;
         }
         let next = result.get(i + 1);
-        let next_result_ids: Vec<&str> = match next {
+        let next_result_ids: Vec<String> = match next {
             Some(Message::User { content }) => content
                 .iter()
                 .filter_map(|item| match item {
-                    UserContent::ToolResult(tr) => Some(tr.call.as_str()),
+                    UserContent::ToolResult(tr) => Some(tr.call.wire().into_owned()),
                     _ => None,
                 })
                 .collect(),
@@ -936,8 +938,11 @@ fn repair_messages_pipeline_includes_empty_tool_result_fix() {
 
 fn make_null_args_tool_call(id: &str, name: &str) -> AssistantContent {
     AssistantContent::ToolCall(ToolCall::new(
-        ToolCallId::new_or_mint(id),
-        ToolFunction::new(name.to_string(), serde_json::Value::Null),
+        CallId::from_wire(id),
+        ToolFunction::new(
+            ToolName::new(name).expect("non-empty tool name"),
+            serde_json::Value::Null,
+        ),
     ))
 }
 
@@ -1030,19 +1035,18 @@ fn repair_messages_heals_null_args_end_to_end() {
 // inject_missing_tool_results — call_id propagation
 // ================================================================
 
-/// Test: synthetic `ToolResult` produced for an unpaired `ToolCall` with
-/// `call_id: Some("call_abc123")` must carry that `call_id` through.
+/// Test: synthetic `ToolResult` produced for an unpaired `ToolCall` must
+/// carry the same call id as its `ToolCall`.
 #[test]
 fn inject_missing_tool_results_preserves_call_id() {
     let tc = AssistantContent::ToolCall(ToolCall {
-        id: ToolCallId::new_or_mint("id_x"),
-        provider: Some(crate::types::ProviderCallId {
-            call_id: "call_abc123".to_string(),
-            item_id: None,
-        }),
+        id: CallId::from_wire("call_abc123"),
         signature: None,
         additional_params: None,
-        function: ToolFunction::new("do_thing".to_string(), serde_json::json!({})),
+        function: ToolFunction::new(
+            ToolName::new("do_thing").expect("non-empty tool name"),
+            serde_json::json!({}),
+        ),
     });
     let msgs = vec![Message::user("go"), assistant_with_content(vec![tc])];
     let result = inject_missing_tool_results(msgs);
@@ -1058,28 +1062,27 @@ fn inject_missing_tool_results_preserves_call_id() {
                 })
                 .expect("injected User message must contain a ToolResult");
             assert_eq!(
-                tr.provider,
-                Some(crate::types::ProviderCallId {
-                    call_id: "call_abc123".to_string(),
-                    item_id: None,
-                }),
-                "synthetic ToolResult must carry call_id from its ToolCall"
+                tr.call.wire().as_ref(),
+                "call_abc123",
+                "synthetic ToolResult must carry the call id from its ToolCall"
             );
         }
         _ => panic!("message[2] must be a User message"),
     }
 }
 
-/// Test: synthetic `ToolResult` produced for an unpaired `ToolCall` with
-/// `call_id: None` must also have `call_id: None`.
+/// Test: synthetic `ToolResult` produced for an unpaired `ToolCall` whose id
+/// is empty must carry a rig-issued local id (never an empty wire id).
 #[test]
-fn inject_missing_tool_results_preserves_none_call_id() {
+fn inject_missing_tool_results_mints_id_for_empty_call_id() {
     let tc = AssistantContent::ToolCall(ToolCall {
-        id: ToolCallId::new_or_mint("id_y"),
-        provider: None,
+        id: CallId::from_wire(""),
         signature: None,
         additional_params: None,
-        function: ToolFunction::new("do_other".to_string(), serde_json::json!({})),
+        function: ToolFunction::new(
+            ToolName::new("do_other").expect("non-empty tool name"),
+            serde_json::json!({}),
+        ),
     });
     let msgs = vec![Message::user("go"), assistant_with_content(vec![tc])];
     let result = inject_missing_tool_results(msgs);
@@ -1094,9 +1097,9 @@ fn inject_missing_tool_results_preserves_none_call_id() {
                     _ => None,
                 })
                 .expect("injected User message must contain a ToolResult");
-            assert_eq!(
-                tr.provider, None,
-                "synthetic ToolResult must have call_id: None when ToolCall has call_id: None"
+            assert!(
+                tr.call.is_local(),
+                "an empty wire id must be replaced by a rig-issued local id"
             );
         }
         _ => panic!("message[2] must be a User message"),

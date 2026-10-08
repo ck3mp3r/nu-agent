@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::types::{
-    AssistantContent, Message, Text, ToolCall, ToolCallId, ToolFunction, ToolResultContent,
+    AssistantContent, CallId, Message, Text, ToolCall, ToolFunction, ToolName, ToolResultContent,
     UserContent,
 };
 
@@ -18,13 +18,13 @@ fn turn_result_can_be_constructed() {
     let result = TurnResult {
         text: "Hello".to_string(),
         usage: rig::completion::request::Usage {
-            input_tokens: 10,
-            output_tokens: 5,
-            total_tokens: 15,
-            cached_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-            tool_use_prompt_tokens: 0,
-            reasoning_tokens: 0,
+            input_tokens: Some(10),
+            output_tokens: Some(5),
+            total_tokens: Some(15),
+            cached_input_tokens: Some(0),
+            cache_creation_input_tokens: Some(0),
+            tool_use_prompt_tokens: Some(0),
+            reasoning_tokens: Some(0),
         },
         messages: None,
         tool_call_count: 0,
@@ -37,8 +37,8 @@ fn turn_result_can_be_constructed() {
     };
 
     assert_eq!(result.text, "Hello");
-    assert_eq!(result.usage.input_tokens, 10);
-    assert_eq!(result.usage.output_tokens, 5);
+    assert_eq!(result.usage.input_tokens, Some(10));
+    assert_eq!(result.usage.output_tokens, Some(5));
     assert_eq!(result.tool_call_count, 0);
     assert!(!result.deltas_emitted);
     assert!(!result.cancelled);
@@ -99,8 +99,7 @@ fn prompt_cancelled_error_is_detected_as_cancellation() {
 
 #[test]
 fn other_prompt_errors_are_not_cancelled() {
-    let completion_err =
-        rig::completion::CompletionError::ResponseError("Some other error".to_string());
+    let completion_err = rig::error::ProviderError::Response("Some other error".to_string());
     let err = rig::completion::PromptError::from(completion_err);
 
     let turn_err = TurnError::from(err);
@@ -115,13 +114,13 @@ fn other_prompt_errors_are_not_cancelled() {
 fn max_turns_error_is_not_cancelled() {
     let err = rig::completion::PromptError::MaxTurnsError {
         max_turns: 10,
-        chat_history: Box::new(vec![]),
-        prompt: Box::new(Message::User {
+        chat_history: vec![],
+        prompt: Message::User {
             content: vec![UserContent::Text(Text {
                 text: "test".to_string(),
                 additional_params: None,
             })],
-        }),
+        },
     };
 
     let turn_err = TurnError::from(err);
@@ -153,7 +152,7 @@ fn streaming_error_from_prompt_cancelled_captures_messages() {
         reason: "Hook cancelled".to_string(),
         chat_history: vec![user_msg],
     };
-    let streaming_err = rig::agent::StreamingError::Prompt(Box::new(inner));
+    let streaming_err = rig::agent::StreamingError::Prompt(inner);
 
     let turn_err = TurnError::from(streaming_err);
 
@@ -206,8 +205,7 @@ fn turn_error_from_prompt_cancelled_captures_messages() {
 
 #[test]
 fn turn_error_from_non_cancelled_has_no_messages() {
-    let completion_err =
-        rig::completion::CompletionError::ResponseError("Network timeout".to_string());
+    let completion_err = rig::error::ProviderError::Response("Network timeout".to_string());
     let err = rig::completion::PromptError::from(completion_err);
 
     let turn_err = TurnError::from(err);
@@ -370,12 +368,11 @@ fn cancel_mid_tool_call_preserves_tool_call_and_tool_result_in_history() {
     chat_history.push(Message::Assistant {
         id: None,
         content: vec![AssistantContent::ToolCall(ToolCall {
-            id: ToolCallId::new_or_mint("call_abc123"),
-            provider: None,
+            id: CallId::from_wire("call_abc123"),
             signature: None,
             additional_params: None,
             function: ToolFunction {
-                name: "read_file".to_string(),
+                name: ToolName::new("read_file").expect("should be non-empty"),
                 arguments: json!({ "path": "/etc/hosts" }),
             },
         })],
@@ -384,9 +381,8 @@ fn cancel_mid_tool_call_preserves_tool_call_and_tool_result_in_history() {
     chat_history.push(Message::User {
         content: vec![UserContent::ToolResult(
             rig::completion::message::ToolResult {
-                call: ToolCallId::new_or_mint("call_abc123"),
-                provider: None,
-                name: "read_file".into(),
+                call: CallId::from_wire("call_abc123"),
+                name: ToolName::new("read_file").expect("should be non-empty"),
                 content: vec![ToolResultContent::Text(Text {
                     text: "file contents here".to_string(),
                     additional_params: None,
@@ -449,12 +445,11 @@ fn cancel_preserves_multiple_tool_use_cycles() {
     chat_history.push(Message::Assistant {
         id: None,
         content: vec![AssistantContent::ToolCall(ToolCall {
-            id: ToolCallId::new_or_mint("call_001"),
-            provider: None,
+            id: CallId::from_wire("call_001"),
             signature: None,
             additional_params: None,
             function: ToolFunction {
-                name: "list_dir".to_string(),
+                name: ToolName::new("list_dir").expect("should be non-empty"),
                 arguments: json!({ "path": "/" }),
             },
         })],
@@ -462,9 +457,8 @@ fn cancel_preserves_multiple_tool_use_cycles() {
     chat_history.push(Message::User {
         content: vec![UserContent::ToolResult(
             rig::completion::message::ToolResult {
-                call: ToolCallId::new_or_mint("call_001"),
-                provider: None,
-                name: "list_dir".into(),
+                call: CallId::from_wire("call_001"),
+                name: ToolName::new("list_dir").expect("should be non-empty"),
                 content: vec![ToolResultContent::Text(Text {
                     text: "/bin /usr /etc".to_string(),
                     additional_params: None,
@@ -484,12 +478,11 @@ fn cancel_preserves_multiple_tool_use_cycles() {
     chat_history.push(Message::Assistant {
         id: None,
         content: vec![AssistantContent::ToolCall(ToolCall {
-            id: ToolCallId::new_or_mint("call_002"),
-            provider: None,
+            id: CallId::from_wire("call_002"),
             signature: None,
             additional_params: None,
             function: ToolFunction {
-                name: "read_file".to_string(),
+                name: ToolName::new("read_file").expect("should be non-empty"),
                 arguments: json!({ "path": "/etc/passwd" }),
             },
         })],
@@ -497,9 +490,8 @@ fn cancel_preserves_multiple_tool_use_cycles() {
     chat_history.push(Message::User {
         content: vec![UserContent::ToolResult(
             rig::completion::message::ToolResult {
-                call: ToolCallId::new_or_mint("call_002"),
-                provider: None,
-                name: "read_file".into(),
+                call: CallId::from_wire("call_002"),
+                name: ToolName::new("read_file").expect("should be non-empty"),
                 content: vec![ToolResultContent::Text(Text {
                     text: "root:x:0:0:root user".to_string(),
                     additional_params: None,

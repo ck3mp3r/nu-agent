@@ -14,8 +14,8 @@ use crate::session::{CachedMemory, FsSessionStore, SessionStore, StoreEntry};
 use crate::tools::handler::builtin_tool::BuiltinTool;
 use crate::types::Message;
 use futures::StreamExt;
-use rig::agent::ModelHandle;
-use rig::streaming::StreamingPrompt;
+use rig::DynModel;
+use rig::operation::Completion;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 use tempfile::TempDir;
 
@@ -88,10 +88,11 @@ async fn load_marker_context_surfaces_store_error_as_failed() -> Result<()> {
     // -- Setup & Fixtures
     let store = Arc::new(FailingStore);
     let compactor = NuCompactor::new(
-        ModelHandle::new(rig::test_utils::MockCompletionModel::from_stream_turns([[
+        rig::test_utils::MockCompletionModel::from_stream_turns([[
             rig::test_utils::MockStreamEvent::Text("summary".to_string()),
             rig::test_utils::MockStreamEvent::final_response_with_default_usage(),
-        ]])),
+        ]])
+        .erase(),
         Bus::default(),
         None,
     )
@@ -178,8 +179,8 @@ async fn over_threshold_fires_requested_and_does_not_compact_synchronously() -> 
         MockStreamEvent::Text("rolled-up summary".to_string()),
         MockStreamEvent::final_response_with_default_usage(),
     ]]);
-    let compactor = NuCompactor::new(ModelHandle::new(model.clone()), Bus::default(), None)
-        .with_store(store_arc.clone());
+    let compactor =
+        NuCompactor::new(model.clone().erase(), Bus::default(), None).with_store(store_arc.clone());
 
     let memory = Arc::new(CachedMemory::new(store_arc));
     let bus = Bus::default();
@@ -250,8 +251,7 @@ fn decide_fixture() -> Result<DecideFixture> {
         MockStreamEvent::Text("summary".to_string()),
         MockStreamEvent::final_response_with_default_usage(),
     ]]);
-    let compactor =
-        NuCompactor::new(ModelHandle::new(model), Bus::default(), None).with_store(store.clone());
+    let compactor = NuCompactor::new(model.erase(), Bus::default(), None).with_store(store.clone());
     let memory = Arc::new(CachedMemory::new(store));
     let bus = Bus::default();
     let compaction = CompactionConfig {
@@ -431,11 +431,10 @@ async fn decide_compaction_no_real_tokens_falls_back_to_context_estimate() -> Re
 /// agents. Rig's stream ends after ONE model turn, so cross-turn scenarios
 /// build a FRESH agent per `turn()` call while the `HookChain` state Arcs
 /// are shared across them — exactly how the executor runs production turns.
-/// The hook's `on_model_select` routes every request to the queued
-/// `shared_model`, so the builder's own model is never consulted.
+/// Each turn builds its agent from the queued model.
 struct RepetitionTurnFixture {
     bus: Bus,
-    shared_model: Arc<std::sync::Mutex<ModelHandle>>,
+    dyn_model: Arc<std::sync::Mutex<DynModel<Completion>>>,
     hook_state: HookState<FsSessionStore>,
     _temp_dir: TempDir, // keeps the store backing the memory alive
 }
@@ -449,9 +448,9 @@ impl RepetitionTurnFixture {
         let memory = Arc::new(CachedMemory::new(store));
         Ok(Self {
             bus: Bus::default(),
-            shared_model: Arc::new(std::sync::Mutex::new(ModelHandle::new(
-                MockCompletionModel::default(),
-            ))),
+            dyn_model: Arc::new(std::sync::Mutex::new(
+                MockCompletionModel::default().erase(),
+            )),
             hook_state: HookState {
                 circuit_breaker: Arc::new(std::sync::Mutex::new(
                     crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
@@ -459,14 +458,11 @@ impl RepetitionTurnFixture {
                 doom_state: Arc::new(std::sync::Mutex::new(DoomLoopState::default())),
                 output_repetition: Arc::new(std::sync::Mutex::new(RepetitionState::default())),
                 repetition_guard: true,
-                shared_model: Arc::new(std::sync::Mutex::new(ModelHandle::new(
-                    MockCompletionModel::default(),
-                ))),
                 memory,
                 conversation_id: "chain-test-conv".to_string(),
                 compaction: CompactionConfig {
                     compactor: NuCompactor::new(
-                        ModelHandle::new(MockCompletionModel::text("summary")),
+                        MockCompletionModel::text("summary").erase(),
                         Bus::default(),
                         None,
                     ),
@@ -479,12 +475,12 @@ impl RepetitionTurnFixture {
         })
     }
 
-    /// Queue a script of one or more streaming turns on the shared model
-    /// handle. A tool-call turn needs TWO model calls in the same script:
+    /// Queue a script of one or more streaming turns on the shared model.
+    /// A tool-call turn needs TWO model calls in the same script:
     /// the tool call, then the post-tool-result final text.
     fn queue_turn(&self, turns: Vec<Vec<MockStreamEvent>>) {
-        *self.shared_model.lock().expect("model mutex poisoned") =
-            ModelHandle::new(MockCompletionModel::from_stream_turns(turns));
+        *self.dyn_model.lock().expect("model mutex poisoned") =
+            MockCompletionModel::from_stream_turns(turns).erase();
     }
 
     /// Run one turn: build a fresh agent carrying this fixture's hook chain
@@ -517,23 +513,20 @@ impl RepetitionTurnFixture {
                 doom_state: self.hook_state.doom_state.clone(),
                 output_repetition: self.hook_state.output_repetition.clone(),
                 repetition_guard: self.hook_state.repetition_guard,
-                shared_model: self.shared_model.clone(),
                 memory: self.hook_state.memory.clone(),
                 conversation_id: self.hook_state.conversation_id.clone(),
                 compaction: self.hook_state.compaction.clone(),
                 last_total_tokens: self.hook_state.last_total_tokens.clone(),
             },
         );
-        let builder = rig::agent::AgentBuilder::from_model_handle(ModelHandle::new(
-            MockCompletionModel::default(),
-        ))
-        .add_hook(hook);
+        let model = self.dyn_model.lock().expect("model mutex poisoned").clone();
+        let builder = rig::agent::AgentBuilder::new(model).add_hook(hook);
         let agent = if with_tool {
             builder.tool(rig::test_utils::MockAddTool).build()
         } else {
             builder.build()
         };
-        let mut stream = agent.stream_prompt("run").max_turns(16).await;
+        let mut stream = agent.prompt("run").max_turns(16).stream();
         let mut items = Vec::new();
         while let Some(item) = stream.next().await {
             items.push(item);
@@ -595,7 +588,7 @@ async fn on_text_delta_repetition_stops_mid_stream_on_first_detection() -> Resul
     let rig::agent::StreamingError::Prompt(boxed) = error else {
         return Err("the mid-stream stop must surface as a Prompt streaming error".into());
     };
-    let rig::completion::PromptError::PromptCancelled { reason, .. } = *boxed else {
+    let rig::completion::PromptError::PromptCancelled { reason, .. } = boxed else {
         return Err("the mid-stream stop must surface PromptCancelled".into());
     };
     let prefix = crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
@@ -686,7 +679,7 @@ async fn on_model_turn_finished_cross_turn_ladder() -> Result<()> {
                 let rig::agent::StreamingError::Prompt(boxed) = error_stream else {
                     return Err("turn 8 stop must surface as a Prompt streaming error".into());
                 };
-                let rig::completion::PromptError::PromptCancelled { reason, .. } = *boxed else {
+                let rig::completion::PromptError::PromptCancelled { reason, .. } = boxed else {
                     return Err("turn 8 stop must surface PromptCancelled".into());
                 };
                 assert!(
@@ -840,7 +833,7 @@ async fn on_text_delta_repetition_stops_mid_stream_with_pre_escalated_ladder() -
     let rig::agent::StreamingError::Prompt(boxed) = error else {
         return Err("the Stop-level stop must surface as a Prompt streaming error".into());
     };
-    let rig::completion::PromptError::PromptCancelled { reason, .. } = *boxed else {
+    let rig::completion::PromptError::PromptCancelled { reason, .. } = boxed else {
         return Err("the Stop-level stop must surface PromptCancelled".into());
     };
     let prefix = crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
@@ -912,7 +905,7 @@ async fn on_text_delta_repetition_stops_mid_stream_at_any_ladder_level() -> Resu
     let rig::agent::StreamingError::Prompt(boxed) = error else {
         return Err("the mid-stream stop must surface as a Prompt streaming error".into());
     };
-    let rig::completion::PromptError::PromptCancelled { reason, .. } = *boxed else {
+    let rig::completion::PromptError::PromptCancelled { reason, .. } = boxed else {
         return Err("the mid-stream stop must surface PromptCancelled".into());
     };
     let prefix = crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
@@ -936,7 +929,7 @@ async fn on_text_delta_repetition_stops_mid_stream_at_any_ladder_level() -> Resu
 
 /// Stub resolver whose `take_previewed` answer is fixed at construction, so
 /// `suppress_previewed_display` can be tested as a pure function without
-/// rig's opaque `ToolResultEvent` type or a real permission flow.
+/// rig's opaque `OutcomeEvent` type or a real permission flow.
 #[derive(Clone)]
 struct StubPreviewResolver {
     previewed: bool,
@@ -1017,7 +1010,7 @@ fn suppress_previewed_display_none_input_stays_none_either_way() {
 // ---------------------------------------------------------------------------
 
 /// Regression test for the producer-side FIFO invariant that the unified UI
-/// event loop depends on: `HookChain::on_tool_call` publishes
+/// event loop depends on: `HookChain::on_dispatch` publishes
 /// `UiEvent::ToolStarted` BEFORE the permission resolver publishes
 /// `UiEvent::PermissionRequested`. Both travel on the single `bus.ui_event()`
 /// channel, so arrival order equals send order.
@@ -1026,7 +1019,7 @@ fn suppress_previewed_display_none_input_stays_none_either_way() {
 /// (chain.rs), the edit diff preview renders above the tool-call line again —
 /// this test fails.
 #[tokio::test]
-async fn on_tool_call_publishes_tool_started_before_permission_requested() -> Result<()> {
+async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
     let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
@@ -1043,10 +1036,9 @@ async fn on_tool_call_publishes_tool_started_before_permission_requested() -> Re
         temp_dir.path().to_path_buf(),
     );
     let resolver_clone = resolver.clone();
-    // The hook's `on_model_select` routes every turn to `shared_model`, so the
-    // scripted tool-call turn must be queued there — the builder's own model is
-    // never consulted.
-    let shared_model = Arc::new(Mutex::new(ModelHandle::new(
+    // The scripted tool-call turn is queued on the shared model; the agent is
+    // built from it below.
+    let shared_model = Arc::new(Mutex::new(
         MockCompletionModel::from_stream_turns([
             vec![
                 MockStreamEvent::tool_call("tc1", "add", serde_json::json!({"x": 1, "y": 2})),
@@ -1056,8 +1048,9 @@ async fn on_tool_call_publishes_tool_started_before_permission_requested() -> Re
                 MockStreamEvent::Text("tool done".to_string()),
                 MockStreamEvent::final_response_with_default_usage(),
             ],
-        ]),
-    )));
+        ])
+        .erase(),
+    ));
     let hook = HookChain::new(
         bus.clone(),
         resolver,
@@ -1072,12 +1065,11 @@ async fn on_tool_call_publishes_tool_started_before_permission_requested() -> Re
             doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
             output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
             repetition_guard: true,
-            shared_model,
             memory,
             conversation_id: "fifo-invariant-conv".to_string(),
             compaction: CompactionConfig {
                 compactor: NuCompactor::new(
-                    ModelHandle::new(MockCompletionModel::text("summary")),
+                    MockCompletionModel::text("summary").erase(),
                     Bus::default(),
                     None,
                 ),
@@ -1089,19 +1081,18 @@ async fn on_tool_call_publishes_tool_started_before_permission_requested() -> Re
     );
     // The "add" tool is not in `safe_defaults(true)`'s allow list, so the
     // global Ask action fires and the resolver publishes PermissionRequested.
-    let agent = rig::agent::AgentBuilder::from_model_handle(ModelHandle::new(
-        MockCompletionModel::default(),
-    ))
-    .add_hook(hook)
-    .tool(rig::test_utils::MockAddTool)
-    .build();
+    let agent =
+        rig::agent::AgentBuilder::new(shared_model.lock().expect("model mutex poisoned").clone())
+            .add_hook(hook)
+            .tool(rig::test_utils::MockAddTool)
+            .build();
     // Subscribe BEFORE driving the stream — broadcast sends are not buffered
     // for later subscribers.
     let mut ui_rx = bus.ui_event().subscribe();
 
     // -- Exec: drive the turn; the tool call blocks on the permission oneshot.
     let turn = tokio::spawn(async move {
-        let mut stream = agent.stream_prompt("run").max_turns(16).await;
+        let mut stream = agent.prompt("run").max_turns(16).stream();
         while stream.next().await.is_some() {}
     });
 
@@ -1135,16 +1126,16 @@ async fn on_tool_call_publishes_tool_started_before_permission_requested() -> Re
 }
 
 // ---------------------------------------------------------------------------
-// ToolRenderRegistry wiring: on_tool_call renders the call line via the
+// ToolRenderRegistry wiring: on_dispatch renders the call line via the
 // registry rather than passing raw arguments through.
 // ---------------------------------------------------------------------------
 
-/// `HookChain::on_tool_call` consults its `ToolRenderRegistry` and publishes
+/// `HookChain::on_dispatch` consults its `ToolRenderRegistry` and publishes
 /// the tailored `CallLine` on `UiEvent::ToolStarted`. A registered
 /// `read` tool renders `→ /tmp/f`; the raw JSON arguments never reach the
 /// event.
 #[tokio::test]
-async fn on_tool_call_publishes_registry_rendered_call_line() -> Result<()> {
+async fn on_dispatch_publishes_registry_rendered_call_line() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
     let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
@@ -1155,7 +1146,7 @@ async fn on_tool_call_publishes_registry_rendered_call_line() -> Result<()> {
         "read",
         crate::tools::handler::read::ReadTool::call_line_render,
     );
-    let shared_model = Arc::new(Mutex::new(ModelHandle::new(
+    let shared_model = Arc::new(Mutex::new(
         MockCompletionModel::from_stream_turns([
             vec![
                 MockStreamEvent::tool_call("tc1", "read", serde_json::json!({"path": "/tmp/f"})),
@@ -1165,8 +1156,9 @@ async fn on_tool_call_publishes_registry_rendered_call_line() -> Result<()> {
                 MockStreamEvent::Text("done".to_string()),
                 MockStreamEvent::final_response_with_default_usage(),
             ],
-        ]),
-    )));
+        ])
+        .erase(),
+    ));
     let hook = HookChain::new(
         bus.clone(),
         PolicyPermissionResolver {
@@ -1186,12 +1178,11 @@ async fn on_tool_call_publishes_registry_rendered_call_line() -> Result<()> {
             doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
             output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
             repetition_guard: true,
-            shared_model,
             memory,
             conversation_id: "render-registry-conv".to_string(),
             compaction: CompactionConfig {
                 compactor: NuCompactor::new(
-                    ModelHandle::new(MockCompletionModel::text("summary")),
+                    MockCompletionModel::text("summary").erase(),
                     Bus::default(),
                     None,
                 ),
@@ -1201,24 +1192,23 @@ async fn on_tool_call_publishes_registry_rendered_call_line() -> Result<()> {
             last_total_tokens: Arc::new(Mutex::new(None)),
         },
     );
-    let agent = rig::agent::AgentBuilder::from_model_handle(ModelHandle::new(
-        MockCompletionModel::default(),
-    ))
-    .add_hook(hook)
-    .dynamic_tool(rig::tool::DynamicTool::new(
-        "read",
-        "Read a file",
-        serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}}),
-        |_context, _args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("contents")) }),
-    ))
-    .build();
+    let agent =
+        rig::agent::AgentBuilder::new(shared_model.lock().expect("model mutex poisoned").clone())
+            .add_hook(hook)
+            .dynamic_tool(rig::tool::DynamicTool::new(
+                "read",
+                "Read a file",
+                serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+                |_args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("contents")) }),
+            ))
+            .build();
     // Subscribe BEFORE driving the stream — broadcast sends are not buffered
     // for later subscribers.
     let mut ui_rx = bus.ui_event().subscribe();
 
     // -- Exec: drive the turn and capture the first ToolStarted event.
     let turn = tokio::spawn(async move {
-        let mut stream = agent.stream_prompt("run").max_turns(16).await;
+        let mut stream = agent.prompt("run").max_turns(16).stream();
         while stream.next().await.is_some() {}
     });
     let call_line = loop {

@@ -22,7 +22,7 @@ async fn journey_corrupt_session_healed_by_repair_on_load() -> Result<()> {
     // The corrupt pattern: user(ToolResult) immediately followed by user(Text), no asst between.
     {
         use crate::types::{
-            AssistantContent, Message, ToolCall, ToolCallId, ToolFunction, ToolResult,
+            AssistantContent, CallId, Message, ToolCall, ToolFunction, ToolName, ToolResult,
             ToolResultContent, UserContent,
         };
 
@@ -46,9 +46,9 @@ async fn journey_corrupt_session_healed_by_repair_on_load() -> Result<()> {
             Message::Assistant {
                 id: None,
                 content: vec![AssistantContent::ToolCall(ToolCall::new(
-                    ToolCallId::new_or_mint("tc1"),
+                    CallId::from_wire("tc1"),
                     ToolFunction::new(
-                        "nu__shell".to_string(),
+                        ToolName::new("nu__shell").expect("non-empty tool name"),
                         serde_json::json!({"command": "git pull"}),
                     ),
                 ))],
@@ -56,9 +56,8 @@ async fn journey_corrupt_session_healed_by_repair_on_load() -> Result<()> {
             // user(tool_result tc1) — pure ToolResult message
             Message::User {
                 content: vec![UserContent::ToolResult(ToolResult {
-                    call: ToolCallId::new_or_mint("tc1"),
-                    provider: None,
-                    name: "nu__shell".into(),
+                    call: CallId::from_wire("tc1"),
+                    name: ToolName::new("nu__shell").expect("non-empty tool name"),
                     content: vec![ToolResultContent::text("Already up to date.")],
                 })],
             },
@@ -151,7 +150,7 @@ async fn journey_corrupt_session_healed_by_repair_on_load() -> Result<()> {
 #[tokio::test]
 async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
     use crate::types::{
-        AssistantContent, ToolCall, ToolCallId, ToolFunction, ToolResult, ToolResultContent,
+        AssistantContent, CallId, ToolCall, ToolFunction, ToolName, ToolResult, ToolResultContent,
         UserContent,
     };
     use rig::memory::ConversationMemory;
@@ -166,16 +165,15 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
         crate::types::Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall::new(
-                ToolCallId::new_or_mint(tc_id),
-                ToolFunction::new("test_echo".to_string(), serde_json::json!({})),
+                CallId::from_wire(tc_id),
+                ToolFunction::new(ToolName::new("test_echo")?, serde_json::json!({})),
             ))],
         },
         // Empty tool result — the key scenario for Gap 6
         crate::types::Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint(tc_id),
-                provider: None,
-                name: "test_echo".into(),
+                call: CallId::from_wire(tc_id),
+                name: ToolName::new("test_echo").expect("non-empty tool name"),
                 content: vec![ToolResultContent::text("")],
             })],
         },
@@ -184,7 +182,7 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
 
     h.memory_state
         .memory_mut()
-        .append(h.session_id, prior_messages)
+        .append(&rig::id::ConversationId::from(h.session_id), prior_messages)
         .await
         .map_err(|e| format!("pre-populate cache: {e:?}"))?;
 
@@ -203,7 +201,7 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
     let all_msgs = h
         .memory_state
         .memory_mut()
-        .load(h.session_id)
+        .load(&rig::id::ConversationId::from(h.session_id))
         .await
         .map_err(|e| format!("load messages: {e:?}"))?;
 
@@ -250,7 +248,7 @@ async fn journey_null_args_tool_call_repaired_on_load() {
     // The corrupt pattern: ToolCall with `arguments: null` and its matching ToolResult.
     {
         use crate::types::{
-            AssistantContent, Message, ToolCall, ToolCallId, ToolFunction, ToolResult,
+            AssistantContent, CallId, Message, ToolCall, ToolFunction, ToolName, ToolResult,
             ToolResultContent, UserContent,
         };
 
@@ -277,9 +275,9 @@ async fn journey_null_args_tool_call_repaired_on_load() {
             Message::Assistant {
                 id: None,
                 content: vec![AssistantContent::ToolCall(ToolCall::new(
-                    ToolCallId::new_or_mint("tc_poison"),
+                    CallId::from_wire("tc_poison"),
                     ToolFunction::new(
-                        "tmux__send_and_capture".to_string(),
+                        ToolName::new("tmux__send_and_capture").expect("non-empty tool name"),
                         serde_json::Value::Null,
                     ),
                 ))],
@@ -287,9 +285,8 @@ async fn journey_null_args_tool_call_repaired_on_load() {
             // user(tool_result tc1 — the Skip reason)
             Message::User {
                 content: vec![UserContent::ToolResult(ToolResult {
-                    call: ToolCallId::new_or_mint("tc_poison"),
-                    provider: None,
-                    name: "tmux__send_and_capture".into(),
+                    call: CallId::from_wire("tc_poison"),
+                    name: ToolName::new("tmux__send_and_capture").expect("non-empty tool name"),
                     content: vec![ToolResultContent::text("Tool not available")],
                 })],
             },

@@ -4,7 +4,7 @@ use super::*;
 // Scenario: multi-byte UTF-8 tool output through the trace-log preview
 // ---------------------------------------------------------------------------
 
-/// Regression: `HookChain::on_tool_result` builds a trace-log preview via
+/// Regression: `HookChain::on_outcome` builds a trace-log preview via
 /// `&result_text[..2000]`. When byte 2000 falls inside a multi-byte UTF-8 char
 /// and trace logging is enabled, the slice panicked and killed the turn. The
 /// full-turn path is the only way to reach that code: `log` macros skip

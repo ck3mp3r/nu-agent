@@ -501,7 +501,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
         );
 
         for tool in closure_tools {
-            tool_server_handle.add_dynamic_tool(tool).await;
+            tool_server_handle.add_dynamic_tool(tool);
         }
 
         // All tool groups are always registered. The permission system gates actual use.

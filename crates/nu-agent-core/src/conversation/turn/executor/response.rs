@@ -38,13 +38,13 @@ pub fn build_response(
     let data = response_data.unwrap_or(TurnResponseData {
         text: String::new(),
         usage: rig::completion::request::Usage {
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: 0,
-            cached_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-            tool_use_prompt_tokens: 0,
-            reasoning_tokens: 0,
+            input_tokens: Some(0),
+            output_tokens: Some(0),
+            total_tokens: Some(0),
+            cached_input_tokens: Some(0),
+            cache_creation_input_tokens: Some(0),
+            tool_use_prompt_tokens: Some(0),
+            reasoning_tokens: Some(0),
         },
         has_session: false,
     });
@@ -54,11 +54,11 @@ pub fn build_response(
     let llm_response = crate::llm::LlmResponse {
         text: data.text,
         usage: crate::llm::LlmUsage {
-            input_tokens: data.usage.input_tokens,
-            output_tokens: data.usage.output_tokens,
-            total_tokens: data.usage.total_tokens,
-            cached_input_tokens: data.usage.cached_input_tokens,
-            cache_creation_input_tokens: data.usage.cache_creation_input_tokens,
+            input_tokens: data.usage.input_tokens.unwrap_or(0),
+            output_tokens: data.usage.output_tokens.unwrap_or(0),
+            total_tokens: data.usage.total_tokens.unwrap_or(0),
+            cached_input_tokens: data.usage.cached_input_tokens.unwrap_or(0),
+            cache_creation_input_tokens: data.usage.cache_creation_input_tokens.unwrap_or(0),
         },
         tool_calls: Vec::new(),         // TODO: track tool calls in TurnResult
         tool_call_metadata: Vec::new(), // TODO: track tool metadata in TurnResult

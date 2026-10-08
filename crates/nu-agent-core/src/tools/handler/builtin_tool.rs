@@ -119,7 +119,7 @@ pub fn make_dynamic_tool<T: BuiltinTool>(
     let name = def.name.clone();
     let description = def.description.clone();
     let parameters = def.parameters.clone();
-    DynamicTool::new(name, description, parameters, move |_ctx, args| {
+    DynamicTool::new(name, description, parameters, move |args| {
         let cwd = cwd.clone();
         let bus = bus.clone();
         Box::pin(async move {
@@ -234,7 +234,7 @@ pub async fn register_builtin(
         }
         _ => return,
     };
-    tool_server.add_dynamic_tool(tool).await;
+    tool_server.add_dynamic_tool(tool);
 }
 
 // region:    --- Support

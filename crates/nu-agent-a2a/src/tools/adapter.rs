@@ -34,28 +34,23 @@ impl A2aToolAdapter {
         let parameters = self.tool_def.parameters.clone();
         let ctx = self.ctx;
 
-        DynamicTool::new(
-            name.clone(),
-            description,
-            parameters,
-            move |_context, args| {
-                let ctx = ctx.clone();
-                let name = name.clone();
-                Box::pin(async move {
-                    let result = handle_dispatch(&name, &ctx, args)
-                        .await
-                        .map_err(ToolExecutionError::provider)?;
+        DynamicTool::new(name.clone(), description, parameters, move |args| {
+            let ctx = ctx.clone();
+            let name = name.clone();
+            Box::pin(async move {
+                let result = handle_dispatch(&name, &ctx, args)
+                    .await
+                    .map_err(ToolExecutionError::provider)?;
 
-                    serde_json::to_string(&result)
-                        .map(ToolOutput::text)
-                        .map_err(|e| {
-                            ToolExecutionError::other(format!(
-                                "Failed to serialize A2A tool result: {e}"
-                            ))
-                        })
-                })
-            },
-        )
+                serde_json::to_string(&result)
+                    .map(ToolOutput::text)
+                    .map_err(|e| {
+                        ToolExecutionError::other(format!(
+                            "Failed to serialize A2A tool result: {e}"
+                        ))
+                    })
+            })
+        })
     }
 }
 

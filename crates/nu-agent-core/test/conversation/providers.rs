@@ -11,22 +11,22 @@ fn build_copilot_client_function_signature_exists() {
     // Type annotation forces the compiler to verify the function signature
     let _function: fn(
         &Config,
-    ) -> std::result::Result<rig::providers::copilot::Client, LabeledError> = build_copilot_client;
+    ) -> std::result::Result<rig::providers::copilot::Copilot, LabeledError> = build_copilot_client;
 
     // If this compiles, the function exists with the correct signature
 }
 
 #[test]
-fn build_copilot_client_no_auth_returns_ok() {
-    // With .oauth(), the client builder always succeeds — rig-core owns the full
-    // auth lifecycle (cached token reads, expiry checks, device-code re-auth) and
-    // surfaces auth failures lazily at request time, not at build time.
+fn build_copilot_client_no_auth_returns_ok() -> Result<()> {
+    // With no credential resolved, the client is still constructible — rig 0.43
+    // resolves OAuth lazily through `Authenticator` (task 6793a293), so auth
+    // failures surface at request time, not at build time.
     use crate::config::Config;
     use crate::utils::env_map::EnvMap;
 
     // Empty env map and a temp token dir keep the test off the real environment
     // and away from any cached OAuth tokens.
-    let token_dir = tempfile::TempDir::new().expect("temp token dir");
+    let token_dir = tempfile::TempDir::new()?;
 
     let config = Config {
         a2a_port: None,
@@ -66,17 +66,18 @@ fn build_copilot_client_no_auth_returns_ok() {
         "OAuth path always succeeds at build time; auth is lazy. Got: {:?}",
         result.err()
     );
+    Ok(())
 }
 
 #[test]
-fn build_copilot_client_oauth_path_succeeds_at_build_time() {
-    // With .oauth(), auth is delegated entirely to rig-core and is lazy —
-    // the client is always constructible; errors only surface when a request
-    // is actually made (401/403 triggers device-code re-auth or returns error).
+fn build_copilot_client_oauth_path_succeeds_at_build_time() -> Result<()> {
+    // With no credential resolved, the client is still constructible — rig 0.43
+    // resolves OAuth lazily through `Authenticator` (task 6793a293), so auth
+    // failures surface at request time, not at build time.
     use crate::config::Config;
     use crate::utils::env_map::EnvMap;
 
-    let token_dir = tempfile::TempDir::new().expect("temp token dir");
+    let token_dir = tempfile::TempDir::new()?;
 
     let config = Config {
         a2a_port: None,
@@ -116,6 +117,7 @@ fn build_copilot_client_oauth_path_succeeds_at_build_time() {
         "OAuth path always succeeds at build time; auth is lazy. Got: {:?}",
         result.err()
     );
+    Ok(())
 }
 
 #[test]
@@ -175,6 +177,164 @@ fn build_ollama_client_with_api_key_succeeds() {
     };
     let result = super::build_ollama_client(&config);
     assert!(result.is_ok());
+}
+
+// ========================================================================
+// rig 0.43 client construction: base_url and route propagation
+// ========================================================================
+
+#[test]
+fn build_openai_client_sets_base_url_on_config() -> Result<()> {
+    use crate::config::Config;
+
+    // -- Setup & Fixtures
+    let config = Config {
+        api_key: Some("sk-fake".to_string()),
+        base_url: Some("http://localhost:8080/v1".to_string()),
+        ..Config::default()
+    };
+
+    // -- Exec
+    let client = build_openai_client(&config).map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(client.config().base_url, "http://localhost:8080/v1");
+    Ok(())
+}
+
+#[test]
+fn build_openai_client_with_base_url_uses_chat_route() -> Result<()> {
+    use crate::config::Config;
+    use rig::providers::openai::Route;
+
+    // -- Setup & Fixtures
+    let config = Config {
+        api_key: Some("sk-fake".to_string()),
+        base_url: Some("http://localhost:8080/v1".to_string()),
+        ..Config::default()
+    };
+
+    // -- Exec
+    let client = build_openai_client(&config).map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(client.config().completion_route(), Route::Chat);
+    Ok(())
+}
+
+#[test]
+fn build_openai_client_without_base_url_uses_responses_route() -> Result<()> {
+    use crate::config::Config;
+    use rig::providers::openai::Route;
+
+    // -- Setup & Fixtures
+    let config = Config {
+        api_key: Some("sk-fake".to_string()),
+        base_url: None,
+        ..Config::default()
+    };
+
+    // -- Exec
+    let client = build_openai_client(&config).map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(client.config().completion_route(), Route::Responses);
+    Ok(())
+}
+
+#[test]
+fn build_anthropic_client_sets_base_url_on_config() -> Result<()> {
+    use crate::config::Config;
+
+    // -- Setup & Fixtures
+    let config = Config {
+        api_key: Some("sk-ant-fake".to_string()),
+        base_url: Some("http://localhost:8080".to_string()),
+        ..Config::default()
+    };
+
+    // -- Exec
+    let client = build_anthropic_client(&config).map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(client.config().base_url, "http://localhost:8080");
+    Ok(())
+}
+
+#[test]
+fn build_ollama_client_sets_base_url_on_config() -> Result<()> {
+    use crate::config::Config;
+
+    // -- Setup & Fixtures
+    let config = Config {
+        api_key: None,
+        base_url: Some("http://localhost:11434".to_string()),
+        ..Config::default()
+    };
+
+    // -- Exec
+    let client = build_ollama_client(&config).map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(client.config().base_url, "http://localhost:11434");
+    Ok(())
+}
+
+#[test]
+fn build_ollama_client_without_api_key_leaves_secret_empty() -> Result<()> {
+    use crate::config::Config;
+
+    // -- Setup & Fixtures
+    let config = Config {
+        api_key: None,
+        base_url: Some("http://localhost:11434".to_string()),
+        ..Config::default()
+    };
+
+    // -- Exec
+    let client = build_ollama_client(&config).map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert!(client.config().api_key.is_empty());
+    Ok(())
+}
+
+#[test]
+fn build_ollama_client_with_api_key_sets_secret() -> Result<()> {
+    use crate::config::Config;
+
+    // -- Setup & Fixtures
+    let config = Config {
+        api_key: Some("test-api-key".to_string()),
+        base_url: Some("http://localhost:11434".to_string()),
+        ..Config::default()
+    };
+
+    // -- Exec
+    let client = build_ollama_client(&config).map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(client.config().api_key.expose(), "test-api-key");
+    Ok(())
+}
+
+#[test]
+fn build_copilot_client_sets_base_url_on_config() -> Result<()> {
+    use crate::config::Config;
+
+    // -- Setup & Fixtures
+    let config = Config {
+        api_key: Some("fake-token".to_string()),
+        base_url: Some("http://localhost:9999".to_string()),
+        ..Config::default()
+    };
+
+    // -- Exec
+    let client = build_copilot_client(&config).map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(client.config().base_url, "http://localhost:9999");
+    Ok(())
 }
 
 // ========================================================================

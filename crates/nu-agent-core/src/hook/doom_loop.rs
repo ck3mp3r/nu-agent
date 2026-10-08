@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use rig::agent::ToolCallAction;
+use rig::agent::DispatchAction;
 use serde_json::Value;
 
 use crate::bus::Bus;
@@ -131,8 +131,8 @@ pub struct DoomLoopDetector {
 impl DoomLoopDetector {
     /// Check for a doom loop and record the tool call signature.
     ///
-    /// Returns `Some(ToolCallAction::skip(...))` with a steering message on the
-    /// first and backoff detections in a turn attempt, `Some(ToolCallAction::stop(...))`
+    /// Returns `Some(DispatchAction::skip(...))` with a steering message on the
+    /// first and backoff detections in a turn attempt, `Some(DispatchAction::stop(...))`
     /// on the stop detection, `None` otherwise.
     /// Using `Skip` feeds the message to the LLM as a tool result so it can
     /// change course; `Stop` is the backstop for a model that ignores the
@@ -142,7 +142,7 @@ impl DoomLoopDetector {
         tool_name: &str,
         args: &str,
         bus: &Bus,
-    ) -> Option<ToolCallAction> {
+    ) -> Option<DispatchAction> {
         let detected = {
             let mut state = self.state.lock().expect("doom loop mutex poisoned");
             state.check_and_record(tool_name, args)
@@ -161,7 +161,7 @@ impl DoomLoopDetector {
                         message: message.clone(),
                     })
                     .await;
-                Some(ToolCallAction::skip(message))
+                Some(DispatchAction::skip(message))
             }
             Some(DoomLoopDetection::Backoff(tool)) => {
                 log::warn!("Doom loop backoff: tool={tool_name}");
@@ -176,7 +176,7 @@ impl DoomLoopDetector {
                         message: message.clone(),
                     })
                     .await;
-                Some(ToolCallAction::skip(message))
+                Some(DispatchAction::skip(message))
             }
             Some(DoomLoopDetection::Stop(tool)) => {
                 log::warn!("Doom loop stopped: tool={tool_name}");
@@ -184,7 +184,7 @@ impl DoomLoopDetector {
                     "{DOOM_LOOP_STOP_PREFIX} '{}' kept looping after repeated steering. The run was stopped.",
                     tool
                 );
-                Some(ToolCallAction::stop(message))
+                Some(DispatchAction::stop(message))
             }
             None => None,
         }

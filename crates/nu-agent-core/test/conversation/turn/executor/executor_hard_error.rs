@@ -421,7 +421,10 @@ async fn hard_error_after_prior_history_persists_user_message() -> Result<()> {
         use rig::memory::ConversationMemory;
         memory_state
             .inner_memory()
-            .append(session_id, prior_messages.clone())
+            .append(
+                &rig::id::ConversationId::from(session_id),
+                prior_messages.clone(),
+            )
             .await
             .map_err(|e| format!("append prior messages: {e:?}"))?;
     }
@@ -569,7 +572,7 @@ async fn hard_error_after_prior_history_persists_only_delta() -> Result<()> {
         use rig::memory::ConversationMemory;
         memory_state
             .inner_memory()
-            .append(session_id, prior_msgs)
+            .append(&rig::id::ConversationId::from(session_id), prior_msgs)
             .await
             .map_err(|e| format!("append prior messages: {e:?}"))?;
     }

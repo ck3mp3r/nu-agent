@@ -1,5 +1,6 @@
 use super::*;
-use rig::agent::ToolCallAction;
+use rig::agent::DispatchAction;
+use rig::error::ErrorKind;
 use std::sync::{Arc, Mutex};
 
 use crate::bus::create_bus;
@@ -14,7 +15,7 @@ type TestResult<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 async fn drive_to_first_detection(
     detector: &DoomLoopDetector,
     bus: &Bus,
-) -> Vec<Option<ToolCallAction>> {
+) -> Vec<Option<DispatchAction>> {
     let mut actions = Vec::new();
     for _ in 0..DOOM_LOOP_THRESHOLD {
         let action = detector
@@ -23,6 +24,32 @@ async fn drive_to_first_detection(
         actions.push(action);
     }
     actions
+}
+
+/// Whether `action` is a skip denial: a `DispatchAction::Deny` whose report is
+/// not a cancellation (a cancellation is a stop).
+fn is_skip(action: &Option<DispatchAction>) -> bool {
+    matches!(action, Some(DispatchAction::Deny(report)) if report.kind != ErrorKind::Cancelled)
+}
+
+/// The reason of a skip denial, if `action` is one.
+fn skip_reason(action: &Option<DispatchAction>) -> Option<&str> {
+    match action {
+        Some(DispatchAction::Deny(report)) if report.kind != ErrorKind::Cancelled => {
+            Some(report.message.as_str())
+        }
+        _ => None,
+    }
+}
+
+/// The reason of a stop denial, if `action` is one.
+fn stop_reason(action: &Option<DispatchAction>) -> Option<&str> {
+    match action {
+        Some(DispatchAction::Deny(report)) if report.kind == ErrorKind::Cancelled => {
+            Some(report.message.as_str())
+        }
+        _ => None,
+    }
 }
 
 #[tokio::test]
@@ -57,7 +84,7 @@ async fn doom_loop_fires_at_threshold() {
             assert!(result.is_none(), "call {i} should not trip doom loop");
         } else {
             assert!(
-                matches!(result, Some(ToolCallAction::Skip { .. })),
+                is_skip(&result),
                 "call {i} should skip with detection message"
             );
         }
@@ -180,7 +207,7 @@ async fn reordered_json_args_trip_doom_loop() {
             assert!(result.is_none(), "call {i} should not trip doom loop");
         } else {
             assert!(
-                matches!(result, Some(ToolCallAction::Skip { .. })),
+                is_skip(&result),
                 "call {i} should skip with detection message"
             );
         }
@@ -210,7 +237,7 @@ async fn whitespace_only_args_trip_doom_loop() {
             assert!(result.is_none(), "call {i} should not trip doom loop");
         } else {
             assert!(
-                matches!(result, Some(ToolCallAction::Skip { .. })),
+                is_skip(&result),
                 "call {i} should skip with detection message"
             );
         }
@@ -235,7 +262,7 @@ async fn non_json_args_use_raw_signature() {
             assert!(result.is_none(), "call {i} should not trip doom loop");
         } else {
             assert!(
-                matches!(result, Some(ToolCallAction::Skip { .. })),
+                is_skip(&result),
                 "call {i} should skip with detection message"
             );
         }
@@ -343,16 +370,13 @@ async fn first_detection_skips_with_steering_message() -> TestResult<()> {
         .ok_or("should have at least one action")?
         .clone()
         .ok_or("threshold call should produce an action")?;
-    match last {
-        ToolCallAction::Skip(message) => {
-            for text in &pinned {
-                assert!(
-                    message.contains(text),
-                    "first-detection skip message must contain the pinned steering text {text:?}, got: {message}"
-                );
-            }
-        }
-        other => return Err(format!("should be Skip, got: {other:?}").into()),
+    let last = Some(last);
+    let message = skip_reason(&last).ok_or("should be a skip denial")?;
+    for text in &pinned {
+        assert!(
+            message.contains(text),
+            "first-detection skip message must contain the pinned steering text {text:?}, got: {message}"
+        );
     }
     Ok(())
 }
@@ -371,30 +395,26 @@ async fn second_detection_backoff_skips_naming_tool() -> TestResult<()> {
     // -- Exec & Check
     let actions = drive_to_first_detection(&detector, &bus).await;
     assert!(
-        matches!(actions.last(), Some(Some(ToolCallAction::Skip { .. }))),
+        is_skip(actions.last().ok_or("should have a last action")?),
         "first detection should skip with steering"
     );
 
     let second = detector
         .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
         .await;
-    match second {
-        Some(ToolCallAction::Skip(message)) => {
-            assert!(
-                message.starts_with("Doom loop persisted:"),
-                "backoff message must start with 'Doom loop persisted:', got: {message}"
-            );
-            assert!(
-                message.contains("read_file"),
-                "backoff message must name the looping tool, got: {message}"
-            );
-            assert!(
-                message.contains("Change your approach"),
-                "backoff message must contain the pinned steering text, got: {message}"
-            );
-        }
-        other => return Err(format!("should be Skip, got: {other:?}").into()),
-    }
+    let message = skip_reason(&second).ok_or("should be a skip denial")?;
+    assert!(
+        message.starts_with("Doom loop persisted:"),
+        "backoff message must start with 'Doom loop persisted:', got: {message}"
+    );
+    assert!(
+        message.contains("read_file"),
+        "backoff message must name the looping tool, got: {message}"
+    );
+    assert!(
+        message.contains("Change your approach"),
+        "backoff message must contain the pinned steering text, got: {message}"
+    );
     Ok(())
 }
 
@@ -415,36 +435,29 @@ async fn fourth_detection_stops_run() -> TestResult<()> {
         .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
         .await;
     assert!(
-        matches!(second, Some(ToolCallAction::Skip { .. })),
+        is_skip(&second),
         "second detection should be a backoff skip"
     );
     let third = detector
         .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
         .await;
-    assert!(
-        matches!(third, Some(ToolCallAction::Skip { .. })),
-        "third detection should be a backoff skip"
-    );
+    assert!(is_skip(&third), "third detection should be a backoff skip");
     let fourth = detector
         .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
         .await;
-    match fourth {
-        Some(ToolCallAction::Stop(message)) => {
-            assert!(
-                message.starts_with(DOOM_LOOP_STOP_PREFIX),
-                "stop message must start with DOOM_LOOP_STOP_PREFIX, got: {message}"
-            );
-            assert!(
-                message.contains("read_file"),
-                "stop message must name the looping tool, got: {message}"
-            );
-            assert!(
-                message.contains("stopped"),
-                "stop message must state the run was stopped, got: {message}"
-            );
-        }
-        other => return Err(format!("should be Stop, got: {other:?}").into()),
-    }
+    let message = stop_reason(&fourth).ok_or("should be a stop denial")?;
+    assert!(
+        message.starts_with(DOOM_LOOP_STOP_PREFIX),
+        "stop message must start with DOOM_LOOP_STOP_PREFIX, got: {message}"
+    );
+    assert!(
+        message.contains("read_file"),
+        "stop message must name the looping tool, got: {message}"
+    );
+    assert!(
+        message.contains("stopped"),
+        "stop message must state the run was stopped, got: {message}"
+    );
     Ok(())
 }
 
@@ -469,7 +482,7 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
         .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
         .await;
     assert!(
-        matches!(second, Some(ToolCallAction::Skip { .. })),
+        is_skip(&second),
         "second detection should be a backoff skip"
     );
     let _ = ui_event_rx.try_recv();
@@ -477,10 +490,7 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
     let third = detector
         .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
         .await;
-    assert!(
-        matches!(third, Some(ToolCallAction::Skip { .. })),
-        "third detection should be a backoff skip"
-    );
+    assert!(is_skip(&third), "third detection should be a backoff skip");
     let _ = ui_event_rx.try_recv();
     // Fourth detection (stop) — must emit no warning.
     let fourth = detector
@@ -489,7 +499,7 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
 
     // -- Check
     assert!(
-        matches!(fourth, Some(ToolCallAction::Stop(_))),
+        stop_reason(&fourth).is_some(),
         "fourth detection should stop the run"
     );
     assert!(
@@ -516,7 +526,7 @@ async fn reset_clears_escalation_counter() -> TestResult<()> {
         .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
         .await;
     assert!(
-        matches!(second, Some(ToolCallAction::Skip { .. })),
+        is_skip(&second),
         "second detection should be a backoff skip before reset"
     );
 
@@ -524,7 +534,7 @@ async fn reset_clears_escalation_counter() -> TestResult<()> {
 
     let actions = drive_to_first_detection(&detector, &bus).await;
     assert!(
-        matches!(actions.last(), Some(Some(ToolCallAction::Skip { .. }))),
+        is_skip(actions.last().ok_or("should have a last action")?),
         "detection after reset should be a first detection again (skip)"
     );
     Ok(())

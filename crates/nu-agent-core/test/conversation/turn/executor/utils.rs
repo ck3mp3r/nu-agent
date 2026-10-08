@@ -13,7 +13,8 @@ use crate::config::Config;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use crate::protocol::event::UiEvent;
 use crate::session::SessionStore;
-use rig::agent::ModelHandle;
+use rig::DynModel;
+use rig::operation::Completion;
 use rig::test_utils::MockCompletionModel;
 
 // ---------------------------------------------------------------------------
@@ -142,11 +143,7 @@ pub(super) fn test_compactor<S: SessionStore + Clone + Send + Sync>(
         })
         .collect();
     let model = MockCompletionModel::from_stream_turns(turns);
-    NuCompactor::from_shared_model(
-        Arc::new(std::sync::Mutex::new(ModelHandle::new(model))),
-        bus,
-        None,
-    )
+    NuCompactor::from_shared_model(Arc::new(std::sync::Mutex::new(model.erase())), bus, None)
 }
 
 /// A `CompactionConfig<S>` with deterministic defaults (no LLM
@@ -166,18 +163,20 @@ pub(super) fn test_compaction_config<S: SessionStore + Clone + Send + Sync>(
 // Shared model handle helper
 // ---------------------------------------------------------------------------
 
-/// Build a shared `Arc<Mutex<ModelHandle>>` wrapping a deterministic mock model.
-pub(super) fn shared_mock_model_handle() -> Arc<std::sync::Mutex<ModelHandle>> {
-    Arc::new(std::sync::Mutex::new(ModelHandle::new(
-        MockCompletionModel::text("summary"),
-    )))
+/// Build a shared `Arc<Mutex<DynModel<Completion>>>` wrapping a deterministic
+/// mock model.
+pub(super) fn shared_mock_model() -> Arc<std::sync::Mutex<DynModel<Completion>>> {
+    Arc::new(std::sync::Mutex::new(
+        MockCompletionModel::text("summary").erase(),
+    ))
 }
 
-/// Wrap a specific `MockCompletionModel` in a shared `Arc<Mutex<ModelHandle>>`.
+/// Wrap a specific `MockCompletionModel` in a shared
+/// `Arc<Mutex<DynModel<Completion>>>`.
 pub(super) fn shared_model_handle(
     model: MockCompletionModel,
-) -> Arc<std::sync::Mutex<ModelHandle>> {
-    Arc::new(std::sync::Mutex::new(ModelHandle::new(model)))
+) -> Arc<std::sync::Mutex<DynModel<Completion>>> {
+    Arc::new(std::sync::Mutex::new(model.erase()))
 }
 
 // ---------------------------------------------------------------------------

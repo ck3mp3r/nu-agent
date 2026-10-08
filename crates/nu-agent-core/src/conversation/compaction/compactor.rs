@@ -14,9 +14,9 @@ use crate::types::{Message, UserContent};
 use chrono::Utc;
 
 use futures::StreamExt;
-use rig::agent::ModelHandle;
-use rig::completion::CompletionModel;
+use rig::DynModel;
 use rig::memory::MemoryError;
+use rig::operation::Completion;
 
 /// The header every artifact body must start with.
 const SUMMARY_HEADER: &str = "What we did thus far:\n\n";
@@ -85,15 +85,15 @@ impl From<SummaryArtifact> for Message {
 /// The summarizer input is `carry_over` text (if any) prepended to the formatted
 /// evicted messages, wrapped in the compaction summary prompt.
 ///
-/// The model is held as `Arc<Mutex<ModelHandle>>` so it can be swapped at
-/// runtime via `set_model()` — `ModelHandle` is rig's erased, cloneable handle,
-/// so the concrete `NuCompactor<S>` type stays fixed regardless of provider. The
-/// handle is constructed eagerly at startup and never empty.
+/// The model is held as `Arc<Mutex<DynModel<Completion>>>` so it can be swapped
+/// at runtime via `set_model()` — `DynModel` is rig's erased, cloneable model
+/// handle, so the concrete `NuCompactor<S>` type stays fixed regardless of
+/// provider. The model is constructed eagerly at startup and never empty.
 pub struct NuCompactor<S = NoopStore>
 where
     S: SessionStore + Clone + Send + Sync,
 {
-    model: Arc<Mutex<ModelHandle>>,
+    model: Arc<Mutex<DynModel<Completion>>>,
     bus: Bus,
     max_bytes: Option<usize>,
     /// Backing store for persisting compaction markers. When set, `compact()`
@@ -151,7 +151,7 @@ impl SessionStore for NoopStore {
 
 impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
     /// Construct a `NuCompactor` with no marker store.
-    pub fn new(model: ModelHandle, bus: Bus, max_bytes: Option<usize>) -> Self {
+    pub fn new(model: DynModel<Completion>, bus: Bus, max_bytes: Option<usize>) -> Self {
         Self {
             model: Arc::new(Mutex::new(model)),
             bus,
@@ -160,14 +160,14 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
         }
     }
 
-    /// Construct a `NuCompactor` from an existing shared model handle.
+    /// Construct a `NuCompactor` from an existing shared model.
     ///
-    /// Unlike `new()`, which creates its own internal `Arc<Mutex<ModelHandle>>`,
-    /// this takes an external `Arc` so the same handle can be shared with other
+    /// Unlike `new()`, which creates its own internal `Arc<Mutex<DynModel<Completion>>>`,
+    /// this takes an external `Arc` so the same model can be shared with other
     /// consumers (e.g. `HookChain`). A `set_model()` call through the shared
     /// `Arc` from outside is visible to the next `compact()` call.
     pub fn from_shared_model(
-        model_arc: Arc<Mutex<ModelHandle>>,
+        model_arc: Arc<Mutex<DynModel<Completion>>>,
         bus: Bus,
         max_bytes: Option<usize>,
     ) -> Self {
@@ -188,11 +188,11 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
 
     /// Swap the model used by subsequent `compact()` calls.
     ///
-    /// Locks the shared inner handle and replaces it. Any in-flight `compact()`
-    /// call keeps the handle clone it already took, so it finishes with the old
+    /// Locks the shared inner model and replaces it. Any in-flight `compact()`
+    /// call keeps the model clone it already took, so it finishes with the old
     /// model; the next call uses the new one.
-    pub fn set_model(&self, handle: ModelHandle) {
-        *self.model.lock().expect("model mutex poisoned") = handle;
+    pub fn set_model(&self, model: DynModel<Completion>) {
+        *self.model.lock().expect("model mutex poisoned") = model;
     }
 
     /// Summarize `evicted` messages and return the artifact.
@@ -237,35 +237,33 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
             None => COMPACTION_SUMMARY_PROMPT.replace("{history}", &input),
         };
 
-        // Lock the shared handle and clone it so the LLM call runs against a
+        // Lock the shared model and clone it so the LLM call runs against a
         // stable model; a concurrent `set_model()` then only affects the next
-        // call. The handle is constructed eagerly at startup, so it is always
+        // call. The model is constructed eagerly at startup, so it is always
         // present here.
         let model = self.model.lock().expect("model mutex poisoned").clone();
 
-        let stream = match model
-            .completion_request(&prompt_text)
-            .messages(Vec::<Message>::new())
-            .stream()
-            .await
-        {
+        // `DynModel::stream` opens the reply synchronously; a failure to open
+        // (transport, auth, malformed request) surfaces here rather than as a
+        // stream item.
+        let stream = match model.stream(rig::completion::CompletionRequest::new(prompt_text)) {
             Ok(stream) => stream,
             Err(e) => {
+                let message = format!("Compaction stream error: {e}");
                 let _ = self
                     .bus
                     .compaction()
                     .send(CompactionEvent::Failed {
                         source: source.to_string(),
-                        message: e.to_string(),
+                        message: message.clone(),
                     })
                     .await;
-                return Err(MemoryError::Backend(e.to_string().into()));
+                return Err(MemoryError::Backend(message.into()));
             }
         };
 
         let mut stream = std::pin::pin!(stream);
         let mut aggregated = String::new();
-        let mut total_tokens: Option<u64> = None;
         let mut cancel_rx = self.bus.cancel().subscribe();
 
         loop {
@@ -273,26 +271,36 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
                 item = stream.next() => {
                     match item {
                         Some(Ok(chunk)) => match chunk {
-                            rig::streaming::StreamedAssistantContent::Text(delta) => {
-                                aggregated.push_str(&delta.text);
+                            rig::streaming::Item::Event(rig::streaming::StreamEvent::Text {
+                                text,
+                                ..
+                            }) => {
+                                aggregated.push_str(&text);
                                 let _ = self.bus.compaction().send(CompactionEvent::SummaryChunk {
                                     source: source.to_string(),
-                                    delta: delta.text,
+                                    delta: text,
                                     aggregated: aggregated.clone(),
                                 }).await;
                             }
-                            rig::streaming::StreamedAssistantContent::Reasoning { .. }
-                            | rig::streaming::StreamedAssistantContent::ReasoningDelta { .. } => {
+                            rig::streaming::Item::Event(rig::streaming::StreamEvent::Reasoning {
+                                ..
+                            }) => {
                                 // Reasoning is not summary content. Log it for
                                 // observability but do not append it to the summary.
                                 log::debug!(
                                     "Compaction stream produced reasoning chunk (not summary content): {chunk:?}"
                                 );
                             }
-                            rig::streaming::StreamedAssistantContent::Final(response) => {
-                                total_tokens = Some(response.usage.total_tokens);
+                            rig::streaming::Item::Event(rig::streaming::StreamEvent::Start {
+                                ..
+                            }) => {
+                                // A part opened. No v0.42 equivalent; nothing to do.
+                                log::trace!("Compaction stream part started: {chunk:?}");
                             }
-                            rig::streaming::StreamedAssistantContent::ToolCall { .. } => {
+                            rig::streaming::Item::Event(rig::streaming::StreamEvent::End {
+                                content: crate::types::AssistantContent::ToolCall(_),
+                                ..
+                            }) => {
                                 let _ = self.bus.compaction().send(CompactionEvent::Failed {
                                     source: source.to_string(),
                                     message: "Unexpected tool call during compaction".to_string(),
@@ -301,19 +309,24 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
                                     "Unexpected tool call during compaction".to_string().into(),
                                 ));
                             }
-                            rig::streaming::StreamedAssistantContent::ToolCallDelta { .. } => {
+                            rig::streaming::Item::Event(rig::streaming::StreamEvent::End {
+                                ..
+                            }) => {
+                                // The finalized part content is not summary text.
+                                // Provider usage is read from the stream after the loop.
+                            }
+                            rig::streaming::Item::Event(rig::streaming::StreamEvent::Arguments {
+                                ..
+                            }) => {
                                 let _ = self.bus.compaction().send(CompactionEvent::Failed {
                                     source: source.to_string(),
-                                    message: "Unexpected tool call delta during compaction"
-                                        .to_string(),
+                                    message: "Unexpected tool call during compaction".to_string(),
                                 }).await;
                                 return Err(MemoryError::Backend(
-                                    "Unexpected tool call delta during compaction"
-                                        .to_string()
-                                        .into(),
+                                    "Unexpected tool call during compaction".to_string().into(),
                                 ));
                             }
-                            rig::streaming::StreamedAssistantContent::Unknown(_) => {
+                            rig::streaming::Item::Unknown(_) => {
                                 let _ = self.bus.compaction().send(CompactionEvent::Failed {
                                     source: source.to_string(),
                                     message: "Unexpected stream chunk: unknown".to_string(),
@@ -345,6 +358,10 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
                 }
             }
         }
+
+        // v0.43 has no `Final` stream event; the provider's usage arrives on the
+        // folded response, which `partial()` exposes once the stream ended.
+        let total_tokens = stream.partial().usage.total_tokens;
 
         // Reject an empty summary before writing a marker. A compaction that
         // produced no text (e.g. the model emitted only reasoning) must not
@@ -495,7 +512,7 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
                                 format!("[Assistant tool call]: {}({})", tc.function.name, args)
                             }
                             crate::types::AssistantContent::Reasoning(r) => {
-                                format!("[Assistant reasoning]: {:?}", r.content)
+                                format!("[Assistant reasoning]: {r:?}")
                             }
                             crate::types::AssistantContent::Image(_) => {
                                 "[Attached image]".to_string()

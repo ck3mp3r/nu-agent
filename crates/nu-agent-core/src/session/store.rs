@@ -386,7 +386,7 @@ impl SessionStore for FsSessionStore {
 /// matching ToolResults for ALL its IDs. Logs a warn! for each violation found.
 /// Does NOT inject synthetic results — only strips and warns.
 pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Message> {
-    use crate::types::{AssistantContent, ToolCallId, UserContent};
+    use crate::types::{AssistantContent, CallId, UserContent};
     use std::collections::HashSet;
 
     // We loop until no violations remain; stripping one pair may expose another.
@@ -394,12 +394,12 @@ pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Messag
     loop {
         // Find the first Assistant message whose ToolCall IDs are not all
         // covered by the immediately following User message.
-        let violation_ids: Option<HashSet<ToolCallId>> =
+        let violation_ids: Option<HashSet<CallId>> =
             messages.iter().enumerate().find_map(|(i, msg)| {
                 let Message::Assistant { content, .. } = msg else {
                     return None;
                 };
-                let call_ids: HashSet<ToolCallId> = content
+                let call_ids: HashSet<CallId> = content
                     .iter()
                     .filter_map(|item| match item {
                         AssistantContent::ToolCall(tc) => Some(tc.id.clone()),
@@ -409,7 +409,7 @@ pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Messag
                 if call_ids.is_empty() {
                     return None;
                 }
-                let next_result_ids: HashSet<ToolCallId> = match messages.get(i + 1) {
+                let next_result_ids: HashSet<CallId> = match messages.get(i + 1) {
                     Some(Message::User { content }) => content
                         .iter()
                         .filter_map(|item| match item {

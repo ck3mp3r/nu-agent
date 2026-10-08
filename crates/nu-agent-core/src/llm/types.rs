@@ -13,11 +13,11 @@ pub struct LlmUsage {
 impl From<rig::completion::request::Usage> for LlmUsage {
     fn from(usage: rig::completion::request::Usage) -> Self {
         Self {
-            input_tokens: usage.input_tokens,
-            output_tokens: usage.output_tokens,
-            total_tokens: usage.total_tokens,
-            cached_input_tokens: usage.cached_input_tokens,
-            cache_creation_input_tokens: usage.cache_creation_input_tokens,
+            input_tokens: usage.input_tokens.unwrap_or(0),
+            output_tokens: usage.output_tokens.unwrap_or(0),
+            total_tokens: usage.total_tokens.unwrap_or(0),
+            cached_input_tokens: usage.cached_input_tokens.unwrap_or(0),
+            cache_creation_input_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
         }
     }
 }

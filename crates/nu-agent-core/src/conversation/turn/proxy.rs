@@ -28,7 +28,7 @@ impl FilteredToolProxy {
         let bus = self.bus;
 
         let tool_name_for_closure = name.clone();
-        DynamicTool::new(name, description, parameters, move |context, args| {
+        DynamicTool::new_with_context(name, description, parameters, move |context, args| {
             let handle = handle.clone();
             let bus = bus.clone();
             let tool_name = tool_name_for_closure.clone();

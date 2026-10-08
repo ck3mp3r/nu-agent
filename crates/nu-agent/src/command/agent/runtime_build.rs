@@ -14,7 +14,8 @@ use nu_agent_core::protocol::preamble::{
 };
 use nu_agent_core::session::SessionStoreBackend;
 use nu_agent_core::tools::mcp::circuit_breaker::McpCircuitBreaker;
-use rig::agent::ModelHandle;
+use rig::DynModel;
+use rig::operation::Completion;
 
 fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
     call.get_flag(name)
@@ -485,22 +486,27 @@ pub(crate) fn build_runtime(
         .repetition_guard
         .unwrap_or(defaults::REPETITION_GUARD_ENABLED);
 
-    // The shared model handle is the single point of model identity: the agent
-    // is built from it, the hook's `on_model_select` routes each turn to it,
-    // and the compactor summarizes with it. It is constructed eagerly at startup
-    // so it is ready for any operation (including `/compact` before the first
-    // turn), and rewritten by every `switch_model()`.
+    // The shared model is the single point of model identity: the agent is
+    // built from it on every turn and the compactor summarizes with it. It is
+    // constructed eagerly at startup so it is ready for any operation
+    // (including `/compact` before the first turn), and rewritten by every
+    // `switch_model()`.
     let mut provider = ProviderState::new(params.config, params.plugin_config);
-    let handle = provider
-        .build_shared_model_handle()
-        .map_err(|e| LabeledError::new(format!("Failed to build model handle: {e}")))?;
-    let shared_model: Arc<Mutex<ModelHandle>> = Arc::new(Mutex::new(handle));
+    let dyn_model = provider
+        .build_dyn_model()
+        .map_err(|e| LabeledError::new(format!("Failed to build model: {e}")))?;
+    let dyn_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(dyn_model));
 
-    // Compactor summarizes evicted messages with the shared model handle, so a
-    // `switch_model()` swap is visible to the next `compact()` call. It is a
-    // standalone service invoked directly by the hook's compaction logic.
+    // Compactor summarizes evicted messages with its own erased model, shared
+    // through an `Arc` so a `switch_model()` swap is visible to the next
+    // `compact()` call. It is a standalone service invoked directly by the
+    // hook's compaction logic.
+    let compactor_model = provider
+        .build_dyn_model()
+        .map_err(|e| LabeledError::new(format!("Failed to build compactor model: {e}")))?;
+    let compactor_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(compactor_model));
     let compactor =
-        NuCompactor::from_shared_model(Arc::clone(&shared_model), params.bus.clone(), None)
+        NuCompactor::from_shared_model(Arc::clone(&compactor_model), params.bus.clone(), None)
             .with_store(Arc::clone(&store_for_session));
 
     // The memory state holds the `CachedMemory` backend directly; all compaction
@@ -570,7 +576,7 @@ pub(crate) fn build_runtime(
         last_total_tokens: Arc::new(Mutex::new(None)),
         bus: params.bus,
         render_registry: params.render_registry,
-        shared_model,
+        dyn_model,
         compaction,
     })
 }

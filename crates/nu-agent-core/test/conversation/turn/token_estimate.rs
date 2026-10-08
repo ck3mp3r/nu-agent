@@ -1,5 +1,7 @@
 use super::estimate_token_count;
-use crate::types::{Message, Text, ToolCallId, ToolResult, ToolResultContent, UserContent};
+use crate::types::{CallId, Message, Text, ToolName, ToolResult, ToolResultContent, UserContent};
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
 fn estimate_token_count_empty_returns_zero() {
@@ -33,14 +35,13 @@ fn estimate_token_count_plain_text() {
 }
 
 #[test]
-fn estimate_token_count_tool_result() {
+fn estimate_token_count_tool_result() -> Result<()> {
     // tool_result content = "abcdefghijkl" = 12 chars
     // 12 / 4 = 3, + 4 overhead = 7
     let msg = Message::User {
         content: vec![UserContent::ToolResult(ToolResult {
-            call: ToolCallId::new_or_mint("tc1"),
-            provider: None,
-            name: "do_thing".into(),
+            call: CallId::from_wire("tc1"),
+            name: ToolName::new("do_thing").map_err(|_| "non-empty tool name")?,
             content: vec![ToolResultContent::Text(Text {
                 text: "abcdefghijkl".to_string(),
                 additional_params: None,
@@ -48,6 +49,7 @@ fn estimate_token_count_tool_result() {
         })],
     };
     assert_eq!(estimate_token_count(&[msg]), 7);
+    Ok(())
 }
 
 /// Conservative note: for `"for i in range(100): print(i)"` (29 chars),

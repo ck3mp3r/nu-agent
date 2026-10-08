@@ -135,14 +135,12 @@ async fn grep_via_builtin_adapter(
     };
     let bus = crate::bus::Bus::default();
     let handle = rig::tool::server::ToolServer::new().run();
-    handle
-        .add_dynamic_tool(make_dynamic_tool::<GrepTool>(
-            tool_def,
-            cwd.clone(),
-            max_tool_result_bytes,
-            bus,
-        ))
-        .await;
+    handle.add_dynamic_tool(make_dynamic_tool::<GrepTool>(
+        tool_def,
+        cwd.clone(),
+        max_tool_result_bytes,
+        bus,
+    ));
     default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {

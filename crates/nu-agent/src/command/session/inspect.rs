@@ -102,7 +102,7 @@ impl AgentSessionInspect {
                                 tc.function.name, tc.function.arguments
                             ),
                             AssistantContent::Reasoning(r) => {
-                                format!("[Reasoning: {:?}]", r.content)
+                                format!("[Reasoning: {r:?}]")
                             }
                             AssistantContent::Image(_) => "[Image]".to_string(),
                         })

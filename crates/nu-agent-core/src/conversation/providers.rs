@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use nu_protocol::LabeledError;
+use rig::http_client::ReqwestClient;
 
 use crate::config::{Config, defaults};
 use crate::utils::crypto::ensure_crypto_provider;
@@ -33,28 +34,24 @@ pub(crate) fn build_http_client(
 /// 1. Explicit `api_key` from plugin config or `--api-key` flag
 /// 2. `GITHUB_COPILOT_API_KEY` / `COPILOT_API_KEY` environment variable
 /// 3. `COPILOT_GITHUB_ACCESS_TOKEN` / `GITHUB_TOKEN` environment variable
-/// 4. OAuth — rig-core owns the full lifecycle: reads cached access-token,
-///    checks api-key.json expiry, retries on 401/403, device-code re-auth.
+/// 4. OAuth — no credential resolved here; rig-core's `Authenticator` owns the
+///    device-code login and token exchange (see task 6793a293).
 pub(super) fn build_copilot_client(
     config: &Config,
-) -> Result<rig::providers::copilot::Client, LabeledError> {
+) -> Result<rig::providers::copilot::Copilot, LabeledError> {
     build_copilot_client_with(config, &process_env(), None)
 }
 
 /// Build a GitHub Copilot client against an explicit environment map.
 ///
-/// `token_dir` overrides the directory rig-core uses for its cached OAuth
-/// access-token and api-key files. `None` keeps rig-core's platform default.
+/// `token_dir` is accepted for call-site compatibility; rig 0.43 resolves
+/// cached credentials through `Authenticator` file paths instead (task 6793a293).
 pub(super) fn build_copilot_client_with(
     config: &Config,
     env: &EnvMap,
     token_dir: Option<&std::path::Path>,
-) -> Result<rig::providers::copilot::Client, LabeledError> {
-    let auth_err = |e: rig::http_client::Error| {
-        LabeledError::new(format!(
-            "Copilot auth failed: {e}. Run `agent auth login` to authenticate."
-        ))
-    };
+) -> Result<rig::providers::copilot::Copilot, LabeledError> {
+    let _ = token_dir;
 
     let http_client = build_http_client(config.read_timeout_secs)?;
 
@@ -66,69 +63,33 @@ pub(super) fn build_copilot_client_with(
         .or_else(|| non_empty(env, "COPILOT_BASE_URL"));
 
     // 1. Explicit api_key from --api-key flag or plugin config
-    if let Some(key) = &config.api_key {
+    let credential = if let Some(key) = &config.api_key {
         log::debug!("Copilot auth: using explicit api_key");
-        let mut b = rig::providers::copilot::Client::builder().http_client(http_client.clone());
-        if let Some(url) = &base_url {
-            b = b.base_url(url.clone());
-        }
-        let b = b.api_key::<rig::providers::copilot::CopilotAuth>(key.clone());
-        return with_token_dir(b, token_dir).build().map_err(auth_err);
-    }
-
-    // 2. GITHUB_COPILOT_API_KEY / COPILOT_API_KEY env var
-    if let Some(key) =
+        Some(key.clone())
+    } else if let Some(key) =
         non_empty(env, "GITHUB_COPILOT_API_KEY").or_else(|| non_empty(env, "COPILOT_API_KEY"))
     {
+        // 2. GITHUB_COPILOT_API_KEY / COPILOT_API_KEY env var
         log::debug!("Copilot auth: using GITHUB_COPILOT_API_KEY");
-        let mut b = rig::providers::copilot::Client::builder().http_client(http_client.clone());
-        if let Some(url) = &base_url {
-            b = b.base_url(url.clone());
-        }
-        let b = b.api_key::<rig::providers::copilot::CopilotAuth>(key);
-        return with_token_dir(b, token_dir).build().map_err(auth_err);
-    }
-
-    // 3. COPILOT_GITHUB_ACCESS_TOKEN / GITHUB_TOKEN env var
-    if let Some(token) =
+        Some(key)
+    } else if let Some(token) =
         non_empty(env, "COPILOT_GITHUB_ACCESS_TOKEN").or_else(|| non_empty(env, "GITHUB_TOKEN"))
     {
+        // 3. COPILOT_GITHUB_ACCESS_TOKEN / GITHUB_TOKEN env var
         log::debug!("Copilot auth: using COPILOT_GITHUB_ACCESS_TOKEN/GITHUB_TOKEN");
-        let mut b = rig::providers::copilot::Client::builder().http_client(http_client.clone());
-        if let Some(url) = &base_url {
-            b = b.base_url(url.clone());
-        }
-        let b = b.github_access_token(token);
-        return with_token_dir(b, token_dir).build().map_err(auth_err);
-    }
+        Some(token)
+    } else {
+        // 4. OAuth — rig 0.43 resolves this through `Authenticator` (task 6793a293).
+        log::debug!("Copilot auth: no credential resolved; OAuth deferred to Authenticator");
+        None
+    };
 
-    // 4. OAuth — delegate the full lifecycle to rig-core: reads cached access-token,
-    //    checks api-key.json expiry, retries on 401/403 with device-code re-auth.
-    log::debug!("Copilot auth: falling back to OAuth");
-    let mut b = rig::providers::copilot::Client::builder().http_client(http_client);
+    let mut copilot_config =
+        rig::providers::copilot::CopilotConfig::new(credential.unwrap_or_default());
     if let Some(url) = &base_url {
-        b = b.base_url(url.clone());
+        copilot_config = copilot_config.with_base_url(url.clone());
     }
-    let b = b.oauth();
-    with_token_dir(b, token_dir).build().map_err(auth_err)
-}
-
-/// A Copilot client builder that has already resolved its auth source.
-type CopilotAuthedBuilder = rig::client::ClientBuilder<
-    rig::providers::copilot::CopilotBuilder,
-    rig::providers::copilot::CopilotAuth,
-    reqwest::Client,
->;
-
-/// Point rig-core's cached OAuth token files at `token_dir` when one is given.
-fn with_token_dir(
-    builder: CopilotAuthedBuilder,
-    token_dir: Option<&std::path::Path>,
-) -> CopilotAuthedBuilder {
-    match token_dir {
-        Some(dir) => builder.token_dir(dir),
-        None => builder,
-    }
+    Ok(copilot_config.connect(ReqwestClient::from(http_client)))
 }
 
 /// Look up `key`, treating an empty value as absent.
@@ -139,82 +100,73 @@ fn non_empty(env: &EnvMap, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Build an OpenAI client using rig's builder pattern.
+/// Build an OpenAI client using rig 0.43's config-and-connect pattern.
 ///
-/// If config has an explicit `api_key`, uses the builder with optional `base_url`.
+/// If config has an explicit `api_key`, uses the config with optional `base_url`.
 /// Otherwise, reads `OPENAI_API_KEY` from the environment (also checks `OPENAI_BASE_URL`).
+///
+/// A `base_url` selects the Chat Completions route (`/chat/completions`), which
+/// every OpenAI-compatible gateway serves; without one the Responses route is used.
 pub(super) fn build_openai_client(
     config: &Config,
-) -> Result<rig::providers::openai::Client, LabeledError> {
+) -> Result<rig::providers::openai::OpenAI, LabeledError> {
+    use rig::providers::openai::{OpenAIConfig, Route};
+
     log::debug!(
         "OpenAI client: api_key={} base_url={:?}",
         config.api_key.is_some(),
         config.base_url
     );
-    let map_build_err = |e: rig::http_client::Error| {
-        LabeledError::new(format!(
-            "OpenAI client initialization failed: {e}. Ensure OPENAI_API_KEY is set."
-        ))
-    };
 
     let http_client = build_http_client(config.read_timeout_secs)?;
 
-    if let Some(key) = &config.api_key {
-        let mut builder = rig::providers::openai::Client::builder().http_client(http_client);
-        if let Some(url) = &config.base_url {
-            builder = builder.base_url(url.clone());
-        }
-        builder.api_key(key.clone()).build().map_err(map_build_err)
+    let (key, base_url) = if let Some(key) = &config.api_key {
+        (key.clone(), config.base_url.clone())
     } else {
         let key = std::env::var("OPENAI_API_KEY").map_err(|_| {
             LabeledError::new(
                 "OpenAI client initialization failed: OPENAI_API_KEY not set.".to_string(),
             )
         })?;
-        let mut builder = rig::providers::openai::Client::builder()
-            .http_client(http_client)
-            .api_key(key);
-        if let Ok(url) = std::env::var("OPENAI_BASE_URL") {
-            builder = builder.base_url(url);
-        }
-        builder.build().map_err(map_build_err)
+        (key, std::env::var("OPENAI_BASE_URL").ok())
+    };
+
+    let mut openai_config = OpenAIConfig::new(key);
+    if let Some(url) = base_url {
+        openai_config = openai_config.with_base_url(url).with_route(Route::Chat);
     }
+    Ok(openai_config.connect(ReqwestClient::from(http_client)))
 }
 
-/// Build an Anthropic client using rig's builder pattern.
+/// Build an Anthropic client using rig 0.43's config-and-connect pattern.
 ///
-/// If config has an explicit `api_key`, uses the builder with optional `base_url`.
+/// If config has an explicit `api_key`, uses the config with optional `base_url`.
 /// Otherwise, reads `ANTHROPIC_API_KEY` from the environment.
 pub(super) fn build_anthropic_client(
     config: &Config,
-) -> Result<rig::providers::anthropic::Client, LabeledError> {
+) -> Result<rig::providers::anthropic::Anthropic, LabeledError> {
+    use rig::providers::anthropic::AnthropicConfig;
+
     log::debug!("Anthropic client: api_key={}", config.api_key.is_some());
-    let map_build_err = |e: rig::http_client::Error| {
-        LabeledError::new(format!(
-            "Anthropic client initialization failed: {e}. Ensure ANTHROPIC_API_KEY is set."
-        ))
-    };
 
     let http_client = build_http_client(config.read_timeout_secs)?;
 
-    if let Some(key) = &config.api_key {
-        let mut builder = rig::providers::anthropic::Client::builder().http_client(http_client);
-        if let Some(url) = &config.base_url {
-            builder = builder.base_url(url.clone());
-        }
-        builder.api_key(key.clone()).build().map_err(map_build_err)
+    let (key, base_url) = if let Some(key) = &config.api_key {
+        (key.clone(), config.base_url.clone())
     } else {
         let key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
             LabeledError::new(
                 "Anthropic client initialization failed: ANTHROPIC_API_KEY not set.".to_string(),
             )
         })?;
-        rig::providers::anthropic::Client::builder()
-            .http_client(http_client)
-            .api_key(key)
-            .build()
-            .map_err(map_build_err)
+        (key, None)
+    };
+
+    let mut anthropic_config = AnthropicConfig::new(key);
+    if let Some(url) = base_url {
+        anthropic_config = anthropic_config.with_base_url(url);
     }
+    Ok(anthropic_config.connect(ReqwestClient::from(http_client)))
 }
 
 /// Build an Ollama client.
@@ -226,14 +178,8 @@ pub(super) fn build_anthropic_client(
 /// `http://localhost:11434`).
 pub(super) fn build_ollama_client(
     config: &Config,
-) -> Result<rig::providers::ollama::Client, LabeledError> {
-    use rig::client::Nothing;
-
-    let map_build_err = |e: rig::http_client::Error| {
-        LabeledError::new(format!(
-            "Ollama client initialization failed: {e}. Ensure Ollama is running."
-        ))
-    };
+) -> Result<rig::providers::ollama::Ollama, LabeledError> {
+    use rig::providers::ollama::OllamaConfig;
 
     let base_url = config.base_url.clone().unwrap_or_else(|| {
         std::env::var("OLLAMA_API_BASE_URL")
@@ -244,14 +190,11 @@ pub(super) fn build_ollama_client(
 
     let http_client = build_http_client(config.read_timeout_secs)?;
 
-    let builder = rig::providers::ollama::Client::builder()
-        .http_client(http_client)
-        .base_url(base_url);
-    let builder = match &config.api_key {
-        Some(key) => builder.api_key(key.clone()),
-        None => builder.api_key(Nothing),
-    };
-    builder.build().map_err(map_build_err)
+    let mut ollama_config = OllamaConfig::new().with_base_url(base_url);
+    if let Some(key) = &config.api_key {
+        ollama_config = ollama_config.with_api_key(key.clone());
+    }
+    Ok(ollama_config.connect(ReqwestClient::from(http_client)))
 }
 
 /// Resolve which provider implementation to use.
@@ -265,82 +208,40 @@ pub(super) fn resolve_provider_type<'a>(
 }
 
 pub enum CachedProviderClient {
-    Copilot(rig::providers::copilot::Client),
-    OpenAi(rig::providers::openai::Client),
+    Copilot(rig::providers::copilot::Copilot),
+    OpenAi(rig::providers::openai::OpenAI),
     /// OpenAI-compatible providers that use `/chat/completions` instead of `/responses`.
     /// Automatically selected when `base_url` is set for the `openai` provider.
-    OpenAiCompletions(rig::providers::openai::CompletionsClient),
-    Anthropic(rig::providers::anthropic::Client),
-    Ollama(rig::providers::ollama::Client),
+    /// In rig 0.43 the route lives in the client's `OpenAIConfig` (`Route::Chat`),
+    /// so this variant holds the same client type as [`Self::OpenAi`].
+    OpenAiCompletions(rig::providers::openai::OpenAI),
+    Anthropic(rig::providers::anthropic::Anthropic),
+    Ollama(rig::providers::ollama::Ollama),
     Mock(rig::test_utils::MockCompletionModel),
 }
 
-/// Visitor pattern for dispatching over cached provider clients.
-///
-/// Each provider's `completion_model()` returns a different concrete type,
-/// so a plain closure can't be generic over all of them. This trait lets
-/// callers define a single generic method that the enum dispatches into,
-/// replacing the duplicated `with_cached_model!` macro with static dispatch.
-pub trait ModelVisitor {
-    type Output;
-    fn visit<M>(self, model: M) -> impl std::future::Future<Output = Self::Output> + Send
-    where
-        M: rig::completion::CompletionModel + Clone + 'static;
-}
-
 impl CachedProviderClient {
-    /// Dispatch the visitor over the cached provider's completion model.
+    /// Erase the cached provider's completion model into a `DynModel<Completion>`.
     ///
-    /// This replaces the `with_cached_model!` macro: each match arm builds the
-    /// concrete completion model and passes it to `visitor.visit(model)`, which
-    /// is monomorphised per variant — no dynamic dispatch needed.
-    pub async fn with_model<V: ModelVisitor>(&self, model_name: &str, visitor: V) -> V::Output {
-        log::debug!("with_model: model={model_name}");
-        use rig::client::CompletionClient;
-        match self {
-            CachedProviderClient::Copilot(c) => visitor.visit(c.completion_model(model_name)).await,
-            CachedProviderClient::OpenAi(c) => visitor.visit(c.completion_model(model_name)).await,
-            CachedProviderClient::OpenAiCompletions(c) => {
-                visitor.visit(c.completion_model(model_name)).await
-            }
-            CachedProviderClient::Anthropic(c) => {
-                visitor.visit(c.completion_model(model_name)).await
-            }
-            CachedProviderClient::Ollama(c) => visitor.visit(c.completion_model(model_name)).await,
-            CachedProviderClient::Mock(m) => visitor.visit(m.clone()).await,
-        }
-    }
-
-    /// Erase the cached provider's completion model into a `ModelHandle`.
-    ///
-    /// The agent is built from this handle (via `AgentBuilder::from_model_handle`)
-    /// and the hook routes per-turn selection to it, so `switch_model()` can
-    /// replace the model without rebuilding the agent.
-    pub fn build_model_handle(
+    /// The erased model runs the same driver as the concrete model it was made
+    /// from, so a consumer that only sends completion requests does not name the
+    /// provider's wire or transport. Each provider's `completion()` returns a
+    /// different concrete `Model<W>`, so the match arms erase to the one shared
+    /// `DynModel<Completion>` type.
+    pub fn build_dyn_model(
         &self,
         model_name: &str,
-    ) -> Result<rig::agent::ModelHandle, nu_protocol::LabeledError> {
-        log::debug!("build_model_handle: model={model_name}");
-        use rig::client::CompletionClient;
-        let handle = match self {
-            CachedProviderClient::Copilot(c) => {
-                rig::agent::ModelHandle::new(c.completion_model(model_name))
-            }
-            CachedProviderClient::OpenAi(c) => {
-                rig::agent::ModelHandle::new(c.completion_model(model_name))
-            }
-            CachedProviderClient::OpenAiCompletions(c) => {
-                rig::agent::ModelHandle::new(c.completion_model(model_name))
-            }
-            CachedProviderClient::Anthropic(c) => {
-                rig::agent::ModelHandle::new(c.completion_model(model_name))
-            }
-            CachedProviderClient::Ollama(c) => {
-                rig::agent::ModelHandle::new(c.completion_model(model_name))
-            }
-            CachedProviderClient::Mock(m) => rig::agent::ModelHandle::new(m.clone()),
+    ) -> Result<rig::DynModel<rig::operation::Completion>, nu_protocol::LabeledError> {
+        log::debug!("build_dyn_model: model={model_name}");
+        let model = match self {
+            CachedProviderClient::Copilot(c) => c.completion(model_name).erase(),
+            CachedProviderClient::OpenAi(c) => c.completion(model_name).erase(),
+            CachedProviderClient::OpenAiCompletions(c) => c.completion(model_name).erase(),
+            CachedProviderClient::Anthropic(c) => c.completion(model_name).erase(),
+            CachedProviderClient::Ollama(c) => c.completion(model_name).erase(),
+            CachedProviderClient::Mock(m) => m.clone().erase(),
         };
-        Ok(handle)
+        Ok(model)
     }
 }
 

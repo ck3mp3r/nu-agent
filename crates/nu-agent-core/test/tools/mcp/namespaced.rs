@@ -6,12 +6,9 @@ use rig::tool::{DynamicTool, ToolOutput};
 fn mock_tool(name: &str, description: &str) -> DynamicTool {
     let name = name.to_string();
     let description = description.to_string();
-    DynamicTool::new(
-        name,
-        description,
-        serde_json::json!({}),
-        |_context, _args| Box::pin(async { Ok(ToolOutput::text("mock result")) }),
-    )
+    DynamicTool::new(name, description, serde_json::json!({}), |_args| {
+        Box::pin(async { Ok(ToolOutput::text("mock result")) })
+    })
 }
 
 /// Build a mock DynamicTool that returns a large result exceeding MAX_TOOL_OUTPUT_BYTES.
@@ -20,7 +17,7 @@ fn large_mock_tool() -> DynamicTool {
         "big_tool",
         "Returns lots of data",
         serde_json::json!({}),
-        |_context, _args| {
+        |_args| {
             let large = "x".repeat(MAX_TOOL_OUTPUT_BYTES + 1_000);
             Box::pin(async move { Ok(ToolOutput::text(large)) })
         },

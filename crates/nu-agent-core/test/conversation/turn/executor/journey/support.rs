@@ -81,7 +81,7 @@ pub(super) fn sse_tool_call_response(id: &str, name: &str, args: &str) -> String
 pub(super) struct JourneyHarness {
     _temp_dir: tempfile::TempDir, // leading underscore keeps TempDir alive
     pub(super) memory_state: MemoryState<FsSessionStore>,
-    shared_model: std::sync::Arc<std::sync::Mutex<rig::agent::ModelHandle>>,
+    dyn_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>>,
     compaction_config: crate::conversation::compaction::CompactionConfig<FsSessionStore>,
     pub(super) session_id: &'static str,
     config: crate::config::Config,
@@ -99,7 +99,7 @@ impl JourneyHarness {
         let bus = crate::bus::create_bus();
         let compaction_config = crate::conversation::compaction::CompactionConfig {
             compactor: crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
-                test_utils::shared_mock_model_handle(),
+                test_utils::shared_mock_model(),
                 bus.clone(),
                 None,
             ),
@@ -110,7 +110,7 @@ impl JourneyHarness {
         Self {
             _temp_dir: temp_dir,
             memory_state,
-            shared_model: test_utils::shared_mock_model_handle(),
+            dyn_model: test_utils::shared_mock_model(),
             compaction_config,
             session_id,
             config,
@@ -128,15 +128,14 @@ impl JourneyHarness {
         std::result::Result<TurnOutcome, LabeledError>,
         Vec<crate::protocol::event::UiEvent>,
     ) {
-        // Wrap the scripted mock model in the shared handle so the agent (built
-        // from the handle) routes to this model.
-        *self.shared_model.lock().expect("model mutex poisoned") =
-            rig::agent::ModelHandle::new(model);
+        // Swap the scripted mock model into the shared slot so the agent
+        // (built from the model) routes to this model.
+        *self.dyn_model.lock().expect("model mutex poisoned") = model.erase();
         let mut executor = TurnExecutor::new(
             &self.config,
             &mut self.memory_state,
             tool_infra.clone(),
-            Arc::clone(&self.shared_model),
+            Arc::clone(&self.dyn_model),
             self.compaction_config.clone(),
         );
         let mut event_collector = BusEventCollector::subscribe(&tool_infra.bus);
@@ -184,13 +183,11 @@ impl JourneyHarness {
         // This is the OpenAI-compatible completions API path, matching our wiremock setup.
         let http_client = crate::conversation::providers::build_http_client(None)
             .map_err(|e| format!("build test http client: {e}"))?;
-        let openai_client = rig::providers::openai::Client::builder()
-            .http_client(http_client)
-            .base_url(server.uri())
-            .api_key("fake-key".to_string())
-            .build()
-            .map_err(|e| format!("build openai client: {e:?}"))?;
-        let cached = CachedProviderClient::OpenAiCompletions(openai_client.completions_api());
+        let openai_client = rig::providers::openai::OpenAIConfig::new("fake-key")
+            .with_base_url(server.uri())
+            .with_route(rig::providers::openai::Route::Chat)
+            .connect(rig::http_client::ReqwestClient::from(http_client));
+        let cached = CachedProviderClient::OpenAiCompletions(openai_client);
         Ok((server, cached))
     }
 
@@ -203,16 +200,16 @@ impl JourneyHarness {
         std::result::Result<TurnOutcome, LabeledError>,
         Vec<crate::protocol::event::UiEvent>,
     )> {
-        // Wrap the wiremock client's model in the shared handle so the agent
-        // (built from the handle) routes to this client's model.
-        *self.shared_model.lock().expect("model mutex poisoned") = client
-            .build_model_handle(&self.config.model)
-            .map_err(|e| format!("build model handle from cached client: {e:?}"))?;
+        // Swap the wiremock client's model into the shared slot so the agent
+        // (built from the model) routes to this client's model.
+        *self.dyn_model.lock().expect("model mutex poisoned") = client
+            .build_dyn_model(&self.config.model)
+            .map_err(|e| format!("build model from cached client: {e:?}"))?;
         let mut executor = TurnExecutor::new(
             &self.config,
             &mut self.memory_state,
             tool_infra.clone(),
-            Arc::clone(&self.shared_model),
+            Arc::clone(&self.dyn_model),
             self.compaction_config.clone(),
         );
         let mut event_collector = BusEventCollector::subscribe(&tool_infra.bus);
@@ -308,7 +305,7 @@ fn build_truncating_tool(
         "nu__shell",
         "Execute a Nushell command",
         serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
-        move |_context, _args| {
+        move |_args| {
             let output = response.to_string();
             let max_bytes = max_tool_result_bytes;
             Box::pin(async move {
@@ -327,9 +324,7 @@ pub(super) async fn nu_shell_tool_truncating(
 ) -> ToolInfra {
     let handle = rig::tool::server::ToolServer::new().run();
     // Register via add_dynamic_tool
-    handle
-        .add_dynamic_tool(build_truncating_tool(response, max_tool_result_bytes))
-        .await;
+    handle.add_dynamic_tool(build_truncating_tool(response, max_tool_result_bytes));
     default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
@@ -513,7 +508,7 @@ pub(super) fn assert_tool_call_in_msg(
         }
     });
     let tc = tc.ok_or("no ToolCall content in Assistant message")?;
-    assert_eq!(tc.id.as_str(), expected_id, "tool call id mismatch");
+    assert_eq!(tc.id.wire().as_ref(), expected_id, "tool call id mismatch");
     assert_eq!(tc.function.name, expected_name, "tool call name mismatch");
     Ok(())
 }
@@ -530,7 +525,7 @@ pub(super) fn assert_tool_result_in_msg(
         .iter()
         .find_map(|c| {
             if let rig::message::UserContent::ToolResult(tr) = c {
-                (tr.call.as_str() == expected_id).then_some(tr)
+                (tr.call.wire().as_ref() == expected_id).then_some(tr)
             } else {
                 None
             }
@@ -562,7 +557,7 @@ pub(super) fn assert_tool_result_flag(
         .iter()
         .find_map(|c| {
             if let rig::message::UserContent::ToolResult(tr) = c {
-                (tr.call.as_str() == expected_id).then_some(tr)
+                (tr.call.wire().as_ref() == expected_id).then_some(tr)
             } else {
                 None
             }
@@ -616,7 +611,7 @@ pub(super) fn assert_no_interrupted(msgs: &[Message]) {
 // ---------------------------------------------------------------------------
 
 /// A no-op `log::Log` used to enable trace logging in tests so the
-/// `log_enabled!` gate in `HookChain::on_tool_result` actually runs the
+/// `log_enabled!` gate in `HookChain::on_outcome` actually runs the
 /// preview construction (the code under test).
 struct TraceNoopLogger;
 
@@ -634,7 +629,7 @@ static TRACE_LOGGER_INSTALL: std::sync::Once = std::sync::Once::new();
 
 /// Install the no-op trace logger exactly once per test binary. Without a
 /// logger, `log::max_level()` is Off and `log_enabled!` skips the preview
-/// construction in `on_tool_result`, so the byte-slice defect is latent.
+/// construction in `on_outcome`, so the byte-slice defect is latent.
 pub(super) fn install_trace_logger() {
     TRACE_LOGGER_INSTALL.call_once(|| {
         log::set_boxed_logger(Box::new(TraceNoopLogger)).ok();
@@ -644,19 +639,19 @@ pub(super) fn install_trace_logger() {
 
 /// A `nu__shell` mock tool that returns a multi-byte UTF-8 result whose byte
 /// 2000 falls inside a 2-byte char — the exact shape that panicked the
-/// trace-log preview in `HookChain::on_tool_result` before the fix.
+/// trace-log preview in `HookChain::on_outcome` before the fix.
 pub(super) async fn nu_shell_multibyte_tool() -> ToolInfra {
     let handle = rig::tool::server::ToolServer::new().run();
     let tool = rig::tool::DynamicTool::new(
         "nu__shell",
         "Execute a Nushell command",
         serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
-        move |_context, _args| {
+        move |_args| {
             let output = format!("{}é rest of the output", "a".repeat(1999));
             Box::pin(async move { Ok(rig::tool::ToolOutput::text(output)) })
         },
     );
-    handle.add_dynamic_tool(tool).await;
+    handle.add_dynamic_tool(tool);
     default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {

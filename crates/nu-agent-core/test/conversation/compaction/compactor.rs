@@ -13,8 +13,9 @@ use crate::session::{CompactionMarker, FsSessionStore, SessionStore, StoreEntry}
 use crate::types::{Message, UserContent};
 use chrono::Utc;
 
-use rig::agent::ModelHandle;
+use rig::DynModel;
 use rig::memory::MemoryError;
+use rig::operation::Completion;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use std::sync::Arc;
@@ -87,7 +88,7 @@ fn last_request_prompt(model: &MockCompletionModel) -> Result<String> {
 }
 
 fn make_compactor(model: MockCompletionModel, bus: Bus, max_bytes: Option<usize>) -> NuCompactor {
-    NuCompactor::new(ModelHandle::new(model), bus, max_bytes)
+    NuCompactor::new(model.erase(), bus, max_bytes)
 }
 
 /// Build a `NuCompactor` attached to a backing store of type `S`.
@@ -97,7 +98,7 @@ fn make_compactor_with_store<S: SessionStore + Clone + Send + Sync>(
     max_bytes: Option<usize>,
     store: Arc<S>,
 ) -> NuCompactor<S> {
-    NuCompactor::new(ModelHandle::new(model), bus, max_bytes).with_store(store)
+    NuCompactor::new(model.erase(), bus, max_bytes).with_store(store)
 }
 
 /// Drain compaction bus events until a `CompactionEvent::Failed` is received,
@@ -411,7 +412,7 @@ async fn set_model_swaps_the_model_used_by_the_next_compact_call() -> Result<()>
     // The new model is scripted to produce a distinct summary; keep a clone to
     // inspect the recorded request after the swap.
     let new_model = stream_model(&["new model summary"]);
-    compactor.set_model(ModelHandle::new(new_model.clone()));
+    compactor.set_model(new_model.clone().erase());
 
     let evicted = vec![Message::user("old message")];
     let artifact = compactor
@@ -440,8 +441,8 @@ async fn from_shared_model_compactor_uses_model_swapped_on_the_shared_arc() -> R
     // The compactor is built from an external shared Arc; the old model is
     // scripted to produce a distinct summary that must NOT appear.
     let old_model = stream_model(&["old shared summary"]);
-    let shared_arc: std::sync::Arc<std::sync::Mutex<ModelHandle>> =
-        std::sync::Arc::new(std::sync::Mutex::new(ModelHandle::new(old_model)));
+    let shared_arc: std::sync::Arc<std::sync::Mutex<DynModel<Completion>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(old_model.erase()));
 
     let compactor: NuCompactor<NoopStore> =
         NuCompactor::from_shared_model(shared_arc.clone(), bus, None);
@@ -449,8 +450,7 @@ async fn from_shared_model_compactor_uses_model_swapped_on_the_shared_arc() -> R
     // The new model is scripted to produce a distinct summary; keep a clone to
     // inspect the recorded request after the swap.
     let new_model = stream_model(&["new shared summary"]);
-    *shared_arc.lock().expect("shared model mutex not poisoned") =
-        ModelHandle::new(new_model.clone());
+    *shared_arc.lock().expect("shared model mutex not poisoned") = new_model.clone().erase();
 
     // -- Exec
     let evicted = vec![Message::user("old message")];

@@ -6,7 +6,7 @@ use super::journal::TOOL_SUCCESS_PARAM;
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::protocol::event::ToolDisplay;
 use crate::session::{CompactionMarker, Session, SessionStore, StoreEntry};
-use crate::types::{AssistantContent, Message, ToolCallId, ToolResultContent, UserContent};
+use crate::types::{AssistantContent, CallId, Message, ToolResultContent, UserContent};
 use std::collections::HashMap;
 
 use crate::tools::handler::builtin_kinds::BuiltinKind;
@@ -225,15 +225,15 @@ pub(crate) fn hydrate_transcript_from_store_entries(
     //         call_id → success from all ToolResults. Success comes ONLY
     //         from the persisted verdict flag on the first Text block
     //         (TOOL_SUCCESS_PARAM); rows without the flag stay unknown.
-    let mut tool_names: HashMap<ToolCallId, String> = HashMap::new();
-    let mut tool_arguments: HashMap<ToolCallId, String> = HashMap::new();
-    let mut tool_success_map: HashMap<ToolCallId, bool> = HashMap::new();
+    let mut tool_names: HashMap<CallId, String> = HashMap::new();
+    let mut tool_arguments: HashMap<CallId, String> = HashMap::new();
+    let mut tool_success_map: HashMap<CallId, bool> = HashMap::new();
     for entry in entries {
         match entry {
             StoreEntry::Message(Message::Assistant { content, .. }) => {
                 for item in content.iter() {
                     if let AssistantContent::ToolCall(tc) = item {
-                        tool_names.insert(tc.id.clone(), tc.function.name.clone());
+                        tool_names.insert(tc.id.clone(), tc.function.name.to_string());
                         tool_arguments.insert(
                             tc.id.clone(),
                             serde_json::to_string(&tc.function.arguments)
@@ -303,9 +303,9 @@ fn format_compaction_content(marker: &CompactionMarker) -> String {
 /// - `Message::System { content }` → system/compaction summary display
 pub(crate) fn hydrate_single_message(
     msg: &Message,
-    tool_names: &HashMap<ToolCallId, String>,
-    tool_success_map: &HashMap<ToolCallId, bool>,
-    tool_arguments: &HashMap<ToolCallId, String>,
+    tool_names: &HashMap<CallId, String>,
+    tool_success_map: &HashMap<CallId, bool>,
+    tool_arguments: &HashMap<CallId, String>,
     cwd: &Path,
 ) -> Vec<UiMessageSnapshot> {
     let mut snapshots = Vec::new();
@@ -374,7 +374,7 @@ pub(crate) fn hydrate_single_message(
 
                         snapshots.push(
                             UiMessageSnapshot::new("tool", display_content)
-                                .with_tool_name(tool_call.function.name.clone())
+                                .with_tool_name(tool_call.function.name.to_string())
                                 .with_tool_details(
                                     Some(args_json),
                                     None,

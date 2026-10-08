@@ -1,5 +1,11 @@
 use super::*;
-use rig::agent::ToolCallAction;
+use rig::agent::DispatchAction;
+use rig::error::ErrorKind;
+
+/// Whether `action` is a skip denial (a non-cancellation `DispatchAction::Deny`).
+fn is_skip(action: &Option<DispatchAction>) -> bool {
+    matches!(action, Some(DispatchAction::Deny(report)) if report.kind != ErrorKind::Cancelled)
+}
 
 #[test]
 fn under_limit_returns_none() {
@@ -15,7 +21,7 @@ fn at_limit_returns_skip() {
     cap.check_and_increment("tool_a");
     cap.check_and_increment("tool_a");
     let result = cap.check_and_increment("tool_a");
-    assert!(matches!(result, Some(ToolCallAction::Skip { .. })));
+    assert!(is_skip(&result));
 }
 
 #[test]

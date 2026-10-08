@@ -191,7 +191,7 @@ fn permission_requested_with_unmatched_tool_key_leaves_transcript_unchanged() ->
     Ok(())
 }
 
-/// Non-duplication is no longer this layer's job: `HookChain::on_tool_result`
+/// Non-duplication is no longer this layer's job: `HookChain::on_outcome`
 /// (nu-agent-core) omits `display` from the `Completed` event whenever a
 /// pre-authorize preview was already shown, so the reducer here never
 /// receives a duplicate to begin with. This test documents that contract at

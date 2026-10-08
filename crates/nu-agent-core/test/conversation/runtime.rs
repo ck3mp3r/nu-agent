@@ -1,6 +1,6 @@
 //! Runtime test suite: preamble assembly, permissions, provider dispatch,
 //! compaction policy, tool visibility, MCP state, memory, persona,
-//! multi-agent state, accessors, and ModelHandle construction.
+//! multi-agent state, accessors, and DynModel<Completion> construction.
 //!
 //! The suite is split into topical sub-files. Shared imports, the `Result`
 //! alias, and the `test_memory_state` helper live here; each sub-file pulls

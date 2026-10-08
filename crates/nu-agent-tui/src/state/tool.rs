@@ -21,7 +21,7 @@ use super::{AppState, ToolCallLine, ToolCallStatus};
 /// key, the active (in-progress) call ids per key, and the next call id.
 ///
 /// Completion-display de-duplication against a pre-authorize preview is NOT
-/// handled here: `HookChain::on_tool_result`/`suppress_previewed_display`
+/// handled here: `HookChain::on_outcome`/`suppress_previewed_display`
 /// (nu-agent-core) already omit `display` from the `Completed` event when a
 /// preview was shown, so this layer never sees a duplicate to suppress.
 #[derive(Debug, Clone)]

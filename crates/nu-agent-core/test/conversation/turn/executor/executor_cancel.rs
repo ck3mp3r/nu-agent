@@ -278,7 +278,7 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
     // Verify that memory.load() succeeds (doesn't panic/error) — content is repair-determined.
     let _ = memory_state
         .inner_memory()
-        .load(session_id)
+        .load(&rig::id::ConversationId::from(session_id))
         .await
         .map_err(|e| format!("memory load should succeed without error: {e:?}"))?;
 
@@ -313,7 +313,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
         use rig::memory::ConversationMemory;
         memory_state
             .inner_memory()
-            .append(session_id, prior_msgs)
+            .append(&rig::id::ConversationId::from(session_id), prior_msgs)
             .await
             .map_err(|e| format!("append prior messages: {e:?}"))?;
     }
@@ -596,7 +596,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
     let has_tool_call = persisted.iter().any(|msg| {
         if let crate::types::Message::Assistant { content, .. } = msg {
             content.iter().any(
-                |c| matches!(c, crate::types::AssistantContent::ToolCall(tc) if tc.id.as_str() == "tc1"),
+                |c| matches!(c, crate::types::AssistantContent::ToolCall(tc) if tc.id.wire().as_ref() == "tc1"),
             )
         } else {
             false
@@ -613,7 +613,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
         if let crate::types::Message::User { content } = msg {
             content.iter().any(|c| {
                 if let crate::types::UserContent::ToolResult(tr) = c {
-                    tr.call.as_str() == "tc1"
+                    tr.call.wire().as_ref() == "tc1"
                         && tr.content.iter().any(|rc| {
                             if let crate::types::ToolResultContent::Text(t) = rc {
                                 !t.text.contains("[interrupted]")

@@ -1,6 +1,5 @@
 use crate::types::{
-    AssistantContent, Message, ProviderCallId, ToolCallId, ToolResult, ToolResultContent,
-    UserContent,
+    AssistantContent, CallId, Message, ToolName, ToolResult, ToolResultContent, UserContent,
 };
 
 /// For each `Assistant(ToolCall)` in `messages` that has no matching `User(ToolResult)`
@@ -12,7 +11,7 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
     use std::collections::HashSet;
 
     // Collect all ToolResult IDs that already exist in the history.
-    let existing_result_ids: HashSet<ToolCallId> = messages
+    let existing_result_ids: HashSet<CallId> = messages
         .iter()
         .flat_map(|msg| match msg {
             Message::User { content } => content
@@ -32,13 +31,13 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
     for msg in messages {
         match &msg {
             Message::Assistant { content, .. } => {
-                // Collect unpaired ToolCall (id, provider, name) triples from this Assistant message.
-                let unpaired_calls: Vec<(ToolCallId, Option<ProviderCallId>, String)> = content
+                // Collect unpaired ToolCall (id, name) pairs from this Assistant message.
+                let unpaired_calls: Vec<(CallId, ToolName)> = content
                     .iter()
                     .filter_map(|item| match item {
                         AssistantContent::ToolCall(tc) => {
                             if !existing_result_ids.contains(&tc.id) {
-                                Some((tc.id.clone(), tc.provider.clone(), tc.function.name.clone()))
+                                Some((tc.id.clone(), tc.function.name.clone()))
                             } else {
                                 None
                             }
@@ -53,11 +52,10 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
                     // Build a single User message with one ToolResult per unpaired call.
                     let tool_results: Vec<UserContent> = unpaired_calls
                         .into_iter()
-                        .map(|(call, provider, name)| {
+                        .map(|(call, name)| {
                             patch_count += 1;
                             UserContent::ToolResult(ToolResult {
                                 call,
-                                provider,
                                 name,
                                 content: vec![ToolResultContent::text("[interrupted]")],
                             })
@@ -260,7 +258,7 @@ pub(crate) fn fix_tool_call_integrity(
         // --- Step 1: orphan removal (global ID matching) ---
 
         // Collect all ToolCall ids from assistant messages.
-        let all_call_ids: HashSet<ToolCallId> = messages
+        let all_call_ids: HashSet<CallId> = messages
             .iter()
             .flat_map(|msg| match msg {
                 Message::Assistant { content, .. } => content
@@ -275,7 +273,7 @@ pub(crate) fn fix_tool_call_integrity(
             .collect();
 
         // Collect all ToolResult ids from user messages.
-        let all_result_ids: HashSet<ToolCallId> = messages
+        let all_result_ids: HashSet<CallId> = messages
             .iter()
             .flat_map(|msg| match msg {
                 Message::User { content } => content
@@ -354,12 +352,12 @@ pub(crate) fn fix_tool_call_integrity(
         // --- Step 2: adjacency enforcement ---
         // Find the first Assistant message whose ToolCall IDs are not all
         // covered by the immediately following User message.
-        let violation_ids: Option<HashSet<ToolCallId>> =
+        let violation_ids: Option<HashSet<CallId>> =
             after_orphan.iter().enumerate().find_map(|(i, msg)| {
                 let Message::Assistant { content, .. } = msg else {
                     return None;
                 };
-                let call_ids: HashSet<ToolCallId> = content
+                let call_ids: HashSet<CallId> = content
                     .iter()
                     .filter_map(|item| match item {
                         AssistantContent::ToolCall(tc) => Some(tc.id.clone()),
@@ -369,7 +367,7 @@ pub(crate) fn fix_tool_call_integrity(
                 if call_ids.is_empty() {
                     return None;
                 }
-                let next_result_ids: HashSet<ToolCallId> = match after_orphan.get(i + 1) {
+                let next_result_ids: HashSet<CallId> = match after_orphan.get(i + 1) {
                     Some(Message::User { content }) => content
                         .iter()
                         .filter_map(|item| match item {

@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use rig::id::ConversationId;
 use rig::memory::ConversationMemory;
 
 use crate::conversation::state::memory::MemoryState;
@@ -39,20 +40,23 @@ async fn memory_state_inner_is_cached_memory_with_load_all() -> Result<()> {
 async fn load_returns_all_appended_messages() -> Result<()> {
     let (_temp_dir, state) = make_state();
     let memory = Arc::clone(state.memory());
-    let conv = "conv-load";
+    let conv = ConversationId::from("conv-load");
 
     for i in 0..5 {
         memory
-            .append(conv, vec![Message::user(format!("user-{i}"))])
+            .append(&conv, vec![Message::user(format!("user-{i}"))])
             .await
             .map_err(|_| "append user should succeed")?;
         memory
-            .append(conv, vec![Message::assistant(format!("assistant-{i}"))])
+            .append(&conv, vec![Message::assistant(format!("assistant-{i}"))])
             .await
             .map_err(|_| "append assistant should succeed")?;
     }
 
-    let loaded = memory.load(conv).await.map_err(|_| "load should succeed")?;
+    let loaded = memory
+        .load(&conv)
+        .await
+        .map_err(|_| "load should succeed")?;
 
     assert_eq!(loaded.len(), 10, "all messages returned unchanged");
     Ok(())
@@ -64,23 +68,26 @@ async fn load_returns_all_appended_messages() -> Result<()> {
 async fn clear_delegates_to_inner_cached_memory() -> Result<()> {
     let (_temp_dir, mut state) = make_state();
     let memory = Arc::clone(state.memory());
-    let conv = "conv-clear";
+    let conv = ConversationId::from("conv-clear");
 
     memory
         .append(
-            conv,
+            &conv,
             vec![Message::user("user-0"), Message::assistant("assistant-0")],
         )
         .await
         .map_err(|_| "append should succeed")?;
 
-    memory.load(conv).await.map_err(|_| "load should succeed")?;
+    memory
+        .load(&conv)
+        .await
+        .map_err(|_| "load should succeed")?;
 
     state.clear();
     assert!(state.last_total_tokens().is_none());
 
     let loaded = memory
-        .load(conv)
+        .load(&conv)
         .await
         .map_err(|_| "load after clear should succeed")?;
     assert!(

@@ -95,7 +95,7 @@ fn build_mcp_dynamic_tool(
     max_tool_result_bytes: usize,
     raw_name: String,
 ) -> DynamicTool {
-    DynamicTool::new(name, description, parameters, move |_context, args| {
+    DynamicTool::new(name, description, parameters, move |args| {
         let client = client.clone();
         let raw_name = raw_name.clone();
         Box::pin(async move {
@@ -309,10 +309,7 @@ impl NamespacedClientHandler {
                     tool.name.to_string(),
                 );
 
-                handler
-                    .tool_server_handle
-                    .add_dynamic_tool(dynamic_tool)
-                    .await;
+                handler.tool_server_handle.add_dynamic_tool(dynamic_tool);
 
                 // Store the namespaced name for later removal
                 managed.push(namespaced_name);
@@ -341,7 +338,7 @@ impl ClientHandler for NamespacedClientHandler {
         // Remove all previously managed tools (by NAMESPACED names)
         let mut managed = self.managed_tool_names.write().await;
         for name in managed.drain(..) {
-            self.tool_server_handle.remove_tool(&name).await;
+            self.tool_server_handle.remove_tool(&name);
         }
 
         // Register new tools (wrapped in DynamicTool)
@@ -357,7 +354,7 @@ impl ClientHandler for NamespacedClientHandler {
                 tool.name.to_string(),
             );
 
-            self.tool_server_handle.add_dynamic_tool(dynamic_tool).await;
+            self.tool_server_handle.add_dynamic_tool(dynamic_tool);
 
             managed.push(namespaced_name);
         }

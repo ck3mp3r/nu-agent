@@ -5,15 +5,18 @@ use crate::conversation::turn::executor::{CompletionErrorCategory, CompletionErr
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
-/// an `InvalidStatusCode` HTTP error (numeric status code, no body).
+/// an `InvalidStatusCodeWithDetails` HTTP error (numeric status code, no body).
 fn turn_error_from_http_status(status: u16) -> Result<CompletionErrorKind> {
     use rig::http_client;
-    let http_err = http_client::Error::InvalidStatusCode(
-        reqwest::StatusCode::from_u16(status).map_err(|e| format!("valid status code: {e:?}"))?,
-    );
-    let streaming_err = rig::agent::StreamingError::Completion(
-        rig::completion::CompletionError::HttpError(http_err),
-    );
+    let http_err = http_client::Error::InvalidStatusCodeWithDetails {
+        status: reqwest::StatusCode::from_u16(status)
+            .map_err(|e| format!("valid status code: {e:?}"))?,
+        body: String::new(),
+        headers: http::HeaderMap::new(),
+    };
+    let streaming_err = rig::agent::StreamingError::Completion(rig::error::ProviderError::Http(
+        std::sync::Arc::new(http_err),
+    ));
     match crate::conversation::turn::TurnError::from(streaming_err) {
         crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => Ok(kind),
         other => panic!("expected CompletionFailed, got: {other:?}"),
@@ -21,16 +24,18 @@ fn turn_error_from_http_status(status: u16) -> Result<CompletionErrorKind> {
 }
 
 /// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
-/// an `InvalidStatusCodeWithMessage` HTTP error (status + body string).
+/// an `InvalidStatusCodeWithDetails` HTTP error (status + body string).
 fn turn_error_from_http_status_with_msg(status: u16, body: &str) -> Result<CompletionErrorKind> {
     use rig::http_client;
-    let http_err = http_client::Error::InvalidStatusCodeWithMessage(
-        reqwest::StatusCode::from_u16(status).map_err(|e| format!("valid status code: {e:?}"))?,
-        body.to_string(),
-    );
-    let streaming_err = rig::agent::StreamingError::Completion(
-        rig::completion::CompletionError::HttpError(http_err),
-    );
+    let http_err = http_client::Error::InvalidStatusCodeWithDetails {
+        status: reqwest::StatusCode::from_u16(status)
+            .map_err(|e| format!("valid status code: {e:?}"))?,
+        body: body.to_string(),
+        headers: http::HeaderMap::new(),
+    };
+    let streaming_err = rig::agent::StreamingError::Completion(rig::error::ProviderError::Http(
+        std::sync::Arc::new(http_err),
+    ));
     match crate::conversation::turn::TurnError::from(streaming_err) {
         crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => Ok(kind),
         other => panic!("expected CompletionFailed, got: {other:?}"),
@@ -38,10 +43,10 @@ fn turn_error_from_http_status_with_msg(status: u16, body: &str) -> Result<Compl
 }
 
 /// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
-/// a `ResponseError` (provider returned a parseable error string).
+/// a `ProviderError::Response` (provider returned a parseable error string).
 fn turn_error_from_response_error(msg: &str) -> CompletionErrorKind {
     let streaming_err = rig::agent::StreamingError::Completion(
-        rig::completion::CompletionError::ResponseError(msg.to_string()),
+        rig::error::ProviderError::Response(msg.to_string()),
     );
     match crate::conversation::turn::TurnError::from(streaming_err) {
         crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => kind,
@@ -50,12 +55,12 @@ fn turn_error_from_response_error(msg: &str) -> CompletionErrorKind {
 }
 
 /// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
-/// a `PromptError::CompletionError` wrapping a `CompletionError`.
+/// a `PromptError::CompletionError` wrapping a `ProviderError`.
 fn turn_error_from_prompt_wrapped(
-    completion_err: rig::completion::CompletionError,
+    completion_err: rig::error::ProviderError,
 ) -> crate::conversation::turn::TurnError {
     let prompt_err = rig::completion::PromptError::CompletionError(completion_err);
-    let streaming_err = rig::agent::StreamingError::Prompt(Box::new(prompt_err));
+    let streaming_err = rig::agent::StreamingError::Prompt(prompt_err);
     crate::conversation::turn::TurnError::from(streaming_err)
 }
 
@@ -63,16 +68,15 @@ fn turn_error_from_prompt_wrapped(
 // Prompt-wrapped provider error classification tests
 // ---------------------------------------------------------------------------
 
-/// A `PromptError::CompletionError(ResponseError(s))` must classify like the
+/// A `PromptError::CompletionError(ProviderError::Response(s))` must classify like the
 /// direct `StreamingError::Completion` path: kind from `classify_from_display`,
-/// msg equal to the inner `CompletionError` Display ("ResponseError: {s}").
+/// msg equal to the inner `ProviderError` Display ("ResponseError: {s}").
 #[test]
 fn prompt_wrapped_response_error_classifies_and_strips_completion_prefix() -> Result<()> {
     let s = "the model produced no answer and stopped with finish_reason=Length; \
              the turn ran out of output budget before producing one — raise max_tokens for this request";
-    let turn_err = turn_error_from_prompt_wrapped(rig::completion::CompletionError::ResponseError(
-        s.to_string(),
-    ));
+    let turn_err =
+        turn_error_from_prompt_wrapped(rig::error::ProviderError::Response(s.to_string()));
     match turn_err {
         crate::conversation::turn::TurnError::CompletionFailed { kind, msg } => {
             assert_eq!(kind, CompletionErrorKind::OutputBudget);
@@ -83,11 +87,11 @@ fn prompt_wrapped_response_error_classifies_and_strips_completion_prefix() -> Re
     Ok(())
 }
 
-/// A `PromptError::CompletionError(ResponseError("finish_reason=length"))` must
+/// A `PromptError::CompletionError(ProviderError::Response("finish_reason=length"))` must
 /// classify as `OutputBudget`.
 #[test]
 fn prompt_wrapped_finish_reason_length_is_output_budget() -> Result<()> {
-    let turn_err = turn_error_from_prompt_wrapped(rig::completion::CompletionError::ResponseError(
+    let turn_err = turn_error_from_prompt_wrapped(rig::error::ProviderError::Response(
         "FinishReasonError { message: finish_reason=length }".to_string(),
     ));
     match turn_err {
@@ -99,14 +103,19 @@ fn prompt_wrapped_finish_reason_length_is_output_budget() -> Result<()> {
     Ok(())
 }
 
-/// A `PromptError::CompletionError(HttpError(InvalidStatusCode(429)))` must
-/// classify as `RateLimit`.
+/// A `PromptError::CompletionError(ProviderError::Http(InvalidStatusCodeWithDetails { 429 }))`
+/// must classify as `RateLimit`.
 #[test]
 fn prompt_wrapped_http_429_is_rate_limit() -> Result<()> {
     use rig::http_client;
-    let http_err = http_client::Error::InvalidStatusCode(reqwest::StatusCode::from_u16(429)?);
-    let turn_err =
-        turn_error_from_prompt_wrapped(rig::completion::CompletionError::HttpError(http_err));
+    let http_err = http_client::Error::InvalidStatusCodeWithDetails {
+        status: reqwest::StatusCode::from_u16(429)?,
+        body: String::new(),
+        headers: http::HeaderMap::new(),
+    };
+    let turn_err = turn_error_from_prompt_wrapped(rig::error::ProviderError::Http(
+        std::sync::Arc::new(http_err),
+    ));
     match turn_err {
         crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => {
             assert_eq!(kind, CompletionErrorKind::RateLimit);
@@ -121,7 +130,7 @@ fn prompt_wrapped_http_429_is_rate_limit() -> Result<()> {
 fn prompt_wrapped_memory_error_is_unknown() -> Result<()> {
     let memory_err = rig::memory::MemoryError::Internal("boom".to_string());
     let prompt_err = rig::completion::PromptError::MemoryError(memory_err);
-    let streaming_err = rig::agent::StreamingError::Prompt(Box::new(prompt_err));
+    let streaming_err = rig::agent::StreamingError::Prompt(prompt_err);
     let turn_err = crate::conversation::turn::TurnError::from(streaming_err);
     match turn_err {
         crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => {
@@ -137,7 +146,7 @@ fn prompt_wrapped_memory_error_is_unknown() -> Result<()> {
 #[test]
 fn from_prompt_error_completion_error_matches_streaming_path() -> Result<()> {
     let s = "provider exploded";
-    let completion_err = rig::completion::CompletionError::ResponseError(s.to_string());
+    let completion_err = rig::error::ProviderError::Response(s.to_string());
     let prompt_err = rig::completion::PromptError::CompletionError(completion_err);
     let turn_err = crate::conversation::turn::TurnError::from(prompt_err);
     match turn_err {
@@ -200,9 +209,9 @@ fn http_status_to_error_kind() -> Result<()> {
 fn from_streaming_http_stream_ended_is_network() {
     use rig::http_client;
     let http_err = http_client::Error::StreamEnded;
-    let streaming_err = rig::agent::StreamingError::Completion(
-        rig::completion::CompletionError::HttpError(http_err),
-    );
+    let streaming_err = rig::agent::StreamingError::Completion(rig::error::ProviderError::Http(
+        std::sync::Arc::new(http_err),
+    ));
     let kind = match crate::conversation::turn::TurnError::from(streaming_err) {
         crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => kind,
         other => panic!("expected CompletionFailed, got: {other:?}"),
@@ -317,7 +326,7 @@ fn from_streaming_prompt_cancelled_produces_cancelled_variant() {
         reason: "cancelled".to_string(),
         chat_history: vec![],
     };
-    let streaming_err = rig::agent::StreamingError::Prompt(Box::new(inner));
+    let streaming_err = rig::agent::StreamingError::Prompt(inner);
     let turn_err = crate::conversation::turn::TurnError::from(streaming_err);
     assert!(turn_err.is_cancelled());
 }

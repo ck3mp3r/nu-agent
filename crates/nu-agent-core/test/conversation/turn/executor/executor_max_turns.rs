@@ -32,14 +32,12 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
     let mut memory_state = make_memory_state(&temp_dir);
 
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
-    tool_server_handle
-        .add_dynamic_tool(rig::tool::DynamicTool::new(
-            "echo_tool",
-            "echoes a fixed result",
-            serde_json::json!({"type": "object", "properties": {}}),
-            |_context, _args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
-        ))
-        .await;
+    tool_server_handle.add_dynamic_tool(rig::tool::DynamicTool::new(
+        "echo_tool",
+        "echoes a fixed result",
+        serde_json::json!({"type": "object", "properties": {}}),
+        |_args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
+    ));
 
     // Turn 1: the tool call exhausts the 1-turn budget (rig rejects the next
     // model call). Turn 2: success — only reached if the steering retry
@@ -154,14 +152,12 @@ async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Re
     let mut memory_state = make_memory_state(&temp_dir);
 
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
-    tool_server_handle
-        .add_dynamic_tool(rig::tool::DynamicTool::new(
-            "echo_tool",
-            "echoes a fixed result",
-            serde_json::json!({"type": "object", "properties": {}}),
-            |_context, _args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
-        ))
-        .await;
+    tool_server_handle.add_dynamic_tool(rig::tool::DynamicTool::new(
+        "echo_tool",
+        "echoes a fixed result",
+        serde_json::json!({"type": "object", "properties": {}}),
+        |_args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
+    ));
 
     // Both scripted turns emit a tool call: every attempt exhausts the
     // 1-turn budget, so the second failure hits the cap.
@@ -254,14 +250,12 @@ async fn no_session_max_turns_failure_returns_err_without_steering() -> Result<(
     let mut memory_state = make_memory_state(&temp_dir);
 
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
-    tool_server_handle
-        .add_dynamic_tool(rig::tool::DynamicTool::new(
-            "echo_tool",
-            "echoes a fixed result",
-            serde_json::json!({"type": "object", "properties": {}}),
-            |_context, _args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
-        ))
-        .await;
+    tool_server_handle.add_dynamic_tool(rig::tool::DynamicTool::new(
+        "echo_tool",
+        "echoes a fixed result",
+        serde_json::json!({"type": "object", "properties": {}}),
+        |_args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
+    ));
 
     let model = MockCompletionModel::from_stream_turns([
         vec![

@@ -174,9 +174,7 @@ pub async fn register_tools_on_server(
 ) -> Result<(), String> {
     for def in a2a_tool_defs() {
         let adapter = A2aToolAdapter::new(def, ctx.clone());
-        tool_server_handle
-            .add_dynamic_tool(adapter.into_dynamic_tool())
-            .await;
+        tool_server_handle.add_dynamic_tool(adapter.into_dynamic_tool());
     }
     Ok(())
 }

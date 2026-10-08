@@ -93,7 +93,10 @@ async fn hard_error_with_failing_append_store_emits_warning_event() -> Result<()
         use rig::memory::ConversationMemory;
         memory_state
             .inner_memory()
-            .append(session_id, vec![user_with_text("prior work")])
+            .append(
+                &rig::id::ConversationId::from(session_id),
+                vec![user_with_text("prior work")],
+            )
             .await
             .map_err(|e| format!("pre-populate append should succeed: {e:?}"))?;
     }
@@ -161,7 +164,10 @@ async fn hard_error_with_working_store_emits_no_warning_event() -> Result<()> {
         use rig::memory::ConversationMemory;
         memory_state
             .inner_memory()
-            .append(session_id, vec![user_with_text("prior work")])
+            .append(
+                &rig::id::ConversationId::from(session_id),
+                vec![user_with_text("prior work")],
+            )
             .await
             .map_err(|e| format!("pre-populate append should succeed: {e:?}"))?;
     }

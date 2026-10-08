@@ -1,7 +1,7 @@
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::{CompactionMarker, SessionStore as _, StoreEntry};
 use crate::types::{
-    AdditionalParams, AssistantContent, Message, Text, ToolCall, ToolCallId, ToolFunction,
+    AdditionalParams, AssistantContent, CallId, Message, Text, ToolCall, ToolFunction, ToolName,
     ToolResult, ToolResultContent, UserContent,
 };
 use chrono::Utc;
@@ -68,12 +68,11 @@ fn test_convert_assistant_tool_call() {
     let messages = vec![Message::Assistant {
         id: None,
         content: vec![AssistantContent::ToolCall(ToolCall {
-            id: ToolCallId::new_or_mint("call_123"),
-            provider: None,
+            id: CallId::from_wire("call_123"),
             signature: None,
             additional_params: None,
             function: ToolFunction {
-                name: "read_file".to_string(),
+                name: ToolName::new("read_file").expect("should be non-empty"),
                 arguments: json!({"path": "/tmp/test.txt"}),
             },
         })],
@@ -113,9 +112,8 @@ fn test_convert_system() {
 fn test_tool_result_not_shown_in_hydrated_transcript() {
     let messages = vec![Message::User {
         content: vec![UserContent::ToolResult(ToolResult {
-            call: ToolCallId::new_or_mint("call_123"),
-            provider: None,
-            name: "read_file".into(),
+            call: CallId::from_wire("call_123"),
+            name: ToolName::new("read_file").expect("non-empty tool name"),
             content: vec![ToolResultContent::Text(Text {
                 text: "File contents here".to_string(),
                 additional_params: None,
@@ -139,12 +137,11 @@ fn test_convert_mixed_assistant_content() {
                 additional_params: None,
             }),
             AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_weather"),
-                provider: None,
+                id: CallId::from_wire("call_weather"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "get_weather".to_string(),
+                    name: ToolName::new("get_weather").expect("should be non-empty"),
                     arguments: json!({"location": "NYC"}),
                 },
             }),
@@ -213,12 +210,11 @@ fn test_tool_call_format_matches_live_rendering() {
     let messages = vec![Message::Assistant {
         id: None,
         content: vec![AssistantContent::ToolCall(ToolCall {
-            id: ToolCallId::new_or_mint("call_abc"),
-            provider: None,
+            id: CallId::from_wire("call_abc"),
             signature: None,
             additional_params: None,
             function: ToolFunction {
-                name: "k8s__list_pods".to_string(),
+                name: ToolName::new("k8s__list_pods").expect("should be non-empty"),
                 arguments: json!({"namespace": "prod"}),
             },
         })],
@@ -249,12 +245,11 @@ fn test_tool_call_argument_summarization() {
     let messages = vec![Message::Assistant {
         id: None,
         content: vec![AssistantContent::ToolCall(ToolCall {
-            id: ToolCallId::new_or_mint("call_long"),
-            provider: None,
+            id: CallId::from_wire("call_long"),
             signature: None,
             additional_params: None,
             function: ToolFunction {
-                name: "write_file".to_string(),
+                name: ToolName::new("write_file").expect("should be non-empty"),
                 arguments: json!({"content": long_content}),
             },
         })],
@@ -425,12 +420,11 @@ fn test_tool_result_edit_creates_display_snapshot() {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_1"),
-                provider: None,
+                id: CallId::from_wire("call_1"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "edit".to_string(),
+                    name: ToolName::new("edit").expect("should be non-empty"),
                     arguments: json!({
                         "filePath": "/tmp/test.rs",
                         "oldString": "old code",
@@ -441,9 +435,8 @@ fn test_tool_result_edit_creates_display_snapshot() {
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_1"),
-                provider: None,
-                name: "edit".into(),
+                call: CallId::from_wire("call_1"),
+                name: ToolName::new("edit").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: serde_json::to_string(&json!({
                         "path": "/tmp/test.rs",
@@ -487,21 +480,19 @@ fn test_tool_result_nu_creates_display_snapshot_from_arguments() -> Result<()> {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_nu_1"),
-                provider: None,
+                id: CallId::from_wire("call_nu_1"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "nu".to_string(),
+                    name: ToolName::new("nu").expect("should be non-empty"),
                     arguments: json!({"command": "ls | sort"}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_nu_1"),
-                provider: None,
-                name: "nu".into(),
+                call: CallId::from_wire("call_nu_1"),
+                name: ToolName::new("nu").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: serde_json::to_string(&json!({
                         "stdout": "",
@@ -552,21 +543,19 @@ fn test_tool_result_nu_explicit_display_wins_over_fallback() -> Result<()> {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_nu_explicit_1"),
-                provider: None,
+                id: CallId::from_wire("call_nu_explicit_1"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "nu".to_string(),
+                    name: ToolName::new("nu").expect("should be non-empty"),
                     arguments: json!({"command": "ls | sort"}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_nu_explicit_1"),
-                provider: None,
-                name: "nu".into(),
+                call: CallId::from_wire("call_nu_explicit_1"),
+                name: ToolName::new("nu").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: serde_json::to_string(&json!({
                         "stdout": "",
@@ -612,21 +601,19 @@ fn test_tool_result_non_previewable_no_display() -> Result<()> {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_read_1"),
-                provider: None,
+                id: CallId::from_wire("call_read_1"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "read".to_string(),
+                    name: ToolName::new("read").expect("should be non-empty"),
                     arguments: json!({"path": "/tmp/test.txt"}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_read_1"),
-                provider: None,
-                name: "read".into(),
+                call: CallId::from_wire("call_read_1"),
+                name: ToolName::new("read").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: serde_json::to_string(&json!({"data": "ok"}))?,
                     additional_params: None,
@@ -655,21 +642,19 @@ fn test_tool_result_nu_empty_command_no_display() -> Result<()> {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_nu_empty_1"),
-                provider: None,
+                id: CallId::from_wire("call_nu_empty_1"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "nu".to_string(),
+                    name: ToolName::new("nu").expect("should be non-empty"),
                     arguments: json!({"command": ""}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_nu_empty_1"),
-                provider: None,
-                name: "nu".into(),
+                call: CallId::from_wire("call_nu_empty_1"),
+                name: ToolName::new("nu").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: serde_json::to_string(&json!({
                         "stdout": "",
@@ -702,21 +687,19 @@ fn test_tool_result_nu_missing_command_no_display() -> Result<()> {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_nu_missing_1"),
-                provider: None,
+                id: CallId::from_wire("call_nu_missing_1"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "nu".to_string(),
+                    name: ToolName::new("nu").expect("should be non-empty"),
                     arguments: json!({}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_nu_missing_1"),
-                provider: None,
-                name: "nu".into(),
+                call: CallId::from_wire("call_nu_missing_1"),
+                name: ToolName::new("nu").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: serde_json::to_string(&json!({
                         "stdout": "",
@@ -747,21 +730,19 @@ fn test_tool_result_non_json_gracefully_skipped() {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_2"),
-                provider: None,
+                id: CallId::from_wire("call_2"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "read".to_string(),
+                    name: ToolName::new("read").expect("should be non-empty"),
                     arguments: json!({"path": "/tmp/test.txt"}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_2"),
-                provider: None,
-                name: "read".into(),
+                call: CallId::from_wire("call_2"),
+                name: ToolName::new("read").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: "plain text, not JSON".to_string(),
                     additional_params: None,
@@ -784,21 +765,19 @@ fn test_tool_result_with_explicit_display_key() {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_3"),
-                provider: None,
+                id: CallId::from_wire("call_3"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "custom_tool".to_string(),
+                    name: ToolName::new("custom_tool").expect("should be non-empty"),
                     arguments: json!({}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_3"),
-                provider: None,
-                name: "custom_tool".into(),
+                call: CallId::from_wire("call_3"),
+                name: ToolName::new("custom_tool").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: serde_json::to_string(&json!({
                         "display": {
@@ -920,21 +899,19 @@ fn hydrate_unflagged_toolset_error_text_rehydrates_as_none() {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_fail_1"),
-                provider: None,
+                id: CallId::from_wire("call_fail_1"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "bash".to_string(),
+                    name: ToolName::new("bash").expect("should be non-empty"),
                     arguments: json!({"command": "exit 1"}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_fail_1"),
-                provider: None,
-                name: "bash".into(),
+                call: CallId::from_wire("call_fail_1"),
+                name: ToolName::new("bash").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: "Toolset error: command exited with code 1".to_string(),
                     additional_params: None,
@@ -964,21 +941,19 @@ fn hydrate_unflagged_plain_text_rehydrates_as_none() {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_ok_1"),
-                provider: None,
+                id: CallId::from_wire("call_ok_1"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "read_file".to_string(),
+                    name: ToolName::new("read_file").expect("should be non-empty"),
                     arguments: json!({"path": "/tmp/test.txt"}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_ok_1"),
-                provider: None,
-                name: "read_file".into(),
+                call: CallId::from_wire("call_ok_1"),
+                name: ToolName::new("read_file").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: "file contents here".to_string(),
                     additional_params: None,
@@ -1052,21 +1027,19 @@ fn hydrate_unflagged_permission_denied_text_rehydrates_as_none() {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_perm_1"),
-                provider: None,
+                id: CallId::from_wire("call_perm_1"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "write_file".to_string(),
+                    name: ToolName::new("write_file").expect("should be non-empty"),
                     arguments: json!({"path": "/etc/passwd", "content": "evil"}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_perm_1"),
-                provider: None,
-                name: "write_file".into(),
+                call: CallId::from_wire("call_perm_1"),
+                name: ToolName::new("write_file").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: "Permission denied".to_string(),
                     additional_params: None,
@@ -1096,21 +1069,19 @@ fn hydrate_unflagged_doom_loop_text_rehydrates_as_none() {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_doom_1"),
-                provider: None,
+                id: CallId::from_wire("call_doom_1"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "nu".to_string(),
+                    name: ToolName::new("nu").expect("should be non-empty"),
                     arguments: json!({"command": "ls"}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_doom_1"),
-                provider: None,
-                name: "nu".into(),
+                call: CallId::from_wire("call_doom_1"),
+                name: ToolName::new("nu").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: "Doom loop detected: 'nu' called 5 times with identical arguments"
                         .to_string(),
@@ -1254,21 +1225,19 @@ fn hydrate_non_boolean_flag_value_rehydrates_as_none() {
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint("call_flag_bad_1"),
-                provider: None,
+                id: CallId::from_wire("call_flag_bad_1"),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "read_file".to_string(),
+                    name: ToolName::new("read_file").expect("should be non-empty"),
                     arguments: json!({"path": "/tmp/test.txt"}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint("call_flag_bad_1"),
-                provider: None,
-                name: "read_file".into(),
+                call: CallId::from_wire("call_flag_bad_1"),
+                name: ToolName::new("read_file").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: "file contents here".to_string(),
                     additional_params: AdditionalParams::from_entries([(
@@ -1302,21 +1271,19 @@ fn tool_call_entries(call_id: &str, text: &str, flag: Option<bool>) -> Vec<Store
         StoreEntry::Message(Message::Assistant {
             id: None,
             content: vec![AssistantContent::ToolCall(ToolCall {
-                id: ToolCallId::new_or_mint(call_id),
-                provider: None,
+                id: CallId::from_wire(call_id),
                 signature: None,
                 additional_params: None,
                 function: ToolFunction {
-                    name: "read_file".to_string(),
+                    name: ToolName::new("read_file").expect("should be non-empty"),
                     arguments: json!({"path": "/tmp/test.txt"}),
                 },
             })],
         }),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
-                call: ToolCallId::new_or_mint(call_id),
-                provider: None,
-                name: "read_file".into(),
+                call: CallId::from_wire(call_id),
+                name: ToolName::new("read_file").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text {
                     text: text.to_string(),
                     additional_params: flag.and_then(|f| {

@@ -31,10 +31,6 @@ pub struct HookState<S: SessionStore + Clone + Send + Sync> {
     /// Enable/disable the repetition guard (doom-loop + output-repetition
     /// detection). When `false`, the hook chain skips all detector calls.
     pub repetition_guard: bool,
-    /// Shared runtime model handle. The single point of model identity: the
-    /// hook's `on_model_select` routes each turn to its current value. It is
-    /// constructed eagerly at startup and updated on every `switch_model()`.
-    pub shared_model: Arc<Mutex<rig::agent::ModelHandle>>,
     /// Memory backing the conversation (shared with the turn executor).
     pub memory: MemoryOf<S>,
     /// The session/conversation id this hook compacts.

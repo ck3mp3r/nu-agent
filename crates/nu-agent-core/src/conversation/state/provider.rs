@@ -59,8 +59,11 @@ impl ProviderState {
             "copilot" | "github-copilot" | "github_copilot" => CachedProviderClient::Copilot(build_copilot_client(&self.config)?),
             "openai" => {
                 let client = build_openai_client(&self.config)?;
+                // rig 0.43 carries the route in the client's `OpenAIConfig`:
+                // `build_openai_client` already selects `Route::Chat` when a
+                // `base_url` is set, so both variants hold the same client type.
                 if self.config.base_url.is_some() {
-                    CachedProviderClient::OpenAiCompletions(client.completions_api())
+                    CachedProviderClient::OpenAiCompletions(client)
                 } else {
                     CachedProviderClient::OpenAi(client)
                 }
@@ -98,21 +101,21 @@ impl ProviderState {
         Ok(format!("{}/{}", self.config.provider, self.config.model))
     }
 
-    /// Canonical constructor for the shared `ModelHandle`.
+    /// Canonical constructor for the erased completion model.
     ///
     /// Ensures the client is cached for the current config, then erases the
-    /// completion model into a `ModelHandle` built from the **bare** model name
-    /// (`self.config.model`). This is the single production call site of
-    /// `CachedProviderClient::build_model_handle`; both startup and model
-    /// switching route through it so the bare-name extraction lives in exactly
-    /// one place.
-    pub fn build_shared_model_handle(&mut self) -> Result<rig::agent::ModelHandle, LabeledError> {
+    /// completion model into a `DynModel<Completion>` built from the **bare**
+    /// model name (`self.config.model`). Both startup and model switching route
+    /// through it so the bare-name extraction lives in exactly one place.
+    pub fn build_dyn_model(
+        &mut self,
+    ) -> Result<rig::DynModel<rig::operation::Completion>, LabeledError> {
         self.ensure_client_cached()?;
         let client = self
             .cached_client
             .as_ref()
             .ok_or_else(|| LabeledError::new("client must be cached after ensure_client_cached"))?;
-        client.build_model_handle(&self.config.model)
+        client.build_dyn_model(&self.config.model)
     }
 }
 
@@ -141,8 +144,10 @@ impl ProviderManager for ProviderState {
         self.switch_model(model_spec)
     }
 
-    fn build_shared_model_handle(&mut self) -> Result<rig::agent::ModelHandle, LabeledError> {
-        self.build_shared_model_handle()
+    fn build_dyn_model(
+        &mut self,
+    ) -> Result<rig::DynModel<rig::operation::Completion>, LabeledError> {
+        self.build_dyn_model()
     }
 
     fn startup_plugin_config(&self) -> Option<&PluginConfig> {

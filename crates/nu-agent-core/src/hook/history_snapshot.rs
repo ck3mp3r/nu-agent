@@ -1,7 +1,7 @@
 //! History snapshot concern.
 //!
 //! Captures the conversation history just before each LLM HTTP call so that
-//! callers can recover it after a `CompletionError`.
+//! callers can recover it after a `ProviderError`.
 
 use std::sync::{Arc, Mutex};
 
@@ -9,7 +9,7 @@ use rig::message::Message;
 
 /// Captures and exposes a snapshot of the conversation history.
 ///
-/// Updated by the hook's `on_completion_call`. After a `CompletionError`,
+/// Updated by the hook's `on_completion_call`. After a `ProviderError`,
 /// callers can read the last snapshot to recover the history that was live
 /// at the time of the failed LLM call.
 #[derive(Clone)]
@@ -31,7 +31,7 @@ impl HistorySnapshot {
     /// Return a clone of the Arc holding the snapshot.
     ///
     /// Callers should clone this Arc **before** passing the hook into the agent
-    /// builder (which consumes `self`), then read it after a `CompletionError`.
+    /// builder (which consumes `self`), then read it after a `ProviderError`.
     pub fn arc(&self) -> Arc<Mutex<Vec<Message>>> {
         Arc::clone(&self.history)
     }

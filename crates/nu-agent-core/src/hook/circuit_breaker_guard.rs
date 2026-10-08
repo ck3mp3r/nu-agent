@@ -6,7 +6,7 @@
 use std::error::Error as _;
 use std::sync::{Arc, Mutex};
 
-use rig::agent::ToolCallAction;
+use rig::agent::DispatchAction;
 use rig::tool::{ToolExecutionError, ToolResult};
 
 use crate::bus::Bus;
@@ -24,19 +24,19 @@ pub struct CircuitBreakerGuard {
 impl CircuitBreakerGuard {
     /// Check whether the server that owns `tool_name` has been disabled.
     ///
-    /// Returns `Some(ToolCallAction::Skip(...))` if the server is currently disabled, `None` otherwise.
+    /// Returns `Some(DispatchAction::skip(...))` if the server is currently disabled, `None` otherwise.
     pub fn check_server_enabled(
         &self,
         tool_name: &str,
         mcp_registry: &McpToolRegistry,
-    ) -> Option<ToolCallAction> {
+    ) -> Option<DispatchAction> {
         if let Some(server_name) = mcp_registry.server_name_for(tool_name)
             && !mcp_registry.is_server_enabled(server_name)
         {
             log::trace!(
                 "circuit_breaker: MCP server '{server_name}' disabled, skipping {tool_name}"
             );
-            return Some(ToolCallAction::skip(format!(
+            return Some(DispatchAction::skip(format!(
                 "MCP server '{server_name}' is disabled (circuit breaker tripped). \
                      Re-enable via MCP panel."
             )));

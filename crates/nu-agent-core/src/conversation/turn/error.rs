@@ -7,10 +7,11 @@
 //! # `CompletionErrorKind` derivation
 //!
 //! `CompletionFailed::kind` is set at the `From<StreamingError>` boundary by
-//! matching **structurally** on `rig::completion::CompletionError` variants —
+//! matching **structurally** on `rig::error::ProviderError` variants —
 //! no post-hoc string parsing.  String matching is used only as a last resort for
-//! `http_client::Error::Instance(Box<dyn Error>)` and for `ResponseError`/`ProviderError`
-//! payloads where the concrete type has been erased by the provider SDK.
+//! `http_client::Error::Instance(Box<dyn Error>)` and for `ProviderError::Response` /
+//! `ProviderError::Provider` payloads where the concrete type has been erased by the
+//! provider SDK.
 
 use crate::conversation::turn::executor::CompletionErrorKind;
 use crate::types::Message;
@@ -68,7 +69,7 @@ pub enum TurnError {
     /// HTTP / transport / decode failure from the LLM provider.
     ///
     /// `kind` is pre-classified at the `From<StreamingError>` boundary by
-    /// matching on `rig::completion::CompletionError` variants structurally.
+    /// matching on `rig::error::ProviderError` variants structurally.
     CompletionFailed {
         /// Display message from the underlying rig error.
         msg: String,
@@ -125,7 +126,7 @@ impl From<rig::completion::PromptError> for TurnError {
             } => Self::MaxTurnsExceeded {
                 msg: format!("Max turns ({max_turns}) exceeded"),
                 max_turns,
-                messages: *chat_history,
+                messages: chat_history,
             },
             rig::completion::PromptError::UnknownToolCall {
                 tool_name,
@@ -134,7 +135,7 @@ impl From<rig::completion::PromptError> for TurnError {
             } => Self::UnknownTool {
                 msg: format!("Unknown tool: {tool_name}"),
                 tool_name,
-                messages: *chat_history,
+                messages: chat_history,
             },
             rig::completion::PromptError::CompletionError(e) => completion_error_to_turn_error(e),
             other => Self::CompletionFailed {
@@ -145,22 +146,21 @@ impl From<rig::completion::PromptError> for TurnError {
     }
 }
 
-/// Classify a `rig::completion::CompletionError` into a `TurnError::CompletionFailed`.
+/// Classify a `rig::error::ProviderError` into a `TurnError::CompletionFailed`.
 ///
 /// Shared by the `From<StreamingError>` and `From<PromptError>` boundaries so
 /// provider failures wrapped as `PromptError::CompletionError` reach the same
 /// classification as the direct `StreamingError::Completion` path.
-fn completion_error_to_turn_error(err: rig::completion::CompletionError) -> TurnError {
-    use rig::completion::CompletionError;
+fn completion_error_to_turn_error(err: rig::error::ProviderError) -> TurnError {
+    use rig::error::ProviderError;
     use rig::http_client;
 
     let msg = err.to_string();
     match err {
-        CompletionError::HttpError(http_err) => {
-            let kind = match http_err {
-                http_client::Error::InvalidStatusCode(s) => classify_by_status(s.as_u16()),
-                http_client::Error::InvalidStatusCodeWithMessage(s, _) => {
-                    classify_by_status(s.as_u16())
+        ProviderError::Http(http_err) => {
+            let kind = match &*http_err {
+                http_client::Error::InvalidStatusCodeWithDetails { status, .. } => {
+                    classify_by_status(status.as_u16())
                 }
                 http_client::Error::StreamEnded => CompletionErrorKind::Network,
                 http_client::Error::Instance(_) => {
@@ -171,26 +171,44 @@ fn completion_error_to_turn_error(err: rig::completion::CompletionError) -> Turn
             };
             TurnError::CompletionFailed { msg, kind }
         }
-        CompletionError::ResponseError(s) => TurnError::CompletionFailed {
+        ProviderError::Response(s) => TurnError::CompletionFailed {
             kind: classify_from_display(&s),
             msg,
         },
-        CompletionError::ProviderError(s) => TurnError::CompletionFailed {
+        ProviderError::Provider(s) => TurnError::CompletionFailed {
             kind: classify_from_display(&s),
             msg,
         },
-        CompletionError::RequestError(s) => TurnError::CompletionFailed {
+        ProviderError::Request(s) => TurnError::CompletionFailed {
             kind: classify_from_display(&s.to_string()),
             msg,
         },
-        // rig 0.42.0 surfaces a failed streaming handshake (connect-time
+        // rig surfaces a failed streaming handshake (connect-time
         // non-success, e.g. a 500) as `ProviderResponse` carrying the
-        // status and body, instead of `HttpError(InvalidStatusCodeWithMessage)`.
+        // status and body, instead of `Http(InvalidStatusCodeWithDetails)`.
         // Classify by status when present so a 500/503/429 stays retryable.
-        CompletionError::ProviderResponse(e) => {
+        ProviderError::ProviderResponse(e) => {
             let kind = match e.status {
                 Some(status) => classify_by_status(status.as_u16()),
                 None => classify_from_display(&e.body),
+            };
+            TurnError::CompletionFailed { msg, kind }
+        }
+        // The provider rejected the configured credentials with 401 or 403.
+        ProviderError::InvalidAuthentication(_) => TurnError::CompletionFailed {
+            kind: CompletionErrorKind::Auth,
+            msg,
+        },
+        // The reply stopped before the provider ended it — a transport fault.
+        ProviderError::Truncated => TurnError::CompletionFailed {
+            kind: CompletionErrorKind::Network,
+            msg,
+        },
+        // A relayed report preserves the origin's status and message.
+        ProviderError::Relayed(report) => {
+            let kind = match report.http_status {
+                Some(status) => classify_by_status(status),
+                None => classify_from_display(&report.message),
             };
             TurnError::CompletionFailed { msg, kind }
         }
@@ -386,7 +404,7 @@ fn contains_status_token(msg: &str, code: &str) -> bool {
 impl From<rig::agent::StreamingError> for TurnError {
     fn from(e: rig::agent::StreamingError) -> Self {
         match e {
-            rig::agent::StreamingError::Prompt(boxed) => match *boxed {
+            rig::agent::StreamingError::Prompt(prompt_err) => match prompt_err {
                 rig::completion::PromptError::PromptCancelled {
                     reason,
                     chat_history,
@@ -401,7 +419,7 @@ impl From<rig::agent::StreamingError> for TurnError {
                 } => Self::MaxTurnsExceeded {
                     msg: format!("Max turns ({max_turns}) exceeded"),
                     max_turns,
-                    messages: *chat_history,
+                    messages: chat_history,
                 },
                 rig::completion::PromptError::UnknownToolCall {
                     tool_name,
@@ -410,7 +428,7 @@ impl From<rig::agent::StreamingError> for TurnError {
                 } => Self::UnknownTool {
                     msg: format!("Unknown tool: {tool_name}"),
                     tool_name,
-                    messages: *chat_history,
+                    messages: chat_history,
                 },
                 rig::completion::PromptError::CompletionError(e) => {
                     completion_error_to_turn_error(e)
@@ -424,6 +442,14 @@ impl From<rig::agent::StreamingError> for TurnError {
             rig::agent::StreamingError::Completion(completion_err) => {
                 completion_error_to_turn_error(completion_err)
             }
+
+            rig::agent::StreamingError::Report(report) => Self::CompletionFailed {
+                msg: report.message.clone(),
+                kind: match report.http_status {
+                    Some(status) => classify_by_status(status),
+                    None => classify_from_display(&report.message),
+                },
+            },
         }
     }
 }

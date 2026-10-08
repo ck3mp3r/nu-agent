@@ -1,8 +1,9 @@
 use super::journal::CachedMemory;
 use super::store::{CompactionMarker, FsSessionStore, SessionStore as _, StoreEntry};
 use super::store_test::{assert_msg_eq, assert_msgs_eq};
-use crate::types::{Message, Text, ToolCallId, ToolResult, ToolResultContent, UserContent};
+use crate::types::{CallId, Message, Text, ToolName, ToolResult, ToolResultContent, UserContent};
 use chrono::Utc;
+use rig::id::ConversationId;
 use rig::memory::ConversationMemory;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -20,7 +21,7 @@ async fn load_cache_hit_runs_repair() {
     let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
     mem.append(
-        "conv-1",
+        &ConversationId::from("conv-1"),
         vec![
             Message::user("first"),
             Message::user("second"),
@@ -30,7 +31,7 @@ async fn load_cache_hit_runs_repair() {
     .await
     .unwrap();
 
-    let loaded = mem.load("conv-1").await.unwrap();
+    let loaded = mem.load(&ConversationId::from("conv-1")).await.unwrap();
 
     assert_eq!(loaded.len(), 2, "consecutive users should be merged");
     assert!(
@@ -48,7 +49,7 @@ async fn load_empty_returns_empty() {
     let tmp = TempDir::new().unwrap();
     let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
-    let messages = mem.load("conv-1").await.unwrap();
+    let messages = mem.load(&ConversationId::from("conv-1")).await.unwrap();
     assert!(messages.is_empty());
 }
 
@@ -62,7 +63,7 @@ async fn load_returns_stored_messages() {
     let msgs = vec![Message::user("hello"), Message::assistant("hi")];
     store.create("conv-1", &msgs).await.unwrap();
 
-    let loaded = mem.load("conv-1").await.unwrap();
+    let loaded = mem.load(&ConversationId::from("conv-1")).await.unwrap();
     assert_msgs_eq(&loaded, &msgs);
 }
 
@@ -85,7 +86,7 @@ async fn load_returns_raw_messages_without_marker_summary() {
     let entries: Vec<StoreEntry> = recent.iter().cloned().map(StoreEntry::Message).collect();
     store.append("conv-1", &entries).await.unwrap();
 
-    let loaded = mem.load("conv-1").await.unwrap();
+    let loaded = mem.load(&ConversationId::from("conv-1")).await.unwrap();
 
     // The marker summary must NOT be prepended as a system message.
     // CachedMemory::load() returns the raw messages so the CompactingMemory
@@ -112,7 +113,7 @@ async fn load_is_cached() {
     store.create("conv-1", &msgs).await.unwrap();
 
     // First load: cache miss
-    let first = mem.load("conv-1").await.unwrap();
+    let first = mem.load(&ConversationId::from("conv-1")).await.unwrap();
     assert_eq!(first.len(), 2);
 
     // Mutate the JSONL file — add more messages (bypasses cache)
@@ -120,7 +121,7 @@ async fn load_is_cached() {
     store.append("conv-1", &extra_entries).await.unwrap();
 
     // Second load: cache hit
-    let second = mem.load("conv-1").await.unwrap();
+    let second = mem.load(&ConversationId::from("conv-1")).await.unwrap();
     assert_eq!(
         second.len(),
         2,
@@ -134,9 +135,11 @@ async fn append_writes_to_memory_and_store() {
     let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
     let msgs = vec![Message::user("hello"), Message::assistant("hi")];
-    mem.append("conv-1", msgs.clone()).await.unwrap();
+    mem.append(&ConversationId::from("conv-1"), msgs.clone())
+        .await
+        .unwrap();
 
-    let cached = mem.load("conv-1").await.unwrap();
+    let cached = mem.load(&ConversationId::from("conv-1")).await.unwrap();
     assert_msgs_eq(&cached, &msgs);
 
     // Check store via load_all
@@ -150,16 +153,18 @@ async fn clear_resets_cache_not_store() {
     let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
     let msgs = vec![Message::user("hello"), Message::assistant("hi")];
-    mem.append("conv-1", msgs.clone()).await.unwrap();
+    mem.append(&ConversationId::from("conv-1"), msgs.clone())
+        .await
+        .unwrap();
 
-    mem.clear("conv-1").await.unwrap();
+    mem.clear(&ConversationId::from("conv-1")).await.unwrap();
 
     // Store still has messages
     let entries = mem.load_all("conv-1").await.unwrap();
     assert_eq!(entries.len(), msgs.len(), "Store should not be cleared");
 
     // Subsequent load should re-read from store
-    let reloaded = mem.load("conv-1").await.unwrap();
+    let reloaded = mem.load(&ConversationId::from("conv-1")).await.unwrap();
     assert_msgs_eq(&reloaded, &msgs);
 }
 
@@ -170,9 +175,13 @@ async fn append_after_clear_no_duplicate() {
 
     let msgs = vec![Message::user("hello"), Message::assistant("hi")];
 
-    mem.append("conv-1", msgs.clone()).await.unwrap();
-    mem.clear("conv-1").await.unwrap();
-    mem.append("conv-1", msgs.clone()).await.unwrap();
+    mem.append(&ConversationId::from("conv-1"), msgs.clone())
+        .await
+        .unwrap();
+    mem.clear(&ConversationId::from("conv-1")).await.unwrap();
+    mem.append(&ConversationId::from("conv-1"), msgs.clone())
+        .await
+        .unwrap();
 
     let entries = mem.load_all("conv-1").await.unwrap();
     assert_eq!(
@@ -191,12 +200,12 @@ async fn reset_context_replaces_cache_only() {
     let original = vec![Message::user("original")];
     store.create("conv-1", &original).await.unwrap();
 
-    let _ = mem.load("conv-1").await.unwrap();
+    let _ = mem.load(&ConversationId::from("conv-1")).await.unwrap();
 
     let new_msgs = vec![Message::user("replaced"), Message::assistant("answer")];
     mem.reset_context("conv-1", new_msgs.clone());
 
-    let cached = mem.load("conv-1").await.unwrap();
+    let cached = mem.load(&ConversationId::from("conv-1")).await.unwrap();
     assert_msgs_eq(&cached, &new_msgs);
 
     // Store unchanged
@@ -213,7 +222,7 @@ async fn append_marker_writes_to_store_only() {
     let tmp = TempDir::new().unwrap();
     let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
 
-    let _ = mem.load("conv-1").await.unwrap();
+    let _ = mem.load(&ConversationId::from("conv-1")).await.unwrap();
 
     let marker = CompactionMarker::new("Summary".to_string(), Utc::now());
     mem.append_marker("conv-1", &marker).await.unwrap();
@@ -222,7 +231,7 @@ async fn append_marker_writes_to_store_only() {
     assert_eq!(entries.len(), 1);
     assert!(matches!(&entries[0], StoreEntry::Marker(_)));
 
-    let cached = mem.load("conv-1").await.unwrap();
+    let cached = mem.load(&ConversationId::from("conv-1")).await.unwrap();
     assert!(
         cached.is_empty(),
         "cache should not be updated by append_marker"
@@ -237,7 +246,7 @@ async fn append_messages_to_store_only_no_cache_update() {
     let store = FsSessionStore::new(tmp.path().to_path_buf());
     let initial = vec![Message::user("initial"), Message::assistant("reply")];
     store.create("conv-1", &initial).await.unwrap();
-    let _ = mem.load("conv-1").await.unwrap();
+    let _ = mem.load(&ConversationId::from("conv-1")).await.unwrap();
 
     let extra = vec![Message::user("store-only")];
     mem.append_messages_to_store_only("conv-1", &extra)
@@ -247,7 +256,7 @@ async fn append_messages_to_store_only_no_cache_update() {
     let entries = mem.load_all("conv-1").await.unwrap();
     assert_eq!(entries.len(), 3);
 
-    let cached = mem.load("conv-1").await.unwrap();
+    let cached = mem.load(&ConversationId::from("conv-1")).await.unwrap();
     assert_eq!(
         cached.len(),
         2,
@@ -271,7 +280,7 @@ async fn no_duplication_when_appending_deltas_sequentially() {
 
     memory
         .append(
-            conversation_id,
+            &ConversationId::from(conversation_id),
             vec![
                 crate::types::Message::user("turn1"),
                 crate::types::Message::assistant("ok1"),
@@ -289,7 +298,7 @@ async fn no_duplication_when_appending_deltas_sequentially() {
 
     memory
         .append(
-            conversation_id,
+            &ConversationId::from(conversation_id),
             vec![
                 crate::types::Message::user("turn2"),
                 crate::types::Message::assistant("[Turn failed: network error]"),
@@ -306,7 +315,7 @@ async fn no_duplication_when_appending_deltas_sequentially() {
     );
 
     let after_turn2 = memory
-        .load(conversation_id)
+        .load(&ConversationId::from(conversation_id))
         .await
         .expect("load should succeed");
     assert_eq!(
@@ -317,7 +326,7 @@ async fn no_duplication_when_appending_deltas_sequentially() {
 
     memory
         .append(
-            conversation_id,
+            &ConversationId::from(conversation_id),
             vec![
                 crate::types::Message::user("turn3"),
                 crate::types::Message::assistant("[Turn failed: timeout]"),
@@ -334,7 +343,7 @@ async fn no_duplication_when_appending_deltas_sequentially() {
     );
 
     let after_turn3 = memory
-        .load(conversation_id)
+        .load(&ConversationId::from(conversation_id))
         .await
         .expect("load should succeed");
     assert_eq!(
@@ -388,8 +397,8 @@ async fn append_stamps_recorded_true_verdict() -> Result<()> {
 
     // -- Exec
     mem.append(
-        "conv-verdict-true",
-        vec![tool_result_message("tc1", "all good")],
+        &ConversationId::from("conv-verdict-true"),
+        vec![tool_result_message("tc1", "all good")?],
     )
     .await
     .map_err(|e| format!("append: {e:?}"))?;
@@ -418,8 +427,8 @@ async fn append_stamps_recorded_false_verdict() -> Result<()> {
 
     // -- Exec
     mem.append(
-        "conv-verdict-false",
-        vec![tool_result_message("tc1", "the tool failed")],
+        &ConversationId::from("conv-verdict-false"),
+        vec![tool_result_message("tc1", "the tool failed")?],
     )
     .await
     .map_err(|e| format!("append: {e:?}"))?;
@@ -449,14 +458,14 @@ async fn append_consumes_verdict_after_first_stamp() -> Result<()> {
 
     // -- Exec
     mem.append(
-        "conv-consume-once",
-        vec![tool_result_message("tc1", "first")],
+        &ConversationId::from("conv-consume-once"),
+        vec![tool_result_message("tc1", "first")?],
     )
     .await
     .map_err(|e| format!("append 1: {e:?}"))?;
     mem.append(
-        "conv-consume-once",
-        vec![tool_result_message("tc1", "second")],
+        &ConversationId::from("conv-consume-once"),
+        vec![tool_result_message("tc1", "second")?],
     )
     .await
     .map_err(|e| format!("append 2: {e:?}"))?;
@@ -489,8 +498,8 @@ async fn append_without_recorded_verdict_leaves_tool_result_unstamped() -> Resul
 
     // -- Exec
     mem.append(
-        "conv-unstamped",
-        vec![tool_result_message("tc1", "plain output")],
+        &ConversationId::from("conv-unstamped"),
+        vec![tool_result_message("tc1", "plain output")?],
     )
     .await
     .map_err(|e| format!("append: {e:?}"))?;
@@ -522,11 +531,11 @@ async fn append_stamps_batched_tool_results_per_call_id() -> Result<()> {
     // -- Exec
     let batched = Message::User {
         content: vec![
-            tool_result("tc1", "first ok"),
-            tool_result("tc2", "second failed"),
+            tool_result("tc1", "first ok")?,
+            tool_result("tc2", "second failed")?,
         ],
     };
-    mem.append("conv-batched", vec![batched])
+    mem.append(&ConversationId::from("conv-batched"), vec![batched])
         .await
         .map_err(|e| format!("append: {e:?}"))?;
     let entries = mem
@@ -548,24 +557,23 @@ async fn append_stamps_batched_tool_results_per_call_id() -> Result<()> {
 
 /// Build a ToolResult for `call_id` with one Text block holding `text` (no
 /// additional params).
-fn tool_result(call_id: &str, text: &str) -> UserContent {
-    UserContent::ToolResult(ToolResult {
-        call: ToolCallId::new_or_mint(call_id),
-        provider: None,
-        name: "test_tool".into(),
+fn tool_result(call_id: &str, text: &str) -> Result<UserContent> {
+    Ok(UserContent::ToolResult(ToolResult {
+        call: CallId::from_wire(call_id),
+        name: ToolName::new("test_tool").map_err(|_| "non-empty tool name")?,
         content: vec![ToolResultContent::Text(Text {
             text: text.to_string(),
             additional_params: None,
         })],
-    })
+    }))
 }
 
 /// Build a User message carrying one ToolResult for `call_id` with one Text
 /// block holding `text` (no additional params).
-fn tool_result_message(call_id: &str, text: &str) -> Message {
-    Message::User {
-        content: vec![tool_result(call_id, text)],
-    }
+fn tool_result_message(call_id: &str, text: &str) -> Result<Message> {
+    Ok(Message::User {
+        content: vec![tool_result(call_id, text)?],
+    })
 }
 
 /// Read the `nu_agent_success` boolean from the first Text block of the

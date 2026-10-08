@@ -44,11 +44,11 @@ pub(super) fn default_tool_infra(bus: Bus) -> ToolInfra {
 }
 
 /// Build a `TurnExecutor` with a deterministic compaction config and the given
-/// shared model handle.
+/// shared model.
 pub(super) fn make_executor<'a, ST, S>(
     config: &'a Config,
     memory_state: &'a mut S,
-    model: Arc<std::sync::Mutex<rig::agent::ModelHandle>>,
+    model: Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>>,
     tool_infra: ToolInfra,
 ) -> TurnExecutor<'a, S, ST>
 where

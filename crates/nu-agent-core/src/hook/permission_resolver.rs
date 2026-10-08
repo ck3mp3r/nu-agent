@@ -25,7 +25,7 @@ use crate::tools::handler::{
     AuthorizationFlowContext, McpToolRegistry, ToolSource, builtin_kinds::BuiltinKind,
     enforce_authorization_for_tool_call, pre_authorize_fs_tool,
 };
-use crate::types::{ToolCall, ToolCallId, ToolFunction};
+use crate::types::{CallId, ToolCall, ToolFunction, ToolName};
 
 pub(crate) fn resolve_tool_source(
     name: &str,
@@ -132,7 +132,7 @@ pub trait AsyncPermissionResolver: Clone + Send + Sync + 'static {
     /// diff) was already shown to the user for the given `(tool_name,
     /// arguments)` pair during `resolve()`.
     ///
-    /// `HookChain::on_tool_result` calls this after the tool finishes, to
+    /// `HookChain::on_outcome` calls this after the tool finishes, to
     /// decide whether the completion event should still carry its own copy
     /// of the same display. This is the single, deterministic source of
     /// truth for "was this already shown" — resolved synchronously inside
@@ -184,9 +184,14 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
                 .unwrap_or(JsonValue::Object(serde_json::Map::new()));
             let call_id = tool_call_id.unwrap_or_else(|| "synthetic".to_string());
             let source = resolve_tool_source(&tool_name, &closure_registry, &mcp_registry);
+            let Ok(tool_name_typed) = ToolName::new(tool_name.clone()) else {
+                return PermissionDecision::Deny {
+                    reason: "Permission denied: empty tool name".to_string(),
+                };
+            };
             let tool_call = ToolCall::new(
-                ToolCallId::new_or_mint(call_id),
-                ToolFunction::new(tool_name.clone(), args_json),
+                CallId::from_wire(call_id),
+                ToolFunction::new(tool_name_typed, args_json),
             );
             let flow_context = AuthorizationFlowContext {
                 ask_context: AskContext::default(),
@@ -290,7 +295,7 @@ pub struct InteractivePermissionResolver {
     /// Keys (`"{tool_name}\n{arguments}"`) for which a pre-authorize preview
     /// was published to the user during `resolve()`. Consumed (removed) by
     /// [`AsyncPermissionResolver::take_previewed`] once `HookChain` checks
-    /// it, so `on_tool_result` never attaches the same display twice.
+    /// it, so `on_outcome` never attaches the same display twice.
     previewed: Arc<StdMutex<std::collections::HashSet<String>>>,
 }
 
@@ -373,9 +378,14 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 .and_then(|kind| pre_authorize_fs_tool(Some(kind), &args_json, &cwd))
                 .map(|output| output.ask_context)
                 .unwrap_or_default();
+            let Ok(tool_name_typed) = ToolName::new(tool_name.clone()) else {
+                return PermissionDecision::Deny {
+                    reason: "Permission denied: empty tool name".to_string(),
+                };
+            };
             let tool_call = ToolCall::new(
-                ToolCallId::new_or_mint(call_id),
-                ToolFunction::new(tool_name.clone(), args_json),
+                CallId::from_wire(call_id),
+                ToolFunction::new(tool_name_typed, args_json),
             );
             let flow_context = AuthorizationFlowContext { ask_context };
 

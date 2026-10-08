@@ -100,10 +100,10 @@ pub struct TurnExecutor<
     pub config: &'a Config,
     pub memory_state: &'a mut S,
     pub tool_infra: ToolInfra,
-    /// Shared runtime model handle used to build each turn's agent and route
-    /// model selection. Cloned into every `TurnConversation`. It is constructed
-    /// eagerly at startup.
-    pub shared_model: Arc<Mutex<rig::agent::ModelHandle>>,
+    /// Shared runtime model used to build each turn's agent. Cloned into every
+    /// `TurnConversation`. It is constructed eagerly at startup and swapped by
+    /// `switch_model()`.
+    pub dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
     /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
     pub compaction: CompactionConfig<ST>,
     /// Stored after a completed turn so the delegate can extract it for response formatting.
@@ -122,14 +122,14 @@ where
         config: &'a Config,
         memory_state: &'a mut S,
         tool_infra: ToolInfra,
-        shared_model: Arc<Mutex<rig::agent::ModelHandle>>,
+        dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
         compaction: CompactionConfig<ST>,
     ) -> Self {
         Self {
             config,
             memory_state,
             tool_infra,
-            shared_model,
+            dyn_model,
             compaction,
             response_data: None,
         }
@@ -199,7 +199,7 @@ where
         if let Err(mem_err) = self
             .memory_state
             .memory_mut()
-            .append(session_id, messages)
+            .append(&rig::id::ConversationId::from(session_id), messages)
             .await
         {
             log::error!("Failed to append session memory ({label}): {mem_err}");

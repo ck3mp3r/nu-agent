@@ -199,7 +199,7 @@ async fn journey_three_batched_tool_calls_in_one_response() -> Result<()> {
     for id in ["tc1", "tc2", "tc3"] {
         assert!(
             content.iter().any(
-                |c| matches!(c, rig::message::UserContent::ToolResult(tr) if tr.call.as_str() == id)
+                |c| matches!(c, rig::message::UserContent::ToolResult(tr) if tr.call.wire().as_ref() == id)
             ),
             "ToolResult {id} missing from batched user message; content: {content:?}"
         );
