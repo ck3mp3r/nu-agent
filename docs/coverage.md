@@ -83,8 +83,8 @@ Cobertura XML, for CI systems that expect that format.
 Restrict the run and the report to one crate with `-p`:
 
 ```sh
-cargo llvm-cov -p nu-agent-core --html
-cargo llvm-cov -p nu-agent-tui --lcov --output-path lcov-tui.info
+cargo llvm-cov -p agnt-core --html
+cargo llvm-cov -p agnt-tui --lcov --output-path lcov-tui.info
 ```
 
 `--exclude` removes a crate from both the test run and the report. `--exclude-from-test` and `--exclude-from-report` remove it from only one of the two.
@@ -165,7 +165,7 @@ Tests run under [`cargo-nextest`](https://nexte.st). Profiles are defined in `.c
 | `integration` | `cargo nextest run --features integration --profile integration` | All tests — lower parallelism, one retry for flaky server tests |
 | `ci` | `cargo nextest run --features integration --profile ci` | Full suite for CI — no retries, JUnit XML output |
 
-Integration test modules are gated behind the `integration` cargo feature, so the default profile runs unit tests only. The `integration` feature is defined in `nu-agent-a2a`, `nu-agent-core`, `nu-agent-tui`, and `nu-agent`; enabling it on `nu-agent` or `nu-agent-tui` propagates to the other two crates.
+Integration test modules are gated behind the `integration` cargo feature, so the default profile runs unit tests only. The `integration` feature is defined in `agnt-a2a`, `agnt-core`, `agnt-tui`, and `agnt-plugin`; enabling it on `agnt-plugin` or `agnt-tui` propagates to the other two crates.
 
 The Nix dev shell wraps the profiles as `tests` (unit only), `tests-all` (unit + integration), and `tests-integration` (integration only, with retries).
 

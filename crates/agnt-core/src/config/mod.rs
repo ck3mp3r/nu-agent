@@ -1,0 +1,23 @@
+pub mod defaults;
+pub mod dotenv;
+pub mod env;
+pub mod file_backend;
+pub mod keychain_backend;
+pub mod loader;
+pub mod models_cache;
+pub mod resolver;
+pub mod toml_config;
+pub mod types;
+pub mod vault;
+
+pub use loader::{
+    ConfigLoadError, load_and_resolve_config, resolve_preamble_for_model, resolve_role_config,
+};
+pub use models_cache::{ModelSpec, ModelsCache, ProviderSpec};
+pub use toml_config::{TomlConfigError, config_path, load};
+pub use types::*;
+pub use vault::{CredentialType, ProviderEntry, Vault, VaultBackendKind, VaultError};
+
+#[cfg(test)]
+#[path = "../../test/config/test.rs"]
+mod test;

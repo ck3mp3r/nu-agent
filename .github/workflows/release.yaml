@@ -2,6 +2,12 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      prerelease:
+        description: "Pre-release label (for example rc). Set only for a pre-release from main."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   packages: write
@@ -18,6 +24,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.prep.outputs.version }}
+      base_version: ${{ steps.prep.outputs.base_version }}
+      prerelease: ${{ steps.prep.outputs.prerelease }}
+      suffix: ${{ steps.prep.outputs.suffix }}
+      branch: ${{ steps.prep.outputs.branch }}
+      flow: ${{ steps.prep.outputs.flow }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -25,21 +36,109 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.ref }}
 
-      - name: Setup Nu Tools
-        uses: ck3mp3r/actions/nu-tools@main
+      - name: Setup CI Tools
+        uses: ck3mp3r/actions/ci-tools@main
 
       - name: Prepare release
         id: prep
         shell: nu {0}
         run: |
-          use nu-tools *
-          setup-git-user
+          use ci *
 
-          let current_version = (open Cargo.toml).package.version
-          let latest_tag = (get-latest-tag)
-          let version = (semver-calculate $latest_tag $current_version | create-release-branch)
-          update-cargo-version $version | commit-files $"Prepare release ($version)"
-          $"version=($version)" | save --append $env.GITHUB_OUTPUT
+          # The ci module returns status records instead of raising errors.
+          # Fail the step when a critical call reports a non-success status.
+          def ensure-ok [what: string]: any -> any {
+            let r = $in
+            if ($r | describe | str starts-with "record") {
+              let status = ($r | get -o status | default "success")
+              let err = ($r | get -o error | default null)
+              if $status != "success" or ($err | is-not-empty) {
+                let msg = ($err | default "unknown error")
+                error make {msg: $"($what) failed: ($msg)"}
+              }
+            }
+            $r
+          }
+
+          "github-actions[bot]@users.noreply.github.com" | ci scm config
+
+          let ref_name = "${{ github.ref_name }}"
+          let prerelease_input = "${{ inputs.prerelease }}"
+          let from_main = ($ref_name == "main")
+
+          # Flow detection:
+          #   full              -> main, no prerelease input
+          #   prerelease-main   -> main, prerelease input set
+          #   prerelease-branch -> any non-main branch
+          let flow = if not $from_main {
+            "prerelease-branch"
+          } else if ($prerelease_input | is-not-empty) {
+            "prerelease-main"
+          } else {
+            "full"
+          }
+          let prerelease = ($flow != "full")
+
+          let current_version = (open Cargo.toml).workspace.package.version
+
+          # Suffix:
+          #   branch pre-release -> short SHA of HEAD (unique, no collision)
+          #   main pre-release   -> explicit label + incrementing number (rc.1, rc.2)
+          let suffix = if $flow == "prerelease-branch" {
+            git rev-parse --short HEAD | str trim
+          } else if $flow == "prerelease-main" {
+            let label = $prerelease_input
+            let prefix = $"v($current_version)-($label)."
+            let existing = (git tag --list $"($prefix)*" | lines | where {|t| $t | is-not-empty })
+            let next = if ($existing | is-empty) {
+              1
+            } else {
+              let numbers = ($existing | each {|t| $t | str replace $prefix "" | into int })
+              ($numbers | math max) + 1
+            }
+            $"($label).($next)"
+          } else {
+            ""
+          }
+
+          # Base version:
+          #   full               -> semver bump from the latest tag
+          #   main pre-release   -> current version (suffix appended)
+          #   branch pre-release -> current version (suffix appended, not written to Cargo.toml)
+          let base_version = if $flow == "full" {
+            ci scm semver (ci scm latest-tag) $current_version
+          } else {
+            $current_version
+          }
+          let version = if $prerelease { $"($base_version)-($suffix)" } else { $base_version }
+
+          # Branch:
+          #   full / main pre-release -> release/<version> created from main
+          #   branch pre-release      -> the feature branch itself (no release branch)
+          let branch = if $flow == "prerelease-branch" {
+            $ref_name
+          } else {
+            $"release/($version)"
+          }
+
+          if $flow != "prerelease-branch" {
+            # Create and push the release branch from main. --reuse recovers a
+            # release branch left behind by a previous failed run instead of
+            # silently continuing on main.
+            $version | ci scm branch --release --version $version --from $ref_name --reuse --push | ensure-ok "ci scm branch"
+            # Update the package version and refresh Cargo.lock
+            let files = (ci cargo update-version $version | ensure-ok "ci cargo update-version")
+            $files | ci scm commit -m $"Prepare release ($version)" --push | ensure-ok "ci scm commit (version bump)"
+          }
+
+          [
+            $"version=($version)"
+            $"base_version=($base_version)"
+            $"prerelease=($prerelease)"
+            $"suffix=($suffix)"
+            $"branch=($branch)"
+            $"flow=($flow)"
+          ] | save --append $env.GITHUB_OUTPUT
 
   build:
     needs: prep-release
@@ -56,10 +155,10 @@ jobs:
           - os: ubuntu-24.04-arm
             nix_system: aarch64-linux
     steps:
-      - name: Checkout release branch
+      - name: Checkout build branch
         uses: actions/checkout@v7
         with:
-          ref: release/${{ needs.prep-release.outputs.version }}
+          ref: ${{ needs.prep-release.outputs.branch }}
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v23
@@ -97,15 +196,15 @@ jobs:
           app-id: ${{ secrets.BOT_ID }}
           private-key: ${{ secrets.BOT }}
 
-      - name: Checkout release branch
+      - name: Checkout build branch
         uses: actions/checkout@v7
         with:
-          ref: release/${{ needs.prep-release.outputs.version }}
+          ref: ${{ needs.prep-release.outputs.branch }}
           fetch-depth: 0
           token: ${{ steps.token.outputs.token }}
 
-      - name: Setup Nu Tools
-        uses: ck3mp3r/actions/nu-tools@main
+      - name: Setup CI Tools
+        uses: ck3mp3r/actions/ci-tools@main
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
@@ -115,13 +214,40 @@ jobs:
       - name: Finalize release
         shell: nu {0}
         run: |
-          use nu-tools *
-          setup-git-user
+          use ci *
+
+          # The ci module returns status records instead of raising errors.
+          # Fail the step when a critical call reports a non-success status.
+          def ensure-ok [what: string]: any -> any {
+            let r = $in
+            if ($r | describe | str starts-with "record") {
+              let status = ($r | get -o status | default "success")
+              let err = ($r | get -o error | default null)
+              if $status != "success" or ($err | is-not-empty) {
+                let msg = ($err | default "unknown error")
+                error make {msg: $"($what) failed: ($msg)"}
+              }
+            }
+            $r
+          }
+
+          "github-actions[bot]@users.noreply.github.com" | ci scm config
 
           let version = "${{ needs.prep-release.outputs.version }}"
+          let base_version = "${{ needs.prep-release.outputs.base_version }}"
+          let prerelease = "${{ needs.prep-release.outputs.prerelease }}"
+          let suffix = "${{ needs.prep-release.outputs.suffix }}"
+          let branch = "${{ needs.prep-release.outputs.branch }}"
+          let flow = "${{ needs.prep-release.outputs.flow }}"
+          # version already carries the suffix for pre-releases
+          let release_tag = $"v($version)"
 
           # Generate platform data and commit
-          generate-platform-data-for $version "nu-agent" "./artifacts" | commit-files $"Add platform data for release ($version)"
+          let data_files = (ci artifacts platform-data $version "./artifacts" "nu-agent" --tag $release_tag)
+          if ($data_files | is-empty) {
+            error make {msg: "ci artifacts platform-data produced no files"}
+          }
+          $data_files | ci scm commit -m $"Add platform data for release ($version)" --push | ensure-ok "ci scm commit (platform data)"
 
           # Prepare architecture data with hashes
           let architectures = [
@@ -144,17 +270,29 @@ jobs:
           ]
 
           # Update Homebrew formula
-          open Formula/nu-agent.rb | update-homebrew-formula $version "nu-agent" $architectures | save --force Formula/nu-agent.rb
+          open Formula/nu-agent.rb | ci homebrew update-formula $version "nu-agent" $architectures | save --force Formula/nu-agent.rb
 
           # Commit the formula update
-          ["Formula/nu-agent.rb"] | commit-files $"Update Homebrew formula for ($version)"
+          ["Formula/nu-agent.rb"] | ci scm commit -m $"Update Homebrew formula for ($version)" --push | ensure-ok "ci scm commit (formula)"
 
-          # Merge and cleanup
-          merge-and-cleanup $version
+          # Full releases merge the release branch back to main
+          if $flow == "full" {
+            ci scm merge $branch -m $"Release ($version)" --push | ensure-ok "ci scm merge"
+          }
 
-          # Create release and upload artifacts using gh CLI
-          create-github-release $version
-          glob "./artifacts/**/*.*" | upload-release-artifacts $version
+          # Create release and upload artifacts
+          if $prerelease == "true" {
+            ci github release create $base_version --prerelease --suffix $suffix --target $branch | ensure-ok "ci github release create"
+          } else {
+            ci github release create $version | ensure-ok "ci github release create"
+          }
+          glob "./artifacts/**/*.*" | ci github release upload $release_tag | ensure-ok "ci github release upload"
+
+          # Clean up the release branch for full releases and main pre-releases.
+          # Branch pre-releases build from the feature branch — nothing to clean up.
+          if $flow != "prerelease-branch" {
+            ci scm cleanup $branch --remote --local
+          }
 
         env:
           GITHUB_TOKEN: ${{ steps.token.outputs.token }}

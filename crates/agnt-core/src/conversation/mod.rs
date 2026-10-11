@@ -1,0 +1,14 @@
+pub mod builder;
+pub mod compaction;
+pub mod managers;
+pub mod mcp_helpers;
+pub mod mode_logic;
+pub mod providers;
+pub mod runtime;
+pub mod runtime_build;
+pub mod state;
+pub mod turn;
+
+#[cfg(test)]
+#[path = "../../test/conversation/helpers.rs"]
+pub mod test_helpers;

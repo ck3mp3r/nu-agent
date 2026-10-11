@@ -2,6 +2,8 @@
 
 Nushell plugin for running an LLM agent from pipelines.
 
+<!-- test edit: ok -->
+
 ## Quick Start
 
 ```bash
@@ -42,9 +44,10 @@ Use it:
 
 ## Module/Test Layout Convention
 
-- Single-file module: `foo.rs` + `foo_test.rs`
-- Multi-file module: `foo/mod.rs` + `foo/test.rs`
-- Forbidden mixed pattern: `foo.rs` + `foo/test.rs`
+- Tests live in a crate-root `test/` directory, mirroring `src/`
+- Single-file module: `src/foo.rs` + `test/foo.rs`
+- Multi-file module: `src/foo/mod.rs` + `test/foo/test.rs`
+- Forbidden mixed pattern: `src/foo.rs` + `test/foo/test.rs`
 
 ## TUI transcript rendering
 
@@ -56,3 +59,4 @@ falls back to stable plain code text so transcript readability is preserved.
 Wrapped transcript rows keep their lane alignment: role icons (⚙, ~, ·) appear
 on the first row only, list items hang-indent under their marker text, and edit
 diffs render one visual row per diff line with no stray blank rows.
+

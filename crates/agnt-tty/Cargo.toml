@@ -1,0 +1,11 @@
+[package]
+name = "agnt-tty"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+agnt-core = { workspace = true }
+nu-protocol = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]

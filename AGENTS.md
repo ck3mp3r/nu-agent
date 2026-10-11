@@ -48,6 +48,7 @@ crates/<crate>/
 - The `mod` declaration name is independent of the filename — `mod foo_test` can point to `test/foo.rs`
 - Test support files (`helpers.rs`, `support.rs`, `shared.rs`, `driver.rs`, `utils.rs`) also live in `test/`
 - Keep test files focused and organized by module
+- **Test file size limit:** No test file shall exceed 500 lines. When a test file reaches this limit, split it into topical subfiles in a subdirectory of the same name (e.g. `test/session.rs` → `test/session/lifecycle.rs`, `test/session/cancel.rs`, etc.). Shared support code stays in a `test/session/support.rs` file. The `#[path]` wiring in the source module declares each split file as a separate `#[cfg(test)]` module
 - Declare each test module from its production module with `#[cfg(test)]` and a `#[path]` attribute. `#[path]` resolves relative to the declaring file, so the path must escape `src/`:
   ```rust
   // region:    --- Tests
@@ -71,6 +72,10 @@ crates/<crate>/
 
 Tests are split into **unit** and **integration** categories. Integration tests spin up real servers, bind TCP ports, do network I/O, or are inherently slow. Unit tests are pure logic with no network and no real servers.
 
+**Unit test speed limit:** Every unit test MUST complete in under 1 second. If a test constructs a real HTTP client (`reqwest::Client`), performs TLS initialization (`rustls`/`ensure_crypto_provider`), opens a database, loads a system keychain, or resolves config from disk, it is an integration test — gate it behind `#[cfg(all(test, feature = "integration"))]` regardless of where the test file lives.
+
+**Unit tests MUST NOT call integration-level constructors.** Functions like `build_acp_runtime()` that construct real provider clients, build HTTP clients, or probe keychains are integration-level. A unit test that calls such a function directly or transitively (e.g., through `new_session()` → `open_session()` → `build_acp_runtime()`) is an integration test in disguise. Inject a mock builder instead.
+
 Integration test modules are gated behind the `integration` cargo feature:
 
 ```rust
@@ -79,7 +84,7 @@ Integration test modules are gated behind the `integration` cargo feature:
 mod test;
 ```
 
-The feature is defined in `crates/nu-agent-a2a/Cargo.toml`, `crates/nu-agent-core/Cargo.toml`, `crates/nu-agent-tui/Cargo.toml`, and `crates/nu-agent/Cargo.toml`. Enabling it on `nu-agent` or `nu-agent-tui` propagates to `nu-agent-core` and `nu-agent-a2a`.
+The feature is defined in `crates/agnt-a2a/Cargo.toml`, `crates/agnt-core/Cargo.toml`, `crates/agnt-tui/Cargo.toml`, and `crates/agnt-plugin/Cargo.toml`. Enabling it on `agnt-plugin` or `agnt-tui` propagates to `agnt-core` and `agnt-a2a`.
 
 `cargo nextest` is the test runner. Profiles live in `.config/nextest.toml`:
 
@@ -104,11 +109,11 @@ The pre-push hook runs the full suite: `cargo clippy --all-features --tests -- -
 
 Integration test modules:
 
-- `nu-agent-a2a` — `test/server/`, `test/agent/`, `test/client/a2a_client.rs`, `test/client/functions.rs`, `test/discovery/test.rs`, `test/tools/test.rs`, `test/task_store/test.rs`
-- `nu-agent-core` — `test/conversation/turn/test.rs`, `test/conversation/turn/executor/`, `test/session/sqlite_store.rs`, `test/tools/mcp/oauth_callback.rs`
-- `nu-agent` — `test/command/agent/a2a_card_switch.rs`, `test/command/session/clear.rs`, `test/command/session/inspect.rs`, `test/command/session/list.rs`
+- `agnt-a2a` — `test/server/`, `test/agent/`, `test/client/a2a_client.rs`, `test/client/functions.rs`, `test/discovery/test.rs`, `test/tools/test.rs`, `test/task_store/test.rs`
+- `agnt-core` — `test/conversation/turn/test.rs`, `test/conversation/turn/executor/`, `test/session/sqlite_store.rs`, `test/tools/mcp/oauth_callback.rs`
+- `agnt-plugin` — `test/command/session/clear.rs`, `test/command/session/inspect.rs`, `test/command/session/list.rs`
 
-All other test modules are unit tests. `nu-agent-tui` and `nu-agent-tty` have no integration test modules.
+All other test modules are unit tests. `agnt-tui` and `agnt-tty` have no integration test modules.
 
 ### No test-only code in production
 
@@ -134,6 +139,54 @@ All other test modules are unit tests. `nu-agent-tui` and `nu-agent-tty` have no
 - If a test needs to inspect internal state, the test is testing implementation details — rewrite it to assert outcomes through the public API, not add a backdoor
 - `pub(crate)` on a field or method just so tests can peek at internal state is the same code smell as `#[cfg(test)]` accessors
 
+### Banned Test Anti-Patterns
+
+These test patterns are **banned**. They verify what the compiler already enforces for free. They give false confidence by inflating the test count without testing any behavior.
+
+- ❌ NO: **Compile-time trait-bound assertion tests** — `fn assert_send<T: Send>() {}` / `assert_send::<MyType>()`. If the type were not `Send`, the crate would not compile. The test adds zero information.
+- ❌ NO: **`assert_sync` / `assert_sink` / `assert_<Trait>` probe tests** — same tautology. The compiler enforces trait conformance at every call site that uses the bound.
+- ❌ NO: **Tests that only assert a type implements a trait** without calling a method and checking the result. Constructing a value and passing it to a generic function with a trait bound is testing the compiler, not the code.
+- ❌ NO: **Tests with empty or trivial bodies** — every test must execute at least one function call and assert at least one observable result. A test that only checks a constant or a type-level property is not a test.
+- ❌ NO: **Tests that re-verify compiler guarantees** — `Send`, `Sync`, `Unpin`, trait bounds, `Clone`, `Default` — these are all compiler-enforced. A test that asserts them adds zero value.
+
+**What to write instead:**
+- ✅ YES: Call the function under test with real arguments and assert on the return value or observable side effect
+- ✅ YES: Use DI mocks (trait implementations in the test file) to inject controlled inputs and capture outputs
+- ✅ YES: Every test must be behavioral — if the implementation is wrong, the test fails; if the implementation is right, the test passes; if the test passes regardless of the implementation, it is a bad test
+
+### Manual Verification
+
+When a task requires manual verification (e.g., terminal behavior, TUI rendering),
+run the binary in a real terminal and verify by hand. Do NOT:
+
+- Write nushell scripts with `job spawn`, `job send`, `job kill` to automate terminal interaction
+- Write shell scripts that spawn the binary in a PTY and poll for exit
+- Invent test automation that is not in the task spec
+
+Manual verification means you run the command, observe the result, and report it.
+If a behavior cannot be verified manually, flag it — do not script around it.
+
+### Task Scope Discipline
+
+Do exactly what the task spec says. If the task says "fix code", fix the code.
+If the task says "write tests", write tests. If the task says "manual verification",
+verify manually. Do not invent additional work, scripts, or tooling that is not
+in the task's INCLUDED scope. If you discover work that needs doing but is not
+in the scope, flag it for the orchestrator — do not do it inline.
+
+### Dependency Injection for Testability
+
+**Every external dependency MUST be injected via a trait so unit tests can substitute a mock.** This is not a suggestion — it is a hard requirement derived from the SOLID Dependency Inversion Principle.
+
+- ❌ NO: A constructor or method that hardcodes a concrete function performing I/O (e.g., `open_session()` calling `build_acp_runtime()` directly)
+- ✅ YES: Define a trait (`RuntimeBuilder`, `SessionUpdateSink`, `PermissionRequestSink`) and store it on the struct. Production uses the real impl; tests use a mock impl.
+- ❌ NO: A unit test that constructs a real `reqwest::Client`, performs TLS init, opens a database, or probes a keychain
+- ✅ YES: Inject a mock that returns a pre-built value. The mock lives in the test file, not in production code.
+- ❌ NO: `pub(crate)` fields or `#[cfg(test)]` accessors to expose internal state for tests
+- ✅ YES: Design the public API so tests use the same methods as production code. If the API doesn't expose enough to verify a behavior, the API is missing a method.
+
+**The DI boundary is where the trait object lives.** `Arc<dyn RuntimeBuilder>` on `AcpSessionManager` is the same exception as `dyn EngineInterfaceLike` on `AgentRuntime` — it is the crate boundary, not internal code.
+
 ### What counts as production code
 
 Any `.rs` file that is NOT in the `test/` directory is production code. This includes `mod.rs`, `input.rs`, `lifecycle.rs`, `dispatch.rs`, etc. The `#[cfg(test)]` attribute on `fn` in these files is the violation.
@@ -142,10 +195,13 @@ Any `.rs` file that is NOT in the `test/` directory is production code. This inc
 
 **Use mocks wherever available:**
 
-- Mock external dependencies (LLM APIs, file system, network)
+**Mocking is mandatory, not optional.** See "Dependency Injection for Testability" above for the hard requirement.
+
+- Mock external dependencies (LLM APIs, file system, network, HTTP clients, keychain, databases)
 - Mock Nushell's `EngineInterface` when testing commands
-- Use dependency injection to make code testable
-- Prefer trait-based abstractions for mockable interfaces
+- Use dependency injection to make code testable — every external dependency gets a trait
+- Trait-based abstractions for mockable interfaces — the mock lives in the test file, not in production code
+- A unit test that constructs a real HTTP client, opens a real database, or probes a real keychain is an integration test in disguise — fix the DI, do not gate the test
 
 ### Code Coverage
 
@@ -324,13 +380,15 @@ the dead code.
 
 - ❌ NO: `Box<dyn Trait>`, `&dyn Trait`, trait objects in internal code
 - ✅ YES: Generics with trait bounds `T: Trait`
-- ✅ EXCEPTION: nu-plugin API boundary and rig's `ModelHandle`/`ConversationMemory` can use dynamic dispatch (required by the framework)
+- ✅ EXCEPTION: nu-plugin API boundary, rig's `ModelHandle`/`ConversationMemory`, and crate-level DI boundaries (`dyn EngineInterfaceLike`, `dyn RuntimeBuilder`) can use dynamic dispatch (required by the framework or for testability)
 - Follow SOLID principles throughout:
   - **S**ingle Responsibility: One reason to change
   - **O**pen/Closed: Open for extension, closed for modification
   - **L**iskov Substitution: Subtypes must be substitutable
   - **I**nterface Segregation: Many specific interfaces over one general
   - **D**ependency Inversion: Depend on abstractions, not concretions
+
+**DIP is a testability requirement, not just an architecture diagram concern.** If a constructor hardcodes a concrete function that performs I/O (HTTP client construction, TLS init, keychain access, database opening), unit tests cannot substitute a mock. The test either becomes an integration test (slow, fragile) or the production code gets `#[cfg(test)]` backdoors (banned). The correct response is: define a trait, inject it, and let tests provide a mock impl. See "Dependency Injection for Testability" above.
 
 ### Event/Channel Design (rust10x 3-level architecture)
 
@@ -398,13 +456,13 @@ See `docs/configuration.md` for the full field reference and provider examples.
 
 ### Loading from config.toml
 
-`PluginConfig` is loaded via `toml_config::load()` (`crates/nu-agent-core/src/config/toml_config.rs`) from `config.toml`. All new features go through this single path.
+`PluginConfig` is loaded via `toml_config::load()` (`crates/agnt-core/src/config/toml_config.rs`) from `config.toml`. All new features go through this single path.
 
 The `PluginConfig` struct holds top-level blocks: `models`, `providers`, `compaction`, `mcp`, `permissions`, `agents`, `preamble`, `a2a_enabled`, `session_store`.
 
 ### Precedence chain (highest → lowest)
 
-1. CLI flags — applied in `resolve_with_new_config()` (`crates/nu-agent/src/command/agent/runtime_build.rs`)
+1. CLI flags — applied in `resolve_with_new_config()` (`crates/agnt-plugin/src/command/agent/runtime_build.rs`)
 2. Persona front matter — `model:` field selects a role or literal model
 3. Role-level config — `ModelRoleConfig` record for the selected role (e.g. `models.heavy`), applied in `PluginConfig::resolve_model()`
 4. Model-level config — `providers.<name>.models.<name>` fields, applied in `PluginConfig::resolve_model()`
@@ -423,7 +481,7 @@ Every `Option` field on the runtime `Config` struct must have at least one real 
 1. Add field to `ModelRoleConfig` struct + parse in `toml_config::load()` models sub-record parsing
 2. Apply in `resolve_model()` role-level block (`if config.field.is_none()`)
 3. Add env var `AGENT_<FIELD_UPPER>` to `Config::from_env()`
-4. Add CLI flag in `crates/nu-agent/src/command/agent/mod.rs` + apply in `apply_cli_flags()`
+4. Add CLI flag in `crates/agnt-plugin/src/command/agent/mod.rs` + apply in `apply_cli_flags()`
 5. Add tests in the corresponding `test/` directory file — NO inline tests
 6. Update `docs/configuration.md`
 ```

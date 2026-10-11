@@ -17,9 +17,9 @@ See also:
 
 Code + tests:
 
-- Runtime injection/footer: `crates/nu-agent-tui/src/runtime/mod.rs`
-- Permission prompt state: `crates/nu-agent-tui/src/state/permissions.rs`
-- Tests: `crates/nu-agent-tui/src/runtime/test.rs`, `crates/nu-agent-tui/src/state/test.rs`
+- Runtime injection/footer: `crates/agnt-tui/src/runtime/mod.rs`
+- Permission prompt state: `crates/agnt-tui/src/state/permissions.rs`
+- Tests: `crates/agnt-tui/src/runtime/test.rs`, `crates/agnt-tui/src/state/test.rs`
   - `permission_prompt_does_not_open_global_dimmed_modal_backdrop`
   - `permission_prompt_open_sets_required_status_and_presence`
   - `permission_prompt_open_scrolls_to_bottom`
@@ -35,9 +35,9 @@ When permission ask is active:
 
 Code + tests:
 
-- Viewport sync: `crates/nu-agent-tui/src/runtime/mod.rs` (`sync_transcript_viewport_lines_with_layout`)
-- Scroll state: `crates/nu-agent-tui/src/state/mod.rs`
-- Tests: `crates/nu-agent-tui/src/runtime/test.rs`, `crates/nu-agent-tui/src/state/test.rs`
+- Viewport sync: `crates/agnt-tui/src/runtime/mod.rs` (`sync_transcript_viewport_lines_with_layout`)
+- Scroll state: `crates/agnt-tui/src/state/mod.rs`
+- Tests: `crates/agnt-tui/src/runtime/test.rs`, `crates/agnt-tui/src/state/test.rs`
   - `transcript_bottom_detection_uses_effective_viewport_after_input_chrome_and_margins`
   - `main_pane_vertical_split_has_no_overlap_or_bottom_cutoff`
   - `push_transcript_item_follows_tail_when_at_last_item`
@@ -59,7 +59,7 @@ Security rationale:
 - `Builtin` tools are read-only (`read`, `skill`) — they carry no filesystem mutation risk and bypassing permissions keeps overhead low for safe operations.
 - `BuiltinFs` tools (`edit`) mutate the filesystem and must be subject to the same permission policy as MCP/closure tools. They are not implicitly trusted even though they are built-in.
 
-See `crates/nu-agent-core/src/tools/handler/types.rs` (`ToolSource`) and `crates/nu-agent-core/src/tools/handler/authz_gate.rs` for the enforcement point.
+See `crates/agnt-core/src/tools/handler/types.rs` (`ToolSource`) and `crates/agnt-core/src/tools/handler/authz_gate.rs` for the enforcement point.
 
 ## 4) Tool/authz architecture direction
 
@@ -77,9 +77,9 @@ Keep handler dependencies one-way:
 
 Source:
 
-- Facade/wiring: `crates/nu-agent-core/src/tools/handler/mod.rs`
-- Submodules: `crates/nu-agent-core/src/tools/handler/{dispatch,authz_gate,pre_authorize,builtin_kinds,fs,result,types}.rs`
-- Module contract tests: `crates/nu-agent-core/src/tools/handler/authz_gate_test.rs`, `dispatch_test.rs`
+- Facade/wiring: `crates/agnt-core/src/tools/handler/mod.rs`
+- Submodules: `crates/agnt-core/src/tools/handler/{dispatch,authz_gate,pre_authorize,builtin_kinds,fs,result,types}.rs`
+- Module contract tests: `crates/agnt-core/src/tools/handler/authz_gate_test.rs`, `dispatch_test.rs`
 
 ## 5) Contributor checklist: adding new tools or permission UX
 
@@ -100,16 +100,16 @@ During code:
 Tests/docs before review:
 
 - [ ] Add/adjust focused tests in:
-  - `crates/nu-agent-core/src/tools/handler/authz_gate_test.rs`
-  - `crates/nu-agent-core/src/tools/handler/dispatch_test.rs`
-  - `crates/nu-agent-core/src/protocol/permission_test.rs`
-  - `crates/nu-agent-tui/src/runtime/test.rs`
+  - `crates/agnt-core/src/tools/handler/authz_gate_test.rs`
+  - `crates/agnt-core/src/tools/handler/dispatch_test.rs`
+  - `crates/agnt-core/src/protocol/permission_test.rs`
+  - `crates/agnt-tui/src/runtime/test.rs`
 - [ ] Update `docs/usage.md` when user-visible behavior changes.
 - [ ] Update this page when introducing/relaxing guardrails.
 
 ## 6) Bus channel topology and UI event dispatch
 
-`Bus` (`crates/nu-agent-core/src/bus/hub.rs`) exposes these channels:
+`Bus` (`crates/agnt-core/src/bus/hub.rs`) exposes these channels:
 
 | Channel | Event type | Role |
 |---|---|---|
@@ -122,9 +122,9 @@ Tests/docs before review:
 | `external` | `ExternalEvent` | External (A2A) prompt intake. |
 
 The typed event enums `ToolEvent`, `LlmEvent`, `WarningEvent`, and `PermissionEvent`
-(`crates/nu-agent-core/src/bus/events.rs`) are **not bus channels**. They are internal
+(`crates/agnt-core/src/bus/events.rs`) are **not bus channels**. They are internal
 dispatch types in the TUI state layer. `dispatch_ui_event`
-(`crates/nu-agent-tui/src/interaction/reducer.rs`) reconstructs them from `UiEvent`
+(`crates/agnt-tui/src/interaction/reducer.rs`) reconstructs them from `UiEvent`
 fields and passes them to the domain reducers (`dispatch_tool_event`,
 `dispatch_llm_event`, `dispatch_turn_event`, `status.reduce_warning_event`,
 `permission.reduce_permission_event`).

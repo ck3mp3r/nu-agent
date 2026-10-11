@@ -13,15 +13,18 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
+name = "nu-agent"
 edition = "2024"
 version = "0.1.0"
 
 [workspace.dependencies]
 # Internal crates
-nu-agent-a2a = { path = "crates/nu-agent-a2a" }
-nu-agent-core = { path = "crates/nu-agent-core" }
-nu-agent-tui = { path = "crates/nu-agent-tui" }
-nu-agent-tty = { path = "crates/nu-agent-tty" }
+agnt-a2a = { path = "crates/agnt-a2a" }
+agnt-acp = { path = "crates/agnt-acp" }
+agnt-cli = { path = "crates/agnt-cli" }
+agnt-core = { path = "crates/agnt-core" }
+agnt-tui = { path = "crates/agnt-tui" }
+agnt-tty = { path = "crates/agnt-tty" }
 
 # Nu ecosystem
 nu-plugin = "0.115.1"
@@ -65,6 +68,9 @@ ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 ratatui-textarea = "0.9"
 unicode-width = "0.2"
 textwrap = { version = "0.16", default-features = false, features = ["unicode-width"] }
+
+# CLI
+clap = { version = "4.6", features = ["derive"] }
 
 # Utilities
 tracing = "0.1"

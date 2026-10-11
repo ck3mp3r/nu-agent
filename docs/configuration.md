@@ -736,7 +736,7 @@ There is no `AGENT_MODEL` env override at runtime; set the default model in `con
 
 ## Fixed retry caps
 
-Two turn-executor retry budgets are fixed defaults in `crates/nu-agent-core/src/config/defaults.rs`. They have no `config.toml` key, CLI flag, or environment-variable override.
+Two turn-executor retry budgets are fixed defaults in `crates/agnt-core/src/config/defaults.rs`. They have no `config.toml` key, CLI flag, or environment-variable override.
 
 | Constant | Default | Behavior |
 |----------|---------|----------|

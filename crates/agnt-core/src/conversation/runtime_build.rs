@@ -1,0 +1,321 @@
+use std::sync::{Arc, Mutex};
+
+use nu_protocol::LabeledError;
+
+use crate::bus::Bus;
+use crate::compaction::CompactionParams;
+use crate::config::{AgentsConfig, Config, ModelRoleConfig, PluginConfig, defaults, vault::Vault};
+use crate::conversation::runtime::AgentConversationRuntime;
+use crate::protocol::persona::PersonaSummary;
+use crate::session::SessionStoreBackend;
+use crate::tools::authz::{PermissionsConfig, PermissionsOverlay};
+use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
+use crate::tools::handler::McpToolRegistry;
+use crate::tools::handler::builtin_tool::ToolRenderRegistry;
+use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
+use crate::tools::mcp::config::McpServerConfig;
+use crate::tools::mcp::runtime::{McpRuntime, McpServerLifecycle};
+use crate::types::ToolDefinition;
+use rig::DynModel;
+use rig::operation::Completion;
+use rig::tool::server::ToolServerHandle;
+
+pub struct RuntimeBuildParams {
+    pub runtime: tokio::runtime::Handle,
+    pub config: Config,
+    pub plugin_config: Option<PluginConfig>,
+    pub tool_definitions: Vec<ToolDefinition>,
+    pub baseline_tool_definitions: Vec<ToolDefinition>,
+    pub closure_registry: ClosureRegistry,
+    pub mcp_runtime: Option<McpRuntime>,
+    pub tool_server_handle: ToolServerHandle,
+    pub mcp_lifecycle_projection: Vec<McpServerLifecycle>,
+    pub mcp_server_configs: Vec<McpServerConfig>,
+    pub mcp_caller_cwd: Option<std::path::PathBuf>,
+    pub vault: Option<Arc<Vault>>,
+    pub mcp_registry: McpToolRegistry,
+    pub engine: Arc<dyn EngineInterfaceLike>,
+    pub store: Arc<SessionStoreBackend>,
+    pub final_session_id: Option<String>,
+    pub compaction_params: CompactionParams,
+    pub proactive_threshold_pct: Option<f64>,
+    pub base_permissions: PermissionsConfig,
+    pub effective_permissions: PermissionsConfig,
+    pub cli_permissions_overlay: Option<PermissionsOverlay>,
+    pub permissions_startup_summary: String,
+    pub persona_body: Option<String>,
+    pub agent_identity: Option<String>,
+    pub agent_description: Option<String>,
+    pub agent_icon: Option<String>,
+    pub cached_agents_chain: Option<String>,
+    pub cached_available_skills: Option<String>,
+    pub cached_sub_agent_instruction: Option<String>,
+    pub available_agents: Vec<PersonaSummary>,
+    pub agents_config: AgentsConfig,
+    pub cwd: std::path::PathBuf,
+    pub bus: Bus,
+    pub render_registry: ToolRenderRegistry,
+}
+
+pub fn build_runtime(params: RuntimeBuildParams) -> Result<AgentConversationRuntime, LabeledError> {
+    use crate::conversation::compaction::compactor::NuCompactor;
+    use crate::conversation::{
+        state::mcp::McpState, state::memory::MemoryState, state::multi_agent::MultiAgentState,
+        state::permission::PermissionState, state::persona::PersonaState,
+        state::provider::ProviderState, state::tool::ToolState,
+    };
+
+    // CRITICAL: clone store BEFORE moving params.store into the struct literal
+    // so both AgentRuntime.store and MemoryState share the same backing store.
+    let store_for_session = Arc::clone(&params.store);
+    // Extract max_tool_result_bytes before params.config is moved.
+    let max_tool_result_bytes = params
+        .config
+        .max_tool_result_bytes
+        .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES);
+    // Resolve the context-window limit before params.config is moved. Used to
+    // compute the hook's compaction threshold.
+    let max_context_tokens = params
+        .config
+        .model_context_tokens
+        .or_else(|| params.config.max_context_tokens.map(|t| t as usize))
+        .unwrap_or(defaults::MAX_CONTEXT_TOKENS as usize);
+    // Resolve the repetition-guard flag before params.config is moved: when
+    // unset, the guard defaults to enabled.
+    let repetition_guard = params
+        .config
+        .repetition_guard
+        .unwrap_or(defaults::REPETITION_GUARD_ENABLED);
+
+    // The shared model is the single point of model identity: the agent is
+    // built from it on every turn and the compactor summarizes with it. It is
+    // constructed eagerly at startup so it is ready for any operation
+    // (including `/compact` before the first turn), and rewritten by every
+    // `switch_model()`.
+    let mut provider = ProviderState::new(params.config, params.plugin_config);
+    let dyn_model = provider
+        .build_dyn_model()
+        .map_err(|e| LabeledError::new(format!("Failed to build model: {e}")))?;
+    let dyn_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(dyn_model));
+
+    // Compactor summarizes evicted messages with its own erased model, shared
+    // through an `Arc` so a `switch_model()` swap is visible to the next
+    // `compact()` call. It is a standalone service invoked directly by the
+    // hook's compaction logic.
+    let compactor_model = provider
+        .build_dyn_model()
+        .map_err(|e| LabeledError::new(format!("Failed to build compactor model: {e}")))?;
+    let compactor_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(compactor_model));
+    let compactor =
+        NuCompactor::from_shared_model(Arc::clone(&compactor_model), params.bus.clone(), None)
+            .with_store(Arc::clone(&store_for_session));
+
+    // The memory state holds the `CachedMemory` backend directly; all compaction
+    // logic lives in the hook.
+    let session = MemoryState::new(store_for_session);
+
+    // Threshold used by the hook to decide when to compact: proactive_threshold_pct
+    // (default 0.8) of model_context_tokens (falling back to max_context_tokens).
+    let threshold_pct = params
+        .proactive_threshold_pct
+        .unwrap_or(defaults::PROACTIVE_THRESHOLD_PCT);
+    let threshold_tokens = Some((max_context_tokens as f64 * threshold_pct) as usize);
+
+    let compaction = crate::conversation::compaction::CompactionConfig {
+        compactor,
+        params: params.compaction_params,
+        threshold_tokens,
+    };
+
+    Ok(AgentConversationRuntime {
+        runtime: params.runtime,
+        tool_server_handle: params.tool_server_handle,
+        provider,
+        tools: ToolState::new(
+            params.tool_definitions,
+            params.baseline_tool_definitions,
+            params.closure_registry,
+        ),
+        mcp_state: McpState::new(
+            params.mcp_runtime,
+            params.mcp_lifecycle_projection,
+            params.mcp_server_configs,
+            params.mcp_caller_cwd,
+            params.mcp_registry,
+            max_tool_result_bytes,
+            params.vault,
+        ),
+        engine: params.engine,
+        store: params.store,
+        final_session_id: params.final_session_id,
+        permission_state: PermissionState::new(
+            params.base_permissions,
+            params.effective_permissions,
+            params.cli_permissions_overlay,
+            crate::tools::authz::SessionGrantCache::default(),
+            params.permissions_startup_summary,
+        ),
+        session,
+        persona: PersonaState::new(
+            params.persona_body,
+            params.agent_identity,
+            params.agent_description,
+            params.agent_icon,
+            params.cached_agents_chain,
+            params.cached_available_skills,
+            params.cached_sub_agent_instruction,
+        ),
+        multi_agent: MultiAgentState::new(params.available_agents, params.agents_config),
+        cwd: params.cwd,
+        interactive_pending: None,
+        renders_tool_previews: false,
+        circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
+        doom_state: Arc::new(Mutex::new(crate::hook::DoomLoopState::default())),
+        output_repetition: Arc::new(Mutex::new(
+            crate::hook::output_repetition::RepetitionState::default(),
+        )),
+        repetition_guard,
+        last_total_tokens: Arc::new(Mutex::new(None)),
+        bus: params.bus,
+        render_registry: params.render_registry,
+        dyn_model,
+        compaction,
+    })
+}
+
+/// Apply persona model override if CLI --model was not provided.
+///
+/// `persona_model` can be:
+/// - A literal `provider/model` string (contains `/`) → used as-is
+/// - A role label (no `/`) → resolved through `plugin_config.models`
+///
+/// Returns `Ok(true)` if persona model was applied, `Ok(false)` if skipped.
+/// Returns `Err` if a role label is unknown or not configured.
+pub fn apply_persona_model(
+    config: &mut Config,
+    plugin_config: Option<&PluginConfig>,
+    persona_model: Option<&str>,
+    cli_model_provided: bool,
+) -> Result<bool, LabeledError> {
+    if cli_model_provided {
+        return Ok(false);
+    }
+    let Some(m) = persona_model else {
+        return Ok(false);
+    };
+
+    let role_config = if m.contains('/') {
+        // Literal provider/model string — use as-is with default overrides
+        ModelRoleConfig {
+            model: m.to_string(),
+            ..Default::default()
+        }
+    } else {
+        // Role label — resolve through plugin_config.models
+        let pc = plugin_config.ok_or_else(|| {
+            LabeledError::new(format!(
+                "Unknown model role: '{m}'. No plugin config available — role labels require a plugin config with a models map."
+            ))
+        })?;
+        pc.models
+            .get(m)
+            .ok_or_else(|| {
+                let mut available: Vec<&str> = pc.models.keys().map(|s| s.as_str()).collect();
+                available.sort();
+                LabeledError::new(format!(
+                    "Unknown model role: '{m}'. Available roles: {}",
+                    available.join(", ")
+                ))
+            })?
+            .clone()
+    };
+
+    // Re-resolve the full config using resolve_model with the role config.
+    // This replaces provider, model, provider_impl, and all role-level overrides.
+    let pc = plugin_config
+        .ok_or_else(|| LabeledError::new("Plugin config required for persona model resolution"))?;
+    *config = pc
+        .resolve_model(&role_config)
+        .map_err(|msg| LabeledError::new(format!("Failed to resolve persona model: {msg}")))?;
+
+    // Re-resolve preamble for the new model.
+    if let Some((provider_name, model_name)) = role_config.model.split_once('/') {
+        config.preamble = crate::config::resolve_preamble_for_model(pc, provider_name, model_name);
+    }
+
+    log::debug!(
+        "apply_persona_model: overriding to provider={}, model={}",
+        config.provider,
+        config.model
+    );
+    Ok(true)
+}
+
+/// Apply per-persona config overrides to runtime Config.
+///
+/// Persona front matter sits between CLI flags and plugin/env/defaults in the precedence chain:
+///   CLI flags > persona front matter > plugin config / env / built-in defaults
+///
+/// `cli_max_turns_provided`: true when the user explicitly passed the max-turns CLI flag.
+/// This is needed because `max_tool_turns` may already be `Some(20)` from the pipeline-mode
+/// default (not a CLI flag) — persona must override that default.
+pub fn apply_persona_config(
+    config: &mut Config,
+    persona: &crate::protocol::persona::ParsedPersona,
+    cli_max_turns_provided: bool,
+) {
+    if config.temperature.is_none() {
+        config.temperature = persona.temperature;
+    }
+    if config.max_tokens.is_none() {
+        config.max_tokens = persona.max_tokens;
+    }
+    // max_tool_turns: only skip if the CLI explicitly provided the flag.
+    // The pipeline-mode default (Some(20)) must be overridable by persona.
+    if !cli_max_turns_provided && let Some(t) = persona.max_tool_turns {
+        config.max_tool_turns = Some(t);
+    }
+    if config.max_tool_calls_per_subturn.is_none() {
+        config.max_tool_calls_per_subturn = persona.max_tool_calls_per_subturn;
+    }
+    if config.max_tool_result_bytes.is_none() {
+        config.max_tool_result_bytes = persona.max_tool_result_bytes;
+    }
+    if config.additional_params.is_none() {
+        config.additional_params = persona.additional_params.clone();
+    }
+}
+
+/// Cache preamble components once at startup — loaded once, reused every turn.
+/// Returns (cached_agents_chain, cached_available_skills, cached_sub_agent_instruction).
+pub fn build_preamble_cache(
+    cwd: &std::path::Path,
+    parent_name: Option<&str>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let loaded_agents_result = crate::protocol::agents::load_agents_chain_for_cwd(cwd);
+
+    for warning in &loaded_agents_result.warnings {
+        log::warn!("AGENTS.md load warning: {}", warning);
+    }
+
+    let cached_agents_chain = loaded_agents_result.merged_chain;
+
+    let cached_available_skills = crate::protocol::skills::render_available_skills_preamble(cwd);
+
+    let cached_sub_agent_instruction = parent_name.map(|parent| {
+        format!(
+            "You are a sub-agent. When you have completed your task, report your results back \
+             to your parent agent using the send_message tool with kind 'completion': \
+             send_message(to: \"{parent}\", message: \"<your results>\", kind: \"completion\"). \
+             If you are blocked and need a decision from your parent, use kind 'question': \
+             send_message(to: \"{parent}\", message: \"<your question>\", kind: \"question\"). \
+             Work autonomously — only use 'question' when truly blocked."
+        )
+    });
+
+    (
+        cached_agents_chain,
+        cached_available_skills,
+        cached_sub_agent_instruction,
+    )
+}

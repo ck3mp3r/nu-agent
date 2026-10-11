@@ -1,0 +1,28 @@
+[package]
+name = "agnt-tui"
+edition.workspace = true
+version.workspace = true
+
+[features]
+integration = ["agnt-core/integration"]
+
+[dependencies]
+agnt-core = { workspace = true }
+nu-protocol = { workspace = true }
+ratatui = { workspace = true }
+ratatui-textarea = { workspace = true }
+crossterm = { workspace = true }
+unicode-width = { workspace = true }
+textwrap = { workspace = true }
+arboard = { workspace = true }
+pulldown-cmark = { workspace = true }
+unicodeit = { workspace = true }
+libc = { workspace = true }
+tokio = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true }
+rand = { workspace = true }
+notify = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

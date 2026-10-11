@@ -1,0 +1,548 @@
+//! Async permission resolution trait and its two implementations.
+//!
+//! - [`PolicyPermissionResolver`]: TTY/non-interactive mode — pure policy evaluation, returns immediately.
+//! - [`InteractivePermissionResolver`]: TUI mode — publishes a `UiEvent::PermissionRequested` on
+//!   `bus.ui_event()` and awaits the user's decision via a oneshot channel.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
+
+use serde_json::Value as JsonValue;
+
+use crate::bus::OneshotTx;
+
+use crate::protocol::event::{
+    PermissionDecision as ProtocolPermissionDecision, PermissionRequestContext, UiEvent,
+};
+use crate::tools::authz::{
+    AskApprovalHook, AskChoice, AskContext, PermissionsConfig, SessionGrantCache, apply_ask_choice,
+    display_tool_name,
+};
+use crate::tools::closure::ClosureRegistry;
+use crate::tools::handler::{
+    AuthorizationFlowContext, McpToolRegistry, ToolSource, builtin_kinds::BuiltinKind,
+    enforce_authorization_for_tool_call, pre_authorize_fs_tool,
+};
+use crate::types::{CallId, ToolCall, ToolFunction, ToolName};
+
+pub(crate) fn resolve_tool_source(
+    name: &str,
+    closures: &ClosureRegistry,
+    mcp: &McpToolRegistry,
+) -> ToolSource {
+    if closures.get(name).is_some() {
+        ToolSource::Closure
+    } else if name.parse::<BuiltinKind>().is_ok() {
+        ToolSource::Builtin
+    } else if mcp.contains(name) {
+        ToolSource::Mcp
+    } else {
+        ToolSource::Unknown
+    }
+}
+
+/// Permission decision returned by the async resolver (and from driver to hook).
+///
+/// `Deny` carries the model-facing denial reason. The reason always starts
+/// with `"Permission denied"` and identifies the matched rule by identity and
+/// scope, so session rehydration and hook consumers can recognise a denial by
+/// its prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermissionDecision {
+    Allow,
+    Deny {
+        /// Model-facing denial reason; starts with `"Permission denied"`.
+        reason: String,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Request ID generation (no uuid dep — use atomic counter)
+// ---------------------------------------------------------------------------
+
+static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_request_id() -> String {
+    format!(
+        "perm-{:016x}",
+        NEXT_REQUEST_ID.fetch_add(1, Ordering::SeqCst)
+    )
+}
+
+// ---------------------------------------------------------------------------
+// NoOp helpers for policy-only path
+// ---------------------------------------------------------------------------
+
+/// An ask hook that always denies without user interaction.
+/// Used by [`PolicyPermissionResolver`] to make the "Ask" case return Deny.
+struct NoOpAskHook;
+
+impl AskApprovalHook for NoOpAskHook {
+    async fn choose(
+        &mut self,
+        _decision: &crate::tools::authz::PermissionDecision,
+        _tool_name: &str,
+        _source: &str,
+        _args: &JsonValue,
+        _ask_context: &AskContext,
+    ) -> AskChoice {
+        AskChoice::Deny
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Summarize tool call payload for display in permission prompts.
+fn summarize_ask_payload(args: &JsonValue) -> String {
+    let compact = serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string());
+    let trimmed = if compact.chars().count() > 240 {
+        let mut prefix = compact.chars().take(240).collect::<String>();
+        prefix.push('…');
+        prefix
+    } else {
+        compact
+    };
+    format!("→ {trimmed}")
+}
+
+// ---------------------------------------------------------------------------
+// AsyncPermissionResolver trait
+// ---------------------------------------------------------------------------
+
+/// Resolves tool call permission decisions asynchronously.
+///
+/// - TUI mode: sends a `UiEvent::PermissionRequested` on `bus.ui_event()` and
+///   awaits the user's decision via a oneshot channel.
+/// - TTY mode: evaluates policy inline and returns immediately.
+pub trait AsyncPermissionResolver: Clone + Send + Sync + 'static {
+    fn resolve(
+        &self,
+        tool_name: &str,
+        arguments: &str,
+        tool_call_id: Option<String>,
+        bus: &crate::bus::Bus,
+    ) -> impl std::future::Future<Output = PermissionDecision> + Send;
+
+    /// Reports, and consumes, whether a pre-authorize preview (e.g. an edit
+    /// diff) was already shown to the user for the given `(tool_name,
+    /// arguments)` pair during `resolve()`.
+    ///
+    /// `HookChain::on_outcome` calls this after the tool finishes, to
+    /// decide whether the completion event should still carry its own copy
+    /// of the same display. This is the single, deterministic source of
+    /// truth for "was this already shown" — resolved synchronously inside
+    /// the same before/after hook call chain, so it cannot race against
+    /// anything (unlike reconstructing the answer from independently
+    /// scheduled UI event streams).
+    ///
+    /// Resolvers that never build previews (e.g. TTY-mode
+    /// `PolicyPermissionResolver`) use the default, which always returns
+    /// `false`.
+    fn take_previewed(&self, _tool_name: &str, _arguments: &str) -> bool {
+        false
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PolicyPermissionResolver (TTY mode)
+// ---------------------------------------------------------------------------
+
+/// Policy-only permission resolver for non-interactive (TTY) mode.
+///
+/// Evaluates static permission rules and returns immediately.
+/// If the policy says "Ask", the [`NoOpAskHook`] converts it to `Deny`.
+#[derive(Clone)]
+pub struct PolicyPermissionResolver {
+    pub permissions: Arc<PermissionsConfig>,
+    pub session_grants: Arc<StdMutex<SessionGrantCache>>,
+    pub closure_registry: Arc<ClosureRegistry>,
+    pub mcp_registry: Arc<McpToolRegistry>,
+}
+
+impl AsyncPermissionResolver for PolicyPermissionResolver {
+    fn resolve(
+        &self,
+        tool_name: &str,
+        arguments: &str,
+        tool_call_id: Option<String>,
+        _bus: &crate::bus::Bus,
+    ) -> impl std::future::Future<Output = PermissionDecision> + Send {
+        let tool_name = tool_name.to_string();
+        let arguments = arguments.to_string();
+        let permissions = Arc::clone(&self.permissions);
+        let session_grants = Arc::clone(&self.session_grants);
+        let closure_registry = Arc::clone(&self.closure_registry);
+        let mcp_registry = Arc::clone(&self.mcp_registry);
+
+        async move {
+            let args_json: JsonValue = serde_json::from_str(&arguments)
+                .unwrap_or(JsonValue::Object(serde_json::Map::new()));
+            let call_id = tool_call_id.unwrap_or_else(|| "synthetic".to_string());
+            let source = resolve_tool_source(&tool_name, &closure_registry, &mcp_registry);
+            let Ok(tool_name_typed) = ToolName::new(tool_name.clone()) else {
+                return PermissionDecision::Deny {
+                    reason: "Permission denied: empty tool name".to_string(),
+                };
+            };
+            let tool_call = ToolCall::new(
+                CallId::from_wire(call_id),
+                ToolFunction::new(tool_name_typed, args_json),
+            );
+            let flow_context = AuthorizationFlowContext {
+                ask_context: AskContext::default(),
+            };
+
+            let deny_reason = enforce_authorization_for_tool_call(
+                &tool_call,
+                source,
+                &permissions,
+                session_grants,
+                &flow_context,
+                &mut NoOpAskHook,
+            )
+            .await;
+
+            match deny_reason {
+                Some(reason) => PermissionDecision::Deny { reason },
+                None => PermissionDecision::Allow,
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// InteractivePermissionResolver (TUI mode)
+// ---------------------------------------------------------------------------
+
+/// Capturing hook for the interactive resolver: records whether Ask was
+/// triggered and saves the context needed to build `PermissionRequestContext`.
+struct AskContextCapture {
+    /// Whether `choose` was called (i.e. the policy said Ask).
+    pub was_called: bool,
+    /// The permission request context captured from the hook arguments.
+    pub captured_context: Option<PermissionRequestContext>,
+    /// The authz decision captured from the sentinel run (used to write the cache key).
+    pub captured_auth_decision: Option<crate::tools::authz::PermissionDecision>,
+    /// Raw JSON arguments string of the tool call, as passed to `resolve()`.
+    /// The hook only receives the parsed `JsonValue`, so the exact key the TUI
+    /// uses for the pending call must be carried in from the caller.
+    pub raw_arguments: String,
+}
+
+impl AskApprovalHook for AskContextCapture {
+    async fn choose(
+        &mut self,
+        decision: &crate::tools::authz::PermissionDecision,
+        tool_name: &str,
+        source: &str,
+        args: &JsonValue,
+        ask_context: &AskContext,
+    ) -> AskChoice {
+        self.was_called = true;
+        self.captured_context = Some(PermissionRequestContext {
+            tool: display_tool_name(tool_name, args),
+            tool_key: format!("{tool_name}\n{}", self.raw_arguments),
+            source: source.to_string(),
+            mode: args
+                .get("mode")
+                .and_then(JsonValue::as_str)
+                .map(ToString::to_string),
+            matched_rule_identity: decision.matched_rule.identity.clone(),
+            scope: decision.matched_rule.scope.to_string(),
+            target_field: decision.matched_rule.target_field.clone(),
+            pattern: decision.matched_rule.pattern.clone(),
+            summary: summarize_ask_payload(args),
+            pre_authorize_display: ask_context.pre_authorize_display.clone(),
+        });
+        self.captured_auth_decision = Some(decision.clone());
+        // AskContextCapture only captures context for the TUI oneshot flow.
+        // The actual UI event is published on bus.ui_event() in resolve().
+        AskChoice::Deny
+    }
+}
+
+/// Interactive permission resolver for TUI mode.
+///
+/// When the policy requires user confirmation ("Ask"), publishes a
+/// `UiEvent::PermissionRequested` on `bus.ui_event()` and awaits the user's
+/// decision. The TUI event loop must call [`InteractivePermissionResolver::submit_decision`]
+/// to unblock the waiting `resolve()` future.
+///
+/// **Design note (deadlock prevention):** This struct does NOT own a
+/// `mpsc::UnboundedSender<UiEvent>`. It owns a `Bus` clone and publishes
+/// permission events on `bus.ui_event()` directly, so the executor's stack
+/// frame (which holds the resolver across the retry loop) never keeps a sender
+/// alive that would prevent the drain loop's channel from closing.
+#[derive(Clone)]
+pub struct InteractivePermissionResolver {
+    pub pending: Arc<StdMutex<HashMap<String, OneshotTx<ProtocolPermissionDecision>>>>,
+    pub permissions: Arc<PermissionsConfig>,
+    pub session_grants: Arc<StdMutex<SessionGrantCache>>,
+    pub closure_registry: Arc<ClosureRegistry>,
+    pub mcp_registry: Arc<McpToolRegistry>,
+    bus: crate::bus::Bus,
+    /// Working directory used to resolve relative paths when building the
+    /// pre-authorize preview. Must match the cwd the tool handlers use —
+    /// `std::env::current_dir()` is the plugin process cwd, which is frozen at
+    /// plugin spawn and diverges from the Nushell session cwd after a `cd`.
+    cwd: std::path::PathBuf,
+    /// Keys (`"{tool_name}\n{arguments}"`) for which a pre-authorize preview
+    /// was published to the user during `resolve()`. Consumed (removed) by
+    /// [`AsyncPermissionResolver::take_previewed`] once `HookChain` checks
+    /// it, so `on_outcome` never attaches the same display twice.
+    previewed: Arc<StdMutex<std::collections::HashSet<String>>>,
+    /// Whether the UI renders pre-authorize previews (`UiEvent::ToolPreview`).
+    ///
+    /// The TUI renders them and relies on the completion display being
+    /// suppressed to avoid showing the same diff twice. The ACP translator
+    /// drops `ToolPreview`, so its client never sees a preview — suppressing
+    /// the completion display there would lose the diff entirely. When this is
+    /// `false`, no preview is recorded, so `take_previewed` returns `false` and
+    /// the completion display is preserved.
+    renders_tool_previews: bool,
+}
+
+impl InteractivePermissionResolver {
+    /// Construct a new `InteractivePermissionResolver`.
+    ///
+    /// # Parameters
+    ///
+    /// - `pending`: shared map of request-id → oneshot sender, also held by the
+    ///   orchestrator's permission poll loop so it can call `submit_decision`.
+    /// - `permissions`: the static permission configuration.
+    /// - `session_grants`: shared session grant cache for AllowAlways persistence.
+    /// - `closure_registry`: registry of closure-based tools.
+    /// - `mcp_registry`: registry of MCP tools.
+    /// - `bus`: the shared signal bus; permission events are published on
+    ///   `bus.ui_event()`.
+    /// - `cwd`: the working directory used to resolve relative paths when
+    ///   building the pre-authorize preview. Pass the same cwd the tool
+    ///   handlers use (the runtime's engine cwd).
+    pub fn new(
+        pending: Arc<StdMutex<HashMap<String, OneshotTx<ProtocolPermissionDecision>>>>,
+        permissions: Arc<PermissionsConfig>,
+        session_grants: Arc<StdMutex<SessionGrantCache>>,
+        closure_registry: Arc<ClosureRegistry>,
+        mcp_registry: Arc<McpToolRegistry>,
+        bus: crate::bus::Bus,
+        cwd: std::path::PathBuf,
+    ) -> Self {
+        Self {
+            pending,
+            permissions,
+            session_grants,
+            closure_registry,
+            mcp_registry,
+            bus,
+            cwd,
+            previewed: Arc::new(StdMutex::new(std::collections::HashSet::new())),
+            renders_tool_previews: true,
+        }
+    }
+
+    /// Set whether the UI renders pre-authorize previews.
+    ///
+    /// Pass `false` for UIs that never consume `UiEvent::ToolPreview` (the ACP
+    /// translator drops it). The resolver then records no preview, so
+    /// `take_previewed` returns `false` and the completion display is preserved.
+    pub fn with_renders_tool_previews(mut self, renders: bool) -> Self {
+        self.renders_tool_previews = renders;
+        self
+    }
+
+    /// Called by the TUI event loop to resolve a pending permission request.
+    pub fn submit_decision(&self, request_id: &str, decision: ProtocolPermissionDecision) {
+        if let Some(tx) = self.pending.lock().unwrap().remove(request_id) {
+            let _ = tx.send(decision);
+        }
+    }
+}
+
+impl AsyncPermissionResolver for InteractivePermissionResolver {
+    fn resolve(
+        &self,
+        tool_name: &str,
+        arguments: &str,
+        tool_call_id: Option<String>,
+        _bus: &crate::bus::Bus,
+    ) -> impl std::future::Future<Output = PermissionDecision> + Send {
+        let tool_name = tool_name.to_string();
+        let arguments = arguments.to_string();
+        let permissions = Arc::clone(&self.permissions);
+        let session_grants = Arc::clone(&self.session_grants);
+        let closure_registry = Arc::clone(&self.closure_registry);
+        let mcp_registry = Arc::clone(&self.mcp_registry);
+        let pending = Arc::clone(&self.pending);
+        let bus = self.bus.clone();
+        let previewed = Arc::clone(&self.previewed);
+        let cwd = self.cwd.clone();
+        let renders_tool_previews = self.renders_tool_previews;
+
+        async move {
+            let args_json: JsonValue = serde_json::from_str(&arguments)
+                .unwrap_or(JsonValue::Object(serde_json::Map::new()));
+            let call_id = tool_call_id.unwrap_or_else(|| "synthetic".to_string());
+            let source = resolve_tool_source(&tool_name, &closure_registry, &mcp_registry);
+            // Build the pre-authorize preview (e.g. an edit diff) so the Ask
+            // prompt below can show it before the user decides. The cwd is the
+            // runtime's engine cwd — the same one the tool handlers use — so
+            // relative paths resolve identically here and at execution time.
+            let ask_context = tool_name
+                .parse::<BuiltinKind>()
+                .ok()
+                .and_then(|kind| pre_authorize_fs_tool(Some(kind), &args_json, &cwd))
+                .map(|output| output.ask_context)
+                .unwrap_or_default();
+            let Ok(tool_name_typed) = ToolName::new(tool_name.clone()) else {
+                return PermissionDecision::Deny {
+                    reason: "Permission denied: empty tool name".to_string(),
+                };
+            };
+            let tool_call = ToolCall::new(
+                CallId::from_wire(call_id),
+                ToolFunction::new(tool_name_typed, args_json),
+            );
+            let flow_context = AuthorizationFlowContext { ask_context };
+
+            let mut capture_hook = AskContextCapture {
+                was_called: false,
+                captured_context: None,
+                captured_auth_decision: None,
+                raw_arguments: arguments.clone(),
+            };
+
+            let deny_reason = {
+                enforce_authorization_for_tool_call(
+                    &tool_call,
+                    source.clone(),
+                    &permissions,
+                    Arc::clone(&session_grants),
+                    &flow_context,
+                    &mut capture_hook,
+                )
+                .await
+            };
+
+            if !capture_hook.was_called {
+                // Policy had an explicit Allow or Deny — no user interaction needed.
+                match deny_reason {
+                    Some(reason) => PermissionDecision::Deny { reason },
+                    None => {
+                        // Auto-approved: the user never sees a prompt, so the
+                        // pre-authorize preview built above has no other way to
+                        // reach the UI. Publish it and record the key so
+                        // `take_previewed` suppresses the completion copy.
+                        //
+                        // Only UIs that render previews (the TUI) get this. A
+                        // UI that drops `ToolPreview` (ACP) must keep the
+                        // completion display, so nothing is recorded for it.
+                        if renders_tool_previews
+                            && let Some(display) = flow_context.ask_context.pre_authorize_display
+                        {
+                            let tool_key = format!("{tool_name}\n{arguments}");
+                            previewed
+                                .lock()
+                                .expect("previewed lock")
+                                .insert(tool_key.clone());
+                            let _ = bus
+                                .ui_event()
+                                .send(UiEvent::ToolPreview { tool_key, display })
+                                .await;
+                        }
+                        PermissionDecision::Allow
+                    }
+                }
+            } else {
+                // Policy said Ask — publish event on the bus and await user decision.
+                let context =
+                    capture_hook
+                        .captured_context
+                        .unwrap_or_else(|| PermissionRequestContext {
+                            tool: tool_name.clone(),
+                            tool_key: format!("{tool_name}\n{arguments}"),
+                            source: "unknown".to_string(),
+                            mode: None,
+                            matched_rule_identity: "unknown".to_string(),
+                            scope: "unknown".to_string(),
+                            target_field: None,
+                            pattern: "*".to_string(),
+                            summary: "→".to_string(),
+                            pre_authorize_display: None,
+                        });
+
+                // A preview was shown to the user for this exact call iff
+                // `pre_authorize_display` is populated here AND the UI renders
+                // previews. Record it now, synchronously, in the same call chain
+                // that will later ask `take_previewed` — no cross-channel event
+                // ordering involved. A UI that drops `ToolPreview` (ACP) records
+                // nothing, so the completion display is preserved.
+                if renders_tool_previews && context.pre_authorize_display.is_some() {
+                    previewed
+                        .lock()
+                        .expect("previewed lock")
+                        .insert(format!("{tool_name}\n{arguments}"));
+                }
+
+                let (tx, rx) = OneshotTx::<ProtocolPermissionDecision>::channel("permission");
+                let request_id = bus
+                    .ui_event()
+                    .request_permission(context)
+                    .await
+                    .unwrap_or_else(|_| next_request_id());
+                pending.lock().unwrap().insert(request_id.clone(), tx);
+
+                // Await the TUI's decision. Deny if the channel is dropped.
+                let protocol_decision = rx.await.unwrap_or(ProtocolPermissionDecision::Deny);
+
+                let ask_choice = match protocol_decision {
+                    ProtocolPermissionDecision::AllowOnce => AskChoice::AllowOnce,
+                    ProtocolPermissionDecision::AllowAlways => AskChoice::AllowAlways,
+                    ProtocolPermissionDecision::Deny => AskChoice::Deny,
+                };
+
+                // Use the authz::PermissionDecision captured during the sentinel run.
+                // This is the same decision the user was shown — no second evaluation needed.
+                if let Some(auth_decision) = capture_hook.captured_auth_decision {
+                    let mut grants = session_grants.lock().expect("session_grants lock");
+                    apply_ask_choice(
+                        auth_decision,
+                        ask_choice,
+                        &mut grants,
+                        &tool_name,
+                        source.as_str(),
+                        &tool_call.function.arguments,
+                    );
+                }
+
+                match ask_choice {
+                    // The sentinel run's capture hook always answers Deny, so the
+                    // authz gate already built the reason from the rule that
+                    // triggered the permission prompt — reuse it verbatim.
+                    AskChoice::Deny => match deny_reason {
+                        Some(reason) => PermissionDecision::Deny { reason },
+                        // Unreachable in practice (a prompt implies a rule match);
+                        // fall back to the legacy bare denial text.
+                        None => PermissionDecision::Deny {
+                            reason: "Permission denied".to_string(),
+                        },
+                    },
+                    _ => PermissionDecision::Allow,
+                }
+            }
+        }
+    }
+
+    fn take_previewed(&self, tool_name: &str, arguments: &str) -> bool {
+        self.previewed
+            .lock()
+            .expect("previewed lock")
+            .remove(&format!("{tool_name}\n{arguments}"))
+    }
+}
+
+#[cfg(test)]
+#[path = "../../test/hook/permission_resolver.rs"]
+mod permission_resolver_test;

@@ -60,8 +60,12 @@
       };
 
       flake = {
-        overlays.default = final: prev: {
-          nu-agent = self.packages.default;
+        overlays.default = final: prev: let
+          system = final.stdenv.hostPlatform.system;
+        in {
+          nu-agent-plugin = self.packages.${system}.plugin;
+          nu-agent-cli = self.packages.${system}.agent;
+          nu-agent = self.packages.${system}.default;
         };
       };
     };

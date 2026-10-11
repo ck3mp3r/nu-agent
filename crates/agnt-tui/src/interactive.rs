@@ -1,0 +1,409 @@
+use std::time::Instant;
+
+use agnt_core::orchestrator::OrchestratorEvent;
+use agnt_core::protocol::{
+    contracts::{ProgressUi, UserInputUi},
+    event::UiEvent,
+};
+use agnt_core::renderer::UiRenderer;
+use nu_protocol::LabeledError;
+use tokio::sync::mpsc;
+
+use crate::interaction::cancel::CancelController;
+use crate::interaction::input::TerminalEvent;
+use crate::runtime::map_crossterm_event;
+use crate::runtime::{HybridTerminalEvents, RuntimeCoordinator, TuiRuntimeRenderer};
+use crate::state::{ActivePicker, PickerOption};
+
+#[cfg(test)]
+#[path = "../test/interactive.rs"]
+mod interactive_test;
+
+pub struct TuiInteractiveUi<R>
+where
+    R: UiRenderer,
+{
+    renderer: TuiRuntimeRenderer<R, HybridTerminalEvents>,
+    theme_persist_tx: Option<mpsc::Sender<String>>,
+}
+
+/// Auxiliary receivers the render loop drains alongside terminal events.
+pub(crate) struct RenderLoopChannels {
+    pub(crate) branch_rx: mpsc::Receiver<()>,
+    pub(crate) theme_persist_tx: Option<mpsc::Sender<String>>,
+}
+
+impl<R> TuiInteractiveUi<R>
+where
+    R: UiRenderer,
+{
+    pub fn new(renderer: TuiRuntimeRenderer<R, HybridTerminalEvents>) -> Self {
+        Self {
+            renderer,
+            theme_persist_tx: None,
+        }
+    }
+
+    /// Set the channel the render loop uses to forward picker theme selections
+    /// to the command layer for persistence. The TUI never writes the file.
+    pub fn set_theme_persist_tx(&mut self, tx: mpsc::Sender<String>) {
+        self.theme_persist_tx = Some(tx);
+    }
+
+    /// Set the active theme by name on the coordinator before the render loop
+    /// starts. Mirrors the `SwitchRequest::Theme` arm.
+    pub fn set_theme(&mut self, name: crate::rendering::theme::ThemeName) {
+        self.renderer.coordinator.set_theme(name);
+    }
+
+    pub fn set_active_model_identity(&mut self, active_model_identity: String) {
+        self.renderer
+            .coordinator
+            .state
+            .status
+            .identity
+            .active_model_identity = active_model_identity;
+    }
+
+    pub fn set_active_persona_icon(&mut self, icon: Option<String>) {
+        self.renderer
+            .coordinator
+            .state
+            .status
+            .identity
+            .active_persona_icon = icon;
+    }
+
+    pub fn set_mcp_lifecycle_projection(
+        &mut self,
+        projection: Vec<agnt_core::tools::mcp::runtime::McpServerLifecycle>,
+    ) {
+        self.renderer.set_mcp_lifecycle_projection(projection);
+    }
+
+    pub fn set_skills_projection(
+        &mut self,
+        skills: Vec<agnt_core::protocol::skills::DiscoverableSkill>,
+    ) {
+        self.renderer.set_skills_projection(skills);
+    }
+
+    pub fn mark_skills_discovery_failed(&mut self) {
+        self.renderer.mark_skills_discovery_failed();
+    }
+
+    pub fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
+        self.renderer
+            .coordinator
+            .set_llm_visible_mcp_tool_count(count);
+    }
+
+    pub fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
+        self.renderer
+            .coordinator
+            .state
+            .status
+            .tokens
+            .set_context_window_max_tokens(max_tokens);
+    }
+
+    pub fn set_picker_options<T: Into<PickerOption>>(
+        &mut self,
+        kind: ActivePicker,
+        options: Vec<T>,
+    ) {
+        self.renderer
+            .coordinator
+            .state
+            .set_picker_options(kind, options);
+    }
+
+    pub fn set_active_agent_identity(&mut self, name: &str) {
+        self.renderer
+            .coordinator
+            .state
+            .set_active_agent_identity(name);
+    }
+
+    /// Pop the next theme name the picker selected, for the command layer to
+    /// persist. The TUI never writes the preference file itself.
+    pub fn take_next_theme_persist_request(&mut self) -> Option<String> {
+        self.renderer
+            .coordinator
+            .state
+            .take_next_theme_persist_request()
+    }
+
+    pub fn set_agent_cycle_names(&mut self, names: Vec<String>) {
+        self.renderer
+            .coordinator
+            .state
+            .status
+            .identity
+            .agent_cycle_names = names;
+    }
+
+    pub fn set_repo_branch_caller_cwd(&mut self, caller_cwd: Option<std::path::PathBuf>) {
+        self.renderer.set_repo_branch_caller_cwd(caller_cwd);
+    }
+
+    pub fn push_startup_logo(&mut self) {
+        self.renderer.coordinator.state.push_startup_logo();
+    }
+
+    pub fn make_render_loop_spawner(
+        &mut self,
+        bus: agnt_core::bus::Bus,
+    ) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
+        let coordinator = std::mem::replace(
+            &mut self.renderer.coordinator,
+            RuntimeCoordinator::new(120, 30, Some(true)),
+        );
+        let theme_persist_tx = self.theme_persist_tx.take();
+        let live_terminal = self.renderer.take_live_terminal();
+        let cancel_controller = coordinator.cancel_controller.clone();
+        // Subscribe a filesystem watcher to git ref files before the loop starts
+        // so branch changes are delivered as events, not polled.
+        let watch_targets = coordinator.repo_branch_watch_targets();
+        let (branch_tx, branch_rx) = mpsc::channel(8);
+        let branch_watcher = if watch_targets.is_empty() {
+            None
+        } else {
+            match crate::runtime::branch_watcher::spawn_branch_watcher(watch_targets, branch_tx) {
+                Ok(w) => Some(w),
+                Err(e) => {
+                    log::warn!("git branch watcher failed: {e}");
+                    None
+                }
+            }
+        };
+        move |event_tx| {
+            let (terminal_tx, terminal_rx) = mpsc::channel(64);
+            if let Err(err) = spawn_terminal_input(terminal_tx) {
+                log::warn!("{err}");
+            }
+            tokio::spawn(async move {
+                let mut coordinator = coordinator;
+                let mut live = live_terminal;
+                let mut live_ref = live.as_mut().map(|l| &mut l.terminal);
+                let _branch_watcher = branch_watcher;
+                let channels = RenderLoopChannels {
+                    branch_rx,
+                    theme_persist_tx,
+                };
+                run_render_loop(
+                    &mut coordinator,
+                    &bus,
+                    &cancel_controller,
+                    event_tx,
+                    terminal_rx,
+                    &mut live_ref,
+                    channels,
+                )
+                .await;
+            });
+        }
+    }
+}
+
+impl<R> ProgressUi for TuiInteractiveUi<R>
+where
+    R: UiRenderer,
+{
+    fn emit(&mut self, event: &UiEvent) {
+        self.renderer.emit(event);
+    }
+
+    fn flush(&mut self) {
+        self.renderer.flush();
+    }
+
+    fn take_cancel_requested(&self) -> bool {
+        self.renderer.take_cancel_requested()
+    }
+
+    fn emit_batch(&mut self, events: &[UiEvent]) {
+        self.renderer.emit_batch(events);
+    }
+}
+
+impl<R> UserInputUi for TuiInteractiveUi<R>
+where
+    R: UiRenderer,
+{
+    fn event_sender(&self) -> &mpsc::Sender<OrchestratorEvent> {
+        self.renderer.event_sender()
+    }
+}
+
+/// Spawn a dedicated thread that reads crossterm terminal events and sends
+/// them on the given channel.
+///
+/// The reader is a plain OS thread, not a `tokio::task::spawn_blocking` task.
+/// It blocks in `crossterm::event::read()` until a key arrives, and dropping a
+/// tokio runtime waits for every blocking task to finish. A pending read would
+/// therefore stall process exit until the user pressed a key. A detached thread
+/// is torn down with the process instead.
+pub fn spawn_terminal_input(
+    terminal_event_tx: mpsc::Sender<TerminalEvent>,
+) -> Result<std::thread::JoinHandle<()>, String> {
+    std::thread::Builder::new()
+        .name("tui-terminal-input".to_string())
+        .spawn(move || {
+            loop {
+                let event = match crossterm::event::read() {
+                    Ok(event) => event,
+                    Err(err) => {
+                        log::warn!("crossterm read failed: {err}");
+                        break;
+                    }
+                };
+                if let Some(terminal_event) = map_crossterm_event(event)
+                    && terminal_event_tx.blocking_send(terminal_event).is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .map_err(|err| format!("failed to spawn terminal input thread: {err}"))
+}
+
+/// Forward any pending picker theme selections to the command layer for
+/// persistence. The TUI never writes the preference file itself.
+async fn drain_theme_persist(
+    coordinator: &mut RuntimeCoordinator,
+    theme_persist_tx: &Option<mpsc::Sender<String>>,
+) {
+    let Some(tx) = theme_persist_tx else {
+        return;
+    };
+    while let Some(name) = coordinator.state.take_next_theme_persist_request() {
+        if tx.send(name).await.is_err() {
+            return;
+        }
+    }
+}
+
+/// Render loop driving `RuntimeCoordinator` from terminal events, bus
+/// channels, and a periodic tick. Owns `&mut RuntimeCoordinator` and calls
+/// `AppState` methods directly.
+pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
+    coordinator: &mut RuntimeCoordinator,
+    bus: &agnt_core::bus::Bus,
+    cancel_controller: &CancelController,
+    event_tx: mpsc::Sender<OrchestratorEvent>,
+    mut terminal_event_rx: mpsc::Receiver<TerminalEvent>,
+    live_terminal: &mut Option<&mut ratatui::Terminal<B>>,
+    mut channels: RenderLoopChannels,
+) {
+    let mut ui_event_rx = bus.ui_event().subscribe();
+    let mut compaction_rx = bus.compaction().subscribe();
+    let mut session_rx = bus.session().subscribe();
+    let mut ui_state_rx = bus.ui_state().subscribe();
+    let mut render_timer = tokio::time::interval(std::time::Duration::from_millis(80));
+
+    loop {
+        tokio::select! {
+            maybe = terminal_event_rx.recv() => {
+                let Some(event) = maybe else { return; };
+                coordinator.handle_terminal_event(event);
+                let pending = coordinator.state.take_pending_events(cancel_controller);
+                for ev in pending {
+                    if event_tx.send(ev).await.is_err() {
+                        return;
+                    }
+                }
+                drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
+                let ui_state_events = coordinator.state.take_pending_ui_state_events();
+                for ev in ui_state_events {
+                    let _ = bus.ui_state().send(ev).await;
+                }
+                if coordinator.state.quit_requested {
+                    let _ = event_tx.send(OrchestratorEvent::Quit).await;
+                    return;
+                }
+                if let Some(msg) = coordinator.fatal_error() {
+                    let _ = event_tx
+                        .send(OrchestratorEvent::FatalError(LabeledError::new(
+                            msg.to_string(),
+                        )))
+                        .await;
+                    return;
+                }
+                coordinator.mark_render_needed();
+                let _ = coordinator.render_if_needed(live_terminal);
+            }
+            ok = ui_event_rx.recv() => {
+                if let Ok(event) = ok
+                    && coordinator.reduce_ui_event(event)
+                {
+                    // A turn completion (or failure) clears the active prompt. Drain
+                    // any prompts stacked during the turn into PromptSubmitted events
+                    // now, without waiting for the next terminal input.
+                    let pending = coordinator.state.take_pending_events(cancel_controller);
+                    for ev in pending {
+                        if event_tx.send(ev).await.is_err() {
+                            return;
+                        }
+                    }
+                    drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
+                    let ui_state_events = coordinator.state.take_pending_ui_state_events();
+                    for ev in ui_state_events {
+                        let _ = bus.ui_state().send(ev).await;
+                    }
+                    coordinator.mark_render_needed();
+                    let _ = coordinator.render_if_needed(live_terminal);
+                }
+            }
+            ok = compaction_rx.recv() => {
+                if let Ok(event) = ok
+                    && coordinator.reduce_compaction_event(event)
+                {
+                    coordinator.mark_render_needed();
+                    let _ = coordinator.render_if_needed(live_terminal);
+                }
+            }
+            ok = session_rx.recv() => {
+                // Session lifecycle events are not rendered in the TUI; drain only.
+                let _ = ok;
+            }
+            ok = ui_state_rx.recv() => {
+                if let Ok(event) = ok {
+                    coordinator.reduce_ui_state_event(event);
+                    // An A2A prompt arrives as `EnqueueExternalPrompt`, which
+                    // queues it via `enqueue_prompt`. Drain the queue now so the
+                    // prompt is submitted on this tick instead of waiting for the
+                    // next terminal input.
+                    let pending = coordinator.state.take_pending_events(cancel_controller);
+                    for ev in pending {
+                        if event_tx.send(ev).await.is_err() {
+                            return;
+                        }
+                    }
+                    drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
+                    let ui_state_events = coordinator.state.take_pending_ui_state_events();
+                    for ev in ui_state_events {
+                        let _ = bus.ui_state().send(ev).await;
+                    }
+                    coordinator.mark_render_needed();
+                    let _ = coordinator.render_if_needed(live_terminal);
+                }
+            }
+            _ = channels.branch_rx.recv() => {
+                coordinator.refresh_repo_branch();
+                let _ = coordinator.render_if_needed(live_terminal);
+            }
+            _ = render_timer.tick() => {
+                if coordinator.has_pending_status_message()
+                    && coordinator.expire_status_message_if_due(Instant::now())
+                {
+                    coordinator.mark_render_needed();
+                }
+                if coordinator.has_active_animation() {
+                    coordinator.mark_render_needed();
+                }
+                let _ = coordinator.render_if_needed(live_terminal);
+            }
+        }
+    }
+}
