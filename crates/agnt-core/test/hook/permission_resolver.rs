@@ -508,7 +508,7 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
             &synthetic_decision,
             ASK_TOOL,
             "unknown",
-            &serde_json::json!({}),
+            &serde_json::Map::new(),
         );
     }
 

@@ -27,7 +27,20 @@
         ];
         pkgs = import inputs.nixpkgs {inherit system overlays;};
 
-        cargoToml = fromTOML (builtins.readFile ./Cargo.toml);
+        # rustnix derives pname from workspace.package.name on virtual
+        # manifests; 'name' is not a real inheritable cargo field, so it is
+        # synthesized here instead of polluting Cargo.toml.
+        cargoToml = let
+          raw = fromTOML (builtins.readFile ./Cargo.toml);
+        in
+          raw
+          // {
+            workspace =
+              raw.workspace
+              // {
+                package = (raw.workspace.package or {}) // {name = "nu-agent";};
+              };
+          };
         cargoLock = {lockFile = ./Cargo.lock;};
 
         # Import packaging logic
@@ -39,6 +52,7 @@
             cargoToml
             cargoLock
             overlays
+            self
             ;
         };
       in {

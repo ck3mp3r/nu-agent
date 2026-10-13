@@ -14,11 +14,17 @@ use clap::{ArgAction, Args, Parser, Subcommand};
 
 // region:    --- Types
 
+/// Version string printed by `agent --version`.
+///
+/// Composed at build time by `build.rs`: the cargo package version plus an
+/// optional ` (<short sha>)` suffix.
+const VERSION_MESSAGE: &str = env!("AGENT_VERSION_MESSAGE");
+
 /// Command-line interface for the `agent` agent runtime.
 #[derive(Debug, Parser)]
 #[command(
     name = "agent",
-    version,
+    version = VERSION_MESSAGE,
     about = "Run the agent runtime in TTY/TUI, ACP, or A2A mode",
     long_about = None
 )]
@@ -412,3 +418,11 @@ fn log_target() -> env_logger::Target {
 }
 
 // endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../test/version.rs"]
+mod version_test;
+
+// endregion: --- Tests

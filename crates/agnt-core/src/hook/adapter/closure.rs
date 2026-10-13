@@ -1,5 +1,5 @@
 use crate::tools::limits::truncate_tool_output;
-use crate::types::ToolDefinition;
+use crate::types::{EmptyToolName, ToolDefinition, ToolName};
 use nu_protocol::{Span, Value};
 use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use std::sync::Arc;
@@ -32,29 +32,40 @@ impl ClosureToolAdapter {
     /// * `executor` - The ToolExecutor for running the closure
     /// * `span` - Span for error reporting
     /// * `max_tool_result_bytes` - Maximum bytes before truncation (0 = disabled)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmptyToolName`] when `name` is empty.
     pub fn new(
         name: String,
         resolved: ResolvedClosure,
         executor: Arc<ToolExecutor>,
         span: Span,
         max_tool_result_bytes: usize,
-    ) -> Self {
-        let definition =
-            crate::tools::closure::closure_to_tool_definition(name.clone(), &resolved.params, None);
+    ) -> Result<Self, EmptyToolName> {
+        let definition = crate::tools::closure::closure_to_tool_definition(
+            name.clone(),
+            &resolved.params,
+            None,
+        )?;
 
-        Self {
+        Ok(Self {
             name,
             definition,
             resolved,
             executor,
             span,
             max_tool_result_bytes,
-        }
+        })
     }
 
     /// Convert this adapter into a DynamicTool for registration with rig.
-    pub fn into_dynamic_tool(self) -> DynamicTool {
-        let name = self.name.clone();
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmptyToolName`] when the adapter's name is empty.
+    pub fn into_dynamic_tool(self) -> Result<DynamicTool, EmptyToolName> {
+        let name = ToolName::new(self.name.clone())?;
         let description = self.definition.description.clone();
         let parameters = self.definition.parameters.clone();
         let resolved = self.resolved;
@@ -62,59 +73,68 @@ impl ClosureToolAdapter {
         let span = self.span;
         let max_tool_result_bytes = self.max_tool_result_bytes;
 
-        DynamicTool::new(name, description, parameters, move |args| {
-            let resolved = resolved.clone();
-            let executor = executor.clone();
-            Box::pin(async move {
-                // Parse JSON arguments to serde_json::Value
-                let args_json: serde_json::Value = serde_json::from_value(args)
-                    .map_err(|e| ToolExecutionError::invalid_args(format!("Invalid JSON: {e}")))?;
+        Ok(DynamicTool::new(
+            name,
+            description,
+            parameters,
+            move |args| {
+                let resolved = resolved.clone();
+                let executor = executor.clone();
+                Box::pin(async move {
+                    // Parse JSON arguments to serde_json::Value
+                    let args_json: serde_json::Value =
+                        serde_json::from_value(args).map_err(|e| {
+                            ToolExecutionError::invalid_args(format!("Invalid JSON: {e}"))
+                        })?;
 
-                // Convert JSON to Nushell Value
-                let args_nu_value = json_to_nu_value(&args_json, span).map_err(|e| {
-                    ToolExecutionError::invalid_args(format!("JSON to Nu conversion failed: {e}"))
-                })?;
+                    // Convert JSON to Nushell Value
+                    let args_nu_value = json_to_nu_value(&args_json, span).map_err(|e| {
+                        ToolExecutionError::invalid_args(format!(
+                            "JSON to Nu conversion failed: {e}"
+                        ))
+                    })?;
 
-                // Extract ordered positional arguments from the record
-                let positional_args = if let Value::Record { val, .. } = &args_nu_value {
-                    // Use pre-resolved parameter names from the closure
-                    let param_names: Vec<&str> =
-                        resolved.params.iter().map(|p| p.name.as_str()).collect();
+                    // Extract ordered positional arguments from the record
+                    let positional_args = if let Value::Record { val, .. } = &args_nu_value {
+                        // Use pre-resolved parameter names from the closure
+                        let param_names: Vec<&str> =
+                            resolved.params.iter().map(|p| p.name.as_str()).collect();
 
-                    // Build positional args in the order expected by the closure
-                    param_names
-                        .iter()
-                        .map(|name| {
-                            val.get(name)
-                                .cloned()
-                                .unwrap_or_else(|| Value::nothing(span))
-                        })
-                        .collect()
-                } else {
-                    vec![args_nu_value]
-                };
+                        // Build positional args in the order expected by the closure
+                        param_names
+                            .iter()
+                            .map(|name| {
+                                val.get(name)
+                                    .cloned()
+                                    .unwrap_or_else(|| Value::nothing(span))
+                            })
+                            .collect()
+                    } else {
+                        vec![args_nu_value]
+                    };
 
-                // Execute the closure via ToolExecutor
-                let result = executor
-                    .invoke_closure(&resolved.closure, positional_args, span)
-                    .await
-                    .map_err(map_tool_error)?;
+                    // Execute the closure via ToolExecutor
+                    let result = executor
+                        .invoke_closure(&resolved.closure, positional_args, span)
+                        .await
+                        .map_err(map_tool_error)?;
 
-                // Convert result back to JSON
-                let result_json = nu_value_to_json(&result).map_err(|e| {
-                    ToolExecutionError::other(format!("Nu to JSON conversion failed: {e}"))
-                })?;
+                    // Convert result back to JSON
+                    let result_json = nu_value_to_json(&result).map_err(|e| {
+                        ToolExecutionError::other(format!("Nu to JSON conversion failed: {e}"))
+                    })?;
 
-                // Serialize to string and cap output size before returning to rig.
-                let result_str = serde_json::to_string(&result_json).map_err(|e| {
-                    ToolExecutionError::other(format!("JSON serialization failed: {e}"))
-                })?;
-                Ok(ToolOutput::text(truncate_tool_output(
-                    result_str,
-                    max_tool_result_bytes,
-                )))
-            })
-        })
+                    // Serialize to string and cap output size before returning to rig.
+                    let result_str = serde_json::to_string(&result_json).map_err(|e| {
+                        ToolExecutionError::other(format!("JSON serialization failed: {e}"))
+                    })?;
+                    Ok(ToolOutput::text(truncate_tool_output(
+                        result_str,
+                        max_tool_result_bytes,
+                    )))
+                })
+            },
+        ))
     }
 }
 
@@ -134,27 +154,29 @@ impl ClosureToolAdapter {
 ///
 /// A vector of DynamicTool instances, one for each closure in the registry.
 /// These can be passed directly to ToolServerHandle::add_dynamic_tool().
+///
+/// # Errors
+///
+/// Returns [`EmptyToolName`] when a closure name is empty.
 pub fn adapt_closures(
     registry: &ClosureRegistry,
     executor: Arc<ToolExecutor>,
     span: Span,
     max_tool_result_bytes: usize,
-) -> Vec<DynamicTool> {
+) -> Result<Vec<DynamicTool>, EmptyToolName> {
     registry
         .names()
         .filter_map(|name| {
             let resolved = registry.get(name)?;
-            Some(
-                ClosureToolAdapter::new(
-                    name.clone(),
-                    resolved.clone(),
-                    executor.clone(),
-                    span,
-                    max_tool_result_bytes,
-                )
-                .into_dynamic_tool(),
-            )
+            Some(ClosureToolAdapter::new(
+                name.clone(),
+                resolved.clone(),
+                executor.clone(),
+                span,
+                max_tool_result_bytes,
+            ))
         })
+        .map(|adapter| adapter.and_then(ClosureToolAdapter::into_dynamic_tool))
         .collect()
 }
 

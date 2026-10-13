@@ -55,7 +55,7 @@ impl ProviderState {
         self.cached_client.as_ref()
     }
 
-    pub fn ensure_client_cached(&mut self) -> Result<(), LabeledError> {
+    pub async fn ensure_client_cached(&mut self) -> Result<(), LabeledError> {
         let key = self.cache_key();
         if self.cached_client_key.as_ref() == Some(&key) {
             return Ok(());
@@ -70,7 +70,7 @@ impl ProviderState {
             self.config.model
         );
         let client = match provider_type {
-            "copilot" | "github-copilot" | "github_copilot" => CachedProviderClient::Copilot(build_copilot_client(&self.config)?),
+            "copilot" | "github-copilot" | "github_copilot" => CachedProviderClient::Copilot(build_copilot_client(&self.config).await?),
             "openai" => {
                 let client = build_openai_client(&self.config)?;
                 // rig 0.43 carries the route in the client's `OpenAIConfig`:
@@ -121,10 +121,10 @@ impl ProviderState {
     /// completion model into a `DynModel<Completion>` built from the **bare**
     /// model name (`self.config.model`). Both startup and model switching route
     /// through it so the bare-name extraction lives in exactly one place.
-    pub fn build_dyn_model(
+    pub async fn build_dyn_model(
         &mut self,
     ) -> Result<rig::DynModel<rig::operation::Completion>, LabeledError> {
-        self.ensure_client_cached()?;
+        self.ensure_client_cached().await?;
         let client = self
             .cached_client
             .as_ref()
@@ -142,8 +142,8 @@ impl ProviderManager for ProviderState {
         &mut self.config
     }
 
-    fn ensure_client_cached(&mut self) -> Result<(), LabeledError> {
-        self.ensure_client_cached()
+    async fn ensure_client_cached(&mut self) -> Result<(), LabeledError> {
+        self.ensure_client_cached().await
     }
 
     fn cached_client(&self) -> Option<&CachedProviderClient> {
@@ -158,10 +158,10 @@ impl ProviderManager for ProviderState {
         self.switch_model(model_spec)
     }
 
-    fn build_dyn_model(
+    async fn build_dyn_model(
         &mut self,
     ) -> Result<rig::DynModel<rig::operation::Completion>, LabeledError> {
-        self.build_dyn_model()
+        self.build_dyn_model().await
     }
 
     fn startup_plugin_config(&self) -> Option<&PluginConfig> {

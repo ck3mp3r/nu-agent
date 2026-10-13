@@ -1,4 +1,4 @@
-use crate::types::ToolDefinition;
+use crate::types::{EmptyToolName, ToolDefinition, ToolName};
 use crate::{
     protocol::{contracts::ProgressUi, event::UiEvent},
     tools::mcp::{
@@ -34,12 +34,12 @@ pub fn mcp_tool(server: &str, name: &str, raw_name: &str) -> McpToolDefinition {
     }
 }
 
-pub fn tool_definition_named(name: &str) -> ToolDefinition {
-    ToolDefinition {
-        name: name.to_string(),
+pub fn tool_definition_named(name: &str) -> Result<ToolDefinition, EmptyToolName> {
+    Ok(ToolDefinition {
+        name: ToolName::new(name)?,
         description: format!("tool {name}"),
         parameters: serde_json::json!({"type":"object"}),
-    }
+    })
 }
 
 pub fn mcp_server_config(name: &str, enabled: bool) -> McpServerConfig {

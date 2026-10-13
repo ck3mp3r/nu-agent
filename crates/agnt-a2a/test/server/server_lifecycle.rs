@@ -110,13 +110,23 @@ async fn test_server_cleanup_frees_port() -> Result<()> {
 
     server.shutdown().await;
 
-    // Give the OS time to release the TCP port from TIME_WAIT state.
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    // Should be able to bind to same port now
-    tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
-        .await
-        .map_err(|e| format!("port should be free after shutdown: {e:?}"))?;
+    // Retry binding until the OS releases the TCP port (bounded).
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut ticker = tokio::time::interval(Duration::from_millis(10));
+    loop {
+        ticker.tick().await;
+        match tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await {
+            Ok(listener) => {
+                drop(listener);
+                break;
+            }
+            Err(e) => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(format!("port should be free after shutdown: {e:?}").into());
+                }
+            }
+        }
+    }
     Ok(())
 }
 

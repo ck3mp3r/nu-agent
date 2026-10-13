@@ -150,7 +150,7 @@ async fn run_inner(
     })?;
 
     // 5. Construct the vault
-    let vault = Arc::new(Vault::auto_detect());
+    let vault = Arc::new(Vault::auto_detect().map_err(|e| LabeledError::new(e.to_string()))?);
 
     // 6. Start callback server on a random port
     let callback_server = CallbackServer::start(0)

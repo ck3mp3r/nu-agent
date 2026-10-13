@@ -1,7 +1,12 @@
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use nu_protocol::LabeledError;
-use rig::http_client::ReqwestClient;
+use rig::http_client::{HttpClientExt, ReqwestClient};
+use rig::providers::copilot::auth::{
+    AuthError, AuthSource, Authenticator, DeviceCodeHandler, default_token_dir,
+};
+use rig::providers::copilot::{Copilot, CopilotConfig};
 
 use crate::config::{Config, defaults};
 use crate::utils::crypto::ensure_crypto_provider;
@@ -34,27 +39,55 @@ pub(crate) fn build_http_client(
 /// 1. Explicit `api_key` from plugin config or `--api-key` flag
 /// 2. `GITHUB_COPILOT_API_KEY` / `COPILOT_API_KEY` environment variable
 /// 3. `COPILOT_GITHUB_ACCESS_TOKEN` / `GITHUB_TOKEN` environment variable
-/// 4. OAuth — no credential resolved here; rig-core's `Authenticator` owns the
-///    device-code login and token exchange (see task 6793a293).
-pub(super) fn build_copilot_client(
-    config: &Config,
-) -> Result<rig::providers::copilot::Copilot, LabeledError> {
-    build_copilot_client_with(config, &process_env(), None)
+/// 4. OAuth — cached credentials, refreshed through rig's `Authenticator`
+///
+/// Cases 1 and 2 are already exchanged Copilot session keys, so they are sent
+/// as-is. Cases 3 and 4 resolve through rig's `Authenticator`: a GitHub access
+/// token is exchanged for a session key, and a cached session key is reused.
+/// The device flow stays disabled at runtime, so a cold cache reports that
+/// sign-in is required instead of blocking a turn for up to 15 minutes.
+pub(super) async fn build_copilot_client(config: &Config) -> Result<Copilot, LabeledError> {
+    build_copilot_client_with(config, &process_env(), None).await
 }
 
 /// Build a GitHub Copilot client against an explicit environment map.
 ///
-/// `token_dir` is accepted for call-site compatibility; rig 0.43 resolves
-/// cached credentials through `Authenticator` file paths instead (task 6793a293).
-pub(super) fn build_copilot_client_with(
+/// `token_dir` overrides the credential directory. When it is absent, rig's
+/// platform default (`$XDG_CONFIG_HOME/github_copilot`) is used.
+pub(super) async fn build_copilot_client_with(
     config: &Config,
     env: &EnvMap,
-    token_dir: Option<&std::path::Path>,
-) -> Result<rig::providers::copilot::Copilot, LabeledError> {
-    let _ = token_dir;
-
+    token_dir: Option<&Path>,
+) -> Result<Copilot, LabeledError> {
     let http_client = build_http_client(config.read_timeout_secs)?;
+    build_copilot_client_on(
+        config,
+        env,
+        resolve_token_dir(token_dir),
+        ReqwestClient::from(http_client),
+    )
+    .await
+}
 
+/// Resolve the credential directory: an explicit directory wins, otherwise
+/// rig's platform default. `None` means no directory can hold credentials.
+fn resolve_token_dir(token_dir: Option<&Path>) -> Option<PathBuf> {
+    token_dir.map(Path::to_path_buf).or_else(default_token_dir)
+}
+
+/// Build a GitHub Copilot client on an injected transport.
+///
+/// `token_dir` is the already-resolved credential directory. The transport is
+/// generic so tests drive credential resolution without a network.
+async fn build_copilot_client_on<H>(
+    config: &Config,
+    env: &EnvMap,
+    token_dir: Option<PathBuf>,
+    http: H,
+) -> Result<Copilot, LabeledError>
+where
+    H: HttpClientExt + 'static,
+{
     // Base URL: config takes precedence, then env vars (same as rig's from_env)
     let base_url = config
         .base_url
@@ -63,33 +96,68 @@ pub(super) fn build_copilot_client_with(
         .or_else(|| non_empty(env, "COPILOT_BASE_URL"));
 
     // 1. Explicit api_key from --api-key flag or plugin config
-    let credential = if let Some(key) = &config.api_key {
-        log::debug!("Copilot auth: using explicit api_key");
-        Some(key.clone())
-    } else if let Some(key) =
-        non_empty(env, "GITHUB_COPILOT_API_KEY").or_else(|| non_empty(env, "COPILOT_API_KEY"))
-    {
-        // 2. GITHUB_COPILOT_API_KEY / COPILOT_API_KEY env var
-        log::debug!("Copilot auth: using GITHUB_COPILOT_API_KEY");
-        Some(key)
-    } else if let Some(token) =
-        non_empty(env, "COPILOT_GITHUB_ACCESS_TOKEN").or_else(|| non_empty(env, "GITHUB_TOKEN"))
-    {
-        // 3. COPILOT_GITHUB_ACCESS_TOKEN / GITHUB_TOKEN env var
-        log::debug!("Copilot auth: using COPILOT_GITHUB_ACCESS_TOKEN/GITHUB_TOKEN");
-        Some(token)
-    } else {
-        // 4. OAuth — rig 0.43 resolves this through `Authenticator` (task 6793a293).
-        log::debug!("Copilot auth: no credential resolved; OAuth deferred to Authenticator");
+    // 2. GITHUB_COPILOT_API_KEY / COPILOT_API_KEY env var
+    let static_key = config
+        .api_key
+        .clone()
+        .or_else(|| non_empty(env, "GITHUB_COPILOT_API_KEY"))
+        .or_else(|| non_empty(env, "COPILOT_API_KEY"));
+
+    // 3. COPILOT_GITHUB_ACCESS_TOKEN / GITHUB_TOKEN env var
+    // 4. OAuth — cached credentials, refreshed through rig's `Authenticator`
+    let source = if static_key.is_some() {
         None
+    } else {
+        Some(
+            non_empty(env, "COPILOT_GITHUB_ACCESS_TOKEN")
+                .or_else(|| non_empty(env, "GITHUB_TOKEN"))
+                .map_or(AuthSource::OAuth, AuthSource::GitHubAccessToken),
+        )
     };
 
-    let mut copilot_config =
-        rig::providers::copilot::CopilotConfig::new(credential.unwrap_or_default());
+    let mut copilot_config = CopilotConfig::new(static_key.unwrap_or_default());
     if let Some(url) = &base_url {
         copilot_config = copilot_config.with_base_url(url.clone());
     }
-    Ok(copilot_config.connect(ReqwestClient::from(http_client)))
+
+    let Some(source) = source else {
+        log::debug!("Copilot auth: using a configured Copilot API key");
+        return Ok(copilot_config.connect(http));
+    };
+
+    let token_dir = token_dir.ok_or_else(|| {
+        LabeledError::new(
+            "GitHub Copilot credential directory unavailable: set XDG_CONFIG_HOME or HOME, \
+             or pass an explicit token directory.",
+        )
+    })?;
+
+    log::debug!("Copilot auth: resolving {source:?} through the Authenticator");
+    let authenticator = Authenticator::new(
+        source,
+        Some(token_dir.join("access-token")),
+        Some(token_dir.join("api-key.json")),
+        DeviceCodeHandler::default(),
+        false,
+    );
+
+    copilot_config
+        .connect(http)
+        .authenticate(&authenticator)
+        .await
+        .map_err(copilot_auth_error)
+}
+
+/// Map a rig auth failure to a labeled error, naming the sign-in command when
+/// the failure is a missing credential.
+fn copilot_auth_error(error: AuthError) -> LabeledError {
+    let message = error.to_string();
+    if message.contains("sign-in required") {
+        return LabeledError::new(format!(
+            "{message} Run `agent provider auth login github-copilot` to sign in."
+        ));
+    }
+    LabeledError::new(format!("GitHub Copilot authentication failed: {message}"))
 }
 
 /// Look up `key`, treating an empty value as absent.

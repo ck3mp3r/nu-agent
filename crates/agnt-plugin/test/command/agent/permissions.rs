@@ -4,6 +4,16 @@ use nu_protocol::{Value, record};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+/// Tool-call arguments as rig 0.44 carries them: a JSON object map.
+macro_rules! args_map {
+    ($($json:tt)*) => {
+        serde_json::json!($($json)*)
+            .as_object()
+            .cloned()
+            .unwrap_or_default()
+    };
+}
+
 #[test]
 fn resolve_effective_permissions_merges_cli_overlay_additively() -> Result<()> {
     let plugin_config = agnt_core::config::PluginConfig {
@@ -39,21 +49,18 @@ read = "allow"
             .map_err(|e| format!("{e:?}"))?;
 
     assert_eq!(
-        effective.evaluate("read", &serde_json::json!({})).action,
+        effective.evaluate("read", &args_map!({})).action,
         PermissionAction::Deny
     );
     assert_eq!(
         effective
-            .evaluate("nu", &serde_json::json!({"command": "kubectl get pods"}))
+            .evaluate("nu", &args_map!({"command": "kubectl get pods"}))
             .action,
         PermissionAction::Allow
     );
     assert_eq!(
         effective
-            .evaluate(
-                "nu",
-                &serde_json::json!({"command": "kubectl delete pod x"})
-            )
+            .evaluate("nu", &args_map!({"command": "kubectl delete pod x"}))
             .action,
         PermissionAction::Deny
     );

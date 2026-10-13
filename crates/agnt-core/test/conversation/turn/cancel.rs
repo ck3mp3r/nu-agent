@@ -2,54 +2,47 @@
 //!
 //! The v0.39.0 fix ensures that when an agent loop is cancelled mid-stream during a tool call,
 //! rig's AgentSession retains accumulated chat_history (including completed tool_call and
-//! tool_result pairs). This means PromptCancelled::chat_history will contain the full set of
+//! tool_result pairs). This means Cancelled::chat_history will contain the full set of
 //! messages — not just [user_msg, partial_assistant_text].
 //!
 //! While we cannot fire a real cancellation mid-tool-call end-to-end without a live LLM,
 //! these tests prove the data path is correct: we construct chat_history as rig's
-//! AgentSession.to_chat_history() would provide to PromptCancelled after v0.39,
-//! pass them through PromptCancelled -> TurnError::from, and verify all messages are preserved.
+//! AgentSession.to_chat_history() would provide to Cancelled after v0.39,
+//! pass them through Cancelled -> TurnError::from, and verify all messages are preserved.
 
 use super::*;
-use crate::types::{AssistantContent, CallId, ToolCall, ToolFunction, ToolName, ToolResultContent};
+use crate::types::{
+    AssistantContent, AssistantMessage, CallId, ToolCall, ToolFunction, ToolName, ToolResultContent,
+};
 use crate::types::{Message, Text, UserContent};
 use serde_json::json;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-/// Regression test for rig-core v0.39.0 PR #1899: PromptCancelled::chat_history is NOT empty
+/// Regression test for rig-core v0.39.0 PR #1899: Cancelled::chat_history is NOT empty
 /// after cancellation when tool calls have been made.
 ///
 /// This tests the core fix: that tool_call + tool_result pairs in chat_history are preserved
-/// through the PromptCancelled -> TurnError conversion. Before v0.39, tool call history was
+/// through the Cancelled -> TurnError conversion. Before v0.39, tool call history was
 /// lost; after v0.39 it survives cancellation.
 #[test]
 fn prompt_cancelled_preserves_tool_call_history() -> Result<()> {
-    // Build chat_history as rig's AgentSession would provide to PromptCancelled after v0.39.0:
+    // Build chat_history as rig's AgentSession would provide to Cancelled after v0.39.0:
     // A complete tool-use cycle: user(prompt) -> assistant(tool_call) -> user(tool_result)
     let mut chat_history: Vec<Message> = Vec::new();
 
     // 1) User message (the initial prompt)
     chat_history.push(Message::User {
-        content: vec![UserContent::Text(Text {
-            text: "What is in /etc/hosts?".to_string(),
-            additional_params: None,
-        })],
+        content: vec![UserContent::Text(Text::new("What is in /etc/hosts?"))],
     });
 
     // 2) Assistant message with a ToolCall (the LLM decided to invoke read_file)
-    chat_history.push(Message::Assistant {
-        id: None,
-        content: vec![AssistantContent::ToolCall(ToolCall {
-            id: CallId::from_wire("call_abc123"),
-            signature: None,
-            additional_params: None,
-            function: ToolFunction {
-                name: ToolName::new("read_file")?,
-                arguments: json!({ "path": "/etc/hosts" }),
-            },
-        })],
-    });
+    chat_history.push(Message::Assistant(AssistantMessage::new(vec![
+        AssistantContent::ToolCall(ToolCall::new(
+            CallId::from_wire("call_abc123"),
+            ToolFunction::new(ToolName::new("read_file")?, json!({ "path": "/etc/hosts" })),
+        )),
+    ])));
 
     // 3) User message with a ToolResult (LLM's prior tool_call result, completed before next
     //    iteration got cancelled mid-stream)
@@ -58,17 +51,17 @@ fn prompt_cancelled_preserves_tool_call_history() -> Result<()> {
             rig::completion::message::ToolResult {
                 call: CallId::from_wire("call_abc123"),
                 name: ToolName::new("read_file")?,
-                content: vec![ToolResultContent::Text(Text {
-                    text: "127.0.0.1 localhost\n::1 localhost".to_string(),
-                    additional_params: None,
-                })],
+                content: vec![ToolResultContent::Text(Text::new(
+                    "127.0.0.1 localhost\n::1 localhost",
+                ))],
+                is_error: false,
             },
         )],
     });
 
     // Simulate the AgentSession being cancelled (e.g., user pressed Esc) while another tool
-    // call was in-flight. The PromptCancelled error now carries the full accumulated history.
-    let err = rig::completion::PromptError::PromptCancelled {
+    // call was in-flight. The Cancelled error now carries the full accumulated history.
+    let err = rig::completion::PromptError::Cancelled {
         reason: "User pressed Esc during read_file".to_string(),
         chat_history: chat_history.clone(),
     };
@@ -79,7 +72,7 @@ fn prompt_cancelled_preserves_tool_call_history() -> Result<()> {
     // CRITICAL ASSERTION 1: cancelled flag must be true
     assert!(
         turn_err.is_cancelled(),
-        "TurnError must be Cancelled variant for PromptCancelled"
+        "TurnError must be Cancelled variant for Cancelled"
     );
 
     // VERIFY: msg should match the cancellation reason
@@ -107,7 +100,7 @@ fn prompt_cancelled_preserves_tool_call_history() -> Result<()> {
         "msg[0] should be a User message (the initial prompt)"
     );
     assert!(
-        matches!(&messages[1], Message::Assistant { .. }),
+        matches!(&messages[1], Message::Assistant(_)),
         "msg[1] should be an Assistant message (the tool_call)"
     );
     assert!(
@@ -117,7 +110,8 @@ fn prompt_cancelled_preserves_tool_call_history() -> Result<()> {
 
     // DEEP ASSERTION: Verify tool_call content is correct
     match &messages[1] {
-        Message::Assistant { content, .. } => {
+        Message::Assistant(assistant) => {
+            let content = &assistant.content;
             assert_eq!(content.len(), 1);
             let tc = match content.first() {
                 Some(AssistantContent::ToolCall(tc)) => tc,
@@ -145,7 +139,7 @@ fn prompt_cancelled_preserves_tool_call_history() -> Result<()> {
 
 /// Contrasting test for the older/pre-v0.39 pattern: when chat_history only contained
 /// a single user message (simulating what would have been the case before the fix),
-/// PromptCancelled should still preserve it, but tools_call history count should be 1.
+/// Cancelled should still preserve it, but tools_call history count should be 1.
 ///
 /// This proves we can distinguish between the good state (>=3 messages) and bad state
 /// (fewer tool call messages). It also validates that even minimal chat_history survives.
@@ -155,22 +149,15 @@ fn prompt_cancelled_with_tool_calls_earlier_has_non_empty_history() -> Result<()
     // user(prompt) + partial assistant text (no tool calls yet, or they were lost).
     let chat_history: Vec<Message> = vec![
         Message::User {
-            content: vec![UserContent::Text(Text {
-                text: "Tell me about Rust".to_string(),
-                additional_params: None,
-            })],
+            content: vec![UserContent::Text(Text::new("Tell me about Rust"))],
         },
-        Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::Text(Text {
-                text: "Rust is a systems programming language".to_string(),
-                additional_params: None,
-            })],
-        },
+        Message::Assistant(AssistantMessage::new(vec![AssistantContent::Text(
+            Text::new("Rust is a systems programming language"),
+        )])),
     ];
 
     // Even with minimal history, messages must NOT be empty.
-    let err = rig::completion::PromptError::PromptCancelled {
+    let err = rig::completion::PromptError::Cancelled {
         reason: "User cancelled early".to_string(),
         chat_history: chat_history.clone(),
     };
@@ -195,6 +182,6 @@ fn prompt_cancelled_with_tool_calls_earlier_has_non_empty_history() -> Result<()
 
     // Verify the content types of the preserved messages.
     assert!(matches!(&messages[0], Message::User { .. }));
-    assert!(matches!(&messages[1], Message::Assistant { .. }));
+    assert!(matches!(&messages[1], Message::Assistant(_)));
     Ok(())
 }

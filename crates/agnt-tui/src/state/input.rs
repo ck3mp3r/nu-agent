@@ -34,6 +34,8 @@ pub struct InputState {
     pub(super) history_index: Option<usize>,
     pub(super) history_saved: String,
     insert_exit_pending_j: Option<std::time::Instant>,
+    /// How long an armed insert-exit `j` stays pending before it expires.
+    insert_exit_expiry: std::time::Duration,
     normal_pending_key: Option<char>,
     pub pending_submit_text: Option<String>,
     /// Text restored from cancelled pending prompts, to be set on the textarea
@@ -49,6 +51,7 @@ impl Default for InputState {
             history_index: None,
             history_saved: String::new(),
             insert_exit_pending_j: None,
+            insert_exit_expiry: std::time::Duration::from_millis(500),
             normal_pending_key: None,
             pending_submit_text: None,
             restored_input_text: None,
@@ -88,6 +91,14 @@ impl InputState {
         self
     }
 
+    /// Chainable: set how long an armed insert-exit `j` stays pending before
+    /// it expires. Production keeps the 500 ms default; tests inject a short
+    /// window so the expiry is observable without a real-time wait.
+    pub fn with_insert_exit_expiry(mut self, expiry: std::time::Duration) -> Self {
+        self.insert_exit_expiry = expiry;
+        self
+    }
+
     // endregion: --- Mode transitions (input-domain part)
 
     // region:    --- Chord state
@@ -100,10 +111,10 @@ impl InputState {
         self.insert_exit_pending_j = None;
     }
 
-    /// Returns true only if pending AND within the timeout window.
+    /// Returns true only if pending AND within the expiry window.
     pub fn insert_exit_pending_j(&self) -> bool {
         match self.insert_exit_pending_j {
-            Some(instant) => instant.elapsed() < std::time::Duration::from_millis(500),
+            Some(instant) => instant.elapsed() < self.insert_exit_expiry,
             None => false,
         }
     }

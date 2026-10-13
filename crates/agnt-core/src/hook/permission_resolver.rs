@@ -393,7 +393,11 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
             let ask_context = tool_name
                 .parse::<BuiltinKind>()
                 .ok()
-                .and_then(|kind| pre_authorize_fs_tool(Some(kind), &args_json, &cwd))
+                .and_then(|kind| {
+                    args_json
+                        .as_object()
+                        .and_then(|args| pre_authorize_fs_tool(Some(kind), args, &cwd))
+                })
                 .map(|output| output.ask_context)
                 .unwrap_or_default();
             let Ok(tool_name_typed) = ToolName::new(tool_name.clone()) else {

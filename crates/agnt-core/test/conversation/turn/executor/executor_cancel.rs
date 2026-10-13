@@ -30,7 +30,7 @@ use crate::utils::value_ext::extract_response_text_from_value;
 /// The mock model emits one text chunk then a FinalResponse. The UI cancels immediately
 /// (before the first drain loop tick), causing the cancel_token to fire before the
 /// spawned tokio task processes any stream event. The hook's on_completion_call sees
-/// Terminate, rig yields PromptCancelled { chat_history }, and build_agent_and_stream
+/// Terminate, rig yields Cancelled { chat_history }, and build_agent_and_stream
 /// returns Ok(StreamingTurnResult { cancelled: true, messages: Some(chat_history) }).
 /// This reaches executor.execute() as Ok(TurnResult { cancelled: true, messages: Some }).
 ///
@@ -82,7 +82,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
-                name: "test_cancel_tool".to_string(),
+                name: crate::types::ToolName::new("test_cancel_tool")?,
                 description: "cancels the turn".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
             }],
@@ -137,7 +137,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
         })
         .collect();
     // The cancelling tool produces a result and then cancels, so path C appends
-    // the delta from PromptCancelled::chat_history plus the synthetic assistant
+    // the delta from Cancelled::chat_history plus the synthetic assistant
     // close-block: [user("hello"), asst(tool_call), user(tool_result),
     // asst(close)]. We assert the delta is non-empty and small (<= 4) to catch
     // duplication (which would produce more).
@@ -221,7 +221,7 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
-                name: "test_cancel_tool".to_string(),
+                name: crate::types::ToolName::new("test_cancel_tool")?,
                 description: "cancels the turn".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
             }],
@@ -291,7 +291,7 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
 
 /// Diagnostic test: does a cancelled turn after prior session history duplicate JSONL?
 ///
-/// Path C fires: rig's PromptCancelled carries chat_history. If that chat_history
+/// Path C fires: rig's Cancelled carries chat_history. If that chat_history
 /// is the full accumulated history (prior + current user prompt), appending it
 /// directly would double the store.
 ///
@@ -347,7 +347,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
-                name: "test_cancel_tool".to_string(),
+                name: crate::types::ToolName::new("test_cancel_tool")?,
                 description: "cancels the turn".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
             }],
@@ -415,14 +415,14 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
 // ---------------------------------------------------------------------------
 
 /// Regression test for the critical Path B cancel bug: when `tokio::select!`
-/// cancels the stream BEFORE rig yields `PromptCancelled` (Path B), the executor
+/// cancels the stream BEFORE rig yields `Cancelled` (Path B), the executor
 /// must use `TurnResult.last_known_history` to persist completed tool calls and
 /// their results — NOT fall through to the old minimal `[user(prompt)]` fallback.
 ///
 /// Scenario: the agent completes tool call T1 (hook's `on_completion_call` fires
 /// with history containing T1), then cancel fires via `tokio::select!` before
 /// the next LLM response. The `StreamingTurnResult` has `cancelled: true,
-/// messages: None` (rig never yielded `PromptCancelled`). However,
+/// messages: None` (rig never yielded `Cancelled`). However,
 /// `last_known_history` contains the full snapshot including the completed T1.
 ///
 /// **Before the fix:** Path B synthesized `[user(prompt), assistant(partial_text)]`
@@ -520,7 +520,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: handle,
         visible_tool_definitions: vec![rig::completion::ToolDefinition {
-            name: "test_cancel_tool".to_string(),
+            name: crate::types::ToolName::new("test_cancel_tool")?,
             description: "Tool that cancels after first call".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }],
@@ -594,7 +594,8 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
 
     // 3. Verify tool call is in the persisted messages
     let has_tool_call = persisted.iter().any(|msg| {
-        if let crate::types::Message::Assistant { content, .. } = msg {
+        if let crate::types::Message::Assistant(assistant) = msg {
+            let content = &assistant.content;
             content.iter().any(
                 |c| matches!(c, crate::types::AssistantContent::ToolCall(tc) if tc.id.wire().as_ref() == "tc1"),
             )
@@ -674,7 +675,7 @@ async fn user_cancel_stays_silent_with_empty_response() -> Result<()> {
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle: handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
-                name: "test_cancel_tool".to_string(),
+                name: crate::types::ToolName::new("test_cancel_tool")?,
                 description: "cancels the turn".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
             }],

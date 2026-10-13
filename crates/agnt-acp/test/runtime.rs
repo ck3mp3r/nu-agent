@@ -37,6 +37,16 @@ fn write_config(dir: &Path, contents: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Force the env-only vault backend so config load never probes the OS keychain.
+///
+/// nextest runs each test in its own process, so mutating the process
+/// environment here cannot race with another test.
+fn force_env_only_vault() {
+    // SAFETY: nextest gives each test its own process, so no other thread
+    // reads the environment concurrently.
+    unsafe { std::env::set_var("AGENT_VAULT_BACKEND", "env") };
+}
+
 async fn memory_store(dir: &Path) -> Result<Arc<SessionStoreBackend>> {
     let store = create_store_in(StoreType::Memory, dir)
         .await
@@ -86,7 +96,7 @@ fn visible_tool_names(runtime: &AgentConversationRuntime) -> Vec<String> {
             runtime.permission_state.permissions(),
         )
         .into_iter()
-        .map(|def| def.name)
+        .map(|def| def.name.to_string())
         .collect()
 }
 
@@ -106,6 +116,7 @@ fn lifecycle_names(runtime: &AgentConversationRuntime) -> Vec<String> {
 #[tokio::test]
 async fn test_runtime_build_acp_runtime_valid_config_returns_ok() -> Result<()> {
     // -- Setup & Fixtures
+    force_env_only_vault();
     let temp = tempfile::tempdir()?;
     let cwd = temp.path().join("session-cwd");
     std::fs::create_dir_all(&cwd)?;
@@ -129,6 +140,7 @@ async fn test_runtime_build_acp_runtime_valid_config_returns_ok() -> Result<()> 
 #[tokio::test]
 async fn test_runtime_build_acp_runtime_installs_interactive_pending() -> Result<()> {
     // -- Setup & Fixtures
+    force_env_only_vault();
     let temp = tempfile::tempdir()?;
     let config_path = write_config(temp.path(), BASE_CONFIG)?;
     let store = memory_store(temp.path()).await?;
@@ -155,6 +167,7 @@ async fn test_runtime_build_acp_runtime_installs_interactive_pending() -> Result
 #[tokio::test]
 async fn test_runtime_build_acp_runtime_missing_config_returns_config_error() -> Result<()> {
     // -- Setup & Fixtures
+    force_env_only_vault();
     let temp = tempfile::tempdir()?;
     let missing = temp.path().join("does-not-exist.toml");
     let store = memory_store(temp.path()).await?;
@@ -184,6 +197,7 @@ async fn test_runtime_build_acp_runtime_missing_config_returns_config_error() ->
 #[tokio::test]
 async fn test_runtime_build_acp_runtime_invalid_config_returns_config_error() -> Result<()> {
     // -- Setup & Fixtures
+    force_env_only_vault();
     // The model id is synthetic so no models cache entry can clamp
     // max_output_tokens down and mask the invalid combination.
     let temp = tempfile::tempdir()?;
@@ -228,6 +242,7 @@ base_url = "http://localhost:11434"
 #[tokio::test]
 async fn test_runtime_build_acp_runtime_registers_builtin_tools() -> Result<()> {
     // -- Setup & Fixtures
+    force_env_only_vault();
     let temp = tempfile::tempdir()?;
     let config_path = write_config(temp.path(), BASE_CONFIG)?;
     let store = memory_store(temp.path()).await?;
@@ -256,6 +271,7 @@ async fn test_runtime_build_acp_runtime_registers_builtin_tools() -> Result<()> 
 #[tokio::test]
 async fn test_runtime_build_acp_runtime_has_no_closure_tools() -> Result<()> {
     // -- Setup & Fixtures
+    force_env_only_vault();
     let temp = tempfile::tempdir()?;
     let config_path = write_config(temp.path(), BASE_CONFIG)?;
     let store = memory_store(temp.path()).await?;
@@ -296,6 +312,7 @@ async fn test_runtime_build_acp_runtime_has_no_closure_tools() -> Result<()> {
 #[tokio::test]
 async fn test_runtime_build_acp_runtime_merges_distinct_mcp_servers() -> Result<()> {
     // -- Setup & Fixtures
+    force_env_only_vault();
     let temp = tempfile::tempdir()?;
     let config = format!(
         "{BASE_CONFIG}\n[mcp.config_only]\ntransport = \"http\"\nurl = \"http://127.0.0.1:9/mcp\"\nenabled = false\n"
@@ -327,6 +344,7 @@ async fn test_runtime_build_acp_runtime_merges_distinct_mcp_servers() -> Result<
 #[tokio::test]
 async fn test_runtime_build_acp_runtime_client_mcp_server_wins_on_collision() -> Result<()> {
     // -- Setup & Fixtures
+    force_env_only_vault();
     // The config.toml server is enabled; the client server of the same name is
     // disabled. Only a client-wins merge leaves the merged entry disabled — and
     // therefore leaves the runtime constructible without a reachable endpoint.

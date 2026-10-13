@@ -1,8 +1,6 @@
 use super::SqliteSessionStore;
 use crate::session::store::{CompactionMarker, SessionStore, StoreEntry};
-use crate::types::{
-    AdditionalParams, CallId, Message, Text, ToolName, ToolResult, ToolResultContent, UserContent,
-};
+use crate::types::{CallId, Message, Text, ToolName, ToolResult, ToolResultContent, UserContent};
 use chrono::Utc;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -395,22 +393,18 @@ async fn list_returns_newest_first() {
         .await
         .expect("create store");
 
-    // Create 3 sessions with different timestamps
-    // We create them in order and rely on created_at timestamps
+    // Create 3 sessions in order. `created_at` is an RFC 3339 timestamp with
+    // sub-second precision, so sequential awaited creates are strictly ordered
+    // and no settle between them is needed.
     store
         .create("session-oldest", &[Message::user("oldest")])
         .await
         .expect("create oldest");
 
-    // Small delay to ensure different timestamps
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
     store
         .create("session-middle", &[Message::user("middle")])
         .await
         .expect("create middle");
-
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
     store
         .create("session-newest", &[Message::user("newest")])
@@ -751,9 +745,9 @@ async fn memory_store_persists_sessions_table_across_queries() {
 // Tool-verdict flag carrier round-trip
 // ================================================================
 
-/// A ToolResult text block carrying `nu_agent_success` in
-/// `additional_params` must survive the SQLite Message serde round trip
-/// unchanged — the store needs no schema change to carry the flag.
+/// A ToolResult carrying the `is_error` verdict must survive the SQLite
+/// Message serde round trip unchanged — the store needs no schema change to
+/// carry the flag.
 #[tokio::test]
 async fn sqlite_round_trips_tool_verdict_flag() -> Result<()> {
     // -- Setup & Fixtures
@@ -764,13 +758,8 @@ async fn sqlite_round_trips_tool_verdict_flag() -> Result<()> {
         content: vec![UserContent::ToolResult(ToolResult {
             call: CallId::from_wire("tc1"),
             name: ToolName::new("test_tool").expect("non-empty tool name"),
-            content: vec![ToolResultContent::Text(Text {
-                text: "the tool failed".to_string(),
-                additional_params: AdditionalParams::from_entries([(
-                    "nu_agent_success",
-                    serde_json::json!(false),
-                )]),
-            })],
+            content: vec![ToolResultContent::Text(Text::new("the tool failed"))],
+            is_error: true,
         })],
     };
 
@@ -792,16 +781,9 @@ async fn sqlite_round_trips_tool_verdict_flag() -> Result<()> {
     let Some(UserContent::ToolResult(tr)) = content.first() else {
         panic!("expected ToolResult content, got: {content:?}");
     };
-    let Some(ToolResultContent::Text(text)) = tr.content.first() else {
-        panic!("expected Text block, got: {:?}", tr.content);
-    };
-    assert_eq!(
-        text.additional_params
-            .as_ref()
-            .and_then(|params| params.get("nu_agent_success"))
-            .and_then(serde_json::Value::as_bool),
-        Some(false),
-        "persisted flag must survive the SQLite serde round trip"
+    assert!(
+        tr.is_error,
+        "persisted verdict must survive the SQLite serde round trip"
     );
     Ok(())
 }

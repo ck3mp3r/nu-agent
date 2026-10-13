@@ -82,6 +82,7 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
         // github-copilot uses the OAuth device-code flow.
         if name == "github-copilot" || name == "copilot" {
             crate::block_on!(plugin, async {
+                use agnt_core::config::copilot_tokens::verify_copilot_login_persistence;
                 use agnt_core::types::{
                     AuthSource, Authenticator, CopilotConfig, DeviceCodeHandler, default_token_dir,
                 };
@@ -107,8 +108,21 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
                     .await
                     .map_err(|e| LabeledError::new(format!("Authentication failed: {e}")))?;
 
+                let token_dir = token_dir.ok_or_else(|| {
+                    LabeledError::new(
+                        "GitHub Copilot credential directory unavailable: set XDG_CONFIG_HOME or HOME.",
+                    )
+                })?;
+                verify_copilot_login_persistence(&token_dir).map_err(LabeledError::new)?;
+
+                let api_key_path = token_dir.join("api-key.json");
+                let access_token_path = token_dir.join("access-token");
                 Ok(Value::string(
-                    "Successfully authenticated with GitHub Copilot",
+                    format!(
+                        "Successfully authenticated with GitHub Copilot\n  api-key.json: {}\n  access-token: {}",
+                        api_key_path.display(),
+                        access_token_path.display()
+                    ),
                     call.head,
                 ))
             })
@@ -128,7 +142,7 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
                 ));
             };
 
-            let vault = Vault::auto_detect();
+            let vault = Vault::auto_detect().map_err(|e| LabeledError::new(e.to_string()))?;
             vault
                 .store_api_key(&name, &key)
                 .map_err(|e| LabeledError::new(format!("Failed to store API key: {e}")))?;

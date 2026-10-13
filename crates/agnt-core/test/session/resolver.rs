@@ -1,7 +1,7 @@
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::{CompactionMarker, SessionStore as _, StoreEntry};
 use crate::types::{
-    AdditionalParams, AssistantContent, CallId, Message, Text, ToolCall, ToolFunction, ToolName,
+    AssistantContent, AssistantMessage, CallId, Message, Text, ToolCall, ToolFunction, ToolName,
     ToolResult, ToolResultContent, UserContent,
 };
 use chrono::Utc;
@@ -33,10 +33,7 @@ fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnaps
 #[test]
 fn test_convert_user_text() {
     let messages = vec![Message::User {
-        content: vec![UserContent::Text(Text {
-            text: "Hello, world!".to_string(),
-            additional_params: None,
-        })],
+        content: vec![UserContent::Text(Text::new("Hello, world!"))],
     }];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
@@ -48,13 +45,9 @@ fn test_convert_user_text() {
 
 #[test]
 fn test_convert_assistant_text() {
-    let messages = vec![Message::Assistant {
-        id: None,
-        content: vec![AssistantContent::Text(Text {
-            text: "I can help you with that.".to_string(),
-            additional_params: None,
-        })],
-    }];
+    let messages = vec![Message::Assistant(AssistantMessage::new(vec![
+        AssistantContent::Text(Text::new("I can help you with that.")),
+    ]))];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
 
@@ -65,18 +58,15 @@ fn test_convert_assistant_text() {
 
 #[test]
 fn test_convert_assistant_tool_call() {
-    let messages = vec![Message::Assistant {
-        id: None,
-        content: vec![AssistantContent::ToolCall(ToolCall {
-            id: CallId::from_wire("call_123"),
-            signature: None,
-            additional_params: None,
-            function: ToolFunction {
-                name: ToolName::new("read_file").expect("should be non-empty"),
-                arguments: json!({"path": "/tmp/test.txt"}),
-            },
-        })],
-    }];
+    let messages = vec![Message::Assistant(AssistantMessage::new(vec![
+        AssistantContent::ToolCall(ToolCall::new(
+            CallId::from_wire("call_123"),
+            ToolFunction::new(
+                ToolName::new("read_file").expect("should be non-empty"),
+                json!({"path": "/tmp/test.txt"}),
+            ),
+        )),
+    ]))];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
 
@@ -114,10 +104,8 @@ fn test_tool_result_not_shown_in_hydrated_transcript() {
         content: vec![UserContent::ToolResult(ToolResult {
             call: CallId::from_wire("call_123"),
             name: ToolName::new("read_file").expect("non-empty tool name"),
-            content: vec![ToolResultContent::Text(Text {
-                text: "File contents here".to_string(),
-                additional_params: None,
-            })],
+            content: vec![ToolResultContent::Text(Text::new("File contents here"))],
+            is_error: false,
         })],
     }];
 
@@ -129,24 +117,16 @@ fn test_tool_result_not_shown_in_hydrated_transcript() {
 
 #[test]
 fn test_convert_mixed_assistant_content() {
-    let messages = vec![Message::Assistant {
-        id: None,
-        content: vec![
-            AssistantContent::Text(Text {
-                text: "Let me help you.".to_string(),
-                additional_params: None,
-            }),
-            AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_weather"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("get_weather").expect("should be non-empty"),
-                    arguments: json!({"location": "NYC"}),
-                },
-            }),
-        ],
-    }];
+    let messages = vec![Message::Assistant(AssistantMessage::new(vec![
+        AssistantContent::Text(Text::new("Let me help you.")),
+        AssistantContent::ToolCall(ToolCall::new(
+            CallId::from_wire("call_weather"),
+            ToolFunction::new(
+                ToolName::new("get_weather").expect("should be non-empty"),
+                json!({"location": "NYC"}),
+            ),
+        )),
+    ]))];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
 
@@ -163,18 +143,11 @@ fn test_convert_mixed_assistant_content() {
 fn test_convert_multiple_messages() {
     let messages = vec![
         Message::User {
-            content: vec![UserContent::Text(Text {
-                text: "What's the weather?".to_string(),
-                additional_params: None,
-            })],
+            content: vec![UserContent::Text(Text::new("What's the weather?"))],
         },
-        Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::Text(Text {
-                text: "I'll check that for you.".to_string(),
-                additional_params: None,
-            })],
-        },
+        Message::Assistant(AssistantMessage::new(vec![AssistantContent::Text(
+            Text::new("I'll check that for you."),
+        )])),
         Message::System {
             content: "Compaction summary".to_string(),
         },
@@ -190,13 +163,9 @@ fn test_convert_multiple_messages() {
 
 #[test]
 fn test_empty_assistant_text_skipped() {
-    let messages = vec![Message::Assistant {
-        id: None,
-        content: vec![AssistantContent::Text(Text {
-            text: "".to_string(),
-            additional_params: None,
-        })],
-    }];
+    let messages = vec![Message::Assistant(AssistantMessage::new(vec![
+        AssistantContent::Text(Text::new("")),
+    ]))];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
 
@@ -207,18 +176,15 @@ fn test_empty_assistant_text_skipped() {
 #[test]
 fn test_tool_call_format_matches_live_rendering() {
     // Test that tool call format matches what start_tool_call produces
-    let messages = vec![Message::Assistant {
-        id: None,
-        content: vec![AssistantContent::ToolCall(ToolCall {
-            id: CallId::from_wire("call_abc"),
-            signature: None,
-            additional_params: None,
-            function: ToolFunction {
-                name: ToolName::new("k8s__list_pods").expect("should be non-empty"),
-                arguments: json!({"namespace": "prod"}),
-            },
-        })],
-    }];
+    let messages = vec![Message::Assistant(AssistantMessage::new(vec![
+        AssistantContent::ToolCall(ToolCall::new(
+            CallId::from_wire("call_abc"),
+            ToolFunction::new(
+                ToolName::new("k8s__list_pods").expect("should be non-empty"),
+                json!({"namespace": "prod"}),
+            ),
+        )),
+    ]))];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
 
@@ -242,18 +208,15 @@ fn test_tool_call_format_matches_live_rendering() {
 fn test_tool_call_argument_summarization() {
     // Test that long arguments are properly summarized
     let long_content = "x".repeat(150);
-    let messages = vec![Message::Assistant {
-        id: None,
-        content: vec![AssistantContent::ToolCall(ToolCall {
-            id: CallId::from_wire("call_long"),
-            signature: None,
-            additional_params: None,
-            function: ToolFunction {
-                name: ToolName::new("write_file").expect("should be non-empty"),
-                arguments: json!({"content": long_content}),
-            },
-        })],
-    }];
+    let messages = vec![Message::Assistant(AssistantMessage::new(vec![
+        AssistantContent::ToolCall(ToolCall::new(
+            CallId::from_wire("call_long"),
+            ToolFunction::new(
+                ToolName::new("write_file").expect("should be non-empty"),
+                json!({"content": long_content}),
+            ),
+        )),
+    ]))];
 
     let snapshots = convert_rig_messages_to_snapshots(&messages);
 
@@ -276,18 +239,11 @@ fn test_tool_call_argument_summarization() {
 fn hydrate_store_entries_includes_messages() {
     let entries = vec![
         StoreEntry::Message(Message::User {
-            content: vec![UserContent::Text(Text {
-                text: "Hello".to_string(),
-                additional_params: None,
-            })],
+            content: vec![UserContent::Text(Text::new("Hello"))],
         }),
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::Text(Text {
-                text: "Hi there".to_string(),
-                additional_params: None,
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::Text(Text::new("Hi there")),
+        ]))),
     ];
 
     let snapshots =
@@ -304,22 +260,15 @@ fn hydrate_store_entries_includes_messages() {
 fn hydrate_store_entries_includes_markers() {
     let entries = vec![
         StoreEntry::Message(Message::User {
-            content: vec![UserContent::Text(Text {
-                text: "Hello".to_string(),
-                additional_params: None,
-            })],
+            content: vec![UserContent::Text(Text::new("Hello"))],
         }),
         StoreEntry::Marker(CompactionMarker::new(
             "Summary of older messages".to_string(),
             Utc::now(),
         )),
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::Text(Text {
-                text: "Response after compaction".to_string(),
-                additional_params: None,
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::Text(Text::new("Response after compaction")),
+        ]))),
     ];
 
     let snapshots =
@@ -356,27 +305,17 @@ fn hydrate_store_entries_marker_format() {
 fn hydrate_store_entries_preserves_order() {
     let entries = vec![
         StoreEntry::Message(Message::User {
-            content: vec![UserContent::Text(Text {
-                text: "First".to_string(),
-                additional_params: None,
-            })],
+            content: vec![UserContent::Text(Text::new("First"))],
         }),
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::Text(Text {
-                text: "Second".to_string(),
-                additional_params: None,
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::Text(Text::new("Second")),
+        ]))),
         StoreEntry::Marker(CompactionMarker::new(
             "compaction summary".to_string(),
             Utc::now(),
         )),
         StoreEntry::Message(Message::User {
-            content: vec![UserContent::Text(Text {
-                text: "Third".to_string(),
-                additional_params: None,
-            })],
+            content: vec![UserContent::Text(Text::new("Third"))],
         }),
     ];
 
@@ -417,35 +356,32 @@ fn hydrate_store_entries_empty_summary_marker() {
 #[test]
 fn test_tool_result_edit_creates_display_snapshot() {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_1"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("edit").expect("should be non-empty"),
-                    arguments: json!({
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire("call_1"),
+                ToolFunction::new(
+                    ToolName::new("edit").expect("should be non-empty"),
+                    json!({
                         "filePath": "/tmp/test.rs",
                         "oldString": "old code",
                         "newString": "new code"
                     }),
-                },
-            })],
-        }),
+                ),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_1"),
                 name: ToolName::new("edit").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: serde_json::to_string(&json!({
+                content: vec![ToolResultContent::Text(Text::new(
+                    serde_json::to_string(&json!({
                         "path": "/tmp/test.rs",
                         "diff": "- old code\n+ new code",
                         "stats": { "insertions": 1, "deletions": 1 }
                     }))
                     .unwrap(),
-                    additional_params: None,
-                })],
+                ))],
+                is_error: false,
             })],
         }),
     ];
@@ -477,30 +413,27 @@ fn test_tool_result_edit_creates_display_snapshot() {
 #[test]
 fn test_tool_result_nu_creates_display_snapshot_from_arguments() -> Result<()> {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_nu_1"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("nu").expect("should be non-empty"),
-                    arguments: json!({"command": "ls | sort"}),
-                },
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire("call_nu_1"),
+                ToolFunction::new(
+                    ToolName::new("nu").expect("should be non-empty"),
+                    json!({"command": "ls | sort"}),
+                ),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_nu_1"),
                 name: ToolName::new("nu").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: serde_json::to_string(&json!({
+                content: vec![ToolResultContent::Text(Text::new(serde_json::to_string(
+                    &json!({
                         "stdout": "",
                         "stderr": "",
                         "exit_code": 0
-                    }))?,
-                    additional_params: None,
-                })],
+                    }),
+                )?))],
+                is_error: false,
             })],
         }),
     ];
@@ -540,24 +473,21 @@ fn test_tool_result_nu_creates_display_snapshot_from_arguments() -> Result<()> {
 #[test]
 fn test_tool_result_nu_explicit_display_wins_over_fallback() -> Result<()> {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_nu_explicit_1"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("nu").expect("should be non-empty"),
-                    arguments: json!({"command": "ls | sort"}),
-                },
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire("call_nu_explicit_1"),
+                ToolFunction::new(
+                    ToolName::new("nu").expect("should be non-empty"),
+                    json!({"command": "ls | sort"}),
+                ),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_nu_explicit_1"),
                 name: ToolName::new("nu").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: serde_json::to_string(&json!({
+                content: vec![ToolResultContent::Text(Text::new(serde_json::to_string(
+                    &json!({
                         "stdout": "",
                         "stderr": "",
                         "exit_code": 0,
@@ -569,9 +499,9 @@ fn test_tool_result_nu_explicit_display_wins_over_fallback() -> Result<()> {
                                 "content": "embedded result"
                             }]
                         }
-                    }))?,
-                    additional_params: None,
-                })],
+                    }),
+                )?))],
+                is_error: false,
             })],
         }),
     ];
@@ -599,26 +529,23 @@ fn test_tool_result_nu_explicit_display_wins_over_fallback() -> Result<()> {
 #[test]
 fn test_tool_result_non_previewable_no_display() -> Result<()> {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_read_1"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("read").expect("should be non-empty"),
-                    arguments: json!({"path": "/tmp/test.txt"}),
-                },
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire("call_read_1"),
+                ToolFunction::new(
+                    ToolName::new("read").expect("should be non-empty"),
+                    json!({"path": "/tmp/test.txt"}),
+                ),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_read_1"),
                 name: ToolName::new("read").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: serde_json::to_string(&json!({"data": "ok"}))?,
-                    additional_params: None,
-                })],
+                content: vec![ToolResultContent::Text(Text::new(serde_json::to_string(
+                    &json!({"data": "ok"}),
+                )?))],
+                is_error: false,
             })],
         }),
     ];
@@ -640,30 +567,27 @@ fn test_tool_result_non_previewable_no_display() -> Result<()> {
 #[test]
 fn test_tool_result_nu_empty_command_no_display() -> Result<()> {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_nu_empty_1"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("nu").expect("should be non-empty"),
-                    arguments: json!({"command": ""}),
-                },
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire("call_nu_empty_1"),
+                ToolFunction::new(
+                    ToolName::new("nu").expect("should be non-empty"),
+                    json!({"command": ""}),
+                ),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_nu_empty_1"),
                 name: ToolName::new("nu").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: serde_json::to_string(&json!({
+                content: vec![ToolResultContent::Text(Text::new(serde_json::to_string(
+                    &json!({
                         "stdout": "",
                         "stderr": "",
                         "exit_code": 0
-                    }))?,
-                    additional_params: None,
-                })],
+                    }),
+                )?))],
+                is_error: false,
             })],
         }),
     ];
@@ -685,30 +609,24 @@ fn test_tool_result_nu_empty_command_no_display() -> Result<()> {
 #[test]
 fn test_tool_result_nu_missing_command_no_display() -> Result<()> {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_nu_missing_1"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("nu").expect("should be non-empty"),
-                    arguments: json!({}),
-                },
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire("call_nu_missing_1"),
+                ToolFunction::new(ToolName::new("nu").expect("should be non-empty"), json!({})),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_nu_missing_1"),
                 name: ToolName::new("nu").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: serde_json::to_string(&json!({
+                content: vec![ToolResultContent::Text(Text::new(serde_json::to_string(
+                    &json!({
                         "stdout": "",
                         "stderr": "",
                         "exit_code": 0
-                    }))?,
-                    additional_params: None,
-                })],
+                    }),
+                )?))],
+                is_error: false,
             })],
         }),
     ];
@@ -728,26 +646,21 @@ fn test_tool_result_nu_missing_command_no_display() -> Result<()> {
 #[test]
 fn test_tool_result_non_json_gracefully_skipped() {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_2"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("read").expect("should be non-empty"),
-                    arguments: json!({"path": "/tmp/test.txt"}),
-                },
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire("call_2"),
+                ToolFunction::new(
+                    ToolName::new("read").expect("should be non-empty"),
+                    json!({"path": "/tmp/test.txt"}),
+                ),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_2"),
                 name: ToolName::new("read").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: "plain text, not JSON".to_string(),
-                    additional_params: None,
-                })],
+                content: vec![ToolResultContent::Text(Text::new("plain text, not JSON"))],
+                is_error: false,
             })],
         }),
     ];
@@ -763,24 +676,21 @@ fn test_tool_result_non_json_gracefully_skipped() {
 #[test]
 fn test_tool_result_with_explicit_display_key() {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_3"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("custom_tool").expect("should be non-empty"),
-                    arguments: json!({}),
-                },
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire("call_3"),
+                ToolFunction::new(
+                    ToolName::new("custom_tool").expect("should be non-empty"),
+                    json!({}),
+                ),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_3"),
                 name: ToolName::new("custom_tool").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: serde_json::to_string(&json!({
+                content: vec![ToolResultContent::Text(Text::new(
+                    serde_json::to_string(&json!({
                         "display": {
                             "title": "custom output",
                             "sections": [{
@@ -791,8 +701,8 @@ fn test_tool_result_with_explicit_display_key() {
                         }
                     }))
                     .unwrap(),
-                    additional_params: None,
-                })],
+                ))],
+                is_error: false,
             })],
         }),
     ];
@@ -822,35 +732,21 @@ fn test_tool_result_with_explicit_display_key() {
 fn hydrate_store_entries_marker_shows_summary_body() {
     let entries = vec![
         StoreEntry::Message(Message::User {
-            content: vec![UserContent::Text(Text {
-                text: "pre-compaction message 1".to_string(),
-                additional_params: None,
-            })],
+            content: vec![UserContent::Text(Text::new("pre-compaction message 1"))],
         }),
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::Text(Text {
-                text: "pre-compaction reply".to_string(),
-                additional_params: None,
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::Text(Text::new("pre-compaction reply")),
+        ]))),
         StoreEntry::Marker(CompactionMarker::new(
             "History summarized: user asked about Rust, assistant explained ownership.".to_string(),
             Utc::now(),
         )),
         StoreEntry::Message(Message::User {
-            content: vec![UserContent::Text(Text {
-                text: "post-compaction question".to_string(),
-                additional_params: None,
-            })],
+            content: vec![UserContent::Text(Text::new("post-compaction question"))],
         }),
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::Text(Text {
-                text: "post-compaction answer".to_string(),
-                additional_params: None,
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::Text(Text::new("post-compaction answer")),
+        ]))),
     ];
 
     let snapshots =
@@ -895,28 +791,25 @@ fn hydrate_store_entries_marker_shows_summary_body() {
 /// A row whose failure-shaped text ("Toolset error: ...") carries NO persisted
 /// flag rehydrates as tool_success == None — output text is never consulted.
 #[test]
-fn hydrate_unflagged_toolset_error_text_rehydrates_as_none() {
+fn hydrate_unflagged_toolset_error_text_rehydrates_as_true() {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_fail_1"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("bash").expect("should be non-empty"),
-                    arguments: json!({"command": "exit 1"}),
-                },
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire("call_fail_1"),
+                ToolFunction::new(
+                    ToolName::new("bash").expect("should be non-empty"),
+                    json!({"command": "exit 1"}),
+                ),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_fail_1"),
                 name: ToolName::new("bash").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: "Toolset error: command exited with code 1".to_string(),
-                    additional_params: None,
-                })],
+                content: vec![ToolResultContent::Text(Text::new(
+                    "Toolset error: command exited with code 1",
+                ))],
+                is_error: false,
             })],
         }),
     ];
@@ -929,36 +822,31 @@ fn hydrate_unflagged_toolset_error_text_rehydrates_as_none() {
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
         snapshots[0].tool_success(),
-        None,
-        "unflagged Toolset error text must rehydrate as None — no text sniffing"
+        Some(true),
+        "unflagged Toolset error text must rehydrate as success — no text sniffing"
     );
 }
 
 /// A plain success-shaped row without a persisted flag rehydrates as
 /// tool_success == None — output text is never consulted, no default.
 #[test]
-fn hydrate_unflagged_plain_text_rehydrates_as_none() {
+fn hydrate_unflagged_plain_text_rehydrates_as_true() {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_ok_1"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("read_file").expect("should be non-empty"),
-                    arguments: json!({"path": "/tmp/test.txt"}),
-                },
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire("call_ok_1"),
+                ToolFunction::new(
+                    ToolName::new("read_file").expect("should be non-empty"),
+                    json!({"path": "/tmp/test.txt"}),
+                ),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_ok_1"),
                 name: ToolName::new("read_file").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: "file contents here".to_string(),
-                    additional_params: None,
-                })],
+                content: vec![ToolResultContent::Text(Text::new("file contents here"))],
+                is_error: false,
             })],
         }),
     ];
@@ -970,8 +858,8 @@ fn hydrate_unflagged_plain_text_rehydrates_as_none() {
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
         snapshots[0].tool_success(),
-        None,
-        "unflagged plain text must rehydrate as None — no default-to-success"
+        Some(true),
+        "unflagged plain text must rehydrate as success — no default-to-failure"
     );
 }
 
@@ -1023,28 +911,23 @@ fn hydrate_store_entries_marker_body_contains_summary() {
 /// A row with legacy bare denial text ("Permission denied") and no persisted
 /// flag rehydrates as tool_success == None — text is never consulted.
 #[test]
-fn hydrate_unflagged_permission_denied_text_rehydrates_as_none() {
+fn hydrate_unflagged_permission_denied_text_rehydrates_as_true() {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_perm_1"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("write_file").expect("should be non-empty"),
-                    arguments: json!({"path": "/etc/passwd", "content": "evil"}),
-                },
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire("call_perm_1"),
+                ToolFunction::new(
+                    ToolName::new("write_file").expect("should be non-empty"),
+                    json!({"path": "/etc/passwd", "content": "evil"}),
+                ),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_perm_1"),
                 name: ToolName::new("write_file").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: "Permission denied".to_string(),
-                    additional_params: None,
-                })],
+                content: vec![ToolResultContent::Text(Text::new("Permission denied"))],
+                is_error: false,
             })],
         }),
     ];
@@ -1057,37 +940,33 @@ fn hydrate_unflagged_permission_denied_text_rehydrates_as_none() {
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
         snapshots[0].tool_success(),
-        None,
-        "unflagged permission denial text must rehydrate as None — no text sniffing"
+        Some(true),
+        "unflagged permission denial text must rehydrate as success — no text sniffing"
     );
 }
 
 /// A row with legacy doom-loop text ("Doom loop detected: ...") and no
 /// persisted flag rehydrates as tool_success == None — text is never consulted.
 #[test]
-fn hydrate_unflagged_doom_loop_text_rehydrates_as_none() {
+fn hydrate_unflagged_doom_loop_text_rehydrates_as_true() {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_doom_1"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("nu").expect("should be non-empty"),
-                    arguments: json!({"command": "ls"}),
-                },
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire("call_doom_1"),
+                ToolFunction::new(
+                    ToolName::new("nu").expect("should be non-empty"),
+                    json!({"command": "ls"}),
+                ),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_doom_1"),
                 name: ToolName::new("nu").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: "Doom loop detected: 'nu' called 5 times with identical arguments"
-                        .to_string(),
-                    additional_params: None,
-                })],
+                content: vec![ToolResultContent::Text(Text::new(
+                    "Doom loop detected: 'nu' called 5 times with identical arguments",
+                ))],
+                is_error: false,
             })],
         }),
     ];
@@ -1100,8 +979,8 @@ fn hydrate_unflagged_doom_loop_text_rehydrates_as_none() {
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
         snapshots[0].tool_success(),
-        None,
-        "unflagged doom loop text must rehydrate as None — no text sniffing"
+        Some(true),
+        "unflagged doom loop text must rehydrate as success — no text sniffing"
     );
 }
 
@@ -1115,7 +994,7 @@ fn hydrate_flagged_tool_quote_text_rehydrates_as_true() {
     let entries = tool_call_entries(
         "call_flag_ok_1",
         "Tool 'nonexistent' is not available.",
-        Some(true),
+        false,
     );
 
     let snapshots =
@@ -1133,11 +1012,11 @@ fn hydrate_flagged_tool_quote_text_rehydrates_as_true() {
 /// The same `Tool '` text without a persisted flag rehydrates as
 /// tool_success == None — the false-positive sniff class is dead.
 #[test]
-fn hydrate_unflagged_tool_quote_text_rehydrates_as_none() {
+fn hydrate_unflagged_tool_quote_text_rehydrates_as_true() {
     let entries = tool_call_entries(
         "call_legacy_quote_1",
         "Tool 'nonexistent' is not available.",
-        None,
+        false,
     );
 
     let snapshots =
@@ -1147,8 +1026,8 @@ fn hydrate_unflagged_tool_quote_text_rehydrates_as_none() {
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
         snapshots[0].tool_success(),
-        None,
-        "unflagged `Tool '` text must rehydrate as None — no text sniffing"
+        Some(true),
+        "unflagged `Tool '` text must rehydrate as success — no text sniffing"
     );
 }
 
@@ -1159,7 +1038,7 @@ fn hydrate_flagged_failure_rehydrates_as_false() {
     let entries = tool_call_entries(
         "call_flag_fail_1",
         "read failed: No such file or directory (os error 2)",
-        Some(false),
+        true,
     );
 
     let snapshots =
@@ -1177,11 +1056,11 @@ fn hydrate_flagged_failure_rehydrates_as_false() {
 /// A legacy row (no flag) with the enriched permission-denial text rehydrates
 /// as tool_success == None — the flag is the only verdict source.
 #[test]
-fn hydrate_legacy_enriched_denial_rehydrates_as_none() {
+fn hydrate_legacy_enriched_denial_rehydrates_as_true() {
     let entries = tool_call_entries(
         "call_legacy_denial_1",
         "Permission denied by rule 'global:*' (scope: global)",
-        None,
+        false,
     );
 
     let snapshots =
@@ -1191,19 +1070,19 @@ fn hydrate_legacy_enriched_denial_rehydrates_as_none() {
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
         snapshots[0].tool_success(),
-        None,
-        "legacy enriched denial text without a flag must rehydrate as None"
+        Some(true),
+        "legacy enriched denial text without a flag must rehydrate as success"
     );
 }
 
 /// A legacy row (no flag) whose text matches no failure class rehydrates as
 /// tool_success == None — unknown is honest; no default-to-success guess.
 #[test]
-fn hydrate_legacy_unmatched_text_rehydrates_as_none() {
+fn hydrate_legacy_unmatched_text_rehydrates_as_true() {
     let entries = tool_call_entries(
         "call_legacy_unmatched_1",
         "read failed: No such file or directory (os error 2)",
-        None,
+        false,
     );
 
     let snapshots =
@@ -1213,84 +1092,32 @@ fn hydrate_legacy_unmatched_text_rehydrates_as_none() {
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
         snapshots[0].tool_success(),
-        None,
-        "legacy rows with no flag must rehydrate as None"
-    );
-}
-
-/// A first Text block whose `nu_agent_success` value is NOT a boolean (e.g. a
-/// string) must not be trusted: the row rehydrates as tool_success == None.
-#[test]
-fn hydrate_non_boolean_flag_value_rehydrates_as_none() {
-    let entries = vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire("call_flag_bad_1"),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("read_file").expect("should be non-empty"),
-                    arguments: json!({"path": "/tmp/test.txt"}),
-                },
-            })],
-        }),
-        StoreEntry::Message(Message::User {
-            content: vec![UserContent::ToolResult(ToolResult {
-                call: CallId::from_wire("call_flag_bad_1"),
-                name: ToolName::new("read_file").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: "file contents here".to_string(),
-                    additional_params: AdditionalParams::from_entries([(
-                        "nu_agent_success",
-                        json!("yes"),
-                    )]),
-                })],
-            })],
-        }),
-    ];
-
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
-
-    assert_eq!(snapshots.len(), 1);
-    assert_eq!(snapshots[0].role(), "tool");
-    assert_eq!(
-        snapshots[0].tool_success(),
-        None,
-        "non-boolean nu_agent_success values must rehydrate as None"
+        Some(true),
+        "legacy rows with no flag must rehydrate as success"
     );
 }
 
 // -- Test Support
 
 /// Build [assistant ToolCall, user ToolResult] store entries for one call
-/// whose result text is `text` and whose persisted verdict flag is `flag`
-/// (`None` = no flag — legacy row).
-fn tool_call_entries(call_id: &str, text: &str, flag: Option<bool>) -> Vec<StoreEntry> {
+/// whose result text is `text` and whose persisted `is_error` flag is `is_error`.
+fn tool_call_entries(call_id: &str, text: &str, is_error: bool) -> Vec<StoreEntry> {
     vec![
-        StoreEntry::Message(Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall {
-                id: CallId::from_wire(call_id),
-                signature: None,
-                additional_params: None,
-                function: ToolFunction {
-                    name: ToolName::new("read_file").expect("should be non-empty"),
-                    arguments: json!({"path": "/tmp/test.txt"}),
-                },
-            })],
-        }),
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire(call_id),
+                ToolFunction::new(
+                    ToolName::new("read_file").expect("should be non-empty"),
+                    json!({"path": "/tmp/test.txt"}),
+                ),
+            )),
+        ]))),
         StoreEntry::Message(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire(call_id),
                 name: ToolName::new("read_file").expect("non-empty tool name"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: text.to_string(),
-                    additional_params: flag.and_then(|f| {
-                        AdditionalParams::from_entries([("nu_agent_success", json!(f))])
-                    }),
-                })],
+                content: vec![ToolResultContent::Text(Text::new(text))],
+                is_error,
             })],
         }),
     ]

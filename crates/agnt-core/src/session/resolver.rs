@@ -2,7 +2,6 @@ use nu_protocol::LabeledError;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::journal::TOOL_SUCCESS_PARAM;
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::protocol::event::ToolDisplay;
 use crate::session::{CompactionMarker, Session, SessionStore, StoreEntry};
@@ -222,15 +221,15 @@ pub(crate) fn hydrate_transcript_from_store_entries(
     cwd: &Path,
 ) -> Vec<UiMessageSnapshot> {
     // Pass 1: collect call_id → tool_name from all ToolCalls and
-    //         call_id → success from all ToolResults. Success comes ONLY
-    //         from the persisted verdict flag on the first Text block
-    //         (TOOL_SUCCESS_PARAM); rows without the flag stay unknown.
+    //         call_id → success from all ToolResults. Success is the inverse
+    //         of the persisted `ToolResult::is_error` flag.
     let mut tool_names: HashMap<CallId, String> = HashMap::new();
     let mut tool_arguments: HashMap<CallId, String> = HashMap::new();
     let mut tool_success_map: HashMap<CallId, bool> = HashMap::new();
     for entry in entries {
         match entry {
-            StoreEntry::Message(Message::Assistant { content, .. }) => {
+            StoreEntry::Message(Message::Assistant(assistant)) => {
+                let content = &assistant.content;
                 for item in content.iter() {
                     if let AssistantContent::ToolCall(tc) = item {
                         tool_names.insert(tc.id.clone(), tc.function.name.to_string());
@@ -245,19 +244,7 @@ pub(crate) fn hydrate_transcript_from_store_entries(
             StoreEntry::Message(Message::User { content }) => {
                 for item in content.iter() {
                     if let UserContent::ToolResult(tr) = item {
-                        for c in tr.content.iter() {
-                            if let ToolResultContent::Text(t) = c {
-                                if let Some(success) = t
-                                    .additional_params
-                                    .as_ref()
-                                    .and_then(|p| p.get(TOOL_SUCCESS_PARAM))
-                                    .and_then(serde_json::Value::as_bool)
-                                {
-                                    tool_success_map.insert(tr.call.clone(), success);
-                                }
-                                break;
-                            }
-                        }
+                        tool_success_map.insert(tr.call.clone(), !tr.is_error);
                     }
                 }
             }
@@ -298,8 +285,8 @@ fn format_compaction_content(marker: &CompactionMarker) -> String {
 /// This function maps rig message types to transcript display items:
 /// - `Message::User { content }` with `UserContent::Text` → user transcript item
 /// - `Message::User { content }` with `UserContent::ToolResult` → skipped (not shown in TUI)
-/// - `Message::Assistant { content }` with `AssistantContent::Text` → assistant text
-/// - `Message::Assistant { content }` with `AssistantContent::ToolCall` → tool call display
+/// - `Message::Assistant(AssistantMessage { content, .. })` with `AssistantContent::Text` → assistant text
+/// - `Message::Assistant(AssistantMessage { content, .. })` with `AssistantContent::ToolCall` → tool call display
 /// - `Message::System { content }` → system/compaction summary display
 pub(crate) fn hydrate_single_message(
     msg: &Message,
@@ -357,7 +344,8 @@ pub(crate) fn hydrate_single_message(
                 }
             }
         }
-        Message::Assistant { content, .. } => {
+        Message::Assistant(assistant) => {
+            let content = &assistant.content;
             for item in content.iter() {
                 match item {
                     AssistantContent::Text(text) if !text.text.is_empty() => {
@@ -406,5 +394,5 @@ fn tool_display_from_arguments(
 ) -> Option<ToolDisplay> {
     let arguments: serde_json::Value = serde_json::from_str(arguments_json).ok()?;
     let kind = tool_name.parse::<BuiltinKind>().ok();
-    pre_authorize_fs_tool(kind, &arguments, cwd).and_then(|output| output.display)
+    pre_authorize_fs_tool(kind, arguments.as_object()?, cwd).and_then(|output| output.display)
 }

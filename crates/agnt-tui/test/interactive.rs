@@ -153,10 +153,12 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
         .send(TerminalEvent::Key(TerminalKey::Enter))
         .await
         .expect("submit second");
-    // Give the loop a moment to process the second submit without completing.
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    // The stacked prompt must not drain while the turn is active. Await the
+    // event channel with a bounded budget: a drain would arrive immediately,
+    // expiry proves none was sent.
+    let drained = tokio::time::timeout(Duration::from_millis(50), event_rx.recv()).await;
     assert!(
-        event_rx.try_recv().is_err(),
+        drained.is_err(),
         "second prompt must not drain while the turn is still active"
     );
 

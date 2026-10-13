@@ -30,7 +30,7 @@ async fn journey_doom_loop_stop_surfaces_reason() -> Result<()> {
         .turn(
             "do the same thing repeatedly",
             model,
-            echo_tool("result_42"),
+            echo_tool("result_42")?,
         )
         .await;
 
@@ -243,7 +243,7 @@ async fn journey_output_repetition_cross_turn_fifth_is_first_continue() -> Resul
 async fn journey_output_repetition_cross_turn_tool_call_resets() -> Result<()> {
     // -- Setup & Fixtures
     let mut h = JourneyHarness::new("journey-output-repetition-tool-reset");
-    let tool_infra = echo_tool("result_42");
+    let tool_infra = echo_tool("result_42")?;
 
     // -- Exec: one tool-call turn, then 4 identical text-only turns.
     // The tool-call turn needs two model calls: one to emit the tool call,
@@ -545,7 +545,7 @@ async fn journey_repetition_guard_off_cross_turn_never_trips() -> Result<()> {
 async fn journey_repetition_guard_off_doom_loop_never_trips() -> Result<()> {
     // -- Setup & Fixtures
     let mut h = JourneyHarness::new("journey-repetition-guard-off-doom");
-    let mut tool_infra = echo_tool("result_42");
+    let mut tool_infra = echo_tool("result_42")?;
     tool_infra.repetition_guard = false;
 
     // 8 identical tool calls (would stop at the 8th with the guard on) plus a

@@ -2,7 +2,7 @@
 //! `ToolServerHandle` while providing a pre-filtered `ToolDefinition`.
 
 use crate::bus::Bus;
-use crate::types::ToolDefinition;
+use crate::types::{ToolDefinition, ToolName};
 use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput, ToolResult};
 
 /// A proxy tool that forwards `call` to an existing `ToolServerHandle`
@@ -12,7 +12,7 @@ use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput, ToolResult};
 /// the LLM sees) while dispatching execution through the original shared
 /// tool server (which has all registered tool implementations).
 pub(crate) struct FilteredToolProxy {
-    pub(crate) tool_name: String,
+    pub(crate) tool_name: ToolName,
     pub(crate) tool_definition: ToolDefinition,
     pub(crate) handle: rig::tool::server::ToolServerHandle,
     pub(crate) bus: Bus,

@@ -236,7 +236,7 @@ impl McpState {
             grouped
                 .entry(server_name.to_string())
                 .or_default()
-                .push(tool.name.clone());
+                .push(tool.name.to_string());
         }
 
         grouped

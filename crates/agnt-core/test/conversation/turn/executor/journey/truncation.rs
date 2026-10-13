@@ -56,7 +56,7 @@ async fn journey_tool_result_truncated_at_configured_limit() -> Result<()> {
         .turn_with_client(
             "list files",
             &client,
-            nu_shell_tool_truncating(response_200, 100).await,
+            nu_shell_tool_truncating(response_200, 100).await?,
         )
         .await?;
     assert!(r.is_ok(), "turn must succeed: {r:?}");
@@ -117,13 +117,13 @@ async fn journey_tool_result_truncated_at_configured_limit() -> Result<()> {
 async fn grep_via_builtin_adapter(
     max_tool_result_bytes: usize,
     cwd: std::path::PathBuf,
-) -> ToolInfra {
+) -> Result<ToolInfra> {
     use crate::tools::handler::builtin_tool::make_dynamic_tool;
     use crate::tools::handler::grep::GrepTool;
     use crate::types::ToolDefinition;
 
     let tool_def = ToolDefinition {
-        name: "grep".to_string(),
+        name: crate::types::ToolName::new("grep")?,
         description: "Search file contents".to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -141,10 +141,10 @@ async fn grep_via_builtin_adapter(
         max_tool_result_bytes,
         bus,
     ));
-    default_tool_infra(
+    Ok(default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
-            name: "grep".to_string(),
+            name: crate::types::ToolName::new("grep")?,
             description: "Search file contents".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -154,7 +154,7 @@ async fn grep_via_builtin_adapter(
                 "required": ["pattern"]
             }),
         }],
-    )
+    ))
 }
 
 /// Prove `Config::max_tool_result_bytes → BuiltinToolAdapter::max_tool_result_bytes →
@@ -222,7 +222,7 @@ async fn journey_tool_result_limit_flows_from_config_to_adapter() -> Result<()> 
         .turn_with_client(
             "load skill",
             &client,
-            grep_via_builtin_adapter(limit, cwd).await,
+            grep_via_builtin_adapter(limit, cwd).await?,
         )
         .await?;
     assert!(r.is_ok(), "turn must succeed: {r:?}");

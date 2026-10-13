@@ -26,7 +26,9 @@ pub trait ProviderManager {
 
     /// Ensure the cached client is up to date for the current config.
     /// Idempotent when the key is unchanged.
-    fn ensure_client_cached(&mut self) -> Result<(), LabeledError>;
+    fn ensure_client_cached(
+        &mut self,
+    ) -> impl std::future::Future<Output = Result<(), LabeledError>> + Send;
 
     /// Return a reference to the cached client, if one exists.
     fn cached_client(&self) -> Option<&CachedProviderClient>;
@@ -42,7 +44,9 @@ pub trait ProviderManager {
     /// bare model name. Ensures the client is cached for the current config first.
     fn build_dyn_model(
         &mut self,
-    ) -> Result<rig::DynModel<rig::operation::Completion>, LabeledError>;
+    ) -> impl std::future::Future<
+        Output = Result<rig::DynModel<rig::operation::Completion>, LabeledError>,
+    > + Send;
 
     /// Return the startup plugin config snapshot (used for model-switch resolution).
     fn startup_plugin_config(&self) -> Option<&PluginConfig>;

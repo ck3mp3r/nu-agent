@@ -3,13 +3,13 @@ use crate::tools::mcp::{
     config::McpServerConfig,
     runtime::{McpRuntime, McpServerLifecycle},
 };
-use crate::types::ToolDefinition;
+use crate::types::{EmptyToolName, ToolDefinition, ToolName};
 
 fn mcp_tool_definition_from_discovered(
     tool: &crate::tools::mcp::client::McpToolDefinition,
-) -> ToolDefinition {
-    ToolDefinition {
-        name: tool.name.clone(),
+) -> Result<ToolDefinition, EmptyToolName> {
+    Ok(ToolDefinition {
+        name: ToolName::new(tool.name.clone())?,
         description: tool
             .description
             .clone()
@@ -26,7 +26,7 @@ fn mcp_tool_definition_from_discovered(
                 "required": ["args"]
             })
         }),
-    }
+    })
 }
 
 pub(super) fn merge_new_mcp_tools_into_runtime(
@@ -53,7 +53,8 @@ pub(super) fn merge_new_mcp_tools_into_runtime(
     for tool in discovered_tools {
         if !known_names.contains(tool.name.as_str()) {
             log::debug!("New MCP tool added: {}", tool.name);
-            tool_definitions.push(mcp_tool_definition_from_discovered(tool));
+            tool_definitions
+                .push(mcp_tool_definition_from_discovered(tool).map_err(|e| e.to_string())?);
         }
     }
 

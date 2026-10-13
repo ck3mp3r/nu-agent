@@ -1,3 +1,4 @@
+pub mod copilot_tokens;
 pub mod defaults;
 pub mod dotenv;
 pub mod env;

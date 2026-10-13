@@ -8,12 +8,15 @@ strip = "symbols"
 
 [profile.release.package."*"]
 strip = false
+
+[profile.dev]
+debug = "line-tables-only"
+
 [workspace]
 members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-name = "nu-agent"
 edition = "2024"
 version = "0.1.0"
 
@@ -32,7 +35,7 @@ nu-protocol = "0.115.1"
 nu-parser = "0.115.1"
 
 # LLM / AI
-rig = { version = "0.43", default-features = false, features = ["agent", "derive", "reqwest", "rmcp", "test-utils"] }
+rig = { version = "0.44", default-features = false, features = ["agent", "derive", "reqwest", "test-utils"] }
 rmcp = { version = "2.2", default-features = false, features = [
   "client",
   "transport-child-process",
@@ -48,7 +51,7 @@ tokio-util = "0.7"
 futures = "0.3"
 
 # Networking
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "system-proxy", "blocking"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "blocking"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 http = "1.4"
 hyper = { version = "1", features = ["server", "http1"] }

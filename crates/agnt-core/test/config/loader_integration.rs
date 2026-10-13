@@ -1,7 +1,9 @@
 //! Integration tests for `load_and_resolve_config`.
 //!
-//! These tests load a real config.toml and probe the OS keychain through
+//! These tests load a real config.toml and resolve it through
 //! `Vault::auto_detect`, so they are gated behind the `integration` feature.
+//! Each test forces the env-only vault backend, so config load never probes
+//! the OS keychain.
 
 use std::path::{Path, PathBuf};
 
@@ -16,6 +18,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 #[test]
 fn test_loader_load_and_resolve_config_resolves_default_role() -> Result<()> {
     // -- Setup & Fixtures
+    force_env_only_vault();
     let dir = TempDir::new()?;
     let path = write_config(dir.path(), DEFAULT_CONFIG)?;
 
@@ -37,6 +40,7 @@ fn test_loader_load_and_resolve_config_resolves_default_role() -> Result<()> {
 #[test]
 fn test_loader_load_and_resolve_config_literal_override_wins_over_default() -> Result<()> {
     // -- Setup & Fixtures
+    force_env_only_vault();
     let dir = TempDir::new()?;
     let path = write_config(dir.path(), MULTI_ROLE_CONFIG)?;
 
@@ -53,6 +57,7 @@ fn test_loader_load_and_resolve_config_literal_override_wins_over_default() -> R
 #[test]
 fn test_loader_load_and_resolve_config_role_label_override() -> Result<()> {
     // -- Setup & Fixtures
+    force_env_only_vault();
     let dir = TempDir::new()?;
     let path = write_config(dir.path(), MULTI_ROLE_CONFIG)?;
 
@@ -93,6 +98,16 @@ fn write_config(dir: &Path, contents: &str) -> Result<PathBuf> {
     let path = dir.join("config.toml");
     std::fs::write(&path, contents)?;
     Ok(path)
+}
+
+/// Force the env-only vault backend so config load never probes the OS keychain.
+///
+/// nextest runs each test in its own process, so mutating the process
+/// environment here cannot race with another test.
+fn force_env_only_vault() {
+    // SAFETY: nextest gives each test its own process, so no other thread
+    // reads the environment concurrently.
+    unsafe { std::env::set_var("AGENT_VAULT_BACKEND", "env") };
 }
 
 // endregion: --- Test Support

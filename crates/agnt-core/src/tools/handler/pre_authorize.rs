@@ -1,5 +1,5 @@
 use crate::types::ToolCall;
-use serde_json::Value as JsonValue;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::protocol::event::ToolDisplay;
 use crate::tools::authz::AskContext;
@@ -25,12 +25,14 @@ pub struct PreAuthorizeOutput {
 /// the target file) — no writes, no process spawn.
 pub fn pre_authorize_fs_tool(
     kind: Option<BuiltinKind>,
-    arguments: &JsonValue,
+    arguments: &JsonMap<String, JsonValue>,
     cwd: &std::path::Path,
 ) -> Option<PreAuthorizeOutput> {
+    // `Previewable::preview` takes the arguments as a `JsonValue`.
+    let args = JsonValue::Object(arguments.clone());
     let preview_display = match kind? {
-        BuiltinKind::Edit => EditTool::preview(arguments, cwd)?,
-        BuiltinKind::Nu => NuTool::preview(arguments, cwd)?,
+        BuiltinKind::Edit => EditTool::preview(&args, cwd)?,
+        BuiltinKind::Nu => NuTool::preview(&args, cwd)?,
         _ => return None,
     };
 

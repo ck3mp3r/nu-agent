@@ -158,18 +158,27 @@ async fn test_translator_drain_bus_subscribes_and_forwards_events() -> Result<()
         )
         .await;
     });
-    // The drain subscribes on its first poll; give it that poll before publishing.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
     // -- Exec
-    bus.ui_event()
-        .send(UiEvent::AssistantMessage {
-            delta: "live".to_string(),
-            text: "live".to_string(),
-        })
+    // The drain subscribes on its first poll. A broadcast send succeeds only
+    // once a receiver is subscribed, so retry until the drain is listening.
+    let event = UiEvent::AssistantMessage {
+        delta: "live".to_string(),
+        text: "live".to_string(),
+    };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if bus.ui_event().send(event.clone()).await.is_ok() {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err("the drain never subscribed to the bus".into());
+        }
+        tokio::task::yield_now().await;
+    }
+    // Await the forwarded notification instead of settling on a fixed delay.
+    tokio::time::timeout(std::time::Duration::from_secs(5), sink.wait_for_updates(1))
         .await
-        .map_err(|e| format!("should publish: {e:?}"))?;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        .map_err(|_| "the drain never forwarded the event")?;
     drain.abort();
 
     // -- Check

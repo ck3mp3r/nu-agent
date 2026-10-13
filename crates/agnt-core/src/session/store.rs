@@ -386,7 +386,7 @@ impl SessionStore for FsSessionStore {
 /// matching ToolResults for ALL its IDs. Logs a warn! for each violation found.
 /// Does NOT inject synthetic results — only strips and warns.
 pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Message> {
-    use crate::types::{AssistantContent, CallId, UserContent};
+    use crate::types::{AssistantContent, AssistantMessage, CallId, UserContent};
     use std::collections::HashSet;
 
     // We loop until no violations remain; stripping one pair may expose another.
@@ -396,9 +396,10 @@ pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Messag
         // covered by the immediately following User message.
         let violation_ids: Option<HashSet<CallId>> =
             messages.iter().enumerate().find_map(|(i, msg)| {
-                let Message::Assistant { content, .. } = msg else {
+                let Message::Assistant(assistant) = msg else {
                     return None;
                 };
+                let content = &assistant.content;
                 let call_ids: HashSet<CallId> = content
                     .iter()
                     .filter_map(|item| match item {
@@ -442,8 +443,9 @@ pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Messag
         messages = messages
             .into_iter()
             .filter_map(|msg| match msg {
-                Message::Assistant { id, content } => {
-                    let items: Vec<crate::types::AssistantContent> = content
+                Message::Assistant(assistant) => {
+                    let items: Vec<crate::types::AssistantContent> = assistant
+                        .content
                         .into_iter()
                         .filter(|item| match item {
                             AssistantContent::ToolCall(tc) => !bad_ids.contains(&tc.id),
@@ -453,7 +455,7 @@ pub(crate) fn validate_tool_call_adjacency(messages: Vec<Message>) -> Vec<Messag
                     if items.is_empty() {
                         None
                     } else {
-                        Some(Message::Assistant { id, content: items })
+                        Some(Message::Assistant(AssistantMessage::new(items)))
                     }
                 }
                 Message::User { content } => {

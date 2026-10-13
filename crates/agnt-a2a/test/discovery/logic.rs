@@ -1,4 +1,6 @@
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use std::time::{Duration, Instant};
+
+use mdns_sd::{Receiver, ResolvedService, ServiceDaemon, ServiceEvent, ServiceInfo};
 
 use crate::discovery::static_discovery::StaticPeerDiscovery;
 use crate::discovery::{
@@ -51,6 +53,28 @@ fn build_test_service_info(agent_name: &str, port: u16, mesh_key: &str) -> Servi
     .expect("synthetic ServiceInfo")
 }
 
+/// Await a resolved mDNS service whose fullname contains `needle`, within
+/// `budget`. Returns `None` when the budget expires or the channel closes.
+fn wait_for_resolved(
+    receiver: &Receiver<ServiceEvent>,
+    needle: &str,
+    budget: Duration,
+) -> Option<Box<ResolvedService>> {
+    let deadline = Instant::now() + budget;
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        match receiver.recv_timeout(remaining) {
+            Ok(ServiceEvent::ServiceResolved(resolved))
+                if resolved.get_fullname().contains(needle) =>
+            {
+                return Some(resolved);
+            }
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // peer_from_fields tests (pure conversion logic)
 // ---------------------------------------------------------------------------
@@ -81,7 +105,7 @@ fn test_peer_from_fields_port_zero() {
 /// NOTE: Requires a working mDNS responder on the host.
 #[ignore]
 #[test]
-fn test_peer_url_from_txt_property() {
+fn test_peer_url_from_txt_property() -> Result<()> {
     let daemon = ServiceDaemon::new().expect("ServiceDaemon");
 
     // Register with a url TXT property that differs from the address-based URL.
@@ -103,24 +127,16 @@ fn test_peer_url_from_txt_property() {
 
     let receiver = daemon.browse("_nu-agent-a2a._tcp.local.").expect("browse");
 
-    let mut found = false;
-    for _ in 0..30 {
-        if let Ok(ServiceEvent::ServiceResolved(resolved)) = receiver.try_recv()
-            && resolved.get_fullname().contains("txt-url-agent")
-        {
-            let url = crate::discovery::peer_url_from_service(&resolved);
-            assert_eq!(
-                url, "http://127.0.0.1:9999",
-                "peer_url_from_service should use TXT url property"
-            );
-            found = true;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+    let resolved = wait_for_resolved(&receiver, "txt-url-agent", Duration::from_secs(3))
+        .ok_or("Should discover txt-url-agent via mDNS")?;
+    let url = crate::discovery::peer_url_from_service(&resolved);
+    assert_eq!(
+        url, "http://127.0.0.1:9999",
+        "peer_url_from_service should use TXT url property"
+    );
 
-    assert!(found, "Should discover txt-url-agent via mDNS");
     let _ = daemon.shutdown();
+    Ok(())
 }
 
 /// Verify browse returns a live channel.
@@ -148,17 +164,7 @@ fn test_raw_mdns_sd_register_and_browse() {
     let receiver = daemon.browse("_nu-agent-a2a._tcp.local.").expect("browse");
 
     // Wait up to 3 seconds for our own service.
-    let mut found = false;
-    for _ in 0..30 {
-        if let Ok(ServiceEvent::ServiceResolved(resolved)) = receiver.try_recv()
-            && resolved.get_fullname().contains("raw-test-agent")
-        {
-            found = true;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-
+    let found = wait_for_resolved(&receiver, "raw-test-agent", Duration::from_secs(3)).is_some();
     assert!(found, "Should discover raw-test-agent via mDNS");
     let _ = daemon.shutdown();
 }

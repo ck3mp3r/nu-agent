@@ -277,18 +277,18 @@ impl rig::tool::Tool for TestNuShellTool {
 }
 
 /// Register a nu__shell tool that returns a fixed result string.
-pub(super) fn nu_shell_tool(response: &'static str) -> ToolInfra {
+pub(super) fn nu_shell_tool(response: &'static str) -> Result<ToolInfra> {
     let handle = rig::tool::server::ToolServer::new()
         .tool(TestNuShellTool { response })
         .run();
-    default_tool_infra(
+    Ok(default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
-            name: "nu__shell".to_string(),
+            name: crate::types::ToolName::new("nu__shell")?,
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         }],
-    )
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -300,9 +300,9 @@ pub(super) fn nu_shell_tool(response: &'static str) -> ToolInfra {
 fn build_truncating_tool(
     response: &'static str,
     max_tool_result_bytes: usize,
-) -> rig::tool::DynamicTool {
-    rig::tool::DynamicTool::new(
-        "nu__shell",
+) -> Result<rig::tool::DynamicTool> {
+    Ok(rig::tool::DynamicTool::new(
+        crate::types::ToolName::new("nu__shell")?,
         "Execute a Nushell command",
         serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         move |_args| {
@@ -314,25 +314,25 @@ fn build_truncating_tool(
                 ))
             })
         },
-    )
+    ))
 }
 
 /// Register a nu__shell tool that applies truncation at `max_tool_result_bytes`.
 pub(super) async fn nu_shell_tool_truncating(
     response: &'static str,
     max_tool_result_bytes: usize,
-) -> ToolInfra {
+) -> Result<ToolInfra> {
     let handle = rig::tool::server::ToolServer::new().run();
     // Register via add_dynamic_tool
-    handle.add_dynamic_tool(build_truncating_tool(response, max_tool_result_bytes));
-    default_tool_infra(
+    handle.add_dynamic_tool(build_truncating_tool(response, max_tool_result_bytes)?);
+    Ok(default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
-            name: "nu__shell".to_string(),
+            name: crate::types::ToolName::new("nu__shell")?,
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         }],
-    )
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -367,18 +367,18 @@ impl rig::tool::Tool for TestEchoTool {
 }
 
 /// Register one echo tool (test_echo) that returns a controlled string.
-pub(super) fn echo_tool(response: &'static str) -> ToolInfra {
+pub(super) fn echo_tool(response: &'static str) -> Result<ToolInfra> {
     let handle = rig::tool::server::ToolServer::new()
         .tool(TestEchoTool { response })
         .run();
-    default_tool_infra(
+    Ok(default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
-            name: "test_echo".to_string(),
+            name: crate::types::ToolName::new("test_echo")?,
             description: "Test echo tool".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }],
-    )
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -437,7 +437,10 @@ impl rig::tool::Tool for TestNuShellCancellingTool {
 /// Register a nu__shell tool that cancels the running turn after its first invocation.
 ///
 /// The `bus` is the same bus the turn executor uses for cancellation.
-pub(super) fn nu_shell_cancelling_tool(output: &'static str, bus: crate::bus::Bus) -> ToolInfra {
+pub(super) fn nu_shell_cancelling_tool(
+    output: &'static str,
+    bus: crate::bus::Bus,
+) -> Result<ToolInfra> {
     let handle = rig::tool::server::ToolServer::new()
         .tool(TestNuShellCancellingTool {
             output,
@@ -448,13 +451,13 @@ pub(super) fn nu_shell_cancelling_tool(output: &'static str, bus: crate::bus::Bu
     let mut infra = default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
-            name: "nu__shell".to_string(),
+            name: crate::types::ToolName::new("nu__shell")?,
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         }],
     );
     infra.bus = bus;
-    infra
+    Ok(infra)
 }
 
 // ---------------------------------------------------------------------------
@@ -476,9 +479,10 @@ pub(super) fn assert_user_text(msg: &Message, expected: &str) {
 }
 
 pub(super) fn assert_assistant_text_contains(msg: &Message, needle: &str) {
-    let Message::Assistant { content, .. } = msg else {
+    let Message::Assistant(assistant) = msg else {
         panic!("expected Assistant message, got: {msg:?}");
     };
+    let content = &assistant.content;
     let text = content.iter().find_map(|c| {
         if let rig::message::AssistantContent::Text(t) = c {
             Some(t.text.as_str())
@@ -497,9 +501,10 @@ pub(super) fn assert_tool_call_in_msg(
     expected_id: &str,
     expected_name: &str,
 ) -> Result<()> {
-    let Message::Assistant { content, .. } = msg else {
+    let Message::Assistant(assistant) = msg else {
         panic!("expected Assistant message for tool call, got: {msg:?}");
     };
+    let content = &assistant.content;
     let tc = content.iter().find_map(|c| {
         if let rig::message::AssistantContent::ToolCall(tc) = c {
             Some(tc)
@@ -543,8 +548,8 @@ pub(super) fn assert_tool_result_in_msg(
     Ok(())
 }
 
-/// Assert the first Text block of the ToolResult whose call id is
-/// `expected_id` carries `expected` under the persisted `nu_agent_success` key.
+/// Assert the ToolResult whose call id is `expected_id` carries `expected`
+/// as its persisted verdict (`ToolResult::is_error` inverted).
 pub(super) fn assert_tool_result_flag(
     msg: &Message,
     expected_id: &str,
@@ -567,25 +572,10 @@ pub(super) fn assert_tool_result_flag(
                 "no ToolResult for call id {expected_id} in User message"
             ))
         })?;
-    let block = tr
-        .content
-        .iter()
-        .find_map(|c| {
-            if let rig::message::ToolResultContent::Text(t) = c {
-                Some(t)
-            } else {
-                None
-            }
-        })
-        .ok_or("no Text block in ToolResult")?;
-    let flag = block
-        .additional_params
-        .as_ref()
-        .and_then(|params| params.get("nu_agent_success"))
-        .and_then(serde_json::Value::as_bool);
+    let flag = Some(!tr.is_error);
     assert_eq!(
         flag, expected,
-        "persisted nu_agent_success mismatch for {expected_id}"
+        "persisted verdict mismatch for {expected_id}"
     );
     Ok(())
 }
@@ -640,10 +630,10 @@ pub(super) fn install_trace_logger() {
 /// A `nu__shell` mock tool that returns a multi-byte UTF-8 result whose byte
 /// 2000 falls inside a 2-byte char — the exact shape that panicked the
 /// trace-log preview in `HookChain::on_outcome` before the fix.
-pub(super) async fn nu_shell_multibyte_tool() -> ToolInfra {
+pub(super) async fn nu_shell_multibyte_tool() -> Result<ToolInfra> {
     let handle = rig::tool::server::ToolServer::new().run();
     let tool = rig::tool::DynamicTool::new(
-        "nu__shell",
+        crate::types::ToolName::new("nu__shell")?,
         "Execute a Nushell command",
         serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         move |_args| {
@@ -652,12 +642,12 @@ pub(super) async fn nu_shell_multibyte_tool() -> ToolInfra {
         },
     );
     handle.add_dynamic_tool(tool);
-    default_tool_infra(
+    Ok(default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
-            name: "nu__shell".to_string(),
+            name: crate::types::ToolName::new("nu__shell")?,
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
         }],
-    )
+    ))
 }

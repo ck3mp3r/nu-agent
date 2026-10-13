@@ -18,7 +18,7 @@ use super::dotenv;
 use super::models_cache::{ModelsCache, ModelsCacheError};
 use super::toml_config::{self, TomlConfigError};
 use super::types::{Config, ModelRoleConfig, PluginConfig};
-use super::vault::Vault;
+use super::vault::{Vault, VaultError};
 
 // endregion: --- Modules
 
@@ -37,6 +37,8 @@ pub enum ConfigLoadError {
     NoDefaultModel,
     /// The model role could not be resolved to a runtime config.
     Resolve(String),
+    /// The vault backend could not be selected.
+    Vault(VaultError),
 }
 
 impl std::fmt::Display for ConfigLoadError {
@@ -47,6 +49,7 @@ impl std::fmt::Display for ConfigLoadError {
             Self::UnknownRole(role) => write!(f, "unknown model role: '{role}'"),
             Self::NoDefaultModel => write!(f, "no model configured"),
             Self::Resolve(msg) => write!(f, "failed to resolve model: {msg}"),
+            Self::Vault(e) => write!(f, "vault backend unavailable: {e}"),
         }
     }
 }
@@ -74,6 +77,7 @@ impl std::error::Error for ConfigLoadError {}
 /// - [`ConfigLoadError::UnknownRole`] / [`ConfigLoadError::NoDefaultModel`]
 ///   when the selected role is not configured
 /// - [`ConfigLoadError::Resolve`] when the role cannot be resolved
+/// - [`ConfigLoadError::Vault`] when the vault backend cannot be selected
 pub fn load_and_resolve_config(
     config_path: &Path,
     model_override: Option<&str>,
@@ -86,7 +90,9 @@ pub fn load_and_resolve_config(
     // project-level values only fill variables that are not already set.
     dotenv::load_env_files();
     // Probe keychain, then file, then env-only. The first available wins.
-    plugin_config.vault = Some(Arc::new(Vault::auto_detect()));
+    plugin_config.vault = Some(Arc::new(
+        Vault::auto_detect().map_err(ConfigLoadError::Vault)?,
+    ));
     match ModelsCache::load() {
         Ok(cache) => plugin_config.models_cache = Some(cache),
         Err(ModelsCacheError::NotFound(_)) => {}

@@ -1,4 +1,4 @@
-use crate::types::ToolDefinition;
+use crate::types::{EmptyToolName, ToolDefinition, ToolName};
 use nu_plugin::EngineInterface;
 use nu_protocol::{Span, Spanned, Value, engine::Closure};
 use serde_json::json;
@@ -84,11 +84,15 @@ impl EngineInterfaceLike for CwdEngine {
 ///
 /// Takes pre-resolved parameters instead of extracting them from engine,
 /// avoiding the dead-context problem with cloned EngineInterface.
+///
+/// # Errors
+///
+/// Returns [`EmptyToolName`] when `name` is empty.
 pub fn closure_to_tool_definition(
     name: String,
     params: &[ClosureParameter],
     description: Option<String>,
-) -> ToolDefinition {
+) -> Result<ToolDefinition, EmptyToolName> {
     let desc = description.unwrap_or_else(|| format!("Nushell closure tool: {name}"));
 
     if params.is_empty() {
@@ -118,25 +122,28 @@ pub fn closure_to_tool_definition(
         "required": required
     });
 
-    ToolDefinition {
-        name,
+    Ok(ToolDefinition {
+        name: ToolName::new(name)?,
         description: desc,
         parameters: schema,
-    }
+    })
 }
 
-fn fallback_tool_definition(name: String, description: String) -> ToolDefinition {
+fn fallback_tool_definition(
+    name: String,
+    description: String,
+) -> Result<ToolDefinition, EmptyToolName> {
     let schema = json!({
         "type": "object",
         "properties": {},
         "required": []
     });
 
-    ToolDefinition {
-        name,
+    Ok(ToolDefinition {
+        name: ToolName::new(name)?,
         description,
         parameters: schema,
-    }
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]

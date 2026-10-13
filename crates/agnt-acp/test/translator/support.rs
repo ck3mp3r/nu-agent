@@ -168,6 +168,7 @@ pub fn register_pending(
 pub struct RecordingSink {
     updates: Mutex<Vec<SessionUpdate>>,
     fail: bool,
+    updated: tokio::sync::Notify,
 }
 
 impl RecordingSink {
@@ -175,6 +176,7 @@ impl RecordingSink {
         Self {
             updates: Mutex::new(Vec::new()),
             fail: true,
+            updated: tokio::sync::Notify::new(),
         }
     }
 
@@ -183,6 +185,14 @@ impl RecordingSink {
             .lock()
             .map(|guard| guard.clone())
             .unwrap_or_default()
+    }
+
+    /// Awaits until at least `count` updates have been recorded, so tests can
+    /// wait for the drain to forward an event instead of sleeping.
+    pub async fn wait_for_updates(&self, count: usize) {
+        while self.taken().len() < count {
+            self.updated.notified().await;
+        }
     }
 }
 
@@ -198,6 +208,7 @@ impl SessionUpdateSink for RecordingSink {
         if let Ok(mut guard) = self.updates.lock() {
             guard.push(update);
         }
+        self.updated.notify_one();
         Ok(())
     }
 }

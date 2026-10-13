@@ -7,7 +7,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
 fn enabling_startup_disabled_server_registers_all_discovered_mcp_tools() -> Result<()> {
-    let mut tool_definitions = vec![tool_definition_named("read")];
+    let mut tool_definitions = vec![tool_definition_named("read")?];
     let mut registry =
         McpToolRegistry::from_tools(vec![mcp_tool("gh", "gh__list_prs", "list_prs")])
             .map_err(|e| format!("startup registry: {e:?}"))?;
@@ -45,7 +45,7 @@ fn enabling_startup_disabled_server_registers_all_discovered_mcp_tools() -> Resu
 
 #[test]
 fn enabling_startup_disabled_server_registers_dispatch_raw_name_mapping() -> Result<()> {
-    let mut tool_definitions = vec![tool_definition_named("read")];
+    let mut tool_definitions = vec![tool_definition_named("read")?];
     let mut registry = McpToolRegistry::empty();
 
     let discovered = vec![mcp_tool("k8s", "k8s__list_pods", "list_pods")];
@@ -60,7 +60,7 @@ fn enabling_startup_disabled_server_registers_dispatch_raw_name_mapping() -> Res
 
 #[test]
 fn enabling_stage_conflict_is_transactional_and_keeps_original_runtime_state() -> Result<()> {
-    let tool_definitions = vec![tool_definition_named("read")];
+    let tool_definitions = vec![tool_definition_named("read")?];
     let registry = McpToolRegistry::from_tools(vec![mcp_tool("gh", "k8s__list_pods", "list_pods")])
         .map_err(|e| format!("startup registry: {e:?}"))?;
 
@@ -118,9 +118,9 @@ fn lifecycle_projection_recomputes_from_registry_state_without_runtime() -> Resu
         &configs,
         &registry,
         &[
-            tool_definition_named("read"),
-            tool_definition_named("gh__list_prs"),
-            tool_definition_named("k8s__list_pods"),
+            tool_definition_named("read")?,
+            tool_definition_named("gh__list_prs")?,
+            tool_definition_named("k8s__list_pods")?,
         ],
     );
 

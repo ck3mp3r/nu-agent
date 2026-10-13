@@ -1,11 +1,12 @@
 use super::repair::{
-    fix_empty_tool_results, fix_null_tool_arguments, fix_tool_call_integrity,
+    fix_empty_tool_results, fix_invalid_tool_arguments, fix_tool_call_integrity,
     inject_assistant_after_dangling_tool_results, inject_missing_tool_results,
     merge_consecutive_same_role, remove_empty_messages, repair_messages, trim_trailing_user,
 };
 use super::store_test::assert_msgs_eq;
 use crate::types::{
-    AssistantContent, CallId, Message, ToolCall, ToolFunction, ToolName, ToolResult, UserContent,
+    AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolName,
+    ToolResult, UserContent,
 };
 
 fn make_tool_call(id: &str, name: &str) -> AssistantContent {
@@ -23,14 +24,12 @@ fn make_tool_result(id: &str, output: &str) -> UserContent {
         call: CallId::from_wire(id),
         name: ToolName::new("read_file").expect("non-empty tool name"),
         content: vec![crate::types::ToolResultContent::text(output)],
+        is_error: false,
     })
 }
 
 fn assistant_with_content(items: Vec<AssistantContent>) -> Message {
-    Message::Assistant {
-        id: None,
-        content: items,
-    }
+    Message::Assistant(AssistantMessage::new(items))
 }
 
 fn user_with_content(items: Vec<UserContent>) -> Message {
@@ -158,7 +157,8 @@ fn tool_call_with_text_preserves_text() {
     // Assistant message kept with only Text content
     assert_eq!(result.len(), 2);
     match &result[1] {
-        Message::Assistant { content, .. } => {
+        Message::Assistant(assistant) => {
+            let content = &assistant.content;
             assert_eq!(content.len(), 1);
             assert!(matches!(content.first(), Some(AssistantContent::Text(_))));
         }
@@ -190,7 +190,8 @@ fn multiple_tool_calls_partial_match() {
         "all three messages kept (C removed from assistant content)"
     );
     match &result[1] {
-        Message::Assistant { content, .. } => {
+        Message::Assistant(assistant) => {
+            let content = &assistant.content;
             assert_eq!(content.len(), 2, "A and B calls kept, C removed");
         }
         _ => panic!("expected assistant message"),
@@ -213,7 +214,7 @@ fn merge_consecutive_user_messages() {
     let result = merge_consecutive_same_role(msgs, &mut issues);
     assert_eq!(result.len(), 2);
     assert!(matches!(&result[0], Message::User { .. }));
-    assert!(matches!(&result[1], Message::Assistant { .. }));
+    assert!(matches!(&result[1], Message::Assistant(_)));
     // Merged user should have 2 content items
     match &result[0] {
         Message::User { content } => assert_eq!(content.len(), 2),
@@ -234,7 +235,7 @@ fn merge_consecutive_assistant_messages() {
     assert_eq!(result.len(), 2);
     assert!(matches!(&result[0], Message::User { .. }));
     match &result[1] {
-        Message::Assistant { content, .. } => assert_eq!(content.len(), 2),
+        Message::Assistant(assistant) => assert_eq!(assistant.content.len(), 2),
         _ => panic!("expected assistant message"),
     }
     assert!(!issues.is_empty());
@@ -325,7 +326,7 @@ fn trim_trailing_user_direct() {
     let mut issues = Vec::new();
     let result = trim_trailing_user(msgs, &mut issues);
     assert_eq!(result.len(), 2);
-    assert!(matches!(&result[1], Message::Assistant { .. }));
+    assert!(matches!(&result[1], Message::Assistant(_)));
     assert!(!issues.is_empty());
 }
 
@@ -340,7 +341,7 @@ fn trim_multiple_trailing_users_direct() {
     let mut issues = Vec::new();
     let result = trim_trailing_user(msgs, &mut issues);
     assert_eq!(result.len(), 2);
-    assert!(matches!(&result[1], Message::Assistant { .. }));
+    assert!(matches!(&result[1], Message::Assistant(_)));
 }
 
 // ================================================================
@@ -403,7 +404,8 @@ fn pipeline_complex_corruption() {
     assert_eq!(result.len(), 2, "merged users + assistant with text only");
     assert!(matches!(&result[0], Message::User { .. }));
     match &result[1] {
-        Message::Assistant { content, .. } => {
+        Message::Assistant(assistant) => {
+            let content = &assistant.content;
             assert_eq!(content.len(), 1);
             assert!(matches!(content.first(), Some(AssistantContent::Text(_))));
         }
@@ -454,7 +456,8 @@ fn fix_tool_call_integrity_strips_non_adjacent_pair() {
     let (result, _) = repair_messages(msgs);
 
     let has_tool_call = result.iter().any(|msg| match msg {
-        Message::Assistant { content, .. } => content
+        Message::Assistant(assistant) => assistant
+            .content
             .iter()
             .any(|i| matches!(i, AssistantContent::ToolCall(_))),
         _ => false,
@@ -494,7 +497,7 @@ fn merge_consecutive_same_role_does_not_merge_tool_call_assistants() {
 
     let assistant_count = result
         .iter()
-        .filter(|msg| matches!(msg, Message::Assistant { .. }))
+        .filter(|msg| matches!(msg, Message::Assistant(_)))
         .count();
     assert_eq!(
         assistant_count, 2,
@@ -526,7 +529,8 @@ fn inject_assistant_after_dangling_tool_results_heals_corrupt_session() {
     );
     // The injected message is at index 3
     match &result[3] {
-        Message::Assistant { content, .. } => {
+        Message::Assistant(assistant) => {
+            let content = &assistant.content;
             let text = content.iter().find_map(|c| match c {
                 crate::types::AssistantContent::Text(t) => Some(t.text.as_str()),
                 _ => None,
@@ -636,7 +640,8 @@ fn repair_messages_heals_session_jsonl_pattern() {
     );
     // result[3] must be the injected assistant (last message after trim)
     match &result[3] {
-        Message::Assistant { content, .. } => {
+        Message::Assistant(assistant) => {
+            let content = &assistant.content;
             let text = content.iter().find_map(|c| match c {
                 crate::types::AssistantContent::Text(t) => Some(t.text.as_str()),
                 _ => None,
@@ -756,9 +761,10 @@ fn pipeline_no_dangling_tool_call_after_trim() {
     // Walk the result; for every Assistant message with ToolCalls, the very
     // next message must be a User message containing matching ToolResults.
     for (i, msg) in result.iter().enumerate() {
-        let Message::Assistant { content, .. } = msg else {
+        let Message::Assistant(assistant) = msg else {
             continue;
         };
+        let content = &assistant.content;
         let call_ids: Vec<String> = content
             .iter()
             .filter_map(|item| match item {
@@ -933,44 +939,49 @@ fn repair_messages_pipeline_includes_empty_tool_result_fix() {
 }
 
 // ================================================================
-// fix_null_tool_arguments tests
+// fix_invalid_tool_arguments tests
 // ================================================================
 
-fn make_null_args_tool_call(id: &str, name: &str) -> AssistantContent {
+fn make_invalid_args_tool_call(id: &str, name: &str) -> AssistantContent {
     AssistantContent::ToolCall(ToolCall::new(
         CallId::from_wire(id),
-        ToolFunction::new(
-            ToolName::new(name).expect("non-empty tool name"),
-            serde_json::Value::Null,
-        ),
+        ToolFunction {
+            name: ToolName::new(name).expect("non-empty tool name"),
+            arguments: serde_json::Map::new(),
+            invalid_arguments: Some("not an object".to_string()),
+        },
     ))
 }
 
 #[test]
-fn fix_null_tool_arguments_replaces_null_args() {
+fn fix_invalid_tool_arguments_clears_invalid_args() {
     let msgs = vec![
         Message::user("prompt"),
-        assistant_with_content(vec![make_null_args_tool_call(
+        assistant_with_content(vec![make_invalid_args_tool_call(
             "tc1",
             "tmux__send_and_capture",
         )]),
         user_with_content(vec![make_tool_result("tc1", "Tool not available")]),
     ];
     let mut issues = Vec::new();
-    let result = fix_null_tool_arguments(msgs, &mut issues);
+    let result = fix_invalid_tool_arguments(msgs, &mut issues);
 
-    // The ToolCall arguments must be replaced with {}
+    // The ToolCall arguments must be reset to {} and invalid_arguments cleared
     match &result[1] {
-        Message::Assistant { content, .. } => {
+        Message::Assistant(assistant) => {
+            let content = &assistant.content;
             let tc = content.iter().find_map(|c| match c {
                 AssistantContent::ToolCall(tc) => Some(tc),
                 _ => None,
             });
             let tc = tc.expect("ToolCall must still be present");
-            assert_eq!(
-                tc.function.arguments,
-                serde_json::json!({}),
-                "null arguments must be replaced with {{}}"
+            assert!(
+                tc.function.arguments.is_empty(),
+                "invalid arguments must be reset to {{}}"
+            );
+            assert!(
+                tc.function.invalid_arguments.is_none(),
+                "invalid_arguments must be cleared"
             );
         }
         _ => panic!("expected Assistant message at index 1"),
@@ -978,13 +989,13 @@ fn fix_null_tool_arguments_replaces_null_args() {
     assert!(
         issues
             .iter()
-            .any(|i| i.contains("replaced null tool call arguments")),
+            .any(|i| i.contains("cleared invalid tool call arguments")),
         "must emit diagnostic; issues: {issues:?}"
     );
 }
 
 #[test]
-fn fix_null_tool_arguments_noop_when_valid() {
+fn fix_invalid_tool_arguments_noop_when_valid() {
     let msgs = vec![
         Message::user("prompt"),
         assistant_with_content(vec![make_tool_call("tc1", "nu__shell")]),
@@ -992,16 +1003,16 @@ fn fix_null_tool_arguments_noop_when_valid() {
     ];
     let original = msgs.clone();
     let mut issues = Vec::new();
-    let result = fix_null_tool_arguments(msgs, &mut issues);
+    let result = fix_invalid_tool_arguments(msgs, &mut issues);
     assert_msgs_eq(&result, &original);
     assert!(issues.is_empty(), "no issues for valid args");
 }
 
 #[test]
-fn repair_messages_heals_null_args_end_to_end() {
+fn repair_messages_heals_invalid_args_end_to_end() {
     let msgs = vec![
         Message::user("prompt"),
-        assistant_with_content(vec![make_null_args_tool_call(
+        assistant_with_content(vec![make_invalid_args_tool_call(
             "tc1",
             "tmux__send_and_capture",
         )]),
@@ -1010,24 +1021,28 @@ fn repair_messages_heals_null_args_end_to_end() {
     ];
     let (result, issues) = repair_messages(msgs);
 
-    // Find the ToolCall and verify its arguments are {}
-    let tc_args = result.iter().find_map(|msg| match msg {
-        Message::Assistant { content, .. } => content.iter().find_map(|c| match c {
-            AssistantContent::ToolCall(tc) => Some(tc.function.arguments.clone()),
+    // Find the ToolCall and verify its arguments are {} and invalid_arguments cleared
+    let tc = result.iter().find_map(|msg| match msg {
+        Message::Assistant(assistant) => assistant.content.iter().find_map(|c| match c {
+            AssistantContent::ToolCall(tc) => Some(tc),
             _ => None,
         }),
         _ => None,
     });
-    assert_eq!(
-        tc_args,
-        Some(serde_json::json!({})),
-        "repair_messages must heal null ToolCall arguments; result: {result:?}"
+    let tc = tc.expect("ToolCall must still be present");
+    assert!(
+        tc.function.arguments.is_empty(),
+        "repair_messages must reset invalid ToolCall arguments; result: {result:?}"
+    );
+    assert!(
+        tc.function.invalid_arguments.is_none(),
+        "repair_messages must clear invalid_arguments; result: {result:?}"
     );
     assert!(
         issues
             .iter()
-            .any(|i| i.contains("replaced null tool call arguments")),
-        "must emit null-args diagnostic; issues: {issues:?}"
+            .any(|i| i.contains("cleared invalid tool call arguments")),
+        "must emit invalid-args diagnostic; issues: {issues:?}"
     );
 }
 
@@ -1039,15 +1054,13 @@ fn repair_messages_heals_null_args_end_to_end() {
 /// carry the same call id as its `ToolCall`.
 #[test]
 fn inject_missing_tool_results_preserves_call_id() {
-    let tc = AssistantContent::ToolCall(ToolCall {
-        id: CallId::from_wire("call_abc123"),
-        signature: None,
-        additional_params: None,
-        function: ToolFunction::new(
+    let tc = AssistantContent::ToolCall(ToolCall::new(
+        CallId::from_wire("call_abc123"),
+        ToolFunction::new(
             ToolName::new("do_thing").expect("non-empty tool name"),
             serde_json::json!({}),
         ),
-    });
+    ));
     let msgs = vec![Message::user("go"), assistant_with_content(vec![tc])];
     let result = inject_missing_tool_results(msgs);
 
@@ -1075,15 +1088,13 @@ fn inject_missing_tool_results_preserves_call_id() {
 /// is empty must carry a rig-issued local id (never an empty wire id).
 #[test]
 fn inject_missing_tool_results_mints_id_for_empty_call_id() {
-    let tc = AssistantContent::ToolCall(ToolCall {
-        id: CallId::from_wire(""),
-        signature: None,
-        additional_params: None,
-        function: ToolFunction::new(
+    let tc = AssistantContent::ToolCall(ToolCall::new(
+        CallId::from_wire(""),
+        ToolFunction::new(
             ToolName::new("do_other").expect("non-empty tool name"),
             serde_json::json!({}),
         ),
-    });
+    ));
     let msgs = vec![Message::user("go"), assistant_with_content(vec![tc])];
     let result = inject_missing_tool_results(msgs);
 
@@ -1111,31 +1122,22 @@ fn inject_missing_tool_results_mints_id_for_empty_call_id() {
 // ================================================================
 
 /// The compaction summary artifact is spliced as a leading `Message::User`
-/// whose `Text` block carries `additional_params` marking it as a compaction
-/// summary via `COMPACTION_SUMMARY_KEY`.
+/// whose `Text` block carries the compaction summary header.
 fn summary_artifact(summary: &str) -> Message {
     Message::User {
-        content: vec![UserContent::Text(crate::types::Text {
-            text: format!("What we did thus far:\n\n{summary}"),
-            additional_params: crate::types::AdditionalParams::from_entries([(
-                crate::conversation::compaction::compactor::COMPACTION_SUMMARY_KEY,
-                serde_json::json!(true),
-            )]),
-        })],
+        content: vec![UserContent::Text(crate::types::Text::new(format!(
+            "{}{summary}",
+            crate::conversation::compaction::compactor::SUMMARY_HEADER
+        )))],
     }
 }
 
-/// True if any `UserContent` block in `content` is marked as a compaction
-/// summary via `COMPACTION_SUMMARY_KEY` in its `additional_params`.
+/// True if any `UserContent` block in `content` carries the compaction
+/// summary header.
 fn is_summary_content(content: &[UserContent]) -> bool {
-    let key = crate::conversation::compaction::compactor::COMPACTION_SUMMARY_KEY;
+    let header = crate::conversation::compaction::compactor::SUMMARY_HEADER;
     content.iter().any(|c| match c {
-        UserContent::Text(t) => t
-            .additional_params
-            .as_ref()
-            .and_then(|p| p.get(key))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
+        UserContent::Text(t) => t.text.starts_with(header),
         _ => false,
     })
 }
@@ -1201,9 +1203,9 @@ fn merge_consecutive_same_role_merges_plain_text_users() {
 }
 
 /// `merge_consecutive_same_role` must NOT merge a summary `Message::User`
-/// (carrying `additional_params` with `COMPACTION_SUMMARY_KEY`) with the next
-/// `Message::User`. The summary is conversation context, not a user turn —
-/// folding it into the next user message would lose it.
+/// (carrying the compaction summary header) with the next `Message::User`.
+/// The summary is conversation context, not a user turn — folding it into the
+/// next user message would lose it.
 #[test]
 fn merge_consecutive_same_role_does_not_merge_summary_with_next_user() {
     // -- Setup & Fixtures
@@ -1256,7 +1258,8 @@ fn fix_tool_call_integrity_still_removes_dangling_tool_call() {
 
     // -- Check
     let has_tool_call = result.iter().any(|msg| match msg {
-        Message::Assistant { content, .. } => content
+        Message::Assistant(assistant) => assistant
+            .content
             .iter()
             .any(|i| matches!(i, AssistantContent::ToolCall(_))),
         _ => false,

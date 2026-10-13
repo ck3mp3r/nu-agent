@@ -6,7 +6,7 @@
 //!
 //! # `CompletionErrorKind` derivation
 //!
-//! `CompletionFailed::kind` is set at the `From<StreamingError>` boundary by
+//! `CompletionFailed::kind` is set at the `From<PromptError>` boundary by
 //! matching **structurally** on `rig::error::ProviderError` variants —
 //! no post-hoc string parsing.  String matching is used only as a last resort for
 //! `http_client::Error::Instance(Box<dyn Error>)` and for `ProviderError::Response` /
@@ -36,7 +36,7 @@ pub(crate) struct TurnContext {
 #[derive(Debug, Clone)]
 pub enum TurnError {
     /// User or hook cancelled the turn mid-flight.
-    /// `messages` is rig's full `chat_history` from `PromptCancelled`.
+    /// `messages` is rig's full `chat_history` from `PromptError::Cancelled`.
     Cancelled {
         /// Human-readable reason supplied by the hook.
         msg: String,
@@ -45,7 +45,7 @@ pub enum TurnError {
     },
 
     /// The LLM exceeded the configured tool-turn limit.
-    /// `messages` is rig's full `chat_history` from `MaxTurnsError`.
+    /// `messages` is rig's full `chat_history` from `PromptError::MaxTurns`.
     MaxTurnsExceeded {
         /// Formatted error message including the limit.
         msg: String,
@@ -68,7 +68,7 @@ pub enum TurnError {
 
     /// HTTP / transport / decode failure from the LLM provider.
     ///
-    /// `kind` is pre-classified at the `From<StreamingError>` boundary by
+    /// `kind` is pre-classified at the `From<PromptError>` boundary by
     /// matching on `rig::error::ProviderError` variants structurally.
     CompletionFailed {
         /// Display message from the underlying rig error.
@@ -112,14 +112,14 @@ impl std::error::Error for TurnError {}
 impl From<rig::completion::PromptError> for TurnError {
     fn from(err: rig::completion::PromptError) -> Self {
         match err {
-            rig::completion::PromptError::PromptCancelled {
+            rig::completion::PromptError::Cancelled {
                 reason,
                 chat_history,
             } => Self::Cancelled {
                 msg: reason,
                 messages: chat_history,
             },
-            rig::completion::PromptError::MaxTurnsError {
+            rig::completion::PromptError::MaxTurns {
                 max_turns,
                 chat_history,
                 ..
@@ -137,7 +137,20 @@ impl From<rig::completion::PromptError> for TurnError {
                 tool_name,
                 messages: chat_history,
             },
-            rig::completion::PromptError::CompletionError(e) => completion_error_to_turn_error(e),
+            rig::completion::PromptError::Provider(e) => completion_error_to_turn_error(e),
+            // Conversation memory failed to load or persist history.
+            rig::completion::PromptError::Memory(e) => Self::CompletionFailed {
+                msg: e.to_string(),
+                kind: CompletionErrorKind::Unknown,
+            },
+            // A relayed report preserves the origin's status and message.
+            rig::completion::PromptError::Report(report) => Self::CompletionFailed {
+                msg: report.message.clone(),
+                kind: match report.http_status {
+                    Some(status) => classify_by_status(status),
+                    None => classify_from_display(&report.message),
+                },
+            },
             other => Self::CompletionFailed {
                 msg: other.to_string(),
                 kind: CompletionErrorKind::Unknown,
@@ -148,9 +161,9 @@ impl From<rig::completion::PromptError> for TurnError {
 
 /// Classify a `rig::error::ProviderError` into a `TurnError::CompletionFailed`.
 ///
-/// Shared by the `From<StreamingError>` and `From<PromptError>` boundaries so
-/// provider failures wrapped as `PromptError::CompletionError` reach the same
-/// classification as the direct `StreamingError::Completion` path.
+/// Shared by the `From<PromptError>` boundary so provider failures wrapped as
+/// `PromptError::Provider` reach the same classification as the direct
+/// `PromptError::Report` path.
 fn completion_error_to_turn_error(err: rig::error::ProviderError) -> TurnError {
     use rig::error::ProviderError;
     use rig::http_client;
@@ -220,7 +233,7 @@ fn completion_error_to_turn_error(err: rig::error::ProviderError) -> TurnError {
 }
 
 // ---------------------------------------------------------------------------
-// From<StreamingError>
+// Classification
 // ---------------------------------------------------------------------------
 
 /// Classify a status code into a `CompletionErrorKind`.
@@ -242,7 +255,7 @@ fn classify_by_status(status: u16) -> CompletionErrorKind {
 ///
 /// This function is used when the concrete error type is unavailable and only the Display
 /// string is accessible.  Structural matching (via HTTP status codes) is always preferred
-/// and is done first in `From<StreamingError>`.  This function acts as the fallback for
+/// and is done first in `From<PromptError>`.  This function acts as the fallback for
 /// `Instance(Box<dyn Error>)`, `ResponseError`, and `ProviderError` payloads.
 ///
 /// Patterns are ordered most-specific first to avoid misclassification.
@@ -399,59 +412,6 @@ fn classify_from_display(msg: &str) -> CompletionErrorKind {
 fn contains_status_token(msg: &str, code: &str) -> bool {
     msg.split_whitespace()
         .any(|word| word.trim_matches(|c: char| !c.is_ascii_digit()) == code)
-}
-
-impl From<rig::agent::StreamingError> for TurnError {
-    fn from(e: rig::agent::StreamingError) -> Self {
-        match e {
-            rig::agent::StreamingError::Prompt(prompt_err) => match prompt_err {
-                rig::completion::PromptError::PromptCancelled {
-                    reason,
-                    chat_history,
-                } => Self::Cancelled {
-                    msg: reason,
-                    messages: chat_history,
-                },
-                rig::completion::PromptError::MaxTurnsError {
-                    max_turns,
-                    chat_history,
-                    ..
-                } => Self::MaxTurnsExceeded {
-                    msg: format!("Max turns ({max_turns}) exceeded"),
-                    max_turns,
-                    messages: chat_history,
-                },
-                rig::completion::PromptError::UnknownToolCall {
-                    tool_name,
-                    chat_history,
-                    ..
-                } => Self::UnknownTool {
-                    msg: format!("Unknown tool: {tool_name}"),
-                    tool_name,
-                    messages: chat_history,
-                },
-                rig::completion::PromptError::CompletionError(e) => {
-                    completion_error_to_turn_error(e)
-                }
-                other => Self::CompletionFailed {
-                    msg: other.to_string(),
-                    kind: CompletionErrorKind::Unknown,
-                },
-            },
-
-            rig::agent::StreamingError::Completion(completion_err) => {
-                completion_error_to_turn_error(completion_err)
-            }
-
-            rig::agent::StreamingError::Report(report) => Self::CompletionFailed {
-                msg: report.message.clone(),
-                kind: match report.http_status {
-                    Some(status) => classify_by_status(status),
-                    None => classify_from_display(&report.message),
-                },
-            },
-        }
-    }
 }
 
 #[cfg(test)]

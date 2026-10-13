@@ -56,12 +56,21 @@ async fn test_send_with_return_immediately_returns_working_task() -> Result<()> 
 async fn test_send_without_configuration_blocks_until_terminal() -> Result<()> {
     let (server, client) = test_server_with_blocking_timeout(MAX_TEST_BLOCKING_TIMEOUT).await;
 
-    // Cancel the task from another connection while the send request blocks.
+    // Cancel the task from another connection once the blocking send has
+    // created it.
     let store = server.task_store();
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        if let Some(task) = store.list_tasks(None).first() {
-            let _ = store.update_status(&task.id, TaskState::Canceled, None);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut ticker = tokio::time::interval(Duration::from_millis(10));
+        loop {
+            ticker.tick().await;
+            if let Some(task) = store.list_tasks(None).first() {
+                let _ = store.update_status(&task.id, TaskState::Canceled, None);
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
         }
     });
 

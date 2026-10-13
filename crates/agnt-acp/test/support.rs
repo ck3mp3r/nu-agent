@@ -2,7 +2,7 @@
 //!
 //! Every test builds a [`TestEnv`] — a throwaway XDG config/cache tree plus a
 //! working directory — and a wiremock HTTP server that answers the agent's
-//! Ollama completion requests with canned NDJSON. The agent itself runs as a
+//! Ollama completion requests with canned SSE. The agent itself runs as a
 //! real `agent acp` subprocess launched through the ACP SDK, so the
 //! tests exercise the stdio transport end to end.
 
@@ -76,10 +76,14 @@ impl TestEnv {
     }
 
     /// An `AcpAgent` that launches `agent acp` with this environment.
+    ///
+    /// `AGENT_VAULT_BACKEND=env` keeps the subprocess config load from probing
+    /// the OS keychain.
     pub fn agent(&self) -> AcpAgent {
         AcpAgent::new(
             AcpAgentConfig::new(&self.binary)
                 .arg("acp")
+                .env("AGENT_VAULT_BACKEND", "env")
                 .env(
                     "XDG_CONFIG_HOME",
                     self.config_home.to_string_lossy().into_owned(),
@@ -128,8 +132,8 @@ pub async fn mount_text_response(
     text: &str,
     delay: Option<Duration>,
 ) -> Result<()> {
-    let body = ndjson_text(text);
-    let mut template = ndjson_template(body);
+    let body = sse_text(text);
+    let mut template = sse_template(body);
     if let Some(delay) = delay {
         template = template.set_delay(delay);
     }
@@ -153,8 +157,8 @@ pub async fn mount_tool_then_text(
     final_text: &str,
 ) -> Result<()> {
     let calls = Arc::new(AtomicUsize::new(0));
-    let tool_body = ndjson_tool_call(tool_name, arguments);
-    let text_body = ndjson_text(final_text);
+    let tool_body = sse_tool_call(tool_name, arguments);
+    let text_body = sse_text(final_text);
     Mock::given(method("POST"))
         .respond_with(move |_request: &Request| {
             let call = calls.fetch_add(1, Ordering::SeqCst);
@@ -163,7 +167,7 @@ pub async fn mount_tool_then_text(
             } else {
                 text_body.clone()
             };
-            ndjson_template(body)
+            sse_template(body)
         })
         .mount(server)
         .await;
@@ -190,57 +194,75 @@ pub async fn llm_request_bodies(server: &MockServer) -> Vec<String> {
         .collect()
 }
 
-/// A 200 response carrying an NDJSON body.
-fn ndjson_template(body: Vec<u8>) -> ResponseTemplate {
+/// A 200 response carrying an SSE body.
+///
+/// rig 0.44 routes `Ollama::completion` through the daemon's OpenAI-compatible
+/// `/v1/chat/completions`, which streams `text/event-stream`; a native
+/// `application/x-ndjson` reply is rejected before any frame is read.
+fn sse_template(body: Vec<u8>) -> ResponseTemplate {
     ResponseTemplate::new(200)
-        .append_header("content-type", "application/x-ndjson")
+        .append_header("content-type", "text/event-stream")
         .set_body_bytes(body)
 }
 
-/// One text chunk followed by the terminal `done: true` record.
-fn ndjson_text(text: &str) -> Vec<u8> {
+/// One text delta per 20-character chunk, then the terminal chunk and `[DONE]`.
+fn sse_text(text: &str) -> Vec<u8> {
     let mut body = String::new();
-    body.push_str(&record(serde_json::json!({
-        "model": "llama3",
-        "created_at": "2024-01-01T00:00:00Z",
-        "message": { "role": "assistant", "content": text },
-        "done": false
+    for chunk in text.chars().collect::<Vec<_>>().chunks(20) {
+        let chunk: String = chunk.iter().collect();
+        body.push_str(&sse_chunk(serde_json::json!({
+            "id": "chatcmpl-test",
+            "choices": [{ "index": 0, "delta": { "content": chunk }, "finish_reason": null }]
+        })));
+    }
+    body.push_str(&sse_chunk(serde_json::json!({
+        "id": "chatcmpl-test",
+        "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }],
+        "usage": { "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 }
     })));
-    body.push_str(&terminal_record());
+    body.push_str("data: [DONE]\n\n");
     body.into_bytes()
 }
 
-/// One tool-call chunk followed by the terminal `done: true` record.
-fn ndjson_tool_call(name: &str, arguments: serde_json::Value) -> Vec<u8> {
+/// One tool-call delta, then the terminal chunk and `[DONE]`.
+fn sse_tool_call(name: &str, arguments: serde_json::Value) -> Vec<u8> {
+    let arguments = arguments.to_string();
     let mut body = String::new();
-    body.push_str(&record(serde_json::json!({
-        "model": "llama3",
-        "created_at": "2024-01-01T00:00:00Z",
-        "message": {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{ "function": { "name": name, "arguments": arguments } }]
-        },
-        "done": false
+    body.push_str(&sse_chunk(serde_json::json!({
+        "id": "chatcmpl-test",
+        "choices": [{
+            "index": 0,
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "id": "call_0",
+                    "type": "function",
+                    "function": { "name": name, "arguments": "" }
+                }]
+            },
+            "finish_reason": null
+        }]
     })));
-    body.push_str(&terminal_record());
+    body.push_str(&sse_chunk(serde_json::json!({
+        "id": "chatcmpl-test",
+        "choices": [{
+            "index": 0,
+            "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": arguments } }] },
+            "finish_reason": null
+        }]
+    })));
+    body.push_str(&sse_chunk(serde_json::json!({
+        "id": "chatcmpl-test",
+        "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }],
+        "usage": { "prompt_tokens": 50, "completion_tokens": 15, "total_tokens": 65 }
+    })));
+    body.push_str("data: [DONE]\n\n");
     body.into_bytes()
 }
 
-fn record(value: serde_json::Value) -> String {
-    format!("{value}\n")
-}
-
-fn terminal_record() -> String {
-    record(serde_json::json!({
-        "model": "llama3",
-        "created_at": "2024-01-01T00:00:00Z",
-        "message": { "role": "assistant", "content": "" },
-        "done": true,
-        "done_reason": "stop",
-        "prompt_eval_count": 10,
-        "eval_count": 5
-    }))
+/// One SSE frame carrying `value` as its `data:` payload.
+fn sse_chunk(value: serde_json::Value) -> String {
+    format!("data: {value}\n\n")
 }
 
 // endregion: --- Mock LLM

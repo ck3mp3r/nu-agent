@@ -125,7 +125,9 @@ async fn journey_two_sequential_tool_calls_then_text() -> Result<()> {
             MockStreamEvent::final_response_with_default_usage(),
         ],
     ]);
-    let (r, _) = h.turn("do two things", model, echo_tool("result_42")).await;
+    let (r, _) = h
+        .turn("do two things", model, echo_tool("result_42")?)
+        .await;
     assert!(r.is_ok(), "turn must succeed: {r:?}");
 
     let msgs = h.raw_messages().await?;
@@ -153,7 +155,7 @@ async fn journey_two_sequential_tool_calls_then_text() -> Result<()> {
 
 /// One `h.turn()` that drives two LLM sub-turns:
 ///   sub-turn 1: LLM emits three tool_calls in the same stream turn → rig batches
-///               them into a single `Message::Assistant([tc1, tc2, tc3])`, then
+///               them into a single `Message::Assistant(AssistantMessage::new([tc1, tc2, tc3]))`, then
 ///               executes all three and batches results into `Message::User([tr1, tr2, tr3])`
 ///   sub-turn 2: LLM emits text "All done" → turn completes
 ///
@@ -177,7 +179,7 @@ async fn journey_three_batched_tool_calls_in_one_response() -> Result<()> {
         ],
     ]);
     let (r, _) = h
-        .turn("do three things", model, echo_tool("batch_result"))
+        .turn("do three things", model, echo_tool("batch_result")?)
         .await;
     assert!(r.is_ok(), "turn must succeed: {r:?}");
 
@@ -243,22 +245,22 @@ impl rig::tool::Tool for TestFailingTool {
 }
 
 /// Register one always-failing tool (test_fail).
-fn failing_tool() -> ToolInfra {
+fn failing_tool() -> Result<ToolInfra> {
     let handle = rig::tool::server::ToolServer::new()
         .tool(TestFailingTool)
         .run();
-    default_tool_infra(
+    Ok(default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
-            name: "test_fail".to_string(),
+            name: crate::types::ToolName::new("test_fail")?,
             description: "Test tool that always fails".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {}, "required": []}),
         }],
-    )
+    ))
 }
 
-/// A successful tool call must persist `nu_agent_success` = true on the
-/// ToolResult's first Text block.
+/// A successful tool call must persist a success verdict (`is_error` = false)
+/// on the ToolResult.
 #[tokio::test]
 async fn journey_successful_tool_call_persists_success_flag() -> Result<()> {
     let mut h = JourneyHarness::new("journey-verdict-success");
@@ -273,7 +275,7 @@ async fn journey_successful_tool_call_persists_success_flag() -> Result<()> {
             MockStreamEvent::final_response_with_default_usage(),
         ],
     ]);
-    let (r, _) = h.turn("run it", model, echo_tool("result_42")).await;
+    let (r, _) = h.turn("run it", model, echo_tool("result_42")?).await;
     assert!(r.is_ok(), "turn must succeed: {r:?}");
 
     let msgs = h.raw_messages().await?;
@@ -284,8 +286,8 @@ async fn journey_successful_tool_call_persists_success_flag() -> Result<()> {
     Ok(())
 }
 
-/// A failing tool call (real execution error) must persist
-/// `nu_agent_success` = false — the verdict, not the output text, decides
+/// A failing tool call (real execution error) must persist a failure verdict
+/// (`is_error` = true) — the verdict, not the output text, decides
 /// rehydration.
 #[tokio::test]
 async fn journey_failed_tool_call_persists_failure_flag() -> Result<()> {
@@ -301,7 +303,7 @@ async fn journey_failed_tool_call_persists_failure_flag() -> Result<()> {
             MockStreamEvent::final_response_with_default_usage(),
         ],
     ]);
-    let (r, _) = h.turn("run it", model, failing_tool()).await;
+    let (r, _) = h.turn("run it", model, failing_tool()?).await;
     assert!(r.is_ok(), "tool failure must not fail the turn: {r:?}");
 
     let msgs = h.raw_messages().await?;
@@ -313,8 +315,9 @@ async fn journey_failed_tool_call_persists_failure_flag() -> Result<()> {
 }
 
 /// A sub-turn cap (max 1) skips the second tool call of the sub-turn: the
-/// skipped call's persisted ToolResult must carry `nu_agent_success` = false
-/// (Skipped disposition), while the executed first call carries true.
+/// skipped call's persisted ToolResult must carry a failure verdict
+/// (`is_error` = true, Skipped disposition), while the executed first call
+/// carries success.
 #[tokio::test]
 async fn journey_subturn_cap_skipped_tool_call_persists_failure_flag() -> Result<()> {
     // -- Setup & Fixtures
@@ -335,7 +338,7 @@ async fn journey_subturn_cap_skipped_tool_call_persists_failure_flag() -> Result
     ]);
 
     // -- Exec
-    let (r, _) = h.turn("run both", model, echo_tool("result_42")).await;
+    let (r, _) = h.turn("run both", model, echo_tool("result_42")?).await;
     assert!(r.is_ok(), "turn must succeed: {r:?}");
 
     // -- Check

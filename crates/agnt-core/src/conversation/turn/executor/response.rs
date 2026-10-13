@@ -37,15 +37,14 @@ pub fn build_response(
 ) -> Value {
     let data = response_data.unwrap_or(TurnResponseData {
         text: String::new(),
-        usage: rig::completion::request::Usage {
-            input_tokens: Some(0),
-            output_tokens: Some(0),
-            total_tokens: Some(0),
-            cached_input_tokens: Some(0),
-            cache_creation_input_tokens: Some(0),
-            tool_use_prompt_tokens: Some(0),
-            reasoning_tokens: Some(0),
-        },
+        usage: rig::completion::request::Usage::new()
+            .input_tokens(0)
+            .output_tokens(0)
+            .total_tokens(0)
+            .cached_input_tokens(0)
+            .cache_creation_input_tokens(0)
+            .tool_use_prompt_tokens(0)
+            .reasoning_tokens(0),
         has_session: false,
     });
 

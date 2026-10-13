@@ -448,7 +448,7 @@ impl McpManagement for FakeRuntime {
 }
 
 impl ModelSwitching for FakeRuntime {
-    fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         self.switched_models.push(model_spec.to_string());
         if let Some(result) = self.switch_model_result.clone() {
             return result.map(|identity| (identity, None));
@@ -456,7 +456,7 @@ impl ModelSwitching for FakeRuntime {
         Ok((model_spec.to_string(), None))
     }
 
-    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
         Err("agent switch not supported in this runtime".to_string())
     }
 
@@ -521,11 +521,11 @@ impl CoreRuntime for FakeValueRuntime {
 }
 
 impl ModelSwitching for FakeValueRuntime {
-    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
 
-    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
         Err("agent switch not supported in this runtime".to_string())
     }
 
@@ -541,7 +541,6 @@ impl ModelSwitching for FakeValueRuntime {
 crate::default_session!(FakeValueRuntime);
 crate::default_mcp!(FakeValueRuntime);
 
-#[derive(Default)]
 pub(crate) struct LongRunningRuntime {
     pub(crate) prompts: Arc<Mutex<Vec<String>>>,
     pub(crate) switched_models: Arc<Mutex<Vec<String>>>,
@@ -551,10 +550,12 @@ pub(crate) struct LongRunningRuntime {
     pub(crate) switch_model_result: Option<Result<String, String>>,
     pub(crate) active_identity: Arc<Mutex<String>>,
     pub(crate) bus: crate::bus::Bus,
+    pub(crate) turn_started_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl LongRunningRuntime {
     pub(crate) fn new(block_first_turn: Arc<AtomicBool>) -> Self {
+        let (turn_started_tx, _) = tokio::sync::watch::channel(false);
         Self {
             prompts: Arc::new(Mutex::new(Vec::new())),
             switched_models: Arc::new(Mutex::new(Vec::new())),
@@ -564,7 +565,14 @@ impl LongRunningRuntime {
             switch_model_result: None,
             active_identity: Arc::new(Mutex::new("openai/gpt-4o-mini".to_string())),
             bus: crate::bus::Bus::default(),
+            turn_started_tx,
         }
+    }
+
+    /// Signals when the blocking `first` turn has begun. Tests await this
+    /// instead of sleeping before they unblock the turn.
+    pub(crate) fn turn_started_rx(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.turn_started_tx.subscribe()
     }
 
     pub(crate) fn with_switch_model_result(mut self, result: Result<String, String>) -> Self {
@@ -597,6 +605,9 @@ impl CoreRuntime for LongRunningRuntime {
             .push(prompt.clone());
 
         if prompt == "first" {
+            // Signal that the blocking turn has begun so tests can unblock it
+            // without sleeping.
+            let _ = self.turn_started_tx.send(true);
             let mut cancel_rx = bus.cancel().subscribe();
             while !self.block_first_turn.load(Ordering::SeqCst) {
                 if matches!(
@@ -624,7 +635,7 @@ impl CoreRuntime for LongRunningRuntime {
 }
 
 impl ModelSwitching for LongRunningRuntime {
-    fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         self.action_log
             .lock()
             .expect("action log lock")
@@ -643,7 +654,7 @@ impl ModelSwitching for LongRunningRuntime {
         Ok((model_spec.to_string(), None))
     }
 
-    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
         Err("agent switch not supported in this runtime".to_string())
     }
 
@@ -669,6 +680,7 @@ pub(crate) struct ResponsiveInteractiveUi {
     pub(crate) expected_completions: usize,
     pub(crate) active_pump_count: Arc<AtomicUsize>,
     pub(crate) warnings: Arc<Mutex<Vec<String>>>,
+    pub(crate) drained_tx: Arc<tokio::sync::watch::Sender<bool>>,
     pub(crate) _bus_task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -683,6 +695,7 @@ impl ResponsiveInteractiveUi {
         active_pump_count: Arc<AtomicUsize>,
     ) -> Self {
         let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<OrchestratorEvent>(256);
+        let (drained_tx, _) = tokio::sync::watch::channel(false);
         let mut submitted: std::collections::VecDeque<String> =
             initial_prompts.iter().map(|s| s.to_string()).collect();
         submitted.extend(injected_during_active.iter().map(|s| s.to_string()));
@@ -701,8 +714,16 @@ impl ResponsiveInteractiveUi {
             expected_completions,
             active_pump_count,
             warnings: Arc::new(Mutex::new(Vec::new())),
+            drained_tx: Arc::new(drained_tx),
             _bus_task: None,
         }
+    }
+
+    /// Signals when the spawner has injected every queued prompt and model
+    /// switch while the worker was active. Tests await this before unblocking
+    /// the turn, so the injections settle without a fixed sleep.
+    pub(crate) fn drained_rx(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.drained_tx.subscribe()
     }
 
     pub(crate) fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
@@ -749,6 +770,7 @@ impl ResponsiveInteractiveUi {
         let model_switch_requests = self.model_switch_requests.clone();
         let active = Arc::clone(&self.active);
         let quit = Arc::clone(&self.quit);
+        let drained_tx = Arc::clone(&self.drained_tx);
         move |event_tx| {
             let event_tx = event_tx.clone();
             let mut submitted = submitted.clone();
@@ -775,6 +797,9 @@ impl ResponsiveInteractiveUi {
                                     spec,
                                 }))
                                 .await;
+                        }
+                        if submitted.is_empty() && model_switch_requests.is_empty() {
+                            let _ = drained_tx.send(true);
                         }
                     }
                     if quit.load(Ordering::SeqCst)

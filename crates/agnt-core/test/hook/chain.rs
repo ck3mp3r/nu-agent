@@ -12,7 +12,7 @@ use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 use crate::protocol::event::UiEvent;
 use crate::session::{CachedMemory, FsSessionStore, SessionStore, StoreEntry};
 use crate::tools::handler::builtin_tool::BuiltinTool;
-use crate::types::Message;
+use crate::types::{Message, ToolName};
 use futures::StreamExt;
 use rig::DynModel;
 use rig::operation::Completion;
@@ -491,7 +491,7 @@ impl RepetitionTurnFixture {
         &self,
         with_tool: bool,
     ) -> core::result::Result<
-        Vec<core::result::Result<rig::agent::MultiTurnStreamItem, rig::agent::StreamingError>>,
+        Vec<core::result::Result<rig::agent::MultiTurnStreamItem, rig::completion::PromptError>>,
         Box<dyn std::error::Error>,
     > {
         let hook = HookChain::new(
@@ -556,7 +556,7 @@ fn identical_text_turn(count: usize) -> Vec<MockStreamEvent> {
 }
 
 /// Intra-stream detection stops the stream on the FIRST detection: a
-/// repetitive stream is killed mid-turn with a PromptCancelled carrying the
+/// repetitive stream is killed mid-turn with a Cancelled carrying the
 /// `OUTPUT_REPETITION_STOP_PREFIX` reason, and NO hook-side warning is
 /// published (the executor surfaces the stop reason).
 #[tokio::test]
@@ -576,7 +576,7 @@ async fn on_text_delta_repetition_stops_mid_stream_on_first_detection() -> Resul
     // -- Exec: drive the stream; the repetitive turn must die mid-stream.
     let items = fx.turn(false).await?;
 
-    // -- Check: the stream errors with a PromptCancelled carrying the prefix.
+    // -- Check: the stream errors with a Cancelled carrying the prefix.
     let mut error_stream = None;
     for item in items {
         if let Err(err) = item {
@@ -585,11 +585,8 @@ async fn on_text_delta_repetition_stops_mid_stream_on_first_detection() -> Resul
         }
     }
     let error = error_stream.ok_or("the first intra-stream detection must stop the run")?;
-    let rig::agent::StreamingError::Prompt(boxed) = error else {
-        return Err("the mid-stream stop must surface as a Prompt streaming error".into());
-    };
-    let rig::completion::PromptError::PromptCancelled { reason, .. } = boxed else {
-        return Err("the mid-stream stop must surface PromptCancelled".into());
+    let rig::completion::PromptError::Cancelled { reason, .. } = error else {
+        return Err("the mid-stream stop must surface Cancelled".into());
     };
     let prefix = crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
     assert!(
@@ -608,7 +605,7 @@ async fn on_text_delta_repetition_stops_mid_stream_on_first_detection() -> Resul
 /// Cross-turn ladder via `on_model_turn_finished`: turns 1-4 identical are
 /// below threshold (each turn completes), the 5th is First →
 /// `retry_with_feedback` (+ warning), 6th/7th Backoff (retry + warning), the
-/// 8th Stop (the turn's stream errors with PromptCancelled) + no warning.
+/// 8th Stop (the turn's stream errors with Cancelled) + no warning.
 /// Rig's stream ends after one model turn, so each scripted turn is queued
 /// and run separately through the SHARED hook state — exactly how the
 /// executor runs production turns.
@@ -662,7 +659,7 @@ async fn on_model_turn_finished_cross_turn_ladder() -> Result<()> {
                 );
             }
             8 => {
-                // Stop: the stream ends with a PromptCancelled error and NO
+                // Stop: the stream ends with a Cancelled error and NO
                 // hook-side warning (the executor surfaces the reason).
                 assert!(
                     turn_warnings.is_empty(),
@@ -676,11 +673,8 @@ async fn on_model_turn_finished_cross_turn_ladder() -> Result<()> {
                     }
                 }
                 let error_stream = stopped.ok_or("turn 8 must stop the run (stream error)")?;
-                let rig::agent::StreamingError::Prompt(boxed) = error_stream else {
-                    return Err("turn 8 stop must surface as a Prompt streaming error".into());
-                };
-                let rig::completion::PromptError::PromptCancelled { reason, .. } = boxed else {
-                    return Err("turn 8 stop must surface PromptCancelled".into());
+                let rig::completion::PromptError::Cancelled { reason, .. } = error_stream else {
+                    return Err("turn 8 stop must surface Cancelled".into());
                 };
                 assert!(
                     reason
@@ -801,7 +795,7 @@ async fn on_model_turn_finished_non_repetitive_continues_without_warning() -> Re
 /// ladder is driven to Stop level (turns 1-8 like
 /// `on_model_turn_finished_cross_turn_ladder`); the next repetitive stream is
 /// still killed MID-TURN by `on_text_delta` returning stop with the
-/// `OUTPUT_REPETITION_STOP_PREFIX` reason — the same PromptCancelled
+/// `OUTPUT_REPETITION_STOP_PREFIX` reason — the same Cancelled
 /// mechanism as the Esc-Esc cancel path. No hook-side warning is sent (the
 /// executor surfaces the stop reason).
 #[tokio::test]
@@ -821,7 +815,7 @@ async fn on_text_delta_repetition_stops_mid_stream_with_pre_escalated_ladder() -
     fx.queue_turn(vec![identical_text_turn(12)]);
     let items = fx.turn(false).await?;
 
-    // -- Check: the stream stops with a PromptCancelled carrying the prefix.
+    // -- Check: the stream stops with a Cancelled carrying the prefix.
     let mut error_stream = None;
     for item in items {
         if let Err(err) = item {
@@ -830,11 +824,8 @@ async fn on_text_delta_repetition_stops_mid_stream_with_pre_escalated_ladder() -
         }
     }
     let error = error_stream.ok_or("turn at Stop level must stop the run (stream error)")?;
-    let rig::agent::StreamingError::Prompt(boxed) = error else {
-        return Err("the Stop-level stop must surface as a Prompt streaming error".into());
-    };
-    let rig::completion::PromptError::PromptCancelled { reason, .. } = boxed else {
-        return Err("the Stop-level stop must surface PromptCancelled".into());
+    let rig::completion::PromptError::Cancelled { reason, .. } = error else {
+        return Err("the Stop-level stop must surface Cancelled".into());
     };
     let prefix = crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
     assert!(
@@ -892,7 +883,7 @@ async fn on_text_delta_repetition_stops_mid_stream_at_any_ladder_level() -> Resu
     fx.queue_turn(vec![identical_text_turn(12)]);
     let items = fx.turn(false).await?;
 
-    // -- Check: the stream stops with a PromptCancelled carrying the prefix.
+    // -- Check: the stream stops with a Cancelled carrying the prefix.
     let mut error_stream = None;
     for item in items {
         if let Err(err) = item {
@@ -902,11 +893,8 @@ async fn on_text_delta_repetition_stops_mid_stream_at_any_ladder_level() -> Resu
     }
     let error =
         error_stream.ok_or("a repetitive turn must stop mid-stream regardless of ladder level")?;
-    let rig::agent::StreamingError::Prompt(boxed) = error else {
-        return Err("the mid-stream stop must surface as a Prompt streaming error".into());
-    };
-    let rig::completion::PromptError::PromptCancelled { reason, .. } = boxed else {
-        return Err("the mid-stream stop must surface PromptCancelled".into());
+    let rig::completion::PromptError::Cancelled { reason, .. } = error else {
+        return Err("the mid-stream stop must surface Cancelled".into());
     };
     let prefix = crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
     assert!(
@@ -1196,7 +1184,7 @@ async fn on_dispatch_publishes_registry_rendered_call_line() -> Result<()> {
         rig::agent::AgentBuilder::new(shared_model.lock().expect("model mutex poisoned").clone())
             .add_hook(hook)
             .dynamic_tool(rig::tool::DynamicTool::new(
-                "read",
+                ToolName::new("read")?,
                 "Read a file",
                 serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}}),
                 |_args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("contents")) }),

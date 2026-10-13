@@ -309,7 +309,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         let config = runtime.provider.provider_config_mut();
         let previous_model = config.model.clone();
         config.model = model.to_string();
-        let dyn_model = match runtime.provider.build_dyn_model() {
+        let dyn_model = match runtime.provider.build_dyn_model().await {
             Ok(dyn_model) => dyn_model,
             Err(e) => {
                 runtime.provider.provider_config_mut().model = previous_model;
@@ -365,7 +365,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         let outcome = if session.cancel_requested.load(Ordering::SeqCst) {
             TurnOutcome::Cancelled
         } else {
-            classify_turn_result(result)
+            classify_turn_result(session_id, result)
         };
         Ok(map_turn_outcome_to_stop_reason(outcome))
     }
@@ -526,8 +526,8 @@ fn replay_history<S: SessionUpdateSink>(
                     }
                 }
             }
-            Message::Assistant { content, .. } => {
-                for item in content.iter() {
+            Message::Assistant(assistant) => {
+                for item in assistant.content.iter() {
                     if let AssistantContent::Text(text) = item {
                         send_chunk(sink, session_id, text.text.clone(), false)?;
                     }
@@ -585,11 +585,16 @@ fn select_values(options: &[SessionConfigOption]) -> Vec<String> {
 /// `CoreRuntime::execute_turn` erases its structured `TurnError` into a
 /// `LabeledError`, so the message is the only signal left at this boundary.
 /// Max-turn and max-token stops are recognised by their message markers;
-/// everything else counts as a completed turn.
-fn classify_turn_result(result: core::result::Result<Value, LabeledError>) -> TurnOutcome {
+/// everything else counts as a completed turn. A failed turn is logged before
+/// it is mapped, so a swallowed error is never silent.
+fn classify_turn_result(
+    session_id: &str,
+    result: core::result::Result<Value, LabeledError>,
+) -> TurnOutcome {
     let Err(err) = result else {
         return TurnOutcome::Completed;
     };
+    log::warn!("session {session_id}: prompt turn failed: {}", err.msg);
     let message = err.msg.to_lowercase();
     if message.contains("max turns") {
         TurnOutcome::MaxTurns

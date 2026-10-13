@@ -105,7 +105,7 @@ impl SimplePluginCommand for AgentAuthMcpStatus {
         })?;
 
         // 2. Construct the vault
-        let vault = Vault::auto_detect();
+        let vault = Vault::auto_detect().map_err(|e| LabeledError::new(e.to_string()))?;
 
         // 3. Build status rows
         let mut rows: Vec<Value> = Vec::new();

@@ -51,8 +51,10 @@ async fn test_subscribe_stream_receives_events() -> Result<()> {
         .unwrap();
 
     // Read SSE body — the stream should close after the cancel event
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    let body_bytes = sse_resp.bytes().await.unwrap();
+    let body_bytes = tokio::time::timeout(Duration::from_secs(5), sse_resp.bytes())
+        .await
+        .map_err(|_| "SSE stream should close after cancel")?
+        .map_err(|e| format!("SSE body read failed: {e:?}"))?;
     let text = String::from_utf8_lossy(&body_bytes);
 
     // StreamResponse format has statusUpdate wrapper
@@ -140,8 +142,10 @@ async fn test_subscribe_stream_artifact_update_carries_context_id() -> Result<()
         .await
         .unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    let body_bytes = sse_resp.bytes().await.unwrap();
+    let body_bytes = tokio::time::timeout(Duration::from_secs(5), sse_resp.bytes())
+        .await
+        .map_err(|_| "SSE stream should close after cancel")?
+        .map_err(|e| format!("SSE body read failed: {e:?}"))?;
     let text = String::from_utf8_lossy(&body_bytes);
 
     // Spec §4.2.2: every artifactUpdate event carries the task's contextId

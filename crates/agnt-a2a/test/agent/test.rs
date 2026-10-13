@@ -50,13 +50,23 @@ async fn test_agent_start_shutdown() -> Result<()> {
     let port = handle.server.port;
     handle.shutdown().await;
 
-    // Give time for port release from TIME_WAIT
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    // Port should be free after shutdown
-    tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
-        .await
-        .map_err(|e| format!("port should be free after shutdown: {e:?}"))?;
+    // Retry binding until the OS releases the TCP port (bounded).
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut ticker = tokio::time::interval(Duration::from_millis(10));
+    loop {
+        ticker.tick().await;
+        match tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await {
+            Ok(listener) => {
+                drop(listener);
+                break;
+            }
+            Err(e) => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(format!("port should be free after shutdown: {e:?}").into());
+                }
+            }
+        }
+    }
     Ok(())
 }
 

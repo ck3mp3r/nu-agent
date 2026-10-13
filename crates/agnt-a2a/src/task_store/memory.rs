@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::Utc;
 use tokio::sync::mpsc;
@@ -25,6 +26,8 @@ pub struct InMemoryTaskStore {
     subscriptions: RwLock<HashMap<String, Vec<mpsc::Sender<TaskEvent>>>>,
     push_configs: RwLock<HashMap<String, Vec<PushNotificationConfig>>>,
     idempotency_keys: RwLock<HashMap<String, String>>,
+    update_seq: RwLock<HashMap<String, u64>>,
+    next_seq: AtomicU64,
 }
 
 impl Default for InMemoryTaskStore {
@@ -34,6 +37,8 @@ impl Default for InMemoryTaskStore {
             subscriptions: RwLock::new(HashMap::new()),
             push_configs: RwLock::new(HashMap::new()),
             idempotency_keys: RwLock::new(HashMap::new()),
+            update_seq: RwLock::new(HashMap::new()),
+            next_seq: AtomicU64::new(0),
         }
     }
 }
@@ -84,14 +89,17 @@ impl TaskStoreBackend for InMemoryTaskStore {
         };
         let filtered_total = filtered.len();
 
-        // Sort by status timestamp descending (spec §3.1.4), with the task ID
-        // as an ascending tiebreaker so equal timestamps still order
-        // deterministically (HashMap iteration order is not stable).
+        // Sort by status timestamp descending (spec §3.1.4), then by the
+        // store-assigned update sequence descending, then by task ID ascending
+        // so equal timestamps still order deterministically (HashMap iteration
+        // order is not stable).
+        let seq = self.update_seq.read().unwrap();
         let mut sorted = filtered;
         sorted.sort_by(|a, b| {
             b.status
                 .timestamp
                 .cmp(&a.status.timestamp)
+                .then_with(|| seq.get(&b.id).cmp(&seq.get(&a.id)))
                 .then_with(|| a.id.cmp(&b.id))
         });
 
@@ -396,7 +404,9 @@ impl InMemoryTaskStore {
             created_at: Some(Utc::now()),
             metadata,
         };
-        self.tasks.write().unwrap().insert(id.clone(), task.clone());
+        let mut tasks = self.tasks.write().unwrap();
+        tasks.insert(id.clone(), task.clone());
+        self.assign_update_seq(&id);
         task
     }
 
@@ -465,6 +475,7 @@ impl InMemoryTaskStore {
         };
         task.status = new_status.clone();
         let result = task.clone();
+        self.assign_update_seq(id);
         drop(tasks); // release lock before notifying
         self.notify_status_change(id, &new_status);
         Ok(result)
@@ -520,13 +531,16 @@ impl InMemoryTaskStore {
             filtered.retain(|t| t.context_id.as_deref() == Some(ctx));
         }
 
-        // Sort by status timestamp descending (spec §3.1.4), with the task ID
-        // as an ascending tiebreaker so equal timestamps still order
-        // deterministically (HashMap iteration order is not stable).
+        // Sort by status timestamp descending (spec §3.1.4), then by the
+        // store-assigned update sequence descending, then by task ID ascending
+        // so equal timestamps still order deterministically (HashMap iteration
+        // order is not stable).
+        let seq = self.update_seq.read().unwrap();
         filtered.sort_by(|a, b| {
             b.status
                 .timestamp
                 .cmp(&a.status.timestamp)
+                .then_with(|| seq.get(&b.id).cmp(&seq.get(&a.id)))
                 .then_with(|| a.id.cmp(&b.id))
         });
 
@@ -637,6 +651,19 @@ impl InMemoryTaskStore {
 
         task.history.get_or_insert_with(Vec::new).push(message);
         Ok(task.clone())
+    }
+
+    // -----------------------------------------------------------------------
+    // Update sequence
+    // -----------------------------------------------------------------------
+
+    /// Assign the next monotonic update sequence to `id`.
+    ///
+    /// Callers hold the `tasks` write lock, so a list call never observes a
+    /// task with a new status but a stale sequence.
+    fn assign_update_seq(&self, id: &str) {
+        let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
+        self.update_seq.write().unwrap().insert(id.to_string(), seq);
     }
 }
 

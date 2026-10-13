@@ -10,7 +10,7 @@ use crate::protocol::persona::PersonaSummary;
 use crate::tools::audit::AuditLogger;
 use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use crate::tools::executor::ToolExecutor;
-use crate::types::ToolDefinition;
+use crate::types::{EmptyToolName, ToolDefinition, ToolName};
 use rig::tool::server::ToolServerHandle;
 use serde_json::json;
 
@@ -50,10 +50,10 @@ pub fn build_compaction_params(merged: &CompactionConfig) -> CompactionParams {
 // ── Tool definitions (moved from binary tool_defs.rs) ───────────────────────
 
 /// Built-in tool definitions for file system and HTTP operations.
-pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
-    vec![
+pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> {
+    Ok(vec![
         ToolDefinition {
-            name: "read".to_string(),
+            name: ToolName::new("read")?,
             description: "Read file content with optional line windowing and return content/version metadata".to_string(),
             parameters: json!({
                 "type": "object",
@@ -66,7 +66,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "edit".to_string(),
+            name: ToolName::new("edit")?,
             description: "Edit or create files. Use operation.type = 'search_replace' with 'search' and 'replacement' string fields (no line numbers needed). Or use operation.type = 'create' with 'content' field. Requires expected_version from a prior read for existing files.".to_string(),
             parameters: json!({
                 "type": "object",
@@ -91,7 +91,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "skill".to_string(),
+            name: ToolName::new("skill")?,
             description: "Load skill content by explicit name from local or home skill roots".to_string(),
             parameters: json!({
                 "type": "object",
@@ -102,7 +102,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "http".to_string(),
+            name: ToolName::new("http")?,
             description: "Fetch content from a URL. Returns markdown extracted from HTML pages, \
                 preserving structure (headings, lists, links, code blocks, tables). \
                 Raw mode returns the unmodified response body. \
@@ -127,7 +127,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["url"]
             }),
         },        ToolDefinition {
-            name: "grep".to_string(),
+            name: ToolName::new("grep")?,
             description: "Search file contents recursively using a regex pattern. Respects .gitignore. Returns structured matches with file path, line number, and line content.".to_string(),
             parameters: json!({
                 "type": "object",
@@ -157,7 +157,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "glob".to_string(),
+            name: ToolName::new("glob")?,
             description: "Find files matching a glob pattern. Respects .gitignore. Returns matching file paths relative to the search root. Use patterns like '**/*.rs' or 'src/**/*.{ts,tsx}'.".to_string(),
             parameters: json!({
                 "type": "object",
@@ -175,7 +175,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "tmux_session".to_string(),
+            name: ToolName::new("tmux_session")?,
             description: "Manage tmux sessions. List all sessions, get info about a specific session, create a new session (in a directory), or kill a session. Killing requires force=true.".to_string(),
             parameters: json!({
                 "type": "object",
@@ -190,7 +190,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "tmux_window".to_string(),
+            name: ToolName::new("tmux_window")?,
             description: "Manage tmux windows within a session. Create a new window (optionally with a name, directory, and target index) or kill a window. Create returns the new window's window_id (e.g. @5) and window_index. Killing requires force=true.".to_string(),
             parameters: json!({
                 "type": "object",
@@ -207,7 +207,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "tmux_pane".to_string(),
+            name: ToolName::new("tmux_pane")?,
             description: "Control tmux panes within a session. List panes, find a pane by name or context, inspect the running process, capture visible output, send a command, split a pane (horizontally or vertically with a size percentage and optional directory), or kill a pane. Panes are addressed as session:window.pane; list/find responses include a target field (session:window_index.pane_index) to copy verbatim. Killing requires force=true.".to_string(),
             parameters: json!({
                 "type": "object",
@@ -229,7 +229,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "tmux_layout".to_string(),
+            name: ToolName::new("tmux_layout")?,
             description: "Select a layout for arranging panes in a tmux window. Non-destructive operation that only changes visual arrangement. Layouts: even-horizontal (equal width columns), even-vertical (equal height rows), main-horizontal (large top pane), main-vertical (large left pane), tiled (grid).".to_string(),
             parameters: json!({
                 "type": "object",
@@ -243,7 +243,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "nu".to_string(),
+            name: ToolName::new("nu")?,
             description: "Execute a Nushell command in a stateless one-shot process. Returns stdout and stderr as text. Use Nushell syntax ONLY (NOT bash/sh/zsh). Each call is independent — no state preserved between calls. Use pipes to chain commands within a single call. The working directory is already set to the project directory; `cd` has no effect and is never needed.".to_string(),
             parameters: json!({
                 "type": "object",
@@ -262,7 +262,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "ast_query".to_string(),
+            name: ToolName::new("ast_query")?,
             description: "Run an S-expression tree-sitter query against source code. Returns matching captures with positions. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
             parameters: json!({
                 "type": "object",
@@ -278,7 +278,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "ast_nodes".to_string(),
+            name: ToolName::new("ast_nodes")?,
             description: "List AST nodes of a given type in source code. Returns node positions. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
             parameters: json!({
                 "type": "object",
@@ -293,7 +293,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "ast_refs".to_string(),
+            name: ToolName::new("ast_refs")?,
             description: "Find references to a named symbol in source code. Returns positions of matching identifiers. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
             parameters: json!({
                 "type": "object",
@@ -307,7 +307,7 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
-            name: "ast_tree".to_string(),
+            name: ToolName::new("ast_tree")?,
             description: "Dump the full S-expression parse tree of source code. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
             parameters: json!({
                 "type": "object",
@@ -319,12 +319,12 @@ pub fn builtin_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["path", "language"]
             }),
         },
-    ]
+    ])
 }
 /// Tool definitions available to any agent that can send messages.
-pub fn messaging_tool_definitions() -> Vec<ToolDefinition> {
-    vec![ToolDefinition {
-        name: "send_message".to_string(),
+pub fn messaging_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> {
+    Ok(vec![ToolDefinition {
+        name: ToolName::new("send_message")?,
         description: "Send a message to another agent. Messages are delivered as conversation turns to the target agent. \
                        Use the agent names provided in your task instructions — you know your own name and your \
                        --parent-name at birth. The response comes back asynchronously as a new conversation turn.".to_string(),
@@ -342,11 +342,13 @@ pub fn messaging_tool_definitions() -> Vec<ToolDefinition> {
             },
             "required": ["to", "message"]
         }),
-    }]
+    }])
 }
 
 /// Tool definitions for orchestrator agents that can spawn sub-agents.
-pub fn orchestrator_tool_definitions(available_agents: &[PersonaSummary]) -> Vec<ToolDefinition> {
+pub fn orchestrator_tool_definitions(
+    available_agents: &[PersonaSummary],
+) -> Result<Vec<ToolDefinition>, EmptyToolName> {
     let description = if available_agents.is_empty() {
         "Spawn a new agent in a tmux pane. No agent personas found. Create .agents/<name>.md files to define agents.".to_string()
     } else {
@@ -366,9 +368,9 @@ pub fn orchestrator_tool_definitions(available_agents: &[PersonaSummary]) -> Vec
         desc
     };
 
-    vec![
+    Ok(vec![
         ToolDefinition {
-            name: "spawn_agent".to_string(),
+            name: ToolName::new("spawn_agent")?,
             description,
             parameters: json!({
                 "type": "object",
@@ -380,7 +382,7 @@ pub fn orchestrator_tool_definitions(available_agents: &[PersonaSummary]) -> Vec
             }),
         },
         ToolDefinition {
-            name: "terminate_agent".to_string(),
+            name: ToolName::new("terminate_agent")?,
             description:
                 "Terminate a running sub-agent by name. Kills its tmux pane and deregisters it."
                     .to_string(),
@@ -392,19 +394,19 @@ pub fn orchestrator_tool_definitions(available_agents: &[PersonaSummary]) -> Vec
                 "required": ["name"]
             }),
         },
-    ]
+    ])
 }
 
 /// Tool definitions available only to orchestrator agents that can list peers.
-pub fn list_agents_tool_definitions() -> Vec<ToolDefinition> {
-    vec![ToolDefinition {
-        name: "list_agents".to_string(),
+pub fn list_agents_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> {
+    Ok(vec![ToolDefinition {
+        name: ToolName::new("list_agents")?,
         description: "List all connected agents and their names".to_string(),
         parameters: json!({
             "type": "object",
             "properties": {},
         }),
-    }]
+    }])
 }
 
 /// Result of assembling the full tool definition set.
@@ -427,7 +429,7 @@ pub fn assemble_tool_definitions(
     discovered_mcp_tools: &[crate::tools::mcp::client::McpToolDefinition],
     cwd: &std::path::Path,
     a2a_enabled: bool,
-) -> ToolAssembly {
+) -> Result<ToolAssembly, EmptyToolName> {
     let mut tool_definitions: Vec<ToolDefinition> = closure_registry
         .names()
         .filter_map(|name| {
@@ -438,22 +440,24 @@ pub fn assemble_tool_definitions(
                 None,
             ))
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
-    tool_definitions.extend(builtin_tool_definitions());
+    tool_definitions.extend(builtin_tool_definitions()?);
     // Old mailbox tools removed in favour of A2A:
     // tool_definitions.extend(messaging_tool_definitions());    // send_message
     // tool_definitions.extend(list_agents_tool_definitions());  // list_agents
     if a2a_enabled {
-        tool_definitions.extend(
-            agnt_a2a::a2a_tool_defs()
-                .into_iter()
-                .map(|def| ToolDefinition {
-                    name: def.name,
+        let a2a_definitions = agnt_a2a::a2a_tool_defs()
+            .into_iter()
+            .map(|def| {
+                Ok(ToolDefinition {
+                    name: ToolName::new(def.name)?,
                     description: def.description,
                     parameters: def.parameters,
-                }),
-        );
+                })
+            })
+            .collect::<Result<Vec<_>, EmptyToolName>>()?;
+        tool_definitions.extend(a2a_definitions);
     }
 
     let available_agents = {
@@ -468,36 +472,40 @@ pub fn assemble_tool_definitions(
     // Old orchestrator tools removed in favour of A2A:
     // tool_definitions.extend(orchestrator_tool_definitions(&available_agents));  // spawn_agent, terminate_agent
 
-    tool_definitions.extend(discovered_mcp_tools.iter().map(|tool| {
-        ToolDefinition {
-            name: tool.name.clone(),
-            description: tool
-                .description
-                .clone()
-                .unwrap_or_else(|| format!("MCP tool from server '{}'", tool.server)),
-            parameters: tool.parameters.clone().unwrap_or_else(|| {
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "args": {
-                            "type": "array",
-                            "items": {}
-                        }
-                    },
-                    "required": ["args"]
-                })
-            }),
-        }
-    }));
+    let mcp_definitions = discovered_mcp_tools
+        .iter()
+        .map(|tool| {
+            Ok(ToolDefinition {
+                name: ToolName::new(tool.name.clone())?,
+                description: tool
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| format!("MCP tool from server '{}'", tool.server)),
+                parameters: tool.parameters.clone().unwrap_or_else(|| {
+                    json!({
+                        "type": "object",
+                        "properties": {
+                            "args": {
+                                "type": "array",
+                                "items": {}
+                            }
+                        },
+                        "required": ["args"]
+                    })
+                }),
+            })
+        })
+        .collect::<Result<Vec<_>, EmptyToolName>>()?;
+    tool_definitions.extend(mcp_definitions);
 
     // Store baseline for agent switching
     let baseline_tool_definitions = tool_definitions.clone();
 
-    ToolAssembly {
+    Ok(ToolAssembly {
         tool_definitions,
         baseline_tool_definitions,
         available_agents,
-    }
+    })
 }
 
 // ── Builder ──────────────────────────────────────────────────────────────────
@@ -590,14 +598,19 @@ impl<'a> AgentRuntimeBuilder<'a> {
             Arc::new(tool_executor.clone()),
             span,
             max_tool_result_bytes,
-        );
+        )
+        .map_err(|e| {
+            LabeledError::new("Invalid closure tool name").with_label(e.to_string(), span)
+        })?;
 
         for tool in closure_tools {
             tool_server_handle.add_dynamic_tool(tool);
         }
 
         // All tool groups are always registered. The permission system gates actual use.
-        let builtin_defs = builtin_tool_definitions();
+        let builtin_defs = builtin_tool_definitions().map_err(|e| {
+            LabeledError::new("Invalid builtin tool name").with_label(e.to_string(), span)
+        })?;
 
         // Build CompactionParams from merged compaction config
         merged_compaction.validate().map_err(|msg| {

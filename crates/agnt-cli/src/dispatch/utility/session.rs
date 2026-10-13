@@ -194,19 +194,23 @@ fn extract_message_info(msg: &Message) -> (String, String) {
                 .join("\n");
             ("user".to_string(), text)
         }
-        Message::Assistant { content, .. } => {
-            let text = content
+        Message::Assistant(assistant) => {
+            let text = assistant
+                .content
                 .iter()
                 .map(|c| match c {
                     AssistantContent::Text(t) => t.text.clone(),
                     AssistantContent::ToolCall(tc) => {
                         format!(
                             "Tool call: {} - {}",
-                            tc.function.name, tc.function.arguments
+                            tc.function.name,
+                            serde_json::to_string(&tc.function.arguments).unwrap_or_default()
                         )
                     }
                     AssistantContent::Reasoning(r) => format!("[Reasoning: {r:?}]"),
                     AssistantContent::Image(_) => "[Image]".to_string(),
+                    AssistantContent::Opaque(_) => "[Opaque]".to_string(),
+                    _ => "[Unknown]".to_string(),
                 })
                 .collect::<Vec<_>>()
                 .join("\n");

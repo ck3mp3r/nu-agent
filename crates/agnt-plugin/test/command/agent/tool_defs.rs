@@ -7,8 +7,8 @@ use agnt_core::conversation::builder::{
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
-fn builtin_tool_registration_contains_exact_unprefixed_names() {
-    let names = builtin_tool_definitions()
+fn builtin_tool_registration_contains_exact_unprefixed_names() -> Result<()> {
+    let names = builtin_tool_definitions()?
         .into_iter()
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
@@ -33,30 +33,33 @@ fn builtin_tool_registration_contains_exact_unprefixed_names() {
             "ast_tree"
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn orchestrator_tool_registration_contains_exact_names() {
-    let names = orchestrator_tool_definitions(&[])
+fn orchestrator_tool_registration_contains_exact_names() -> Result<()> {
+    let names = orchestrator_tool_definitions(&[])?
         .into_iter()
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
 
     assert_eq!(names, vec!["spawn_agent", "terminate_agent"]);
+    Ok(())
 }
 
 #[test]
-fn orchestrator_tool_description_shows_no_agents_message_when_empty() {
-    let defs = orchestrator_tool_definitions(&[]);
+fn orchestrator_tool_description_shows_no_agents_message_when_empty() -> Result<()> {
+    let defs = orchestrator_tool_definitions(&[])?;
     let desc = &defs[0].description;
     assert!(
         desc.contains("No agent personas found"),
         "Expected no-agents message, got: {desc}"
     );
+    Ok(())
 }
 
 #[test]
-fn orchestrator_tool_description_lists_available_agents() {
+fn orchestrator_tool_description_lists_available_agents() -> Result<()> {
     use agnt_core::protocol::persona::PersonaSummary;
     let agents = vec![
         PersonaSummary {
@@ -70,7 +73,7 @@ fn orchestrator_tool_description_lists_available_agents() {
             builtin: false,
         },
     ];
-    let defs = orchestrator_tool_definitions(&agents);
+    let defs = orchestrator_tool_definitions(&agents)?;
     let desc = &defs[0].description;
     assert!(
         desc.contains("coder: Writes code"),
@@ -85,31 +88,34 @@ fn orchestrator_tool_description_lists_available_agents() {
         "Expected send_message mention, got: {desc}"
     );
     assert!(desc.contains("tmux"), "Expected tmux mention, got: {desc}");
+    Ok(())
 }
 
 #[test]
-fn messaging_tool_registration_contains_only_send_message() {
-    let names = messaging_tool_definitions()
+fn messaging_tool_registration_contains_only_send_message() -> Result<()> {
+    let names = messaging_tool_definitions()?
         .into_iter()
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
 
     assert_eq!(names, vec!["send_message"]);
+    Ok(())
 }
 
 #[test]
-fn list_agents_tool_registration_contains_only_list_agents() {
-    let names = list_agents_tool_definitions()
+fn list_agents_tool_registration_contains_only_list_agents() -> Result<()> {
+    let names = list_agents_tool_definitions()?
         .into_iter()
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
 
     assert_eq!(names, vec!["list_agents"]);
+    Ok(())
 }
 
 #[test]
 fn send_message_description_explains_delivery_semantics() -> Result<()> {
-    let defs = messaging_tool_definitions();
+    let defs = messaging_tool_definitions()?;
     let send = defs
         .iter()
         .find(|d| d.name == "send_message")
@@ -138,20 +144,21 @@ fn send_message_description_explains_delivery_semantics() -> Result<()> {
 }
 
 #[test]
-fn builtin_tool_registration_explicitly_rejects_prefixed_names() {
-    let names = builtin_tool_definitions()
+fn builtin_tool_registration_explicitly_rejects_prefixed_names() -> Result<()> {
+    let names = builtin_tool_definitions()?
         .into_iter()
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
 
     assert!(!names.iter().any(|name| name.starts_with("fs__")));
     assert!(!names.iter().any(|name| name.starts_with("tool__")));
+    Ok(())
 }
 
 #[test]
 fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_fields() -> Result<()>
 {
-    let edit = builtin_tool_definitions()
+    let edit = builtin_tool_definitions()?
         .into_iter()
         .find(|tool| tool.name == "edit")
         .ok_or("should have edit tool definition")?;
@@ -176,12 +183,12 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_f
 // --- Tool assembly tests: A2A tools gated on a2a_enabled ---
 
 #[test]
-fn a2a_tools_absent_when_disabled() {
+fn a2a_tools_absent_when_disabled() -> Result<()> {
     let closure_registry = agnt_core::tools::closure::ClosureRegistry::default();
     let agents_config = agnt_core::config::AgentsConfig::default();
     let cwd = std::path::Path::new("/tmp");
 
-    let assembly = assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, false);
+    let assembly = assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, false)?;
 
     let names: Vec<&str> = assembly
         .tool_definitions
@@ -225,15 +232,16 @@ fn a2a_tools_absent_when_disabled() {
         !baseline_names.contains(&"agent_list"),
         "agent_list must be absent from baseline when A2A disabled"
     );
+    Ok(())
 }
 
 #[test]
-fn a2a_tools_present_when_enabled() {
+fn a2a_tools_present_when_enabled() -> Result<()> {
     let closure_registry = agnt_core::tools::closure::ClosureRegistry::default();
     let agents_config = agnt_core::config::AgentsConfig::default();
     let cwd = std::path::Path::new("/tmp");
 
-    let assembly = assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, true);
+    let assembly = assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, true)?;
 
     let names: Vec<&str> = assembly
         .tool_definitions
@@ -277,4 +285,5 @@ fn a2a_tools_present_when_enabled() {
         baseline_names.contains(&"agent_list"),
         "agent_list must be in baseline when A2A enabled"
     );
+    Ok(())
 }

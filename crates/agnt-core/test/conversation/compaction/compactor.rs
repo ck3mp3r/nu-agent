@@ -76,7 +76,8 @@ fn last_request_prompt(model: &MockCompletionModel) -> Result<String> {
             .collect::<Vec<_>>()
             .join(" ")),
         Message::System { content } => Ok(content.clone()),
-        Message::Assistant { content, .. } => Ok(content
+        Message::Assistant(assistant) => Ok(assistant
+            .content
             .iter()
             .filter_map(|c| match c {
                 crate::types::AssistantContent::Text(t) => Some(t.text.clone()),

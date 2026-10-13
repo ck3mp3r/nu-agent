@@ -3,12 +3,14 @@
 //! Every consumer (provider auth commands, MCP auth commands, the config
 //! resolver, and the MCP runtime) interacts with secrets through [`Vault`].
 //! The storage backend is selected once at startup by [`Vault::auto_detect`]
-//! and dispatched statically through [`VaultBackendKind`] — no `Box<dyn>` and
-//! no vtable.
+//! and dispatched statically through the [`VaultBackend`] generic: `Vault<B>`
+//! is monomorphized per backend, and tests inject a mock by naming it.
 
 // region:    --- Modules
 
 use std::sync::Arc;
+
+use crate::utils::env_map::{EnvMap, process_env};
 
 use super::file_backend::FileBackend;
 use super::keychain_backend::KeychainBackend;
@@ -36,6 +38,12 @@ const MCP_STATE_PREFIX: &str = "mcp:state:";
 /// Key prefix for MCP bearer tokens.
 const MCP_BEARER_PREFIX: &str = "mcp:bearer:";
 
+/// Environment variable that overrides the vault backend selection.
+const BACKEND_ENV: &str = "AGENT_VAULT_BACKEND";
+
+/// Environment variable that nextest sets in every test process.
+const NEXTEST_ENV: &str = "NEXTEST";
+
 // endregion: --- Constants
 
 // region:    --- Types
@@ -44,18 +52,21 @@ const MCP_BEARER_PREFIX: &str = "mcp:bearer:";
 
 /// The single point of interaction with secret storage and retrieval.
 ///
-/// Owns a [`VaultBackendKind`] and exposes typed methods for each secret
+/// Owns a [`VaultBackend`] backend and exposes typed methods for each secret
 /// category. Consumers never touch a backend directly.
+///
+/// The backend is a compile-time parameter: production runs the default
+/// `Vault<VaultBackendKind>`; tests inject a mock by naming it.
 #[derive(Debug)]
-pub struct Vault {
-    backend: VaultBackendKind,
+pub struct Vault<B: VaultBackend = VaultBackendKind> {
+    backend: B,
 }
 
 /// Two vaults are equal when they use the same backend variant.
 ///
 /// The comparison never inspects stored values — only the backend kind — so it
 /// is safe to derive `PartialEq` for configuration comparison.
-impl PartialEq for Vault {
+impl<B: VaultBackend> PartialEq for Vault<B> {
     fn eq(&self, other: &Self) -> bool {
         self.backend.kind() == other.backend.kind()
     }
@@ -75,17 +86,6 @@ pub enum VaultBackendKind {
     EnvOnly(EnvOnlyBackend),
 }
 
-impl VaultBackendKind {
-    /// Identifies the backend variant without exposing the backend internals.
-    pub fn kind(&self) -> BackendKind {
-        match self {
-            Self::Keychain(_) => BackendKind::Keychain,
-            Self::File(_) => BackendKind::File,
-            Self::EnvOnly(_) => BackendKind::EnvOnly,
-        }
-    }
-}
-
 /// Which backend variant a [`VaultBackendKind`] holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
@@ -100,6 +100,9 @@ pub enum BackendKind {
 ///
 /// The trait is internal to this module — consumers only ever see [`Vault`].
 pub trait VaultBackend: Send + Sync {
+    /// Identifies the backend without exposing its internals.
+    fn kind(&self) -> BackendKind;
+
     /// Return the stored value, or `None` when the key is absent.
     fn get(&self, key: &str) -> Result<Option<String>, VaultError>;
 
@@ -124,6 +127,10 @@ pub enum VaultError {
     Json(#[from] serde_json::Error),
     #[error("Keychain error: {0}")]
     Keychain(String),
+    #[error(
+        "keychain backend unavailable: {0} — unlock the keychain, or set AGENT_VAULT_BACKEND=file to use the plaintext file backend"
+    )]
+    BackendUnavailable(String),
     #[error("No vault backend available")]
     NoBackend,
     #[error("No data directory found — set XDG_DATA_HOME")]
@@ -173,20 +180,25 @@ pub enum CredentialType {
 
 /// Environment-only fallback backend.
 ///
-/// Stores nothing: `get` always returns `None`, `set` and `delete` do nothing,
-/// and `list` returns empty. It is the unconditional final fallback of
-/// [`Vault::auto_detect`], for pure Docker/CI environments where env vars are
-/// the only secret source.
+/// Read paths are empty: `get` always returns `None`, `list` returns empty,
+/// and `delete` is a no-op. `set` fails with [`VaultError::NoBackend`] — the
+/// backend cannot store anything, so a write must not report success. It is
+/// the unconditional final fallback of [`Vault::auto_detect`], for pure
+/// Docker/CI environments where env vars are the only secret source.
 #[derive(Debug)]
 pub struct EnvOnlyBackend;
 
 impl VaultBackend for EnvOnlyBackend {
+    fn kind(&self) -> BackendKind {
+        BackendKind::EnvOnly
+    }
+
     fn get(&self, _key: &str) -> Result<Option<String>, VaultError> {
         Ok(None)
     }
 
     fn set(&self, _key: &str, _value: &str) -> Result<(), VaultError> {
-        Ok(())
+        Err(VaultError::NoBackend)
     }
 
     fn delete(&self, _key: &str) -> Result<(), VaultError> {
@@ -202,43 +214,48 @@ impl VaultBackend for EnvOnlyBackend {
 
 // region:    --- Vault Impl
 
-impl Vault {
+/// Runtime-selected vault: the production instantiation.
+impl Vault<VaultBackendKind> {
     // --- Construction ---
 
-    /// Probe backends in priority order: keychain, then file, then env-only.
-    /// The first available backend wins. Every probe is now real.
-    pub fn auto_detect() -> Self {
-        if let Ok(kc) = KeychainBackend::probe() {
-            return Self {
-                backend: VaultBackendKind::Keychain(kc),
-            };
-        }
-        if let Ok(fb) = FileBackend::probe() {
-            return Self {
-                backend: VaultBackendKind::File(fb),
-            };
-        }
-        Self {
-            backend: VaultBackendKind::EnvOnly(EnvOnlyBackend),
-        }
+    /// Select a backend from the process environment.
+    ///
+    /// `AGENT_VAULT_BACKEND` overrides the default chain: `env` selects the
+    /// env-only backend without probing, `file` probes the file backend only,
+    /// and `keychain` or `auto` probe keychain, then file, then env-only.
+    ///
+    /// # Errors
+    /// - [`VaultError::BackendUnavailable`] when the keychain probe fails with
+    ///   anything other than [`VaultError::NoBackend`]
+    pub fn auto_detect() -> Result<Self, VaultError> {
+        Self::auto_detect_with(&process_env())
     }
 
-    /// Construct a vault with a specific backend.
-    pub fn new(backend: VaultBackendKind) -> Self {
-        Self { backend }
+    /// Select a backend from an explicit environment map.
+    ///
+    /// The map-taking variant keeps the selection testable without mutating
+    /// the process environment.
+    fn auto_detect_with(env: &EnvMap) -> Result<Self, VaultError> {
+        Ok(Self::new(resolve_backend(backend_choice(env))?))
     }
 
     /// Construct an env-only vault. All lookups return `None`.
     pub fn env_only() -> Self {
-        Self {
-            backend: VaultBackendKind::EnvOnly(EnvOnlyBackend),
-        }
+        Self::new(VaultBackendKind::EnvOnly(EnvOnlyBackend))
+    }
+}
+
+/// Backend-agnostic vault: every instantiation shares these methods.
+impl<B: VaultBackend> Vault<B> {
+    /// Construct a vault with a specific backend.
+    pub fn new(backend: B) -> Self {
+        Self { backend }
     }
 
     // --- Accessors ---
 
     /// Borrow the selected backend.
-    pub fn backend(&self) -> &VaultBackendKind {
+    pub fn backend(&self) -> &B {
         &self.backend
     }
 
@@ -389,7 +406,7 @@ impl Vault {
     // --- rmcp Adapters ---
 
     /// Produce an rmcp `CredentialStore` adapter for one MCP server.
-    pub fn mcp_credential_store(self: &Arc<Self>, server: &str) -> VaultCredentialStore {
+    pub fn mcp_credential_store(self: &Arc<Self>, server: &str) -> VaultCredentialStore<B> {
         VaultCredentialStore {
             vault: Arc::clone(self),
             server_name: server.to_string(),
@@ -397,7 +414,7 @@ impl Vault {
     }
 
     /// Produce an rmcp `StateStore` adapter.
-    pub fn mcp_state_store(self: &Arc<Self>) -> VaultStateStore {
+    pub fn mcp_state_store(self: &Arc<Self>) -> VaultStateStore<B> {
         VaultStateStore {
             vault: Arc::clone(self),
         }
@@ -409,6 +426,14 @@ impl Vault {
 // region:    --- VaultBackendKind Impl
 
 impl VaultBackend for VaultBackendKind {
+    fn kind(&self) -> BackendKind {
+        match self {
+            Self::Keychain(_) => BackendKind::Keychain,
+            Self::File(_) => BackendKind::File,
+            Self::EnvOnly(_) => BackendKind::EnvOnly,
+        }
+    }
+
     fn get(&self, key: &str) -> Result<Option<String>, VaultError> {
         match self {
             Self::Keychain(b) => b.get(key),
@@ -446,6 +471,92 @@ impl VaultBackend for VaultBackendKind {
 
 // region:    --- Support
 
+/// Which backend the environment requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackendChoice {
+    /// Probe keychain, then file, then env-only.
+    Auto,
+    /// Probe the file backend, then fall back to env-only.
+    File,
+    /// Use the env-only backend without probing.
+    EnvOnly,
+}
+
+/// Map `AGENT_VAULT_BACKEND` to a backend choice. Pure — no probing.
+///
+/// `keychain` and `auto` share the auto chain: keychain, then file, then
+/// env-only. An unknown value logs a warning and keeps the auto chain.
+///
+/// Under nextest ([`NEXTEST_ENV`]) an unset `AGENT_VAULT_BACKEND` selects the
+/// env-only backend, so no test probes the OS keychain. An explicit value
+/// always wins.
+fn backend_choice(env: &EnvMap) -> BackendChoice {
+    match env.get(BACKEND_ENV).map(String::as_str) {
+        Some("env") => BackendChoice::EnvOnly,
+        Some("file") => BackendChoice::File,
+        Some("keychain") | Some("auto") => BackendChoice::Auto,
+        Some(other) => {
+            log::warn!("Unknown {BACKEND_ENV} value '{other}' — using auto detection");
+            BackendChoice::Auto
+        }
+        None if env.contains_key(NEXTEST_ENV) => BackendChoice::EnvOnly,
+        None => BackendChoice::Auto,
+    }
+}
+
+/// Resolve a backend choice to a concrete backend, probing as needed.
+fn resolve_backend(choice: BackendChoice) -> Result<VaultBackendKind, VaultError> {
+    match choice {
+        BackendChoice::Auto => auto_chain(),
+        choice => resolve_backend_with(choice, KeychainBackend::probe, FileBackend::probe),
+    }
+}
+
+/// Resolve a backend choice using injectable probes.
+fn resolve_backend_with(
+    choice: BackendChoice,
+    keychain_probe: impl FnOnce() -> Result<KeychainBackend, VaultError>,
+    file_probe: impl FnOnce() -> Result<FileBackend, VaultError>,
+) -> Result<VaultBackendKind, VaultError> {
+    match choice {
+        BackendChoice::EnvOnly => Ok(VaultBackendKind::EnvOnly(EnvOnlyBackend)),
+        BackendChoice::File => match file_probe() {
+            Ok(backend) => Ok(VaultBackendKind::File(backend)),
+            Err(e) => {
+                log::warn!("File vault backend unavailable ({e}) — falling back to env-only");
+                Ok(VaultBackendKind::EnvOnly(EnvOnlyBackend))
+            }
+        },
+        BackendChoice::Auto => auto_chain_with(keychain_probe, file_probe),
+    }
+}
+
+/// Probe keychain, then file, then env-only. The first available backend wins.
+///
+/// A keychain probe failure other than [`VaultError::NoBackend`] aborts the
+/// chain: silently downgrading to the file backend would store plaintext
+/// secrets while the user believes the keychain holds them.
+fn auto_chain() -> Result<VaultBackendKind, VaultError> {
+    auto_chain_with(KeychainBackend::probe, FileBackend::probe)
+}
+
+/// Probe keychain, then file, then env-only using injectable probes.
+fn auto_chain_with(
+    keychain_probe: impl FnOnce() -> Result<KeychainBackend, VaultError>,
+    file_probe: impl FnOnce() -> Result<FileBackend, VaultError>,
+) -> Result<VaultBackendKind, VaultError> {
+    match keychain_probe() {
+        Ok(keychain) => return Ok(VaultBackendKind::Keychain(keychain)),
+        // No credential store at all — the designed container fallback.
+        Err(VaultError::NoBackend) => {}
+        Err(e) => return Err(VaultError::BackendUnavailable(e.to_string())),
+    }
+    if let Ok(file) = file_probe() {
+        return Ok(VaultBackendKind::File(file));
+    }
+    Ok(VaultBackendKind::EnvOnly(EnvOnlyBackend))
+}
+
 /// Backend key for a provider credential.
 fn provider_key(name: &str) -> String {
     format!("{PROVIDER_PREFIX}{name}")
@@ -479,13 +590,13 @@ fn to_auth_error(error: VaultError) -> AuthError {
 ///
 /// Holds a shared reference to the vault and the server name. Every rmcp call
 /// delegates to the vault's typed MCP-credential methods.
-pub struct VaultCredentialStore {
-    pub vault: Arc<Vault>,
+pub struct VaultCredentialStore<B: VaultBackend = VaultBackendKind> {
+    pub vault: Arc<Vault<B>>,
     pub server_name: String,
 }
 
 #[async_trait::async_trait]
-impl CredentialStore for VaultCredentialStore {
+impl<B: VaultBackend> CredentialStore for VaultCredentialStore<B> {
     async fn load(&self) -> Result<Option<StoredCredentials>, AuthError> {
         self.vault
             .get_mcp_credentials(&self.server_name)
@@ -509,12 +620,12 @@ impl CredentialStore for VaultCredentialStore {
 ///
 /// Holds a shared reference to the vault. Every rmcp call delegates to the
 /// vault's typed MCP-state methods.
-pub struct VaultStateStore {
-    pub vault: Arc<Vault>,
+pub struct VaultStateStore<B: VaultBackend = VaultBackendKind> {
+    pub vault: Arc<Vault<B>>,
 }
 
 #[async_trait::async_trait]
-impl StateStore for VaultStateStore {
+impl<B: VaultBackend> StateStore for VaultStateStore<B> {
     async fn save(
         &self,
         csrf_token: &str,
@@ -541,7 +652,39 @@ impl StateStore for VaultStateStore {
 // region:    --- Tests
 
 #[cfg(test)]
-#[path = "../../test/config/vault.rs"]
-mod vault_test;
+#[path = "../../test/config/vault/support.rs"]
+mod vault_test_support;
+
+#[cfg(test)]
+#[path = "../../test/config/vault/selection.rs"]
+mod vault_selection_test;
+
+#[cfg(test)]
+#[path = "../../test/config/vault/errors.rs"]
+mod vault_errors_test;
+
+#[cfg(test)]
+#[path = "../../test/config/vault/env_only.rs"]
+mod vault_env_only_test;
+
+#[cfg(test)]
+#[path = "../../test/config/vault/store.rs"]
+mod vault_store_test;
+
+#[cfg(test)]
+#[path = "../../test/config/vault/mcp.rs"]
+mod vault_mcp_test;
+
+#[cfg(test)]
+#[path = "../../test/config/vault/rmcp_adapters.rs"]
+mod vault_rmcp_test;
+
+#[cfg(test)]
+#[path = "../../test/config/vault_mock.rs"]
+mod vault_mock_test;
+
+#[cfg(test)]
+#[path = "../../test/config/vault_probe.rs"]
+mod vault_probe_test;
 
 // endregion: --- Tests

@@ -19,7 +19,7 @@ use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
-use crate::types::ToolDefinition;
+use crate::types::{ToolDefinition, ToolName};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -240,7 +240,7 @@ async fn execute_turn_cancel_returns_cancelled_true() -> Result<()> {
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: handle,
         visible_tool_definitions: vec![ToolDefinition {
-            name: "test_cancel_tool".to_string(),
+            name: ToolName::new("test_cancel_tool")?,
             description: "cancels the turn".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }],
@@ -400,19 +400,24 @@ fn turn_context_uses_compacting_memory() {
 ///
 /// The cancel must be published AFTER the tool starts running: the proxy subscribes
 /// to the bus cancel channel inside its execution closure, and broadcast channels
-/// only deliver messages sent after the receiver subscribes. Publishing before the
-/// call would race the subscription and not exercise the cancel branch.
+/// only deliver messages sent after the receiver subscribes. The tool body signals
+/// its start, so the cancel is published only once the subscription is live.
 #[tokio::test]
 async fn filtered_tool_proxy_cancels_during_execution() -> Result<()> {
     let handle = rig::tool::server::ToolServer::new().run();
-    // Register a tool that sleeps so the cancel can fire mid-execution.
+    // Register a tool that never completes on its own, so only the cancel path
+    // can end the call. The body signals its start before pending forever.
+    let started = std::sync::Arc::new(tokio::sync::Notify::new());
+    let started_for_tool = std::sync::Arc::clone(&started);
     handle.add_dynamic_tool(rig::tool::DynamicTool::new(
-        "sleeping_tool",
-        "sleeps to allow cancellation",
+        ToolName::new("sleeping_tool")?,
+        "runs until cancelled",
         serde_json::json!({}),
-        |_args| {
+        move |_args| {
+            let started = std::sync::Arc::clone(&started_for_tool);
             Box::pin(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                started.notify_one();
+                std::future::pending::<()>().await;
                 Ok(rig::tool::ToolOutput::text("done"))
             })
         },
@@ -420,9 +425,9 @@ async fn filtered_tool_proxy_cancels_during_execution() -> Result<()> {
 
     let bus = crate::bus::create_bus();
     let proxy = FilteredToolProxy {
-        tool_name: "sleeping_tool".to_string(),
+        tool_name: ToolName::new("sleeping_tool")?,
         tool_definition: ToolDefinition {
-            name: "sleeping_tool".to_string(),
+            name: ToolName::new("sleeping_tool")?,
             description: "test".to_string(),
             parameters: serde_json::json!({}),
         },
@@ -435,10 +440,11 @@ async fn filtered_tool_proxy_cancels_during_execution() -> Result<()> {
     let mut toolset = rig::tool::ToolSet::default();
     toolset.add_dynamic_tool(dynamic_tool);
 
-    // Publish the cancel shortly after the tool call starts running.
+    // Publish the cancel once the tool body has started: the proxy subscribes
+    // to the cancel channel before dispatching, so the subscription is live.
     let bus2 = bus.clone();
     let cancel_handle = tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        started.notified().await;
         let _ = bus2.cancel().send(crate::bus::CancelEvent::Requested).await;
     });
 

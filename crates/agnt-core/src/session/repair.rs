@@ -1,5 +1,6 @@
 use crate::types::{
-    AssistantContent, CallId, Message, ToolName, ToolResult, ToolResultContent, UserContent,
+    AssistantContent, AssistantMessage, CallId, Message, ToolName, ToolResult, ToolResultContent,
+    UserContent,
 };
 
 /// For each `Assistant(ToolCall)` in `messages` that has no matching `User(ToolResult)`
@@ -30,8 +31,9 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
 
     for msg in messages {
         match &msg {
-            Message::Assistant { content, .. } => {
+            Message::Assistant(assistant) => {
                 // Collect unpaired ToolCall (id, name) pairs from this Assistant message.
+                let content = &assistant.content;
                 let unpaired_calls: Vec<(CallId, ToolName)> = content
                     .iter()
                     .filter_map(|item| match item {
@@ -58,6 +60,7 @@ pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
                                 call,
                                 name,
                                 content: vec![ToolResultContent::text("[interrupted]")],
+                                is_error: false,
                             })
                         })
                         .collect();
@@ -120,7 +123,7 @@ pub(crate) fn inject_assistant_after_dangling_tool_results(
 ///
 /// With `CompactingMemory`, `CachedMemory::load()` returns raw store messages
 /// and the wrapper splices the compaction summary artifact as a leading
-/// `Message::User` (carrying `additional_params` with `COMPACTION_SUMMARY_KEY`)
+/// `Message::User` (carrying the compaction summary header)
 /// followed by the kept messages. Each pass below is evaluated against that shape:
 ///
 /// - `inject_assistant_after_dangling_tool_results` — **kept**. `CompactingMemory`'s
@@ -131,16 +134,17 @@ pub(crate) fn inject_assistant_after_dangling_tool_results(
 ///   that would otherwise reach the provider.
 /// - `merge_consecutive_same_role` — **kept**. The policy may still produce
 ///   consecutive same-role messages after splicing. It now skips merging a
-///   summary artifact (a `User` whose `Text` `additional_params` marks it as a
-///   compaction summary) into the next `User` turn, so the summary survives as
+///   summary artifact (a `User` whose `Text` starts with the compaction summary
+///   header) into the next `User` turn, so the summary survives as
 ///   conversation context.
 /// - `trim_trailing_user` — **kept**. The artifact is spliced at the front, not
 ///   trailing, so this pass no longer strips it; it still removes genuine
 ///   trailing orphan `User(Text)` messages.
 /// - `fix_tool_call_integrity` — **kept**. Enforces ToolCall/ToolResult adjacency
 ///   and removes dangling/orphaned pairs, which the policy window can expose.
-/// - `fix_null_tool_arguments` — **kept**. Heals null-args ToolCalls from
-///   sessions poisoned before the `on_invalid_tool_call` → Retry migration.
+/// - `fix_invalid_tool_arguments` — **kept**. Clears `invalid_arguments` on
+///   ToolCalls from sessions poisoned before the `on_invalid_tool_call` → Retry
+///   migration.
 /// - `trim_trailing_user` (second) — **kept**. Cleans up any trailing `User(Text)`
 ///   exposed by integrity removal or argument fixing.
 /// - `ensure_valid` — **kept**. Safety net; an empty history is valid.
@@ -151,7 +155,7 @@ pub fn repair_messages(messages: Vec<Message>) -> (Vec<Message>, Vec<String>) {
     let mut issues = Vec::new();
     // Pass ordering: each pass may expose issues for later passes.
     // fix_tool_call_integrity runs late so earlier passes' violations are caught.
-    // fix_null_tool_arguments follows to heal null-args ToolCalls.
+    // fix_invalid_tool_arguments follows to clear invalid ToolCall arguments.
     // A final trim_trailing_user cleans up any trailing User(Text) exposed
     // by integrity removal or argument fixing.
     let messages = inject_assistant_after_dangling_tool_results(messages, &mut issues); // NEW — first
@@ -159,7 +163,7 @@ pub fn repair_messages(messages: Vec<Message>) -> (Vec<Message>, Vec<String>) {
     let messages = merge_consecutive_same_role(messages, &mut issues);
     let messages = trim_trailing_user(messages, &mut issues);
     let messages = fix_tool_call_integrity(messages, &mut issues);
-    let messages = fix_null_tool_arguments(messages, &mut issues);
+    let messages = fix_invalid_tool_arguments(messages, &mut issues);
     let messages = trim_trailing_user(messages, &mut issues);
     let messages = ensure_valid(messages, &mut issues);
     let messages = fix_empty_tool_results(messages, &mut issues);
@@ -192,8 +196,8 @@ fn is_message_empty(msg: &Message) -> bool {
                 _ => false,
             })
         }
-        Message::Assistant { content, .. } => {
-            content.iter().all(|item| match item {
+        Message::Assistant(assistant) => {
+            assistant.content.iter().all(|item| match item {
                 AssistantContent::Text(t) => t.text.trim().is_empty(),
                 // ToolCall counts as non-empty
                 _ => false,
@@ -206,27 +210,32 @@ fn role_name(msg: &Message) -> &'static str {
     match msg {
         Message::System { .. } => "system",
         Message::User { .. } => "user",
-        Message::Assistant { .. } => "assistant",
+        Message::Assistant(_) => "assistant",
     }
 }
 
-/// Replaces `null` arguments in ToolCall messages with `{}` (empty JSON object).
-/// Heals sessions poisoned before the `on_invalid_tool_call` → Retry migration.
-/// Also guards against any future path that may persist a null-args ToolCall.
-pub(crate) fn fix_null_tool_arguments(
+/// Clears `invalid_arguments` on ToolCall messages and resets their arguments
+/// to `{}` (empty JSON object). Heals sessions poisoned before the
+/// `on_invalid_tool_call` → Retry migration, where a ToolCall could persist
+/// arguments the model sent as something other than a JSON object.
+pub(crate) fn fix_invalid_tool_arguments(
     messages: Vec<Message>,
     issues: &mut Vec<String>,
 ) -> Vec<Message> {
     messages
         .into_iter()
         .map(|msg| match msg {
-            Message::Assistant { id, content } => {
+            Message::Assistant(assistant) => {
                 let mut fixed = false;
-                let new_content: Vec<_> = content
+                let new_content: Vec<_> = assistant
+                    .content
                     .into_iter()
                     .map(|c| match c {
-                        AssistantContent::ToolCall(mut tc) if tc.function.arguments.is_null() => {
-                            tc.function.arguments = serde_json::json!({});
+                        AssistantContent::ToolCall(mut tc)
+                            if tc.function.invalid_arguments.is_some() =>
+                        {
+                            tc.function.arguments = serde_json::Map::new();
+                            tc.function.invalid_arguments = None;
                             fixed = true;
                             AssistantContent::ToolCall(tc)
                         }
@@ -234,12 +243,9 @@ pub(crate) fn fix_null_tool_arguments(
                     })
                     .collect();
                 if fixed {
-                    issues.push("replaced null tool call arguments with {}".to_string());
+                    issues.push("cleared invalid tool call arguments".to_string());
                 }
-                Message::Assistant {
-                    id,
-                    content: new_content,
-                }
+                Message::Assistant(AssistantMessage::new(new_content))
             }
             other => other,
         })
@@ -261,7 +267,8 @@ pub(crate) fn fix_tool_call_integrity(
         let all_call_ids: HashSet<CallId> = messages
             .iter()
             .flat_map(|msg| match msg {
-                Message::Assistant { content, .. } => content
+                Message::Assistant(assistant) => assistant
+                    .content
                     .iter()
                     .filter_map(|item| match item {
                         AssistantContent::ToolCall(tc) => Some(tc.id.clone()),
@@ -290,8 +297,9 @@ pub(crate) fn fix_tool_call_integrity(
         let after_orphan: Vec<Message> = messages
             .into_iter()
             .filter_map(|msg| match msg {
-                Message::Assistant { id, content } => {
-                    let items: Vec<AssistantContent> = content
+                Message::Assistant(assistant) => {
+                    let items: Vec<AssistantContent> = assistant
+                        .content
                         .into_iter()
                         .filter(|item| match item {
                             AssistantContent::ToolCall(tc) => {
@@ -315,7 +323,7 @@ pub(crate) fn fix_tool_call_integrity(
                         );
                         None
                     } else {
-                        Some(Message::Assistant { id, content: items })
+                        Some(Message::Assistant(AssistantMessage::new(items)))
                     }
                 }
                 Message::User { content } => {
@@ -354,9 +362,10 @@ pub(crate) fn fix_tool_call_integrity(
         // covered by the immediately following User message.
         let violation_ids: Option<HashSet<CallId>> =
             after_orphan.iter().enumerate().find_map(|(i, msg)| {
-                let Message::Assistant { content, .. } = msg else {
+                let Message::Assistant(assistant) = msg else {
                     return None;
                 };
+                let content = &assistant.content;
                 let call_ids: HashSet<CallId> = content
                     .iter()
                     .filter_map(|item| match item {
@@ -402,8 +411,9 @@ pub(crate) fn fix_tool_call_integrity(
                 messages = after_orphan
                     .into_iter()
                     .filter_map(|msg| match msg {
-                        Message::Assistant { id, content } => {
-                            let items: Vec<AssistantContent> = content
+                        Message::Assistant(assistant) => {
+                            let items: Vec<AssistantContent> = assistant
+                                .content
                                 .into_iter()
                                 .filter(|item| match item {
                                     AssistantContent::ToolCall(tc) => !bad_ids.contains(&tc.id),
@@ -413,7 +423,7 @@ pub(crate) fn fix_tool_call_integrity(
                             if items.is_empty() {
                                 None
                             } else {
-                                Some(Message::Assistant { id, content: items })
+                                Some(Message::Assistant(AssistantMessage::new(items)))
                             }
                         }
                         Message::User { content } => {
@@ -461,8 +471,8 @@ pub(crate) fn merge_consecutive_same_role(
             // Fix 3: guard Assistant merge — do NOT merge if either message
             // contains a ToolCall.
             (
-                Some(Message::Assistant { content: prev, .. }),
-                Message::Assistant { content: next, .. },
+                Some(Message::Assistant(AssistantMessage { content: prev, .. })),
+                Message::Assistant(AssistantMessage { content: next, .. }),
             ) if !prev
                 .iter()
                 .any(|i| matches!(i, AssistantContent::ToolCall(_)))
@@ -483,17 +493,11 @@ pub(crate) fn merge_consecutive_same_role(
 }
 
 /// Returns true if `content` is a compaction summary artifact: a
-/// `UserContent::Text` whose `additional_params` marks it as a compaction
-/// summary via `COMPACTION_SUMMARY_KEY`.
+/// `UserContent::Text` carrying the compaction summary header.
 fn is_compaction_summary(content: &[UserContent]) -> bool {
-    let key = crate::conversation::compaction::compactor::COMPACTION_SUMMARY_KEY;
+    let header = crate::conversation::compaction::compactor::SUMMARY_HEADER;
     content.iter().any(|item| match item {
-        UserContent::Text(t) => t
-            .additional_params
-            .as_ref()
-            .and_then(|p| p.get(key))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
+        UserContent::Text(t) => t.text.starts_with(header),
         _ => false,
     })
 }
@@ -561,10 +565,7 @@ pub(crate) fn fix_empty_tool_results(
                     .collect();
                 Message::User {
                     content: if fixed.is_empty() {
-                        vec![UserContent::Text(crate::types::Text {
-                            text: "(empty result)".to_string(),
-                            additional_params: None,
-                        })]
+                        vec![UserContent::Text(crate::types::Text::new("(empty result)"))]
                     } else {
                         fixed
                     },

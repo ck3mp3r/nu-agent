@@ -59,6 +59,7 @@ fn map_config_load_error(err: config::ConfigLoadError, call: &EvaluatedCall) -> 
         ConfigLoadError::Resolve(msg) => {
             LabeledError::new("Failed to resolve model").with_label(msg, call.head)
         }
+        ConfigLoadError::Vault(e) => LabeledError::new(e.to_string()),
     }
 }
 

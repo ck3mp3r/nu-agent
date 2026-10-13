@@ -2,17 +2,27 @@ use super::*;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-#[test]
-fn build_copilot_client_no_auth_returns_ok() -> Result<()> {
-    // With no credential resolved, the client is still constructible — rig 0.43
-    // resolves OAuth lazily through `Authenticator` (task 6793a293), so auth
-    // failures surface at request time, not at build time.
+/// Write a live cached Copilot session key into `dir`, as a completed login would.
+fn seed_cached_session_key(dir: &std::path::Path) -> Result<()> {
+    std::fs::write(
+        dir.join("api-key.json"),
+        serde_json::json!({ "token": "tid=cached-session", "expires_at": i64::MAX }).to_string(),
+    )?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn build_copilot_client_no_auth_returns_ok() -> Result<()> {
+    // With no credential in config or environment, the client resolves through
+    // rig's `Authenticator`. A live cached session key is reused, so the build
+    // succeeds without a network call.
     use crate::config::Config;
     use crate::utils::env_map::EnvMap;
 
     // Empty env map and a temp token dir keep the test off the real environment
     // and away from any cached OAuth tokens.
     let token_dir = tempfile::TempDir::new()?;
+    seed_cached_session_key(token_dir.path())?;
 
     let config = Config {
         a2a_port: None,
@@ -45,25 +55,26 @@ fn build_copilot_client_no_auth_returns_ok() -> Result<()> {
         session_store_type: None,
     };
 
-    let result = build_copilot_client_with(&config, &EnvMap::new(), Some(token_dir.path()));
+    let result = build_copilot_client_with(&config, &EnvMap::new(), Some(token_dir.path())).await;
 
     assert!(
         result.is_ok(),
-        "OAuth path always succeeds at build time; auth is lazy. Got: {:?}",
+        "a live cached session key builds without a network call. Got: {:?}",
         result.err()
     );
     Ok(())
 }
 
-#[test]
-fn build_copilot_client_oauth_path_succeeds_at_build_time() -> Result<()> {
-    // With no credential resolved, the client is still constructible — rig 0.43
-    // resolves OAuth lazily through `Authenticator` (task 6793a293), so auth
-    // failures surface at request time, not at build time.
+#[tokio::test]
+async fn build_copilot_client_oauth_path_succeeds_at_build_time() -> Result<()> {
+    // With no credential in config or environment, the client resolves through
+    // rig's `Authenticator`. A live cached session key is reused, so the build
+    // succeeds without a network call.
     use crate::config::Config;
     use crate::utils::env_map::EnvMap;
 
     let token_dir = tempfile::TempDir::new()?;
+    seed_cached_session_key(token_dir.path())?;
 
     let config = Config {
         a2a_port: None,
@@ -96,11 +107,11 @@ fn build_copilot_client_oauth_path_succeeds_at_build_time() -> Result<()> {
         session_store_type: None,
     };
 
-    let result = build_copilot_client_with(&config, &EnvMap::new(), Some(token_dir.path()));
+    let result = build_copilot_client_with(&config, &EnvMap::new(), Some(token_dir.path())).await;
 
     assert!(
         result.is_ok(),
-        "OAuth path always succeeds at build time; auth is lazy. Got: {:?}",
+        "a live cached session key builds without a network call. Got: {:?}",
         result.err()
     );
     Ok(())
@@ -283,8 +294,8 @@ fn build_ollama_client_with_api_key_sets_secret() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn build_copilot_client_sets_base_url_on_config() -> Result<()> {
+#[tokio::test]
+async fn build_copilot_client_sets_base_url_on_config() -> Result<()> {
     use crate::config::Config;
 
     // -- Setup & Fixtures
@@ -295,7 +306,9 @@ fn build_copilot_client_sets_base_url_on_config() -> Result<()> {
     };
 
     // -- Exec
-    let client = build_copilot_client(&config).map_err(|e| format!("{e:?}"))?;
+    let client = build_copilot_client(&config)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
     // -- Check
     assert_eq!(client.config().base_url, "http://localhost:9999");
@@ -306,8 +319,8 @@ fn build_copilot_client_sets_base_url_on_config() -> Result<()> {
 // Phase 1b: CachedProviderClient, resolve_provider_type, ClientCacheKey
 // ========================================================================
 
-#[test]
-fn cached_provider_client_copilot_variant_holds_client() -> Result<()> {
+#[tokio::test]
+async fn cached_provider_client_copilot_variant_holds_client() -> Result<()> {
     use crate::config::Config;
 
     let config = Config {
@@ -317,7 +330,9 @@ fn cached_provider_client_copilot_variant_holds_client() -> Result<()> {
         api_key: Some("fake-token".to_string()),
         ..Config::default()
     };
-    let client = build_copilot_client(&config).map_err(|e| format!("{e:?}"))?;
+    let client = build_copilot_client(&config)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     let c = CachedProviderClient::Copilot(client);
     assert!(matches!(c, CachedProviderClient::Copilot(_)));
     Ok(())
@@ -362,8 +377,8 @@ fn cached_provider_client_ollama_variant_holds_client() -> Result<()> {
 // OpenAI variant selection: base_url vs no base_url
 // ========================================================================
 
-#[test]
-fn openai_without_base_url_produces_openai_variant() -> Result<()> {
+#[tokio::test]
+async fn openai_without_base_url_produces_openai_variant() -> Result<()> {
     use crate::config::Config;
     use crate::conversation::state::provider::ProviderState;
 
@@ -376,7 +391,10 @@ fn openai_without_base_url_produces_openai_variant() -> Result<()> {
         ..Config::default()
     };
     let mut state = ProviderState::new(config, None);
-    state.ensure_client_cached().map_err(|e| format!("{e:?}"))?;
+    state
+        .ensure_client_cached()
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     let client = state
         .client()
         .ok_or("client should be cached after ensure_client_cached")?;
@@ -384,8 +402,8 @@ fn openai_without_base_url_produces_openai_variant() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn openai_with_base_url_produces_openai_completions_variant() -> Result<()> {
+#[tokio::test]
+async fn openai_with_base_url_produces_openai_completions_variant() -> Result<()> {
     use crate::config::Config;
     use crate::conversation::state::provider::ProviderState;
 
@@ -398,7 +416,10 @@ fn openai_with_base_url_produces_openai_completions_variant() -> Result<()> {
         ..Config::default()
     };
     let mut state = ProviderState::new(config, None);
-    state.ensure_client_cached().map_err(|e| format!("{e:?}"))?;
+    state
+        .ensure_client_cached()
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     let client = state
         .client()
         .ok_or("client should be cached after ensure_client_cached")?;

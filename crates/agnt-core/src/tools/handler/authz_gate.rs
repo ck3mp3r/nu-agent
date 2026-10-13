@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use serde_json::Value as JsonValue;
+
 use crate::types::ToolCall;
 
 use crate::tools::authz::{
@@ -51,12 +53,15 @@ pub async fn enforce_authorization_for_tool_call(
         );
     }
     if auth_decision.action == PermissionAction::Ask {
+        // The ask hook still takes the arguments as a `JsonValue`; the tool
+        // call carries them as a map.
+        let args_value = JsonValue::Object(tool_call.function.arguments.clone());
         let choice = ask_hook
             .choose(
                 &auth_decision,
                 &tool_call.function.name,
                 source.as_str(),
-                &tool_call.function.arguments,
+                &args_value,
                 &flow_context.ask_context,
             )
             .await;

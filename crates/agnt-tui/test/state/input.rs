@@ -177,12 +177,14 @@ fn test_input_state_handle_action_busy_visual_resets_chords_and_passes_through()
 
 #[test]
 fn test_input_state_insert_exit_chord_expires_after_timeout() {
-    // -- Setup & Fixtures
-    let mut input = InputState::default();
+    // -- Setup & Fixtures: inject a short expiry so the window elapses without
+    // a real-time wait.
+    let mut input =
+        InputState::default().with_insert_exit_expiry(std::time::Duration::from_millis(10));
     input.set_insert_exit_pending_j();
 
     // -- Exec
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    std::thread::sleep(std::time::Duration::from_millis(30));
 
     // -- Check
     assert!(!input.insert_exit_pending_j());

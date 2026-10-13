@@ -55,10 +55,14 @@ pub(crate) struct RenderLoopDriver {
 // endregion: --- Types
 
 impl RenderLoopDriver {
-    /// How long `advance_with_frame` waits before closing the terminal
-    /// channel, so at least one 80 ms render-timer tick fires past the 16 ms
-    /// throttle window and a frame lands in the buffer before the loop exits.
-    const FRAME_SETTLE: Duration = Duration::from_millis(150);
+    /// The render loop flushes a frame on its 80 ms interval tick.
+    const RENDER_TICK: Duration = Duration::from_millis(80);
+
+    /// Bounded budget for `advance_with_frame` to await the loop's render tick.
+    /// The loop's own timer starts before the driver's, so two tick periods
+    /// guarantee its tick fires and the frame is flushed before the terminal
+    /// channel closes.
+    const FRAME_BUDGET: Duration = Duration::from_millis(250);
 
     // region: Constructors
 
@@ -154,11 +158,11 @@ impl RenderLoopDriver {
         self.run_loop_once(events, None).await
     }
 
-    /// Like [`advance`](Self::advance), but settles long enough for the loop's
-    /// render timer to flush a frame into the `TestBackend` buffer before the
-    /// loop exits.
+    /// Like [`advance`](Self::advance), but awaits the loop's render-timer tick
+    /// with a bounded budget so a frame lands in the `TestBackend` buffer
+    /// before the loop exits.
     pub(crate) async fn advance_with_frame(&mut self, events: &[DriveEvent]) -> Result<()> {
-        self.run_loop_once(events, Some(Self::FRAME_SETTLE)).await
+        self.run_loop_once(events, Some(Self::FRAME_BUDGET)).await
     }
 
     async fn run_loop_once(
@@ -217,8 +221,19 @@ impl RenderLoopDriver {
             tokio::task::yield_now().await;
         }
 
-        if let Some(settle) = settle {
-            tokio::time::sleep(settle).await;
+        if let Some(budget) = settle {
+            // The loop flushes a frame on its 80 ms interval tick. The driver
+            // cannot observe a frame while the loop owns the terminal, so await
+            // two of the loop's ticks with a bounded budget: the loop's timer
+            // starts first, so its tick fires within the first period and the
+            // second gives it slack to flush before the terminal channel closes.
+            let mut render_tick = tokio::time::interval(Self::RENDER_TICK);
+            let _ = tokio::time::timeout(budget, async {
+                render_tick.tick().await;
+                render_tick.tick().await;
+                render_tick.tick().await;
+            })
+            .await;
         }
         drop(terminal_tx);
 

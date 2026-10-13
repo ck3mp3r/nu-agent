@@ -151,8 +151,28 @@ async fn test_subscribe_task_streams_lifecycle() -> Result<()> {
             .await
     });
 
-    // Give the subscription time to register before completing the task
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The subscribe handler registers the subscription before it writes the SSE
+    // response headers. Yield once so the client's subscribe request is issued
+    // first, then await the headers of a second subscribe request: the server
+    // has then run its subscribe path for the client's request too.
+    tokio::task::yield_now().await;
+    let probe = tokio::time::timeout(
+        Duration::from_secs(5),
+        reqwest::Client::new()
+            .post(format!("{url}/tasks/{}/subscribe", sent.id))
+            .header("A2A-Version", crate::A2A_VERSION)
+            .send(),
+    )
+    .await
+    .map_err(|_| "subscribe probe should return response headers")?
+    .map_err(|e| format!("subscribe probe failed: {e:?}"))?;
+    assert!(
+        probe.status().is_success(),
+        "subscribe probe must succeed, got {}",
+        probe.status()
+    );
+    drop(probe);
+
     server
         .task_store()
         .complete_task(&sent.id, "Task completed successfully")
@@ -298,8 +318,9 @@ async fn test_subscribe_task_sse_chunk_split_mid_utf8_char_no_data_loss() -> Res
 
         // Let the client consume chunk 1 before writing chunk 2, so the two
         // writes cannot coalesce into one TCP segment (which would mask the
-        // split boundary).
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // split boundary). Bounded so a stalled client cannot hang the test.
+        let _ =
+            tokio::time::timeout(Duration::from_millis(200), std::future::pending::<()>()).await;
 
         // Chunk 2: the rest of the event + terminal delimiter.
         stream

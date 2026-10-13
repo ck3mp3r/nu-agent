@@ -78,7 +78,7 @@ impl SimplePluginCommand for AgentAuthMcpLogout {
     ) -> Result<Value, LabeledError> {
         let server_name: String = call.req(0)?;
 
-        let vault = Vault::auto_detect();
+        let vault = Vault::auto_detect().map_err(|e| LabeledError::new(e.to_string()))?;
 
         let msg = perform_logout(&vault, &server_name);
 

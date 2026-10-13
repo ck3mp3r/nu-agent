@@ -256,7 +256,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             // surfaces the stop reason and drives the stop-to-steering retry
             // (append steering + reset ladder + re-run, terminal on the second
             // stop), the same path as the Esc-Esc cancel: `ObservationAction
-            // ::stop` → PromptCancelled → cancel-reason matching →
+            // ::stop` → Cancelled → cancel-reason matching →
             // `LlmEvent::Stopped` + `WarningEvent`.
             if repetition_action.is_some() {
                 return ObservationAction::stop(format!(

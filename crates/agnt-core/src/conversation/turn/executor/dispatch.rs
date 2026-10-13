@@ -73,7 +73,7 @@ where
             }
             Err((crate::conversation::turn::TurnError::Cancelled { msg, messages }, ctx)) => {
                 // Path A: rig hook cancelled — persist chat_history delta if available.
-                // messages for PromptCancelled is rig's full_history() — it DOES include
+                // messages for Cancelled is rig's full_history() — it DOES include
                 // the current-turn user prompt and any tool exchanges. skip(pre_turn_message_count)
                 // yields only the new messages from this turn, preventing double-appending the
                 // prior session history when a cancelled turn follows prior session messages.
@@ -239,17 +239,17 @@ where
             }
         };
 
-        // Path C: PromptCancelled was caught inside build_agent_and_stream and returned
+        // Path C: Cancelled was caught inside build_agent_and_stream and returned
         // as Ok(cancelled=true). Treat identically to Path A.
         //
         // Path B (defensive fallback) is folded into Path C: Ok(cancelled=true, messages=None).
-        // Under rig v0.39+ semantics this branch is not expected to trigger — PromptCancelled
+        // Under rig v0.39+ semantics this branch is not expected to trigger — Cancelled
         // always carries chat_history. Kept as a safety net for future rig version changes.
         if turn_result.cancelled {
             if let Some(session_id) = final_session_id {
                 if let Some(messages) = turn_result.messages {
-                    // Normal path: rig provided chat_history via PromptCancelled.
-                    // PromptCancelled.chat_history is rig's full_history() — it DOES include
+                    // Normal path: rig provided chat_history via Cancelled.
+                    // Cancelled.chat_history is rig's full_history() — it DOES include
                     // the current-turn user prompt and any tool exchanges. skip(pre_turn_message_count)
                     // yields only the new messages from this turn, preventing double-appending the
                     // prior session history when a cancelled turn follows prior session messages.
@@ -276,7 +276,7 @@ where
                         .await;
                     }
                 } else {
-                    // Path B: tokio::select cancelled before rig yielded PromptCancelled.
+                    // Path B: tokio::select cancelled before rig yielded Cancelled.
                     // Use last_known_history from the hook's snapshot of completed work
                     // (including tool calls and their results) instead of synthesizing a
                     // minimal placeholder that would lose all completed work from this turn.

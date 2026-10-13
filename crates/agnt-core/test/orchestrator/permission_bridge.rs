@@ -199,11 +199,11 @@ impl McpManagement for PermissionTimeoutIgnoredRuntime {
 crate::default_session!(PermissionTimeoutIgnoredRuntime);
 
 impl ModelSwitching for PermissionTimeoutIgnoredRuntime {
-    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
 
-    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
         Err("agent switch not supported in this runtime".to_string())
     }
 
@@ -260,10 +260,11 @@ async fn models_launcher_opens_picker_while_worker_active() -> TResult {
     let ui = ModelPickerLaunchWhileActiveUi::new(&["first"], 1).with_bus(bus.clone());
     let spawner = ui.make_event_spawner(bus.clone());
 
-    // Spawn a background task to unblock the turn after a delay.
+    // Unblock the turn once the fixture signals that it has started.
+    let mut turn_started_rx = runtime.turn_started_rx();
     let unblock = Arc::clone(&block_first_turn);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = turn_started_rx.changed().await;
         unblock.store(true, Ordering::SeqCst);
     });
 
@@ -297,10 +298,11 @@ async fn models_slash_opens_picker_while_worker_active() -> TResult {
     let ui = ModelPickerLaunchWhileActiveUi::new(&["first"], 1).with_bus(bus.clone());
     let spawner = ui.make_event_spawner(bus.clone());
 
-    // Spawn a background task to unblock the turn after a delay.
+    // Unblock the turn once the fixture signals that it has started.
+    let mut turn_started_rx = runtime.turn_started_rx();
     let unblock = Arc::clone(&block_first_turn);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = turn_started_rx.changed().await;
         unblock.store(true, Ordering::SeqCst);
     });
 

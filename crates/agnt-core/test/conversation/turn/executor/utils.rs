@@ -251,13 +251,16 @@ pub(crate) fn message_text(msg: &crate::types::Message) -> Option<String> {
                 None
             }
         }),
-        crate::types::Message::Assistant { content, .. } => content.iter().find_map(|c| {
-            if let crate::types::AssistantContent::Text(t) = c {
-                Some(t.text.clone())
-            } else {
-                None
-            }
-        }),
+        crate::types::Message::Assistant(assistant) => {
+            let content = &assistant.content;
+            content.iter().find_map(|c| {
+                if let crate::types::AssistantContent::Text(t) = c {
+                    Some(t.text.clone())
+                } else {
+                    None
+                }
+            })
+        }
         crate::types::Message::System { .. } => None,
     }
 }

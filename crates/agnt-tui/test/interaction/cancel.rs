@@ -1,8 +1,4 @@
-use std::{
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{sync::mpsc, thread, time::Duration};
 
 use crate::{
     interaction::{
@@ -46,20 +42,18 @@ fn cross_thread_request_is_visible_to_consumer() -> Result<()> {
     let (tx, rx) = mpsc::channel::<()>();
 
     let producer = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(10));
         controller_for_thread.request_cancel();
         tx.send(()).expect("send completion signal");
     });
 
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while !controller.is_cancel_requested() && Instant::now() < deadline {
-        thread::yield_now();
-    }
+    // Await the producer's completion signal with a bounded budget: the signal
+    // is sent after the cancel request, so its arrival proves the request is
+    // visible on this thread.
+    rx.recv_timeout(Duration::from_secs(1))
+        .map_err(|_| "should receive producer completion signal")?;
 
     assert!(controller.is_cancel_requested());
 
-    rx.recv_timeout(Duration::from_secs(1))
-        .map_err(|_| "should receive producer completion signal")?;
     producer.join().expect("producer joins cleanly");
     Ok(())
 }

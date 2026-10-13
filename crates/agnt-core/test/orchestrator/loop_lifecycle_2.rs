@@ -50,11 +50,11 @@ impl McpManagement for StartupHydrationRuntime {
 }
 
 impl ModelSwitching for StartupHydrationRuntime {
-    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
 
-    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
         Err("agent switch not supported in this runtime".to_string())
     }
 
@@ -87,10 +87,14 @@ async fn interactive_loop_processes_input_while_first_turn_is_running() -> TResu
     .with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    // Spawn a background task to unblock the turn after a delay.
+    // Unblock the turn once it has started and the fixture has injected every
+    // queued prompt.
+    let mut turn_started_rx = runtime.turn_started_rx();
+    let mut drained_rx = ui.drained_rx();
     let unblock = Arc::clone(&block_first_turn);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = turn_started_rx.changed().await;
+        let _ = drained_rx.changed().await;
         unblock.store(true, Ordering::SeqCst);
     });
 
@@ -129,10 +133,14 @@ async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() -> TR
     .with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    // Spawn a background task to unblock the turn after a delay.
+    // Unblock the turn once it has started and the fixture has injected every
+    // queued prompt.
+    let mut turn_started_rx = runtime.turn_started_rx();
+    let mut drained_rx = ui.drained_rx();
     let unblock = Arc::clone(&block_first_turn);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = turn_started_rx.changed().await;
+        let _ = drained_rx.changed().await;
         unblock.store(true, Ordering::SeqCst);
     });
 
@@ -162,10 +170,11 @@ async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_pr
         .with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    // Spawn a background task that unblocks the turn after a short delay.
+    // Unblock the turn once the fixture signals that it has started.
+    let mut turn_started_rx = runtime.turn_started_rx();
     let unblock = Arc::clone(&block_first_turn);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = turn_started_rx.changed().await;
         unblock.store(true, Ordering::SeqCst);
     });
 

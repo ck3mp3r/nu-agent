@@ -1,7 +1,9 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, Value};
 
+use agnt_core::config::copilot_tokens::read_copilot_token_record;
 use agnt_core::config::vault::{CredentialType, Vault};
+use agnt_core::types::default_token_dir;
 
 use crate::plugin::AgentPlugin;
 
@@ -59,12 +61,12 @@ impl SimplePluginCommand for AgentProviderAuthStatus {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let vault = Vault::auto_detect();
+        let vault = Vault::auto_detect().map_err(|e| LabeledError::new(e.to_string()))?;
         let entries = vault
             .list_providers()
             .map_err(|e| LabeledError::new(format!("Failed to list credentials: {e}")))?;
 
-        let rows: Vec<Value> = entries
+        let mut rows: Vec<Value> = entries
             .into_iter()
             .map(|entry| {
                 let (cred_type, expiry) = match entry.credential_type {
@@ -87,6 +89,24 @@ impl SimplePluginCommand for AgentProviderAuthStatus {
                 )
             })
             .collect();
+
+        // github-copilot stores its tokens in files, not the vault.
+        if let Some(dir) = default_token_dir()
+            && let Some(record) = read_copilot_token_record(&dir).map_err(LabeledError::new)?
+        {
+            let expiry = record
+                .expires_at
+                .map(|t| Value::int(t, call.head))
+                .unwrap_or(Value::nothing(call.head));
+            rows.push(Value::record(
+                nu_protocol::record! {
+                    "provider" => Value::string("github-copilot", call.head),
+                    "type" => Value::string("oauth", call.head),
+                    "expires_at" => expiry,
+                },
+                call.head,
+            ));
+        }
 
         Ok(Value::list(rows, call.head))
     }

@@ -66,24 +66,14 @@ async fn test_send_stream_without_context_id_mints_uuid() -> Result<()> {
         .await
         .unwrap();
 
-    // Give the server a moment to create the task
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Look up the task via list to get its ID
-    let list_resp = client
-        .get(format!("{}/tasks", server.local_url))
-        .send()
-        .await
-        .unwrap();
-    let list_body: serde_json::Value = list_resp.json().await.unwrap();
-    let tasks = list_body["tasks"]
-        .as_array()
-        .ok_or("should have tasks array")?;
-    let task_id = tasks
-        .iter()
-        .find(|t| t["status"]["state"] == "TASK_STATE_WORKING")
-        .and_then(|t| t["id"].as_str())
-        .ok_or("should find a working task")?;
+    // Wait for the streamed task to become visible via GET /tasks.
+    let task_id = wait_for_task_in_state(
+        &client,
+        &server.local_url,
+        "TASK_STATE_WORKING",
+        Duration::from_secs(5),
+    )
+    .await?;
 
     // Cancel the task to trigger a terminal event and close the SSE stream
     client
@@ -93,8 +83,10 @@ async fn test_send_stream_without_context_id_mints_uuid() -> Result<()> {
         .unwrap();
 
     // Read the SSE body (stream should close after the cancel event)
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let body = resp.bytes().await.unwrap();
+    let body = tokio::time::timeout(Duration::from_secs(5), resp.bytes())
+        .await
+        .map_err(|_| "SSE stream should close after cancel")?
+        .map_err(|e| format!("SSE body read failed: {e:?}"))?;
     let text = String::from_utf8_lossy(&body);
 
     let events = sse_data_events(&text);

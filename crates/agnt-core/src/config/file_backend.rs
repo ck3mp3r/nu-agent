@@ -14,7 +14,7 @@ use fs2::FileExt;
 
 use crate::utils::env_map::{EnvMap, process_env};
 
-use super::vault::{VaultBackend, VaultError};
+use super::vault::{BackendKind, VaultBackend, VaultError};
 
 // endregion: --- Modules
 
@@ -172,6 +172,10 @@ impl FileBackend {
 // region:    --- VaultBackend Impl
 
 impl VaultBackend for FileBackend {
+    fn kind(&self) -> BackendKind {
+        BackendKind::File
+    }
+
     fn get(&self, key: &str) -> Result<Option<String>, VaultError> {
         let map = self.load_map()?;
         Ok(map.get(key).cloned())

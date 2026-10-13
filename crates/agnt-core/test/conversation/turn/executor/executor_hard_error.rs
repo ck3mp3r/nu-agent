@@ -19,15 +19,15 @@ use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 // Error path persistence tests
 // ---------------------------------------------------------------------------
 
-/// MaxTurnsError carries full chat_history — executor must persist it and return Err.
+/// MaxTurns carries full chat_history — executor must persist it and return Err.
 ///
 /// Setup: mock returns a tool_call on turn 1. Config limits tool turns to 0, so rig
-/// raises MaxTurnsError after the first tool call attempt. After Fix 1, TurnError
+/// raises MaxTurns after the first tool call attempt. After Fix 1, TurnError
 /// gets messages=Some(chat_history). After Fix 2, executor persists those messages
 /// before returning LabeledError.
 #[tokio::test]
 async fn max_turns_error_persists_full_history() -> Result<()> {
-    // max_tool_turns=0: rig raises MaxTurnsError as soon as a tool-call turn would
+    // max_tool_turns=0: rig raises MaxTurns as soon as a tool-call turn would
     // be scheduled (current_turn > 0 + 1 after the first tool response).
     let config = Config {
         max_tool_turns: Some(0),
@@ -37,7 +37,7 @@ async fn max_turns_error_persists_full_history() -> Result<()> {
     let session_id = "test-max-turns";
     let mut memory_state = make_memory_state(&temp_dir);
 
-    // Turn 1: model asks for a tool call. With max_turns=0, rig will MaxTurnsError
+    // Turn 1: model asks for a tool call. With max_turns=0, rig will MaxTurns
     // as soon as it tries to schedule the tool-call turn.
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::tool_call("tool_call_1", "some_tool", serde_json::json!({"x": 1})),
@@ -68,7 +68,7 @@ async fn max_turns_error_persists_full_history() -> Result<()> {
     // Must return Err (it's a hard error, not a cancellation)
     assert!(
         result.is_err(),
-        "MaxTurnsError must propagate as LabeledError to caller"
+        "MaxTurns must propagate as LabeledError to caller"
     );
 
     // JSONL must have been written with the partial chat history
@@ -86,7 +86,7 @@ async fn max_turns_error_persists_full_history() -> Result<()> {
         .collect();
     assert!(
         !persisted.is_empty(),
-        "MaxTurnsError must persist chat_history to JSONL (Fix 1 + Fix 2 path A history)"
+        "MaxTurns must persist chat_history to JSONL (Fix 1 + Fix 2 path A history)"
     );
 
     Ok(())
@@ -489,7 +489,7 @@ async fn hard_error_after_prior_history_persists_user_message() -> Result<()> {
     );
     // [1] must be the prior assistant message
     assert!(
-        matches!(&persisted[1], crate::types::Message::Assistant { .. }),
+        matches!(&persisted[1], crate::types::Message::Assistant(_)),
         "persisted[1] must be Assistant (prior); got {:?}",
         persisted[1]
     );
@@ -942,7 +942,7 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
             visible_tool_definitions: vec![rig::completion::ToolDefinition {
-                name: "some_tool".to_string(),
+                name: crate::types::ToolName::new("some_tool")?,
                 description: "Simple echo tool for testing".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {"x": {"type": "number"}}}),
             }],
@@ -1002,7 +1002,7 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
     );
     // The 4th message must be a synthetic assistant close-block.
     assert!(
-        matches!(&persisted[3], crate::types::Message::Assistant { .. }),
+        matches!(&persisted[3], crate::types::Message::Assistant(_)),
         "persisted[3] must be the synthetic assistant close-block; got: {:?}",
         persisted[3]
     );
@@ -1011,9 +1011,10 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
     use crate::types::{AssistantContent, UserContent};
     let mut found_tool_call = false;
     for (i, msg) in persisted.iter().enumerate() {
-        let crate::types::Message::Assistant { content, .. } = msg else {
+        let crate::types::Message::Assistant(assistant) = msg else {
             continue;
         };
+        let content = &assistant.content;
         for item in content.iter() {
             let AssistantContent::ToolCall(tc) = item else {
                 continue;

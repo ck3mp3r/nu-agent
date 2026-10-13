@@ -58,12 +58,12 @@ impl McpManagement for ContextWindowRuntime {
 }
 
 impl ModelSwitching for ContextWindowRuntime {
-    fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         self.switched_models.push(model_spec.to_string());
         Ok((model_spec.to_string(), self.max_context_tokens))
     }
 
-    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
         Err("agent switch not supported in this runtime".to_string())
     }
 
@@ -213,11 +213,11 @@ impl CoreRuntime for TokenSeedingRuntime {
 }
 
 impl ModelSwitching for TokenSeedingRuntime {
-    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
 
-    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
         Err("agent switch not supported in this runtime".to_string())
     }
 

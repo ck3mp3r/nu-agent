@@ -555,6 +555,21 @@ The Vault always selects a backend. The agent never fails because a keychain is 
 | File | JSON file, mode `0600` | Headless Linux, containers with a mounted data directory |
 | Environment only | Nothing | Docker and CI with environment variables only |
 
+### `AGENT_VAULT_BACKEND` override
+
+Set `AGENT_VAULT_BACKEND` to select the backend explicitly. The override replaces the startup hierarchy.
+
+| Value | Backend |
+|-------|---------|
+| `env` | Environment only. The agent probes nothing. |
+| `file` | File store. The agent falls back to environment only when the file store is unavailable. |
+| `keychain` | OS keychain. The agent falls back to the file store, then to environment only, when the keychain is unavailable. |
+| `auto` | The startup hierarchy. This is the default. |
+
+An unknown value logs a warning and uses the startup hierarchy.
+
+Under nextest, the agent selects the environment-only backend when `AGENT_VAULT_BACKEND` is unset. nextest sets `NEXTEST=1` in every test process, and the agent reads that variable as a request for the environment-only backend. An explicit `AGENT_VAULT_BACKEND` value always wins. Plain `cargo test` does not set `NEXTEST` and still probes the keychain.
+
 ### `.env` files
 
 The agent loads two `.env` files at startup, before it reads any environment variable:
@@ -841,8 +856,12 @@ base_url = "http://127.0.0.1:11434"
 model = "github-copilot/claude-sonnet-4.6"
 
 [providers.github-copilot]
-# No api_key needed — Copilot uses the OAuth device-code flow
-# (run: agent provider auth login github-copilot)
+# No api_key needed — credentials resolve at runtime
+# COPILOT_GITHUB_ACCESS_TOKEN / GITHUB_TOKEN is exchanged for a Copilot session key
+# The exchange runs through rig's Authenticator
+# Cached OAuth credentials are reused
+# The runtime starts no device flow
+# (run: agent provider auth login github-copilot when no cached credential exists)
 
 [providers.github-copilot.models.claude-sonnet-4.6]
 ```

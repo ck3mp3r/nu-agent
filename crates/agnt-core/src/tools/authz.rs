@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use std::future::Future;
 
-use serde_json::Value as JsonValue;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::protocol::event::{PermissionDecision as UiPermissionDecision, ToolDisplay};
 use crate::tools::handler::builtin_tool::BuiltinTool;
@@ -248,7 +248,7 @@ impl PermissionsConfig {
     }
 
     pub fn is_tool_visible(&self, tool_name: &str) -> bool {
-        let decision = self.evaluate(tool_name, &serde_json::json!({}));
+        let decision = self.evaluate(tool_name, &JsonMap::new());
         decision.action != PermissionAction::Deny
     }
     pub fn from_plugin_config(config: &crate::config::PluginConfig, interactive: bool) -> Self {
@@ -324,7 +324,11 @@ impl PermissionsConfig {
         }
     }
 
-    pub fn evaluate(&self, tool_name: &str, args: &JsonValue) -> PermissionDecision {
+    pub fn evaluate(
+        &self,
+        tool_name: &str,
+        args: &JsonMap<String, JsonValue>,
+    ) -> PermissionDecision {
         let mut diagnostics = self.diagnostics.clone();
         let mut matched_rule = PermissionRuleMatch {
             identity: "global:*".to_string(),
@@ -588,7 +592,7 @@ impl SessionGrantScopedKey {
         decision: &PermissionDecision,
         tool_name: &str,
         source: &str,
-        args: &JsonValue,
+        args: &JsonMap<String, JsonValue>,
     ) -> Self {
         Self {
             matched_rule_identity: decision.matched_rule.identity.clone(),
@@ -609,7 +613,7 @@ impl SessionGrantCache {
         decision: &PermissionDecision,
         tool_name: &str,
         source: &str,
-        args: &JsonValue,
+        args: &JsonMap<String, JsonValue>,
     ) -> Option<PermissionAction> {
         let key = SessionGrantScopedKey::from_request(decision, tool_name, source, args);
         self.grants_by_scope.get(&key).copied()
@@ -620,7 +624,7 @@ impl SessionGrantCache {
         decision: &PermissionDecision,
         tool_name: &str,
         source: &str,
-        args: &JsonValue,
+        args: &JsonMap<String, JsonValue>,
     ) {
         let key = SessionGrantScopedKey::from_request(decision, tool_name, source, args);
         self.grants_by_scope.insert(key, PermissionAction::Allow);
@@ -648,7 +652,7 @@ pub fn apply_ask_choice(
     grant_cache: &mut SessionGrantCache,
     tool_name: &str,
     source: &str,
-    args: &JsonValue,
+    args: &JsonMap<String, JsonValue>,
 ) -> PermissionDecision {
     match choice {
         AskChoice::AllowOnce => PermissionDecision {
@@ -674,7 +678,7 @@ pub fn apply_session_grant_override(
     grant_cache: &SessionGrantCache,
     tool_name: &str,
     source: &str,
-    args: &JsonValue,
+    args: &JsonMap<String, JsonValue>,
 ) -> PermissionDecision {
     if let Some(action) = grant_cache.get(&decision, tool_name, source, args) {
         return PermissionDecision { action, ..decision };

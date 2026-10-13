@@ -162,14 +162,14 @@ impl CommandRouter {
         match request {
             UiRequest::SwitchModel { spec } => {
                 log::debug!("Router: UiRequest SwitchModel spec={spec}");
-                let result = runtime.switch_model(&spec);
+                let result = runtime.switch_model(&spec).await;
                 let _ = response_tx
                     .send(UiRequestResponse::ModelSwitch(result))
                     .await;
             }
             UiRequest::SwitchAgent { name } => {
                 log::debug!("Router: UiRequest SwitchAgent name={name}");
-                let result = runtime.switch_agent(&name);
+                let result = runtime.switch_agent(&name).await;
                 let response = result.map(|agent_identity| {
                     let model_identity = runtime.active_model_identity();
                     let max_tokens = runtime.max_context_tokens();

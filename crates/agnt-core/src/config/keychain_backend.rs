@@ -7,7 +7,7 @@
 
 use keyring::v1::Entry;
 
-use super::vault::{VaultBackend, VaultError};
+use super::vault::{BackendKind, VaultBackend, VaultError};
 
 // endregion: --- Modules
 
@@ -57,6 +57,10 @@ impl KeychainBackend {
 // region:    --- VaultBackend Impl
 
 impl VaultBackend for KeychainBackend {
+    fn kind(&self) -> BackendKind {
+        BackendKind::Keychain
+    }
+
     fn get(&self, key: &str) -> Result<Option<String>, VaultError> {
         let entry = Entry::new(SERVICE_NAME, key).map_err(map_error)?;
         match entry.get_password() {

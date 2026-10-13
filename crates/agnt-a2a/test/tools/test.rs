@@ -638,9 +638,9 @@ async fn test_handle_tasks_send_completion_event_carries_context_id() -> Result<
         .ok_or("should have taskId")?
         .to_string();
 
-    // Let the background SSE watcher subscribe, then complete the task so the
-    // watcher observes a terminal state and emits the completion event.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Complete the task so the watcher observes a terminal state and emits the
+    // completion event. The watcher falls back to `get_task` when the task is
+    // already terminal at subscribe time.
     server
         .task_store()
         .update_status(&task_id, TaskState::Completed, None)

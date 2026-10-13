@@ -4,7 +4,7 @@ use crate::conversation::turn::executor::{CompletionErrorCategory, CompletionErr
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-/// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
+/// Helper: build a `TurnError::CompletionFailed` via `From<PromptError>` using
 /// an `InvalidStatusCodeWithDetails` HTTP error (numeric status code, no body).
 fn turn_error_from_http_status(status: u16) -> Result<CompletionErrorKind> {
     use rig::http_client;
@@ -14,7 +14,7 @@ fn turn_error_from_http_status(status: u16) -> Result<CompletionErrorKind> {
         body: String::new(),
         headers: http::HeaderMap::new(),
     };
-    let streaming_err = rig::agent::StreamingError::Completion(rig::error::ProviderError::Http(
+    let streaming_err = rig::completion::PromptError::Provider(rig::error::ProviderError::Http(
         std::sync::Arc::new(http_err),
     ));
     match crate::conversation::turn::TurnError::from(streaming_err) {
@@ -23,7 +23,7 @@ fn turn_error_from_http_status(status: u16) -> Result<CompletionErrorKind> {
     }
 }
 
-/// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
+/// Helper: build a `TurnError::CompletionFailed` via `From<PromptError>` using
 /// an `InvalidStatusCodeWithDetails` HTTP error (status + body string).
 fn turn_error_from_http_status_with_msg(status: u16, body: &str) -> Result<CompletionErrorKind> {
     use rig::http_client;
@@ -33,7 +33,7 @@ fn turn_error_from_http_status_with_msg(status: u16, body: &str) -> Result<Compl
         body: body.to_string(),
         headers: http::HeaderMap::new(),
     };
-    let streaming_err = rig::agent::StreamingError::Completion(rig::error::ProviderError::Http(
+    let streaming_err = rig::completion::PromptError::Provider(rig::error::ProviderError::Http(
         std::sync::Arc::new(http_err),
     ));
     match crate::conversation::turn::TurnError::from(streaming_err) {
@@ -42,10 +42,10 @@ fn turn_error_from_http_status_with_msg(status: u16, body: &str) -> Result<Compl
     }
 }
 
-/// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
+/// Helper: build a `TurnError::CompletionFailed` via `From<PromptError>` using
 /// a `ProviderError::Response` (provider returned a parseable error string).
 fn turn_error_from_response_error(msg: &str) -> CompletionErrorKind {
-    let streaming_err = rig::agent::StreamingError::Completion(
+    let streaming_err = rig::completion::PromptError::Provider(
         rig::error::ProviderError::Response(msg.to_string()),
     );
     match crate::conversation::turn::TurnError::from(streaming_err) {
@@ -54,22 +54,22 @@ fn turn_error_from_response_error(msg: &str) -> CompletionErrorKind {
     }
 }
 
-/// Helper: build a `TurnError::CompletionFailed` via `From<StreamingError>` using
+/// Helper: build a `TurnError::CompletionFailed` via `From<PromptError>` using
 /// a `PromptError::CompletionError` wrapping a `ProviderError`.
 fn turn_error_from_prompt_wrapped(
     completion_err: rig::error::ProviderError,
 ) -> crate::conversation::turn::TurnError {
-    let prompt_err = rig::completion::PromptError::CompletionError(completion_err);
-    let streaming_err = rig::agent::StreamingError::Prompt(prompt_err);
-    crate::conversation::turn::TurnError::from(streaming_err)
+    let prompt_err = rig::completion::PromptError::Provider(completion_err);
+
+    crate::conversation::turn::TurnError::from(prompt_err)
 }
 
 // ---------------------------------------------------------------------------
 // Prompt-wrapped provider error classification tests
 // ---------------------------------------------------------------------------
 
-/// A `PromptError::CompletionError(ProviderError::Response(s))` must classify like the
-/// direct `StreamingError::Completion` path: kind from `classify_from_display`,
+/// A `PromptError::Provider(ProviderError::Response(s))` must classify like the
+/// direct `PromptError::Provider` path: kind from `classify_from_display`,
 /// msg equal to the inner `ProviderError` Display ("ResponseError: {s}").
 #[test]
 fn prompt_wrapped_response_error_classifies_and_strips_completion_prefix() -> Result<()> {
@@ -87,7 +87,7 @@ fn prompt_wrapped_response_error_classifies_and_strips_completion_prefix() -> Re
     Ok(())
 }
 
-/// A `PromptError::CompletionError(ProviderError::Response("finish_reason=length"))` must
+/// A `PromptError::Provider(ProviderError::Response("finish_reason=length"))` must
 /// classify as `OutputBudget`.
 #[test]
 fn prompt_wrapped_finish_reason_length_is_output_budget() -> Result<()> {
@@ -103,7 +103,7 @@ fn prompt_wrapped_finish_reason_length_is_output_budget() -> Result<()> {
     Ok(())
 }
 
-/// A `PromptError::CompletionError(ProviderError::Http(InvalidStatusCodeWithDetails { 429 }))`
+/// A `PromptError::Provider(ProviderError::Http(InvalidStatusCodeWithDetails { 429 }))`
 /// must classify as `RateLimit`.
 #[test]
 fn prompt_wrapped_http_429_is_rate_limit() -> Result<()> {
@@ -125,13 +125,12 @@ fn prompt_wrapped_http_429_is_rate_limit() -> Result<()> {
     Ok(())
 }
 
-/// A `PromptError::MemoryError` must continue to classify as `Unknown`.
+/// A `PromptError::Memory` must continue to classify as `Unknown`.
 #[test]
 fn prompt_wrapped_memory_error_is_unknown() -> Result<()> {
     let memory_err = rig::memory::MemoryError::Internal("boom".to_string());
-    let prompt_err = rig::completion::PromptError::MemoryError(memory_err);
-    let streaming_err = rig::agent::StreamingError::Prompt(prompt_err);
-    let turn_err = crate::conversation::turn::TurnError::from(streaming_err);
+    let prompt_err = rig::completion::PromptError::Memory(memory_err);
+    let turn_err = crate::conversation::turn::TurnError::from(prompt_err);
     match turn_err {
         crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => {
             assert_eq!(kind, CompletionErrorKind::Unknown);
@@ -141,13 +140,13 @@ fn prompt_wrapped_memory_error_is_unknown() -> Result<()> {
     Ok(())
 }
 
-/// `From<PromptError>` must route `PromptError::CompletionError` through the
-/// same helper, producing the same kind and msg as the StreamingError path.
+/// `From<PromptError>` must route `PromptError::Provider` through the
+/// same helper, producing the same kind and msg as the PromptError path.
 #[test]
 fn from_prompt_error_completion_error_matches_streaming_path() -> Result<()> {
     let s = "provider exploded";
     let completion_err = rig::error::ProviderError::Response(s.to_string());
-    let prompt_err = rig::completion::PromptError::CompletionError(completion_err);
+    let prompt_err = rig::completion::PromptError::Provider(completion_err);
     let turn_err = crate::conversation::turn::TurnError::from(prompt_err);
     match turn_err {
         crate::conversation::turn::TurnError::CompletionFailed { kind, msg } => {
@@ -209,7 +208,7 @@ fn http_status_to_error_kind() -> Result<()> {
 fn from_streaming_http_stream_ended_is_network() {
     use rig::http_client;
     let http_err = http_client::Error::StreamEnded;
-    let streaming_err = rig::agent::StreamingError::Completion(rig::error::ProviderError::Http(
+    let streaming_err = rig::completion::PromptError::Provider(rig::error::ProviderError::Http(
         std::sync::Arc::new(http_err),
     ));
     let kind = match crate::conversation::turn::TurnError::from(streaming_err) {
@@ -319,15 +318,14 @@ fn from_streaming_response_exceeds_max_output_tokens_is_output_budget() {
     assert!(!kind.is_retryable());
 }
 
-/// `PromptCancelled` via StreamingError must produce `Cancelled` variant.
+/// `Cancelled` via PromptError must produce `Cancelled` variant.
 #[test]
 fn from_streaming_prompt_cancelled_produces_cancelled_variant() {
-    let inner = rig::completion::PromptError::PromptCancelled {
+    let prompt_err = rig::completion::PromptError::Cancelled {
         reason: "cancelled".to_string(),
         chat_history: vec![],
     };
-    let streaming_err = rig::agent::StreamingError::Prompt(inner);
-    let turn_err = crate::conversation::turn::TurnError::from(streaming_err);
+    let turn_err = crate::conversation::turn::TurnError::from(prompt_err);
     assert!(turn_err.is_cancelled());
 }
 

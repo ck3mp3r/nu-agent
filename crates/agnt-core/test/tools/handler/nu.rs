@@ -144,7 +144,7 @@ async fn nu_timeout_kills_process_and_returns_error() {
     let bus = Bus::default();
     let start = std::time::Instant::now();
     let result = NuTool::execute(
-        &serde_json::json!({"command": "sleep 10sec", "timeout_seconds": 1}),
+        &serde_json::json!({"command": "sleep 2sec", "timeout_seconds": 1}),
         Path::new("/tmp"),
         &bus,
     )
@@ -161,12 +161,23 @@ async fn nu_cancellation_kills_process_quickly() {
     let bus = Bus::default();
     let bus2 = bus.clone();
     let handle = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let _ = bus2.cancel().send(CancelEvent::Requested).await;
+        // Publish once the tool has subscribed to the cancel channel: a
+        // broadcast send succeeds only when a receiver is live. Bounded so a
+        // missed subscription cannot hang the test.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if bus2.cancel().send(CancelEvent::Requested).await.is_ok() {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
     });
     let start = std::time::Instant::now();
     let result = NuTool::execute(
-        &serde_json::json!({"command": "sleep 30sec"}),
+        &serde_json::json!({"command": "sleep 2sec"}),
         Path::new("/tmp"),
         &bus,
     )

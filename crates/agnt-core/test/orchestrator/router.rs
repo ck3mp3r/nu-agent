@@ -87,11 +87,11 @@ impl McpManagement for AgentSwitchRuntime {
 }
 
 impl ModelSwitching for AgentSwitchRuntime {
-    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
 
-    fn switch_agent(&mut self, agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, agent_name: &str) -> Result<String, String> {
         self.switched_agents.push(agent_name.to_string());
         if let Some(result) = self.switch_agent_result.clone() {
             return result;
@@ -243,10 +243,12 @@ struct LongRunningAgentRuntime {
     block_first_turn: Arc<AtomicBool>,
     active_model: String,
     bus: crate::bus::Bus,
+    turn_started_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl LongRunningAgentRuntime {
     fn new(block_first_turn: Arc<AtomicBool>) -> Self {
+        let (turn_started_tx, _) = tokio::sync::watch::channel(false);
         Self {
             prompts: Arc::new(Mutex::new(Vec::new())),
             switched_agents: Arc::new(Mutex::new(Vec::new())),
@@ -254,7 +256,14 @@ impl LongRunningAgentRuntime {
             block_first_turn,
             active_model: "openai/gpt-4o-mini".to_string(),
             bus: crate::bus::Bus::default(),
+            turn_started_tx,
         }
+    }
+
+    /// Signals when the blocking `first` turn has begun. Tests await this
+    /// instead of sleeping before they unblock the turn.
+    fn turn_started_rx(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.turn_started_tx.subscribe()
     }
 
     fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
@@ -278,6 +287,9 @@ impl CoreRuntime for LongRunningAgentRuntime {
             .push(prompt.clone());
 
         if prompt == "first" {
+            // Signal that the blocking turn has begun so tests can unblock it
+            // without sleeping.
+            let _ = self.turn_started_tx.send(true);
             let mut cancel_rx = bus.cancel().subscribe();
             loop {
                 tokio::select! {
@@ -286,7 +298,7 @@ impl CoreRuntime for LongRunningAgentRuntime {
                         return Err(LabeledError::new("LLM call cancelled"));
                     }
                     _ = tokio::time::sleep(Duration::from_millis(2)) => {
-                        if !self.block_first_turn.load(Ordering::SeqCst) {
+                        if self.block_first_turn.load(Ordering::SeqCst) {
                             break;
                         }
                     }
@@ -329,11 +341,11 @@ impl McpManagement for LongRunningAgentRuntime {
 }
 
 impl ModelSwitching for LongRunningAgentRuntime {
-    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
 
-    fn switch_agent(&mut self, agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, agent_name: &str) -> Result<String, String> {
         self.switched_agents
             .lock()
             .expect("switched agents lock")
@@ -370,6 +382,7 @@ struct ResponsiveAgentSwitchUi {
     expected_completions: usize,
     warnings: Arc<Mutex<Vec<String>>>,
     active_agent_identity: Arc<Mutex<Option<String>>>,
+    drained_tx: Arc<tokio::sync::watch::Sender<bool>>,
     _turn_task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -380,6 +393,7 @@ impl ResponsiveAgentSwitchUi {
         expected_completions: usize,
     ) -> Self {
         let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<OrchestratorEvent>(256);
+        let (drained_tx, _) = tokio::sync::watch::channel(false);
         Self {
             event_tx,
             submitted: initial_prompts.iter().map(|s| s.to_string()).collect(),
@@ -392,8 +406,16 @@ impl ResponsiveAgentSwitchUi {
             expected_completions,
             warnings: Arc::new(Mutex::new(Vec::new())),
             active_agent_identity: Arc::new(Mutex::new(None)),
+            drained_tx: Arc::new(drained_tx),
             _turn_task: None,
         }
+    }
+
+    /// Signals when the spawner has injected every queued agent switch. Tests
+    /// await this before unblocking the turn, so the injections settle without
+    /// a fixed sleep.
+    fn drained_rx(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.drained_tx.subscribe()
     }
 
     fn with_bus(mut self, bus: crate::bus::Bus) -> Self {
@@ -446,6 +468,7 @@ impl ResponsiveAgentSwitchUi {
         let submitted = self.submitted.clone();
         let agent_switch_requests = self.agent_switch_requests.clone();
         let quit = Arc::clone(&self.quit);
+        let drained_tx = Arc::clone(&self.drained_tx);
         move |event_tx| {
             let event_tx = event_tx.clone();
             let mut submitted = submitted.clone();
@@ -463,6 +486,9 @@ impl ResponsiveAgentSwitchUi {
                                 name,
                             }))
                             .await;
+                    }
+                    if agent_switch_requests.is_empty() {
+                        let _ = drained_tx.send(true);
                     }
                     if quit.load(Ordering::SeqCst)
                         && event_tx.send(OrchestratorEvent::Quit).await.is_err()
@@ -571,10 +597,14 @@ async fn agent_switch_while_worker_active_is_queued_for_next_turn()
     let ui = ResponsiveAgentSwitchUi::new(&["first"], &["research-agent"], 1).with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    // Spawn a background task to unblock the turn after a delay.
+    // Unblock the turn once it has started and the fixture has injected every
+    // queued agent switch.
+    let mut turn_started_rx = runtime.turn_started_rx();
+    let mut drained_rx = ui.drained_rx();
     let unblock = Arc::clone(&block_first_turn);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = turn_started_rx.changed().await;
+        let _ = drained_rx.changed().await;
         unblock.store(true, Ordering::SeqCst);
     });
 
@@ -615,10 +645,14 @@ async fn queued_agent_switch_last_write_wins()
         ResponsiveAgentSwitchUi::new(&["first"], &["agent-a", "agent-b"], 1).with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    // Spawn a background task to unblock the turn after a delay.
+    // Unblock the turn once it has started and the fixture has injected every
+    // queued agent switch.
+    let mut turn_started_rx = runtime.turn_started_rx();
+    let mut drained_rx = ui.drained_rx();
     let unblock = Arc::clone(&block_first_turn);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = turn_started_rx.changed().await;
+        let _ = drained_rx.changed().await;
         unblock.store(true, Ordering::SeqCst);
     });
 
@@ -675,11 +709,11 @@ impl CoreRuntime for SwitchSessionRuntime {
 }
 
 impl ModelSwitching for SwitchSessionRuntime {
-    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
 
-    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
         Err("agent switch not supported".to_string())
     }
 
@@ -1042,11 +1076,11 @@ impl CoreRuntime for AttachContextRuntime {
 }
 
 impl ModelSwitching for AttachContextRuntime {
-    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
 
-    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
         Err("agent switch not supported".to_string())
     }
 

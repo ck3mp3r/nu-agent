@@ -39,7 +39,7 @@ async fn load_cache_hit_runs_repair() {
         "first message should be user"
     );
     assert!(
-        matches!(&loaded[1], Message::Assistant { .. }),
+        matches!(&loaded[1], Message::Assistant(_)),
         "second message should be assistant"
     );
 }
@@ -362,13 +362,16 @@ async fn no_duplication_when_appending_deltas_sequentially() {
                     None
                 }
             }),
-            crate::types::Message::Assistant { content, .. } => content.iter().find_map(|c| {
-                if let crate::types::AssistantContent::Text(t) = c {
-                    Some(t.text.clone())
-                } else {
-                    None
-                }
-            }),
+            crate::types::Message::Assistant(assistant) => {
+                let content = &assistant.content;
+                content.iter().find_map(|c| {
+                    if let crate::types::AssistantContent::Text(t) = c {
+                        Some(t.text.clone())
+                    } else {
+                        None
+                    }
+                })
+            }
             _ => None,
         })
         .collect();
@@ -386,8 +389,8 @@ async fn no_duplication_when_appending_deltas_sequentially() {
 // Tool-verdict stamping: record → append stamps → consume-once
 // ---------------------------------------------------------------------------
 
-/// A recorded verdict must be stamped as `nu_agent_success` onto the first
-/// Text block of the matching persisted ToolResult.
+/// A recorded verdict must be stamped as `ToolResult::is_error` onto the
+/// matching persisted ToolResult.
 #[tokio::test]
 async fn append_stamps_recorded_true_verdict() -> Result<()> {
     // -- Setup & Fixtures
@@ -417,7 +420,7 @@ async fn append_stamps_recorded_true_verdict() -> Result<()> {
     Ok(())
 }
 
-/// A recorded `false` verdict must stamp `nu_agent_success` = false.
+/// A recorded `false` verdict must stamp `ToolResult::is_error` = true.
 #[tokio::test]
 async fn append_stamps_recorded_false_verdict() -> Result<()> {
     // -- Setup & Fixtures
@@ -454,7 +457,7 @@ async fn append_consumes_verdict_after_first_stamp() -> Result<()> {
     // -- Setup & Fixtures
     let tmp = TempDir::new().map_err(|e| format!("tempdir: {e:?}"))?;
     let mem = TestMemory::new(Arc::new(FsSessionStore::new(tmp.path().to_path_buf())));
-    mem.record_tool_verdict("tc1", true);
+    mem.record_tool_verdict("tc1", false);
 
     // -- Exec
     mem.append(
@@ -478,18 +481,19 @@ async fn append_consumes_verdict_after_first_stamp() -> Result<()> {
     assert_eq!(entries.len(), 2, "two appended messages expected");
     assert_eq!(
         tool_result_flag(&entries[0]),
-        Some(true),
-        "first append must carry the stamped verdict"
+        Some(false),
+        "first append must carry the stamped failure verdict"
     );
     assert_eq!(
         tool_result_flag(&entries[1]),
-        None,
-        "verdict must be consumed — the second append must stay unstamped"
+        Some(true),
+        "verdict must be consumed — the second append keeps the default success state"
     );
     Ok(())
 }
 
-/// A ToolResult appended without a recorded verdict must stay unstamped.
+/// A ToolResult appended without a recorded verdict must keep the default
+/// success state (`is_error` stays false).
 #[tokio::test]
 async fn append_without_recorded_verdict_leaves_tool_result_unstamped() -> Result<()> {
     // -- Setup & Fixtures
@@ -512,8 +516,8 @@ async fn append_without_recorded_verdict_leaves_tool_result_unstamped() -> Resul
     assert_eq!(entries.len(), 1, "one appended message expected");
     assert_eq!(
         tool_result_flag(&entries[0]),
-        None,
-        "no recorded verdict — the persisted ToolResult must carry no flag"
+        Some(true),
+        "no recorded verdict — the persisted ToolResult keeps the default success state"
     );
     Ok(())
 }
@@ -561,10 +565,8 @@ fn tool_result(call_id: &str, text: &str) -> Result<UserContent> {
     Ok(UserContent::ToolResult(ToolResult {
         call: CallId::from_wire(call_id),
         name: ToolName::new("test_tool").map_err(|_| "non-empty tool name")?,
-        content: vec![ToolResultContent::Text(Text {
-            text: text.to_string(),
-            additional_params: None,
-        })],
+        content: vec![ToolResultContent::Text(Text::new(text))],
+        is_error: false,
     }))
 }
 
@@ -576,8 +578,8 @@ fn tool_result_message(call_id: &str, text: &str) -> Result<Message> {
     })
 }
 
-/// Read the `nu_agent_success` boolean from the first Text block of the
-/// first ToolResult in a store entry. `None` when absent or not a boolean.
+/// Read the success verdict from the first ToolResult in a store entry.
+/// `None` when the entry is not a User message carrying a ToolResult.
 fn tool_result_flag(entry: &StoreEntry) -> Option<bool> {
     let StoreEntry::Message(Message::User { content }) = entry else {
         return None;
@@ -585,17 +587,11 @@ fn tool_result_flag(entry: &StoreEntry) -> Option<bool> {
     let Some(UserContent::ToolResult(tr)) = content.first() else {
         return None;
     };
-    let Some(ToolResultContent::Text(text)) = tr.content.first() else {
-        return None;
-    };
-    text.additional_params
-        .as_ref()
-        .and_then(|params| params.get("nu_agent_success"))
-        .and_then(serde_json::Value::as_bool)
+    Some(!tr.is_error)
 }
 
-/// Read the `nu_agent_success` boolean from the first Text block of EACH
-/// ToolResult in a store entry, in order. `None` when absent or not a boolean.
+/// Read the success verdict from EACH ToolResult in a store entry, in order.
+/// Content items that are not ToolResults are skipped.
 fn tool_result_flags(entry: &StoreEntry) -> Vec<Option<bool>> {
     let StoreEntry::Message(Message::User { content }) = entry else {
         return Vec::new();
@@ -606,15 +602,7 @@ fn tool_result_flags(entry: &StoreEntry) -> Vec<Option<bool>> {
             let UserContent::ToolResult(tr) = c else {
                 return None;
             };
-            let Some(ToolResultContent::Text(text)) = tr.content.first() else {
-                return None;
-            };
-            Some(
-                text.additional_params
-                    .as_ref()
-                    .and_then(|params| params.get("nu_agent_success"))
-                    .and_then(serde_json::Value::as_bool),
-            )
+            Some(Some(!tr.is_error))
         })
         .collect()
 }

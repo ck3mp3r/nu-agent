@@ -2,7 +2,7 @@ use super::store::{
     CompactionMarker, FsSessionStore, StoreEntry, extract_llm_context, validate_tool_call_adjacency,
 };
 use crate::session::{SessionStore, extract_title};
-use crate::types::Message;
+use crate::types::{AssistantMessage, Message};
 use chrono::Utc;
 use tempfile::TempDir;
 
@@ -620,19 +620,16 @@ fn extract_llm_context_empty_summary() {
 fn assistant_content_round_trips_with_type_tag() -> TestResult<()> {
     use crate::types::{AssistantContent, CallId, ToolCall, ToolFunction, ToolName};
 
-    let msg = crate::types::Message::Assistant {
-        id: None,
-        content: vec![
-            AssistantContent::Text(crate::types::Text::new("hello")),
-            AssistantContent::ToolCall(ToolCall::new(
-                CallId::from_wire("call_1"),
-                ToolFunction::new(
-                    ToolName::new("some_tool").map_err(|_| "non-empty tool name")?,
-                    serde_json::json!({"a": 1}),
-                ),
-            )),
-        ],
-    };
+    let msg = crate::types::Message::Assistant(AssistantMessage::new(vec![
+        AssistantContent::Text(crate::types::Text::new("hello")),
+        AssistantContent::ToolCall(ToolCall::new(
+            CallId::from_wire("call_1"),
+            ToolFunction::new(
+                ToolName::new("some_tool").map_err(|_| "non-empty tool name")?,
+                serde_json::json!({"a": 1}),
+            ),
+        )),
+    ]));
 
     // Serialize and verify the "type" tags are present on each content block.
     let value = serde_json::to_value(&msg).unwrap();
@@ -743,7 +740,7 @@ fn extract_llm_context_trims_trailing_orphan_user_message() {
     let context = extract_llm_context(&entries);
     assert_eq!(context.len(), 2);
     assert!(matches!(&context[0], Message::User { .. }));
-    assert!(matches!(&context[1], Message::Assistant { .. }));
+    assert!(matches!(&context[1], Message::Assistant(_)));
 }
 
 #[test]
@@ -760,7 +757,7 @@ fn extract_llm_context_trims_multiple_stacked_orphan_user_messages() {
     let context = extract_llm_context(&entries);
     assert_eq!(context.len(), 2);
     assert!(matches!(&context[0], Message::User { .. }));
-    assert!(matches!(&context[1], Message::Assistant { .. }));
+    assert!(matches!(&context[1], Message::Assistant(_)));
 }
 
 #[test]
@@ -884,16 +881,15 @@ async fn load_preserves_multiple_post_compaction_entries() -> TestResult<()> {
 
 fn make_tool_call_msg(id: &str) -> TestResult<crate::types::Message> {
     use crate::types::{AssistantContent, CallId, ToolCall, ToolFunction, ToolName};
-    Ok(crate::types::Message::Assistant {
-        id: None,
-        content: vec![AssistantContent::ToolCall(ToolCall::new(
+    Ok(crate::types::Message::Assistant(AssistantMessage::new(
+        vec![AssistantContent::ToolCall(ToolCall::new(
             CallId::from_wire(id),
             ToolFunction::new(
                 ToolName::new("some_tool").map_err(|_| "non-empty tool name")?,
                 serde_json::json!({}),
             ),
         ))],
-    })
+    )))
 }
 
 fn make_tool_result_msg(id: &str) -> TestResult<crate::types::Message> {
@@ -903,6 +899,7 @@ fn make_tool_result_msg(id: &str) -> TestResult<crate::types::Message> {
             call: CallId::from_wire(id),
             name: ToolName::new("some_tool").map_err(|_| "non-empty tool name")?,
             content: vec![ToolResultContent::text("ok")],
+            is_error: false,
         })],
     })
 }
@@ -935,7 +932,7 @@ fn validate_tool_call_adjacency_strips_non_adjacent_pair() -> TestResult<()> {
     // ToolCall and ToolResult must both be stripped; remaining: user("start"), user("in-between")
     let has_tc = result
         .iter()
-        .any(|m| matches!(m, crate::types::Message::Assistant { .. }));
+        .any(|m| matches!(m, crate::types::Message::Assistant(_)));
     let has_tr = result.iter().any(|m| match m {
         crate::types::Message::User { content } => content
             .iter()

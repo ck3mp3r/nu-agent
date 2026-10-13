@@ -9,20 +9,27 @@ use super::*;
 struct CancellableBlockingRuntime {
     block: Arc<AtomicBool>,
     cancelled: Arc<AtomicBool>,
-    started: Arc<AtomicBool>,
+    started_tx: tokio::sync::watch::Sender<bool>,
     prompts: Arc<Mutex<Vec<String>>>,
     bus: crate::bus::Bus,
 }
 
 impl CancellableBlockingRuntime {
     fn new(block: Arc<AtomicBool>) -> Self {
+        let (started_tx, _) = tokio::sync::watch::channel(false);
         Self {
             block,
             cancelled: Arc::new(AtomicBool::new(false)),
-            started: Arc::new(AtomicBool::new(false)),
+            started_tx,
             prompts: Arc::new(Mutex::new(Vec::new())),
             bus: crate::bus::Bus::default(),
         }
+    }
+
+    /// Signals when the blocking turn has begun. Tests await this instead of
+    /// polling before they send a cancel.
+    fn started_rx(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.started_tx.subscribe()
     }
 
     fn cancelled(&self) -> bool {
@@ -44,7 +51,9 @@ impl CoreRuntime for CancellableBlockingRuntime {
         _span: Span,
     ) -> Result<Value, LabeledError> {
         self.prompts.lock().expect("prompts lock").push(prompt);
-        self.started.store(true, Ordering::SeqCst);
+        // Signal that the blocking turn has begun so tests can cancel without
+        // polling.
+        let _ = self.started_tx.send(true);
         // Subscribe to the bus cancel channel directly, matching production where
         // the hook/tool proxies subscribe to `bus.cancel()`.
         let mut cancel_rx = self.bus.cancel().subscribe();
@@ -78,11 +87,11 @@ impl CoreRuntime for CancellableBlockingRuntime {
 }
 
 impl ModelSwitching for CancellableBlockingRuntime {
-    fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, _model_spec: &str) -> Result<(String, Option<u64>), String> {
         Err("model switching not supported".to_string())
     }
 
-    fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, _agent_name: &str) -> Result<String, String> {
         Err("agent switch not supported in this runtime".to_string())
     }
 
@@ -124,12 +133,10 @@ async fn matching_a2a_task_cancel_sets_cancel_requested() -> TResult {
     });
 
     // Send a matching cancel once the turn has started.
-    let started = runtime.started.clone();
+    let mut started_rx = runtime.started_rx();
     let cancel_tx_clone = cancel_tx.clone();
     tokio::spawn(async move {
-        while !started.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(2)).await;
-        }
+        let _ = started_rx.changed().await;
         cancel_tx_clone
             .send("11111111-2222-3333-4444-555555555555".to_string())
             .unwrap();
@@ -183,10 +190,12 @@ async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() -> TResult
         .send("99999999-9999-9999-9999-999999999999".to_string())
         .unwrap();
 
-    // Unblock the turn after a delay; a non-matching cancel must NOT cancel it.
+    // Unblock the turn once it has started; a non-matching cancel must NOT
+    // cancel it.
+    let mut turn_started_rx = runtime.turn_started_rx();
     let unblock = Arc::clone(&block_first_turn);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _ = turn_started_rx.changed().await;
         unblock.store(true, Ordering::SeqCst);
     });
 
@@ -236,13 +245,11 @@ async fn matching_a2a_task_cancel_stops_running_turn() -> TResult {
         }
     });
 
-    let started = runtime.started.clone();
+    let mut started_rx = runtime.started_rx();
     let cancel_tx_clone = cancel_tx.clone();
     tokio::spawn(async move {
         // Wait until the turn has started, then cancel the matching task.
-        while !started.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(2)).await;
-        }
+        let _ = started_rx.changed().await;
         cancel_tx_clone
             .send("22222222-3333-4444-5555-666666666666".to_string())
             .unwrap();

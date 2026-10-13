@@ -113,7 +113,7 @@ async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
         ],
         vec![MockStreamEvent::error("connection reset")],
     ]);
-    let (r1, _) = h.turn("do things", model1, echo_tool("real_result")).await;
+    let (r1, _) = h.turn("do things", model1, echo_tool("real_result")?).await;
     assert!(r1.is_err(), "CompletionError must propagate");
 
     let msgs = h.raw_messages().await?;
@@ -129,7 +129,7 @@ async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
     assert_tool_result_in_msg(&msgs[4], "tc2", "real_result")?;
     // msgs[5] is the synthetic assistant close-block appended by close_open_tool_result_block
     assert!(
-        matches!(&msgs[5], crate::types::Message::Assistant { .. }),
+        matches!(&msgs[5], crate::types::Message::Assistant(_)),
         "msgs[5] must be the synthetic assistant close-block; got: {:?}",
         msgs[5]
     );
@@ -184,7 +184,7 @@ async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
 /// 3. `TestNuShellCancellingTool::call()` returns `"Already up to date."` then fires cancel token
 /// 4. `on_outcome` records `User(ToolResult tc1)` in `new_messages`
 /// 5. `on_completion_call(sub-turn 2)` → `is_cancelled()` → `Terminate`
-/// 6. `PromptCancelled { chat_history: [user(prompt), asst(tc1), user(tr1)] }`
+/// 6. `Cancelled { chat_history: [user(prompt), asst(tc1), user(tr1)] }`
 /// 7. Path C: delta = 3 messages persisted
 ///
 /// Turn 2 sees the 3-message prior context.
@@ -212,7 +212,7 @@ async fn journey_cancelled_turn_then_continuation() -> Result<()> {
         .turn(
             "run a git command",
             model1,
-            nu_shell_cancelling_tool("Already up to date.", bus),
+            nu_shell_cancelling_tool("Already up to date.", bus)?,
         )
         .await;
     assert!(r1.is_ok(), "cancelled turn must return Ok: {r1:?}");
@@ -230,7 +230,7 @@ async fn journey_cancelled_turn_then_continuation() -> Result<()> {
     assert_tool_result_in_msg(&msgs[2], "tc1", "Already up to date.")?;
     // msgs[3] is the synthetic assistant close-block appended by close_open_tool_result_block
     assert!(
-        matches!(&msgs[3], crate::types::Message::Assistant { .. }),
+        matches!(&msgs[3], crate::types::Message::Assistant(_)),
         "msgs[3] must be the synthetic assistant close-block; got: {:?}",
         msgs[3]
     );

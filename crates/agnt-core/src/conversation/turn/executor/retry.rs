@@ -295,13 +295,13 @@ where
                     },
                     ctx,
                 )) => {
-                    // Path A (non-cancelled): MaxTurnsError carries full chat_history.
+                    // Path A (non-cancelled): MaxTurns carries full chat_history.
                     // Persist only the delta (new messages from this turn) so the session
                     // remembers the failed turn without re-appending messages already in
                     // persistent storage. This runs on every MaxTurnsExceeded, before the
                     // retry decision, so completed sub-turns survive either outcome.
                     if let Some(session_id) = final_session_id {
-                        // messages for MaxTurnsError is rig's full accumulated
+                        // messages for MaxTurns is rig's full accumulated
                         // chat_history (from AgentRun::full_history()), which DOES include the
                         // current-turn user prompt and any tool call exchanges from this turn.
                         // This is unlike last_known_history (from on_completion_call's `history`
@@ -422,7 +422,7 @@ where
                     if msg.starts_with(OUTPUT_REPETITION_STOP_PREFIX) =>
                 {
                     // Path A stop-to-steering: the repetition guard cancelled the
-                    // turn via rig's PromptCancelled. Below the retry cap,
+                    // turn via rig's Cancelled. Below the retry cap,
                     // publish the steering notice, deliver the repetition
                     // steering message (session append, or prompt prepend when
                     // there is no session), reset the escalation ladder, and

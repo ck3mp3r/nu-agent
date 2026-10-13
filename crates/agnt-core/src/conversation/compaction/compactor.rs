@@ -19,15 +19,13 @@ use rig::memory::MemoryError;
 use rig::operation::Completion;
 
 /// The header every artifact body must start with.
-const SUMMARY_HEADER: &str = "What we did thus far:\n\n";
+///
+/// `merge_consecutive_same_role` in `session/repair.rs` checks this header
+/// instead of a content marker so a summary artifact is never folded into the
+/// next `User` turn.
+pub(crate) const SUMMARY_HEADER: &str = "What we did thus far:\n\n";
 /// Marker appended when the artifact body is truncated to `max_bytes`.
 const TRUNCATION_MARKER: &str = "[…truncated…]";
-
-/// Key in a `Text` content block's `additional_params` marking it as a
-/// compaction summary. `merge_consecutive_same_role` in `session/repair.rs`
-/// checks this key instead of the text content so a summary artifact is never
-/// folded into the next `User` turn.
-pub const COMPACTION_SUMMARY_KEY: &str = "compaction_summary";
 
 const COMPACTION_SUMMARY_PROMPT: &str = include_str!("prompts/compaction_summary.md");
 const COMPACTION_ROLLING_PROMPT: &str = include_str!("prompts/compaction_rolling.md");
@@ -67,13 +65,7 @@ impl From<SummaryArtifact> for Message {
     fn from(artifact: SummaryArtifact) -> Self {
         let text = format!("{SUMMARY_HEADER}{}", artifact.summary);
         Message::User {
-            content: vec![UserContent::Text(crate::types::Text {
-                text,
-                additional_params: crate::types::AdditionalParams::from_entries([(
-                    COMPACTION_SUMMARY_KEY,
-                    serde_json::json!(true),
-                )]),
-            })],
+            content: vec![UserContent::Text(crate::types::Text::new(text))],
         }
     }
 }
@@ -473,7 +465,7 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
             .map(|msg| {
                 let role = match msg {
                     Message::User { .. } => "user",
-                    Message::Assistant { .. } => "assistant",
+                    Message::Assistant(_) => "assistant",
                     Message::System { .. } => "system",
                 };
                 let content = match msg {
@@ -502,7 +494,8 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
                         })
                         .collect::<Vec<_>>()
                         .join(" "),
-                    Message::Assistant { content, .. } => content
+                    Message::Assistant(assistant) => assistant
+                        .content
                         .iter()
                         .map(|c| match c {
                             crate::types::AssistantContent::Text(t) => t.text.clone(),
@@ -517,6 +510,7 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
                             crate::types::AssistantContent::Image(_) => {
                                 "[Attached image]".to_string()
                             }
+                            _ => "[Provider item]".to_string(),
                         })
                         .collect::<Vec<_>>()
                         .join(" "),

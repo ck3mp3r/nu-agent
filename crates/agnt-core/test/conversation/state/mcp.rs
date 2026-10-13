@@ -15,9 +15,9 @@ fn mcp_state_with_k8s_tools() -> Result<(McpState, Vec<ToolDefinition>)> {
     let configs = vec![mcp_server_config("k8s", true)];
 
     let tool_definitions = vec![
-        tool_definition_named("read"),
-        tool_definition_named("k8s__list_pods"),
-        tool_definition_named("k8s__delete_pod"),
+        tool_definition_named("read")?,
+        tool_definition_named("k8s__list_pods")?,
+        tool_definition_named("k8s__delete_pod")?,
     ];
 
     let state = McpState::new(None, vec![], configs, None, registry, 20_000, None);
@@ -85,9 +85,9 @@ async fn disable_leaves_non_target_server_tools_enabled() -> Result<()> {
     ];
 
     let mut tool_definitions = vec![
-        tool_definition_named("read"),
-        tool_definition_named("k8s__list_pods"),
-        tool_definition_named("gh__list_prs"),
+        tool_definition_named("read")?,
+        tool_definition_named("k8s__list_pods")?,
+        tool_definition_named("gh__list_prs")?,
     ];
 
     let mut mcp_state = McpState::new(None, vec![], configs, None, registry, 20_000, None);

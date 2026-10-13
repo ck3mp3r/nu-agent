@@ -52,13 +52,13 @@ fn tool_state_active_definitions_empty_when_no_tools() {
 }
 
 #[test]
-fn tool_state_baseline_is_reset_source() {
+fn tool_state_baseline_is_reset_source() -> Result<()> {
     // Characterise that baseline_tool_definitions serves as the reset
     // source: cloning baseline into tool_definitions restores initial state.
 
     let _tool_definitions: Vec<ToolDefinition> = vec![];
     let baseline_tool_definitions: Vec<ToolDefinition> = vec![ToolDefinition {
-        name: "test_tool".to_string(),
+        name: ToolName::new("test_tool")?,
         description: "".to_string(),
         parameters: serde_json::json!({}),
     }];
@@ -72,4 +72,5 @@ fn tool_state_baseline_is_reset_source() {
         "after reset, tool_definitions must match baseline length"
     );
     assert_eq!(tool_definitions[0].name, "test_tool");
+    Ok(())
 }

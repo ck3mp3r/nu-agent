@@ -62,7 +62,7 @@ pub struct TurnResult {
     /// History snapshot from hook, captured before the last LLM call.
     /// Populated from `HookChain::last_known_history()` Arc after the turn completes.
     /// Used by executor's Path B cancel fallback when `messages` is `None` (tokio::select
-    /// cancelled before rig yielded PromptCancelled) to persist completed tool calls
+    /// cancelled before rig yielded Cancelled) to persist completed tool calls
     /// instead of synthesizing a minimal `[user(prompt)]` placeholder.
     pub last_known_history: Vec<Message>,
 }
@@ -162,10 +162,7 @@ where
 
     // Build the prompt message
     let user_message = Message::User {
-        content: vec![UserContent::Text(Text {
-            text: ctx.input.prompt,
-            additional_params: None,
-        })],
+        content: vec![UserContent::Text(Text::new(ctx.input.prompt))],
     };
 
     // Clone preamble for the 'static future
@@ -229,7 +226,7 @@ where
     // Spawn the completion on the current task.
     // Cancellation note: publishing CancelEvent on the bus fires Terminate on the next
     // hook entry (on_completion_call, on_text_delta, or on_dispatch), causing rig to
-    // yield PromptCancelled { chat_history }. If the HTTP request hangs before any hook
+    // yield Cancelled { chat_history }. If the HTTP request hangs before any hook
     // fires (e.g. dead network), the stream blocks until the provider's own HTTP client
     // timeout. Ensure timeouts are configured on the client.
     let prompt_handle = tokio::spawn(prompt_future);
@@ -334,12 +331,11 @@ struct StreamingTurnResult {
 
 /// Build an agent with a hook and execute a multi-turn streaming prompt loop.
 ///
-/// The error is boxed: rig 0.43's `StreamingError` carries an unboxed
-/// `PromptError`, which makes the enum large enough to trip
+/// The error is boxed: rig 0.44's `PromptError` is large enough to trip
 /// `clippy::result_large_err`.
 async fn build_agent_and_stream<S, P>(
     config: AgentPromptConfig<S, P>,
-) -> Result<StreamingTurnResult, Box<rig::agent::StreamingError>>
+) -> Result<StreamingTurnResult, Box<rig::completion::PromptError>>
 where
     S: SessionStore + Clone + Send + Sync + 'static,
     P: AsyncPermissionResolver,
@@ -482,12 +478,6 @@ where
                     }
                 }
 
-                // --- TOOL RESULT (user content fed back to model) ---
-                // The hook's on_outcome already fired and emitted ToolCompleted.
-                rig::agent::MultiTurnStreamItem::StreamUserItem(
-                    rig::streaming::StreamedUserContent::ToolResult { .. },
-                ) => {}
-
                 // --- PER-SUBCALL USAGE ---
                 rig::agent::MultiTurnStreamItem::CompletionCall(call) => {
                     last_total_tokens = call.usage.total_tokens.unwrap_or(0);
@@ -495,9 +485,9 @@ where
 
                 // --- FINAL RESPONSE ---
                 rig::agent::MultiTurnStreamItem::FinalResponse(fin) => {
-                    text = fin.output().to_string();
+                    text = fin.output();
                     usage = fin.usage();
-                    messages = fin.messages().map(|h| h.to_vec());
+                    messages = Some(fin.messages().to_vec());
                 }
 
                 // --- MODEL TURN RETRIED ---
@@ -525,24 +515,16 @@ where
             Some(Err(e)) => {
                 // Check whether rig cancelled the agent loop via the hook's Terminate action.
                 match e {
-                    rig::agent::StreamingError::Prompt(prompt_err) => match prompt_err {
-                        rig::completion::PromptError::PromptCancelled {
-                            reason,
-                            chat_history,
-                        } => {
-                            log::trace!(
-                                "Stream PromptCancelled: history_len={}",
-                                chat_history.len()
-                            );
-                            messages = Some(chat_history);
-                            cancelled = true;
-                            cancel_reason = Some(reason);
-                            break;
-                        }
-                        other => {
-                            return Err(Box::new(rig::agent::StreamingError::Prompt(other)));
-                        }
-                    },
+                    rig::completion::PromptError::Cancelled {
+                        reason,
+                        chat_history,
+                    } => {
+                        log::trace!("Stream Cancelled: history_len={}", chat_history.len());
+                        messages = Some(chat_history);
+                        cancelled = true;
+                        cancel_reason = Some(reason);
+                        break;
+                    }
                     other => return Err(Box::new(other)),
                 }
             }

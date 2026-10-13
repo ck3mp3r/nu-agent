@@ -253,10 +253,14 @@ async fn model_switch_while_worker_active_is_queued_for_next_turn() -> TResult {
     .with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    // Spawn a background task to unblock the turn after a delay.
+    // Unblock the turn once it has started and the fixture has injected every
+    // queued prompt and model switch.
+    let mut turn_started_rx = runtime.turn_started_rx();
+    let mut drained_rx = ui.drained_rx();
     let unblock = Arc::clone(&block_first_turn);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = turn_started_rx.changed().await;
+        let _ = drained_rx.changed().await;
         unblock.store(true, Ordering::SeqCst);
     });
 
@@ -303,10 +307,14 @@ async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() -
     .with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    // Spawn a background task to unblock the turn after a delay.
+    // Unblock the turn once it has started and the fixture has injected every
+    // queued prompt and model switch.
+    let mut turn_started_rx = runtime.turn_started_rx();
+    let mut drained_rx = ui.drained_rx();
     let unblock = Arc::clone(&block_first_turn);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = turn_started_rx.changed().await;
+        let _ = drained_rx.changed().await;
         unblock.store(true, Ordering::SeqCst);
     });
 
@@ -349,10 +357,14 @@ async fn queued_model_switch_last_write_wins() -> TResult {
     .with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    // Spawn a background task to unblock the turn after a delay.
+    // Unblock the turn once it has started and the fixture has injected every
+    // queued prompt and model switch.
+    let mut turn_started_rx = runtime.turn_started_rx();
+    let mut drained_rx = ui.drained_rx();
     let unblock = Arc::clone(&block_first_turn);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = turn_started_rx.changed().await;
+        let _ = drained_rx.changed().await;
         unblock.store(true, Ordering::SeqCst);
     });
 
@@ -397,10 +409,14 @@ async fn queued_model_switch_failure_keeps_previous_model_and_warns() -> TResult
     .with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    // Spawn a background task to unblock the turn after a delay.
+    // Unblock the turn once it has started and the fixture has injected every
+    // queued prompt and model switch.
+    let mut turn_started_rx = runtime.turn_started_rx();
+    let mut drained_rx = ui.drained_rx();
     let unblock = Arc::clone(&block_first_turn);
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let _ = turn_started_rx.changed().await;
+        let _ = drained_rx.changed().await;
         unblock.store(true, Ordering::SeqCst);
     });
 

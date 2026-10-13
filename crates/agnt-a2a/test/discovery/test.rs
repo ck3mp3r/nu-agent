@@ -43,6 +43,25 @@ fn peer_from_fields(name: &str, address: &str, port: u16, hostname: &str) -> Pee
     }
 }
 
+/// Await a [`PeerEvent::PeerDiscovered`] matching `pred` within `budget`.
+///
+/// Returns `true` when a matching peer arrives, `false` when the budget
+/// expires or the channel closes. Non-matching events are skipped.
+async fn wait_for_peer<F>(rx: &mut mpsc::Receiver<PeerEvent>, budget: Duration, pred: F) -> bool
+where
+    F: Fn(&Peer) -> bool,
+{
+    let deadline = tokio::time::Instant::now() + budget;
+    while let Some(remaining) = deadline.checked_duration_since(tokio::time::Instant::now()) {
+        match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Some(PeerEvent::PeerDiscovered(peer))) if pred(&peer) => return true,
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => return false,
+        }
+    }
+    false
+}
+
 // ---------------------------------------------------------------------------
 // PeerEvent dispatch tests
 // ---------------------------------------------------------------------------
@@ -189,22 +208,10 @@ async fn test_register_and_browse_roundtrip() {
     let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "test-mesh", 52095).unwrap();
 
     // Wait up to 5 seconds for the registered service to appear.
-    let mut found = false;
-    for _ in 0..50 {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        while let Ok(event) = rx.try_recv() {
-            if let PeerEvent::PeerDiscovered(peer) = event
-                && peer.name.contains("roundtrip-agent")
-            {
-                found = true;
-            }
-        }
-
-        if found {
-            break;
-        }
-    }
+    let found = wait_for_peer(&mut rx, Duration::from_secs(5), |p| {
+        p.name.contains("roundtrip-agent")
+    })
+    .await;
 
     assert!(found, "Should discover registered service via mDNS");
 }
@@ -232,20 +239,10 @@ async fn test_mesh_scoping_filters_other_key() {
     let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "key-a", 52095).unwrap();
 
     // Wait up to 5 seconds and check we never receive the wrong-key peer.
-    let mut wrong_key = false;
-    for _ in 0..50 {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        while let Ok(event) = rx.try_recv() {
-            if let PeerEvent::PeerDiscovered(peer) = event
-                && peer.name.contains("mesh-key-b-agent")
-            {
-                wrong_key = true;
-            }
-        }
-        if wrong_key {
-            break;
-        }
-    }
+    let wrong_key = wait_for_peer(&mut rx, Duration::from_secs(5), |p| {
+        p.name.contains("mesh-key-b-agent")
+    })
+    .await;
     assert!(
         !wrong_key,
         "Should not discover peers with different mesh key"
@@ -270,24 +267,14 @@ async fn test_browse_self_excluded() {
         DiscoveryService::register(daemon.clone(), "self-test-agent", 7777, &card, "test-mesh")
             .unwrap();
 
-    // Give mDNS time to announce
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
     let (_browser, mut rx) = DiscoveryBrowser::browse(daemon.clone(), "test-mesh", 7777).unwrap();
 
-    // Try to receive — should NOT get our own service
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    while let Ok(event) = rx.try_recv() {
-        match event {
-            PeerEvent::PeerDiscovered(p) => {
-                assert_ne!(
-                    p.name, "self-test-agent",
-                    "agent should not discover itself"
-                );
-            }
-            PeerEvent::PeerLost(_) => {}
-        }
-    }
+    // Wait up to 5 seconds — our own service must never appear.
+    let found_self = wait_for_peer(&mut rx, Duration::from_secs(5), |p| {
+        p.name == "self-test-agent"
+    })
+    .await;
+    assert!(!found_self, "agent should not discover itself");
 }
 
 // ---------------------------------------------------------------------------
@@ -312,26 +299,15 @@ async fn test_cross_daemon_mesh_scoping() {
     )
     .unwrap();
 
-    // Give mDNS time to announce
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
     // Daemon B browses with a DIFFERENT mesh_key "key-b"
     let daemon_b = ServiceDaemon::new().unwrap();
     let (browser, mut rx) = DiscoveryBrowser::browse(daemon_b.clone(), "key-b", 52095).unwrap();
 
-    // Wait and check: should NOT discover cross-daemon-agent (key mismatch)
-    let mut found_wrong = false;
-    for _ in 0..30 {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        while let Ok(event) = rx.try_recv() {
-            if let PeerEvent::PeerDiscovered(peer) = event
-                && peer.name.contains("cross-daemon-agent")
-            {
-                found_wrong = true;
-                eprintln!("FOUND peer despite key mismatch! peer_key from TXT?");
-            }
-        }
-    }
+    // Wait up to 5 seconds: should NOT discover cross-daemon-agent (key mismatch)
+    let found_wrong = wait_for_peer(&mut rx, Duration::from_secs(5), |p| {
+        p.name.contains("cross-daemon-agent")
+    })
+    .await;
 
     assert!(
         !found_wrong,

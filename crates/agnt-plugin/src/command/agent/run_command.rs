@@ -240,7 +240,8 @@ pub(super) fn run_command(
             &discovered_mcp_tools,
             &cwd,
             false,
-        );
+        )
+        .map_err(|e| LabeledError::new("Invalid tool name").with_label(e.to_string(), call.head))?;
 
         let resolver = DefaultSessionResolver::new(Arc::clone(&store));
         let mut session_resolution = resolver
@@ -323,7 +324,8 @@ pub(super) fn run_command(
             cwd: cwd.clone(),
             bus: bus.clone(),
             render_registry,
-        })?;
+        })
+        .await?;
         log::debug!(
             "runtime: agent_persona_body_len={:?}, agent_identity={:?}, agent_description={:?}",
             runtime_impl.persona_body_len(),

@@ -18,13 +18,13 @@ use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 // Subtask 1 — inject_missing_tool_results: integration tests
 // ---------------------------------------------------------------------------
 
-/// On PromptCancelled (Ok path, cancelled=true) with an unpaired ToolCall in
+/// On Cancelled (Ok path, cancelled=true) with an unpaired ToolCall in
 /// the chat_history, the messages written to JSONL must contain a synthetic
 /// User(ToolResult) for that ToolCall ID so the stored history is always valid.
 ///
-/// We force a PromptCancelled scenario by triggering immediate cancellation.
+/// We force a Cancelled scenario by triggering immediate cancellation.
 /// The mock model emits a tool_call on its first (and only) turn; the UI
-/// cancels immediately so rig returns PromptCancelled with a chat_history that
+/// cancels immediately so rig returns Cancelled with a chat_history that
 /// contains the Assistant(ToolCall) but no User(ToolResult).
 ///
 /// After inject_missing_tool_results, the persisted JSONL must contain both
@@ -70,7 +70,7 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() -> 
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
-                name: "test_cancel_tool".to_string(),
+                name: crate::types::ToolName::new("test_cancel_tool")?,
                 description: "cancels the turn".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
             }],
@@ -123,9 +123,10 @@ async fn prompt_cancelled_with_unpaired_tool_call_injects_synthetic_result() -> 
     // User message with the matching ToolResult.
     use crate::types::{AssistantContent, UserContent};
     for (i, msg) in persisted.iter().enumerate() {
-        let crate::types::Message::Assistant { content, .. } = msg else {
+        let crate::types::Message::Assistant(assistant) = msg else {
             continue;
         };
+        let content = &assistant.content;
         for item in content.iter() {
             let AssistantContent::ToolCall(tc) = item else {
                 continue;
@@ -217,9 +218,10 @@ async fn unknown_tool_error_with_unpaired_tool_call_injects_synthetic_result() -
     // Same invariant: every persisted ToolCall must have an adjacent ToolResult.
     use crate::types::{AssistantContent, UserContent};
     for (i, msg) in persisted.iter().enumerate() {
-        let crate::types::Message::Assistant { content, .. } = msg else {
+        let crate::types::Message::Assistant(assistant) = msg else {
             continue;
         };
+        let content = &assistant.content;
         for item in content.iter() {
             let AssistantContent::ToolCall(tc) = item else {
                 continue;
@@ -260,6 +262,7 @@ fn user_with_tool_result(id: &str) -> crate::types::Message {
                 call: crate::types::CallId::from_wire(id),
                 name: crate::types::ToolName::new("do_thing").expect("non-empty tool name"),
                 content: vec![crate::types::ToolResultContent::text("result")],
+                is_error: false,
             },
         )],
     }
@@ -278,6 +281,7 @@ fn user_with_mixed_content(id: &str) -> crate::types::Message {
                 call: crate::types::CallId::from_wire(id),
                 name: crate::types::ToolName::new("do_thing").expect("non-empty tool name"),
                 content: vec![crate::types::ToolResultContent::text("result")],
+                is_error: false,
             }),
             crate::types::UserContent::Text(crate::types::Text::new("some text")),
         ],
@@ -296,7 +300,7 @@ fn close_open_tool_result_block_appends_when_last_is_tool_result() {
     let result = close_open_tool_result_block(msgs, "server error");
     assert_eq!(result.len(), 4, "synthetic assistant must be appended");
     assert!(
-        matches!(result[3], crate::types::Message::Assistant { .. }),
+        matches!(result[3], crate::types::Message::Assistant(_)),
         "last message must be Assistant; got: {:?}",
         result[3]
     );
@@ -313,7 +317,7 @@ fn close_open_tool_result_block_noop_when_last_is_assistant() {
     assert!(
         matches!(
             result[result.len() - 1],
-            crate::types::Message::Assistant { .. }
+            crate::types::Message::Assistant(_)
         ),
         "last message must still be Assistant"
     );

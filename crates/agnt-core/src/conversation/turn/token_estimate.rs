@@ -28,7 +28,8 @@ fn message_char_count(msg: &Message) -> usize {
                 _ => 0,
             })
             .sum(),
-        Message::Assistant { content, .. } => content
+        Message::Assistant(assistant) => assistant
+            .content
             .iter()
             .map(|c| match c {
                 AssistantContent::Text(t) => t.text.len(),

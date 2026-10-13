@@ -1,12 +1,12 @@
-use crate::types::ToolDefinition;
+use crate::types::{EmptyToolName, ToolDefinition, ToolName};
 use std::path::Path;
 
 use super::BuiltinTool;
 
 #[tokio::test]
-async fn dynamic_tool_calls_grep_tool() {
+async fn dynamic_tool_calls_grep_tool() -> TestResult<()> {
     let tool_def = ToolDefinition {
-        name: "grep".to_string(),
+        name: ToolName::new("grep")?,
         description: "Search file contents".to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -54,10 +54,11 @@ async fn dynamic_tool_calls_grep_tool() {
             .unwrap()
             .contains("needle")
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn dynamic_tool_truncates_large_output() {
+async fn dynamic_tool_truncates_large_output() -> TestResult<()> {
     use crate::tools::limits::MAX_TOOL_OUTPUT_BYTES;
 
     let temp_dir = std::env::temp_dir();
@@ -71,7 +72,7 @@ async fn dynamic_tool_truncates_large_output() {
     std::fs::write(&target_file, &big_content).unwrap();
 
     let tool_def = ToolDefinition {
-        name: "grep".to_string(),
+        name: ToolName::new("grep")?,
         description: "Search file contents".to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -108,6 +109,7 @@ async fn dynamic_tool_truncates_large_output() {
         "large builtin output must be truncated; got {} bytes, no marker",
         result_str.len()
     );
+    Ok(())
 }
 
 // ================================================================
@@ -157,7 +159,7 @@ impl super::BuiltinTool for FailingPlainTool {
 async fn dynamic_tool_error_with_details_truncates_and_sets_model_output() -> TestResult<()> {
     // -- Setup & Fixtures
     let tool_def = ToolDefinition {
-        name: "fail_details".to_string(),
+        name: ToolName::new("fail_details")?,
         description: "Always fails with details".to_string(),
         parameters: serde_json::json!({"type": "object", "properties": {}}),
     };
@@ -212,7 +214,7 @@ async fn dynamic_tool_error_with_details_truncates_and_sets_model_output() -> Te
 async fn dynamic_tool_error_without_details_keeps_message_only() -> TestResult<()> {
     // -- Setup & Fixtures
     let tool_def = ToolDefinition {
-        name: "fail_plain".to_string(),
+        name: ToolName::new("fail_plain")?,
         description: "Always fails without details".to_string(),
         parameters: serde_json::json!({"type": "object", "properties": {}}),
     };
@@ -340,12 +342,12 @@ async fn dynamic_tool_error_kind_maps_to_rig_kind_without_details() -> TestResul
         ("fail_unknown", rig::tool::ToolErrorKind::Other),
     ];
     let mut toolset = rig::tool::ToolSet::default();
-    add_failing_tool::<FailingValidationTool>(&mut toolset, "fail_validation");
-    add_failing_tool::<FailingTimeoutTool>(&mut toolset, "fail_timeout");
-    add_failing_tool::<FailingAuthorizationTool>(&mut toolset, "fail_authorization");
-    add_failing_tool::<FailingTransportTool>(&mut toolset, "fail_transport");
-    add_failing_tool::<FailingRuntimeTool>(&mut toolset, "fail_runtime");
-    add_failing_tool::<FailingUnknownTool>(&mut toolset, "fail_unknown");
+    add_failing_tool::<FailingValidationTool>(&mut toolset, "fail_validation")?;
+    add_failing_tool::<FailingTimeoutTool>(&mut toolset, "fail_timeout")?;
+    add_failing_tool::<FailingAuthorizationTool>(&mut toolset, "fail_authorization")?;
+    add_failing_tool::<FailingTransportTool>(&mut toolset, "fail_transport")?;
+    add_failing_tool::<FailingRuntimeTool>(&mut toolset, "fail_runtime")?;
+    add_failing_tool::<FailingUnknownTool>(&mut toolset, "fail_unknown")?;
 
     // -- Exec & Check
     for (tool_name, expected_kind) in &cases {
@@ -376,7 +378,7 @@ async fn dynamic_tool_error_kind_maps_to_rig_kind_without_details() -> TestResul
 async fn dynamic_tool_error_kind_maps_to_rig_kind_with_details() -> TestResult<()> {
     // -- Setup & Fixtures
     let tool_def = ToolDefinition {
-        name: "fail_validation_details".to_string(),
+        name: ToolName::new("fail_validation_details")?,
         description: "Always fails with details".to_string(),
         parameters: serde_json::json!({"type": "object", "properties": {}}),
     };
@@ -599,7 +601,7 @@ async fn dynamic_tool_edit_noop_surfaces_as_failed_result() -> TestResult<()> {
     std::fs::write(&path, "hello world\n")?;
     let version = crate::tools::fs::core::version_token("hello world\n");
     let tool_def = ToolDefinition {
-        name: "edit".to_string(),
+        name: ToolName::new("edit")?,
         description: "Edit a file".to_string(),
         parameters: serde_json::json!({"type": "object", "properties": {}}),
     };
@@ -644,9 +646,12 @@ async fn dynamic_tool_edit_noop_surfaces_as_failed_result() -> TestResult<()> {
 
 // -- Test Support
 
-fn add_failing_tool<T: super::BuiltinTool>(toolset: &mut rig::tool::ToolSet, tool_name: &str) {
+fn add_failing_tool<T: super::BuiltinTool>(
+    toolset: &mut rig::tool::ToolSet,
+    tool_name: &str,
+) -> Result<(), EmptyToolName> {
     let tool_def = ToolDefinition {
-        name: tool_name.to_string(),
+        name: ToolName::new(tool_name)?,
         description: "Always fails".to_string(),
         parameters: serde_json::json!({"type": "object", "properties": {}}),
     };
@@ -656,4 +661,5 @@ fn add_failing_tool<T: super::BuiltinTool>(toolset: &mut rig::tool::ToolSet, too
         100,
         crate::bus::Bus::default(),
     ));
+    Ok(())
 }

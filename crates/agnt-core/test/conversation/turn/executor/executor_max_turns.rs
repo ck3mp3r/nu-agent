@@ -33,7 +33,7 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
 
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
     tool_server_handle.add_dynamic_tool(rig::tool::DynamicTool::new(
-        "echo_tool",
+        crate::types::ToolName::new("echo_tool")?,
         "echoes a fixed result",
         serde_json::json!({"type": "object", "properties": {}}),
         |_args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
@@ -63,7 +63,7 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
-                name: "echo_tool".to_string(),
+                name: crate::types::ToolName::new("echo_tool")?,
                 description: "echoes a fixed result".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
             }],
@@ -153,7 +153,7 @@ async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Re
 
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
     tool_server_handle.add_dynamic_tool(rig::tool::DynamicTool::new(
-        "echo_tool",
+        crate::types::ToolName::new("echo_tool")?,
         "echoes a fixed result",
         serde_json::json!({"type": "object", "properties": {}}),
         |_args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
@@ -182,7 +182,7 @@ async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Re
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
-                name: "echo_tool".to_string(),
+                name: crate::types::ToolName::new("echo_tool")?,
                 description: "echoes a fixed result".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
             }],
@@ -251,7 +251,7 @@ async fn no_session_max_turns_failure_returns_err_without_steering() -> Result<(
 
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
     tool_server_handle.add_dynamic_tool(rig::tool::DynamicTool::new(
-        "echo_tool",
+        crate::types::ToolName::new("echo_tool")?,
         "echoes a fixed result",
         serde_json::json!({"type": "object", "properties": {}}),
         |_args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
@@ -278,7 +278,7 @@ async fn no_session_max_turns_failure_returns_err_without_steering() -> Result<(
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
-                name: "echo_tool".to_string(),
+                name: crate::types::ToolName::new("echo_tool")?,
                 description: "echoes a fixed result".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
             }],

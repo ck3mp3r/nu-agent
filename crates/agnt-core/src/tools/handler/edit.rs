@@ -558,13 +558,17 @@ impl BuiltinTool for EditTool {
                             return Err(noop_or_conflict_error(&edit_args.path, mode, plan));
                         }
 
-                        let preview_display = super::pre_authorize::pre_authorize_fs_tool(
-                            Some(super::builtin_kinds::BuiltinKind::Edit),
-                            args,
-                            cwd,
-                        )
-                        .and_then(|output| output.display)
-                        .unwrap_or_else(|| edit_preview_display(&edit_args.path, &plan));
+                        let preview_display = args
+                            .as_object()
+                            .and_then(|args| {
+                                super::pre_authorize::pre_authorize_fs_tool(
+                                    Some(super::builtin_kinds::BuiltinKind::Edit),
+                                    args,
+                                    cwd,
+                                )
+                            })
+                            .and_then(|output| output.display)
+                            .unwrap_or_else(|| edit_preview_display(&edit_args.path, &plan));
 
                         let summary = match apply_search_replace_edit(
                             &resolved_path,
@@ -687,13 +691,17 @@ impl BuiltinTool for EditTool {
                             return Err(create_conflict_error(&edit_args.path, mode, plan));
                         }
 
-                        let preview_display = super::pre_authorize::pre_authorize_fs_tool(
-                            Some(super::builtin_kinds::BuiltinKind::Edit),
-                            args,
-                            cwd,
-                        )
-                        .and_then(|output| output.display)
-                        .unwrap_or_else(|| edit_preview_display(&edit_args.path, &plan));
+                        let preview_display = args
+                            .as_object()
+                            .and_then(|args| {
+                                super::pre_authorize::pre_authorize_fs_tool(
+                                    Some(super::builtin_kinds::BuiltinKind::Edit),
+                                    args,
+                                    cwd,
+                                )
+                            })
+                            .and_then(|output| output.display)
+                            .unwrap_or_else(|| edit_preview_display(&edit_args.path, &plan));
 
                         let summary = match crate::tools::fs::core::apply_create_file(
                             &resolved_path,

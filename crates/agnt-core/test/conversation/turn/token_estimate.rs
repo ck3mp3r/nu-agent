@@ -13,10 +13,7 @@ fn estimate_token_count_per_message_overhead() {
     // 1 message with 0 content chars:
     // (0 / 4) + (1 * 4) = 0 + 4 = 4
     let msg = Message::User {
-        content: vec![UserContent::Text(Text {
-            text: String::new(),
-            additional_params: None,
-        })],
+        content: vec![UserContent::Text(Text::new(String::new()))],
     };
     assert_eq!(estimate_token_count(&[msg]), 4);
 }
@@ -26,10 +23,7 @@ fn estimate_token_count_plain_text() {
     // "hello world" = 11 chars
     // 11 / 4 = 2 (integer division), + 4 overhead = 6
     let msg = Message::User {
-        content: vec![UserContent::Text(Text {
-            text: "hello world".to_string(),
-            additional_params: None,
-        })],
+        content: vec![UserContent::Text(Text::new("hello world"))],
     };
     assert_eq!(estimate_token_count(&[msg]), 6);
 }
@@ -42,10 +36,8 @@ fn estimate_token_count_tool_result() -> Result<()> {
         content: vec![UserContent::ToolResult(ToolResult {
             call: CallId::from_wire("tc1"),
             name: ToolName::new("do_thing").map_err(|_| "non-empty tool name")?,
-            content: vec![ToolResultContent::Text(Text {
-                text: "abcdefghijkl".to_string(),
-                additional_params: None,
-            })],
+            content: vec![ToolResultContent::Text(Text::new("abcdefghijkl"))],
+            is_error: false,
         })],
     };
     assert_eq!(estimate_token_count(&[msg]), 7);
@@ -65,10 +57,9 @@ fn estimate_token_count_conservative_note() {
     // Our estimate: 29/4 + 4 = 7 + 4 = 11
     // tiktoken would give ~10 (code is denser than 4 chars/token), so we under-count.
     let msg = Message::User {
-        content: vec![UserContent::Text(Text {
-            text: "for i in range(100): print(i)".to_string(),
-            additional_params: None,
-        })],
+        content: vec![UserContent::Text(Text::new(
+            "for i in range(100): print(i)",
+        ))],
     };
     let estimated = estimate_token_count(&[msg]);
     assert_eq!(estimated, 11);

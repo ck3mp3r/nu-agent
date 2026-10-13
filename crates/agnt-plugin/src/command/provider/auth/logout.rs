@@ -1,7 +1,9 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
 
+use agnt_core::config::copilot_tokens::read_copilot_token_record;
 use agnt_core::config::vault::Vault;
+use agnt_core::types::default_token_dir;
 
 use crate::plugin::AgentPlugin;
 
@@ -67,7 +69,21 @@ impl SimplePluginCommand for AgentProviderAuthLogout {
     ) -> Result<Value, LabeledError> {
         let name: String = call.req(0)?;
 
-        let vault = Vault::auto_detect();
+        // github-copilot stores its tokens in files, not the vault.
+        if (name == "github-copilot" || name == "copilot")
+            && let Some(dir) = default_token_dir()
+            && read_copilot_token_record(&dir)
+                .map_err(LabeledError::new)?
+                .is_some()
+        {
+            remove_copilot_token_files(&dir).map_err(LabeledError::new)?;
+            return Ok(Value::string(
+                format!("Removed credentials for '{name}'"),
+                call.head,
+            ));
+        }
+
+        let vault = Vault::auto_detect().map_err(|e| LabeledError::new(e.to_string()))?;
 
         let removed = vault
             .remove_provider(&name)
@@ -85,3 +101,20 @@ impl SimplePluginCommand for AgentProviderAuthLogout {
         }
     }
 }
+
+// region:    --- Support
+
+/// Delete the two Copilot token files, leaving the directory in place.
+fn remove_copilot_token_files(dir: &std::path::Path) -> Result<(), String> {
+    for file in ["access-token", "api-key.json"] {
+        let path = dir.join(file);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("Failed to remove {}: {e}", path.display())),
+        }
+    }
+    Ok(())
+}
+
+// endregion: --- Support

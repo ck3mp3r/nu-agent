@@ -215,7 +215,8 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         &discovered_mcp_tools,
         &cwd,
         true,
-    );
+    )
+    .map_err(|e| Error::Custom(format!("Invalid tool name: {e}")))?;
 
     let resolver = DefaultSessionResolver::new(Arc::clone(&store));
     let mut session_resolution = resolver
@@ -309,6 +310,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         bus: bus.clone(),
         render_registry,
     })
+    .await
     .map_err(Error::from)?;
 
     // ── Extract A2A receivers into the mode context ──────────────────────

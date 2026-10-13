@@ -37,7 +37,7 @@ async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -
 
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
     tool_server_handle.add_dynamic_tool(rig::tool::DynamicTool::new(
-        "echo_tool",
+        crate::types::ToolName::new("echo_tool")?,
         "echoes a fixed result",
         serde_json::json!({"type": "object", "properties": {}}),
         |_args| Box::pin(async move { Ok(rig::tool::ToolOutput::text("echoed")) }),
@@ -65,7 +65,7 @@ async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
-                name: "echo_tool".to_string(),
+                name: crate::types::ToolName::new("echo_tool")?,
                 description: "echoes a fixed result".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
             }],
@@ -310,7 +310,7 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
     // asserted below after the flow settles. Trace: execute() calls 1-4 run
     // turns 1-4 (below threshold). Call 5's rig stream internally retries on
     // the ladder: turn 5 (First → retry_with_feedback), turns 6-7 (Backoff),
-    // turn 8 (count=4 → Stop → PromptCancelled) → conversion (steering +
+    // turn 8 (count=4 → Stop → Cancelled) → conversion (steering +
     // reset) → retry re-escalates: turns 9-12 (Stop again → conversion 2),
     // turns 13-16 (Stop again → conversion 3), turns 17-20 (Stop at cap 3 →
     // terminal EarlyReturn). 20 model calls total: the 4 below-threshold
@@ -434,7 +434,7 @@ async fn repetition_stop_reset_ladder_lets_retry_sequence_restart_at_first() -> 
 
     // Trace: execute() calls 1-4 run turns 1-4 (below threshold). Call 5's
     // rig stream retries on the ladder: turn 5 (First → retry), turns 6-7
-    // (Backoff → retry), turn 8 (count=4 → Stop → PromptCancelled) →
+    // (Backoff → retry), turn 8 (count=4 → Stop → Cancelled) →
     // conversion (steering + reset) → retry consumes turn 9 (DISTINCT
     // content → no detection → completes the rig stream). The ladder is now
     // reset (count=0, segment tracking preserved) and `last_segment` is the
@@ -558,7 +558,7 @@ async fn repetition_stop_session_less_steers_via_prompt_and_terminal_on_cap() ->
     // Generous identical scripted turn supply; the exact consumption is
     // asserted below after the flow settles. Trace: execute() calls 1-4 run
     // turns 1-4 (below threshold); call 5's rig stream escalates turns 5-8
-    // (First, Backoff, Backoff, Stop → PromptCancelled) → conversion (prompt
+    // (First, Backoff, Backoff, Stop → Cancelled) → conversion (prompt
     // prepend + ladder reset) → each retry re-escalates in 4 calls; the stop
     // at cap 3 is terminal: 20 model calls total.
     let stop_turn = vec![

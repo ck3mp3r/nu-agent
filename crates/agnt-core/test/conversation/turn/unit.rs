@@ -5,8 +5,8 @@
 
 use super::*;
 use crate::types::{
-    AssistantContent, CallId, Message, Text, ToolCall, ToolFunction, ToolName, ToolResultContent,
-    UserContent,
+    AssistantContent, AssistantMessage, CallId, Message, Text, ToolCall, ToolFunction, ToolName,
+    ToolResultContent, UserContent,
 };
 
 // ---------------------------------------------------------------------------
@@ -17,15 +17,14 @@ use crate::types::{
 fn turn_result_can_be_constructed() {
     let result = TurnResult {
         text: "Hello".to_string(),
-        usage: rig::completion::request::Usage {
-            input_tokens: Some(10),
-            output_tokens: Some(5),
-            total_tokens: Some(15),
-            cached_input_tokens: Some(0),
-            cache_creation_input_tokens: Some(0),
-            tool_use_prompt_tokens: Some(0),
-            reasoning_tokens: Some(0),
-        },
+        usage: rig::completion::request::Usage::new()
+            .input_tokens(10)
+            .output_tokens(5)
+            .total_tokens(15)
+            .cached_input_tokens(0)
+            .cache_creation_input_tokens(0)
+            .tool_use_prompt_tokens(0)
+            .reasoning_tokens(0),
         messages: None,
         tool_call_count: 0,
         deltas_emitted: false,
@@ -68,12 +67,9 @@ fn turn_error_can_be_constructed() {
 #[test]
 fn prompt_cancelled_error_is_detected_as_cancellation() {
     let user_msg = Message::User {
-        content: vec![UserContent::Text(Text {
-            text: "Hello".to_string(),
-            additional_params: None,
-        })],
+        content: vec![UserContent::Text(Text::new("Hello"))],
     };
-    let err = rig::completion::PromptError::PromptCancelled {
+    let err = rig::completion::PromptError::Cancelled {
         chat_history: vec![user_msg],
         reason: "Cancelled by user".to_string(),
     };
@@ -82,7 +78,7 @@ fn prompt_cancelled_error_is_detected_as_cancellation() {
 
     assert!(
         turn_err.is_cancelled(),
-        "PromptCancelled variant should be detected as cancellation"
+        "Cancelled variant should be detected as cancellation"
     );
     let (msg, messages) = match &turn_err {
         TurnError::Cancelled { msg, messages, .. } => (msg, messages),
@@ -112,14 +108,11 @@ fn other_prompt_errors_are_not_cancelled() {
 
 #[test]
 fn max_turns_error_is_not_cancelled() {
-    let err = rig::completion::PromptError::MaxTurnsError {
+    let err = rig::completion::PromptError::MaxTurns {
         max_turns: 10,
         chat_history: vec![],
         prompt: Message::User {
-            content: vec![UserContent::Text(Text {
-                text: "test".to_string(),
-                additional_params: None,
-            })],
+            content: vec![UserContent::Text(Text::new("test"))],
         },
     };
 
@@ -127,7 +120,7 @@ fn max_turns_error_is_not_cancelled() {
 
     assert!(
         !turn_err.is_cancelled(),
-        "MaxTurnsError should not be detected as cancellation"
+        "MaxTurns should not be detected as cancellation"
     );
 }
 
@@ -138,23 +131,19 @@ fn turn_context_always_has_tool_server_handle() {
     let _handle_clone = handle.clone();
 }
 
-/// Test that StreamingError converts to TurnError with cancelled=false for non-cancel errors.
+/// Test that a PromptError converts to TurnError with cancelled=true for cancel errors.
 #[test]
-fn streaming_error_from_prompt_cancelled_captures_messages() {
+fn prompt_error_from_cancelled_captures_messages() {
     let user_msg = Message::User {
-        content: vec![UserContent::Text(Text {
-            text: "Tell me about async".to_string(),
-            additional_params: None,
-        })],
+        content: vec![UserContent::Text(Text::new("Tell me about async"))],
     };
 
-    let inner = rig::completion::PromptError::PromptCancelled {
+    let prompt_err = rig::completion::PromptError::Cancelled {
         reason: "Hook cancelled".to_string(),
         chat_history: vec![user_msg],
     };
-    let streaming_err = rig::agent::StreamingError::Prompt(inner);
 
-    let turn_err = TurnError::from(streaming_err);
+    let turn_err = TurnError::from(prompt_err);
 
     assert!(turn_err.is_cancelled());
     let (msg, messages) = match &turn_err {
@@ -165,24 +154,17 @@ fn streaming_error_from_prompt_cancelled_captures_messages() {
     assert_eq!(messages.len(), 1);
 }
 
-/// TurnError from PromptCancelled captures chat_history as messages.
+/// TurnError from Cancelled captures chat_history as messages.
 #[test]
 fn turn_error_from_prompt_cancelled_captures_messages() {
     let user_msg = Message::User {
-        content: vec![UserContent::Text(Text {
-            text: "What is Rust?".to_string(),
-            additional_params: None,
-        })],
+        content: vec![UserContent::Text(Text::new("What is Rust?"))],
     };
-    let assistant_msg = Message::Assistant {
-        id: None,
-        content: vec![AssistantContent::Text(Text {
-            text: "Rust is a systems programming...".to_string(),
-            additional_params: None,
-        })],
-    };
+    let assistant_msg = Message::Assistant(AssistantMessage::new(vec![AssistantContent::Text(
+        Text::new("Rust is a systems programming..."),
+    )]));
 
-    let err = rig::completion::PromptError::PromptCancelled {
+    let err = rig::completion::PromptError::Cancelled {
         reason: "User pressed Esc".to_string(),
         chat_history: vec![user_msg, assistant_msg],
     };
@@ -251,7 +233,8 @@ fn path_b_cancelled_with_partial_text_constructs_user_and_assistant_messages() {
     );
 
     match &cancelled_messages[1] {
-        Message::Assistant { content, .. } => {
+        Message::Assistant(assistant) => {
+            let content = &assistant.content;
             let text = content.iter().find_map(|c| {
                 if let AssistantContent::Text(t) = c {
                     Some(t.text.as_str())
@@ -351,7 +334,7 @@ fn turn_result_cancelled_flag_propagates() {
 // rig v0.39.0: Path B with tool calls — chat_history preserved after cancel
 // ---------------------------------------------------------------------------
 
-/// Regression test: PromptCancelled preserves tool_call + tool_result history.
+/// Regression test: Cancelled preserves tool_call + tool_result history.
 #[test]
 fn cancel_mid_tool_call_preserves_tool_call_and_tool_result_in_history() {
     use serde_json::json;
@@ -359,39 +342,31 @@ fn cancel_mid_tool_call_preserves_tool_call_and_tool_result_in_history() {
     let mut chat_history: Vec<Message> = Vec::new();
 
     chat_history.push(Message::User {
-        content: vec![UserContent::Text(Text {
-            text: "What is in /etc/hosts?".to_string(),
-            additional_params: None,
-        })],
+        content: vec![UserContent::Text(Text::new("What is in /etc/hosts?"))],
     });
 
-    chat_history.push(Message::Assistant {
-        id: None,
-        content: vec![AssistantContent::ToolCall(ToolCall {
-            id: CallId::from_wire("call_abc123"),
-            signature: None,
-            additional_params: None,
-            function: ToolFunction {
-                name: ToolName::new("read_file").expect("should be non-empty"),
-                arguments: json!({ "path": "/etc/hosts" }),
-            },
-        })],
-    });
+    chat_history.push(Message::Assistant(AssistantMessage::new(vec![
+        AssistantContent::ToolCall(ToolCall::new(
+            CallId::from_wire("call_abc123"),
+            ToolFunction::new(
+                ToolName::new("read_file").expect("should be non-empty"),
+                json!({ "path": "/etc/hosts" }),
+            ),
+        )),
+    ])));
 
     chat_history.push(Message::User {
         content: vec![UserContent::ToolResult(
             rig::completion::message::ToolResult {
                 call: CallId::from_wire("call_abc123"),
                 name: ToolName::new("read_file").expect("should be non-empty"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: "file contents here".to_string(),
-                    additional_params: None,
-                })],
+                content: vec![ToolResultContent::Text(Text::new("file contents here"))],
+                is_error: false,
             },
         )],
     });
 
-    let err = rig::completion::PromptError::PromptCancelled {
+    let err = rig::completion::PromptError::Cancelled {
         reason: "User pressed Esc during tool execution".to_string(),
         chat_history: chat_history.clone(),
     };
@@ -419,7 +394,7 @@ fn cancel_mid_tool_call_preserves_tool_call_and_tool_result_in_history() {
         _ => panic!("msg[0] should be User (prompt)"),
     };
     match &messages[1] {
-        Message::Assistant { .. } => {}
+        Message::Assistant(_) => {}
         _ => panic!("msg[1] should be Assistant (tool_call)"),
     };
     match &messages[2] {
@@ -437,70 +412,53 @@ fn cancel_preserves_multiple_tool_use_cycles() {
 
     // First tool-use cycle
     chat_history.push(Message::User {
-        content: vec![UserContent::Text(Text {
-            text: "List files".to_string(),
-            additional_params: None,
-        })],
+        content: vec![UserContent::Text(Text::new("List files"))],
     });
-    chat_history.push(Message::Assistant {
-        id: None,
-        content: vec![AssistantContent::ToolCall(ToolCall {
-            id: CallId::from_wire("call_001"),
-            signature: None,
-            additional_params: None,
-            function: ToolFunction {
-                name: ToolName::new("list_dir").expect("should be non-empty"),
-                arguments: json!({ "path": "/" }),
-            },
-        })],
-    });
+    chat_history.push(Message::Assistant(AssistantMessage::new(vec![
+        AssistantContent::ToolCall(ToolCall::new(
+            CallId::from_wire("call_001"),
+            ToolFunction::new(
+                ToolName::new("list_dir").expect("should be non-empty"),
+                json!({ "path": "/" }),
+            ),
+        )),
+    ])));
     chat_history.push(Message::User {
         content: vec![UserContent::ToolResult(
             rig::completion::message::ToolResult {
                 call: CallId::from_wire("call_001"),
                 name: ToolName::new("list_dir").expect("should be non-empty"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: "/bin /usr /etc".to_string(),
-                    additional_params: None,
-                })],
+                content: vec![ToolResultContent::Text(Text::new("/bin /usr /etc"))],
+                is_error: false,
             },
         )],
     });
 
     // Second tool-use cycle
-    chat_history.push(Message::Assistant {
-        id: None,
-        content: vec![AssistantContent::Text(Text {
-            text: "Now read that file".to_string(),
-            additional_params: None,
-        })],
-    });
-    chat_history.push(Message::Assistant {
-        id: None,
-        content: vec![AssistantContent::ToolCall(ToolCall {
-            id: CallId::from_wire("call_002"),
-            signature: None,
-            additional_params: None,
-            function: ToolFunction {
-                name: ToolName::new("read_file").expect("should be non-empty"),
-                arguments: json!({ "path": "/etc/passwd" }),
-            },
-        })],
-    });
+    chat_history.push(Message::Assistant(AssistantMessage::new(vec![
+        AssistantContent::Text(Text::new("Now read that file")),
+    ])));
+    chat_history.push(Message::Assistant(AssistantMessage::new(vec![
+        AssistantContent::ToolCall(ToolCall::new(
+            CallId::from_wire("call_002"),
+            ToolFunction::new(
+                ToolName::new("read_file").expect("should be non-empty"),
+                json!({ "path": "/etc/passwd" }),
+            ),
+        )),
+    ])));
     chat_history.push(Message::User {
         content: vec![UserContent::ToolResult(
             rig::completion::message::ToolResult {
                 call: CallId::from_wire("call_002"),
                 name: ToolName::new("read_file").expect("should be non-empty"),
-                content: vec![ToolResultContent::Text(Text {
-                    text: "root:x:0:0:root user".to_string(),
-                    additional_params: None,
-                })],
+                content: vec![ToolResultContent::Text(Text::new("root:x:0:0:root user"))],
+                is_error: false,
             },
         )],
     });
 
-    let err = rig::completion::PromptError::PromptCancelled {
+    let err = rig::completion::PromptError::Cancelled {
         reason: "Cancelled during read_file tool call".to_string(),
         chat_history: chat_history.clone(),
     };

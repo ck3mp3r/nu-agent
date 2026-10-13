@@ -514,16 +514,18 @@ async fn a2a_task_rx_busy_without_store_drops_without_panic() -> Result<()> {
         .send(incoming_task("task-1", "do work"))
         .await
         .map_err(|_| "task send failed")?;
-    // Give the loop a chance to process the arm.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // -- Check
+    // The busy-without-store arm must drop the task without dispatching a
+    // command. Await the worker channel with a bounded budget: a dispatch would
+    // arrive immediately, expiry proves none was sent.
+    let dispatched = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        worker_rx.as_mut().ok_or("worker_rx present")?.recv(),
+    )
+    .await;
     assert!(
-        worker_rx
-            .as_mut()
-            .ok_or("worker_rx present")?
-            .try_recv()
-            .is_err(),
+        dispatched.is_err(),
         "no command should be dispatched for a busy task without a store"
     );
 

@@ -37,7 +37,7 @@ mod wiremock_tests;
 // endregion: --- Modules
 
 use crate::conversation::providers::ClientCacheKey;
-use crate::types::ToolDefinition;
+use crate::types::{ToolDefinition, ToolName};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

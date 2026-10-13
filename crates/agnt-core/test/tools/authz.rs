@@ -1,6 +1,16 @@
 use super::*;
 use nu_protocol::{Value, record};
 
+/// Tool-call arguments as rig 0.44 carries them: a JSON object map.
+macro_rules! args_map {
+    ($($json:tt)*) => {
+        serde_json::json!($($json)*)
+            .as_object()
+            .cloned()
+            .unwrap_or_default()
+    };
+}
+
 fn permissions_toml() -> toml::Value {
     toml::from_str(
         r#"
@@ -19,10 +29,7 @@ read = "allow"
 #[test]
 fn parser_accepts_canonical_permissions_shape() {
     let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
-    let deny = parsed.evaluate(
-        "shell",
-        &serde_json::json!({"command": "kubectl delete pod x"}),
-    );
+    let deny = parsed.evaluate("shell", &args_map!({"command": "kubectl delete pod x"}));
     assert_eq!(deny.action, PermissionAction::Deny);
     assert_eq!(deny.matched_rule.scope, "nested");
     assert_eq!(deny.matched_rule.target_field, Some("command".to_string()));
@@ -32,18 +39,15 @@ fn parser_accepts_canonical_permissions_shape() {
 fn precedence_is_global_then_tool_then_nested_command() {
     let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
 
-    let global = parsed.evaluate("unknown_tool", &serde_json::json!({}));
+    let global = parsed.evaluate("unknown_tool", &args_map!({}));
     assert_eq!(global.action, PermissionAction::Ask);
     assert_eq!(global.matched_rule.scope, "global");
 
-    let tool = parsed.evaluate("read", &serde_json::json!({}));
+    let tool = parsed.evaluate("read", &args_map!({}));
     assert_eq!(tool.action, PermissionAction::Allow);
     assert_eq!(tool.matched_rule.scope, "tool");
 
-    let nested = parsed.evaluate(
-        "shell",
-        &serde_json::json!({"command": "kubectl delete ns prod"}),
-    );
+    let nested = parsed.evaluate("shell", &args_map!({"command": "kubectl delete ns prod"}));
     assert_eq!(nested.action, PermissionAction::Deny);
     assert_eq!(nested.matched_rule.scope, "nested");
 }
@@ -53,7 +57,7 @@ fn command_matching_normalizes_whitespace() {
     let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let decision = parsed.evaluate(
         "shell",
-        &serde_json::json!({"command": "   kubectl    delete   pod   foo   "}),
+        &args_map!({"command": "   kubectl    delete   pod   foo   "}),
     );
     assert_eq!(decision.action, PermissionAction::Deny);
 }
@@ -61,7 +65,7 @@ fn command_matching_normalizes_whitespace() {
 #[test]
 fn missing_command_uses_deterministic_safe_fallback_with_diagnostics() {
     let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
-    let decision = parsed.evaluate("shell", &serde_json::json!({}));
+    let decision = parsed.evaluate("shell", &args_map!({}));
     assert_eq!(decision.action, PermissionAction::Ask);
     assert!(
         decision
@@ -82,7 +86,7 @@ fn redundant_nested_star_equal_to_inherited_is_valid_noop_with_diagnostic() {
     )
     .expect("valid toml");
     let parsed = PermissionsConfig::from_toml(&value, true);
-    let decision = parsed.evaluate("shell", &serde_json::json!({"command": "echo hi"}));
+    let decision = parsed.evaluate("shell", &args_map!({"command": "echo hi"}));
 
     assert_eq!(decision.action, PermissionAction::Ask);
     assert!(
@@ -97,7 +101,7 @@ fn redundant_nested_star_equal_to_inherited_is_valid_noop_with_diagnostic() {
 fn ask_choices_apply_once_always_and_deny() {
     let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let mut cache = SessionGrantCache::default();
-    let args = serde_json::json!({"command": "echo hi"});
+    let args = args_map!({"command": "echo hi"});
 
     let base = parsed.evaluate("shell", &args);
     assert_eq!(base.action, PermissionAction::Ask);
@@ -142,8 +146,8 @@ fn ask_choices_apply_once_always_and_deny() {
 fn session_grants_are_keyed_by_scoped_request_context_not_call_arguments() {
     let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
     let mut cache = SessionGrantCache::default();
-    let first_args = serde_json::json!({"command": "echo one"});
-    let second_args = serde_json::json!({"command": "echo two"});
+    let first_args = args_map!({"command": "echo one"});
+    let second_args = args_map!({"command": "echo two"});
 
     let first = parsed.evaluate("shell", &first_args);
     let second = parsed.evaluate("shell", &second_args);
@@ -173,7 +177,7 @@ fn allow_always_for_shell_does_not_leak_to_read_under_global_ask() {
     let parsed = PermissionsConfig::from_toml(&value, true);
     let mut cache = SessionGrantCache::default();
 
-    let shell_args = serde_json::json!({"command": "echo one"});
+    let shell_args = args_map!({"command": "echo one"});
     let shell_decision = parsed.evaluate("shell", &shell_args);
     let _ = apply_ask_choice(
         shell_decision,
@@ -184,7 +188,7 @@ fn allow_always_for_shell_does_not_leak_to_read_under_global_ask() {
         &shell_args,
     );
 
-    let read_args = serde_json::json!({"filePath": "README.md"});
+    let read_args = args_map!({"filePath": "README.md"});
     let read = parsed.evaluate("read", &read_args);
     assert_eq!(read.matched_rule.identity, "global:*");
     let overridden = apply_session_grant_override(read, &cache, "read", "closure", &read_args);
@@ -202,7 +206,7 @@ fn same_rule_identity_different_tool_name_does_not_share_session_grant() {
     let parsed = PermissionsConfig::from_toml(&value, true);
     let mut cache = SessionGrantCache::default();
 
-    let glob_args = serde_json::json!({"pattern": "**/*.rs"});
+    let glob_args = args_map!({"pattern": "**/*.rs"});
     let glob = parsed.evaluate("glob", &glob_args);
     let _ = apply_ask_choice(
         glob,
@@ -213,7 +217,7 @@ fn same_rule_identity_different_tool_name_does_not_share_session_grant() {
         &glob_args,
     );
 
-    let read_args = serde_json::json!({"filePath": "README.md"});
+    let read_args = args_map!({"filePath": "README.md"});
     let read = parsed.evaluate("read", &read_args);
     assert_eq!(read.matched_rule.identity, "global:*");
     let overridden = apply_session_grant_override(read, &cache, "read", "closure", &read_args);
@@ -232,7 +236,7 @@ fn same_tool_name_different_mode_does_not_share_session_grant() {
     let parsed = PermissionsConfig::from_toml(&value, true);
     let mut cache = SessionGrantCache::default();
 
-    let preview_args = serde_json::json!({
+    let preview_args = args_map!({
         "path": "file.txt",
         "mode": "preview"
     });
@@ -246,7 +250,7 @@ fn same_tool_name_different_mode_does_not_share_session_grant() {
         &preview_args,
     );
 
-    let apply_args = serde_json::json!({
+    let apply_args = args_map!({
         "path": "file.txt",
         "mode": "apply"
     });
@@ -267,7 +271,7 @@ fn same_tool_name_same_mode_different_source_does_not_share_session_grant() {
     let parsed = PermissionsConfig::from_toml(&value, true);
     let mut cache = SessionGrantCache::default();
 
-    let args = serde_json::json!({
+    let args = args_map!({
         "path": "file.txt",
         "mode": "apply"
     });
@@ -300,7 +304,7 @@ fn same_tool_source_mode_different_rule_identity_does_not_share_session_grant() 
     let parsed = PermissionsConfig::from_toml(&value, true);
     let mut cache = SessionGrantCache::default();
 
-    let echo_args = serde_json::json!({"command": "echo one"});
+    let echo_args = args_map!({"command": "echo one"});
     let echo_decision = parsed.evaluate("shell", &echo_args);
     assert_eq!(
         echo_decision.matched_rule.identity,
@@ -315,7 +319,7 @@ fn same_tool_source_mode_different_rule_identity_does_not_share_session_grant() 
         &echo_args,
     );
 
-    let ls_args = serde_json::json!({"command": "ls -la"});
+    let ls_args = args_map!({"command": "ls -la"});
     let ls_decision = parsed.evaluate("shell", &ls_args);
     assert_eq!(
         ls_decision.matched_rule.identity,
@@ -330,12 +334,12 @@ fn same_tool_source_mode_different_rule_identity_does_not_share_session_grant() 
 fn defaults_apply_when_permissions_block_is_missing() {
     let parsed = PermissionsConfig::safe_defaults(true);
     assert_eq!(
-        parsed.evaluate("read", &serde_json::json!({})).action,
+        parsed.evaluate("read", &args_map!({})).action,
         PermissionAction::Allow
     );
     assert_eq!(
         parsed
-            .evaluate("shell", &serde_json::json!({"command": "kubectl get pods"}))
+            .evaluate("shell", &args_map!({"command": "kubectl get pods"}))
             .action,
         PermissionAction::Ask
     );
@@ -346,7 +350,7 @@ fn allow_always_grant_is_session_only_and_resets_with_new_cache() {
     let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
 
     let mut first_session_cache = SessionGrantCache::default();
-    let first_args = serde_json::json!({"command": "echo one"});
+    let first_args = args_map!({"command": "echo one"});
     let first = parsed.evaluate("shell", &first_args);
     let _ = apply_ask_choice(
         first.clone(),
@@ -366,7 +370,7 @@ fn allow_always_grant_is_session_only_and_resets_with_new_cache() {
     assert_eq!(first_overridden.action, PermissionAction::Allow);
 
     let fresh_session_cache = SessionGrantCache::default();
-    let second_args = serde_json::json!({"command": "echo two"});
+    let second_args = args_map!({"command": "echo two"});
     let second = parsed.evaluate("shell", &second_args);
     let second_overridden = apply_session_grant_override(
         second,
@@ -420,15 +424,15 @@ glob = "deny"
     let merged = base.with_overlay(&overlay);
 
     assert_eq!(
-        merged.evaluate("read", &serde_json::json!({})).action,
+        merged.evaluate("read", &args_map!({})).action,
         PermissionAction::Deny
     );
     assert_eq!(
-        merged.evaluate("glob", &serde_json::json!({})).action,
+        merged.evaluate("glob", &args_map!({})).action,
         PermissionAction::Deny
     );
     assert_eq!(
-        merged.evaluate("grep", &serde_json::json!({})).action,
+        merged.evaluate("grep", &args_map!({})).action,
         PermissionAction::Allow
     );
 }
@@ -462,22 +466,19 @@ fn additive_overlay_merges_nested_command_deterministically() {
 
     assert_eq!(
         merged
-            .evaluate("shell", &serde_json::json!({"command": "kubectl get pods"}))
+            .evaluate("shell", &args_map!({"command": "kubectl get pods"}))
             .action,
         PermissionAction::Allow
     );
     assert_eq!(
         merged
-            .evaluate(
-                "shell",
-                &serde_json::json!({"command": "kubectl delete pod x"})
-            )
+            .evaluate("shell", &args_map!({"command": "kubectl delete pod x"}))
             .action,
         PermissionAction::Deny
     );
     assert_eq!(
         merged
-            .evaluate("shell", &serde_json::json!({"command": "echo hi"}))
+            .evaluate("shell", &args_map!({"command": "echo hi"}))
             .action,
         PermissionAction::Deny
     );
@@ -485,7 +486,7 @@ fn additive_overlay_merges_nested_command_deterministically() {
     let merged_again = base.with_overlay(&overlay);
     assert_eq!(
         merged_again
-            .evaluate("shell", &serde_json::json!({"command": "echo hi"}))
+            .evaluate("shell", &args_map!({"command": "echo hi"}))
             .action,
         PermissionAction::Deny
     );
@@ -820,14 +821,14 @@ read = "allow"
 #[test]
 fn safe_defaults_tui_mode_global_ask() {
     let config = PermissionsConfig::safe_defaults(true);
-    let decision = config.evaluate("unknown_tool", &serde_json::json!({}));
+    let decision = config.evaluate("unknown_tool", &args_map!({}));
     assert_eq!(decision.action, PermissionAction::Ask);
 }
 
 #[test]
 fn safe_defaults_tty_mode_global_deny() {
     let config = PermissionsConfig::safe_defaults(false);
-    let decision = config.evaluate("unknown_tool", &serde_json::json!({}));
+    let decision = config.evaluate("unknown_tool", &args_map!({}));
     assert_eq!(decision.action, PermissionAction::Deny);
 }
 
@@ -850,28 +851,28 @@ fn safe_defaults_tty_mode_hides_unknown_tools() {
 #[test]
 fn ast_query_tool_permission_defaults_to_allow() {
     let config = PermissionsConfig::safe_defaults(true);
-    let decision = config.evaluate("ast_query", &serde_json::json!({}));
+    let decision = config.evaluate("ast_query", &args_map!({}));
     assert_eq!(decision.action, PermissionAction::Allow);
 }
 
 #[test]
 fn ast_nodes_tool_permission_defaults_to_allow() {
     let config = PermissionsConfig::safe_defaults(true);
-    let decision = config.evaluate("ast_nodes", &serde_json::json!({}));
+    let decision = config.evaluate("ast_nodes", &args_map!({}));
     assert_eq!(decision.action, PermissionAction::Allow);
 }
 
 #[test]
 fn ast_refs_tool_permission_defaults_to_allow() {
     let config = PermissionsConfig::safe_defaults(true);
-    let decision = config.evaluate("ast_refs", &serde_json::json!({}));
+    let decision = config.evaluate("ast_refs", &args_map!({}));
     assert_eq!(decision.action, PermissionAction::Allow);
 }
 
 #[test]
 fn ast_tree_tool_permission_defaults_to_allow() {
     let config = PermissionsConfig::safe_defaults(true);
-    let decision = config.evaluate("ast_tree", &serde_json::json!({}));
+    let decision = config.evaluate("ast_tree", &args_map!({}));
     assert_eq!(decision.action, PermissionAction::Allow);
 }
 
@@ -883,7 +884,7 @@ fn clear_empties_all_grants() {
     let mut cache = SessionGrantCache::default();
 
     // Insert grants for multiple tools
-    let shell_args = serde_json::json!({"command": "echo one"});
+    let shell_args = args_map!({"command": "echo one"});
     let shell_decision = parsed.evaluate("shell", &shell_args);
     let _ = apply_ask_choice(
         shell_decision,
@@ -894,7 +895,7 @@ fn clear_empties_all_grants() {
         &shell_args,
     );
 
-    let read_args = serde_json::json!({"filePath": "README.md"});
+    let read_args = args_map!({"filePath": "README.md"});
     let read_decision = parsed.evaluate("read", &read_args);
     let _ = apply_ask_choice(
         read_decision,
@@ -905,7 +906,7 @@ fn clear_empties_all_grants() {
         &read_args,
     );
 
-    let glob_args = serde_json::json!({"pattern": "**/*.rs"});
+    let glob_args = args_map!({"pattern": "**/*.rs"});
     let glob_decision = parsed.evaluate("glob", &glob_args);
     let _ = apply_ask_choice(
         glob_decision,
@@ -957,7 +958,7 @@ fn clear_on_empty_cache() {
 
     // Verify still empty
     let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
-    let args = serde_json::json!({"command": "echo test"});
+    let args = args_map!({"command": "echo test"});
     let decision = parsed.evaluate("shell", &args);
     assert_eq!(
         apply_session_grant_override(decision, &cache, "shell", "closure", &args).action,
@@ -973,7 +974,7 @@ fn clear_for_server_removes_only_matching_prefix() {
     let mut cache = SessionGrantCache::default();
 
     // Insert grants for context7__* tools, gh__* tool, and a local tool
-    let context7_search_args = serde_json::json!({"query": "test"});
+    let context7_search_args = args_map!({"query": "test"});
     let context7_search_decision = parsed.evaluate("context7__search", &context7_search_args);
     let _ = apply_ask_choice(
         context7_search_decision,
@@ -984,7 +985,7 @@ fn clear_for_server_removes_only_matching_prefix() {
         &context7_search_args,
     );
 
-    let context7_fetch_args = serde_json::json!({"url": "https://example.com"});
+    let context7_fetch_args = args_map!({"url": "https://example.com"});
     let context7_fetch_decision = parsed.evaluate("context7__fetch", &context7_fetch_args);
     let _ = apply_ask_choice(
         context7_fetch_decision,
@@ -995,7 +996,7 @@ fn clear_for_server_removes_only_matching_prefix() {
         &context7_fetch_args,
     );
 
-    let gh_list_prs_args = serde_json::json!({});
+    let gh_list_prs_args = args_map!({});
     let gh_list_prs_decision = parsed.evaluate("gh__list_prs", &gh_list_prs_args);
     let _ = apply_ask_choice(
         gh_list_prs_decision,
@@ -1006,7 +1007,7 @@ fn clear_for_server_removes_only_matching_prefix() {
         &gh_list_prs_args,
     );
 
-    let shell_args = serde_json::json!({"command": "echo test"});
+    let shell_args = args_map!({"command": "echo test"});
     let shell_decision = parsed.evaluate("shell", &shell_args);
     let _ = apply_ask_choice(
         shell_decision,
@@ -1120,7 +1121,7 @@ fn clear_for_server_with_no_matching_grants() {
     let mut cache = SessionGrantCache::default();
 
     // Insert grants for gh__* tools only
-    let gh_list_prs_args = serde_json::json!({});
+    let gh_list_prs_args = args_map!({});
     let gh_list_prs_decision = parsed.evaluate("gh__list_prs", &gh_list_prs_args);
     let _ = apply_ask_choice(
         gh_list_prs_decision,
@@ -1131,7 +1132,7 @@ fn clear_for_server_with_no_matching_grants() {
         &gh_list_prs_args,
     );
 
-    let gh_get_pr_args = serde_json::json!({"number": 1});
+    let gh_get_pr_args = args_map!({"number": 1});
     let gh_get_pr_decision = parsed.evaluate("gh__get_pr", &gh_get_pr_args);
     let _ = apply_ask_choice(
         gh_get_pr_decision,
@@ -1182,7 +1183,7 @@ fn clear_for_server_empty_cache() {
 
     // Verify still empty
     let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
-    let args = serde_json::json!({"command": "echo test"});
+    let args = args_map!({"command": "echo test"});
     let decision = parsed.evaluate("shell", &args);
     assert_eq!(
         apply_session_grant_override(decision, &cache, "shell", "closure", &args).action,
@@ -1196,7 +1197,7 @@ fn clear_for_server_exact_prefix_match_only() {
     let mut cache = SessionGrantCache::default();
 
     // Insert context7__search and context7x__search
-    let context7_search_args = serde_json::json!({"query": "test"});
+    let context7_search_args = args_map!({"query": "test"});
     let context7_search_decision = parsed.evaluate("context7__search", &context7_search_args);
     let _ = apply_ask_choice(
         context7_search_decision,
@@ -1207,7 +1208,7 @@ fn clear_for_server_exact_prefix_match_only() {
         &context7_search_args,
     );
 
-    let context7x_search_args = serde_json::json!({"query": "other"});
+    let context7x_search_args = args_map!({"query": "other"});
     let context7x_search_decision = parsed.evaluate("context7x__search", &context7x_search_args);
     let _ = apply_ask_choice(
         context7x_search_decision,

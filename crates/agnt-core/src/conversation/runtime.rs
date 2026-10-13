@@ -209,7 +209,7 @@ where
         );
 
         // Provider dispatch - build model from cached client
-        self.provider.ensure_client_cached()?;
+        self.provider.ensure_client_cached().await?;
 
         // Compute filtered tool definitions before entering the mutable borrow scope
         let visible_tool_definitions = self.tools.active_definitions(
@@ -362,13 +362,13 @@ where
 impl<Prov, Tools, Sess, Persona, Multi> ModelSwitching
     for AgentRuntime<Prov, Tools, Sess, Persona, Multi>
 where
-    Prov: ProviderManager,
-    Tools: ToolManager,
-    Sess: SessionManager,
-    Persona: PersonaManager,
-    Multi: MultiAgentManager,
+    Prov: ProviderManager + Send,
+    Tools: ToolManager + Send,
+    Sess: SessionManager + Send,
+    Persona: PersonaManager + Send,
+    Multi: MultiAgentManager + Send,
 {
-    fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
+    async fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
         let identity = self.provider.switch_model(model_spec)?;
         let max_tokens = self.max_context_tokens();
         // Erase the newly-cached concrete model into a `DynModel<Completion>`
@@ -376,12 +376,16 @@ where
         // the new model; an in-flight turn keeps the model it already cloned.
         // The model is built from the bare model name via the canonical
         // constructor.
-        let new_model = self.provider.build_dyn_model().map_err(|e| e.to_string())?;
+        let new_model = self
+            .provider
+            .build_dyn_model()
+            .await
+            .map_err(|e| e.to_string())?;
         *self.dyn_model.lock().expect("model mutex poisoned") = new_model;
         Ok((identity, max_tokens))
     }
 
-    fn switch_agent(&mut self, agent_name: &str) -> Result<String, String> {
+    async fn switch_agent(&mut self, agent_name: &str) -> Result<String, String> {
         let cwd = self
             .mcp_state
             .mcp_caller_cwd()
@@ -397,7 +401,7 @@ where
             let _ = self.provider.switch_model(&model);
             // Rebuild the shared model from the bare model name so the
             // persona's model serves the next turn (mirrors switch_model).
-            if let Ok(new_model) = self.provider.build_dyn_model() {
+            if let Ok(new_model) = self.provider.build_dyn_model().await {
                 *self.dyn_model.lock().expect("model mutex poisoned") = new_model;
             }
         }

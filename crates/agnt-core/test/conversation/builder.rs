@@ -120,8 +120,8 @@ fn full_precedence_default_then_plugin_then_cli() {
 // ── builtin_tool_definitions ─────────────────────────────────────────────────
 
 #[test]
-fn builtin_tool_registration_contains_exact_unprefixed_names() {
-    let names = builtin_tool_definitions()
+fn builtin_tool_registration_contains_exact_unprefixed_names() -> Result<()> {
+    let names = builtin_tool_definitions()?
         .into_iter()
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
@@ -146,23 +146,25 @@ fn builtin_tool_registration_contains_exact_unprefixed_names() {
             "ast_tree"
         ]
     );
+    Ok(())
 }
 
 #[test]
-fn builtin_tool_registration_explicitly_rejects_prefixed_names() {
-    let names = builtin_tool_definitions()
+fn builtin_tool_registration_explicitly_rejects_prefixed_names() -> Result<()> {
+    let names = builtin_tool_definitions()?
         .into_iter()
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
 
     assert!(!names.iter().any(|name| name.starts_with("fs__")));
     assert!(!names.iter().any(|name| name.starts_with("tool__")));
+    Ok(())
 }
 
 #[test]
 fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_fields() -> Result<()>
 {
-    let edit = builtin_tool_definitions()
+    let edit = builtin_tool_definitions()?
         .into_iter()
         .find(|tool| tool.name == "edit")
         .ok_or("edit tool definition")?;
@@ -195,7 +197,7 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_f
 
 #[test]
 fn builtin_tmux_pane_definition_has_window_property() -> Result<()> {
-    let pane = builtin_tool_definitions()
+    let pane = builtin_tool_definitions()?
         .into_iter()
         .find(|tool| tool.name == "tmux_pane")
         .ok_or("tmux_pane tool definition")?;
@@ -217,7 +219,7 @@ fn builtin_tmux_pane_definition_has_window_property() -> Result<()> {
 
 #[test]
 fn builtin_path_and_directory_parameters_mention_relative_paths() -> Result<()> {
-    let tools = builtin_tool_definitions();
+    let tools = builtin_tool_definitions()?;
 
     for tool in &tools {
         let properties = tool.parameters["properties"]
@@ -245,18 +247,19 @@ fn builtin_path_and_directory_parameters_mention_relative_paths() -> Result<()> 
 // ── messaging_tool_definitions ───────────────────────────────────────────────
 
 #[test]
-fn messaging_tool_registration_contains_only_send_message() {
-    let names = messaging_tool_definitions()
+fn messaging_tool_registration_contains_only_send_message() -> Result<()> {
+    let names = messaging_tool_definitions()?
         .into_iter()
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
 
     assert_eq!(names, vec!["send_message"]);
+    Ok(())
 }
 
 #[test]
 fn send_message_description_explains_delivery_semantics() -> Result<()> {
-    let defs = messaging_tool_definitions();
+    let defs = messaging_tool_definitions()?;
     let send = defs
         .iter()
         .find(|d| d.name == "send_message")
@@ -287,27 +290,29 @@ fn send_message_description_explains_delivery_semantics() -> Result<()> {
 // ── orchestrator_tool_definitions ────────────────────────────────────────────
 
 #[test]
-fn orchestrator_tool_registration_contains_exact_names() {
-    let names = orchestrator_tool_definitions(&[])
+fn orchestrator_tool_registration_contains_exact_names() -> Result<()> {
+    let names = orchestrator_tool_definitions(&[])?
         .into_iter()
         .map(|tool| tool.name)
         .collect::<Vec<_>>();
 
     assert_eq!(names, vec!["spawn_agent", "terminate_agent"]);
+    Ok(())
 }
 
 #[test]
-fn orchestrator_tool_description_shows_no_agents_message_when_empty() {
-    let defs = orchestrator_tool_definitions(&[]);
+fn orchestrator_tool_description_shows_no_agents_message_when_empty() -> Result<()> {
+    let defs = orchestrator_tool_definitions(&[])?;
     let desc = &defs[0].description;
     assert!(
         desc.contains("No agent personas found"),
         "Expected no-agents message, got: {desc}"
     );
+    Ok(())
 }
 
 #[test]
-fn orchestrator_tool_description_lists_available_agents() {
+fn orchestrator_tool_description_lists_available_agents() -> Result<()> {
     let agents = vec![
         PersonaSummary {
             name: "coder".to_string(),
@@ -320,7 +325,7 @@ fn orchestrator_tool_description_lists_available_agents() {
             builtin: false,
         },
     ];
-    let defs = orchestrator_tool_definitions(&agents);
+    let defs = orchestrator_tool_definitions(&agents)?;
     let desc = &defs[0].description;
     assert!(
         desc.contains("coder: Writes code"),
@@ -335,4 +340,5 @@ fn orchestrator_tool_description_lists_available_agents() {
         "Expected send_message mention, got: {desc}"
     );
     assert!(desc.contains("tmux"), "Expected tmux mention, got: {desc}");
+    Ok(())
 }

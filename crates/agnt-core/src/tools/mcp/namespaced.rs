@@ -1,4 +1,5 @@
 use crate::tools::limits::truncate_tool_output;
+use crate::types::EmptyToolName;
 use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use rmcp::handler::client::ClientHandler;
 use rmcp::model::ClientInfo;
@@ -87,6 +88,10 @@ impl NamespacedTool {
 ///
 /// This replaces the old pattern of wrapping rig's (now private) `McpTool` in a
 /// `NamespacedTool`. The tool name is already namespaced (e.g. `server__tool`).
+///
+/// # Errors
+///
+/// Returns [`EmptyToolName`] when `name` is empty.
 fn build_mcp_dynamic_tool(
     name: String,
     description: String,
@@ -94,55 +99,65 @@ fn build_mcp_dynamic_tool(
     client: rmcp::service::ServerSink,
     max_tool_result_bytes: usize,
     raw_name: String,
-) -> DynamicTool {
-    DynamicTool::new(name, description, parameters, move |args| {
-        let client = client.clone();
-        let raw_name = raw_name.clone();
-        Box::pin(async move {
-            // Serialize args to string for MCP parsing
-            let args_str = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
+) -> Result<DynamicTool, EmptyToolName> {
+    let name = crate::types::ToolName::new(name)?;
 
-            // Parse JSON arguments for MCP
-            let arguments = parse_mcp_arguments(&args_str).map_err(|error| {
-                ToolExecutionError::invalid_args(format!(
-                    "MCP tool received invalid arguments: {error}"
-                ))
-                .with_source(error)
-            })?;
+    Ok(DynamicTool::new(
+        name,
+        description,
+        parameters,
+        move |args| {
+            let client = client.clone();
+            let raw_name = raw_name.clone();
+            Box::pin(async move {
+                // Serialize args to string for MCP parsing
+                let args_str = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
 
-            let request = arguments
-                .map(|args| {
-                    rmcp::model::CallToolRequestParams::new(raw_name.clone()).with_arguments(args)
-                })
-                .unwrap_or_else(|| rmcp::model::CallToolRequestParams::new(raw_name.clone()));
-
-            // Call the MCP server
-            let result = call_mcp_tool(&client, request, Some(DEFAULT_MCP_TOOL_TIMEOUT))
-                .await
-                .map_err(|error| {
-                    ToolExecutionError::provider(format!("MCP tool request failed: {error}"))
-                        .with_source(error)
+                // Parse JSON arguments for MCP
+                let arguments = parse_mcp_arguments(&args_str).map_err(|error| {
+                    ToolExecutionError::invalid_args(format!(
+                        "MCP tool received invalid arguments: {error}"
+                    ))
+                    .with_source(error)
                 })?;
 
-            let is_error = result.is_error == Some(true);
-            let output = mcp_result_output(&result).map_err(|error| {
-                ToolExecutionError::provider(format!("MCP tool result conversion failed: {error}"))
+                let request = arguments
+                    .map(|args| {
+                        rmcp::model::CallToolRequestParams::new(raw_name.clone())
+                            .with_arguments(args)
+                    })
+                    .unwrap_or_else(|| rmcp::model::CallToolRequestParams::new(raw_name.clone()));
+
+                // Call the MCP server
+                let result = call_mcp_tool(&client, request, Some(DEFAULT_MCP_TOOL_TIMEOUT))
+                    .await
+                    .map_err(|error| {
+                        ToolExecutionError::provider(format!("MCP tool request failed: {error}"))
+                            .with_source(error)
+                    })?;
+
+                let is_error = result.is_error == Some(true);
+                let output = mcp_result_output(&result).map_err(|error| {
+                    ToolExecutionError::provider(format!(
+                        "MCP tool result conversion failed: {error}"
+                    ))
                     .with_source(error)
-            })?;
+                })?;
 
-            // Apply truncation
-            let output = truncate_tool_output(output, max_tool_result_bytes);
+                // Apply truncation
+                let output = truncate_tool_output(output, max_tool_result_bytes);
 
-            if is_error {
-                Err(
-                    ToolExecutionError::other("MCP tool reported an execution error".to_string())
-                        .with_model_output(ToolOutput::text(output)),
-                )
-            } else {
-                Ok(ToolOutput::text(output))
-            }
-        })
-    })
+                if is_error {
+                    Err(ToolExecutionError::other(
+                        "MCP tool reported an execution error".to_string(),
+                    )
+                    .with_model_output(ToolOutput::text(output)))
+                } else {
+                    Ok(ToolOutput::text(output))
+                }
+            })
+        },
+    ))
 }
 
 /// Parse JSON args string into MCP-compatible arguments.
@@ -307,7 +322,7 @@ impl NamespacedClientHandler {
                     service.peer().clone(),
                     handler.max_tool_result_bytes,
                     tool.name.to_string(),
-                );
+                )?;
 
                 handler.tool_server_handle.add_dynamic_tool(dynamic_tool);
 
@@ -345,14 +360,20 @@ impl ClientHandler for NamespacedClientHandler {
         for tool in tools {
             let namespaced_name = format!("{}{}{}", self.server_prefix, self.delimiter, tool.name);
 
-            let dynamic_tool = build_mcp_dynamic_tool(
+            let dynamic_tool = match build_mcp_dynamic_tool(
                 namespaced_name.clone(),
                 tool.description.clone().unwrap_or_default().to_string(),
                 tool.schema_as_json_value(),
                 context.peer.clone(),
                 self.max_tool_result_bytes,
                 tool.name.to_string(),
-            );
+            ) {
+                Ok(tool) => tool,
+                Err(e) => {
+                    log::error!("Failed to build dynamic tool '{namespaced_name}': {e}");
+                    continue;
+                }
+            };
 
             self.tool_server_handle.add_dynamic_tool(dynamic_tool);
 
@@ -369,6 +390,9 @@ pub enum McpClientError {
 
     #[error("Failed to list tools: {0}")]
     ListToolsError(#[source] rmcp::service::ServiceError),
+
+    #[error("empty tool name")]
+    EmptyToolName(#[from] EmptyToolName),
 }
 
 #[cfg(test)]

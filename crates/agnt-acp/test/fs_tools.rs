@@ -24,7 +24,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// The standard `read` tool definition, as the runtime hands it to the ACP tool.
 fn read_definition() -> Result<ToolDefinition> {
-    builtin_tool_definitions()
+    builtin_tool_definitions()?
         .into_iter()
         .find(|def| def.name == "read")
         .ok_or_else(|| "builtin_tool_definitions must contain a 'read' tool".into())
@@ -138,7 +138,7 @@ fn cleanup_truncated_file(output: &str) {
 
 /// The standard `edit` tool definition, as the runtime hands it to the ACP tool.
 fn edit_definition() -> Result<ToolDefinition> {
-    builtin_tool_definitions()
+    builtin_tool_definitions()?
         .into_iter()
         .find(|def| def.name == "edit")
         .ok_or_else(|| "builtin_tool_definitions must contain an 'edit' tool".into())

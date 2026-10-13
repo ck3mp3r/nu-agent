@@ -231,13 +231,16 @@ async fn a2a_completion_rx_buffers_while_worker_busy() -> Result<()> {
         .send(completion2)
         .await
         .map_err(|_| "completion-2 send failed")?;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // The busy worker must buffer completion-2, not dispatch it. Await the
+    // worker channel with a bounded budget: a dispatch would arrive
+    // immediately, expiry proves none was sent.
+    let dispatched = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        worker_rx.as_mut().ok_or("worker_rx present")?.recv(),
+    )
+    .await;
     assert!(
-        worker_rx
-            .as_mut()
-            .ok_or("worker_rx present")?
-            .try_recv()
-            .is_err(),
+        dispatched.is_err(),
         "completion-2 must not dispatch while the worker is busy"
     );
 

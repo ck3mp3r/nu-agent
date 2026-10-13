@@ -440,10 +440,18 @@ fn insert_exit_pending_j_is_true_within_timeout() {
 
 #[test]
 fn insert_exit_pending_j_is_false_after_timeout() {
-    let mut state = AppState::default();
+    // -- Setup & Fixtures: inject a short expiry so the window elapses without
+    // a real-time wait.
+    let mut state = AppState {
+        input: InputState::default().with_insert_exit_expiry(std::time::Duration::from_millis(10)),
+        ..Default::default()
+    };
     state.input.set_insert_exit_pending_j();
 
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    // -- Exec
+    std::thread::sleep(std::time::Duration::from_millis(30));
+
+    // -- Check
     assert!(!state.input.insert_exit_pending_j());
 }
 

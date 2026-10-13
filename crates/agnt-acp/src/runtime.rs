@@ -29,7 +29,7 @@ use agnt_core::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use agnt_core::tools::mcp::client::McpToolDefinition;
 use agnt_core::tools::mcp::config::{McpConfig, McpServerConfig};
 use agnt_core::tools::mcp::runtime::connect_servers;
-use agnt_core::types::{Completion, DynModel, ToolDefinition};
+use agnt_core::types::{Completion, DynModel, EmptyToolName, ToolDefinition, ToolName};
 
 use crate::engine_stub::AcpEngineStub;
 use crate::error::{AcpError, Result};
@@ -181,7 +181,9 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     let mut render_registry = ToolRenderRegistry::default();
     let mut acp_read_def: Option<ToolDefinition> = None;
     let mut acp_edit_def: Option<ToolDefinition> = None;
-    for def in builtin_tool_definitions() {
+    for def in builtin_tool_definitions()
+        .map_err(|e| AcpError::Runtime(format!("invalid builtin tool name: {e}")))?
+    {
         if client_fs_supported && def.name == "read" {
             acp_read_def = Some(def);
             continue;
@@ -252,8 +254,14 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     let mcp_registry = McpToolRegistry::from_tools(discovered_mcp_tools.clone())
         .map_err(|e| AcpError::Runtime(format!("failed to build MCP tool registry: {e}")))?;
 
-    let mut tool_definitions = builtin_tool_definitions();
-    tool_definitions.extend(discovered_mcp_tools.iter().map(mcp_tool_definition));
+    let mut tool_definitions = builtin_tool_definitions()
+        .map_err(|e| AcpError::Runtime(format!("invalid builtin tool name: {e}")))?;
+    let mcp_definitions = discovered_mcp_tools
+        .iter()
+        .map(mcp_tool_definition)
+        .collect::<core::result::Result<Vec<_>, EmptyToolName>>()
+        .map_err(|e| AcpError::Runtime(format!("invalid MCP tool name: {e}")))?;
+    tool_definitions.extend(mcp_definitions);
     let baseline_tool_definitions = tool_definitions.clone();
 
     // -- Permissions from config.toml. ACP prompts the client, so the
@@ -293,10 +301,12 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     let mut provider = ProviderState::new(config, Some(plugin_config.clone()));
     let dyn_model = provider
         .build_dyn_model()
+        .await
         .map_err(|e| AcpError::Runtime(format!("failed to build model: {e}")))?;
     let dyn_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(dyn_model));
     let compactor_model = provider
         .build_dyn_model()
+        .await
         .map_err(|e| AcpError::Runtime(format!("failed to build compactor model: {e}")))?;
     let compactor_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(compactor_model));
     let compactor = NuCompactor::from_shared_model(Arc::clone(&compactor_model), bus.clone(), None)
@@ -396,9 +406,11 @@ fn merge_mcp_servers(
     merged
 }
 
-fn mcp_tool_definition(tool: &McpToolDefinition) -> ToolDefinition {
-    ToolDefinition {
-        name: tool.name.clone(),
+fn mcp_tool_definition(
+    tool: &McpToolDefinition,
+) -> core::result::Result<ToolDefinition, EmptyToolName> {
+    Ok(ToolDefinition {
+        name: ToolName::new(tool.name.clone())?,
         description: tool
             .description
             .clone()
@@ -415,7 +427,7 @@ fn mcp_tool_definition(tool: &McpToolDefinition) -> ToolDefinition {
                 "required": ["args"]
             })
         }),
-    }
+    })
 }
 
 /// Map a shared config-load error to an ACP error.
@@ -435,6 +447,7 @@ fn map_config_load_error(err: agnt_core::config::ConfigLoadError) -> AcpError {
         ConfigLoadError::Resolve(msg) => {
             AcpError::Config(format!("failed to resolve model: {msg}"))
         }
+        ConfigLoadError::Vault(e) => AcpError::Config(e.to_string()),
     }
 }
 

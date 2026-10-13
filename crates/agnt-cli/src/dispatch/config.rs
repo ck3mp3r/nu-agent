@@ -47,6 +47,7 @@ fn map_config_load_error(err: config::ConfigLoadError) -> Error {
         ),
         ConfigLoadError::NoDefaultModel => "No model configured. Edit config.toml to add a model:\n  [models.default]\n  model = \"ollama-cloud/glm-5.2\"\n\nRun `agent models sync && agent models list` to see available models.".to_string(),
         ConfigLoadError::Resolve(msg) => format!("Failed to resolve model: {msg}"),
+        ConfigLoadError::Vault(e) => e.to_string(),
     };
     Error::Custom(message)
 }

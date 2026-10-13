@@ -73,7 +73,7 @@ async fn journey_hard_error_after_tool_results_session_remains_valid() -> Result
     }
 
     let (r1, _) = h
-        .turn_with_client("run something", &client, nu_shell_tool("result_42"))
+        .turn_with_client("run something", &client, nu_shell_tool("result_42")?)
         .await?;
     assert!(r1.is_err(), "turn 1 must fail with server error");
 
@@ -85,7 +85,7 @@ async fn journey_hard_error_after_tool_results_session_remains_valid() -> Result
     );
     // last message must be the synthetic assistant that closes the tool block
     assert!(
-        matches!(&msgs[3], rig::message::Message::Assistant { .. }),
+        matches!(&msgs[3], rig::message::Message::Assistant(_)),
         "last message must be Assistant, got: {:?}",
         msgs[3]
     );

@@ -31,7 +31,7 @@ async fn journey_tool_result_with_multibyte_utf8_at_byte_2000_does_not_panic() -
     // Byte 2000 of the tool result lands inside the 2-byte 'é'; before the
     // fix the trace preview sliced &result_text[..2000] and panicked here.
     let (r, _) = h
-        .turn("run it", model, nu_shell_multibyte_tool().await)
+        .turn("run it", model, nu_shell_multibyte_tool().await?)
         .await;
     assert!(
         r.is_ok(),

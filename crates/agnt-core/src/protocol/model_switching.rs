@@ -1,8 +1,14 @@
 /// Runtime capability for model and agent switching.
 pub trait ModelSwitching {
-    fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String>;
+    fn switch_model(
+        &mut self,
+        model_spec: &str,
+    ) -> impl std::future::Future<Output = Result<(String, Option<u64>), String>> + Send;
 
-    fn switch_agent(&mut self, agent_name: &str) -> Result<String, String>;
+    fn switch_agent(
+        &mut self,
+        agent_name: &str,
+    ) -> impl std::future::Future<Output = Result<String, String>> + Send;
 
     fn active_model_identity(&self) -> String;
 

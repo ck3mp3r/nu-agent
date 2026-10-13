@@ -28,6 +28,35 @@ pub fn sse_data_events(text: &str) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Poll `GET /tasks` until a task in `state` is visible, or `budget` expires.
+///
+/// Returns the task ID. Fails loud when the budget expires.
+pub async fn wait_for_task_in_state(
+    client: &reqwest::Client,
+    base_url: &str,
+    state: &str,
+    budget: Duration,
+) -> Result<String> {
+    let deadline = tokio::time::Instant::now() + budget;
+    let mut ticker = tokio::time::interval(Duration::from_millis(50));
+    loop {
+        ticker.tick().await;
+        let resp = client.get(format!("{base_url}/tasks")).send().await?;
+        let body: serde_json::Value = resp.json().await?;
+        let tasks = body["tasks"].as_array().ok_or("should have tasks array")?;
+        if let Some(id) = tasks
+            .iter()
+            .find(|t| t["status"]["state"] == state)
+            .and_then(|t| t["id"].as_str())
+        {
+            return Ok(id.to_string());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!("no task in state {state} visible within {budget:?}").into());
+        }
+    }
+}
+
 /// Assert the error metadata `timestamp` uses the spec §5.6.1 format
 /// `YYYY-MM-DDTHH:mm:ss.sssZ` — a `Z` suffix, never a `+00:00` offset.
 pub fn assert_timestamp_has_z_suffix(body: &serde_json::Value) {

@@ -22,8 +22,8 @@ async fn journey_corrupt_session_healed_by_repair_on_load() -> Result<()> {
     // The corrupt pattern: user(ToolResult) immediately followed by user(Text), no asst between.
     {
         use crate::types::{
-            AssistantContent, CallId, Message, ToolCall, ToolFunction, ToolName, ToolResult,
-            ToolResultContent, UserContent,
+            AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolName,
+            ToolResult, ToolResultContent, UserContent,
         };
 
         let session_file = path.join(format!("{}.jsonl", session_id));
@@ -43,22 +43,22 @@ async fn journey_corrupt_session_healed_by_repair_on_load() -> Result<()> {
             // user("run something")
             Message::user("run something"),
             // assistant(tool_call tc1 nu__shell)
-            Message::Assistant {
-                id: None,
-                content: vec![AssistantContent::ToolCall(ToolCall::new(
+            Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+                ToolCall::new(
                     CallId::from_wire("tc1"),
                     ToolFunction::new(
                         ToolName::new("nu__shell").expect("non-empty tool name"),
                         serde_json::json!({"command": "git pull"}),
                     ),
-                ))],
-            },
+                ),
+            )])),
             // user(tool_result tc1) — pure ToolResult message
             Message::User {
                 content: vec![UserContent::ToolResult(ToolResult {
                     call: CallId::from_wire("tc1"),
                     name: ToolName::new("nu__shell").expect("non-empty tool name"),
                     content: vec![ToolResultContent::text("Already up to date.")],
+                    is_error: false,
                 })],
             },
             // user("continue") — immediately after ToolResult, no assistant between them → CORRUPT
@@ -150,8 +150,8 @@ async fn journey_corrupt_session_healed_by_repair_on_load() -> Result<()> {
 #[tokio::test]
 async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
     use crate::types::{
-        AssistantContent, CallId, ToolCall, ToolFunction, ToolName, ToolResult, ToolResultContent,
-        UserContent,
+        AssistantContent, AssistantMessage, CallId, ToolCall, ToolFunction, ToolName, ToolResult,
+        ToolResultContent, UserContent,
     };
     use rig::memory::ConversationMemory;
 
@@ -162,19 +162,19 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
     let tc_id = "tc_gap6";
     let prior_messages: Vec<crate::types::Message> = vec![
         crate::types::Message::user("run something"),
-        crate::types::Message::Assistant {
-            id: None,
-            content: vec![AssistantContent::ToolCall(ToolCall::new(
+        crate::types::Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+            ToolCall::new(
                 CallId::from_wire(tc_id),
                 ToolFunction::new(ToolName::new("test_echo")?, serde_json::json!({})),
-            ))],
-        },
+            ),
+        )])),
         // Empty tool result — the key scenario for Gap 6
         crate::types::Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire(tc_id),
                 name: ToolName::new("test_echo").expect("non-empty tool name"),
                 content: vec![ToolResultContent::text("")],
+                is_error: false,
             })],
         },
         crate::types::Message::assistant("[ok]"),
@@ -229,27 +229,29 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
 // Null-args ToolCall repair integration test
 // ---------------------------------------------------------------------------
 
-/// Verifies that a session containing a ToolCall with `arguments: null` (the poison
-/// pattern from `on_invalid_tool_call` → Skip → rollback_messages) is transparently
-/// healed on load and the next turn succeeds.
+/// Verifies that a session containing a ToolCall whose arguments the model sent
+/// as something other than a JSON object (the poison pattern from
+/// `on_invalid_tool_call` → Skip → rollback_messages) is transparently healed on
+/// load and the next turn succeeds.
 ///
 /// The repair happens inside `JournalConversationMemory::load()` via `repair_messages()`.
-/// The `fix_null_tool_arguments` pass replaces `null` with `{}` before rig sees the history.
+/// The `fix_invalid_tool_arguments` pass clears `invalid_arguments` and resets the
+/// arguments to `{}` before rig sees the history.
 #[tokio::test]
-async fn journey_null_args_tool_call_repaired_on_load() {
+async fn journey_invalid_args_tool_call_repaired_on_load() {
     use std::io::Write;
 
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let path = temp_dir.path().to_path_buf();
-    let session_id = "journey-null-args-repair";
+    let session_id = "journey-invalid-args-repair";
     let config = test_config();
 
     // Write corrupt JSONL directly to the session file.
-    // The corrupt pattern: ToolCall with `arguments: null` and its matching ToolResult.
+    // The corrupt pattern: ToolCall with non-object arguments and its matching ToolResult.
     {
         use crate::types::{
-            AssistantContent, CallId, Message, ToolCall, ToolFunction, ToolName, ToolResult,
-            ToolResultContent, UserContent,
+            AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolName,
+            ToolResult, ToolResultContent, UserContent,
         };
 
         let session_file = path.join(format!("{session_id}.jsonl"));
@@ -271,23 +273,24 @@ async fn journey_null_args_tool_call_repaired_on_load() {
         let corrupt_messages: Vec<Message> = vec![
             // user("run something")
             Message::user("run something"),
-            // assistant(tool_call tc1 with null arguments) — THE POISON
-            Message::Assistant {
-                id: None,
-                content: vec![AssistantContent::ToolCall(ToolCall::new(
+            // assistant(tool_call tc1 with non-object arguments) — THE POISON
+            Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+                ToolCall::new(
                     CallId::from_wire("tc_poison"),
-                    ToolFunction::new(
-                        ToolName::new("tmux__send_and_capture").expect("non-empty tool name"),
-                        serde_json::Value::Null,
-                    ),
-                ))],
-            },
+                    ToolFunction {
+                        name: ToolName::new("tmux__send_and_capture").expect("non-empty tool name"),
+                        arguments: serde_json::Map::new(),
+                        invalid_arguments: Some("not an object".to_string()),
+                    },
+                ),
+            )])),
             // user(tool_result tc1 — the Skip reason)
             Message::User {
                 content: vec![UserContent::ToolResult(ToolResult {
                     call: CallId::from_wire("tc_poison"),
                     name: ToolName::new("tmux__send_and_capture").expect("non-empty tool name"),
                     content: vec![ToolResultContent::text("Tool not available")],
+                    is_error: false,
                 })],
             },
             // assistant closing text
@@ -328,9 +331,9 @@ async fn journey_null_args_tool_call_repaired_on_load() {
         )
         .await;
 
-    // The turn must succeed — repair healed the null-args poison on load.
+    // The turn must succeed — repair healed the invalid-args poison on load.
     assert!(
         outcome.is_ok(),
-        "turn must succeed after null-args ToolCall is repaired on load; got: {outcome:?}"
+        "turn must succeed after invalid-args ToolCall is repaired on load; got: {outcome:?}"
     );
 }

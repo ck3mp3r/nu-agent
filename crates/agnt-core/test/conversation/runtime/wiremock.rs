@@ -130,7 +130,7 @@ async fn switch_model_builds_handle_from_bare_model_name() -> Result<()> {
     // switch_model resolves the spec and invalidates the cache; the canonical
     // constructor then rebuilds the handle from the bare model name.
     let identity = state.switch_model("openai/glm-5.3-flash")?;
-    let handle = state.build_dyn_model()?;
+    let handle = state.build_dyn_model().await?;
     drive_completion(&handle).await?;
 
     // -- Check
@@ -167,7 +167,7 @@ async fn startup_builds_handle_from_bare_model_name() -> Result<()> {
     let mut state = crate::conversation::state::provider::ProviderState::new(config, None);
 
     // -- Exec
-    let handle = state.build_dyn_model()?;
+    let handle = state.build_dyn_model().await?;
     drive_completion(&handle).await?;
 
     // -- Check
@@ -212,7 +212,7 @@ async fn switch_agent_rebuilds_shared_handle_when_model_present() -> Result<()> 
         Some(openai_wiremock_plugin_config(&server.uri())),
     );
     let shared_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(state.build_dyn_model()?));
+        std::sync::Arc::new(std::sync::Mutex::new(state.build_dyn_model().await?));
 
     // -- Exec
     // Replicate switch_agent's model-rewrite block (runtime.rs:374-377).
@@ -222,7 +222,7 @@ async fn switch_agent_rebuilds_shared_handle_when_model_present() -> Result<()> 
     let persona_model = Some("openai/glm-5.3-flash".to_string());
     if let Some(model) = persona_model {
         let _ = state.switch_model(&model);
-        if let Ok(new_model) = state.build_dyn_model() {
+        if let Ok(new_model) = state.build_dyn_model().await {
             *shared_model
                 .lock()
                 .map_err(|_| "model mutex poisoned".to_string())? = new_model;
@@ -268,14 +268,14 @@ async fn switch_agent_keeps_shared_handle_when_no_model() -> Result<()> {
         Some(openai_wiremock_plugin_config(&server.uri())),
     );
     let shared_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(state.build_dyn_model()?));
+        std::sync::Arc::new(std::sync::Mutex::new(state.build_dyn_model().await?));
 
     // -- Exec
     // Replicate switch_agent's model-rewrite block with NO persona model.
     let persona_model: Option<String> = None;
     if let Some(model) = persona_model {
         let _ = state.switch_model(&model);
-        if let Ok(new_model) = state.build_dyn_model() {
+        if let Ok(new_model) = state.build_dyn_model().await {
             *shared_model
                 .lock()
                 .map_err(|_| "model mutex poisoned".to_string())? = new_model;

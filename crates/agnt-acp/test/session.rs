@@ -84,6 +84,7 @@ impl RuntimeBuilder for MockRuntimeBuilder {
         let mut provider = ProviderState::with_client(config, CachedProviderClient::Mock(model));
         let dyn_model = provider
             .build_dyn_model()
+            .await
             .map_err(|e| AcpError::Runtime(format!("failed to build mock model: {e}")))?;
         let compactor = NuCompactor::from_shared_model(
             Arc::new(Mutex::new(compactor_model.erase())),

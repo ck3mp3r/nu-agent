@@ -1,16 +1,10 @@
 use super::store::{CompactionMarker, SessionStore, StoreEntry};
-use crate::types::{AdditionalParams, Message, ToolResult, ToolResultContent, UserContent};
+use crate::types::{Message, UserContent};
 use rig::id::ConversationId;
 use rig::memory::{ConversationMemory, MemoryError};
 use rig::wasm_compat::WasmBoxedFuture;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-
-/// Key under `ToolResultContent::Text::additional_params` carrying the
-/// persisted success verdict for a tool result. Written by the
-/// `CachedMemory::append` stamp from verdicts recorded by the hook, read by
-/// the session resolver at rehydration (`session/resolver.rs`).
-pub(crate) const TOOL_SUCCESS_PARAM: &str = "nu_agent_success";
 
 /// A `ConversationMemory` implementation backed by any `S: SessionStore`.
 ///
@@ -31,7 +25,7 @@ pub struct CachedMemory<S: SessionStore + Clone + Send + Sync> {
     /// Track which conversation_ids have been persisted (for create vs append).
     persisted: Arc<Mutex<HashSet<String>>>,
     /// Tool-success verdicts recorded by the hook, keyed by provider call id.
-    /// Consumed by `append`: the verdict is stamped as `TOOL_SUCCESS_PARAM`
+    /// Consumed by `append`: the verdict is written as `ToolResult::is_error`
     /// on the persisted ToolResult with the matching call id, then removed.
     tool_verdicts: Arc<Mutex<HashMap<String, bool>>>,
     /// The backing session store.
@@ -68,8 +62,8 @@ impl<S: SessionStore + Clone + Send + Sync> CachedMemory<S> {
 
     /// Record the success verdict for a tool call id.
     ///
-    /// Called by the hook at tool completion. `append` stamps the verdict as
-    /// `TOOL_SUCCESS_PARAM` onto the persisted ToolResult with the matching
+    /// Called by the hook at tool completion. `append` writes the verdict as
+    /// `ToolResult::is_error` on the persisted ToolResult with the matching
     /// call id and consumes it — one verdict per call id.
     pub fn record_tool_verdict(&self, call_id: &str, success: bool) {
         self.tool_verdicts
@@ -310,9 +304,8 @@ impl<S: SessionStore + Clone + Send + Sync> ConversationMemory for CachedMemory<
 /// Stamp recorded verdicts onto the ToolResults of `message`.
 ///
 /// For each `UserContent::ToolResult` whose call id has a recorded verdict,
-/// the verdict is written as `TOOL_SUCCESS_PARAM` on the first
-/// `ToolResultContent::Text` block (merging into existing params) and the
-/// verdict is removed from `verdicts` — one shot per recorded verdict.
+/// the verdict is written as `ToolResult::is_error` and the verdict is removed
+/// from `verdicts` — one shot per recorded verdict.
 fn stamp_tool_verdicts(message: &mut Message, verdicts: &mut HashMap<String, bool>) {
     let Message::User { content } = message else {
         return;
@@ -324,25 +317,7 @@ fn stamp_tool_verdicts(message: &mut Message, verdicts: &mut HashMap<String, boo
         let Some(success) = verdicts.remove(result.call.wire().as_ref()) else {
             continue;
         };
-        stamp_tool_success(result, success);
-    }
-}
-
-/// Write `TOOL_SUCCESS_PARAM = success` on the first Text block of `result`,
-/// merging into existing additional params when present.
-fn stamp_tool_success(result: &mut ToolResult, success: bool) {
-    for block in result.content.iter_mut() {
-        if let ToolResultContent::Text(text) = block {
-            if let Some(verdict) =
-                AdditionalParams::from_entries([(TOOL_SUCCESS_PARAM, serde_json::json!(success))])
-            {
-                match text.additional_params.as_mut() {
-                    Some(params) => params.merge(verdict),
-                    None => text.additional_params = Some(verdict),
-                }
-            }
-            break;
-        }
+        result.is_error = !success;
     }
 }
 

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use rig::completion::message::{EmptyToolName, ToolName};
 use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -28,29 +29,38 @@ impl A2aToolAdapter {
     }
 
     /// Convert this adapter into a DynamicTool for registration with rig.
-    pub fn into_dynamic_tool(self) -> DynamicTool {
-        let name = self.tool_def.name.clone();
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmptyToolName`] when the tool definition carries an empty name.
+    pub fn into_dynamic_tool(self) -> Result<DynamicTool, EmptyToolName> {
+        let name = ToolName::new(self.tool_def.name.clone())?;
         let description = self.tool_def.description.clone();
         let parameters = self.tool_def.parameters.clone();
         let ctx = self.ctx;
 
-        DynamicTool::new(name.clone(), description, parameters, move |args| {
-            let ctx = ctx.clone();
-            let name = name.clone();
-            Box::pin(async move {
-                let result = handle_dispatch(&name, &ctx, args)
-                    .await
-                    .map_err(ToolExecutionError::provider)?;
+        Ok(DynamicTool::new(
+            name.clone(),
+            description,
+            parameters,
+            move |args| {
+                let ctx = ctx.clone();
+                let name = name.clone();
+                Box::pin(async move {
+                    let result = handle_dispatch(&name, &ctx, args)
+                        .await
+                        .map_err(ToolExecutionError::provider)?;
 
-                serde_json::to_string(&result)
-                    .map(ToolOutput::text)
-                    .map_err(|e| {
-                        ToolExecutionError::other(format!(
-                            "Failed to serialize A2A tool result: {e}"
-                        ))
-                    })
-            })
-        })
+                    serde_json::to_string(&result)
+                        .map(ToolOutput::text)
+                        .map_err(|e| {
+                            ToolExecutionError::other(format!(
+                                "Failed to serialize A2A tool result: {e}"
+                            ))
+                        })
+                })
+            },
+        ))
     }
 }
 

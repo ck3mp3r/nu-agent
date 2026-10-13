@@ -4,25 +4,27 @@ use super::{
 use nu_protocol::{BlockId, Span, Spanned, engine::Closure};
 use serde_json::json;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 struct MockEngine {
     source: String,
 }
 
 impl EngineInterfaceLike for MockEngine {
-    fn get_span_contents(&self, _span: Span) -> Result<Vec<u8>, String> {
+    fn get_span_contents(&self, _span: Span) -> core::result::Result<Vec<u8>, String> {
         Ok(self.source.as_bytes().to_vec())
     }
 }
 
 #[test]
-fn converts_closure_with_no_parameters() {
+fn converts_closure_with_no_parameters() -> Result<()> {
     let params = super::parse_closure_parameters("{|| 42}");
 
     let tool_def = closure_to_tool_definition(
         "constant".to_string(),
         &params,
         Some("Returns 42".to_string()),
-    );
+    )?;
 
     assert_eq!(tool_def.name, "constant");
     assert_eq!(tool_def.description, "Returns 42");
@@ -35,17 +37,18 @@ fn converts_closure_with_no_parameters() {
 
     let required = schema.get("required").expect("Should have required field");
     assert_eq!(required.as_array().unwrap().len(), 0);
+    Ok(())
 }
 
 #[test]
-fn converts_closure_with_one_parameter() {
+fn converts_closure_with_one_parameter() -> Result<()> {
     let params = super::parse_closure_parameters("{|x| $x * 2}");
 
     let tool_def = closure_to_tool_definition(
         "double".to_string(),
         &params,
         Some("Double a number".to_string()),
-    );
+    )?;
 
     assert_eq!(tool_def.name, "double");
 
@@ -56,17 +59,18 @@ fn converts_closure_with_one_parameter() {
 
     let required = schema.get("required").expect("Should have required field");
     assert!(required.as_array().unwrap().contains(&json!("x")));
+    Ok(())
 }
 
 #[test]
-fn converts_closure_with_two_parameters() {
+fn converts_closure_with_two_parameters() -> Result<()> {
     let params = super::parse_closure_parameters("{|x, y| $x + $y}");
 
     let tool_def = closure_to_tool_definition(
         "add".to_string(),
         &params,
         Some("Add two numbers".to_string()),
-    );
+    )?;
 
     assert_eq!(tool_def.name, "add");
 
@@ -82,13 +86,14 @@ fn converts_closure_with_two_parameters() {
     assert!(req_array.contains(&json!("x")));
     assert!(req_array.contains(&json!("y")));
     assert_eq!(req_array.len(), 2);
+    Ok(())
 }
 
 #[test]
-fn converts_closure_with_optional_parameter() {
+fn converts_closure_with_optional_parameter() -> Result<()> {
     let params = super::parse_closure_parameters("{|x, y?| $x + ($y | default 0)}");
 
-    let tool_def = closure_to_tool_definition("add_optional".to_string(), &params, None);
+    let tool_def = closure_to_tool_definition("add_optional".to_string(), &params, None)?;
 
     let schema = tool_def.parameters;
     let properties = schema.get("properties").expect("Should have properties");
@@ -102,17 +107,19 @@ fn converts_closure_with_optional_parameter() {
     assert!(req_array.contains(&json!("x")));
     assert!(!req_array.contains(&json!("y")));
     assert_eq!(req_array.len(), 1);
+    Ok(())
 }
 
 #[test]
-fn uses_default_description_when_none_provided() {
+fn uses_default_description_when_none_provided() -> Result<()> {
     let params = super::parse_closure_parameters("{|x| $x}");
 
-    let tool_def = closure_to_tool_definition("identity".to_string(), &params, None);
+    let tool_def = closure_to_tool_definition("identity".to_string(), &params, None)?;
 
     assert_eq!(tool_def.name, "identity");
     assert!(tool_def.description.starts_with("Nushell closure tool:"));
     assert!(tool_def.description.contains("identity"));
+    Ok(())
 }
 
 #[test]
@@ -257,7 +264,7 @@ fn create_test_closure() -> Spanned<Closure> {
 }
 
 #[test]
-fn closure_to_tool_definition_takes_params_not_engine() {
+fn closure_to_tool_definition_takes_params_not_engine() -> Result<()> {
     let params = vec![
         ClosureParameter {
             name: "city".to_string(),
@@ -268,7 +275,7 @@ fn closure_to_tool_definition_takes_params_not_engine() {
             is_required: false,
         },
     ];
-    let def = closure_to_tool_definition("weather".to_string(), &params, None);
+    let def = closure_to_tool_definition("weather".to_string(), &params, None)?;
     let schema: serde_json::Value = serde_json::from_str(&def.parameters.to_string()).unwrap();
     assert!(schema["properties"]["city"].is_object());
     assert!(
@@ -283,13 +290,14 @@ fn closure_to_tool_definition_takes_params_not_engine() {
             .unwrap()
             .contains(&serde_json::json!("unit"))
     );
+    Ok(())
 }
 
 #[test]
 fn resolve_closure_params_returns_empty_on_engine_error() {
     struct FailingEngine;
     impl EngineInterfaceLike for FailingEngine {
-        fn get_span_contents(&self, _span: Span) -> Result<Vec<u8>, String> {
+        fn get_span_contents(&self, _span: Span) -> core::result::Result<Vec<u8>, String> {
             Err("no active call context".to_string())
         }
     }

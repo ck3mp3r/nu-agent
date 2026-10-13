@@ -5,8 +5,15 @@
   cargoToml,
   cargoLock,
   overlays,
+  self,
 }: let
   supportedTargets = ["aarch64-darwin" "aarch64-linux" "x86_64-darwin" "x86_64-linux"];
+
+  # Short commit SHA injected into the build environment. Nix builds from a
+  # store source without `.git`, so `build.rs` cannot run `git rev-parse`.
+  # Nix pins `shortRev`/`dirtyShortRev` to 7 chars, so cut the full revision
+  # instead. `dirtyRev` carries a `-dirty` suffix past the 8-char cut.
+  gitSha = builtins.substring 0 8 (self.dirtyRev or self.rev or "unknown");
 
   # Install data for pre-built releases (will be generated during release)
   installData = {
@@ -47,6 +54,7 @@
     packageName = "nu-agent";
     archiveAndHash = false;
     nativeBuildInputs = [pkgs.pkg-config pkgs.gitMinimal pkgs.cacert];
+    extraArgs = {env.AGENT_GIT_SHA = gitSha;};
   };
 
   # Archive the combined derivation: .tgz with both binaries plus hashes.
@@ -66,6 +74,7 @@
     packageName = "archive";
     archiveAndHash = true;
     nativeBuildInputs = [pkgs.pkg-config pkgs.gitMinimal pkgs.cacert];
+    extraArgs = {env.AGENT_GIT_SHA = gitSha;};
   };
 
   # Named packages symlink into the combined derivation. They reference the

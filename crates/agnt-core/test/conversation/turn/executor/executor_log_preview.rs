@@ -77,7 +77,7 @@ async fn test_turn_executor_hard_error_log_preview_multibyte_utf8() -> Result<()
 async fn test_turn_executor_path_a_error_log_preview_multibyte_utf8() -> Result<()> {
     // -- Setup & Fixtures
     install_error_logger();
-    // max_tool_turns=0: rig raises MaxTurnsError as soon as a tool-call turn
+    // max_tool_turns=0: rig raises MaxTurns as soon as a tool-call turn
     // would be scheduled. No session id → the steering-retry branch is
     // skipped (session-less turns cannot append feedback) and the path-A
     // preview + error log run immediately.

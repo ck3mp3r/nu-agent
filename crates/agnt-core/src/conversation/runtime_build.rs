@@ -57,7 +57,9 @@ pub struct RuntimeBuildParams {
     pub render_registry: ToolRenderRegistry,
 }
 
-pub fn build_runtime(params: RuntimeBuildParams) -> Result<AgentConversationRuntime, LabeledError> {
+pub async fn build_runtime(
+    params: RuntimeBuildParams,
+) -> Result<AgentConversationRuntime, LabeledError> {
     use crate::conversation::compaction::compactor::NuCompactor;
     use crate::conversation::{
         state::mcp::McpState, state::memory::MemoryState, state::multi_agent::MultiAgentState,
@@ -95,6 +97,7 @@ pub fn build_runtime(params: RuntimeBuildParams) -> Result<AgentConversationRunt
     let mut provider = ProviderState::new(params.config, params.plugin_config);
     let dyn_model = provider
         .build_dyn_model()
+        .await
         .map_err(|e| LabeledError::new(format!("Failed to build model: {e}")))?;
     let dyn_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(dyn_model));
 
@@ -104,6 +107,7 @@ pub fn build_runtime(params: RuntimeBuildParams) -> Result<AgentConversationRunt
     // hook's compaction logic.
     let compactor_model = provider
         .build_dyn_model()
+        .await
         .map_err(|e| LabeledError::new(format!("Failed to build compactor model: {e}")))?;
     let compactor_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(compactor_model));
     let compactor =
