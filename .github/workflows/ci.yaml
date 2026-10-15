@@ -3,15 +3,21 @@ name: CI Build & Cache
 on:
   workflow_dispatch:
   push:
-    branches-ignore: []  # all branches
     paths:
-      - '**/*.nix'
-      - 'Cargo.lock'
-      - 'Cargo.toml'
-      - 'flake.lock'
-      - 'flake.nix'
-      - 'crates/**'
+      - "**/*.nix"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "flake.lock"
+      - "flake.nix"
+      - "crates/**"
   pull_request:
+    paths:
+      - "**/*.nix"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "flake.lock"
+      - "flake.nix"
+      - "crates/**"
 
 permissions:
   id-token: write
@@ -26,19 +32,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-cache:
-    runs-on: macos-latest
+  test:
+    name: Format, lint, and test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
     steps:
-      - name: Code checkout
+      - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v23
         with:
-          fetch-depth: 0  # full history for git diff
-
-      - name: Install Determinate Nix
-        run: curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm
-
-      - name: Setup CI Tools
-        uses: ck3mp3r/actions/ci-tools@main
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Format
         run: nix develop .#ci --command cargo fmt -- --check
@@ -59,6 +64,22 @@ jobs:
         with:
           name: junit-report
           path: target/nextest/ci/junit.xml
+
+  nix-build-cache:
+    name: Nix build & cache
+    runs-on: macos-latest
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    steps:
+      - name: Code checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history for git diff
+
+      - name: Install Determinate Nix
+        run: curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install --no-confirm
+
+      - name: Setup CI Tools
+        uses: ck3mp3r/actions/ci-tools@main
 
       - name: Build, test, and cache
         env:
