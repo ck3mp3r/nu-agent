@@ -6,99 +6,65 @@ use crate::tools::handler::ToolErrorKind;
 use std::path::Path;
 
 #[tokio::test]
-async fn missing_action_returns_validation_error() {
-    let bus = Bus::default();
-    let err = TmuxPaneTool::execute(
-        &serde_json::json!({ "session": "main" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-}
+async fn validation_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, serde_json::Value, Option<&str>)> = vec![
+        (
+            "missing action",
+            serde_json::json!({ "session": "main" }),
+            None,
+        ),
+        (
+            "missing session",
+            serde_json::json!({ "action": "list" }),
+            None,
+        ),
+        (
+            "unknown action",
+            serde_json::json!({ "action": "bogus", "session": "main" }),
+            Some("Unknown tmux_pane action"),
+        ),
+        (
+            "find requires name or context",
+            serde_json::json!({ "action": "find", "session": "main" }),
+            Some("requires 'name' or 'context'"),
+        ),
+        (
+            "send requires command",
+            serde_json::json!({ "action": "send", "session": "main" }),
+            Some("requires 'command'"),
+        ),
+        (
+            "split requires valid direction",
+            serde_json::json!({
+                "action": "split",
+                "session": "main",
+                "direction": "diagonal"
+            }),
+            Some("expected 'horizontal' or 'vertical'"),
+        ),
+        (
+            "kill requires force",
+            serde_json::json!({ "action": "kill", "session": "main" }),
+            Some("force: true"),
+        ),
+    ];
 
-#[tokio::test]
-async fn missing_session_returns_validation_error() {
+    // -- Exec & Check
     let bus = Bus::default();
-    let err = TmuxPaneTool::execute(
-        &serde_json::json!({ "action": "list" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-}
-
-#[tokio::test]
-async fn unknown_action_returns_validation_error() {
-    let bus = Bus::default();
-    let err = TmuxPaneTool::execute(
-        &serde_json::json!({ "action": "bogus", "session": "main" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(err.message.contains("Unknown tmux_pane action"));
-}
-
-#[tokio::test]
-async fn find_requires_name_or_context() {
-    let bus = Bus::default();
-    let err = TmuxPaneTool::execute(
-        &serde_json::json!({ "action": "find", "session": "main" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(err.message.contains("requires 'name' or 'context'"));
-}
-
-#[tokio::test]
-async fn send_requires_command() {
-    let bus = Bus::default();
-    let err = TmuxPaneTool::execute(
-        &serde_json::json!({ "action": "send", "session": "main" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(err.message.contains("requires 'command'"));
-}
-
-#[tokio::test]
-async fn split_requires_valid_direction() {
-    let bus = Bus::default();
-    let err = TmuxPaneTool::execute(
-        &serde_json::json!({ "action": "split", "session": "main", "direction": "diagonal" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(err.message.contains("expected 'horizontal' or 'vertical'"));
-}
-
-#[tokio::test]
-async fn kill_requires_force() {
-    let bus = Bus::default();
-    let err = TmuxPaneTool::execute(
-        &serde_json::json!({ "action": "kill", "session": "main" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(err.message.contains("force: true"));
+    for (name, args, expected_message) in cases {
+        let err = TmuxPaneTool::execute(&args, Path::new("/tmp"), &bus)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ToolErrorKind::Validation, "case '{name}': kind");
+        if let Some(message) = expected_message {
+            assert!(
+                err.message.contains(message),
+                "case '{name}': message must contain '{message}', got: {}",
+                err.message
+            );
+        }
+    }
 }
 
 #[test]

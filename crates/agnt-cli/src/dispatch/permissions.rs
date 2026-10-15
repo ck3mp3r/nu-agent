@@ -30,3 +30,11 @@ pub fn resolve_effective_permissions_from_clap(
 }
 
 // endregion: --- Functions
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/dispatch/permissions.rs"]
+mod permissions_test;
+
+// endregion: --- Tests

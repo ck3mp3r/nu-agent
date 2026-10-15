@@ -1,23 +1,25 @@
 use super::selection::TranscriptSelection;
 
 #[test]
-fn starts_at_provided_transcript_index() {
-    let at_top = TranscriptSelection::new(0);
-    assert_eq!(at_top.anchor(), 0);
-    assert_eq!(at_top.cursor(), 0);
-    assert_eq!(at_top.normalized_range(), (0, 0));
+fn transcript_selection_tracks_anchor_cursor_and_normalized_range() {
+    // -- Setup & Fixtures: selections anchored at the top and at the bottom.
+    let cases = [(0usize, (0usize, 0usize)), (42, (42, 42))];
 
-    let at_bottom = TranscriptSelection::new(42);
-    assert_eq!(at_bottom.anchor(), 42);
-    assert_eq!(at_bottom.cursor(), 42);
-    assert_eq!(at_bottom.normalized_range(), (42, 42));
-}
+    // -- Exec & Check
+    for (index, expected_range) in cases {
+        let selection = TranscriptSelection::new(index);
+        assert_eq!(selection.anchor(), index);
+        assert_eq!(selection.cursor(), index);
+        assert_eq!(selection.normalized_range(), expected_range);
+    }
 
-#[test]
-fn range_normalizes_when_anchor_is_greater_than_cursor() {
+    // -- Setup & Fixtures: a cursor moved above the anchor.
     let mut selection = TranscriptSelection::new(7);
+
+    // -- Exec
     selection.set_cursor(2);
 
+    // -- Check
     assert_eq!(selection.anchor(), 7);
     assert_eq!(selection.cursor(), 2);
     assert_eq!(selection.normalized_range(), (2, 7));

@@ -1,105 +1,56 @@
 use super::*;
 
+/// The command palette lists the canonical actions in order, filters
+/// case-insensitively on non-prefix queries, and exposes no info panel for the
+/// Agents action.
 #[test]
-fn command_palette_empty_query_returns_canonical_help_status_order_only() {
+fn command_palette_order_and_fuzzy_matching() -> Result<()> {
+    // -- Setup & Fixtures
     let mut state = AppState::default();
     open_command_palette_for_test(&mut state);
 
-    assert_eq!(
-        palette_ids(&state),
-        vec![
-            "Help", "Status", "MCPs", "Skills", "Models", "Agents", "Sessions", "Theme",
-        ]
-    );
-}
+    // -- Exec & Check: the canonical order.
+    let canonical = vec![
+        "Help", "Status", "MCPs", "Skills", "Models", "Agents", "Sessions", "Theme",
+    ];
+    assert_eq!(palette_ids(&state), canonical);
+    assert!(palette_ids(&state).contains(&"Models".to_string()));
+    assert!(palette_ids(&state).contains(&"Agents".to_string()));
 
-#[test]
-fn command_palette_empty_query_returns_canonical_help_status_mcps_skills_order() {
-    let mut state = AppState::default();
-    open_command_palette_for_test(&mut state);
-
-    assert_eq!(
-        palette_ids(&state),
-        vec![
-            "Help", "Status", "MCPs", "Skills", "Models", "Agents", "Sessions", "Theme",
-        ]
-    );
-}
-
-#[test]
-fn command_palette_fuzzy_matching_is_case_insensitive_and_non_prefix() {
-    let mut state = AppState::default();
-    open_command_palette_for_test(&mut state);
-
-    for ch in "HP".chars() {
-        state
-            .picker
-            .active_state_mut()
-            .unwrap()
-            .append_query_char(ch);
-    }
+    // -- Exec & Check: a case-insensitive non-prefix query.
+    type_query(&mut state, "HP")?;
     assert_eq!(palette_ids(&state), vec!["Help"]);
 
-    state.picker.active_state_mut().unwrap().query.clear();
-    for ch in "tS".chars() {
-        state
-            .picker
-            .active_state_mut()
-            .unwrap()
-            .append_query_char(ch);
-    }
+    // -- Exec & Check: a query matching multiple entries.
+    state
+        .picker
+        .active_state_mut()
+        .ok_or("palette should be open")?
+        .query
+        .clear();
+    type_query(&mut state, "tS")?;
     assert_eq!(palette_ids(&state), vec!["Status", "Agents"]);
-}
 
-#[test]
-fn command_palette_fuzzy_query_matches_mcps_entry() {
-    let mut state = AppState::default();
-    open_command_palette_for_test(&mut state);
-
-    for ch in "mcp".chars() {
-        state
-            .picker
-            .active_state_mut()
-            .unwrap()
-            .append_query_char(ch);
-    }
-
+    // -- Exec & Check: fuzzy queries match MCPs and Skills.
+    state
+        .picker
+        .active_state_mut()
+        .ok_or("palette should be open")?
+        .query
+        .clear();
+    type_query(&mut state, "mcp")?;
     assert_eq!(palette_ids(&state), vec!["MCPs"]);
-}
 
-#[test]
-fn command_palette_fuzzy_query_matches_skills_entry() {
-    let mut state = AppState::default();
-    open_command_palette_for_test(&mut state);
-
-    for ch in "skls".chars() {
-        state
-            .picker
-            .active_state_mut()
-            .unwrap()
-            .append_query_char(ch);
-    }
-
+    state
+        .picker
+        .active_state_mut()
+        .ok_or("palette should be open")?
+        .query
+        .clear();
+    type_query(&mut state, "skls")?;
     assert_eq!(palette_ids(&state), vec!["Skills"]);
-}
 
-#[test]
-fn command_palette_includes_models_action() {
-    let mut state = AppState::default();
-    open_command_palette_for_test(&mut state);
-
-    assert!(palette_ids(&state).contains(&"Models".to_string()));
-}
-
-#[test]
-fn command_palette_includes_agents_action() {
-    let mut state = AppState::default();
-    open_command_palette_for_test(&mut state);
-
-    assert!(palette_ids(&state).contains(&"Agents".to_string()));
-}
-
-#[test]
-fn info_panel_for_command_palette_action_agents_returns_none() {
+    // -- Exec & Check: the Agents action has no info panel.
     assert_eq!(CommandPaletteAction::Agents.info_panel(), None);
+    Ok(())
 }

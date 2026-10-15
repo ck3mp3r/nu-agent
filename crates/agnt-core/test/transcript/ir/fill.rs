@@ -2,16 +2,12 @@ use super::*;
 
 // ── Fill::from_preview ──────────────────────────────────────────────────────
 
+/// A preview fills `Code` when any section carries diff or code content, and
+/// `None` otherwise.
 #[test]
-fn fill_from_preview_none_returns_none() {
-    // -- Exec & Check
-    assert_eq!(Fill::from_preview(&None), Fill::None);
-}
-
-#[test]
-fn fill_from_preview_plain_only_display_returns_none() -> Result<()> {
+fn fill_from_preview_table() {
     // -- Setup & Fixtures
-    let display = Display {
+    let plain = Display {
         title: Some("plain output".to_string()),
         sections: vec![DisplaySection {
             label: Some("out".to_string()),
@@ -20,16 +16,7 @@ fn fill_from_preview_plain_only_display_returns_none() -> Result<()> {
             stats: None,
         }],
     };
-
-    // -- Exec & Check
-    assert_eq!(Fill::from_preview(&Some(display)), Fill::None);
-    Ok(())
-}
-
-#[test]
-fn fill_from_preview_diff_section_returns_code() -> Result<()> {
-    // -- Setup & Fixtures
-    let display = Display {
+    let diff = Display {
         title: Some("edit a.rs".to_string()),
         sections: vec![DisplaySection {
             label: Some("a.rs".to_string()),
@@ -41,16 +28,7 @@ fn fill_from_preview_diff_section_returns_code() -> Result<()> {
             stats: None,
         }],
     };
-
-    // -- Exec & Check
-    assert_eq!(Fill::from_preview(&Some(display)), Fill::Code);
-    Ok(())
-}
-
-#[test]
-fn fill_from_preview_code_section_returns_code() -> Result<()> {
-    // -- Setup & Fixtures
-    let display = Display {
+    let code = Display {
         title: Some("run nu".to_string()),
         sections: vec![DisplaySection {
             label: Some("script".to_string()),
@@ -63,6 +41,24 @@ fn fill_from_preview_code_section_returns_code() -> Result<()> {
     };
 
     // -- Exec & Check
-    assert_eq!(Fill::from_preview(&Some(display)), Fill::Code);
-    Ok(())
+    assert_eq!(
+        Fill::from_preview(&None),
+        Fill::None,
+        "no preview fills none"
+    );
+    assert_eq!(
+        Fill::from_preview(&Some(plain)),
+        Fill::None,
+        "plain-only preview fills none"
+    );
+    assert_eq!(
+        Fill::from_preview(&Some(diff)),
+        Fill::Code,
+        "diff preview fills code"
+    );
+    assert_eq!(
+        Fill::from_preview(&Some(code)),
+        Fill::Code,
+        "code preview fills code"
+    );
 }

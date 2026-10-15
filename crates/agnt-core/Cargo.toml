@@ -56,5 +56,5 @@ tokio = { workspace = true }
 serial_test = { workspace = true }
 rig = { workspace = true, features = ["test-utils"] }
 reqwest = { workspace = true }
-wiremock = "0.6"
+agnt-testkit = { workspace = true }
 oauth2 = "5.0"

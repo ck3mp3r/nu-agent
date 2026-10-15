@@ -1,33 +1,25 @@
 use super::*;
 
+/// The main pane vertical split reserves the status target height and the
+/// input minimum height, leaving the transcript the remaining space with no
+/// overlap or bottom cutoff.
 #[test]
-fn main_pane_vertical_split_has_no_overlap_or_bottom_cutoff() {
-    use crate::runtime::render::frame_test::STATUS_TARGET_HEIGHT;
-    let (_header, transcript, input, status) = RuntimeCoordinator::main_pane_rects_for_height(10);
+fn main_pane_vertical_split_layout() -> Result<()> {
+    use crate::rendering::layout::INPUT_MIN_HEIGHT;
+    use crate::runtime::render::frame_test::{STATUS_TARGET_HEIGHT, main_pane_rects_for_height};
 
-    assert_eq!(_header.height, 0);
-    assert!(
-        transcript.height > 0,
-        "transcript pane should remain visible"
-    );
-    assert_eq!(
-        status.height, STATUS_TARGET_HEIGHT,
-        "footer must reserve STATUS_TARGET_HEIGHT rows"
-    );
+    // -- Exec & Check: a 10-row main pane.
+    let (header, transcript, input, status) = RuntimeCoordinator::main_pane_rects_for_height(10);
+    assert_eq!(header.height, 0);
+    assert!(transcript.height > 0);
+    assert_eq!(status.height, STATUS_TARGET_HEIGHT);
     assert_eq!(transcript.y + transcript.height, input.y);
     assert_eq!(input.y + input.height, status.y);
     assert_eq!(status.y + status.height, 10);
-}
 
-#[test]
-fn main_pane_rects_transcript_gets_remaining_space() {
-    use crate::rendering::layout::INPUT_MIN_HEIGHT;
-    use crate::runtime::render::frame_test::STATUS_TARGET_HEIGHT;
-    use crate::runtime::render::frame_test::main_pane_rects_for_height;
-
+    // -- Exec & Check: a 40-row main pane.
     let main_height = 40u16;
     let (header, transcript, input, status) = main_pane_rects_for_height(main_height);
-
     assert_eq!(header.height, 0);
     assert_eq!(status.height, STATUS_TARGET_HEIGHT);
     assert_eq!(input.height, INPUT_MIN_HEIGHT);
@@ -35,162 +27,158 @@ fn main_pane_rects_transcript_gets_remaining_space() {
         transcript.height,
         main_height - INPUT_MIN_HEIGHT - STATUS_TARGET_HEIGHT
     );
+    Ok(())
 }
 
-// ========== single_line_visual_row_count tests ==========
-
+/// `single_line_visual_row_count` counts wrapped rows, treating an empty line
+/// and a zero width as one row.
 #[test]
-fn single_line_visual_row_count_short_line() {
-    let line = ratatui::text::Line::from("1234567890");
-    let count = super::render::single_line_visual_row_count(&line, 80);
-    assert_eq!(count, 1);
-}
-
-#[test]
-fn single_line_visual_row_count_wider_than_viewport() {
-    let line = ratatui::text::Line::from("x".repeat(200));
-    let count = super::render::single_line_visual_row_count(&line, 80);
-    assert_eq!(count, 3);
-}
-
-#[test]
-fn single_line_visual_row_count_multi_span() {
+fn single_line_visual_row_count_matrix() -> Result<()> {
     use ratatui::text::Span;
-    let line = ratatui::text::Line::from(vec![
+
+    // -- Setup & Fixtures
+    let multi_span = ratatui::text::Line::from(vec![
         Span::raw("a".repeat(50)),
         Span::raw("b".repeat(50)),
         Span::raw("c".repeat(50)),
     ]);
-    let count = super::render::single_line_visual_row_count(&line, 80);
-    assert_eq!(count, 2);
+    let cases: [(&str, ratatui::text::Line, usize, usize); 5] = [
+        ("short line", ratatui::text::Line::from("1234567890"), 80, 1),
+        (
+            "wider than viewport",
+            ratatui::text::Line::from("x".repeat(200)),
+            80,
+            3,
+        ),
+        ("multi span", multi_span, 80, 2),
+        ("empty line", ratatui::text::Line::from(""), 80, 1),
+        ("width zero", ratatui::text::Line::from("hello"), 0, 1),
+    ];
+
+    // -- Exec & Check
+    for (label, line, width, expected) in cases {
+        assert_eq!(
+            super::render::single_line_visual_row_count(&line, width),
+            expected,
+            "{label}"
+        );
+    }
+    Ok(())
 }
 
+/// `should_scan_for_yank` is true only in visual mode.
 #[test]
-fn single_line_visual_row_count_empty_line() {
-    let line = ratatui::text::Line::from("");
-    let count = super::render::single_line_visual_row_count(&line, 80);
-    assert_eq!(count, 1);
-}
-
-#[test]
-fn single_line_visual_row_count_width_zero() {
-    let line = ratatui::text::Line::from("hello");
-    let count = super::render::single_line_visual_row_count(&line, 0);
-    assert_eq!(count, 1);
-}
-
-// ========== rendered_line_text gating tests ==========
-
-#[test]
-fn should_scan_for_yank_insert_mode_returns_false() {
+fn should_scan_for_yank_matrix() -> Result<()> {
+    // -- Exec & Check
     assert!(!super::render::should_scan_for_yank(InputMode::Insert));
-}
-
-#[test]
-fn should_scan_for_yank_normal_mode_returns_false() {
     assert!(!super::render::should_scan_for_yank(InputMode::Normal));
-}
-
-#[test]
-fn should_scan_for_yank_visual_mode_returns_true() {
     assert!(super::render::should_scan_for_yank(InputMode::Visual));
+    Ok(())
 }
 
-// ========== height index tests ==========
-
+/// The height index is computed on a new entry, sums measure per block plus
+/// separators, and is invalidated on clear.
 #[test]
-fn height_index_computed_on_new_entry() {
+fn height_index_lifecycle() -> Result<()> {
+    // -- Setup & Fixtures
     let mut state = crate::state::AppState::default();
     push_message_line(&mut state, MessageRole::User, "hello");
+
+    // -- Exec
     state.transcript.rebuild_height_index(80);
+
+    // -- Check: computed on a new entry.
     assert!(state.transcript.height_index_valid_for(80));
     assert!(state.transcript.total_visual_rows() >= 1);
-}
 
-#[test]
-fn total_visual_rows_sums_measure_per_block_plus_separators() {
-    let mut state = crate::state::AppState::default();
-    push_message_line(&mut state, MessageRole::User, "a");
-    push_message_line(&mut state, MessageRole::Assistant, "b\nc\nd");
-    push_message_line(&mut state, MessageRole::User, "e");
-    state.transcript.rebuild_height_index(80);
-    // Content blocks only: [User "a", Assistant, User "e"].
-    // measure sum = 1 + 3 + 1 = 5; SM separators = 0 + 2 + 2 = 4; the final
-    // block is a user turn, so it closes with 1 trailing separator row
-    // (task 670e0292).
-    let measured: usize = state
+    // -- Setup & Fixtures: three blocks.
+    let mut summed = crate::state::AppState::default();
+    push_message_line(&mut summed, MessageRole::User, "a");
+    push_message_line(&mut summed, MessageRole::Assistant, "b\nc\nd");
+    push_message_line(&mut summed, MessageRole::User, "e");
+
+    // -- Exec
+    summed.transcript.rebuild_height_index(80);
+
+    // -- Check: measure sum + separators + trailing row.
+    let measured: usize = summed
         .transcript
         .blocks()
         .iter()
         .map(|block| crate::tui_renderer::measure(block, 80, &TuiTheme::default()))
         .sum();
-    let expected = measured + 4 + 1;
-    assert_eq!(state.transcript.total_visual_rows(), expected);
-    // 5 content rows + 4 separator rows + 1 trailing row = 10 visual rows
-    assert_eq!(state.transcript.total_visual_rows(), 10);
+    assert_eq!(summed.transcript.total_visual_rows(), measured + 4 + 1);
+    assert_eq!(summed.transcript.total_visual_rows(), 10);
+
+    // -- Setup & Fixtures: a built index.
+    let mut cleared = crate::state::AppState::default();
+    push_message_line(&mut cleared, MessageRole::User, "hello");
+    cleared.transcript.rebuild_height_index(80);
+    assert!(cleared.transcript.height_index_valid_for(80));
+
+    // -- Exec
+    cleared.clear_transcript();
+
+    // -- Check: invalidated on clear.
+    assert!(!cleared.transcript.height_index_valid_for(80));
+    assert_eq!(cleared.transcript.total_visual_rows(), 0);
+    Ok(())
 }
 
+/// The startup logo is pushed on demand, never during hydration, and a single
+/// logo leaves the transcript shorter than the viewport.
 #[test]
-fn height_index_invalidated_on_clear_transcript() {
-    let mut state = crate::state::AppState::default();
-    push_message_line(&mut state, MessageRole::User, "hello");
-    state.transcript.rebuild_height_index(80);
-    assert!(state.transcript.height_index_valid_for(80));
-    state.clear_transcript();
-    assert!(!state.transcript.height_index_valid_for(80));
-    assert_eq!(state.transcript.total_visual_rows(), 0);
-}
-
-#[test]
-fn push_startup_logo_adds_logo_entry_to_transcript() {
+fn startup_logo_and_bottom_align() -> Result<()> {
+    // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
+
+    // -- Exec
     coordinator.state.push_startup_logo();
+
+    // -- Check: the logo is pushed.
     let blocks = coordinator.state.transcript.blocks();
     assert_eq!(blocks.len(), 1);
     assert!(matches!(blocks[0].source, BlockSource::Banner { .. }));
-}
 
-#[test]
-fn startup_logo_not_pushed_during_hydration() {
-    let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
+    // -- Setup & Fixtures: hydration with no messages.
+    let mut hydrating = RuntimeCoordinator::new(120, 40, Some(false));
     let messages: Vec<UiMessageSnapshot> = vec![];
-    coordinator.hydrate_transcript_from_messages(messages, None);
-    let has_logo = coordinator
+
+    // -- Exec
+    hydrating.hydrate_transcript_from_messages(messages, None);
+
+    // -- Check: hydration must not push a logo.
+    let has_logo = hydrating
         .state
         .transcript
         .blocks()
         .iter()
         .any(|b| matches!(b.source, BlockSource::Banner { .. }));
-    assert!(!has_logo, "hydration must not push a logo");
-}
+    assert!(!has_logo);
 
-#[test]
-fn bottom_align_pads_content_when_shorter_than_viewport() {
-    // This test verifies the render-time behavior: when total_visual_rows < viewport_height,
-    // the rendered output should have viewport_height lines (padded with empty lines at top).
-    // We test this indirectly by checking that the coordinator's state reflects the padding
-    // after a render pass.
-    let mut coordinator = RuntimeCoordinator::new(120, 40, Some(false));
-    // Push a single logo entry — total_visual_rows will be small
-    coordinator.state.push_startup_logo();
-    // Force a render to trigger the bottom-align logic.
-    coordinator.state.transcript.invalidate_height_index();
-    // The actual padding happens in render_transcript_pane which we can't easily unit-test
-    // without a full Frame. Instead, verify the state is set up correctly for bottom-align:
-    // viewport_height > total_visual_rows should be true for a single logo on a 40-row terminal.
-    coordinator.state.transcript.rebuild_height_index(120);
-    let total = coordinator.state.transcript.total_visual_rows();
-    let vp = coordinator.state.scroll.viewport_height;
-    // On a 40-row terminal, a single logo entry should be much shorter
+    // -- Setup & Fixtures: a single logo on a 40-row terminal.
+    let mut bottom = RuntimeCoordinator::new(120, 40, Some(false));
+    bottom.state.push_startup_logo();
+    bottom.state.transcript.invalidate_height_index();
+
+    // -- Exec
+    bottom.state.transcript.rebuild_height_index(120);
+
+    // -- Check: the transcript is shorter than the viewport.
+    let total = bottom.state.transcript.total_visual_rows();
+    let vp = bottom.state.scroll.viewport_height;
     assert!(
         total < vp || vp == 0,
         "expected total_visual_rows ({total}) < viewport_height ({vp}) for single logo"
     );
+    Ok(())
 }
 
+/// The status section paints the message above the lanes, and the lanes below
+/// the input divider, for both wrapping and fitting model identities.
 #[tokio::test]
-async fn status_section_wrap_message_renders_rows_in_strictly_increasing_order() -> Result<()> {
-    // -- Setup & Fixtures
+async fn status_section_lane_layout() -> Result<()> {
+    // -- Setup & Fixtures: a wrapping identity with a message.
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let repo = temp_dir.path().join("repo");
     fs::create_dir_all(&repo).expect("repo dir");
@@ -199,7 +187,7 @@ async fn status_section_wrap_message_renders_rows_in_strictly_increasing_order()
     let mut driver = RenderLoopDriver::new(60, 30);
     driver
         .coordinator_mut()
-        .set_repo_branch_caller_cwd(Some(repo));
+        .set_repo_branch_caller_cwd(Some(repo.clone()));
     driver
         .coordinator_mut()
         .state
@@ -217,7 +205,7 @@ async fn status_section_wrap_message_renders_rows_in_strictly_increasing_order()
     // -- Exec
     driver.advance_with_frame(&[]).await?;
 
-    // -- Check
+    // -- Check: message < left < right.
     let buffer = driver.buffer_text();
     let lines: Vec<&str> = buffer.lines().collect();
     let msg_row = lines
@@ -236,39 +224,27 @@ async fn status_section_wrap_message_renders_rows_in_strictly_increasing_order()
         msg_row < left_row && left_row < right_row,
         "wrap+message must paint message < left < right, got msg={msg_row} left={left_row} right={right_row}\n{buffer}",
     );
-    Ok(())
-}
 
-#[tokio::test]
-async fn status_section_fit_message_renders_message_above_single_lane_row() -> Result<()> {
-    // -- Setup & Fixtures
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let repo = temp_dir.path().join("repo");
-    fs::create_dir_all(&repo).expect("repo dir");
-    init_repo_with_branch(&repo, "feature/status-lane-wrap");
-
-    let mut driver = RenderLoopDriver::new(120, 30);
-    driver
-        .coordinator_mut()
-        .set_repo_branch_caller_cwd(Some(repo));
-    driver
-        .coordinator_mut()
+    // -- Setup & Fixtures: a fitting identity with a message.
+    let mut fit = RenderLoopDriver::new(120, 30);
+    fit.coordinator_mut()
+        .set_repo_branch_caller_cwd(Some(repo.clone()));
+    fit.coordinator_mut()
         .state
         .status
         .identity
         .active_model_identity = "gpt-5".to_string();
-    driver
-        .coordinator_mut()
+    fit.coordinator_mut()
         .state
         .status
         .message
         .set_message("status-message-sentinel");
 
     // -- Exec
-    driver.advance_with_frame(&[]).await?;
+    fit.advance_with_frame(&[]).await?;
 
-    // -- Check
-    let buffer = driver.buffer_text();
+    // -- Check: message above the lane; left and right on the same row.
+    let buffer = fit.buffer_text();
     let lines: Vec<&str> = buffer.lines().collect();
     let msg_row = lines
         .iter()
@@ -286,26 +262,14 @@ async fn status_section_fit_message_renders_message_above_single_lane_row() -> R
         msg_row < lane_row,
         "fit+message must paint message above the lane, got msg={msg_row} lane={lane_row}\n{buffer}",
     );
-    assert_eq!(
-        lane_row, right_row,
-        "fit+message must paint left and right fragments on the same row\n{buffer}",
-    );
-    Ok(())
-}
+    assert_eq!(lane_row, right_row);
 
-#[tokio::test]
-async fn status_section_wrap_no_message_renders_lanes_below_input_divider() -> Result<()> {
-    // -- Setup & Fixtures
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let repo = temp_dir.path().join("repo");
-    fs::create_dir_all(&repo).expect("repo dir");
-    init_repo_with_branch(&repo, "feature/status-lane-wrap");
-
-    let mut driver = RenderLoopDriver::new(60, 30);
-    driver
+    // -- Setup & Fixtures: a wrapping identity with no message.
+    let mut wrap_no_msg = RenderLoopDriver::new(60, 30);
+    wrap_no_msg
         .coordinator_mut()
-        .set_repo_branch_caller_cwd(Some(repo));
-    driver
+        .set_repo_branch_caller_cwd(Some(repo.clone()));
+    wrap_no_msg
         .coordinator_mut()
         .state
         .status
@@ -314,10 +278,10 @@ async fn status_section_wrap_no_message_renders_lanes_below_input_divider() -> R
         "openai/gpt-5-ultra-long-model-identity-that-forces-wrap-0123456789".to_string();
 
     // -- Exec
-    driver.advance_with_frame(&[]).await?;
+    wrap_no_msg.advance_with_frame(&[]).await?;
 
-    // -- Check
-    let buffer = driver.buffer_text();
+    // -- Check: lanes immediately below the input divider.
+    let buffer = wrap_no_msg.buffer_text();
     let lines: Vec<&str> = buffer.lines().collect();
     let div_row = lines
         .iter()
@@ -331,32 +295,15 @@ async fn status_section_wrap_no_message_renders_lanes_below_input_divider() -> R
         .iter()
         .position(|l| l.contains("feature/status-lane-wrap"))
         .ok_or("should find right lane row")?;
-    assert_eq!(
-        left_row,
-        div_row + 1,
-        "wrap+no-message must paint left lane immediately below the input divider\n{buffer}",
-    );
-    assert_eq!(
-        right_row,
-        left_row + 1,
-        "wrap+no-message must paint right lane immediately below the left lane\n{buffer}",
-    );
-    Ok(())
-}
+    assert_eq!(left_row, div_row + 1);
+    assert_eq!(right_row, left_row + 1);
 
-#[tokio::test]
-async fn status_section_fit_no_message_renders_single_lane_below_input_divider() -> Result<()> {
-    // -- Setup & Fixtures
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let repo = temp_dir.path().join("repo");
-    fs::create_dir_all(&repo).expect("repo dir");
-    init_repo_with_branch(&repo, "feature/status-lane-wrap");
-
-    let mut driver = RenderLoopDriver::new(120, 30);
-    driver
+    // -- Setup & Fixtures: a fitting identity with no message.
+    let mut fit_no_msg = RenderLoopDriver::new(120, 30);
+    fit_no_msg
         .coordinator_mut()
         .set_repo_branch_caller_cwd(Some(repo));
-    driver
+    fit_no_msg
         .coordinator_mut()
         .state
         .status
@@ -364,10 +311,10 @@ async fn status_section_fit_no_message_renders_single_lane_below_input_divider()
         .active_model_identity = "gpt-5".to_string();
 
     // -- Exec
-    driver.advance_with_frame(&[]).await?;
+    fit_no_msg.advance_with_frame(&[]).await?;
 
-    // -- Check
-    let buffer = driver.buffer_text();
+    // -- Check: a single lane immediately below the input divider.
+    let buffer = fit_no_msg.buffer_text();
     let lines: Vec<&str> = buffer.lines().collect();
     let div_row = lines
         .iter()
@@ -381,15 +328,8 @@ async fn status_section_fit_no_message_renders_single_lane_below_input_divider()
         .iter()
         .position(|l| l.contains("feature/status-lane-wrap"))
         .ok_or("should find right lane row")?;
-    assert_eq!(
-        lane_row,
-        div_row + 1,
-        "fit+no-message must paint the lane immediately below the input divider\n{buffer}",
-    );
-    assert_eq!(
-        lane_row, right_row,
-        "fit+no-message must paint left and right fragments on the same row\n{buffer}",
-    );
+    assert_eq!(lane_row, div_row + 1);
+    assert_eq!(lane_row, right_row);
     Ok(())
 }
 

@@ -6,57 +6,46 @@ use crate::tools::handler::ToolErrorKind;
 use std::path::Path;
 
 #[tokio::test]
-async fn missing_action_returns_validation_error() {
-    let bus = Bus::default();
-    let err = TmuxWindowTool::execute(
-        &serde_json::json!({ "session": "main" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-}
+async fn validation_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, serde_json::Value, Option<&str>)> = vec![
+        (
+            "missing action",
+            serde_json::json!({ "session": "main" }),
+            None,
+        ),
+        (
+            "missing session",
+            serde_json::json!({ "action": "create" }),
+            None,
+        ),
+        (
+            "unknown action",
+            serde_json::json!({ "action": "bogus", "session": "main" }),
+            Some("Unknown tmux_window action"),
+        ),
+        (
+            "kill requires force",
+            serde_json::json!({ "action": "kill", "session": "main" }),
+            Some("force: true"),
+        ),
+    ];
 
-#[tokio::test]
-async fn missing_session_returns_validation_error() {
+    // -- Exec & Check
     let bus = Bus::default();
-    let err = TmuxWindowTool::execute(
-        &serde_json::json!({ "action": "create" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-}
-
-#[tokio::test]
-async fn unknown_action_returns_validation_error() {
-    let bus = Bus::default();
-    let err = TmuxWindowTool::execute(
-        &serde_json::json!({ "action": "bogus", "session": "main" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(err.message.contains("Unknown tmux_window action"));
-}
-
-#[tokio::test]
-async fn kill_requires_force() {
-    let bus = Bus::default();
-    let err = TmuxWindowTool::execute(
-        &serde_json::json!({ "action": "kill", "session": "main" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(err.message.contains("force: true"));
+    for (name, args, expected_message) in cases {
+        let err = TmuxWindowTool::execute(&args, Path::new("/tmp"), &bus)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ToolErrorKind::Validation, "case '{name}': kind");
+        if let Some(message) = expected_message {
+            assert!(
+                err.message.contains(message),
+                "case '{name}': message must contain '{message}', got: {}",
+                err.message
+            );
+        }
+    }
 }
 
 #[test]
@@ -76,12 +65,26 @@ fn window_args_deserialize() {
 }
 
 #[test]
-fn parse_window_create_output_parses_id_and_index() {
-    let parsed = parse_window_create_output("@5:2");
-    assert_eq!(parsed, Some(("@5".to_string(), 2)));
-}
+fn parse_window_create_output_table() -> core::result::Result<(), Box<dyn std::error::Error>> {
+    // -- Setup & Fixtures
+    type Case = (&'static str, &'static str, Option<(&'static str, u64)>);
 
-#[test]
-fn parse_window_create_output_returns_none_for_malformed_output() {
-    assert_eq!(parse_window_create_output("not-a-valid-shape"), None);
+    let cases: Vec<Case> = vec![
+        ("parses id and index", "@5:2", Some(("@5", 2))),
+        ("malformed output", "not-a-valid-shape", None),
+    ];
+
+    // -- Exec & Check
+    for (name, output, expected) in cases {
+        let parsed = parse_window_create_output(output);
+        match expected {
+            Some((id, index)) => {
+                let (actual_id, actual_index) = parsed.ok_or("a well-formed output must parse")?;
+                assert_eq!(actual_id, id, "case '{name}': id");
+                assert_eq!(actual_index, index, "case '{name}': index");
+            }
+            None => assert_eq!(parsed, None, "case '{name}': malformed output"),
+        }
+    }
+    Ok(())
 }

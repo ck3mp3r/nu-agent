@@ -8,21 +8,36 @@ fail-fast = true
 slow-timeout = { period = "10s", terminate-after = 2, grace-period = "2s" }
 final-status-level = "slow"
 
-# All tests (--features integration): lower parallelism for server tests,
-# retries for flaky tests.
+# All tests (--features integration): lower parallelism for server tests.
+# Deterministic crates fail fast; only the timing-sensitive crates retry.
 [profile.integration]
-retries = 1
+retries = 0
 fail-fast = false
-test-threads = "num-cpus"
-slow-timeout = { period = "30s", terminate-after = 2, grace-period = "5s" }
+test-threads = 32
+slow-timeout = { period = "20s", terminate-after = 2, grace-period = "5s" }
 global-timeout = "20m"
-final-status-level = "slow"
+final-status-level = "flaky"
+
+# agnt-a2a hosts the timing-sensitive tests (real servers on ephemeral ports,
+# mDNS responder, SSE timing); keep its retry.
+[[profile.integration.overrides]]
+filter = 'package(agnt-a2a)'
+retries = 1
+
+# agnt-acp integration tests spawn a real `agent` subprocess per test and carry
+# internal 30s budgets; give them a longer slow-timeout and reserve two thread
+# slots to avoid CPU oversubscription.
+[[profile.integration.overrides]]
+filter = 'package(agnt-acp)'
+slow-timeout = { period = "40s", terminate-after = 2, grace-period = "5s" }
+threads-required = 2
 
 # CI: complete run, no retries, JUnit XML report.
 [profile.ci]
 retries = 0
 fail-fast = false
 global-timeout = "30m"
+final-status-level = "flaky"
 
 [profile.ci.junit]
 path = "junit.xml"

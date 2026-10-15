@@ -34,18 +34,32 @@ fn make_tool_call(name: &str) -> Result<ToolCall> {
 }
 
 #[tokio::test]
-async fn config_allow_tools_pass_permission_flow() -> Result<()> {
-    // With safe_defaults(true), `read` is configured as Allow so it passes
-    // without prompting, even though the hook would otherwise deny.
-    let permissions = PermissionsConfig::safe_defaults(true);
-    let grant_cache = Arc::new(Mutex::new(SessionGrantCache::default()));
-    let flow_context = AuthorizationFlowContext {
-        ask_context: AskContext::default(),
-    };
-    let mut ask_hook = AlwaysDenyHook;
+async fn config_tools_follow_permission_flow_table() -> Result<()> {
+    // -- Setup & Fixtures
+    // With safe_defaults(true), `read`/`glob`/`grep` are configured as Allow so
+    // they pass without prompting; every other tool falls through to the global
+    // Ask action, so the AlwaysDenyHook denies it.
+    let cases: Vec<(&str, bool)> = vec![
+        ("read", true),
+        ("glob", true),
+        ("grep", true),
+        ("nu", false),
+        ("edit", false),
+        ("skill", false),
+        ("spawn_agent", false),
+        ("send_message", false),
+    ];
 
-    for tool_name in ["read", "glob", "grep"] {
+    // -- Exec & Check
+    for (tool_name, expected_pass) in cases {
+        let permissions = PermissionsConfig::safe_defaults(true);
+        let grant_cache = Arc::new(Mutex::new(SessionGrantCache::default()));
+        let flow_context = AuthorizationFlowContext {
+            ask_context: AskContext::default(),
+        };
+        let mut ask_hook = AlwaysDenyHook;
         let tool_call = make_tool_call(tool_name)?;
+
         let result = enforce_authorization_for_tool_call(
             &tool_call,
             ToolSource::Builtin,
@@ -55,41 +69,16 @@ async fn config_allow_tools_pass_permission_flow() -> Result<()> {
             &mut ask_hook,
         )
         .await;
-        assert!(
+
+        assert_eq!(
             result.is_none(),
-            "tool '{}' configured as allow should pass the permission flow",
-            tool_name,
-        );
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn config_ask_tools_prompt_through_permission_flow() -> Result<()> {
-    // With safe_defaults(true), tools not listed as allow fall through to the
-    // global Ask action, so the AlwaysDenyHook denies them.
-    let permissions = PermissionsConfig::safe_defaults(true);
-    let grant_cache = Arc::new(Mutex::new(SessionGrantCache::default()));
-    let flow_context = AuthorizationFlowContext {
-        ask_context: AskContext::default(),
-    };
-    let mut ask_hook = AlwaysDenyHook;
-
-    for tool_name in ["nu", "edit", "skill", "spawn_agent", "send_message"] {
-        let tool_call = make_tool_call(tool_name)?;
-        let result = enforce_authorization_for_tool_call(
-            &tool_call,
-            ToolSource::Builtin,
-            &permissions,
-            Arc::clone(&grant_cache),
-            &flow_context,
-            &mut ask_hook,
-        )
-        .await;
-        assert!(
-            result.is_some(),
-            "tool '{}' not configured as allow should be denied by the hook",
-            tool_name,
+            expected_pass,
+            "tool '{tool_name}' must {}",
+            if expected_pass {
+                "pass the permission flow"
+            } else {
+                "be denied by the hook"
+            }
         );
     }
     Ok(())

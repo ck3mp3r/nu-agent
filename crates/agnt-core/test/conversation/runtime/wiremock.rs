@@ -4,9 +4,9 @@ use super::*;
 // DynModel<Completion> construction regression tests (task 47715fca)
 // ========================================================================
 
-/// Build a `Config` for an OpenAI-compatible provider pointed at a wiremock
+/// Build a `Config` for an OpenAI-compatible provider pointed at a mock
 /// server. `base_url` selects the `OpenAiCompletions` variant (targets
-/// `/chat/completions`), matching the wiremock setup.
+/// `/chat/completions`), matching the mock setup.
 fn openai_wiremock_config(server_uri: &str, model: &str) -> crate::config::Config {
     crate::config::Config {
         provider: "openai".to_string(),
@@ -40,23 +40,7 @@ fn openai_wiremock_config(server_uri: &str, model: &str) -> crate::config::Confi
     }
 }
 
-/// SSE body for a single text completion chunk (wiremock response).
-fn sse_text_body(text: &str) -> Result<String> {
-    let mut body = String::new();
-    for chunk in text.chars().collect::<Vec<_>>().chunks(20) {
-        let chunk: String = chunk.iter().collect();
-        let encoded = serde_json::to_string(&chunk).map_err(|e| format!("encode chunk: {e}"))?;
-        body.push_str(&format!(
-            "data: {{\"id\":\"chatcmpl-test\",\"choices\":[{{\"index\":0,\"delta\":{{\"content\":{}}},\"finish_reason\":null}}]}}\n\n",
-            encoded
-        ));
-    }
-    body.push_str("data: {\"id\":\"chatcmpl-test\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n");
-    body.push_str("data: [DONE]\n\n");
-    Ok(body)
-}
-
-/// Build a `PluginConfig` whose `openai` provider block points at the wiremock
+/// Build a `PluginConfig` whose `openai` provider block points at the mock
 /// server, so `switch_model("openai/<model>")` resolves to a config that uses it.
 fn openai_wiremock_plugin_config(server_uri: &str) -> crate::config::PluginConfig {
     let mut plugin_config = crate::config::PluginConfig::default();
@@ -72,7 +56,7 @@ fn openai_wiremock_plugin_config(server_uri: &str) -> crate::config::PluginConfi
 }
 
 /// Drive a single completion through a `DynModel<Completion>` against the
-/// wiremock server, consuming the stream so the request is actually sent.
+/// mock server, consuming the stream so the request is actually sent.
 async fn drive_completion(model: &rig::DynModel<rig::operation::Completion>) -> Result<()> {
     use futures::StreamExt;
     let stream = model
@@ -85,10 +69,9 @@ async fn drive_completion(model: &rig::DynModel<rig::operation::Completion>) -> 
     Ok(())
 }
 
-/// Extract the `"model"` field from the first captured wiremock request body.
-async fn captured_model_field(server: &wiremock::MockServer) -> Result<String> {
-    let requests = server
-        .received_requests()
+/// Extract the `"model"` field from the first captured request body.
+async fn captured_model_field(server: &agnt_testkit::MockServer) -> Result<String> {
+    let requests = agnt_testkit::received_requests(server)
         .await
         .ok_or("no requests captured")?;
     let req = requests.first().ok_or("no request captured")?;
@@ -106,20 +89,14 @@ async fn captured_model_field(server: &wiremock::MockServer) -> Result<String> {
 #[tokio::test]
 async fn switch_model_builds_handle_from_bare_model_name() -> Result<()> {
     // -- Setup & Fixtures
-    let server = wiremock::MockServer::start().await;
-    let sse_body = sse_text_body("hello from mock")?;
-    {
-        use wiremock::matchers::method;
-        use wiremock::{Mock, ResponseTemplate};
-        Mock::given(method("POST"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .append_header("content-type", "text/event-stream")
-                    .set_body_bytes(sse_body.into_bytes()),
-            )
-            .mount(&server)
-            .await;
-    }
+    let server = agnt_testkit::start_server().await;
+    agnt_testkit::mount_sse_response(
+        &server,
+        "POST",
+        None,
+        agnt_testkit::sse_text_body("hello from mock"),
+    )
+    .await;
 
     let config = openai_wiremock_config(&server.uri(), "glm-5.3-flash");
     let plugin_config = openai_wiremock_plugin_config(&server.uri());
@@ -148,20 +125,14 @@ async fn switch_model_builds_handle_from_bare_model_name() -> Result<()> {
 #[tokio::test]
 async fn startup_builds_handle_from_bare_model_name() -> Result<()> {
     // -- Setup & Fixtures
-    let server = wiremock::MockServer::start().await;
-    let sse_body = sse_text_body("hello from mock")?;
-    {
-        use wiremock::matchers::method;
-        use wiremock::{Mock, ResponseTemplate};
-        Mock::given(method("POST"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .append_header("content-type", "text/event-stream")
-                    .set_body_bytes(sse_body.into_bytes()),
-            )
-            .mount(&server)
-            .await;
-    }
+    let server = agnt_testkit::start_server().await;
+    agnt_testkit::mount_sse_response(
+        &server,
+        "POST",
+        None,
+        agnt_testkit::sse_text_body("hello from mock"),
+    )
+    .await;
 
     let config = openai_wiremock_config(&server.uri(), "glm-5.3-flash");
     let mut state = crate::conversation::state::provider::ProviderState::new(config, None);
@@ -190,20 +161,14 @@ async fn startup_builds_handle_from_bare_model_name() -> Result<()> {
 #[tokio::test]
 async fn switch_agent_rebuilds_shared_handle_when_model_present() -> Result<()> {
     // -- Setup & Fixtures
-    let server = wiremock::MockServer::start().await;
-    let sse_body = sse_text_body("hello from mock")?;
-    {
-        use wiremock::matchers::method;
-        use wiremock::{Mock, ResponseTemplate};
-        Mock::given(method("POST"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .append_header("content-type", "text/event-stream")
-                    .set_body_bytes(sse_body.into_bytes()),
-            )
-            .mount(&server)
-            .await;
-    }
+    let server = agnt_testkit::start_server().await;
+    agnt_testkit::mount_sse_response(
+        &server,
+        "POST",
+        None,
+        agnt_testkit::sse_text_body("hello from mock"),
+    )
+    .await;
 
     // Shared model, mirroring runtime.rs dyn_model: Arc<Mutex<DynModel<Completion>>>.
     // Start bound to a previous model.
@@ -248,20 +213,14 @@ async fn switch_agent_rebuilds_shared_handle_when_model_present() -> Result<()> 
 #[tokio::test]
 async fn switch_agent_keeps_shared_handle_when_no_model() -> Result<()> {
     // -- Setup & Fixtures
-    let server = wiremock::MockServer::start().await;
-    let sse_body = sse_text_body("hello from mock")?;
-    {
-        use wiremock::matchers::method;
-        use wiremock::{Mock, ResponseTemplate};
-        Mock::given(method("POST"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .append_header("content-type", "text/event-stream")
-                    .set_body_bytes(sse_body.into_bytes()),
-            )
-            .mount(&server)
-            .await;
-    }
+    let server = agnt_testkit::start_server().await;
+    agnt_testkit::mount_sse_response(
+        &server,
+        "POST",
+        None,
+        agnt_testkit::sse_text_body("hello from mock"),
+    )
+    .await;
 
     let mut state = crate::conversation::state::provider::ProviderState::new(
         openai_wiremock_config(&server.uri(), "glm-5.3-flash"),

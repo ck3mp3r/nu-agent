@@ -390,3 +390,11 @@ fn resolve_mode() -> CliMode {
 }
 
 // endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/dispatch/a2a.rs"]
+mod a2a_test;
+
+// endregion: --- Tests

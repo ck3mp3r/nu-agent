@@ -7,7 +7,6 @@
 //! tests exercise the stdio transport end to end.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -20,8 +19,7 @@ use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, ActiveSession, Agent, Builder, Client, HandleDispatchFrom, NullClose,
     NullRun, SessionMessage, on_receive_request,
 };
-use wiremock::matchers::method;
-use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+use agnt_testkit::MockServer;
 
 pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -123,7 +121,7 @@ fn agent_binary() -> Result<PathBuf> {
 
 /// Start a wiremock server that stands in for the Ollama daemon.
 pub async fn start_llm_server() -> Result<MockServer> {
-    Ok(MockServer::start().await)
+    Ok(agnt_testkit::start_server().await)
 }
 
 /// Answer every completion request with `text`, optionally after `delay`.
@@ -132,15 +130,7 @@ pub async fn mount_text_response(
     text: &str,
     delay: Option<Duration>,
 ) -> Result<()> {
-    let body = sse_text(text);
-    let mut template = sse_template(body);
-    if let Some(delay) = delay {
-        template = template.set_delay(delay);
-    }
-    Mock::given(method("POST"))
-        .respond_with(template)
-        .mount(server)
-        .await;
+    agnt_testkit::mount_text_response(server, text, delay).await;
     Ok(())
 }
 
@@ -156,113 +146,18 @@ pub async fn mount_tool_then_text(
     arguments: serde_json::Value,
     final_text: &str,
 ) -> Result<()> {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let tool_body = sse_tool_call(tool_name, arguments);
-    let text_body = sse_text(final_text);
-    Mock::given(method("POST"))
-        .respond_with(move |_request: &Request| {
-            let call = calls.fetch_add(1, Ordering::SeqCst);
-            let body = if call == 0 {
-                tool_body.clone()
-            } else {
-                text_body.clone()
-            };
-            sse_template(body)
-        })
-        .mount(server)
-        .await;
+    agnt_testkit::mount_tool_then_text(server, tool_name, arguments, final_text).await;
     Ok(())
 }
 
 /// The number of completion requests the mock server has received so far.
 pub async fn llm_request_count(server: &MockServer) -> usize {
-    server
-        .received_requests()
-        .await
-        .map(|requests| requests.len())
-        .unwrap_or(0)
+    agnt_testkit::received_request_count(server).await
 }
 
 /// The raw bodies of every completion request the mock server has received.
 pub async fn llm_request_bodies(server: &MockServer) -> Vec<String> {
-    server
-        .received_requests()
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|request| String::from_utf8_lossy(&request.body).into_owned())
-        .collect()
-}
-
-/// A 200 response carrying an SSE body.
-///
-/// rig 0.44 routes `Ollama::completion` through the daemon's OpenAI-compatible
-/// `/v1/chat/completions`, which streams `text/event-stream`; a native
-/// `application/x-ndjson` reply is rejected before any frame is read.
-fn sse_template(body: Vec<u8>) -> ResponseTemplate {
-    ResponseTemplate::new(200)
-        .append_header("content-type", "text/event-stream")
-        .set_body_bytes(body)
-}
-
-/// One text delta per 20-character chunk, then the terminal chunk and `[DONE]`.
-fn sse_text(text: &str) -> Vec<u8> {
-    let mut body = String::new();
-    for chunk in text.chars().collect::<Vec<_>>().chunks(20) {
-        let chunk: String = chunk.iter().collect();
-        body.push_str(&sse_chunk(serde_json::json!({
-            "id": "chatcmpl-test",
-            "choices": [{ "index": 0, "delta": { "content": chunk }, "finish_reason": null }]
-        })));
-    }
-    body.push_str(&sse_chunk(serde_json::json!({
-        "id": "chatcmpl-test",
-        "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }],
-        "usage": { "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 }
-    })));
-    body.push_str("data: [DONE]\n\n");
-    body.into_bytes()
-}
-
-/// One tool-call delta, then the terminal chunk and `[DONE]`.
-fn sse_tool_call(name: &str, arguments: serde_json::Value) -> Vec<u8> {
-    let arguments = arguments.to_string();
-    let mut body = String::new();
-    body.push_str(&sse_chunk(serde_json::json!({
-        "id": "chatcmpl-test",
-        "choices": [{
-            "index": 0,
-            "delta": {
-                "tool_calls": [{
-                    "index": 0,
-                    "id": "call_0",
-                    "type": "function",
-                    "function": { "name": name, "arguments": "" }
-                }]
-            },
-            "finish_reason": null
-        }]
-    })));
-    body.push_str(&sse_chunk(serde_json::json!({
-        "id": "chatcmpl-test",
-        "choices": [{
-            "index": 0,
-            "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": arguments } }] },
-            "finish_reason": null
-        }]
-    })));
-    body.push_str(&sse_chunk(serde_json::json!({
-        "id": "chatcmpl-test",
-        "choices": [{ "index": 0, "delta": {}, "finish_reason": "tool_calls" }],
-        "usage": { "prompt_tokens": 50, "completion_tokens": 15, "total_tokens": 65 }
-    })));
-    body.push_str("data: [DONE]\n\n");
-    body.into_bytes()
-}
-
-/// One SSE frame carrying `value` as its `data:` payload.
-fn sse_chunk(value: serde_json::Value) -> String {
-    format!("data: {value}\n\n")
+    agnt_testkit::received_request_bodies(server).await
 }
 
 // endregion: --- Mock LLM

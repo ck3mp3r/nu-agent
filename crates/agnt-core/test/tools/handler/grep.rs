@@ -6,122 +6,167 @@ use tempfile::tempdir;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-#[tokio::test]
-async fn grep_finds_literal_match() -> Result<()> {
-    let dir = tempdir().unwrap();
-    let file = dir.path().join("foo.rs");
-    std::fs::write(&file, "fn hello_world() {}\n").unwrap();
-
-    let args = serde_json::json!({"pattern": "hello_world", "path": dir.path().to_str().unwrap()});
-    let result = GrepTool::execute(&args, dir.path(), &Bus::default())
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-
-    let matches = result["matches"].as_array().unwrap();
-    assert_eq!(matches.len(), 1);
-    assert!(matches[0]["file"].as_str().unwrap().contains("foo.rs"));
-    assert_eq!(matches[0]["line"], 1);
-    assert!(
-        matches[0]["content"]
-            .as_str()
-            .unwrap()
-            .contains("hello_world")
-    );
-    assert_eq!(result["truncated"], false);
-    Ok(())
-}
+const TEN_MATCH_LINES: &str = "match line 1\nmatch line 2\nmatch line 3\nmatch line 4\nmatch line 5\n\
+     match line 6\nmatch line 7\nmatch line 8\nmatch line 9\nmatch line 10\n";
 
 #[tokio::test]
-async fn grep_returns_empty_when_no_match() -> Result<()> {
-    let dir = tempdir().unwrap();
-    std::fs::write(dir.path().join("foo.rs"), "fn unrelated() {}\n").unwrap();
+async fn grep_search_behavior_table() -> Result<()> {
+    // -- Setup & Fixtures
+    struct Case {
+        name: &'static str,
+        files: Vec<(&'static str, &'static str)>,
+        args: serde_json::Value,
+        expected_matches: usize,
+        expected_total: Option<usize>,
+        expected_truncated: bool,
+        expected_file_suffix: Option<&'static str>,
+        expected_first_line: Option<i64>,
+        expected_first_content: Option<&'static str>,
+    }
 
-    let args =
-        serde_json::json!({"pattern": "xyzzy_no_match", "path": dir.path().to_str().unwrap()});
-    let result = GrepTool::execute(&args, dir.path(), &Bus::default())
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    let cases = vec![
+        Case {
+            name: "finds a literal match",
+            files: vec![("foo.rs", "fn hello_world() {}\n")],
+            args: serde_json::json!({"pattern": "hello_world"}),
+            expected_matches: 1,
+            expected_total: None,
+            expected_truncated: false,
+            expected_file_suffix: Some("foo.rs"),
+            expected_first_line: Some(1),
+            expected_first_content: Some("hello_world"),
+        },
+        Case {
+            name: "returns empty when nothing matches",
+            files: vec![("foo.rs", "fn unrelated() {}\n")],
+            args: serde_json::json!({"pattern": "xyzzy_no_match"}),
+            expected_matches: 0,
+            expected_total: Some(0),
+            expected_truncated: false,
+            expected_file_suffix: None,
+            expected_first_line: None,
+            expected_first_content: None,
+        },
+        Case {
+            name: "case sensitive search misses a different case",
+            files: vec![("foo.rs", "Hello World\n")],
+            args: serde_json::json!({"pattern": "hello world", "case_insensitive": false}),
+            expected_matches: 0,
+            expected_total: None,
+            expected_truncated: false,
+            expected_file_suffix: None,
+            expected_first_line: None,
+            expected_first_content: None,
+        },
+        Case {
+            name: "case insensitive search matches a different case",
+            files: vec![("foo.rs", "Hello World\n")],
+            args: serde_json::json!({"pattern": "hello world", "case_insensitive": true}),
+            expected_matches: 1,
+            expected_total: None,
+            expected_truncated: false,
+            expected_file_suffix: None,
+            expected_first_line: None,
+            expected_first_content: None,
+        },
+        Case {
+            name: "glob filter keeps only .rs files",
+            files: vec![("foo.rs", "needle\n"), ("foo.txt", "needle\n")],
+            args: serde_json::json!({"pattern": "needle", "glob": "*.rs"}),
+            expected_matches: 1,
+            expected_total: None,
+            expected_truncated: false,
+            expected_file_suffix: Some(".rs"),
+            expected_first_line: None,
+            expected_first_content: None,
+        },
+        Case {
+            name: "glob filter keeps only .txt files",
+            files: vec![("foo.rs", "needle\n"), ("foo.txt", "needle\n")],
+            args: serde_json::json!({"pattern": "needle", "glob": "*.txt"}),
+            expected_matches: 1,
+            expected_total: None,
+            expected_truncated: false,
+            expected_file_suffix: Some(".txt"),
+            expected_first_line: None,
+            expected_first_content: None,
+        },
+        Case {
+            name: "max_results caps the matches and sets truncated",
+            files: vec![("foo.rs", TEN_MATCH_LINES)],
+            args: serde_json::json!({"pattern": "match line", "max_results": 3}),
+            expected_matches: 3,
+            expected_total: None,
+            expected_truncated: true,
+            expected_file_suffix: None,
+            expected_first_line: None,
+            expected_first_content: None,
+        },
+        Case {
+            name: "max_results above the match count leaves truncated false",
+            files: vec![("foo.rs", TEN_MATCH_LINES)],
+            args: serde_json::json!({"pattern": "match line", "max_results": 20}),
+            expected_matches: 10,
+            expected_total: None,
+            expected_truncated: false,
+            expected_file_suffix: None,
+            expected_first_line: None,
+            expected_first_content: None,
+        },
+    ];
 
-    assert_eq!(result["matches"].as_array().unwrap().len(), 0);
-    assert_eq!(result["total"], 0);
-    assert_eq!(result["truncated"], false);
-    Ok(())
-}
+    // -- Exec & Check
+    for case in cases {
+        let dir = tempdir()?;
+        for (name, content) in &case.files {
+            std::fs::write(dir.path().join(name), content)?;
+        }
+        let mut args = case.args.clone();
+        args["path"] = serde_json::json!(dir.path().to_str().ok_or("temp path must be UTF-8")?);
 
-#[tokio::test]
-async fn grep_case_insensitive_flag() -> Result<()> {
-    let dir = tempdir().unwrap();
-    std::fs::write(dir.path().join("foo.rs"), "Hello World\n").unwrap();
+        let result = GrepTool::execute(&args, dir.path(), &Bus::default())
+            .await
+            .map_err(|e| format!("{e:?}"))?;
 
-    let sensitive = serde_json::json!({"pattern": "hello world", "path": dir.path().to_str().unwrap(), "case_insensitive": false});
-    let sensitive_res = GrepTool::execute(&sensitive, dir.path(), &Bus::default())
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    assert_eq!(sensitive_res["matches"].as_array().unwrap().len(), 0);
-
-    let insensitive = serde_json::json!({"pattern": "hello world", "path": dir.path().to_str().unwrap(), "case_insensitive": true});
-    let insensitive_res = GrepTool::execute(&insensitive, dir.path(), &Bus::default())
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    assert_eq!(insensitive_res["matches"].as_array().unwrap().len(), 1);
-    Ok(())
-}
-
-#[tokio::test]
-async fn grep_glob_filter_limits_files() -> Result<()> {
-    let dir = tempdir().unwrap();
-    std::fs::write(dir.path().join("foo.rs"), "needle\n").unwrap();
-    std::fs::write(dir.path().join("foo.txt"), "needle\n").unwrap();
-
-    let rs_only = serde_json::json!({"pattern": "needle", "path": dir.path().to_str().unwrap(), "glob": "*.rs"});
-    let rs_res = GrepTool::execute(&rs_only, dir.path(), &Bus::default())
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-
-    let txt_only = serde_json::json!({"pattern": "needle", "path": dir.path().to_str().unwrap(), "glob": "*.txt"});
-    let txt_res = GrepTool::execute(&txt_only, dir.path(), &Bus::default())
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-
-    assert_eq!(rs_res["matches"].as_array().unwrap().len(), 1);
-    assert!(
-        rs_res["matches"][0]["file"]
-            .as_str()
-            .unwrap()
-            .ends_with(".rs")
-    );
-
-    assert_eq!(txt_res["matches"].as_array().unwrap().len(), 1);
-    assert!(
-        txt_res["matches"][0]["file"]
-            .as_str()
-            .unwrap()
-            .ends_with(".txt")
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn grep_respects_max_results_and_sets_truncated() -> Result<()> {
-    let dir = tempdir().unwrap();
-    let content = (1..=10)
-        .map(|i| format!("match line {i}\n"))
-        .collect::<String>();
-    std::fs::write(dir.path().join("foo.rs"), content).unwrap();
-
-    let capped = serde_json::json!({"pattern": "match line", "path": dir.path().to_str().unwrap(), "max_results": 3});
-    let capped_res = GrepTool::execute(&capped, dir.path(), &Bus::default())
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    assert_eq!(capped_res["matches"].as_array().unwrap().len(), 3);
-    assert_eq!(capped_res["truncated"], true);
-
-    let uncapped = serde_json::json!({"pattern": "match line", "path": dir.path().to_str().unwrap(), "max_results": 20});
-    let uncapped_res = GrepTool::execute(&uncapped, dir.path(), &Bus::default())
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    assert_eq!(uncapped_res["matches"].as_array().unwrap().len(), 10);
-    assert_eq!(uncapped_res["truncated"], false);
+        let matches = result["matches"]
+            .as_array()
+            .ok_or("matches must be an array")?;
+        assert_eq!(
+            matches.len(),
+            case.expected_matches,
+            "case '{}': match count",
+            case.name
+        );
+        if let Some(total) = case.expected_total {
+            assert_eq!(result["total"], total, "case '{}': total", case.name);
+        }
+        assert_eq!(
+            result["truncated"], case.expected_truncated,
+            "case '{}': truncated",
+            case.name
+        );
+        if let Some(suffix) = case.expected_file_suffix {
+            let file = matches[0]["file"].as_str().ok_or("file must be a string")?;
+            assert!(
+                file.ends_with(suffix),
+                "case '{}': expected file suffix {suffix}, got {file}",
+                case.name
+            );
+        }
+        if let Some(line) = case.expected_first_line {
+            assert_eq!(matches[0]["line"], line, "case '{}': line", case.name);
+        }
+        if let Some(content) = case.expected_first_content {
+            let actual = matches[0]["content"]
+                .as_str()
+                .ok_or("content must be a string")?;
+            assert!(
+                actual.contains(content),
+                "case '{}': expected content to contain {content}, got {actual}",
+                case.name
+            );
+        }
+    }
     Ok(())
 }
 
@@ -177,86 +222,46 @@ async fn grep_skips_binary_files_without_error() {
 // === call_line_render ===
 
 #[test]
-fn grep_call_line_render_shows_quoted_pattern_and_glob_when_path_is_dot() -> Result<()> {
+fn grep_call_line_render_table() -> Result<()> {
     // -- Setup & Fixtures
-    let args = r#"{"pattern":"fn main","path":".","glob":"*.rs"}"#;
+    let cases: Vec<(&str, &str, &str)> = vec![
+        (
+            "quoted pattern and glob when path is dot",
+            r#"{"pattern":"fn main","path":".","glob":"*.rs"}"#,
+            "→ \"fn main\" *.rs",
+        ),
+        (
+            "combines path and glob",
+            r#"{"pattern":"fn main","path":"/src","glob":"*.rs"}"#,
+            "→ \"fn main\" /src/*.rs",
+        ),
+        (
+            "shows path without glob",
+            r#"{"pattern":"fn main","path":"/src"}"#,
+            "→ \"fn main\" /src",
+        ),
+        (
+            "shows pattern only without location",
+            r#"{"pattern":"fn main"}"#,
+            "→ \"fn main\"",
+        ),
+    ];
 
-    // -- Exec
-    let render = GrepTool::call_line_render(args);
+    // -- Exec & Check
+    for (name, args, expected) in cases {
+        assert_eq!(
+            GrepTool::call_line_render(args),
+            CallLine {
+                summary: expected.to_string(),
+            },
+            "case '{name}'"
+        );
+    }
 
-    // -- Check
+    let invalid = "not-json";
     assert_eq!(
-        render,
-        CallLine {
-            summary: "→ \"fn main\" *.rs".to_string(),
-        }
+        GrepTool::call_line_render(invalid),
+        CallLine::from_json_summary(invalid)
     );
-    Ok(())
-}
-
-#[test]
-fn grep_call_line_render_combines_path_and_glob() -> Result<()> {
-    // -- Setup & Fixtures
-    let args = r#"{"pattern":"fn main","path":"/src","glob":"*.rs"}"#;
-
-    // -- Exec
-    let render = GrepTool::call_line_render(args);
-
-    // -- Check
-    assert_eq!(
-        render,
-        CallLine {
-            summary: "→ \"fn main\" /src/*.rs".to_string(),
-        }
-    );
-    Ok(())
-}
-
-#[test]
-fn grep_call_line_render_shows_path_without_glob() -> Result<()> {
-    // -- Setup & Fixtures
-    let args = r#"{"pattern":"fn main","path":"/src"}"#;
-
-    // -- Exec
-    let render = GrepTool::call_line_render(args);
-
-    // -- Check
-    assert_eq!(
-        render,
-        CallLine {
-            summary: "→ \"fn main\" /src".to_string(),
-        }
-    );
-    Ok(())
-}
-
-#[test]
-fn grep_call_line_render_shows_pattern_only_without_location() -> Result<()> {
-    // -- Setup & Fixtures
-    let args = r#"{"pattern":"fn main"}"#;
-
-    // -- Exec
-    let render = GrepTool::call_line_render(args);
-
-    // -- Check
-    assert_eq!(
-        render,
-        CallLine {
-            summary: "→ \"fn main\"".to_string(),
-        }
-    );
-    Ok(())
-}
-
-#[test]
-fn grep_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
-    // -- Setup & Fixtures
-    let args = "not-json";
-
-    // -- Exec
-    let render = GrepTool::call_line_render(args);
-
-    // -- Check
-    assert_eq!(render, CallLine::from_json_summary(args));
     Ok(())
 }

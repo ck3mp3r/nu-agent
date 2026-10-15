@@ -53,6 +53,7 @@ result-*
 
 # Rust
 target/
+coverage/
 Cargo.lock.msrv
 .cargo/*
 !.cargo/config.toml

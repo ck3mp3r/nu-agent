@@ -153,3 +153,11 @@ pub fn build_agent_picker_catalog(available_agents: &[PersonaSummary]) -> Vec<Ag
 }
 
 // endregion: --- Functions
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/protocol/picker.rs"]
+mod picker_test;
+
+// endregion: --- Tests

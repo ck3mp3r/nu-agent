@@ -52,21 +52,21 @@ async fn nu_captures_stdout_and_stderr() -> Result<()> {
 }
 
 #[tokio::test]
-async fn nu_missing_command_returns_validation_error() {
-    let bus = Bus::default();
-    let err = NuTool::execute(&serde_json::json!({}), Path::new("/tmp"), &bus)
-        .await
-        .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-}
+async fn nu_invalid_command_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, serde_json::Value)> = vec![
+        ("missing command", serde_json::json!({})),
+        ("non-string command", serde_json::json!({"command": 42})),
+    ];
 
-#[tokio::test]
-async fn nu_non_string_command_returns_validation_error() {
+    // -- Exec & Check
     let bus = Bus::default();
-    let err = NuTool::execute(&serde_json::json!({"command": 42}), Path::new("/tmp"), &bus)
-        .await
-        .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
+    for (name, args) in cases {
+        let err = NuTool::execute(&args, Path::new("/tmp"), &bus)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ToolErrorKind::Validation, "case '{name}': kind");
+    }
 }
 
 /// A non-zero nu exit must return a failure-shaped error: kind Runtime,
@@ -192,119 +192,90 @@ async fn nu_cancellation_kills_process_quickly() {
 // === Previewable ===
 
 #[test]
-fn nu_preview_returns_code_display() -> Result<()> {
+fn nu_preview_table() -> Result<()> {
     // -- Setup & Fixtures
-    let args = serde_json::json!({"command": "ls | select name"});
-
-    // -- Exec
-    let display = NuTool::preview(&args, Path::new("/tmp"));
-
-    // -- Check
-    let display = display.ok_or("preview must produce a display for a valid command")?;
-    assert_eq!(display.title, None);
-    assert_eq!(display.sections.len(), 1);
-    let section = &display.sections[0];
-    assert!(
-        matches!(section.kind, ContentKind::Code { ref language } if language == "nu"),
-        "section kind must be Code(nu), got {:?}",
-        section.kind
-    );
-    assert_eq!(section.content, "ls | select name");
-    assert!(section.stats.is_none(), "code preview carries no stats");
-    Ok(())
-}
-
-#[test]
-fn nu_preview_empty_command_returns_none() -> Result<()> {
-    // -- Setup & Fixtures
-    let args = serde_json::json!({"command": ""});
+    let cases: Vec<(&str, serde_json::Value, Option<&str>)> = vec![
+        (
+            "valid command returns a code display",
+            serde_json::json!({"command": "ls | select name"}),
+            Some("ls | select name"),
+        ),
+        ("empty command", serde_json::json!({"command": ""}), None),
+        ("missing command", serde_json::json!({}), None),
+    ];
 
     // -- Exec & Check
-    assert!(
-        NuTool::preview(&args, Path::new("/tmp")).is_none(),
-        "empty command must produce no preview"
-    );
-    Ok(())
-}
-
-#[test]
-fn nu_preview_missing_command_returns_none() -> Result<()> {
-    // -- Setup & Fixtures
-    let args = serde_json::json!({});
-
-    // -- Exec & Check
-    assert!(
-        NuTool::preview(&args, Path::new("/tmp")).is_none(),
-        "missing command must produce no preview"
-    );
+    for (name, args, expected_command) in cases {
+        let display = NuTool::preview(&args, Path::new("/tmp"));
+        match expected_command {
+            Some(command) => {
+                let display =
+                    display.ok_or("preview must produce a display for a valid command")?;
+                assert_eq!(display.title, None, "case '{name}': title");
+                assert_eq!(display.sections.len(), 1, "case '{name}': section count");
+                let section = &display.sections[0];
+                assert!(
+                    matches!(section.kind, ContentKind::Code { ref language } if language == "nu"),
+                    "case '{name}': section kind must be Code(nu), got {:?}",
+                    section.kind
+                );
+                assert_eq!(section.content, command, "case '{name}': section content");
+                assert!(
+                    section.stats.is_none(),
+                    "case '{name}': code preview carries no stats"
+                );
+            }
+            None => assert!(display.is_none(), "case '{name}': preview must return None"),
+        }
+    }
     Ok(())
 }
 
 // === call_line_render ===
 
 #[test]
-fn nu_call_line_render_shows_default_timeout_when_omitted() -> Result<()> {
+fn nu_call_line_render_table() -> Result<()> {
     // -- Setup & Fixtures
-    let args = r#"{"command":"ls"}"#;
-
-    // -- Exec
-    let render = NuTool::call_line_render(args);
-
-    // -- Check: the command renders in the preview block, so the call line
-    // carries only the applied timeout.
-    assert_eq!(
-        render,
-        CallLine {
-            summary: "⏱ 120s".to_string()
-        }
-    );
-    Ok(())
-}
-
-#[test]
-fn nu_call_line_render_shows_provided_timeout() -> Result<()> {
-    // -- Setup & Fixtures
-    let args = r#"{"command":"ls","timeout_seconds":60}"#;
-
-    // -- Exec
-    let render = NuTool::call_line_render(args);
-
-    // -- Check
-    assert_eq!(
-        render,
-        CallLine {
-            summary: "⏱ 60s".to_string()
-        }
-    );
-    Ok(())
-}
-
-#[test]
-fn nu_call_line_render_falls_back_to_generic_on_invalid_json() -> Result<()> {
-    // -- Setup & Fixtures
-    let args = "not-json";
-
-    // -- Exec
-    let render = NuTool::call_line_render(args);
-
-    // -- Check
-    assert_eq!(render, CallLine::from_json_summary(args));
-    Ok(())
-}
-
-#[test]
-fn nu_call_line_render_falls_back_to_generic_on_missing_or_empty_command() -> Result<()> {
-    // -- Setup & Fixtures
-    let missing = r#"{"timeout_seconds":5}"#;
-    let empty = r#"{"command":""}"#;
+    // The command renders in the preview block, so the call line carries only
+    // the applied timeout. Args without a usable command keep the generic
+    // summary.
+    let cases: Vec<(&str, &str, Option<&str>)> = vec![
+        (
+            "shows default timeout when omitted",
+            r#"{"command":"ls"}"#,
+            Some("⏱ 120s"),
+        ),
+        (
+            "shows provided timeout",
+            r#"{"command":"ls","timeout_seconds":60}"#,
+            Some("⏱ 60s"),
+        ),
+        ("falls back to generic on invalid json", "not-json", None),
+        (
+            "falls back to generic on missing command",
+            r#"{"timeout_seconds":5}"#,
+            None,
+        ),
+        (
+            "falls back to generic on empty command",
+            r#"{"command":""}"#,
+            None,
+        ),
+    ];
 
     // -- Exec & Check
-    for args in [missing, empty] {
-        assert_eq!(
-            NuTool::call_line_render(args),
-            CallLine::from_json_summary(args),
-            "args without a usable command must keep the generic summary: {args}"
-        );
+    for (name, args, expected) in cases {
+        let render = NuTool::call_line_render(args);
+        match expected {
+            Some(summary) => assert_eq!(
+                render,
+                CallLine {
+                    summary: summary.to_string(),
+                },
+                "case '{name}'"
+            ),
+            None => assert_eq!(render, CallLine::from_json_summary(args), "case '{name}'"),
+        }
     }
     Ok(())
 }

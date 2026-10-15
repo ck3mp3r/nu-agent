@@ -425,4 +425,12 @@ fn log_target() -> env_logger::Target {
 #[path = "../test/version.rs"]
 mod version_test;
 
+#[cfg(test)]
+#[path = "../test/cli.rs"]
+mod cli_test;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/integration.rs"]
+mod integration_test;
+
 // endregion: --- Tests

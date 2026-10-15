@@ -5,263 +5,163 @@ use crate::interaction::reducer::UserAction;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+/// Idle Normal-mode keymap: vim keys map to scroll/focus/mode actions, and
+/// unmapped characters are consumed as no-ops. Idle rewriting never reports a
+/// change (the reducer owns mode transitions).
 #[test]
-fn test_input_state_handle_action_idle_normal_keymap_maps_vim_keys() {
+fn test_input_state_idle_normal_keymap_matrix() -> Result<()> {
     // -- Setup & Fixtures
     let mut input = InputState::default().with_mode(InputMode::Normal);
 
-    // -- Exec & Check
-    let (action, changed) = input.handle_action(UserAction::InsertChar('j'), true);
-    assert_eq!(action, UserAction::ScrollLineDown);
-    assert!(!changed);
+    // -- Exec & Check: mapped keys.
+    let cases: [(char, UserAction); 8] = [
+        ('j', UserAction::ScrollLineDown),
+        ('k', UserAction::ScrollLineUp),
+        ('h', UserAction::FocusPaneLeft),
+        ('l', UserAction::FocusPaneRight),
+        ('i', UserAction::EnterInsertMode),
+        ('v', UserAction::EnterVisualMode),
+        ('G', UserAction::ScrollToBottom),
+        ('x', UserAction::Noop),
+    ];
+    for (ch, expected) in cases {
+        let (action, changed) = input.handle_action(UserAction::InsertChar(ch), true);
+        assert_eq!(action, expected, "key {ch}");
+        assert!(!changed, "key {ch}");
+    }
 
-    let (action, _) = input.handle_action(UserAction::InsertChar('k'), true);
-    assert_eq!(action, UserAction::ScrollLineUp);
-
-    let (action, _) = input.handle_action(UserAction::InsertChar('h'), true);
-    assert_eq!(action, UserAction::FocusPaneLeft);
-
-    let (action, _) = input.handle_action(UserAction::InsertChar('l'), true);
-    assert_eq!(action, UserAction::FocusPaneRight);
-
+    // -- Exec & Check: completion keys map to pane focus.
     let (action, _) = input.handle_action(UserAction::CompleteForward, true);
     assert_eq!(action, UserAction::FocusPaneRight);
-
     let (action, _) = input.handle_action(UserAction::CompleteBackward, true);
     assert_eq!(action, UserAction::FocusPaneLeft);
 
-    let (action, _) = input.handle_action(UserAction::InsertChar('i'), true);
-    assert_eq!(action, UserAction::EnterInsertMode);
-
-    let (action, _) = input.handle_action(UserAction::InsertChar('v'), true);
-    assert_eq!(action, UserAction::EnterVisualMode);
-
-    let (action, _) = input.handle_action(UserAction::InsertChar('G'), true);
-    assert_eq!(action, UserAction::ScrollToBottom);
-
+    // -- Exec & Check: Esc passes through.
     let (action, _) = input.handle_action(UserAction::Esc, true);
     assert_eq!(action, UserAction::Esc);
-}
 
-#[test]
-fn test_input_state_handle_action_idle_normal_unmapped_char_is_noop() {
-    // -- Setup & Fixtures
-    // Equivalent of the deleted reducer insert_char free fn: plain characters
-    // in normal mode are consumed, not typed.
-    let mut input = InputState::default().with_mode(InputMode::Normal);
-
-    // -- Exec
-    let (action, changed) = input.handle_action(UserAction::InsertChar('x'), true);
-
-    // -- Check
-    assert_eq!(action, UserAction::Noop);
-    assert!(!changed);
-}
-
-#[test]
-fn test_input_state_handle_action_idle_normal_gg_chord_arms_then_fires() {
-    // -- Setup & Fixtures
-    let mut input = InputState::default().with_mode(InputMode::Normal);
-
-    // -- Exec & Check
+    // -- Exec & Check: the gg chord arms then fires, then re-arms.
     let (action, _) = input.handle_action(UserAction::InsertChar('g'), true);
     assert_eq!(action, UserAction::Noop);
-
     let (action, _) = input.handle_action(UserAction::InsertChar('g'), true);
     assert_eq!(action, UserAction::ScrollToTop);
-
-    // The chord is consumed after firing; a third 'g' re-arms it.
     let (action, _) = input.handle_action(UserAction::InsertChar('g'), true);
     assert_eq!(action, UserAction::Noop);
-}
 
-#[test]
-fn test_input_state_handle_action_idle_insert_j_chord_arms_then_fires() {
-    // -- Setup & Fixtures
-    let mut input = InputState::default();
-    assert_eq!(input.mode, InputMode::Insert);
-
-    // -- Exec & Check
-    let (action, _) = input.handle_action(UserAction::InsertChar('j'), true);
-    assert_eq!(action, UserAction::InsertChar('j'));
-
-    let (action, _) = input.handle_action(UserAction::InsertChar('j'), true);
-    assert_eq!(action, UserAction::EnterNormalModeFromChord);
-    // Idle-mode rewriting does not transition the mode; the reducer does.
-    assert_eq!(input.mode, InputMode::Insert);
-}
-
-#[test]
-fn test_input_state_handle_action_idle_visual_y_maps_to_yank() {
-    // -- Setup & Fixtures
-    let mut input = InputState::default().with_mode(InputMode::Visual);
-
-    // -- Exec
-    let (action, _) = input.handle_action(UserAction::InsertChar('y'), true);
-
-    // -- Check
+    // -- Exec & Check: Visual-mode 'y' maps to yank.
+    let mut visual = InputState::default().with_mode(InputMode::Visual);
+    let (action, _) = visual.handle_action(UserAction::InsertChar('y'), true);
     assert_eq!(action, UserAction::YankSelection);
+    Ok(())
 }
 
+/// Idle Insert-mode chords and busy-mode rewriting: the jj/jk chords arm and
+/// fire, Esc exits to Normal, and the insert-exit chord expires after its
+/// timeout.
 #[test]
-fn test_input_state_handle_action_busy_insert_esc_exits_to_normal_and_returns_esc() {
-    // -- Setup & Fixtures
-    let mut input = InputState::default();
+fn test_input_state_chords_and_busy_rewriting() -> Result<()> {
+    // -- Setup & Fixtures: idle Insert mode.
+    let mut idle = InputState::default();
+    assert_eq!(idle.mode, InputMode::Insert);
 
-    // -- Exec
-    let (action, changed) = input.handle_action(UserAction::Esc, false);
+    // -- Exec & Check: jj chord arms then fires; mode is not rewritten here.
+    let (action, _) = idle.handle_action(UserAction::InsertChar('j'), true);
+    assert_eq!(action, UserAction::InsertChar('j'));
+    let (action, _) = idle.handle_action(UserAction::InsertChar('j'), true);
+    assert_eq!(action, UserAction::EnterNormalModeFromChord);
+    assert_eq!(idle.mode, InputMode::Insert);
 
-    // -- Check
+    // -- Setup & Fixtures: busy Insert mode.
+    let mut busy = InputState::default();
+
+    // -- Exec & Check: Esc exits to Normal and returns Esc.
+    let (action, changed) = busy.handle_action(UserAction::Esc, false);
     assert_eq!(action, UserAction::Esc);
     assert!(changed);
-    assert_eq!(input.mode, InputMode::Normal);
-    assert!(!input.insert_exit_pending_j());
-}
+    assert_eq!(busy.mode, InputMode::Normal);
+    assert!(!busy.insert_exit_pending_j());
 
-#[test]
-fn test_input_state_handle_action_busy_insert_jk_chord_transitions_to_normal() {
-    // -- Setup & Fixtures
-    let mut input = InputState::default();
-
-    // -- Exec & Check
-    let (action, changed) = input.handle_action(UserAction::InsertChar('j'), false);
+    // -- Exec & Check: the jk chord transitions to Normal.
+    busy.enter_insert_mode();
+    let (action, changed) = busy.handle_action(UserAction::InsertChar('j'), false);
     assert_eq!(action, UserAction::InsertChar('j'));
     assert!(changed);
-    assert_eq!(input.mode, InputMode::Insert);
-
-    let (action, changed) = input.handle_action(UserAction::InsertChar('j'), false);
+    assert_eq!(busy.mode, InputMode::Insert);
+    let (action, changed) = busy.handle_action(UserAction::InsertChar('k'), false);
     assert_eq!(action, UserAction::EnterNormalModeFromChord);
     assert!(changed);
-    assert_eq!(input.mode, InputMode::Normal);
+    assert_eq!(busy.mode, InputMode::Normal);
 
-    // Re-entering insert mode resets the chord; the jk chord arms with 'j'
-    // and fires with 'k' ('k' alone never arms — it only clears).
-    input.enter_insert_mode();
-    let (action, _) = input.handle_action(UserAction::InsertChar('j'), false);
-    assert_eq!(action, UserAction::InsertChar('j'));
-
-    let (action, changed) = input.handle_action(UserAction::InsertChar('k'), false);
-    assert_eq!(action, UserAction::EnterNormalModeFromChord);
-    assert!(changed);
-    assert_eq!(input.mode, InputMode::Normal);
-}
-
-#[test]
-fn test_input_state_handle_action_busy_normal_i_enters_insert() {
-    // -- Setup & Fixtures
-    let mut input = InputState::default().with_mode(InputMode::Normal);
-
-    // -- Exec
-    let (action, changed) = input.handle_action(UserAction::InsertChar('i'), false);
-
-    // -- Check
+    // -- Exec & Check: busy Normal 'i' enters Insert.
+    let mut normal = InputState::default().with_mode(InputMode::Normal);
+    let (action, changed) = normal.handle_action(UserAction::InsertChar('i'), false);
     assert_eq!(action, UserAction::Noop);
     assert!(changed);
-    assert_eq!(input.mode, InputMode::Insert);
-}
+    assert_eq!(normal.mode, InputMode::Insert);
 
-#[test]
-fn test_input_state_handle_action_busy_visual_resets_chords_and_passes_through() {
-    // -- Setup & Fixtures
-    let mut input = InputState::default().with_mode(InputMode::Visual);
-    input.set_insert_exit_pending_j();
-
-    // -- Exec
-    let (action, changed) = input.handle_action(UserAction::ScrollLineDown, false);
-
-    // -- Check
+    // -- Exec & Check: busy Visual resets chords and passes the action through.
+    let mut visual = InputState::default().with_mode(InputMode::Visual);
+    visual.set_insert_exit_pending_j();
+    let (action, changed) = visual.handle_action(UserAction::ScrollLineDown, false);
     assert_eq!(action, UserAction::ScrollLineDown);
     assert!(!changed);
-    assert!(!input.insert_exit_pending_j());
-}
+    assert!(!visual.insert_exit_pending_j());
 
-#[test]
-fn test_input_state_insert_exit_chord_expires_after_timeout() {
-    // -- Setup & Fixtures: inject a short expiry so the window elapses without
-    // a real-time wait.
-    let mut input =
+    // -- Exec & Check: the insert-exit chord expires after its timeout.
+    let mut expiring =
         InputState::default().with_insert_exit_expiry(std::time::Duration::from_millis(10));
-    input.set_insert_exit_pending_j();
-
-    // -- Exec
+    expiring.set_insert_exit_pending_j();
     std::thread::sleep(std::time::Duration::from_millis(30));
-
-    // -- Check
-    assert!(!input.insert_exit_pending_j());
+    assert!(!expiring.insert_exit_pending_j());
+    Ok(())
 }
 
+/// History navigation loads newest first, clamps at the oldest, restores the
+/// saved draft, returns none for an empty history, and resets on demand; the
+/// clipboard request is consumed once.
 #[test]
-fn test_input_state_history_up_loads_newest_first_then_clamps_at_oldest() -> Result<()> {
+fn test_input_state_history_and_clipboard() -> Result<()> {
     // -- Setup & Fixtures
     let mut input = InputState::default();
     let submitted = vec!["a".to_string(), "b".to_string(), "c".to_string()];
 
-    // -- Exec & Check
-    assert_eq!(
-        input.history_up(&submitted, ""),
-        Some("c".to_string()),
-        "should load newest first"
-    );
+    // -- Exec & Check: newest first, clamped at the oldest.
+    assert_eq!(input.history_up(&submitted, ""), Some("c".to_string()));
     assert_eq!(input.history_up(&submitted, ""), Some("b".to_string()));
     assert_eq!(input.history_up(&submitted, ""), Some("a".to_string()));
-    assert_eq!(
-        input.history_up(&submitted, ""),
-        Some("a".to_string()),
-        "should clamp at the oldest entry"
-    );
-    Ok(())
-}
+    assert_eq!(input.history_up(&submitted, ""), Some("a".to_string()));
 
-#[test]
-fn test_input_state_history_down_past_newest_restores_saved_draft() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut input = InputState::default();
-    let submitted = vec!["p1".to_string()];
-
-    // -- Exec
-    let up = input
-        .history_up(&submitted, "draft")
+    // -- Setup & Fixtures: draft restore.
+    let mut draft = InputState::default();
+    let single = vec!["p1".to_string()];
+    let up = draft
+        .history_up(&single, "draft")
         .ok_or("should load history up")?;
-    let down = input.history_down(&submitted);
+    let down = draft.history_down(&single);
 
     // -- Check
     assert_eq!(up, "p1");
     assert_eq!(down, Some("draft".to_string()));
+
+    // -- Exec & Check: empty history returns none.
+    let mut empty = InputState::default();
+    let none: Vec<String> = Vec::new();
+    assert_eq!(empty.history_up(&none, ""), None);
+    assert_eq!(empty.history_down(&none), None);
+
+    // -- Exec & Check: reset clears the navigation index and saved draft.
+    let mut reset = InputState::default();
+    let _ = reset.history_up(&single, "draft");
+    reset.reset_history_navigation();
+    assert_eq!(reset.history_down(&single), None);
+
+    // -- Exec & Check: the clipboard request is consumed once.
+    let mut clipboard = InputState::default();
+    clipboard.set_clipboard_request("payload".to_string());
+    assert_eq!(
+        clipboard.take_clipboard_request(),
+        Some("payload".to_string())
+    );
+    assert_eq!(clipboard.take_clipboard_request(), None);
     Ok(())
-}
-
-#[test]
-fn test_input_state_history_with_empty_submitted_returns_none() {
-    // -- Setup & Fixtures
-    let mut input = InputState::default();
-    let submitted: Vec<String> = Vec::new();
-
-    // -- Exec & Check
-    assert_eq!(input.history_up(&submitted, ""), None);
-    assert_eq!(input.history_down(&submitted), None);
-}
-
-#[test]
-fn test_input_state_reset_history_navigation_clears_index_and_saved_draft() {
-    // -- Setup & Fixtures
-    let mut input = InputState::default();
-    let submitted = vec!["p1".to_string()];
-    let _ = input.history_up(&submitted, "draft");
-
-    // -- Exec
-    input.reset_history_navigation();
-
-    // -- Check
-    assert_eq!(input.history_down(&submitted), None);
-}
-
-#[test]
-fn test_input_state_clipboard_request_take_consumes_payload() {
-    // -- Setup & Fixtures
-    let mut input = InputState::default();
-    input.set_clipboard_request("payload".to_string());
-
-    // -- Exec & Check
-    assert_eq!(input.take_clipboard_request(), Some("payload".to_string()));
-    assert_eq!(input.take_clipboard_request(), None);
 }

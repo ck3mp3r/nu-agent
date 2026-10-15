@@ -311,3 +311,11 @@ fn list_server_names(config: &McpConfig) -> String {
 }
 
 // endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/dispatch/utility/mcp.rs"]
+mod mcp_test;
+
+// endregion: --- Tests

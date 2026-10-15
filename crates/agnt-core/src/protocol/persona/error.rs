@@ -85,3 +85,11 @@ impl std::error::Error for FrontMatterError {
         }
     }
 }
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/protocol/persona/error.rs"]
+mod error_test;
+
+// endregion: --- Tests

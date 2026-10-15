@@ -418,56 +418,6 @@ where
                     }
                     break result;
                 }
-                Err((crate::conversation::turn::TurnError::Cancelled { msg, .. }, _))
-                    if msg.starts_with(OUTPUT_REPETITION_STOP_PREFIX) =>
-                {
-                    // Path A stop-to-steering: the repetition guard cancelled the
-                    // turn via rig's Cancelled. Below the retry cap,
-                    // publish the steering notice, deliver the repetition
-                    // steering message (session append, or prompt prepend when
-                    // there is no session), reset the escalation ladder, and
-                    // re-run the turn. A stop at the cap exhausts it and falls
-                    // through to the terminal surface after the loop (which
-                    // surfaces the stop reason).
-                    if rep_stop_retries < defaults::MAX_REPETITION_STOP_RETRIES {
-                        rep_stop_retries += 1;
-                        log::warn!(
-                            "Repetition stop converted to steering retry {rep_stop_retries}/{}. ",
-                            defaults::MAX_REPETITION_STOP_RETRIES
-                        );
-                        let _ = self
-                            .tool_infra
-                            .bus
-                            .ui_event()
-                            .send(UiEvent::Warning {
-                                message: super::core::REPETITION_STEERING_NOTICE.to_string(),
-                            })
-                            .await;
-                        match final_session_id {
-                            Some(session_id) => {
-                                self.append_to_memory_or_warn(
-                                    session_id,
-                                    vec![Message::user(OUTPUT_REPETITION_BACKOFF_MESSAGE)],
-                                    "repetition stop steering retry",
-                                )
-                                .await;
-                            }
-                            None => {
-                                // No session: carry the steering in the retry
-                                // prompt (transient, nothing persisted).
-                                session_less_steering =
-                                    Some(OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string());
-                            }
-                        }
-                        self.tool_infra
-                            .output_repetition
-                            .lock()
-                            .expect("output repetition mutex poisoned")
-                            .reset_ladder();
-                        continue;
-                    }
-                    break result;
-                }
                 _ => break result,
             }
         }

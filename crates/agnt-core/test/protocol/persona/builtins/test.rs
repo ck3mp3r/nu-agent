@@ -6,41 +6,28 @@ use crate::protocol::persona::{
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
-fn test_builtin_planner_content_not_empty() {
+fn builtin_persona_registry_entries() {
+    // Builtin contents are non-empty.
     assert!(
         !BUILTIN_PLANNER_CONTENT.is_empty(),
         "planner content must not be empty"
     );
-}
-
-#[test]
-fn test_builtin_maker_content_not_empty() {
     assert!(
         !BUILTIN_MAKER_CONTENT.is_empty(),
         "maker content must not be empty"
     );
-}
 
-#[test]
-fn test_is_builtin_persona_planner() {
+    // Known builtin names are recognized; unknown names are not.
     assert!(is_builtin_persona("planner"));
-}
-
-#[test]
-fn test_is_builtin_persona_maker() {
     assert!(is_builtin_persona("maker"));
-}
-
-#[test]
-fn test_is_builtin_persona_unknown() {
     assert!(!is_builtin_persona("custom"));
 }
 
 #[test]
-fn test_builtin_content_has_valid_front_matter() -> Result<()> {
+fn builtin_personas_parse_with_name_description_icon() -> Result<()> {
     let parser = PulldownCmarkFrontMatterParser;
 
-    // Planner
+    // Planner front matter carries a name and a description.
     let planner_raw = parser
         .parse(BUILTIN_PLANNER_CONTENT)
         .map_err(|e| format!("planner content should parse: {e:?}"))?;
@@ -56,7 +43,7 @@ fn test_builtin_content_has_valid_front_matter() -> Result<()> {
         "planner front matter must contain a description"
     );
 
-    // Maker
+    // Maker front matter carries a name and a description.
     let maker_raw = parser
         .parse(BUILTIN_MAKER_CONTENT)
         .map_err(|e| format!("maker content should parse: {e:?}"))?;
@@ -70,12 +57,8 @@ fn test_builtin_content_has_valid_front_matter() -> Result<()> {
         maker_parsed.description.is_some(),
         "maker front matter must contain a description"
     );
-    Ok(())
-}
 
-#[test]
-fn builtin_personas_have_icon() -> Result<()> {
-    let parser = PulldownCmarkFrontMatterParser;
+    // Every builtin persona has an icon.
     for builtin in BUILTIN_PERSONAS {
         let raw = parser
             .parse(builtin.content)

@@ -8,10 +8,6 @@ pub mod state;
 pub mod tui_renderer;
 
 #[cfg(test)]
-#[path = "../test/architecture.rs"]
-mod architecture_test;
-
-#[cfg(test)]
 #[path = "../test/renderer.rs"]
 mod renderer_test;
 

@@ -67,3 +67,11 @@ fn generate_config_content() -> String {
 }
 
 // endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/dispatch/utility/config.rs"]
+mod config_test;
+
+// endregion: --- Tests

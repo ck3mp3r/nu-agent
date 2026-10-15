@@ -6,68 +6,47 @@ use crate::tools::handler::ToolErrorKind;
 use std::path::Path;
 
 #[tokio::test]
-async fn missing_action_returns_validation_error() {
-    let bus = Bus::default();
-    let err = TmuxSessionTool::execute(&serde_json::json!({}), Path::new("/tmp"), &bus)
-        .await
-        .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-}
+async fn validation_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, serde_json::Value, Option<&str>)> = vec![
+        ("missing action", serde_json::json!({}), None),
+        (
+            "unknown action",
+            serde_json::json!({ "action": "bogus" }),
+            Some("Unknown tmux_session action"),
+        ),
+        (
+            "info requires session",
+            serde_json::json!({ "action": "info" }),
+            Some("requires 'session'"),
+        ),
+        (
+            "create requires name",
+            serde_json::json!({ "action": "create" }),
+            Some("requires 'name'"),
+        ),
+        (
+            "kill requires force",
+            serde_json::json!({ "action": "kill", "session": "main" }),
+            Some("force: true"),
+        ),
+    ];
 
-#[tokio::test]
-async fn unknown_action_returns_validation_error() {
+    // -- Exec & Check
     let bus = Bus::default();
-    let err = TmuxSessionTool::execute(
-        &serde_json::json!({ "action": "bogus" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(err.message.contains("Unknown tmux_session action"));
-}
-
-#[tokio::test]
-async fn info_requires_session() {
-    let bus = Bus::default();
-    let err = TmuxSessionTool::execute(
-        &serde_json::json!({ "action": "info" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(err.message.contains("requires 'session'"));
-}
-
-#[tokio::test]
-async fn create_requires_name() {
-    let bus = Bus::default();
-    let err = TmuxSessionTool::execute(
-        &serde_json::json!({ "action": "create" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(err.message.contains("requires 'name'"));
-}
-
-#[tokio::test]
-async fn kill_requires_force() {
-    let bus = Bus::default();
-    let err = TmuxSessionTool::execute(
-        &serde_json::json!({ "action": "kill", "session": "main" }),
-        Path::new("/tmp"),
-        &bus,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(err.kind, ToolErrorKind::Validation);
-    assert!(err.message.contains("force: true"));
+    for (name, args, expected_message) in cases {
+        let err = TmuxSessionTool::execute(&args, Path::new("/tmp"), &bus)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ToolErrorKind::Validation, "case '{name}': kind");
+        if let Some(message) = expected_message {
+            assert!(
+                err.message.contains(message),
+                "case '{name}': message must contain '{message}', got: {}",
+                err.message
+            );
+        }
+    }
 }
 
 #[test]

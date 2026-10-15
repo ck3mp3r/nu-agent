@@ -41,3 +41,11 @@ fn format_row(cells: &[String], widths: &[usize]) -> String {
 }
 
 // endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/dispatch/utility/table.rs"]
+mod table_test;
+
+// endregion: --- Tests

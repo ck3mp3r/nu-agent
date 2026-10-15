@@ -1,9 +1,6 @@
 use nu_protocol::Value;
 
 use super::input::{extract_context_from_input, extract_prompt_from_input};
-use agnt_core::protocol::prompt::{
-    merge_preamble_with_prompt_and_context, merge_prompt_with_context,
-};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -157,92 +154,6 @@ fn test_extract_context_accepts_empty_context() -> Result<()> {
     // The merging logic will decide how to handle it
     assert_eq!(value, Some("".to_string()));
     Ok(())
-}
-
-// ============================================================================
-// Prompt Merging Tests - Task 1.2
-// ============================================================================
-
-#[test]
-fn test_merge_prompt_without_context() {
-    // When no context, return prompt as-is
-    let prompt = "What is Rust?";
-    let context: Option<&str> = None;
-
-    let result = merge_prompt_with_context(prompt, context);
-
-    assert_eq!(result, "What is Rust?");
-}
-
-#[test]
-fn test_merge_prompt_with_context() {
-    // RED: When context is provided, merge it with the prompt
-    let prompt = "Explain the code";
-    let context = Some("File: main.rs\nCode: fn main() { println!(\"Hello\"); }");
-
-    let result = merge_prompt_with_context(prompt, context);
-
-    // Context should be prepended to prompt with clear separation
-    assert!(result.contains("File: main.rs"));
-    assert!(result.contains("Explain the code"));
-    assert!(result.len() > prompt.len());
-}
-
-#[test]
-fn test_merge_prompt_with_empty_context() {
-    // Empty context string should be treated as no context
-    let prompt = "What is Rust?";
-    let context = Some("");
-
-    let result = merge_prompt_with_context(prompt, context);
-
-    // Empty context should not affect the prompt
-    assert_eq!(result, "What is Rust?");
-}
-
-#[test]
-fn test_merge_prompt_with_whitespace_context() {
-    // Whitespace-only context should be treated as no context
-    let prompt = "What is Rust?";
-    let context = Some("   \n  \t  ");
-
-    let result = merge_prompt_with_context(prompt, context);
-
-    // Whitespace-only context should not affect the prompt
-    assert_eq!(result, "What is Rust?");
-}
-
-#[test]
-fn test_merge_prompt_preserves_context_format() {
-    // Verify that context formatting is preserved (newlines, etc.)
-    let prompt = "Summarize";
-    let context = Some("Line 1\nLine 2\nLine 3");
-
-    let result = merge_prompt_with_context(prompt, context);
-
-    // All context lines should be present
-    assert!(result.contains("Line 1"));
-    assert!(result.contains("Line 2"));
-    assert!(result.contains("Line 3"));
-    assert!(result.contains("Summarize"));
-}
-
-#[test]
-fn test_merge_preamble_with_prompt_and_context_prepends_preamble() {
-    let result = merge_preamble_with_prompt_and_context(
-        "Explain the code",
-        Some("File: main.rs"),
-        Some("You are a strict reviewer."),
-    );
-
-    let expected = "You are a strict reviewer.\n\n---\n\nFile: main.rs\n\n---\n\nExplain the code";
-    assert_eq!(result, expected);
-}
-
-#[test]
-fn test_merge_preamble_with_prompt_and_context_ignores_empty_preamble() {
-    let result = merge_preamble_with_prompt_and_context("Explain", Some("Ctx"), Some("  \n\t  "));
-    assert_eq!(result, "Ctx\n\n---\n\nExplain");
 }
 
 // ============================================================================

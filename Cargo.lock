@@ -70,6 +70,7 @@ dependencies = [
 name = "agnt-a2a"
 version = "0.1.0"
 dependencies = [
+ "agnt-testkit",
  "anyhow",
  "axum",
  "chrono",
@@ -99,6 +100,7 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "agnt-core",
+ "agnt-testkit",
  "chrono",
  "log",
  "nu-protocol",
@@ -107,7 +109,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "wiremock",
 ]
 
 [[package]]
@@ -117,6 +118,7 @@ dependencies = [
  "agnt-a2a",
  "agnt-acp",
  "agnt-core",
+ "agnt-testkit",
  "agnt-tty",
  "agnt-tui",
  "chrono",
@@ -130,6 +132,8 @@ dependencies = [
  "rmcp",
  "rustls",
  "serde_json",
+ "serial_test",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "url",
@@ -140,6 +144,7 @@ name = "agnt-core"
 version = "0.1.0"
 dependencies = [
  "agnt-a2a",
+ "agnt-testkit",
  "async-trait",
  "bytes",
  "chrono",
@@ -184,6 +189,13 @@ dependencies = [
  "unicode-width 0.2.2",
  "unicodeit",
  "url",
+]
+
+[[package]]
+name = "agnt-testkit"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
  "wiremock",
 ]
 

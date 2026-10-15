@@ -45,3 +45,11 @@ pub fn resolve_agent_mode(
 }
 
 // endregion: --- Functions
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/conversation/mode_logic.rs"]
+mod mode_logic_test;
+
+// endregion: --- Tests

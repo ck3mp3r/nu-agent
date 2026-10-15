@@ -220,3 +220,11 @@ fn extract_message_info(msg: &Message) -> (String, String) {
 }
 
 // endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/dispatch/utility/session.rs"]
+mod session_test;
+
+// endregion: --- Tests

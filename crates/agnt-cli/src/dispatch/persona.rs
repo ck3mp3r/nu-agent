@@ -118,3 +118,11 @@ pub fn resolve_persona_from_clap(
 }
 
 // endregion: --- Functions
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/dispatch/persona.rs"]
+mod persona_test;
+
+// endregion: --- Tests

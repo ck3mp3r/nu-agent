@@ -1,8 +1,14 @@
 use super::*;
 
+/// Coordinator hydration skips blank lines, maps unknown roles to system,
+/// reconstructs tool rows matching the live shape, uses the tool's tailored
+/// call line, and parses persisted tool status lines.
 #[test]
-fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
+fn coordinator_hydration_and_tool_rows() -> Result<()> {
+    // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+
+    // -- Exec
     coordinator.hydrate_transcript_from_messages(
         vec![
             UiMessageSnapshot::new("user", "line1\n\nline2"),
@@ -13,6 +19,7 @@ fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
         None,
     );
 
+    // -- Check: blank lines are preserved; unknown roles map to system.
     let lines = coordinator.state().transcript.blocks().to_vec();
     assert_eq!(
         lines
@@ -20,20 +27,17 @@ fn coordinator_hydration_skips_blank_lines_and_maps_unknown_role_to_system() {
             .map(|block| (block_to_role(block), block.source.plain_text()))
             .collect::<Vec<_>>(),
         vec![
-            // user block: one whole block, blank lines preserved
             (TranscriptRole::User, "line1\n\nline2".to_string()),
-            // assistant block: reply
             (TranscriptRole::Assistant, "reply".to_string()),
-            // system block: fallback
             (TranscriptRole::System, "system fallback".to_string()),
         ]
     );
-}
 
-#[test]
-fn hydrated_tool_history_matches_live_tool_row_shape() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.hydrate_transcript_from_messages(
+    // -- Setup & Fixtures: a finished tool call.
+    let mut tool = RuntimeCoordinator::new(120, 30, Some(true));
+
+    // -- Exec
+    tool.hydrate_transcript_from_messages(
         vec![
             UiMessageSnapshot::new("tool", "tool[k8s__list_pods] → {} · done").with_tool_details(
                 Some("{\"namespace\":\"prod\"}".to_string()),
@@ -44,25 +48,21 @@ fn hydrated_tool_history_matches_live_tool_row_shape() {
         None,
     );
 
-    // Tool block: no leading spacer under the unified spacer rule
-    assert_eq!(coordinator.state().transcript.len(), 1);
-    let tool_block = &coordinator.state().transcript.blocks()[0];
+    // -- Check: one Tool block matching the live shape.
+    assert_eq!(tool.state().transcript.len(), 1);
+    let tool_block = &tool.state().transcript.blocks()[0];
     assert!(matches!(tool_block.source, BlockSource::Tool { .. }));
-    if let BlockSource::Tool { call, .. } = &tool_block.source {
-        assert!(call.summary.contains("namespace"));
-    } else {
-        panic!("Expected Tool variant");
-    }
+    let BlockSource::Tool { call, .. } = &tool_block.source else {
+        return Err("expected Tool variant".into());
+    };
+    assert!(call.summary.contains("namespace"));
     assert_eq!(tool_block.status, Some(ItemStatus::Done));
-}
 
-#[test]
-fn hydrated_nu_tool_row_call_line_contains_command() {
-    // -- Setup & Fixtures
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    // -- Setup & Fixtures: a nu tool call.
+    let mut nu = RuntimeCoordinator::new(120, 30, Some(true));
 
     // -- Exec
-    coordinator.hydrate_transcript_from_messages(
+    nu.hydrate_transcript_from_messages(
         vec![
             UiMessageSnapshot::new("tool", "tool[nu] → \"ls\" · done").with_tool_details(
                 Some(r#"{"command":"ls | select name type size"}"#.to_string()),
@@ -73,26 +73,18 @@ fn hydrated_nu_tool_row_call_line_contains_command() {
         None,
     );
 
-    // -- Check: the nu tool's tailored call line carries the applied
-    // timeout — the command renders in the preview block.
-    let block = &coordinator.state().transcript.blocks()[0];
-    if let BlockSource::Tool { call, .. } = &block.source {
-        assert_eq!(
-            call.summary, "⏱ 120s",
-            "hydrated nu row must use the nu tool's tailored call line"
-        );
-    } else {
-        panic!("Expected Tool variant");
-    }
-}
+    // -- Check: the nu tool's tailored call line.
+    let block = &nu.state().transcript.blocks()[0];
+    let BlockSource::Tool { call, .. } = &block.source else {
+        return Err("expected Tool variant".into());
+    };
+    assert_eq!(call.summary, "⏱ 120s");
 
-#[test]
-fn hydrated_edit_tool_row_call_line_uses_edit_tailored_render() {
-    // -- Setup & Fixtures
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    // -- Setup & Fixtures: an edit tool call.
+    let mut edit = RuntimeCoordinator::new(120, 30, Some(true));
 
     // -- Exec
-    coordinator.hydrate_transcript_from_messages(
+    edit.hydrate_transcript_from_messages(
         vec![
             UiMessageSnapshot::new("tool", "tool[edit] → \"a.rs\" · done").with_tool_details(
                 Some(r#"{"path":"a.rs","operation":{"type":"create","content":"x"}}"#.to_string()),
@@ -103,41 +95,40 @@ fn hydrated_edit_tool_row_call_line_uses_edit_tailored_render() {
         None,
     );
 
-    // -- Check
-    let block = &coordinator.state().transcript.blocks()[0];
-    if let BlockSource::Tool { call, .. } = &block.source {
-        assert_eq!(
-            call.summary,
-            "→ a.rs (diff)".to_string(),
-            "hydrated edit row must use the edit tool's tailored inline call line"
-        );
-    } else {
-        panic!("Expected Tool variant");
-    }
-}
+    // -- Check: the edit tool's tailored inline call line.
+    let block = &edit.state().transcript.blocks()[0];
+    let BlockSource::Tool { call, .. } = &block.source else {
+        return Err("expected Tool variant".into());
+    };
+    assert_eq!(call.summary, "→ a.rs (diff)");
 
-#[test]
-fn parse_persisted_tool_status_line_supports_done_and_failed_shapes() {
-    let done = crate::state::parse_persisted_tool_status_line(
-        "tool[k8s__list_pods] → {\"namespace\":\"prod\"} · done",
-    );
+    // -- Exec & Check: the persisted tool status line parser.
     assert_eq!(
-        done,
+        crate::state::parse_persisted_tool_status_line(
+            "tool[k8s__list_pods] → {\"namespace\":\"prod\"} · done"
+        ),
         Some(("k8s__list_pods", "{\"namespace\":\"prod\"}", true))
     );
-
-    let failed = crate::state::parse_persisted_tool_status_line("tool[gh__run] → {} · failed");
-    assert_eq!(failed, Some(("gh__run", "{}", false)));
-
+    assert_eq!(
+        crate::state::parse_persisted_tool_status_line("tool[gh__run] → {} · failed"),
+        Some(("gh__run", "{}", false))
+    );
     assert_eq!(
         crate::state::parse_persisted_tool_status_line("tool[gh__run] → {}"),
         None
     );
+    Ok(())
 }
 
-#[test]
-fn coordinator_hydration_projects_both_user_and_assistant_markdown() {
+/// Coordinator hydration projects user and assistant markdown, keeps
+/// unsupported markdown readable, handles malformed markdown without dropping
+/// the message, and reprojects on resize.
+#[tokio::test]
+async fn coordinator_hydration_markdown_projection() -> Result<()> {
+    // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+
+    // -- Exec
     coordinator.hydrate_transcript_from_messages(
         vec![
             UiMessageSnapshot::new("user", "# user stays literal"),
@@ -146,8 +137,7 @@ fn coordinator_hydration_projects_both_user_and_assistant_markdown() {
         None,
     );
 
-    // After the raw-markdown refactor: the block source is raw markdown.
-    // Project to verify the rendered content.
+    // -- Check: user text is literal; assistant markdown projects.
     let raw_lines: Vec<(TranscriptRole, String)> = coordinator
         .state()
         .transcript
@@ -155,15 +145,11 @@ fn coordinator_hydration_projects_both_user_and_assistant_markdown() {
         .iter()
         .map(|block| (block_to_role(block), block.source.plain_text()))
         .collect();
-
-    // User message: raw markdown stored as-is
     assert!(
         raw_lines
             .iter()
-            .any(|(r, t)| *r == TranscriptRole::User && t.contains("user stays literal")),
-        "user message should contain the text; got: {raw_lines:?}"
+            .any(|(r, t)| *r == TranscriptRole::User && t.contains("user stays literal"))
     );
-    // Assistant message: raw markdown stored, projection produces heading and code
     let assistant_projected: Vec<String> = raw_lines
         .iter()
         .filter(|(r, _)| *r == TranscriptRole::Assistant)
@@ -175,88 +161,21 @@ fn coordinator_hydration_projects_both_user_and_assistant_markdown() {
                 .collect::<String>()
         })
         .collect();
-    assert!(
-        assistant_projected.iter().any(|l| l.contains("heading")),
-        "projected assistant lines should contain heading text; got: {assistant_projected:?}"
-    );
-    assert!(
-        assistant_projected.iter().any(|l| l.contains("x")),
-        "projected assistant lines should contain code text; got: {assistant_projected:?}"
-    );
-}
+    assert!(assistant_projected.iter().any(|l| l.contains("heading")));
+    assert!(assistant_projected.iter().any(|l| l.contains("x")));
 
-#[test]
-fn coordinator_hydration_preserves_assistant_markdown_styles() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.hydrate_transcript_from_messages(
-        vec![UiMessageSnapshot::new("assistant", "**bold** and `code`")],
-        None,
-    );
-
-    // TranscriptEntry no longer has a `.rendered` field - test removed
-    // Previously tested that assistant hydration preserved rendered markdown
-}
-
-#[test]
-fn assistant_markdown_projection_is_memoized_across_repeated_messages() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    let markdown = markdown_fixture("fenced_code_blocks.md");
-
-    coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
-        delta: markdown.clone(),
-        text: markdown.clone(),
-    });
-    coordinator.drain_transport();
-
-    coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
-        delta: markdown.clone(),
-        text: markdown,
-    });
-    coordinator.drain_transport();
-
-    // Both messages are processed; the second replaces the first via streaming truncation
-}
-
-#[tokio::test]
-async fn resize_and_redraw_paths_reproject_at_new_width() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut driver = RenderLoopDriver::new(120, 30);
-    let markdown = markdown_fixture("fenced_code_blocks.md");
-
-    driver
-        .coordinator_mut()
-        .enqueue_ui_event(UiEvent::AssistantMessage {
-            delta: markdown.clone(),
-            text: markdown,
-        });
-    driver.coordinator_mut().drain_transport();
-
-    for (columns, rows) in [(100, 28), (140, 42), (80, 24)] {
-        driver
-            .advance(&[DriveEvent::Key(TerminalEvent::Resize(
-                crate::interaction::input::TerminalResize { columns, rows },
-            ))])
-            .await?;
-    }
-
-    // Resize clears the projection cache so width-aware re-projection occurs
-    // on the next render pass. No assertion on cache misses — the counter was
-    // removed when render-time caching moved into the projection layer.
-    Ok(())
-}
-
-#[test]
-fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transcript() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    // -- Setup & Fixtures: unsupported markdown.
+    let mut unsupported = RuntimeCoordinator::new(120, 30, Some(true));
     let markdown = markdown_fixture("unsupported_fallback.md");
-    coordinator.hydrate_transcript_from_messages(
+
+    // -- Exec
+    unsupported.hydrate_transcript_from_messages(
         vec![UiMessageSnapshot::new("assistant", &markdown)],
         None,
     );
 
-    // After the raw-markdown refactor, the block stores raw markdown.
-    // Project it to verify the rendered content is readable.
-    let projected_lines: Vec<String> = coordinator
+    // -- Check: tables render with separators; alt text is readable.
+    let projected_lines: Vec<String> = unsupported
         .state()
         .transcript
         .blocks()
@@ -273,8 +192,6 @@ fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transc
         .flat_map(|b| crate::markdown::render_markdown_lines(&b.source.plain_text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
-
-    // Tables are now supported and rendered with separators
     assert!(
         projected_lines
             .iter()
@@ -285,27 +202,25 @@ fn coordinator_hydration_keeps_unsupported_markdown_readable_in_assistant_transc
             .iter()
             .any(|line| line.contains("a") && line.contains("b"))
     );
-    assert!(
-        projected_lines.iter().any(|line| line.contains("│")),
-        "table cells should be separated"
-    );
+    assert!(projected_lines.iter().any(|line| line.contains("│")));
     assert!(
         projected_lines
             .iter()
             .any(|line| line.contains("alt (image: https://img.example/x.png)"))
     );
-}
 
-#[test]
-fn coordinator_hydration_handles_malformed_assistant_markdown_without_dropping_message() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    // -- Setup & Fixtures: malformed markdown.
+    let mut malformed = RuntimeCoordinator::new(120, 30, Some(true));
     let markdown = markdown_fixture("malformed.md");
-    coordinator.hydrate_transcript_from_messages(
+
+    // -- Exec
+    malformed.hydrate_transcript_from_messages(
         vec![UiMessageSnapshot::new("assistant", &markdown)],
         None,
     );
 
-    let assistant_entries = coordinator
+    // -- Check: the message is not dropped.
+    let assistant_entries = malformed
         .state()
         .transcript
         .blocks()
@@ -320,34 +235,89 @@ fn coordinator_hydration_handles_malformed_assistant_markdown_without_dropping_m
             )
         })
         .collect::<Vec<_>>();
-
     assert!(!assistant_entries.is_empty());
-    // Raw markdown is stored; check projected output contains the expected text
     let projected_text: String = assistant_entries
         .iter()
         .flat_map(|b| crate::markdown::render_markdown_lines(&b.source.plain_text(), None))
         .flat_map(|l| l.spans.into_iter())
         .map(|s| s.text)
         .collect();
-    assert!(
-        projected_text.contains("fn main() {"),
-        "projected text should contain 'fn main()'; got: {projected_text:?}"
+    assert!(projected_text.contains("fn main() {"));
+
+    // -- Setup & Fixtures: a memoized projection across repeated messages.
+    let mut memoized = RuntimeCoordinator::new(120, 30, Some(true));
+    let markdown = markdown_fixture("fenced_code_blocks.md");
+
+    // -- Exec
+    memoized.enqueue_ui_event(UiEvent::AssistantMessage {
+        delta: markdown.clone(),
+        text: markdown.clone(),
+    });
+    memoized.drain_transport();
+    memoized.enqueue_ui_event(UiEvent::AssistantMessage {
+        delta: markdown.clone(),
+        text: markdown,
+    });
+    memoized.drain_transport();
+
+    // -- Check: the second message replaces the first.
+    assert_eq!(
+        memoized
+            .state()
+            .transcript
+            .blocks()
+            .iter()
+            .filter(|b| matches!(
+                b.source,
+                BlockSource::Markdown {
+                    role: MessageRole::Assistant,
+                    ..
+                }
+            ))
+            .count(),
+        1
     );
+
+    // -- Setup & Fixtures: resize reprojection.
+    let mut driver = RenderLoopDriver::new(120, 30);
+    let markdown = markdown_fixture("fenced_code_blocks.md");
+    driver
+        .coordinator_mut()
+        .enqueue_ui_event(UiEvent::AssistantMessage {
+            delta: markdown.clone(),
+            text: markdown,
+        });
+    driver.coordinator_mut().drain_transport();
+
+    // -- Exec
+    for (columns, rows) in [(100, 28), (140, 42), (80, 24)] {
+        driver
+            .advance(&[DriveEvent::Key(TerminalEvent::Resize(
+                crate::interaction::input::TerminalResize { columns, rows },
+            ))])
+            .await?;
+    }
+
+    // -- Check: the resize path completes without error.
+    Ok(())
 }
 
+/// An assistant message event sanitizes pseudo tags and control tags at
+/// projection time.
 #[test]
-fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_transcript() {
+fn assistant_message_event_sanitizes_pseudo_and_control_tags() -> Result<()> {
+    // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    let text = "prefix\n[code:json]\n{\"ok\":true}\n[/code]\n<system-reminder>hidden</system-reminder>\nsuffix";
+
+    // -- Exec
     coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
-        delta: "prefix\n[code:json]\n{\"ok\":true}\n[/code]\n<system-reminder>hidden</system-reminder>\nsuffix"
-            .to_string(),
-        text: "prefix\n[code:json]\n{\"ok\":true}\n[/code]\n<system-reminder>hidden</system-reminder>\nsuffix"
-            .to_string(),
+        delta: text.to_string(),
+        text: text.to_string(),
     });
     coordinator.drain_transport();
 
-    // After the raw-markdown refactor, the raw markdown is stored in the block.
-    // Sanitization happens at projection time (render_markdown_lines). Verify by projecting.
+    // -- Check
     let projected_lines: Vec<String> = coordinator
         .state()
         .transcript
@@ -365,7 +335,6 @@ fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_tra
         .flat_map(|b| crate::markdown::render_markdown_lines(&b.source.plain_text(), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
-
     assert!(projected_lines.iter().any(|l| l.contains("prefix")));
     assert!(
         projected_lines
@@ -381,12 +350,17 @@ fn assistant_message_event_sanitizes_pseudo_tags_and_control_tags_in_runtime_tra
             .any(|line| line.contains("<system-reminder>"))
     );
     assert!(!projected_lines.iter().any(|line| line.contains("hidden")));
+    Ok(())
 }
 
+/// Hydration does not duplicate lines on a single call, and an empty message
+/// snapshot leaves the empty-session behavior unchanged.
 #[test]
-fn coordinator_hydration_regression_no_duplicate_lines_on_single_call() {
+fn coordinator_hydration_regression() -> Result<()> {
+    // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
 
+    // -- Exec
     coordinator.hydrate_transcript_from_messages(
         vec![
             UiMessageSnapshot::new("user", "dup-check"),
@@ -395,6 +369,7 @@ fn coordinator_hydration_regression_no_duplicate_lines_on_single_call() {
         None,
     );
 
+    // -- Check: no duplicate lines.
     let user_count = coordinator
         .state()
         .transcript
@@ -409,18 +384,19 @@ fn coordinator_hydration_regression_no_duplicate_lines_on_single_call() {
         .iter()
         .filter(|b| b.source.plain_text() == "dup-check-reply")
         .count();
-
     assert_eq!(user_count, 1);
     assert_eq!(assistant_count, 1);
-}
 
-#[test]
-fn coordinator_hydrate_with_empty_message_snapshot_leaves_empty_session_behavior_unchanged() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.hydrate_transcript_from_messages(Vec::<UiMessageSnapshot>::new(), None);
+    // -- Setup & Fixtures: an empty snapshot.
+    let mut empty = RuntimeCoordinator::new(120, 30, Some(true));
 
-    let state = coordinator.state();
+    // -- Exec
+    empty.hydrate_transcript_from_messages(Vec::<UiMessageSnapshot>::new(), None);
+
+    // -- Check: the empty-session behavior is unchanged.
+    let state = empty.state();
     assert!(state.transcript.blocks().is_empty());
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
+    Ok(())
 }

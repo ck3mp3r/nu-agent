@@ -46,62 +46,47 @@ fn mcp_server_toggle_and_counts_follow_selected_row() -> Result<()> {
 }
 
 #[test]
-fn enabling_failed_server_queues_enable_and_can_transition_to_failed_on_outcome() -> Result<()> {
-    let mut state = AppState::default();
-    state
-        .status
-        .mcp
-        .set_mcp_servers(vec![crate::state::McpServerState {
-            name: "gh".to_string(),
-            state: McpServerUsabilityState::Failed,
-        }]);
+fn mcp_toggle_request_and_counts_follow_server_state() -> Result<()> {
+    // -- Setup & Fixtures: (initial state, expected request enable, expected counts)
+    let cases = [
+        (McpServerUsabilityState::Failed, true, (1, 0, 0, 1)),
+        (McpServerUsabilityState::Enabled, false, (1, 0, 1, 0)),
+    ];
 
-    assert!(state.status.mcp.queue_selected_mcp_toggle_request());
-    let request = state
-        .status
-        .mcp
-        .take_next_mcp_toggle_request()
-        .ok_or("should have toggle request")?;
-    assert_eq!(request.server_name, "gh");
-    assert!(request.enable);
-
-    assert!(
+    // -- Exec & Check
+    for (initial, expected_enable, expected_counts) in cases {
+        let mut state = AppState::default();
         state
             .status
             .mcp
-            .set_mcp_server_state_by_name("gh", McpServerUsabilityState::Failed)
-    );
-    assert_eq!(state.status.mcp.mcp_counts(), (1, 0, 0, 1));
-    Ok(())
-}
+            .set_mcp_servers(vec![crate::state::McpServerState {
+                name: "gh".to_string(),
+                state: initial,
+            }]);
 
-#[test]
-fn disabling_enabled_server_applies_disabled_state_immediately_and_queues_disable_request()
--> Result<()> {
-    let mut state = AppState::default();
-    state
-        .status
-        .mcp
-        .set_mcp_servers(vec![crate::state::McpServerState {
-            name: "gh".to_string(),
-            state: McpServerUsabilityState::Enabled,
-        }]);
+        assert!(state.status.mcp.queue_selected_mcp_toggle_request());
+        let request = state
+            .status
+            .mcp
+            .take_next_mcp_toggle_request()
+            .ok_or("should have toggle request")?;
+        assert_eq!(request.server_name, "gh");
+        assert_eq!(request.enable, expected_enable, "initial={initial:?}");
+        assert_eq!(
+            state.status.mcp.mcp_counts(),
+            expected_counts,
+            "initial={initial:?}"
+        );
 
-    assert!(state.status.mcp.queue_selected_mcp_toggle_request());
-    assert_eq!(
-        state.status.mcp.selected_mcp_server_state(),
-        Some(McpServerUsabilityState::Disabled),
-        "disable must apply immediately in UI state"
-    );
-
-    let request = state
-        .status
-        .mcp
-        .take_next_mcp_toggle_request()
-        .ok_or("should have disable request")?;
-    assert_eq!(request.server_name, "gh");
-    assert!(!request.enable);
-    assert_eq!(state.status.mcp.mcp_counts(), (1, 0, 1, 0));
+        // Re-marking the server failed always succeeds and keeps the counts.
+        assert!(
+            state
+                .status
+                .mcp
+                .set_mcp_server_state_by_name("gh", McpServerUsabilityState::Failed)
+        );
+        assert_eq!(state.status.mcp.mcp_counts(), (1, 0, 0, 1));
+    }
     Ok(())
 }
 

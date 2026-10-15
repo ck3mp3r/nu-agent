@@ -2,7 +2,8 @@ use super::*;
 use crate::state::selection::TranscriptSelection;
 
 #[test]
-fn enter_visual_mode_selects_first_visible_entry_not_scroll_offset() {
+fn visual_mode_entry_table() {
+    // Selects the first visible entry, not the scroll offset.
     let mut state = AppState {
         scroll: ScrollState {
             pane_focus: PaneFocus::Transcript,
@@ -10,14 +11,8 @@ fn enter_visual_mode_selects_first_visible_entry_not_scroll_offset() {
         },
         ..Default::default()
     };
-    // Populate transcript with entries that render as multiple lines
-    // Entry 0: multi-line markdown (renders as 3 visual rows)
-    // Entry 1: multi-line markdown (renders as 2 visual rows)
     push_user_line(&mut state, "line 0\nextra\nmore");
     push_user_line(&mut state, "line 1\nextra");
-    // Scroll offset = 2 means we've scrolled past entry 0's 3 lines
-    // (offset 0, 1, 2 are all entry 0's visual rows)
-    // The first visible entry should be entry 1
     state.scroll.scroll_offset = 2;
     state.scroll.cursor_visual_row = 3;
     state.scroll.entry_indices = vec![0, 0, 0, 1, 1];
@@ -28,14 +23,11 @@ fn enter_visual_mode_selects_first_visible_entry_not_scroll_offset() {
         None,
     );
     let sel = state.scroll.selection.expect("selection should be set");
-    // Should select visual row 3 (maps to entry 1 via entry_indices)
     assert_eq!(sel.anchor(), 3);
     assert_eq!(sel.cursor(), 3);
     assert_eq!(state.input.mode, InputMode::Visual);
-}
 
-#[test]
-fn enter_visual_mode_sets_selection_at_scroll_offset() {
+    // Sets the selection at the scroll offset.
     let mut state = AppState {
         scroll: ScrollState {
             pane_focus: PaneFocus::Transcript,
@@ -56,10 +48,8 @@ fn enter_visual_mode_sets_selection_at_scroll_offset() {
     assert_eq!(sel.cursor(), 5);
     assert_eq!(state.input.mode, InputMode::Visual);
     assert!(state.status.message.status_line().is_empty());
-}
 
-#[test]
-fn enter_visual_mode_requires_transcript_focus() {
+    // Requires transcript focus.
     let mut state = AppState {
         scroll: ScrollState {
             pane_focus: PaneFocus::Input,
@@ -77,10 +67,8 @@ fn enter_visual_mode_requires_transcript_focus() {
         VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS
     );
     assert!(state.scroll.selection.is_none());
-}
 
-#[test]
-fn enter_visual_mode_noop_when_busy() {
+    // No-op when busy.
     let mut state = AppState {
         phase: UiPhase::Busy,
         ..Default::default()
@@ -94,7 +82,8 @@ fn enter_visual_mode_noop_when_busy() {
 }
 
 #[test]
-fn visual_j_extends_selection_down() {
+fn visual_mode_extension_table() {
+    // Visual j extends the selection down.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
@@ -118,10 +107,8 @@ fn visual_j_extends_selection_down() {
     assert_eq!(state.scroll.cursor_visual_row, 1);
     assert_eq!(state.scroll.scroll_offset, 1);
     assert!(!state.scroll.following_tail);
-}
 
-#[test]
-fn visual_k_extends_selection_up() {
+    // Visual k extends the selection up.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
@@ -146,7 +133,8 @@ fn visual_k_extends_selection_up() {
 }
 
 #[test]
-fn visual_yank_copies_and_exits_visual() {
+fn visual_yank_table() {
+    // Yank copies and exits visual mode.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
@@ -162,7 +150,6 @@ fn visual_yank_copies_and_exits_visual() {
         },
         ..Default::default()
     };
-    // Set selection covering visual rows 1-3
     let mut sel = TranscriptSelection::new(1);
     sel.set_cursor(3);
     state.scroll.selection = Some(sel);
@@ -175,10 +162,8 @@ fn visual_yank_copies_and_exits_visual() {
     assert_eq!(clipboard, Some("line 1\nline 2\nline 3".to_string()));
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
-}
 
-#[test]
-fn visual_yank_copies_only_selected_rows_not_whole_entry() {
+    // Yank copies only the selected rows, not the whole entry.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
@@ -188,7 +173,6 @@ fn visual_yank_copies_only_selected_rows_not_whole_entry() {
         },
         ..Default::default()
     };
-    // Select rows 3-5 out of 10
     let mut sel = TranscriptSelection::new(3);
     sel.set_cursor(5);
     state.scroll.selection = Some(sel);
@@ -201,14 +185,11 @@ fn visual_yank_copies_only_selected_rows_not_whole_entry() {
     assert_eq!(clipboard, Some("row 3\nrow 4\nrow 5".to_string()));
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
-}
 
-#[test]
-fn visual_yank_with_nonzero_scroll_offset_copies_correct_rows() {
+    // Yank with a nonzero scroll offset copies the correct rows.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
-            // Simulate viewport scrolled down — rendered_line_text[0] is absolute row 10
             rendered_line_start_row: 10,
             rendered_line_text: vec![
                 "row 10".to_string(),
@@ -221,7 +202,6 @@ fn visual_yank_with_nonzero_scroll_offset_copies_correct_rows() {
         },
         ..Default::default()
     };
-    // Select absolute visual rows 11-13
     let mut sel = TranscriptSelection::new(11);
     sel.set_cursor(13);
     state.scroll.selection = Some(sel);
@@ -234,10 +214,8 @@ fn visual_yank_with_nonzero_scroll_offset_copies_correct_rows() {
     assert_eq!(clipboard, Some("row 11\nrow 12\nrow 13".to_string()));
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
-}
 
-#[test]
-fn visual_yank_nothing_to_yank_leaves_status_empty() {
+    // Nothing to yank leaves the status empty.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
@@ -257,10 +235,8 @@ fn visual_yank_nothing_to_yank_leaves_status_empty() {
     assert!(state.status.message.status_line().is_empty());
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
-}
 
-#[test]
-fn visual_yank_empty_selection_noop() {
+    // An empty selection is a no-op.
     let mut state = AppState::default();
     reduce_with_cancel_controller(
         &mut state,
@@ -271,7 +247,8 @@ fn visual_yank_empty_selection_noop() {
 }
 
 #[test]
-fn visual_esc_clears_selection_and_exits() {
+fn visual_mode_exit_and_jump_table() {
+    // Esc clears the selection and exits.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
@@ -283,10 +260,8 @@ fn visual_esc_clears_selection_and_exits() {
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
-}
 
-#[test]
-fn visual_gg_jumps_to_top() {
+    // gg jumps to the top.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
@@ -304,10 +279,8 @@ fn visual_gg_jumps_to_top() {
     assert_eq!(sel.cursor(), 0);
     assert_eq!(state.scroll.scroll_offset, 0);
     assert!(!state.scroll.following_tail);
-}
 
-#[test]
-fn visual_g_jumps_to_bottom() {
+    // g jumps to the bottom.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {

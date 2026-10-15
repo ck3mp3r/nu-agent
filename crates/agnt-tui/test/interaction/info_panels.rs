@@ -15,7 +15,8 @@ fn escape_closes_info_panel_without_mode_regression() {
 }
 
 #[test]
-fn help_panel_ctrl_n_scrolls_down() {
+fn help_panel_scroll_table() {
+    // Ctrl-N scrolls down.
     let mut state = AppState::default();
     state.open_info_panel(crate::state::InfoPanel::Help);
     assert_eq!(state.info_panel_scroll, 0);
@@ -25,10 +26,8 @@ fn help_panel_ctrl_n_scrolls_down() {
 
     assert!(changed);
     assert_eq!(state.info_panel_scroll, 1);
-}
 
-#[test]
-fn help_panel_ctrl_p_scrolls_up() {
+    // Ctrl-P scrolls up.
     let mut state = AppState::default();
     state.open_info_panel(crate::state::InfoPanel::Help);
     state.info_panel_scroll = 3;
@@ -38,23 +37,17 @@ fn help_panel_ctrl_p_scrolls_up() {
 
     assert!(changed);
     assert_eq!(state.info_panel_scroll, 2);
-}
 
-#[test]
-fn help_panel_j_is_noop() {
+    // j is a no-op.
     let mut state = AppState::default();
     state.open_info_panel(crate::state::InfoPanel::Help);
     state.info_panel_scroll = 0;
 
-    let changed = dispatch_terminal_event(
+    let _changed = dispatch_terminal_event(
         &mut state,
         &TerminalEvent::Key(TerminalKey::Char('j')),
         None,
     );
 
-    // j is not a navigation key in the help panel — scroll must not change
     assert_eq!(state.info_panel_scroll, 0);
-    // changed may be true or false depending on reducer noop handling;
-    // the important assertion is that scroll did not increment
-    let _ = changed;
 }

@@ -322,3 +322,7 @@ mod providers_test;
 #[cfg(all(test, feature = "integration"))]
 #[path = "../../test/conversation/providers_integration.rs"]
 mod providers_integration_test;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/conversation/providers_credentials.rs"]
+mod providers_credentials_test;

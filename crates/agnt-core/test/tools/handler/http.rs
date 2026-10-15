@@ -8,204 +8,252 @@ const DEFAULT_MAX_LENGTH: usize = 12000;
 // --- parse_args tests ---
 
 #[test]
-fn parse_args_minimal() {
-    let args: HttpArgs =
-        serde_json::from_value(serde_json::json!({"url": "https://example.com"})).unwrap();
+fn parse_args_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, serde_json::Value, Option<&str>, Option<usize>)> = vec![
+        (
+            "minimal",
+            serde_json::json!({"url": "https://example.com"}),
+            None,
+            None,
+        ),
+        (
+            "raw mode",
+            serde_json::json!({"url": "https://example.com", "mode": "raw"}),
+            Some("raw"),
+            None,
+        ),
+        (
+            "custom max length",
+            serde_json::json!({"url": "https://example.com", "max_length": 500}),
+            None,
+            Some(500),
+        ),
+    ];
 
-    assert_eq!(args.url, "https://example.com");
-    assert!(args.mode.is_none());
-    assert!(args.max_length.is_none());
-}
-
-#[test]
-fn parse_args_raw_mode() {
-    let args: HttpArgs =
-        serde_json::from_value(serde_json::json!({"url": "https://example.com", "mode": "raw"}))
-            .unwrap();
-
-    assert_eq!(args.mode.as_deref(), Some("raw"));
-}
-
-#[test]
-fn parse_args_custom_max_length() {
-    let args: HttpArgs = serde_json::from_value(
-        serde_json::json!({"url": "https://example.com", "max_length": 500}),
-    )
-    .unwrap();
-
-    assert_eq!(args.max_length, Some(500));
+    // -- Exec & Check
+    for (name, value, expected_mode, expected_max_length) in cases {
+        let args: HttpArgs = serde_json::from_value(value).expect("valid http args");
+        assert_eq!(args.url, "https://example.com", "case '{name}': url");
+        assert_eq!(args.mode.as_deref(), expected_mode, "case '{name}': mode");
+        assert_eq!(
+            args.max_length, expected_max_length,
+            "case '{name}': max_length"
+        );
+    }
 }
 
 // --- HttpTool::execute error path tests ---
 
 #[tokio::test]
-async fn invalid_args_missing_url() {
-    let result = HttpTool::execute(
-        &serde_json::json!({}),
-        std::path::Path::new("/tmp"),
-        &Bus::default(),
-    )
-    .await;
+async fn http_execute_error_table() -> core::result::Result<(), Box<dyn std::error::Error>> {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, serde_json::Value, &[&str])> = vec![
+        ("missing url", serde_json::json!({}), &["Invalid"]),
+        (
+            "ftp scheme",
+            serde_json::json!({"url": "ftp://example.com"}),
+            &["http://", "https://"],
+        ),
+        ("empty url", serde_json::json!({"url": ""}), &[]),
+    ];
 
-    let err = result.expect_err("expected an error for missing url");
-    assert_eq!(err.kind, super::ToolErrorKind::Validation);
-    assert!(err.message.contains("Invalid"), "message: {}", err.message);
-}
-
-#[tokio::test]
-async fn invalid_url_scheme() {
-    let result = HttpTool::execute(
-        &serde_json::json!({"url": "ftp://example.com"}),
-        std::path::Path::new("/tmp"),
-        &Bus::default(),
-    )
-    .await;
-
-    let err = result.expect_err("expected an error for ftp scheme");
-    assert_eq!(err.kind, super::ToolErrorKind::Validation);
-    assert!(
-        err.message.contains("http://") || err.message.contains("https://"),
-        "message: {}",
-        err.message
-    );
+    // -- Exec & Check
+    for (name, args, expected_fragments) in cases {
+        let result = HttpTool::execute(&args, std::path::Path::new("/tmp"), &Bus::default()).await;
+        let err = result.err().ok_or("expected an error for this url")?;
+        assert_eq!(
+            err.kind,
+            super::ToolErrorKind::Validation,
+            "case '{name}': kind"
+        );
+        assert!(
+            expected_fragments.is_empty()
+                || expected_fragments
+                    .iter()
+                    .any(|fragment| err.message.contains(fragment)),
+            "case '{name}': message must contain one of {expected_fragments:?}, got: {}",
+            err.message
+        );
+    }
+    Ok(())
 }
 
 // --- process_body tests ---
 
 #[test]
-fn truncation_applied() {
-    let long_body = "x".repeat(DEFAULT_MAX_LENGTH + 500);
-    let (content, truncated) = process_body(long_body, "text/plain", "raw", DEFAULT_MAX_LENGTH);
+fn process_body_table() {
+    // -- Setup & Fixtures
+    struct Case {
+        name: &'static str,
+        body: String,
+        content_type: &'static str,
+        mode: &'static str,
+        max_length: usize,
+        expected_truncated: bool,
+        expected_equals_body: bool,
+        expected_contains: Option<&'static str>,
+        expected_absent: Option<&'static str>,
+        expected_bytes: Option<usize>,
+        expected_chars: Option<usize>,
+    }
 
-    assert!(truncated, "should be truncated");
-    assert_eq!(content.len(), DEFAULT_MAX_LENGTH);
-}
+    let cases = vec![
+        Case {
+            name: "truncation applied",
+            body: "x".repeat(DEFAULT_MAX_LENGTH + 500),
+            content_type: "text/plain",
+            mode: "raw",
+            max_length: DEFAULT_MAX_LENGTH,
+            expected_truncated: true,
+            expected_equals_body: false,
+            expected_contains: None,
+            expected_absent: None,
+            expected_bytes: Some(DEFAULT_MAX_LENGTH),
+            expected_chars: None,
+        },
+        Case {
+            name: "no truncation when short",
+            body: "hello world".to_string(),
+            content_type: "text/plain",
+            mode: "raw",
+            max_length: DEFAULT_MAX_LENGTH,
+            expected_truncated: false,
+            expected_equals_body: true,
+            expected_contains: None,
+            expected_absent: None,
+            expected_bytes: None,
+            expected_chars: None,
+        },
+        Case {
+            name: "html triggers markdown conversion",
+            body: "<h1>Hello</h1>".to_string(),
+            content_type: "text/html",
+            mode: "markdown",
+            max_length: DEFAULT_MAX_LENGTH,
+            expected_truncated: false,
+            expected_equals_body: false,
+            expected_contains: Some("# Hello"),
+            expected_absent: Some("<h1>"),
+            expected_bytes: None,
+            expected_chars: None,
+        },
+        Case {
+            name: "raw mode skips conversion",
+            body: "<h1>Hello</h1>".to_string(),
+            content_type: "text/html",
+            mode: "raw",
+            max_length: DEFAULT_MAX_LENGTH,
+            expected_truncated: false,
+            expected_equals_body: false,
+            expected_contains: Some("<h1>"),
+            expected_absent: None,
+            expected_bytes: None,
+            expected_chars: None,
+        },
+        Case {
+            name: "non html skips conversion",
+            body: "<h1>Hello</h1>".to_string(),
+            content_type: "application/json",
+            mode: "markdown",
+            max_length: DEFAULT_MAX_LENGTH,
+            expected_truncated: false,
+            expected_equals_body: false,
+            expected_contains: Some("<h1>"),
+            expected_absent: None,
+            expected_bytes: None,
+            expected_chars: None,
+        },
+        Case {
+            name: "truncation respects char boundary multibyte",
+            body: "🦀".repeat(DEFAULT_MAX_LENGTH + 10),
+            content_type: "text/plain",
+            mode: "raw",
+            max_length: DEFAULT_MAX_LENGTH,
+            expected_truncated: true,
+            expected_equals_body: false,
+            expected_contains: None,
+            expected_absent: None,
+            expected_bytes: None,
+            expected_chars: Some(DEFAULT_MAX_LENGTH),
+        },
+    ];
 
-#[test]
-fn no_truncation_when_short() {
-    let short_body = "hello world".to_string();
-    let (content, truncated) =
-        process_body(short_body.clone(), "text/plain", "raw", DEFAULT_MAX_LENGTH);
-
-    assert!(!truncated, "should not be truncated");
-    assert_eq!(content, short_body);
-}
-
-#[test]
-fn html_triggers_markdown_conversion() {
-    let (content, _truncated) = process_body(
-        "<h1>Hello</h1>".to_string(),
-        "text/html",
-        "markdown",
-        DEFAULT_MAX_LENGTH,
-    );
-
-    assert!(
-        content.contains("# Hello"),
-        "expected markdown heading, got: {content}"
-    );
-    assert!(
-        !content.contains("<h1>"),
-        "expected no raw html tags, got: {content}"
-    );
-}
-
-#[test]
-fn raw_mode_skips_conversion() {
-    let (content, _truncated) = process_body(
-        "<h1>Hello</h1>".to_string(),
-        "text/html",
-        "raw",
-        DEFAULT_MAX_LENGTH,
-    );
-
-    assert!(
-        content.contains("<h1>"),
-        "expected raw html preserved, got: {content}"
-    );
-}
-
-#[test]
-fn non_html_skips_conversion() {
-    let (content, _truncated) = process_body(
-        "<h1>Hello</h1>".to_string(),
-        "application/json",
-        "markdown",
-        DEFAULT_MAX_LENGTH,
-    );
-
-    // No conversion: content_type is not text/html, so the html is left as-is
-    assert!(
-        content.contains("<h1>"),
-        "expected no conversion for non-html content type, got: {content}"
-    );
-}
-
-#[tokio::test]
-async fn empty_url_is_invalid() {
-    let result = HttpTool::execute(
-        &serde_json::json!({"url": ""}),
-        std::path::Path::new("/tmp"),
-        &Bus::default(),
-    )
-    .await;
-    let err = result.expect_err("expected an error for empty url");
-    assert_eq!(err.kind, super::ToolErrorKind::Validation);
-}
-
-#[test]
-fn truncation_respects_char_boundary_multibyte() {
-    // 🦀 is 4 bytes — byte count >> char count
-    let emoji_body = "🦀".repeat(DEFAULT_MAX_LENGTH + 10);
-    let (content, truncated) = process_body(emoji_body, "text/plain", "raw", DEFAULT_MAX_LENGTH);
-    assert!(truncated, "should be truncated");
-    assert_eq!(content.chars().count(), DEFAULT_MAX_LENGTH);
+    // -- Exec & Check
+    for case in cases {
+        let (content, truncated) = process_body(
+            case.body.clone(),
+            case.content_type,
+            case.mode,
+            case.max_length,
+        );
+        assert_eq!(
+            truncated, case.expected_truncated,
+            "case '{}': truncated",
+            case.name
+        );
+        if case.expected_equals_body {
+            assert_eq!(content, case.body, "case '{}': content", case.name);
+        }
+        if let Some(fragment) = case.expected_contains {
+            assert!(
+                content.contains(fragment),
+                "case '{}': content must contain {fragment}, got: {content}",
+                case.name
+            );
+        }
+        if let Some(fragment) = case.expected_absent {
+            assert!(
+                !content.contains(fragment),
+                "case '{}': content must not contain {fragment}, got: {content}",
+                case.name
+            );
+        }
+        if let Some(bytes) = case.expected_bytes {
+            assert_eq!(content.len(), bytes, "case '{}': byte length", case.name);
+        }
+        if let Some(chars) = case.expected_chars {
+            assert_eq!(
+                content.chars().count(),
+                chars,
+                "case '{}': char count",
+                case.name
+            );
+        }
+    }
 }
 
 // === call_line_render ===
 
 #[test]
-fn http_call_line_render_shows_explicit_method_and_url() {
+fn http_call_line_render_table() {
     // -- Setup & Fixtures
-    let args = r#"{"url":"https://example.com","method":"POST"}"#;
+    let cases: Vec<(&str, &str, Option<&str>)> = vec![
+        (
+            "shows explicit method and url",
+            r#"{"url":"https://example.com","method":"POST"}"#,
+            Some("→ POST https://example.com"),
+        ),
+        (
+            "defaults method to get",
+            r#"{"url":"https://example.com"}"#,
+            Some("→ GET https://example.com"),
+        ),
+        ("falls back to generic on invalid json", "not-json", None),
+    ];
 
-    // -- Exec
-    let render = HttpTool::call_line_render(args);
-
-    // -- Check
-    assert_eq!(
-        render,
-        CallLine {
-            summary: "→ POST https://example.com".to_string(),
+    // -- Exec & Check
+    for (name, args, expected) in cases {
+        let render = HttpTool::call_line_render(args);
+        match expected {
+            Some(summary) => assert_eq!(
+                render,
+                CallLine {
+                    summary: summary.to_string(),
+                },
+                "case '{name}'"
+            ),
+            None => assert_eq!(render, CallLine::from_json_summary(args), "case '{name}'"),
         }
-    );
-}
-
-#[test]
-fn http_call_line_render_defaults_method_to_get() {
-    // -- Setup & Fixtures
-    let args = r#"{"url":"https://example.com"}"#;
-
-    // -- Exec
-    let render = HttpTool::call_line_render(args);
-
-    // -- Check
-    assert_eq!(
-        render,
-        CallLine {
-            summary: "→ GET https://example.com".to_string(),
-        }
-    );
-}
-
-#[test]
-fn http_call_line_render_falls_back_to_generic_on_invalid_json() {
-    // -- Setup & Fixtures
-    let args = "not-json";
-
-    // -- Exec
-    let render = HttpTool::call_line_render(args);
-
-    // -- Check
-    assert_eq!(render, CallLine::from_json_summary(args));
+    }
 }

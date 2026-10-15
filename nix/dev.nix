@@ -20,6 +20,7 @@
   tests-integration = pkgs.writeShellScriptBin "tests-integration" ''cargo nextest run --features integration --profile integration'';
   clippy = pkgs.writeShellScriptBin "clippy" ''cargo clippy'';
   build = pkgs.writeShellScriptBin "build" ''cargo build --release'';
+  coverage = pkgs.writeShellScriptBin "coverage" ''cargo llvm-cov nextest --workspace --features integration --profile integration --cargo-profile coverage --html --output-dir coverage/ --ignore-filename-regex '(/test/|/test$)${"'"}'';
 in
   pkgs.mkShellNoCC {
     name = "nu-agent-dev";
@@ -42,6 +43,7 @@ in
       tests-integration
       clippy
       build
+      coverage
     ];
 
     shellHook = ''
@@ -58,6 +60,7 @@ in
       echo "  tests-integration - Run integration tests only (with retries)"
       echo "  clippy            - Run cargo clippy"
       echo "  build             - Build release binary"
+      echo "  coverage          - Run workspace coverage (HTML report in coverage/)"
       echo ""
       echo "Git hooks (prek):"
       echo "  prek install    - Install git hook shims"

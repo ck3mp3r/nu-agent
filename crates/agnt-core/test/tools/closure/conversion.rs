@@ -17,96 +17,142 @@ impl EngineInterfaceLike for MockEngine {
 }
 
 #[test]
-fn converts_closure_with_no_parameters() -> Result<()> {
-    let params = super::parse_closure_parameters("{|| 42}");
+fn closure_to_tool_definition_table() -> Result<()> {
+    // -- Setup & Fixtures
+    struct Case {
+        name: &'static str,
+        params: Vec<ClosureParameter>,
+        description: Option<&'static str>,
+        expected_description: Option<&'static str>,
+        expected_properties: Vec<&'static str>,
+        expected_required: Vec<&'static str>,
+    }
 
-    let tool_def = closure_to_tool_definition(
-        "constant".to_string(),
-        &params,
-        Some("Returns 42".to_string()),
-    )?;
+    let cases = vec![
+        Case {
+            name: "no parameters",
+            params: super::parse_closure_parameters("{|| 42}"),
+            description: Some("Returns 42"),
+            expected_description: Some("Returns 42"),
+            expected_properties: vec![],
+            expected_required: vec![],
+        },
+        Case {
+            name: "one parameter",
+            params: super::parse_closure_parameters("{|x| $x * 2}"),
+            description: Some("Double a number"),
+            expected_description: Some("Double a number"),
+            expected_properties: vec!["x"],
+            expected_required: vec!["x"],
+        },
+        Case {
+            name: "two parameters",
+            params: super::parse_closure_parameters("{|x, y| $x + $y}"),
+            description: Some("Add two numbers"),
+            expected_description: Some("Add two numbers"),
+            expected_properties: vec!["x", "y"],
+            expected_required: vec!["x", "y"],
+        },
+        Case {
+            name: "optional parameter",
+            params: super::parse_closure_parameters("{|x, y?| $x + ($y | default 0)}"),
+            description: None,
+            expected_description: None,
+            expected_properties: vec!["x", "y"],
+            expected_required: vec!["x"],
+        },
+        Case {
+            name: "explicit params without an engine",
+            params: vec![
+                ClosureParameter {
+                    name: "city".to_string(),
+                    is_required: true,
+                },
+                ClosureParameter {
+                    name: "unit".to_string(),
+                    is_required: false,
+                },
+            ],
+            description: None,
+            expected_description: None,
+            expected_properties: vec!["city", "unit"],
+            expected_required: vec!["city"],
+        },
+    ];
 
-    assert_eq!(tool_def.name, "constant");
-    assert_eq!(tool_def.description, "Returns 42");
+    // -- Exec & Check
+    for case in cases {
+        let tool_def = closure_to_tool_definition(
+            "tool".to_string(),
+            &case.params,
+            case.description.map(String::from),
+        )?;
 
-    let schema = tool_def.parameters;
-    assert_eq!(schema["type"], "object");
-    let properties = schema.get("properties").expect("Should have properties");
-    assert!(properties.is_object());
-    assert_eq!(properties.as_object().unwrap().len(), 0);
+        assert_eq!(tool_def.name, "tool", "case '{}': name", case.name);
+        match case.expected_description {
+            Some(expected) => assert_eq!(
+                tool_def.description, expected,
+                "case '{}': description",
+                case.name
+            ),
+            None => {
+                assert!(
+                    tool_def.description.starts_with("Nushell closure tool:"),
+                    "case '{}': default description, got: {}",
+                    case.name,
+                    tool_def.description
+                );
+                assert!(
+                    tool_def.description.contains("tool"),
+                    "case '{}': default description must name the tool",
+                    case.name
+                );
+            }
+        }
 
-    let required = schema.get("required").expect("Should have required field");
-    assert_eq!(required.as_array().unwrap().len(), 0);
-    Ok(())
-}
+        let schema = &tool_def.parameters;
+        assert_eq!(
+            schema["type"], "object",
+            "case '{}': schema type",
+            case.name
+        );
+        let properties = schema.get("properties").ok_or("Should have properties")?;
+        assert!(properties.is_object(), "case '{}': properties", case.name);
+        assert_eq!(
+            properties.as_object().map(|o| o.len()),
+            Some(case.expected_properties.len()),
+            "case '{}': property count",
+            case.name
+        );
+        for property in &case.expected_properties {
+            assert!(
+                properties.get(property).is_some(),
+                "case '{}': property {property}",
+                case.name
+            );
+            assert_eq!(
+                properties[*property]["type"], "string",
+                "case '{}': property {property} type",
+                case.name
+            );
+        }
 
-#[test]
-fn converts_closure_with_one_parameter() -> Result<()> {
-    let params = super::parse_closure_parameters("{|x| $x * 2}");
-
-    let tool_def = closure_to_tool_definition(
-        "double".to_string(),
-        &params,
-        Some("Double a number".to_string()),
-    )?;
-
-    assert_eq!(tool_def.name, "double");
-
-    let schema = tool_def.parameters;
-    let properties = schema.get("properties").expect("Should have properties");
-    assert!(properties.get("x").is_some());
-    assert_eq!(properties["x"]["type"], "string");
-
-    let required = schema.get("required").expect("Should have required field");
-    assert!(required.as_array().unwrap().contains(&json!("x")));
-    Ok(())
-}
-
-#[test]
-fn converts_closure_with_two_parameters() -> Result<()> {
-    let params = super::parse_closure_parameters("{|x, y| $x + $y}");
-
-    let tool_def = closure_to_tool_definition(
-        "add".to_string(),
-        &params,
-        Some("Add two numbers".to_string()),
-    )?;
-
-    assert_eq!(tool_def.name, "add");
-
-    let schema = tool_def.parameters;
-    let properties = schema.get("properties").expect("Should have properties");
-    assert!(properties.get("x").is_some());
-    assert!(properties.get("y").is_some());
-    assert_eq!(properties["x"]["type"], "string");
-    assert_eq!(properties["y"]["type"], "string");
-
-    let required = schema.get("required").expect("Should have required field");
-    let req_array = required.as_array().unwrap();
-    assert!(req_array.contains(&json!("x")));
-    assert!(req_array.contains(&json!("y")));
-    assert_eq!(req_array.len(), 2);
-    Ok(())
-}
-
-#[test]
-fn converts_closure_with_optional_parameter() -> Result<()> {
-    let params = super::parse_closure_parameters("{|x, y?| $x + ($y | default 0)}");
-
-    let tool_def = closure_to_tool_definition("add_optional".to_string(), &params, None)?;
-
-    let schema = tool_def.parameters;
-    let properties = schema.get("properties").expect("Should have properties");
-    assert!(properties.get("x").is_some());
-    assert!(properties.get("y").is_some());
-    assert_eq!(properties["x"]["type"], "string");
-    assert_eq!(properties["y"]["type"], "string");
-
-    let required = schema.get("required").expect("Should have required field");
-    let req_array = required.as_array().unwrap();
-    assert!(req_array.contains(&json!("x")));
-    assert!(!req_array.contains(&json!("y")));
-    assert_eq!(req_array.len(), 1);
+        let required = schema.get("required").ok_or("Should have required field")?;
+        let required = required.as_array().ok_or("required must be an array")?;
+        assert_eq!(
+            required.len(),
+            case.expected_required.len(),
+            "case '{}': required count",
+            case.name
+        );
+        for property in &case.expected_required {
+            assert!(
+                required.contains(&json!(property)),
+                "case '{}': required must contain {property}",
+                case.name
+            );
+        }
+    }
     Ok(())
 }
 
@@ -123,134 +169,62 @@ fn uses_default_description_when_none_provided() -> Result<()> {
 }
 
 #[test]
-fn parses_no_parameters() {
-    let params = super::parse_closure_parameters("{|| 42}");
-    assert_eq!(params, vec![]);
-}
+fn parse_closure_parameters_table() {
+    // -- Setup & Fixtures
+    type Case = (&'static str, &'static str, Vec<(&'static str, bool)>);
 
-#[test]
-fn parses_one_parameter() {
-    let params = super::parse_closure_parameters("{|x| $x * 2}");
-    assert_eq!(
-        params,
-        vec![super::ClosureParameter {
-            name: "x".to_string(),
-            is_required: true
-        }]
-    );
-}
+    let cases: Vec<Case> = vec![
+        ("no parameters", "{|| 42}", vec![]),
+        ("one parameter", "{|x| $x * 2}", vec![("x", true)]),
+        (
+            "two parameters",
+            "{|x, y| $x + $y}",
+            vec![("x", true), ("y", true)],
+        ),
+        (
+            "optional parameter",
+            "{|x, y?| $x + $y}",
+            vec![("x", true), ("y", false)],
+        ),
+        (
+            "whitespace",
+            "{| x , y | $x + $y}",
+            vec![("x", true), ("y", true)],
+        ),
+        (
+            "spaced opening",
+            "{ |x, y| $x + $y }",
+            vec![("x", true), ("y", true)],
+        ),
+        (
+            "typed param",
+            "{|city_name: string| $city_name}",
+            vec![("city_name", true)],
+        ),
+        (
+            "optional typed param",
+            "{|city_name?: string| $city_name}",
+            vec![("city_name", false)],
+        ),
+        (
+            "typed spaced",
+            "{ |city_name: string| $city_name }",
+            vec![("city_name", true)],
+        ),
+    ];
 
-#[test]
-fn parses_two_parameters() {
-    let params = super::parse_closure_parameters("{|x, y| $x + $y}");
-    assert_eq!(
-        params,
-        vec![
-            super::ClosureParameter {
-                name: "x".to_string(),
-                is_required: true
-            },
-            super::ClosureParameter {
-                name: "y".to_string(),
-                is_required: true
-            },
-        ]
-    );
-}
-
-#[test]
-fn parses_optional_parameter() {
-    let params = super::parse_closure_parameters("{|x, y?| $x + $y}");
-    assert_eq!(
-        params,
-        vec![
-            super::ClosureParameter {
-                name: "x".to_string(),
-                is_required: true
-            },
-            super::ClosureParameter {
-                name: "y".to_string(),
-                is_required: false
-            },
-        ]
-    );
-}
-
-#[test]
-fn handles_whitespace() {
-    let params = super::parse_closure_parameters("{| x , y | $x + $y}");
-    assert_eq!(
-        params,
-        vec![
-            super::ClosureParameter {
-                name: "x".to_string(),
-                is_required: true
-            },
-            super::ClosureParameter {
-                name: "y".to_string(),
-                is_required: true
-            },
-        ]
-    );
-}
-
-#[test]
-fn parses_spaced_opening() {
-    let params = super::parse_closure_parameters("{ |x, y| $x + $y }");
-    assert_eq!(params.len(), 2);
-    assert_eq!(
-        params[0],
-        super::ClosureParameter {
-            name: "x".to_string(),
-            is_required: true
-        }
-    );
-    assert_eq!(
-        params[1],
-        super::ClosureParameter {
-            name: "y".to_string(),
-            is_required: true
-        }
-    );
-}
-
-#[test]
-fn parses_typed_param() {
-    let params = super::parse_closure_parameters("{|city_name: string| $city_name}");
-    assert_eq!(params.len(), 1);
-    assert_eq!(
-        params[0],
-        super::ClosureParameter {
-            name: "city_name".to_string(),
-            is_required: true
-        }
-    );
-}
-
-#[test]
-fn parses_optional_typed_param() {
-    let params = super::parse_closure_parameters("{|city_name?: string| $city_name}");
-    assert_eq!(params.len(), 1);
-    assert_eq!(
-        params[0],
-        super::ClosureParameter {
-            name: "city_name".to_string(),
-            is_required: false
-        }
-    );
-}
-
-#[test]
-fn parses_typed_spaced() {
-    let params = super::parse_closure_parameters("{ |city_name: string| $city_name }");
-    assert_eq!(params.len(), 1);
-    assert_eq!(
-        params[0],
-        super::ClosureParameter {
-            name: "city_name".to_string(),
-            is_required: true
-        }
-    );
+    // -- Exec & Check
+    for (name, source, expected) in cases {
+        let params = super::parse_closure_parameters(source);
+        let expected: Vec<ClosureParameter> = expected
+            .into_iter()
+            .map(|(param_name, is_required)| ClosureParameter {
+                name: param_name.to_string(),
+                is_required,
+            })
+            .collect();
+        assert_eq!(params, expected, "case '{name}'");
+    }
 }
 
 fn create_test_closure() -> Spanned<Closure> {

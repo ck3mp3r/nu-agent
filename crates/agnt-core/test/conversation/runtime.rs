@@ -14,6 +14,15 @@ use super::*;
 mod accessors;
 #[path = "runtime/compaction.rs"]
 mod compaction;
+#[path = "runtime/depth.rs"]
+mod depth;
+#[cfg(all(test, feature = "integration"))]
+#[path = "runtime/depth_gated.rs"]
+mod depth_gated;
+#[path = "runtime/harness.rs"]
+mod harness;
+#[path = "runtime/lifecycle.rs"]
+mod lifecycle;
 #[path = "runtime/mcp.rs"]
 mod mcp;
 #[path = "runtime/memory.rs"]
@@ -28,8 +37,12 @@ mod persona;
 mod preamble;
 #[path = "runtime/provider.rs"]
 mod provider;
+#[path = "runtime/switching.rs"]
+mod switching;
 #[path = "runtime/tools.rs"]
 mod tools;
+#[path = "runtime/turn.rs"]
+mod turn;
 #[cfg(all(test, feature = "integration"))]
 #[path = "runtime/wiremock.rs"]
 mod wiremock_tests;

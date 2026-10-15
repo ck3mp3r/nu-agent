@@ -1,7 +1,10 @@
 use super::*;
 
+/// Agent picker open/close resets state, launch and switch requests queue and
+/// drain in order, and the active agent identity is recorded.
 #[test]
-fn test_open_agent_picker() {
+fn agent_picker_open_close_and_requests() -> Result<()> {
+    // -- Setup & Fixtures
     let mut state = AppState::default();
     state.set_picker_options(ActivePicker::Agent, test_agent_options());
     if let Some(s) = state.picker.active_state_mut() {
@@ -9,216 +12,213 @@ fn test_open_agent_picker() {
         s.selection = 2;
     }
 
+    // -- Exec: open resets query and selection.
     state.picker.open(ActivePicker::Agent);
 
+    // -- Check
     assert_eq!(state.picker.render_kind(), Some(PickerRenderKind::Agent));
-    let s = state.picker.active_state().unwrap();
+    let s = state.picker.active_state().ok_or("picker should be open")?;
     assert_eq!(s.query, "");
     assert_eq!(s.selection, 0);
-}
 
-#[test]
-fn test_close_agent_picker() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Agent, test_agent_options());
-    state.picker.open(ActivePicker::Agent);
+    // -- Exec: close clears the active picker.
     if let Some(s) = state.picker.active_state_mut() {
         s.query = "al".to_string();
         s.selection = 1;
     }
-
     state.picker.close();
 
+    // -- Check
     assert_eq!(state.picker.render_kind(), None);
-}
 
-#[test]
-fn test_queue_agent_picker_launch_request() {
-    let mut state = AppState::default();
-
-    state.queue_launch_request(SharedUiAction::Agents);
-
+    // -- Exec & Check: launch requests queue and drain in order.
+    let mut launch = AppState::default();
+    assert_eq!(launch.take_next_launch_request(), None);
+    launch.queue_launch_request(SharedUiAction::Agents);
     assert_eq!(
-        state.take_next_launch_request(),
+        launch.take_next_launch_request(),
         Some(SharedUiAction::Agents)
     );
-}
+    assert_eq!(launch.take_next_launch_request(), None);
 
-#[test]
-fn test_take_next_agent_picker_launch_request() {
-    let mut state = AppState::default();
-
-    assert_eq!(state.take_next_launch_request(), None);
-
-    state.queue_launch_request(SharedUiAction::Agents);
+    // -- Exec & Check: switch requests queue and drain in order.
+    let mut switching = AppState::default();
+    switching.set_picker_options(ActivePicker::Agent, test_agent_options());
+    switching.picker.open(ActivePicker::Agent);
+    let opt = switching
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .selected()
+        .ok_or("should have selected option")?;
+    switching.queue_switch_request(SwitchRequest::Agent(opt.id.clone()));
+    switching
+        .picker
+        .active_state_mut()
+        .ok_or("picker should be open")?
+        .move_down();
+    let opt = switching
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .selected()
+        .ok_or("should have selected option")?;
+    switching.queue_switch_request(SwitchRequest::Agent(opt.id.clone()));
     assert_eq!(
-        state.take_next_launch_request(),
-        Some(SharedUiAction::Agents)
-    );
-
-    assert_eq!(state.take_next_launch_request(), None);
-}
-
-#[test]
-fn test_filtered_agent_picker_options_empty_query() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Agent, test_agent_options());
-    state.picker.open(ActivePicker::Agent);
-
-    let filtered = state.picker.active_state().unwrap().filtered();
-    assert_eq!(filtered.len(), 3);
-}
-
-#[test]
-fn test_filtered_agent_picker_options_with_query() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Agent, test_agent_options());
-    state.picker.open(ActivePicker::Agent);
-
-    for ch in "ALPHA".chars() {
-        state
-            .picker
-            .active_state_mut()
-            .unwrap()
-            .append_query_char(ch);
-    }
-    let filtered = state.picker.active_state().unwrap().filtered();
-    assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].id, "alpha");
-
-    state.picker.active_state_mut().unwrap().query.clear();
-    for ch in "Gamma agent".chars() {
-        state
-            .picker
-            .active_state_mut()
-            .unwrap()
-            .append_query_char(ch);
-    }
-    let filtered = state.picker.active_state().unwrap().filtered();
-    assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].id, "gamma");
-}
-
-#[test]
-fn test_filtered_agent_picker_options_no_match() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Agent, test_agent_options());
-    state.picker.open(ActivePicker::Agent);
-
-    for ch in "zzz".chars() {
-        state
-            .picker
-            .active_state_mut()
-            .unwrap()
-            .append_query_char(ch);
-    }
-    let filtered = state.picker.active_state().unwrap().filtered();
-    assert!(filtered.is_empty());
-}
-
-#[test]
-fn test_selected_agent_picker_option() -> Result<()> {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Agent, test_agent_options());
-    state.picker.open(ActivePicker::Agent);
-
-    let first = state
-        .picker
-        .active_state()
-        .unwrap()
-        .selected()
-        .ok_or("should have first selected option")?;
-    assert_eq!(first.id, "alpha");
-
-    state.picker.active_state_mut().unwrap().move_down();
-    let second = state
-        .picker
-        .active_state()
-        .unwrap()
-        .selected()
-        .ok_or("should have second selected option")?;
-    assert_eq!(second.id, "beta");
-
-    state.picker.active_state_mut().unwrap().move_down();
-    let third = state
-        .picker
-        .active_state()
-        .unwrap()
-        .selected()
-        .ok_or("should have third selected option")?;
-    assert_eq!(third.id, "gamma");
-    Ok(())
-}
-
-#[test]
-fn test_queue_selected_agent_switch_request() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Agent, test_agent_options());
-    state.picker.open(ActivePicker::Agent);
-
-    state.picker.active_state_mut().unwrap().move_down();
-    let opt = state.picker.active_state().unwrap().selected().unwrap();
-    state.queue_switch_request(SwitchRequest::Agent(opt.id.clone()));
-
-    let request = state.take_next_switch_request();
-    assert_eq!(request, Some(SwitchRequest::Agent("beta".to_string())));
-}
-
-#[test]
-fn test_take_next_agent_switch_request() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Agent, test_agent_options());
-    state.picker.open(ActivePicker::Agent);
-
-    let opt = state.picker.active_state().unwrap().selected().unwrap();
-    state.queue_switch_request(SwitchRequest::Agent(opt.id.clone()));
-    state.picker.active_state_mut().unwrap().move_down();
-    let opt = state.picker.active_state().unwrap().selected().unwrap();
-    state.queue_switch_request(SwitchRequest::Agent(opt.id.clone()));
-
-    assert_eq!(
-        state.take_next_switch_request(),
+        switching.take_next_switch_request(),
         Some(SwitchRequest::Agent("alpha".to_string()))
     );
     assert_eq!(
-        state.take_next_switch_request(),
+        switching.take_next_switch_request(),
         Some(SwitchRequest::Agent("beta".to_string()))
     );
-    assert_eq!(state.take_next_switch_request(), None);
-}
+    assert_eq!(switching.take_next_switch_request(), None);
 
-#[test]
-fn test_set_active_agent_identity() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Agent, test_agent_options());
+    // -- Exec & Check: the active agent identity is recorded.
+    let mut identity = AppState::default();
+    identity.set_picker_options(ActivePicker::Agent, test_agent_options());
+    identity.set_active_agent_identity("beta");
+    assert_eq!(
+        identity.status.identity.active_agent_identity(),
+        Some("beta")
+    );
 
-    state.set_active_agent_identity("beta");
-
-    assert_eq!(state.status.identity.active_agent_identity(), Some("beta"));
-}
-
-#[test]
-fn test_agent_picker_move_up_wraps() {
+    // -- Setup & Fixtures: filtering and selection.
     let mut state = AppState::default();
     state.set_picker_options(ActivePicker::Agent, test_agent_options());
     state.picker.open(ActivePicker::Agent);
 
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    // -- Exec & Check: an empty query returns all options.
+    assert_eq!(
+        state
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .filtered()
+            .len(),
+        3
+    );
 
-    state.picker.active_state_mut().unwrap().move_up();
-    assert_eq!(state.picker.active_state().unwrap().selection, 2);
-}
+    // -- Exec & Check: an uppercase query matches case-insensitively.
+    type_query(&mut state, "ALPHA")?;
+    let filtered = state
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .filtered();
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].id, "alpha");
 
-#[test]
-fn test_agent_picker_move_down_wraps() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Agent, test_agent_options());
-    state.picker.open(ActivePicker::Agent);
+    // -- Exec & Check: a non-prefix query matches the description.
+    state
+        .picker
+        .active_state_mut()
+        .ok_or("picker should be open")?
+        .query
+        .clear();
+    type_query(&mut state, "Gamma agent")?;
+    let filtered = state
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .filtered();
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].id, "gamma");
 
-    state.picker.active_state_mut().unwrap().move_down();
-    state.picker.active_state_mut().unwrap().move_down();
-    assert_eq!(state.picker.active_state().unwrap().selection, 2);
+    // -- Exec & Check: a no-match query returns an empty list.
+    state
+        .picker
+        .active_state_mut()
+        .ok_or("picker should be open")?
+        .query
+        .clear();
+    type_query(&mut state, "zzz")?;
+    assert!(
+        state
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .filtered()
+            .is_empty()
+    );
 
-    state.picker.active_state_mut().unwrap().move_down();
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    // -- Setup & Fixtures: a fresh picker.
+    let mut selection = AppState::default();
+    selection.set_picker_options(ActivePicker::Agent, test_agent_options());
+    selection.picker.open(ActivePicker::Agent);
+
+    // -- Exec & Check: the selected option follows the selection index.
+    let first = selection
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .selected()
+        .ok_or("should have first selected option")?;
+    assert_eq!(first.id, "alpha");
+    selection
+        .picker
+        .active_state_mut()
+        .ok_or("picker should be open")?
+        .move_down();
+    let second = selection
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .selected()
+        .ok_or("should have second selected option")?;
+    assert_eq!(second.id, "beta");
+    selection
+        .picker
+        .active_state_mut()
+        .ok_or("picker should be open")?
+        .move_down();
+    let third = selection
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .selected()
+        .ok_or("should have third selected option")?;
+    assert_eq!(third.id, "gamma");
+
+    // -- Exec & Check: move up wraps from the first to the last.
+    let mut wrapping = AppState::default();
+    wrapping.set_picker_options(ActivePicker::Agent, test_agent_options());
+    wrapping.picker.open(ActivePicker::Agent);
+    assert_eq!(
+        wrapping
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .selection,
+        0
+    );
+    wrapping
+        .picker
+        .active_state_mut()
+        .ok_or("picker should be open")?
+        .move_up();
+    assert_eq!(
+        wrapping
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .selection,
+        2
+    );
+
+    // -- Exec & Check: move down wraps from the last to the first.
+    wrapping
+        .picker
+        .active_state_mut()
+        .ok_or("picker should be open")?
+        .move_down();
+    assert_eq!(
+        wrapping
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .selection,
+        0
+    );
+    Ok(())
 }

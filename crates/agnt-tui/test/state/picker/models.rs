@@ -1,68 +1,87 @@
 use super::*;
 
+/// The model picker opens with the available models, filters incrementally,
+/// moves selection deterministically, closes on escape, orders by provider
+/// then identity, and shows a deterministic empty state for an empty catalog.
 #[test]
-fn inline_model_picker_opens_with_available_models() {
+fn model_picker_lifecycle() -> Result<()> {
+    // -- Setup & Fixtures
     let mut state = AppState::default();
     state.set_picker_options(ActivePicker::Model, test_model_options());
+
+    // -- Exec: open.
     state.picker.open(ActivePicker::Model);
 
+    // -- Check: selection and query reset, all models listed.
     assert_eq!(state.picker.render_kind(), Some(PickerRenderKind::Model));
-    let s = state.picker.active_state().unwrap();
+    let s = state.picker.active_state().ok_or("picker should be open")?;
     assert_eq!(s.selection, 0);
     assert_eq!(s.query, "");
     assert_eq!(s.filtered().len(), 2);
-}
 
-#[test]
-fn inline_model_picker_filters_incrementally() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Model, test_model_options());
-    state.picker.open(ActivePicker::Model);
-
-    for ch in "openai".chars() {
-        state
-            .picker
-            .active_state_mut()
-            .unwrap()
-            .append_query_char(ch);
-    }
-
-    let filtered = state.picker.active_state().unwrap().filtered();
+    // -- Exec & Check: filtering narrows the list.
+    type_query(&mut state, "openai")?;
+    let filtered = state
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .filtered();
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].id, "openai/gpt-4o-mini");
-}
 
-#[test]
-fn inline_model_picker_moves_selection_deterministically() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Model, test_model_options());
-    state.picker.open(ActivePicker::Model);
+    // -- Setup & Fixtures: a fresh picker.
+    let mut moving = AppState::default();
+    moving.set_picker_options(ActivePicker::Model, test_model_options());
+    moving.picker.open(ActivePicker::Model);
 
-    state.picker.active_state_mut().unwrap().move_down();
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+    // -- Exec & Check: selection moves deterministically and wraps.
+    moving
+        .picker
+        .active_state_mut()
+        .ok_or("picker should be open")?
+        .move_down();
+    assert_eq!(
+        moving
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .selection,
+        1
+    );
+    moving
+        .picker
+        .active_state_mut()
+        .ok_or("picker should be open")?
+        .move_down();
+    assert_eq!(
+        moving
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .selection,
+        0
+    );
+    moving
+        .picker
+        .active_state_mut()
+        .ok_or("picker should be open")?
+        .move_up();
+    assert_eq!(
+        moving
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .selection,
+        1
+    );
 
-    state.picker.active_state_mut().unwrap().move_down();
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    // -- Exec & Check: close clears the picker.
+    moving.picker.close();
+    assert_eq!(moving.picker.render_kind(), None);
 
-    state.picker.active_state_mut().unwrap().move_up();
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
-}
-
-#[test]
-fn inline_model_picker_closes_on_escape() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Model, test_model_options());
-    state.picker.open(ActivePicker::Model);
-
-    state.picker.close();
-
-    assert_eq!(state.picker.render_kind(), None);
-}
-
-#[test]
-fn inline_model_picker_uses_cached_startup_plugin_config_catalog() {
-    let mut state = AppState::default();
-    state.set_picker_options(
+    // -- Setup & Fixtures: an unordered catalog.
+    let mut ordered = AppState::default();
+    ordered.set_picker_options(
         ActivePicker::Model,
         vec![
             ModelPickerOption {
@@ -89,40 +108,55 @@ fn inline_model_picker_uses_cached_startup_plugin_config_catalog() {
             },
         ],
     );
-    state.picker.open(ActivePicker::Model);
+    ordered.picker.open(ActivePicker::Model);
 
-    let ordered = state.picker.active_state().unwrap().filtered();
-    assert_eq!(ordered[0].id, "a-provider/a-model");
-    assert_eq!(ordered[1].id, "z-provider/z-model");
-}
+    // -- Check: ordered by provider then identity.
+    let ordered_list = ordered
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .filtered();
+    assert_eq!(ordered_list[0].id, "a-provider/a-model");
+    assert_eq!(ordered_list[1].id, "z-provider/z-model");
 
-#[test]
-fn model_picker_query_changes_results_with_hydrated_catalog() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Model, test_model_options());
-    state.picker.open(ActivePicker::Model);
+    // -- Setup & Fixtures: a hydrated catalog.
+    let mut hydrated = AppState::default();
+    hydrated.set_picker_options(ActivePicker::Model, test_model_options());
+    hydrated.picker.open(ActivePicker::Model);
 
-    let all = state.picker.active_state().unwrap().filtered();
-    assert_eq!(all.len(), 2);
-
-    for ch in "claude".chars() {
-        state
+    // -- Exec & Check: a query changes the results.
+    assert_eq!(
+        hydrated
             .picker
-            .active_state_mut()
-            .unwrap()
-            .append_query_char(ch);
-    }
-    let narrowed = state.picker.active_state().unwrap().filtered();
+            .active_state()
+            .ok_or("picker should be open")?
+            .filtered()
+            .len(),
+        2
+    );
+    type_query(&mut hydrated, "claude")?;
+    let narrowed = hydrated
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .filtered();
     assert_eq!(narrowed.len(), 1);
     assert_eq!(narrowed[0].id, "anthropic/claude-3-5-sonnet");
-}
 
-#[test]
-fn model_picker_empty_catalog_shows_deterministic_empty_state() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Model, Vec::<PickerOption>::new());
-    state.picker.open(ActivePicker::Model);
+    // -- Setup & Fixtures: an empty catalog.
+    let mut empty = AppState::default();
+    empty.set_picker_options(ActivePicker::Model, Vec::<PickerOption>::new());
+    empty.picker.open(ActivePicker::Model);
 
-    assert_eq!(state.picker.render_kind(), Some(PickerRenderKind::Model));
-    assert!(state.picker.active_state().unwrap().filtered().is_empty());
+    // -- Check: a deterministic empty state.
+    assert_eq!(empty.picker.render_kind(), Some(PickerRenderKind::Model));
+    assert!(
+        empty
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .filtered()
+            .is_empty()
+    );
+    Ok(())
 }

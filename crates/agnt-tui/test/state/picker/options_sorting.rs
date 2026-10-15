@@ -1,7 +1,12 @@
 use super::*;
 
+/// `set_picker_options` sorts agent options by id, session options by created_at
+/// descending, and model options by configured-first then provider then
+/// identity; theme options keep their order. Writing options does not open the
+/// picker, and opening the palette twice opens a single picker.
 #[test]
-fn set_picker_options_sorts_agent_by_id() {
+fn set_picker_options_sorting_and_open() -> Result<()> {
+    // -- Setup & Fixtures: agent options out of order.
     let mut state = AppState::default();
     state.set_picker_options(
         ActivePicker::Agent,
@@ -21,6 +26,7 @@ fn set_picker_options_sorts_agent_by_id() {
         ],
     );
 
+    // -- Check: sorted by id.
     let ids: Vec<String> = state.picker.entries[2]
         .state
         .options
@@ -28,13 +34,11 @@ fn set_picker_options_sorts_agent_by_id() {
         .map(|o| o.id.clone())
         .collect();
     assert_eq!(ids, vec!["alpha", "zeta"]);
-}
 
-#[test]
-fn set_picker_options_sorts_session_by_created_at_desc() {
-    let mut state = AppState::default();
+    // -- Setup & Fixtures: session options out of order.
+    let mut sessions = AppState::default();
     let now = chrono::Utc::now();
-    state.set_picker_options(
+    sessions.set_picker_options(
         ActivePicker::Session,
         vec![
             PickerOption {
@@ -66,19 +70,18 @@ fn set_picker_options_sorts_session_by_created_at_desc() {
         ],
     );
 
-    let ids: Vec<String> = state.picker.entries[3]
+    // -- Check: sorted by created_at descending.
+    let ids: Vec<String> = sessions.picker.entries[3]
         .state
         .options
         .iter()
         .map(|o| o.id.clone())
         .collect();
     assert_eq!(ids, vec!["new", "old"]);
-}
 
-#[test]
-fn set_picker_options_keeps_theme_unsorted() {
-    let mut state = AppState::default();
-    state.set_picker_options(
+    // -- Setup & Fixtures: theme options.
+    let mut themes = AppState::default();
+    themes.set_picker_options(
         ActivePicker::Theme,
         vec![
             PickerOption {
@@ -98,28 +101,24 @@ fn set_picker_options_keeps_theme_unsorted() {
         ],
     );
 
-    let ids: Vec<String> = state.picker.entries[4]
+    // -- Check: theme options keep their order.
+    let ids: Vec<String> = themes.picker.entries[4]
         .state
         .options
         .iter()
         .map(|o| o.id.clone())
         .collect();
     assert_eq!(ids, vec!["b", "a"]);
-}
 
-#[test]
-fn set_picker_options_writes_without_opening() {
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Model, Vec::<PickerOption>::new());
+    // -- Exec & Check: writing options does not open the picker.
+    let mut unopened = AppState::default();
+    unopened.set_picker_options(ActivePicker::Model, Vec::<PickerOption>::new());
+    assert_eq!(unopened.picker.render_kind(), None);
+    assert!(unopened.picker.entries[1].state.options.is_empty());
 
-    assert_eq!(state.picker.render_kind(), None);
-    assert!(state.picker.entries[1].state.options.is_empty());
-}
-
-#[test]
-fn set_picker_options_sorts_model_by_provider_then_identity() {
-    let mut state = AppState::default();
-    state.set_picker_options(
+    // -- Setup & Fixtures: model options out of order.
+    let mut models = AppState::default();
+    models.set_picker_options(
         ActivePicker::Model,
         vec![
             ModelPickerOption {
@@ -147,19 +146,18 @@ fn set_picker_options_sorts_model_by_provider_then_identity() {
         ],
     );
 
-    let ids: Vec<String> = state.picker.entries[1]
+    // -- Check: sorted by provider then identity.
+    let ids: Vec<String> = models.picker.entries[1]
         .state
         .options
         .iter()
         .map(|o| o.id.clone())
         .collect();
     assert_eq!(ids, vec!["a-provider/a-model", "z-provider/z-model"]);
-}
 
-#[test]
-fn set_picker_options_sorts_model_configured_first() {
-    let mut state = AppState::default();
-    state.set_picker_options(
+    // -- Setup & Fixtures: configured and unconfigured models.
+    let mut configured = AppState::default();
+    configured.set_picker_options(
         ActivePicker::Model,
         vec![
             ModelPickerOption {
@@ -187,24 +185,23 @@ fn set_picker_options_sorts_model_configured_first() {
         ],
     );
 
-    let ids: Vec<String> = state.picker.entries[1]
+    // -- Check: configured models sort first.
+    let ids: Vec<String> = configured.picker.entries[1]
         .state
         .options
         .iter()
         .map(|o| o.id.clone())
         .collect();
     assert_eq!(ids, vec!["openai/gpt-4o", "openai/gpt-4o-mini"]);
-}
 
-#[test]
-fn open_command_palette_twice_opens_single_picker() {
-    let mut state = AppState::default();
-    open_command_palette_for_test(&mut state);
-    open_command_palette_for_test(&mut state);
-
+    // -- Exec & Check: opening the palette twice opens a single picker.
+    let mut palette = AppState::default();
+    open_command_palette_for_test(&mut palette);
+    open_command_palette_for_test(&mut palette);
     assert_eq!(
-        state.picker.render_kind(),
+        palette.picker.render_kind(),
         Some(PickerRenderKind::CommandPalette)
     );
-    assert_eq!(state.picker.active(), Some(ActivePicker::CommandPalette));
+    assert_eq!(palette.picker.active(), Some(ActivePicker::CommandPalette));
+    Ok(())
 }

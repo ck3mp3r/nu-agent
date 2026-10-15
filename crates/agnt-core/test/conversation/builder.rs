@@ -1,3 +1,15 @@
+//! Tests for the conversation builder helpers and `AgentRuntimeBuilder`.
+//!
+//! The suite is split into topical sub-files. Shared imports live here; each
+//! sub-file pulls them in with `use super::*;`.
+
+// region:    --- Modules
+
+#[path = "builder/runtime_builder.rs"]
+mod runtime_builder;
+
+// endregion: --- Modules
+
 use super::{
     build_compaction_params, builtin_tool_definitions, merge_compaction_configs,
     messaging_tool_definitions, orchestrator_tool_definitions,
@@ -342,3 +354,8 @@ fn orchestrator_tool_description_lists_available_agents() -> Result<()> {
     assert!(desc.contains("tmux"), "Expected tmux mention, got: {desc}");
     Ok(())
 }
+
+// ── AgentRuntimeBuilder::build ───────────────────────────────────────────────
+//
+// The builder tests live in `builder/runtime_builder.rs`; the module is
+// declared at the top of this file.

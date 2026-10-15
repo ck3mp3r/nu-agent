@@ -2,94 +2,38 @@ use super::BuiltinKind;
 use std::str::FromStr;
 
 #[test]
-fn as_str_returns_correct_string_for_all_variants() {
-    assert_eq!(BuiltinKind::Read.as_str(), "read");
-    assert_eq!(BuiltinKind::Edit.as_str(), "edit");
-    assert_eq!(BuiltinKind::Skill.as_str(), "skill");
-    assert_eq!(BuiltinKind::SpawnAgent.as_str(), "spawn_agent");
-    assert_eq!(BuiltinKind::TerminateAgent.as_str(), "terminate_agent");
-    assert_eq!(BuiltinKind::SendMessage.as_str(), "send_message");
-    assert_eq!(BuiltinKind::ListAgents.as_str(), "list_agents");
-    assert_eq!(BuiltinKind::Http.as_str(), "http");
-    assert_eq!(BuiltinKind::Grep.as_str(), "grep");
-    assert_eq!(BuiltinKind::Glob.as_str(), "glob");
-    assert_eq!(BuiltinKind::Nu.as_str(), "nu");
-    assert_eq!(BuiltinKind::TmuxSession.as_str(), "tmux_session");
-    assert_eq!(BuiltinKind::TmuxWindow.as_str(), "tmux_window");
-    assert_eq!(BuiltinKind::TmuxPane.as_str(), "tmux_pane");
-    assert_eq!(BuiltinKind::TmuxLayout.as_str(), "tmux_layout");
-    assert_eq!(BuiltinKind::AstQuery.as_str(), "ast_query");
-    assert_eq!(BuiltinKind::AstNodes.as_str(), "ast_nodes");
-    assert_eq!(BuiltinKind::AstRefs.as_str(), "ast_refs");
-    assert_eq!(BuiltinKind::AstTree.as_str(), "ast_tree");
-}
+fn kind_string_round_trip_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(BuiltinKind, &str)> = vec![
+        (BuiltinKind::Read, "read"),
+        (BuiltinKind::Edit, "edit"),
+        (BuiltinKind::Skill, "skill"),
+        (BuiltinKind::SpawnAgent, "spawn_agent"),
+        (BuiltinKind::TerminateAgent, "terminate_agent"),
+        (BuiltinKind::SendMessage, "send_message"),
+        (BuiltinKind::ListAgents, "list_agents"),
+        (BuiltinKind::Http, "http"),
+        (BuiltinKind::Grep, "grep"),
+        (BuiltinKind::Glob, "glob"),
+        (BuiltinKind::Nu, "nu"),
+        (BuiltinKind::TmuxSession, "tmux_session"),
+        (BuiltinKind::TmuxWindow, "tmux_window"),
+        (BuiltinKind::TmuxPane, "tmux_pane"),
+        (BuiltinKind::TmuxLayout, "tmux_layout"),
+        (BuiltinKind::AstQuery, "ast_query"),
+        (BuiltinKind::AstNodes, "ast_nodes"),
+        (BuiltinKind::AstRefs, "ast_refs"),
+        (BuiltinKind::AstTree, "ast_tree"),
+    ];
 
-#[test]
-fn from_str_returns_some_for_all_valid_strings() {
-    assert_eq!(BuiltinKind::from_str("read"), Ok(BuiltinKind::Read));
-    assert_eq!(BuiltinKind::from_str("edit"), Ok(BuiltinKind::Edit));
-    assert_eq!(BuiltinKind::from_str("skill"), Ok(BuiltinKind::Skill));
-    assert_eq!(
-        BuiltinKind::from_str("spawn_agent"),
-        Ok(BuiltinKind::SpawnAgent)
-    );
-    assert_eq!(
-        BuiltinKind::from_str("terminate_agent"),
-        Ok(BuiltinKind::TerminateAgent)
-    );
-    assert_eq!(
-        BuiltinKind::from_str("send_message"),
-        Ok(BuiltinKind::SendMessage)
-    );
-    assert_eq!(
-        BuiltinKind::from_str("list_agents"),
-        Ok(BuiltinKind::ListAgents)
-    );
-    assert_eq!(BuiltinKind::from_str("http"), Ok(BuiltinKind::Http));
-    assert_eq!(BuiltinKind::from_str("grep"), Ok(BuiltinKind::Grep));
-    assert_eq!(BuiltinKind::from_str("glob"), Ok(BuiltinKind::Glob));
-    assert_eq!(BuiltinKind::from_str("nu"), Ok(BuiltinKind::Nu));
-    assert_eq!(
-        BuiltinKind::from_str("tmux_session"),
-        Ok(BuiltinKind::TmuxSession)
-    );
-    assert_eq!(
-        BuiltinKind::from_str("tmux_window"),
-        Ok(BuiltinKind::TmuxWindow)
-    );
-    assert_eq!(
-        BuiltinKind::from_str("tmux_pane"),
-        Ok(BuiltinKind::TmuxPane)
-    );
-    assert_eq!(
-        BuiltinKind::from_str("tmux_layout"),
-        Ok(BuiltinKind::TmuxLayout)
-    );
-    assert_eq!(
-        BuiltinKind::from_str("ast_query"),
-        Ok(BuiltinKind::AstQuery)
-    );
-    assert_eq!(
-        BuiltinKind::from_str("ast_nodes"),
-        Ok(BuiltinKind::AstNodes)
-    );
-    assert_eq!(BuiltinKind::from_str("ast_refs"), Ok(BuiltinKind::AstRefs));
-    assert_eq!(BuiltinKind::from_str("ast_tree"), Ok(BuiltinKind::AstTree));
-}
-
-#[test]
-fn from_str_round_trips_all_tmux_variants() {
-    for kind in [
-        BuiltinKind::TmuxSession,
-        BuiltinKind::TmuxWindow,
-        BuiltinKind::TmuxPane,
-        BuiltinKind::TmuxLayout,
-        BuiltinKind::AstQuery,
-        BuiltinKind::AstNodes,
-        BuiltinKind::AstRefs,
-        BuiltinKind::AstTree,
-    ] {
-        assert_eq!(BuiltinKind::from_str(kind.as_str()), Ok(kind));
+    // -- Exec & Check
+    for (kind, expected) in cases {
+        assert_eq!(kind.as_str(), expected, "as_str for {kind:?}");
+        assert_eq!(
+            BuiltinKind::from_str(expected),
+            Ok(kind),
+            "from_str must round trip '{expected}'"
+        );
     }
 }
 

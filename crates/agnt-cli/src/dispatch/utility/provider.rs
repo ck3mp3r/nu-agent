@@ -214,3 +214,11 @@ fn remove_copilot_token_files(dir: &std::path::Path) -> core::result::Result<(),
 }
 
 // endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/dispatch/utility/provider.rs"]
+mod provider_test;
+
+// endregion: --- Tests

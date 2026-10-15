@@ -226,3 +226,11 @@ fn parse_duration(input: &str) -> std::result::Result<Duration, String> {
 }
 
 // endregion: --- Tool timeout
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/dispatch/config.rs"]
+mod config_test;
+
+// endregion: --- Tests

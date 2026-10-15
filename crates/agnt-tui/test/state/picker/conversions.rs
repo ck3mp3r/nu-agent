@@ -1,159 +1,61 @@
 use super::*;
 
+/// `PickerOption::from` forwards the model's configured flag and context
+/// window, and the agent's description.
 #[test]
-fn from_model_picker_option_carries_configured_true() -> Result<()> {
+fn picker_option_from_carries_payload_fields() -> Result<()> {
     // -- Setup & Fixtures
-    let opt = ModelPickerOption {
+    let model = |configured: bool, context_window: Option<u32>| ModelPickerOption {
         provider: "openai".to_string(),
         model: "gpt-4o-mini".to_string(),
         identity: "openai/gpt-4o-mini".to_string(),
         display: "openai / gpt-4o-mini".to_string(),
         active: true,
-        context_window: None,
+        context_window,
         max_output: None,
-        configured: true,
+        configured,
         provider_display_name: String::new(),
     };
 
-    // -- Exec
-    let option = PickerOption::from(opt);
-
-    // -- Check
-    match option.payload {
-        PickerPayload::Model { configured, .. } => {
-            assert!(configured, "configured flag must be forwarded");
+    // -- Exec & Check: the configured flag is forwarded.
+    for configured in [true, false] {
+        let option = PickerOption::from(model(configured, None));
+        match option.payload {
+            PickerPayload::Model {
+                configured: actual, ..
+            } => assert_eq!(actual, configured, "configured flag must be forwarded"),
+            _ => return Err("expected PickerPayload::Model".into()),
         }
-        _ => return Err("expected PickerPayload::Model".into()),
     }
-    Ok(())
-}
 
-#[test]
-fn from_model_picker_option_carries_configured_false() -> Result<()> {
-    // -- Setup & Fixtures
-    let opt = ModelPickerOption {
-        provider: "anthropic".to_string(),
-        model: "claude-3-5-sonnet".to_string(),
-        identity: "anthropic/claude-3-5-sonnet".to_string(),
-        display: "anthropic / claude-3-5-sonnet".to_string(),
-        active: false,
-        context_window: None,
-        max_output: None,
-        configured: false,
-        provider_display_name: String::new(),
-    };
-
-    // -- Exec
-    let option = PickerOption::from(opt);
-
-    // -- Check
-    match option.payload {
-        PickerPayload::Model { configured, .. } => {
-            assert!(!configured, "configured flag must be forwarded");
+    // -- Exec & Check: the context window is forwarded.
+    for context_window in [Some(200_000u32), None] {
+        let option = PickerOption::from(model(true, context_window));
+        match option.payload {
+            PickerPayload::Model {
+                context_window: actual,
+                ..
+            } => assert_eq!(actual, context_window),
+            _ => return Err("expected PickerPayload::Model".into()),
         }
-        _ => return Err("expected PickerPayload::Model".into()),
     }
-    Ok(())
-}
 
-#[test]
-fn from_agent_picker_option_carries_description_some() -> Result<()> {
-    // -- Setup & Fixtures
-    let opt = AgentPickerOption {
-        name: "reviewer".into(),
-        description: Some("Runs reviews".into()),
-        display: "reviewer".into(),
-        builtin: false,
-    };
-
-    // -- Exec
-    let option = PickerOption::from(opt);
-
-    // -- Check
-    match option.payload {
-        PickerPayload::Agent { description, .. } => {
-            assert_eq!(description, Some("Runs reviews".to_string()));
+    // -- Exec & Check: the agent description is forwarded.
+    for description in [Some("Runs reviews".to_string()), None] {
+        let opt = AgentPickerOption {
+            name: "reviewer".into(),
+            description: description.clone(),
+            display: "reviewer".into(),
+            builtin: false,
+        };
+        let option = PickerOption::from(opt);
+        match option.payload {
+            PickerPayload::Agent {
+                description: actual,
+                ..
+            } => assert_eq!(actual, description),
+            _ => return Err("expected PickerPayload::Agent".into()),
         }
-        _ => return Err("expected PickerPayload::Agent".into()),
-    }
-    Ok(())
-}
-
-#[test]
-fn from_agent_picker_option_carries_description_none() -> Result<()> {
-    // -- Setup & Fixtures
-    let opt = AgentPickerOption {
-        name: "reviewer".into(),
-        description: None,
-        display: "reviewer".into(),
-        builtin: false,
-    };
-
-    // -- Exec
-    let option = PickerOption::from(opt);
-
-    // -- Check
-    match option.payload {
-        PickerPayload::Agent { description, .. } => {
-            assert_eq!(description, None);
-        }
-        _ => return Err("expected PickerPayload::Agent".into()),
-    }
-    Ok(())
-}
-
-#[test]
-fn from_model_picker_option_carries_context_window_some() -> Result<()> {
-    // -- Setup & Fixtures
-    let opt = ModelPickerOption {
-        provider: "openai".to_string(),
-        model: "gpt-4o".to_string(),
-        identity: "openai/gpt-4o".to_string(),
-        display: "openai/gpt-4o".to_string(),
-        active: true,
-        context_window: Some(200000),
-        max_output: None,
-        configured: true,
-        provider_display_name: String::new(),
-    };
-
-    // -- Exec
-    let option = PickerOption::from(opt);
-
-    // -- Check
-    match option.payload {
-        PickerPayload::Model { context_window, .. } => {
-            assert_eq!(context_window, Some(200000));
-        }
-        _ => return Err("expected PickerPayload::Model".into()),
-    }
-    Ok(())
-}
-
-#[test]
-fn from_model_picker_option_carries_context_window_none() -> Result<()> {
-    // -- Setup & Fixtures
-    let opt = ModelPickerOption {
-        provider: "openai".to_string(),
-        model: "gpt-4o".to_string(),
-        identity: "openai/gpt-4o".to_string(),
-        display: "openai/gpt-4o".to_string(),
-        active: true,
-        context_window: None,
-        max_output: None,
-        configured: true,
-        provider_display_name: String::new(),
-    };
-
-    // -- Exec
-    let option = PickerOption::from(opt);
-
-    // -- Check
-    match option.payload {
-        PickerPayload::Model { context_window, .. } => {
-            assert_eq!(context_window, None);
-        }
-        _ => return Err("expected PickerPayload::Model".into()),
     }
     Ok(())
 }

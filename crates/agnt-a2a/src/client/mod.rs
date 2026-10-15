@@ -24,3 +24,6 @@ mod functions_test;
 #[cfg(test)]
 #[path = "../../test/client/mock.rs"]
 mod mock_test;
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/client/shared.rs"]
+mod shared;

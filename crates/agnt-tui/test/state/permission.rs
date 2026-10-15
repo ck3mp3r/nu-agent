@@ -53,8 +53,16 @@ fn push_tool_summary(state: &mut AppState, summary: &str) {
 }
 
 #[test]
-fn permission_prompt_open_sets_presence() {
+fn permission_prompt_open_sets_presence_without_scrolling() {
+    // -- Setup & Fixtures: a transcript scrolled away from the tail.
     let mut state = AppState::default();
+    push_user(&mut state, "msg1");
+    push_assistant(&mut state, "msg2");
+    push_tool_summary(&mut state, "tool1");
+    state.scroll.scroll_transcript_to_top();
+    assert!(!state.scroll.following_tail);
+
+    // -- Exec: a nested closure prompt.
     state.permission.open_prompt(PermissionPrompt {
         request_id: "ask-0000000000000001".to_string(),
         matched_rule_identity: "nested:nu.command:*".to_string(),
@@ -67,18 +75,17 @@ fn permission_prompt_open_sets_presence() {
         summary: "→ {\"command\":\"echo hi\"}".to_string(),
     });
 
+    // -- Check
     assert!(state.permission.has_prompt());
-}
+    assert!(
+        !state.scroll.following_tail,
+        "opening a prompt must not scroll the transcript"
+    );
 
-#[test]
-fn permission_prompt_open_does_not_scroll() {
+    // -- Setup & Fixtures: a global builtin prompt.
     let mut state = AppState::default();
-    push_user(&mut state, "msg1");
-    push_assistant(&mut state, "msg2");
-    push_tool_summary(&mut state, "tool1");
-    state.scroll.scroll_transcript_to_top();
-    assert!(!state.scroll.following_tail);
 
+    // -- Exec
     state.permission.open_prompt(PermissionPrompt {
         request_id: "ask-001".to_string(),
         matched_rule_identity: "rule".to_string(),
@@ -91,7 +98,8 @@ fn permission_prompt_open_does_not_scroll() {
         summary: "edit foo.rs".to_string(),
     });
 
-    assert!(!state.scroll.following_tail);
+    // -- Check
+    assert!(state.permission.has_prompt());
 }
 
 #[test]

@@ -20,64 +20,64 @@ fn create_test_resolved() -> ResolvedClosure {
 }
 
 #[test]
-fn new_registry_is_empty() {
-    let registry = ClosureRegistry::default();
-    assert_eq!(registry.names().count(), 0);
-}
+fn registry_register_and_names_table() {
+    // -- Setup & Fixtures
+    struct Case {
+        name: &'static str,
+        registrations: Vec<&'static str>,
+        expected_names: Vec<&'static str>,
+    }
 
-#[test]
-fn register_adds_closure() {
-    let mut registry = ClosureRegistry::default();
+    let cases = vec![
+        Case {
+            name: "new registry is empty",
+            registrations: vec![],
+            expected_names: vec![],
+        },
+        Case {
+            name: "register adds a closure",
+            registrations: vec!["add"],
+            expected_names: vec!["add"],
+        },
+        Case {
+            name: "register multiple closures",
+            registrations: vec!["add", "multiply", "divide"],
+            expected_names: vec!["add", "multiply", "divide"],
+        },
+        Case {
+            name: "register overwrites an existing name",
+            registrations: vec!["add", "add"],
+            expected_names: vec!["add"],
+        },
+    ];
 
-    registry.register("add".to_string(), create_test_resolved());
+    // -- Exec & Check
+    for case in cases {
+        let mut registry = ClosureRegistry::default();
+        for name in &case.registrations {
+            registry.register(name.to_string(), create_test_resolved());
+        }
 
-    assert_eq!(registry.names().count(), 1);
-    assert!(registry.get("add").is_some());
-}
-
-#[test]
-fn register_multiple_closures() {
-    let mut registry = ClosureRegistry::default();
-
-    registry.register("add".to_string(), create_test_resolved());
-    registry.register("multiply".to_string(), create_test_resolved());
-    registry.register("divide".to_string(), create_test_resolved());
-
-    assert_eq!(registry.names().count(), 3);
-    assert!(registry.get("add").is_some());
-    assert!(registry.get("multiply").is_some());
-    assert!(registry.get("divide").is_some());
-}
-
-#[test]
-fn get_returns_none_for_missing_closure() {
-    let registry = ClosureRegistry::default();
-    assert!(registry.get("nonexistent").is_none());
-}
-
-#[test]
-fn register_overwrites_existing() {
-    let mut registry = ClosureRegistry::default();
-
-    registry.register("add".to_string(), create_test_resolved());
-    registry.register("add".to_string(), create_test_resolved());
-
-    assert_eq!(registry.names().count(), 1);
-}
-
-#[test]
-fn names_returns_all_registered_names() {
-    let mut registry = ClosureRegistry::default();
-
-    registry.register("add".to_string(), create_test_resolved());
-    registry.register("sub".to_string(), create_test_resolved());
-    registry.register("mul".to_string(), create_test_resolved());
-
-    let names: Vec<&String> = registry.names().collect();
-    assert_eq!(names.len(), 3);
-    assert!(names.contains(&&"add".to_string()));
-    assert!(names.contains(&&"sub".to_string()));
-    assert!(names.contains(&&"mul".to_string()));
+        let names: Vec<&String> = registry.names().collect();
+        assert_eq!(
+            names.len(),
+            case.expected_names.len(),
+            "case '{}': name count",
+            case.name
+        );
+        for expected in &case.expected_names {
+            assert!(
+                names.contains(&&expected.to_string()),
+                "case '{}': names must contain {expected}, got {names:?}",
+                case.name
+            );
+            assert!(
+                registry.get(expected).is_some(),
+                "case '{}': get({expected}) must resolve",
+                case.name
+            );
+        }
+    }
 }
 
 #[test]

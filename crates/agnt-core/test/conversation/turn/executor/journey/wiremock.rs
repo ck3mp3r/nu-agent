@@ -1,7 +1,7 @@
 use super::*;
 
 // ---------------------------------------------------------------------------
-// Gap 1A: wiremock diagnostics + close_open_tool_result_block integration test
+// Gap 1A: mock-server diagnostics + close_open_tool_result_block integration test
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -9,19 +9,13 @@ async fn journey_wiremock_basic_text_smoke() -> Result<()> {
     let mut h = JourneyHarness::new("journey-wiremock-smoke");
     let (server, client) = h.start_mock_server().await?;
 
-    let sse_body = sse_text_response("hello from mock");
-    {
-        use wiremock::matchers::method;
-        use wiremock::{Mock, ResponseTemplate};
-        Mock::given(method("POST"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .append_header("content-type", "text/event-stream")
-                    .set_body_bytes(sse_body.into_bytes()),
-            )
-            .mount(&server)
-            .await;
-    }
+    agnt_testkit::mount_sse_response(
+        &server,
+        "POST",
+        None,
+        agnt_testkit::sse_text_body("hello from mock"),
+    )
+    .await;
 
     let (r, _) = h.turn_with_client("test", &client, no_tools()).await?;
     assert!(r.is_ok(), "basic wiremock text turn must succeed: {r:?}");
@@ -44,10 +38,11 @@ async fn journey_hard_error_after_tool_results_session_remains_valid() -> Result
     let (server, client) = h.start_mock_server().await?;
 
     // Turn 1: tool call succeeds, sub-turn 2 → HTTP 500
-    let tool_call_body = sse_tool_call_response("tc1", "nu__shell", "{\"command\":\"git pull\"}");
+    let tool_call_body =
+        agnt_testkit::sse_tool_call_body("tc1", "nu__shell", "{\"command\":\"git pull\"}");
     {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, ResponseTemplate};
+        use agnt_testkit::matchers::{method, path};
+        use agnt_testkit::{Mock, ResponseTemplate};
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
@@ -91,20 +86,13 @@ async fn journey_hard_error_after_tool_results_session_remains_valid() -> Result
     );
 
     // Turn 2: must succeed — proves the session is no longer broken
-    let text_body = sse_text_response("recovered successfully");
-    {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, ResponseTemplate};
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .append_header("content-type", "text/event-stream")
-                    .set_body_bytes(text_body.into_bytes()),
-            )
-            .mount(&server)
-            .await;
-    }
+    agnt_testkit::mount_sse_response(
+        &server,
+        "POST",
+        Some("/chat/completions"),
+        agnt_testkit::sse_text_body("recovered successfully"),
+    )
+    .await;
 
     let (r2, _) = h.turn_with_client("continue", &client, no_tools()).await?;
     assert!(r2.is_ok(), "turn 2 must succeed after repair — was: {r2:?}");
@@ -131,8 +119,6 @@ async fn journey_context_warning_emitted_near_limit() -> Result<()> {
     // Pre-populate session with enough content to exceed threshold.
     // Execute a first turn to build up history.
     {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, ResponseTemplate};
         // Non-repeating filler content: identical 20-char delta chunks would
         // legitimately trip the output-repetition detector (5 identical deltas).
         let filler: String = (0..200)
@@ -144,15 +130,13 @@ async fn journey_context_warning_emitted_near_limit() -> Result<()> {
                 )
             })
             .collect();
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .append_header("content-type", "text/event-stream")
-                    .set_body_bytes(sse_text_response(&filler).into_bytes()),
-            )
-            .mount(&server)
-            .await;
+        agnt_testkit::mount_sse_response(
+            &server,
+            "POST",
+            Some("/chat/completions"),
+            agnt_testkit::sse_text_body(&filler),
+        )
+        .await;
     }
     let _ = h
         .turn_with_client("initial prompt with some content here", &client, no_tools())
@@ -160,19 +144,13 @@ async fn journey_context_warning_emitted_near_limit() -> Result<()> {
 
     // Execute a second turn — pre_turn_messages will include the first turn's history
     // which should exceed the 50-token threshold (100 * 0.5).
-    {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, ResponseTemplate};
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .append_header("content-type", "text/event-stream")
-                    .set_body_bytes(sse_text_response("done").into_bytes()),
-            )
-            .mount(&server)
-            .await;
-    }
+    agnt_testkit::mount_sse_response(
+        &server,
+        "POST",
+        Some("/chat/completions"),
+        agnt_testkit::sse_text_body("done"),
+    )
+    .await;
     let (r2, events) = h.turn_with_client("follow up", &client, no_tools()).await?;
 
     assert!(r2.is_ok(), "turn must succeed even with warning: {r2:?}");
@@ -194,19 +172,13 @@ async fn journey_no_context_warning_when_not_configured() -> Result<()> {
     let mut h = JourneyHarness::new("journey-no-ctx-warn");
     let (server, client) = h.start_mock_server().await?;
 
-    {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, ResponseTemplate};
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .append_header("content-type", "text/event-stream")
-                    .set_body_bytes(sse_text_response("ok").into_bytes()),
-            )
-            .mount(&server)
-            .await;
-    }
+    agnt_testkit::mount_sse_response(
+        &server,
+        "POST",
+        Some("/chat/completions"),
+        agnt_testkit::sse_text_body("ok"),
+    )
+    .await;
     let (r, events) = h.turn_with_client("hello", &client, no_tools()).await?;
 
     assert!(r.is_ok());

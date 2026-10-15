@@ -111,42 +111,26 @@ fn test_plugin_config_resolve_model_role_level_overrides() -> Result<()> {
 }
 
 #[test]
-fn test_resolve_model_output_budget_remedy_fields() -> Result<()> {
-    // Role config sets both remedy fields; resolve_model must copy them into Config.
-    let plugin_config = PluginConfig {
-        models: {
-            let mut m = HashMap::new();
-            m.insert(
-                "default".to_string(),
-                ModelRoleConfig {
-                    model: "openai/gpt-4".to_string(),
-                    output_budget_empty_remedy: Some("custom remedy".to_string()),
-                    output_budget_remedy_mode: Some("shorter_response".to_string()),
-                    ..ModelRoleConfig::default()
-                },
-            );
-            m
-        },
-        providers: HashMap::new(),
-        compaction: None,
-        agents: AgentsConfig::default(),
-        a2a_enabled: None,
-        session_store: None,
-        vault: None,
-        models_cache: None,
-        permissions: None,
-        mcp: None,
-        theme: None,
-    };
+fn test_resolve_model_output_budget_fields() -> Result<()> {
+    // -- Setup & Fixtures
+    // Role config sets every output-budget field; resolve_model must copy them.
     let role_config = ModelRoleConfig {
         model: "openai/gpt-4".to_string(),
         output_budget_empty_remedy: Some("custom remedy".to_string()),
         output_budget_remedy_mode: Some("shorter_response".to_string()),
+        output_budget_raise_enabled: Some(true),
+        output_budget_raise_multiplier: Some(3.0),
+        output_budget_raise_cap: Some(65536),
         ..ModelRoleConfig::default()
     };
+    let plugin_config = plugin_config_with_role(role_config.clone());
+
+    // -- Exec
     let config = plugin_config
         .resolve_model(&role_config)
         .map_err(|e| format!("should resolve: {e:?}"))?;
+
+    // -- Check
     assert_eq!(
         config.output_budget_empty_remedy,
         Some("custom remedy".to_string())
@@ -155,48 +139,6 @@ fn test_resolve_model_output_budget_remedy_fields() -> Result<()> {
         config.output_budget_remedy_mode,
         Some("shorter_response".to_string())
     );
-    Ok(())
-}
-
-#[test]
-fn test_resolve_model_output_budget_raise_fields() -> Result<()> {
-    // Role config sets the three raise fields; resolve_model must copy them into Config.
-    let plugin_config = PluginConfig {
-        models: {
-            let mut m = HashMap::new();
-            m.insert(
-                "default".to_string(),
-                ModelRoleConfig {
-                    model: "openai/gpt-4".to_string(),
-                    output_budget_raise_enabled: Some(true),
-                    output_budget_raise_multiplier: Some(3.0),
-                    output_budget_raise_cap: Some(65536),
-                    ..ModelRoleConfig::default()
-                },
-            );
-            m
-        },
-        providers: HashMap::new(),
-        compaction: None,
-        agents: AgentsConfig::default(),
-        a2a_enabled: None,
-        session_store: None,
-        vault: None,
-        models_cache: None,
-        permissions: None,
-        mcp: None,
-        theme: None,
-    };
-    let role_config = ModelRoleConfig {
-        model: "openai/gpt-4".to_string(),
-        output_budget_raise_enabled: Some(true),
-        output_budget_raise_multiplier: Some(3.0),
-        output_budget_raise_cap: Some(65536),
-        ..ModelRoleConfig::default()
-    };
-    let config = plugin_config
-        .resolve_model(&role_config)
-        .map_err(|e| format!("should resolve: {e:?}"))?;
     assert_eq!(config.output_budget_raise_enabled, Some(true));
     assert_eq!(config.output_budget_raise_multiplier, Some(3.0));
     assert_eq!(config.output_budget_raise_cap, Some(65536));
@@ -204,129 +146,44 @@ fn test_resolve_model_output_budget_raise_fields() -> Result<()> {
 }
 
 #[test]
-fn test_resolve_model_repetition_guard_none_when_unset() -> Result<()> {
+fn test_resolve_model_repetition_guard() -> Result<()> {
     // -- Setup & Fixtures
-    let plugin_config = PluginConfig {
-        models: {
-            let mut m = HashMap::new();
-            m.insert(
-                "default".to_string(),
-                ModelRoleConfig {
-                    model: "openai/gpt-4".to_string(),
-                    ..ModelRoleConfig::default()
-                },
-            );
-            m
-        },
-        providers: HashMap::new(),
-        compaction: None,
-        agents: AgentsConfig::default(),
-        a2a_enabled: None,
-        session_store: None,
-        vault: None,
-        models_cache: None,
-        permissions: None,
-        mcp: None,
-        theme: None,
-    };
-    let role_config = ModelRoleConfig {
+    let plugin_config = plugin_config_with_role(ModelRoleConfig {
         model: "openai/gpt-4".to_string(),
         ..ModelRoleConfig::default()
-    };
+    });
 
-    // -- Exec
+    // -- Exec & Check: unset role leaves the field None
     let config = plugin_config
-        .resolve_model(&role_config)
+        .resolve_model(&ModelRoleConfig {
+            model: "openai/gpt-4".to_string(),
+            ..ModelRoleConfig::default()
+        })
         .map_err(|e| format!("should resolve: {e:?}"))?;
-
-    // -- Check
     assert_eq!(config.repetition_guard, None);
-    Ok(())
-}
 
-#[test]
-fn test_resolve_model_repetition_guard_role_false() -> Result<()> {
-    // -- Setup & Fixtures
-    let plugin_config = PluginConfig {
-        models: {
-            let mut m = HashMap::new();
-            m.insert(
-                "default".to_string(),
-                ModelRoleConfig {
-                    model: "openai/gpt-4".to_string(),
-                    ..ModelRoleConfig::default()
-                },
-            );
-            m
-        },
-        providers: HashMap::new(),
-        compaction: None,
-        agents: AgentsConfig::default(),
-        a2a_enabled: None,
-        session_store: None,
-        vault: None,
-        models_cache: None,
-        permissions: None,
-        mcp: None,
-        theme: None,
-    };
-    let role_config = ModelRoleConfig {
-        model: "openai/gpt-4".to_string(),
-        repetition_guard: Some(false),
-        ..ModelRoleConfig::default()
-    };
-
-    // -- Exec
+    // -- Exec & Check: role-level false is copied into Config
     let config = plugin_config
-        .resolve_model(&role_config)
+        .resolve_model(&ModelRoleConfig {
+            model: "openai/gpt-4".to_string(),
+            repetition_guard: Some(false),
+            ..ModelRoleConfig::default()
+        })
         .map_err(|e| format!("should resolve: {e:?}"))?;
-
-    // -- Check
     assert_eq!(config.repetition_guard, Some(false));
-    Ok(())
-}
 
-#[test]
-fn test_resolve_model_repetition_guard_role_overrides_env() -> Result<()> {
-    // -- Setup & Fixtures
-    let plugin_config = PluginConfig {
-        models: {
-            let mut m = HashMap::new();
-            m.insert(
-                "default".to_string(),
-                ModelRoleConfig {
-                    model: "openai/gpt-4".to_string(),
-                    ..ModelRoleConfig::default()
-                },
-            );
-            m
-        },
-        providers: HashMap::new(),
-        compaction: None,
-        agents: AgentsConfig::default(),
-        a2a_enabled: None,
-        session_store: None,
-        vault: None,
-        models_cache: None,
-        permissions: None,
-        mcp: None,
-        theme: None,
-    };
-    let role_config = ModelRoleConfig {
-        model: "openai/gpt-4".to_string(),
-        repetition_guard: Some(true),
-        ..ModelRoleConfig::default()
-    };
-
-    // -- Exec
+    // -- Exec & Check: role-level true beats the env var
     let env = env_map(&[("AGENT_REPETITION_GUARD", "false")]);
-    let resolved = plugin_config
-        .resolve_model_with(&role_config, &env)
-        .map_err(|e| format!("should resolve: {e:?}"))
-        .ok();
-
-    // -- Check
-    let config = resolved.ok_or("should resolve")?;
+    let config = plugin_config
+        .resolve_model_with(
+            &ModelRoleConfig {
+                model: "openai/gpt-4".to_string(),
+                repetition_guard: Some(true),
+                ..ModelRoleConfig::default()
+            },
+            &env,
+        )
+        .map_err(|e| format!("should resolve: {e:?}"))?;
     assert_eq!(config.repetition_guard, Some(true));
     Ok(())
 }
@@ -405,3 +262,25 @@ fn test_resolve_model_role_max_output_tokens_overrides_model_limit() -> Result<(
     assert_eq!(config.max_context_tokens, Some(128000));
     Ok(())
 }
+
+// region:    --- Test Support
+
+fn plugin_config_with_role(role: ModelRoleConfig) -> PluginConfig {
+    let mut models = HashMap::new();
+    models.insert("default".to_string(), role);
+    PluginConfig {
+        models,
+        providers: HashMap::new(),
+        compaction: None,
+        agents: AgentsConfig::default(),
+        a2a_enabled: None,
+        session_store: None,
+        vault: None,
+        models_cache: None,
+        permissions: None,
+        mcp: None,
+        theme: None,
+    }
+}
+
+// endregion: --- Test Support

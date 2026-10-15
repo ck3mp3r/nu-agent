@@ -1,81 +1,125 @@
 use super::*;
 
 #[test]
-fn circuit_breaker_trips_after_threshold() {
-    let mut cb = McpCircuitBreaker::new(3);
-
-    assert!(!cb.record_failure("server_a"));
-    assert!(!cb.record_failure("server_a"));
-    // 3rd failure trips the breaker
-    assert!(cb.record_failure("server_a"));
-    assert_eq!(*cb.failure_counts.get("server_a").unwrap(), 3);
-}
-
-#[test]
-fn circuit_breaker_resets_on_success() {
-    let mut cb = McpCircuitBreaker::new(3);
-
-    // 2 failures
-    assert!(!cb.record_failure("server_a"));
-    assert!(!cb.record_failure("server_a"));
-
-    // 1 success resets
-    cb.record_success("server_a");
-    assert!(!cb.failure_counts.contains_key("server_a"));
-
-    // 2 more failures — never reaches threshold
-    assert!(!cb.record_failure("server_a"));
-    assert!(!cb.record_failure("server_a"));
-    assert_eq!(*cb.failure_counts.get("server_a").unwrap(), 2);
-}
-
-#[test]
-fn circuit_breaker_independent_per_server() {
-    let mut cb = McpCircuitBreaker::new(3);
-
-    // 2 failures on server_a — does NOT trip
-    assert!(!cb.record_failure("server_a"));
-    assert!(!cb.record_failure("server_a"));
-
-    // 3 failures on server_b — trips only server_b
-    assert!(!cb.record_failure("server_b"));
-    assert!(!cb.record_failure("server_b"));
-    assert!(cb.record_failure("server_b"));
-
-    // server_a still at 2
-    assert_eq!(*cb.failure_counts.get("server_a").unwrap(), 2);
-    assert_eq!(*cb.failure_counts.get("server_b").unwrap(), 3);
-}
-
-#[test]
-fn default_threshold_is_ten() {
-    let cb = McpCircuitBreaker::default();
-    assert_eq!(cb.threshold(), 10);
-}
-
-#[test]
-fn zero_threshold_uses_default() {
-    let cb = McpCircuitBreaker::new(0);
-    assert_eq!(cb.threshold(), 10);
-}
-
-#[test]
-fn custom_threshold_is_respected() {
-    let mut cb = McpCircuitBreaker::new(5);
-    for _ in 0..4 {
-        assert!(!cb.record_failure("server_a"));
+fn circuit_breaker_sequences_table() {
+    // -- Setup & Fixtures
+    enum Op {
+        Fail(&'static str),
+        Succeed(&'static str),
     }
-    // 5th failure trips
-    assert!(cb.record_failure("server_a"));
+
+    struct Case {
+        name: &'static str,
+        threshold: usize,
+        ops: Vec<Op>,
+        expected_trips: Vec<bool>,
+        expected_counts: Vec<(&'static str, usize)>,
+    }
+
+    let cases = vec![
+        Case {
+            name: "trips after threshold",
+            threshold: 3,
+            ops: vec![
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+            ],
+            expected_trips: vec![false, false, true],
+            expected_counts: vec![("server_a", 3)],
+        },
+        Case {
+            name: "resets on success",
+            threshold: 3,
+            ops: vec![
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+                Op::Succeed("server_a"),
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+            ],
+            expected_trips: vec![false, false, false, false, false],
+            expected_counts: vec![("server_a", 2)],
+        },
+        Case {
+            name: "independent per server",
+            threshold: 3,
+            ops: vec![
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+                Op::Fail("server_b"),
+                Op::Fail("server_b"),
+                Op::Fail("server_b"),
+            ],
+            expected_trips: vec![false, false, false, false, true],
+            expected_counts: vec![("server_a", 2), ("server_b", 3)],
+        },
+        Case {
+            name: "trips stay tripped on further failures",
+            threshold: 3,
+            ops: vec![
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+            ],
+            expected_trips: vec![false, false, true, true, true],
+            expected_counts: vec![("server_a", 5)],
+        },
+        Case {
+            name: "custom threshold is respected",
+            threshold: 5,
+            ops: vec![
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+                Op::Fail("server_a"),
+            ],
+            expected_trips: vec![false, false, false, false, true],
+            expected_counts: vec![("server_a", 5)],
+        },
+    ];
+
+    // -- Exec & Check
+    for case in cases {
+        let mut cb = McpCircuitBreaker::new(case.threshold);
+        for (op, expected_trip) in case.ops.iter().zip(&case.expected_trips) {
+            let tripped = match op {
+                Op::Fail(server) => cb.record_failure(server),
+                Op::Succeed(server) => {
+                    cb.record_success(server);
+                    false
+                }
+            };
+            assert_eq!(tripped, *expected_trip, "case '{}': trip result", case.name);
+        }
+        for (server, count) in &case.expected_counts {
+            assert_eq!(
+                cb.failure_counts.get(*server).copied(),
+                Some(*count),
+                "case '{}': failure count for {server}",
+                case.name
+            );
+        }
+    }
 }
 
 #[test]
-fn trips_stay_tripped_on_further_failures() {
-    let mut cb = McpCircuitBreaker::new(3);
-    for _ in 0..3 {
-        cb.record_failure("server_a");
+fn circuit_breaker_threshold_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, Option<usize>, usize)> = vec![
+        ("default constructor", None, 10),
+        ("zero threshold uses default", Some(0), 10),
+    ];
+
+    // -- Exec & Check
+    for (name, configured, expected) in cases {
+        let cb = match configured {
+            Some(threshold) => McpCircuitBreaker::new(threshold),
+            None => McpCircuitBreaker::default(),
+        };
+        assert_eq!(cb.threshold(), expected, "case '{name}'");
     }
-    // 4th and 5th failures still return true
-    assert!(cb.record_failure("server_a"));
-    assert!(cb.record_failure("server_a"));
 }

@@ -13,7 +13,36 @@ fn esc_closes_mcps_panel_and_preserves_insert_mode() {
 }
 
 #[test]
-fn mcps_panel_navigation_and_enter_toggle_updates_selected_server() -> Result<()> {
+fn mcp_panel_navigation_table() {
+    let cases = [
+        (TerminalKey::CtrlN, 0usize, 1usize),
+        (TerminalKey::CtrlP, 1usize, 0usize),
+        (TerminalKey::Char('j'), 0usize, 0usize),
+    ];
+    for (key, start, expected) in cases {
+        let mut state = AppState::default();
+        state.status.mcp.set_mcp_servers(vec![
+            McpServerState {
+                name: "gh".to_string(),
+                state: McpServerUsabilityState::Enabled,
+            },
+            McpServerState {
+                name: "k8s".to_string(),
+                state: McpServerUsabilityState::Disabled,
+            },
+        ]);
+        state.open_info_panel(InfoPanel::Mcps);
+        state.status.mcp.mcp_panel_selection = start;
+
+        let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(key), None);
+
+        assert_eq!(state.status.mcp.mcp_panel_selection, expected);
+    }
+}
+
+#[test]
+fn mcps_panel_toggle_table() -> Result<()> {
+    // Navigation and Enter toggle the selected server.
     let mut state = AppState::default();
     state.status.mcp.set_mcp_servers(vec![
         McpServerState {
@@ -44,11 +73,8 @@ fn mcps_panel_navigation_and_enter_toggle_updates_selected_server() -> Result<()
         .ok_or("should have queued toggle request")?;
     assert_eq!(request.server_name, "k8s");
     assert!(request.enable);
-    Ok(())
-}
 
-#[test]
-fn mcps_panel_supports_up_ctrl_p_and_space_toggle() -> Result<()> {
+    // Up, Ctrl-P and Space toggle.
     let mut state = AppState::default();
     state.status.mcp.set_mcp_servers(vec![
         McpServerState {
@@ -83,72 +109,4 @@ fn mcps_panel_supports_up_ctrl_p_and_space_toggle() -> Result<()> {
     assert_eq!(request.server_name, "k8s");
     assert!(request.enable);
     Ok(())
-}
-
-#[test]
-fn mcp_panel_ctrl_n_moves_selection_down() {
-    let mut state = AppState::default();
-    state.status.mcp.set_mcp_servers(vec![
-        McpServerState {
-            name: "gh".to_string(),
-            state: McpServerUsabilityState::Enabled,
-        },
-        McpServerState {
-            name: "k8s".to_string(),
-            state: McpServerUsabilityState::Disabled,
-        },
-    ]);
-    state.open_info_panel(InfoPanel::Mcps);
-    assert_eq!(state.status.mcp.mcp_panel_selection, 0);
-
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
-
-    assert_eq!(state.status.mcp.mcp_panel_selection, 1);
-}
-
-#[test]
-fn mcp_panel_ctrl_p_moves_selection_up() {
-    let mut state = AppState::default();
-    state.status.mcp.set_mcp_servers(vec![
-        McpServerState {
-            name: "gh".to_string(),
-            state: McpServerUsabilityState::Enabled,
-        },
-        McpServerState {
-            name: "k8s".to_string(),
-            state: McpServerUsabilityState::Disabled,
-        },
-    ]);
-    state.open_info_panel(InfoPanel::Mcps);
-    state.status.mcp.mcp_panel_selection = 1;
-
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
-
-    assert_eq!(state.status.mcp.mcp_panel_selection, 0);
-}
-
-#[test]
-fn mcp_panel_j_is_noop() {
-    let mut state = AppState::default();
-    state.status.mcp.set_mcp_servers(vec![
-        McpServerState {
-            name: "gh".to_string(),
-            state: McpServerUsabilityState::Enabled,
-        },
-        McpServerState {
-            name: "k8s".to_string(),
-            state: McpServerUsabilityState::Disabled,
-        },
-    ]);
-    state.open_info_panel(InfoPanel::Mcps);
-    assert_eq!(state.status.mcp.mcp_panel_selection, 0);
-
-    dispatch_terminal_event(
-        &mut state,
-        &TerminalEvent::Key(TerminalKey::Char('j')),
-        None,
-    );
-
-    // j is no longer a navigation key in the MCPs panel — selection must not change
-    assert_eq!(state.status.mcp.mcp_panel_selection, 0);
 }

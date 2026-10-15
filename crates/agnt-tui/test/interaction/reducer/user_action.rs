@@ -100,7 +100,7 @@ fn table_driven_user_action_noop_and_contract_matrix() {
                 assert!(state.quit_requested);
             }
             "quit_idle_with_text_is_noop" => {
-                // In the TextArea architecture, the reducer no longer checks for
+                // In the TextArea model, the reducer no longer checks for
                 // input buffer text (text is in TextArea on the coordinator).
                 // Quit in idle mode always sets quit_requested = true.
                 assert!(state.quit_requested);
@@ -125,7 +125,8 @@ fn table_driven_user_action_noop_and_contract_matrix() {
 }
 
 #[test]
-fn esc_esc_with_pending_restores_texts_to_input_buffer() {
+fn esc_esc_restores_and_clears_state_table() {
+    // Esc-Esc with pending prompts restores the texts to the input buffer.
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("first".to_string()),
         ..Default::default()
@@ -143,10 +144,8 @@ fn esc_esc_with_pending_restores_texts_to_input_buffer() {
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(pending_prompt_ids(&state).is_empty());
     assert_eq!(active_prompt_id(&state), None);
-}
 
-#[test]
-fn esc_esc_with_no_pending_clears_state_but_not_buffer() {
+    // Esc-Esc with no pending clears the state but not the buffer.
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("do work".to_string()),
         ..Default::default()

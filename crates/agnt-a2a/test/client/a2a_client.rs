@@ -1,25 +1,18 @@
-use std::sync::Arc;
+// region:    --- Modules
+
+use super::shared::*;
+
+// endregion: --- Modules
+
 use std::time::Duration;
 
 use tokio::io::{AsyncWriteExt, BufWriter as TokioBufWriter};
 
-use crate::{
-    A2aError, AgentCapabilities, AgentCard, Message, Part, Peer, PeerCache, Role,
-    SendMessageConfiguration, TaskState,
-};
+use crate::{A2aError, Message, Part, Peer, PeerCache, Role, TaskState};
 
 use super::{A2aClient, cancel_task, send_task};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-/// Non-blocking configuration: these tests assert on the in-progress task, so
-/// the server must not wait for a terminal state (spec §3.2.2).
-fn non_blocking() -> Option<SendMessageConfiguration> {
-    Some(SendMessageConfiguration {
-        return_immediately: Some(true),
-        accepted_output_modes: None,
-    })
-}
 
 // ---------------------------------------------------------------------------
 // list_peers / get_peer (synchronous cache methods)
@@ -46,28 +39,6 @@ async fn test_list_peers() {
 // ---------------------------------------------------------------------------
 // subscribe_task with real server
 // ---------------------------------------------------------------------------
-
-async fn test_setup() -> (crate::A2aServer, A2aClient, String) {
-    let card = AgentCard {
-        name: "test-server".into(),
-        url: "http://127.0.0.1:0".into(),
-        version: "1.0".into(),
-        capabilities: AgentCapabilities::default(),
-        skills: vec![],
-        ..Default::default()
-    };
-    let server = crate::A2aServer::start_with_blocking_timeout(
-        card,
-        Arc::new(PeerCache::default()),
-        0,
-        crate::TEST_BLOCKING_TIMEOUT,
-    )
-    .await
-    .unwrap();
-    let client = A2aClient::new().unwrap();
-    let url = server.local_url.clone();
-    (server, client, url)
-}
 
 #[tokio::test]
 async fn test_subscribe_task_terminal_returns_error() -> Result<()> {
@@ -195,38 +166,30 @@ async fn test_subscribe_task_streams_lifecycle() -> Result<()> {
 
 #[tokio::test]
 async fn test_client_sends_a2a_version_header() -> Result<()> {
-    // Mini echo server that captures the A2A-Version request header
-    let (version_tx, mut version_rx) = tokio::sync::mpsc::channel::<String>(1);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    // Stub peer that answers /message:send with a canned working task.
+    let server = agnt_testkit::start_server().await;
+    agnt_testkit::Mock::given(agnt_testkit::matchers::method("POST"))
+        .and(agnt_testkit::matchers::path("/message:send"))
+        .respond_with(
+            agnt_testkit::ResponseTemplate::new(200)
+                .append_header("content-type", "application/json")
+                .set_body_string(
+                    serde_json::json!({
+                        "task": {
+                            "id": "00000000-0000-0000-0000-000000000000",
+                            "status": {
+                                "state": "TASK_STATE_WORKING",
+                                "timestamp": "2026-01-01T00:00:00Z"
+                            },
+                            "artifacts": []
+                        }
+                    })
+                    .to_string(),
+                ),
+        )
+        .mount(&server)
+        .await;
 
-    let app = axum::Router::new().route(
-        "/message:send",
-        axum::routing::post(move |headers: axum::http::HeaderMap| async move {
-            let version = headers
-                .get("A2A-Version")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("no-version")
-                .to_string();
-            let _ = version_tx.send(version).await;
-            axum::Json(serde_json::json!({
-                "task": {
-                    "id": "00000000-0000-0000-0000-000000000000",
-                    "status": {
-                        "state": "TASK_STATE_WORKING",
-                        "timestamp": "2026-01-01T00:00:00Z"
-                    },
-                    "artifacts": []
-                }
-            }))
-        }),
-    );
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let url = format!("http://127.0.0.1:{}", addr.port());
     let client = A2aClient::new().unwrap();
     let msg = Message {
         role: Role::User,
@@ -238,13 +201,19 @@ async fn test_client_sends_a2a_version_header() -> Result<()> {
         metadata: None,
     };
 
-    let _ = send_task(&client, &url, msg, None, None, non_blocking()).await;
+    let _ = send_task(&client, &server.uri(), msg, None, None, non_blocking()).await;
 
-    let captured = tokio::time::timeout(Duration::from_secs(2), version_rx.recv())
+    let requests = agnt_testkit::received_requests(&server)
         .await
-        .map_err(|e| format!("timeout waiting for echo server: {e:?}"))?
-        .ok_or("echo server closed channel")?;
-    assert_eq!(captured, "1.0", "client should send A2A-Version: 1.0");
+        .ok_or("the stub peer must capture the send request")?;
+    let version = requests
+        .first()
+        .ok_or("the stub peer must capture the send request")?
+        .headers
+        .get("a2a-version")
+        .and_then(|value| value.to_str().ok())
+        .ok_or("the send request must carry an A2A-Version header")?;
+    assert_eq!(version, "1.0", "client should send A2A-Version: 1.0");
     Ok(())
 }
 

@@ -1,68 +1,53 @@
 use super::*;
 
-// ── Message Renderable impl ──────────────────────────────────────────────────
+// ── Renderable impls ────────────────────────────────────────────────────────
 
+/// Message, Spacer, and Banner answer the three `Renderable` questions:
+/// source, lane, and fill.
 #[test]
-fn message_user_lanes_marker_and_fills_full() {
+fn renderable_impls_table() -> Result<()> {
     // -- Setup & Fixtures
-    let msg = Message {
+    let user = Message {
         role: MessageRole::User,
         markdown: "hi".to_string(),
     };
+    let assistant = Message {
+        role: MessageRole::Assistant,
+        markdown: "hi".to_string(),
+    };
+    let spacer = Spacer;
+    let banner = Banner {
+        text: "line1\nline2".to_string(),
+    };
 
-    // -- Exec & Check
+    // -- Exec & Check: user message — marker lane, full fill, markdown source.
     assert_eq!(
-        msg.source(),
+        user.source(),
         BlockSource::Markdown {
             role: MessageRole::User,
             markdown: "hi".to_string(),
         }
     );
-    assert_eq!(msg.lane(), Lane::Marker("▏"));
-    assert_eq!(msg.fill(), Fill::Full);
-}
+    assert_eq!(user.lane(), Lane::Marker("▏"));
+    assert_eq!(user.fill(), Fill::Full);
 
-#[test]
-fn message_assistant_is_blank_lane_with_no_fill() {
-    // -- Setup & Fixtures
-    let msg = Message {
-        role: MessageRole::Assistant,
-        markdown: "hi".to_string(),
-    };
-
-    // -- Exec & Check
+    // -- Check: assistant message — blank lane, no fill, markdown source.
     assert_eq!(
-        msg.source(),
+        assistant.source(),
         BlockSource::Markdown {
             role: MessageRole::Assistant,
             markdown: "hi".to_string(),
         }
     );
-    assert_eq!(msg.lane(), Lane::Blank);
-    assert_eq!(msg.fill(), Fill::None);
-}
+    assert_eq!(assistant.lane(), Lane::Blank);
+    assert_eq!(assistant.fill(), Fill::None);
 
-// ── Spacer / Banner Renderable impls ────────────────────────────────────────
-
-#[test]
-fn spacer_source_is_spacer_with_blank_lane_and_no_fill() {
-    // -- Setup & Fixtures
-    let spacer = Spacer;
-
-    // -- Exec & Check
+    // -- Check: spacer — Spacer source, blank lane, no fill.
     assert!(matches!(spacer.source(), BlockSource::Spacer));
     assert_eq!(spacer.lane(), Lane::Blank);
     assert_eq!(spacer.fill(), Fill::None);
-}
 
-#[test]
-fn banner_source_is_blank_system_lane_with_no_fill() {
-    // -- Setup & Fixtures
-    let banner = Banner {
-        text: "line1\nline2".to_string(),
-    };
-
-    // -- Exec & Check
+    // -- Check: banner — Banner source, system-blank lane, no fill.
     assert_eq!(
         banner.source(),
         BlockSource::Banner {
@@ -71,4 +56,5 @@ fn banner_source_is_blank_system_lane_with_no_fill() {
     );
     assert_eq!(banner.lane(), Lane::SystemBlank);
     assert_eq!(banner.fill(), Fill::None);
+    Ok(())
 }

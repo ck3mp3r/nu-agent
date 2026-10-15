@@ -5,13 +5,14 @@ use super::*;
 use crate::interaction::reducer::VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS;
 use crate::state::selection::TranscriptSelection;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
-fn test_scroll_state_defaults_follow_tail_with_input_focus() {
+fn test_scroll_state_defaults_and_sync_after_render() -> Result<()> {
     // -- Setup & Fixtures
-    // -- Exec
     let scroll = ScrollState::default();
 
-    // -- Check
+    // -- Exec & Check: defaults follow tail with input focus.
     assert_eq!(scroll.scroll_offset, 0);
     assert!(scroll.following_tail);
     assert_eq!(scroll.cursor_visual_row, 0);
@@ -29,64 +30,44 @@ fn test_scroll_state_defaults_follow_tail_with_input_focus() {
         None
     );
     assert_eq!(scroll.pane_focus, PaneFocus::Input);
-}
 
-#[test]
-fn test_scroll_state_sync_after_render_pins_cursor_while_tailing() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState {
+    // -- Exec & Check: sync pins the cursor while tailing.
+    let mut tailing = ScrollState {
         viewport_height: 10,
         ..Default::default()
     };
-
-    // -- Exec
-    let max_scroll = scroll.sync_after_render(25);
-
-    // -- Check
+    let max_scroll = tailing.sync_after_render(25);
     assert_eq!(max_scroll, 15);
-    assert_eq!(scroll.total_visual_rows, 25);
-    assert_eq!(scroll.max_scroll, 15);
-    assert_eq!(scroll.cursor_visual_row, 24, "cursor rides the last row");
-}
+    assert_eq!(tailing.total_visual_rows, 25);
+    assert_eq!(tailing.max_scroll, 15);
+    assert_eq!(tailing.cursor_visual_row, 24, "cursor rides the last row");
 
-#[test]
-fn test_scroll_state_sync_after_render_leaves_cursor_when_not_tailing() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState {
+    // -- Exec & Check: sync leaves the cursor when not tailing.
+    let mut detached = ScrollState {
         viewport_height: 10,
         following_tail: false,
         cursor_visual_row: 4,
         ..Default::default()
     };
-
-    // -- Exec
-    let max_scroll = scroll.sync_after_render(25);
-
-    // -- Check
+    let max_scroll = detached.sync_after_render(25);
     assert_eq!(max_scroll, 15);
-    assert_eq!(scroll.cursor_visual_row, 4, "user-controlled cursor kept");
-}
+    assert_eq!(detached.cursor_visual_row, 4, "user-controlled cursor kept");
 
-#[test]
-fn test_scroll_state_sync_after_render_zero_total_rows_clamps() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState {
+    // -- Exec & Check: sync clamps at zero when the viewport exceeds the rows.
+    let mut clamped = ScrollState {
         viewport_height: 10,
         following_tail: false,
         ..Default::default()
     };
-
-    // -- Exec
-    let max_scroll = scroll.sync_after_render(3);
-
-    // -- Check
+    let max_scroll = clamped.sync_after_render(3);
     assert_eq!(max_scroll, 0, "saturating_sub clamps at zero");
-    assert_eq!(scroll.max_scroll, 0);
-    assert_eq!(scroll.cursor_visual_row, 0);
+    assert_eq!(clamped.max_scroll, 0);
+    assert_eq!(clamped.cursor_visual_row, 0);
+    Ok(())
 }
 
 #[test]
-fn test_scroll_state_reduce_scroll_action_line_down_moves_cursor_and_offset() {
+fn test_scroll_state_reduce_scroll_action_line_moves() -> Result<()> {
     // -- Setup & Fixtures
     let mut scroll = ScrollState {
         pane_focus: PaneFocus::Transcript,
@@ -97,44 +78,32 @@ fn test_scroll_state_reduce_scroll_action_line_down_moves_cursor_and_offset() {
         ..Default::default()
     };
 
-    // -- Exec
+    // -- Exec & Check: line down moves the cursor without scrolling.
     let changed = scroll.reduce_scroll_action(ScrollAction::LineDown { select: false });
-
-    // -- Check
     assert!(changed);
     assert_eq!(scroll.cursor_visual_row, 6);
     assert_eq!(scroll.scroll_offset, 0, "viewport did not scroll");
-}
 
-#[test]
-fn test_scroll_state_reduce_scroll_action_line_up_exits_tail_follow() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState {
+    // -- Exec & Check: line up exits tail follow and clamps at the top.
+    let mut up = ScrollState {
         pane_focus: PaneFocus::Transcript,
         viewport_height: 10,
         max_scroll: 10,
         total_visual_rows: 20,
         ..Default::default()
     };
-    assert!(scroll.following_tail);
-
-    // -- Exec
-    let changed = scroll.reduce_scroll_action(ScrollAction::LineUp { select: false });
-
-    // -- Check
+    assert!(up.following_tail);
+    let changed = up.reduce_scroll_action(ScrollAction::LineUp { select: false });
     assert!(changed);
-    assert!(!scroll.following_tail);
+    assert!(!up.following_tail);
     assert_eq!(
-        scroll.scroll_offset, 9,
+        up.scroll_offset, 9,
         "offset snaps to max_scroll, then the margin check nudges it"
     );
-    assert_eq!(scroll.cursor_visual_row, 0, "cursor clamps at top");
-}
+    assert_eq!(up.cursor_visual_row, 0, "cursor clamps at top");
 
-#[test]
-fn test_scroll_state_reduce_scroll_action_line_down_extends_selection() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState {
+    // -- Exec & Check: line down with select extends the selection.
+    let mut selecting = ScrollState {
         pane_focus: PaneFocus::Transcript,
         viewport_height: 10,
         selection: Some(TranscriptSelection::new(0)),
@@ -142,25 +111,17 @@ fn test_scroll_state_reduce_scroll_action_line_down_extends_selection() {
         total_visual_rows: 5,
         ..Default::default()
     };
-
-    // -- Exec
-    let changed = scroll.reduce_scroll_action(ScrollAction::LineDown { select: true });
-
-    // -- Check
+    let changed = selecting.reduce_scroll_action(ScrollAction::LineDown { select: true });
     assert!(changed);
-    let sel = scroll
+    let sel = selecting
         .selection
         .as_ref()
-        .ok_or("should still have selection")
-        .unwrap();
+        .ok_or("should still have selection")?;
     assert_eq!(sel.cursor(), 1);
     assert_eq!(sel.anchor(), 0);
-}
 
-#[test]
-fn test_scroll_state_reduce_scroll_action_line_down_without_select_keeps_selection() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState {
+    // -- Exec & Check: line down without select keeps the selection cursor.
+    let mut keeping = ScrollState {
         pane_focus: PaneFocus::Transcript,
         viewport_height: 10,
         selection: Some(TranscriptSelection::new(0)),
@@ -168,24 +129,20 @@ fn test_scroll_state_reduce_scroll_action_line_down_without_select_keeps_selecti
         total_visual_rows: 5,
         ..Default::default()
     };
-
-    // -- Exec
-    let changed = scroll.reduce_scroll_action(ScrollAction::LineDown { select: false });
-
-    // -- Check
+    let changed = keeping.reduce_scroll_action(ScrollAction::LineDown { select: false });
     assert!(changed);
-    let sel = scroll
+    let sel = keeping
         .selection
         .as_ref()
-        .ok_or("should still have selection")
-        .unwrap();
+        .ok_or("should still have selection")?;
     assert_eq!(sel.cursor(), 0, "selection cursor untouched");
+    Ok(())
 }
 
 #[test]
-fn test_scroll_state_reduce_scroll_action_to_top_resets_offset_and_selection() {
+fn test_scroll_state_reduce_scroll_action_jumps_and_paging() -> Result<()> {
     // -- Setup & Fixtures
-    let mut scroll = ScrollState {
+    let mut top = ScrollState {
         pane_focus: PaneFocus::Transcript,
         viewport_height: 10,
         total_visual_rows: 20,
@@ -193,51 +150,37 @@ fn test_scroll_state_reduce_scroll_action_to_top_resets_offset_and_selection() {
         ..Default::default()
     };
 
-    // -- Exec
-    let changed = scroll.reduce_scroll_action(ScrollAction::ToTop { select: true });
-
-    // -- Check
+    // -- Exec & Check: to top resets offset and selection.
+    let changed = top.reduce_scroll_action(ScrollAction::ToTop { select: true });
     assert!(changed);
-    assert_eq!(scroll.cursor_visual_row, 0);
-    assert_eq!(scroll.scroll_offset, 0);
-    assert!(!scroll.following_tail);
-    let sel = scroll
+    assert_eq!(top.cursor_visual_row, 0);
+    assert_eq!(top.scroll_offset, 0);
+    assert!(!top.following_tail);
+    let sel = top
         .selection
         .as_ref()
-        .ok_or("should still have selection")
-        .unwrap();
+        .ok_or("should still have selection")?;
     assert_eq!(sel.cursor(), 0);
-}
 
-#[test]
-fn test_scroll_state_reduce_scroll_action_to_bottom_follows_tail() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState {
+    // -- Exec & Check: to bottom follows the tail.
+    let mut bottom = ScrollState {
         pane_focus: PaneFocus::Transcript,
         total_visual_rows: 5,
         selection: Some(TranscriptSelection::new(0)),
         ..Default::default()
     };
-
-    // -- Exec
-    let changed = scroll.reduce_scroll_action(ScrollAction::ToBottom { select: true });
-
-    // -- Check
+    let changed = bottom.reduce_scroll_action(ScrollAction::ToBottom { select: true });
     assert!(changed);
-    assert_eq!(scroll.cursor_visual_row, 4);
-    assert!(scroll.following_tail);
-    let sel = scroll
+    assert_eq!(bottom.cursor_visual_row, 4);
+    assert!(bottom.following_tail);
+    let sel = bottom
         .selection
         .as_ref()
-        .ok_or("should still have selection")
-        .unwrap();
+        .ok_or("should still have selection")?;
     assert_eq!(sel.cursor(), 4);
-}
 
-#[test]
-fn test_scroll_state_reduce_scroll_action_page_up_down_move_by_page() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState {
+    // -- Exec & Check: page down and page up move by a page.
+    let mut paging = ScrollState {
         pane_focus: PaneFocus::Transcript,
         viewport_height: 10,
         cursor_visual_row: 10,
@@ -247,81 +190,64 @@ fn test_scroll_state_reduce_scroll_action_page_up_down_move_by_page() {
         entry_indices: (0..30).collect(),
         ..Default::default()
     };
-
-    // -- Exec & Check
-    let changed = scroll.reduce_scroll_action(ScrollAction::PageDown { select: false });
+    let changed = paging.reduce_scroll_action(ScrollAction::PageDown { select: false });
     assert!(changed);
-    assert_eq!(scroll.cursor_visual_row, 18);
-    assert_eq!(scroll.scroll_offset, 13);
-
-    let changed = scroll.reduce_scroll_action(ScrollAction::PageUp { select: false });
+    assert_eq!(paging.cursor_visual_row, 18);
+    assert_eq!(paging.scroll_offset, 13);
+    let changed = paging.reduce_scroll_action(ScrollAction::PageUp { select: false });
     assert!(changed);
-    assert_eq!(scroll.cursor_visual_row, 10);
-    assert_eq!(scroll.scroll_offset, 5);
+    assert_eq!(paging.cursor_visual_row, 10);
+    assert_eq!(paging.scroll_offset, 5);
+
+    // -- Exec & Check: focus pane toggles both directions.
+    let mut focus = ScrollState::default();
+    assert_eq!(focus.pane_focus, PaneFocus::Input);
+    let changed = focus.reduce_scroll_action(ScrollAction::FocusPaneLeft);
+    assert!(changed);
+    assert_eq!(focus.pane_focus, PaneFocus::Transcript);
+    let changed = focus.reduce_scroll_action(ScrollAction::FocusPaneRight);
+    assert!(changed);
+    assert_eq!(focus.pane_focus, PaneFocus::Input);
+    Ok(())
 }
 
 #[test]
-fn test_scroll_state_reduce_scroll_action_focus_pane_toggles() {
+fn test_scroll_state_enter_visual_mode() -> Result<()> {
     // -- Setup & Fixtures
-    let mut scroll = ScrollState::default();
-    assert_eq!(scroll.pane_focus, PaneFocus::Input);
-
-    // -- Exec & Check
-    let changed = scroll.reduce_scroll_action(ScrollAction::FocusPaneLeft);
-    assert!(changed);
-    assert_eq!(scroll.pane_focus, PaneFocus::Transcript);
-
-    let changed = scroll.reduce_scroll_action(ScrollAction::FocusPaneRight);
-    assert!(changed);
-    assert_eq!(scroll.pane_focus, PaneFocus::Input);
-}
-
-#[test]
-fn test_scroll_state_enter_visual_mode_requires_transcript_focus() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState::default();
-    assert_eq!(scroll.pane_focus, PaneFocus::Input);
+    let mut input_focus = ScrollState::default();
+    assert_eq!(input_focus.pane_focus, PaneFocus::Input);
     let mut status = StatusState::default();
 
-    // -- Exec
-    let entered = scroll.enter_visual_mode(&mut status);
-
-    // -- Check
+    // -- Exec & Check: visual mode requires transcript focus.
+    let entered = input_focus.enter_visual_mode(&mut status);
     assert!(!entered);
     assert_eq!(
         status.message.status_line(),
         VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS
     );
-    assert!(scroll.selection.is_none());
-}
+    assert!(input_focus.selection.is_none());
 
-#[test]
-fn test_scroll_state_enter_visual_mode_starts_selection_at_cursor() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState {
+    // -- Exec & Check: with transcript focus, the selection starts at the cursor.
+    let mut transcript_focus = ScrollState {
         pane_focus: PaneFocus::Transcript,
         cursor_visual_row: 7,
         ..Default::default()
     };
     let mut status = StatusState::default();
-
-    // -- Exec
-    let entered = scroll.enter_visual_mode(&mut status);
-
-    // -- Check
+    let entered = transcript_focus.enter_visual_mode(&mut status);
     assert!(entered);
     assert!(status.message.status_line().is_empty());
-    let sel = scroll
+    let sel = transcript_focus
         .selection
         .as_ref()
-        .ok_or("should have selection")
-        .unwrap();
+        .ok_or("should have selection")?;
     assert_eq!(sel.anchor(), 7);
     assert_eq!(sel.cursor(), 7);
+    Ok(())
 }
 
 #[test]
-fn test_scroll_state_yank_selection_extracts_selected_rendered_rows() {
+fn test_scroll_state_yank_selection() -> Result<()> {
     // -- Setup & Fixtures
     let mut scroll = ScrollState {
         rendered_line_text: vec![
@@ -336,49 +262,30 @@ fn test_scroll_state_yank_selection_extracts_selected_rendered_rows() {
     sel.set_cursor(2);
     scroll.selection = Some(sel);
 
-    // -- Exec
+    // -- Exec & Check: extracts the selected rendered rows and clears selection.
     let payload = scroll.yank_selection();
-
-    // -- Check
     assert_eq!(payload, Some("line 1\nline 2".to_string()));
     assert!(scroll.selection.is_none(), "selection cleared after yank");
-}
 
-#[test]
-fn test_scroll_state_yank_selection_empty_payload_returns_none() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState {
+    // -- Exec & Check: an empty payload returns none.
+    let mut empty = ScrollState {
         selection: Some(TranscriptSelection::new(0)),
         ..Default::default()
     };
-
-    // -- Exec
-    let payload = scroll.yank_selection();
-
-    // -- Check
+    let payload = empty.yank_selection();
     assert_eq!(payload, None);
-    assert!(scroll.selection.is_none());
-}
+    assert!(empty.selection.is_none());
 
-#[test]
-fn test_scroll_state_yank_selection_without_selection_returns_none() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState::default();
-
-    // -- Exec
-    let payload = scroll.yank_selection();
-
-    // -- Check
+    // -- Exec & Check: no selection returns none.
+    let mut none = ScrollState::default();
+    let payload = none.yank_selection();
     assert_eq!(payload, None);
-    assert!(scroll.selection.is_none());
-}
+    assert!(none.selection.is_none());
 
-#[test]
-fn test_scroll_state_yank_selection_respects_rendered_line_start_row() {
-    // -- Setup & Fixtures
+    // -- Exec & Check: yank respects the rendered line start row.
     let mut sel = TranscriptSelection::new(11);
     sel.set_cursor(12);
-    let mut scroll = ScrollState {
+    let mut offset = ScrollState {
         rendered_line_start_row: 10,
         rendered_line_text: vec![
             "row 10".to_string(),
@@ -388,16 +295,13 @@ fn test_scroll_state_yank_selection_respects_rendered_line_start_row() {
         selection: Some(sel),
         ..Default::default()
     };
-
-    // -- Exec
-    let payload = scroll.yank_selection();
-
-    // -- Check
+    let payload = offset.yank_selection();
     assert_eq!(payload, Some("row 11\nrow 12".to_string()));
+    Ok(())
 }
 
 #[test]
-fn test_scroll_state_scroll_helpers_nudge_offset_and_clear_tail_follow() {
+fn test_scroll_state_scroll_helpers_and_pane_focus() -> Result<()> {
     // -- Setup & Fixtures
     let mut scroll = ScrollState {
         following_tail: true,
@@ -405,37 +309,28 @@ fn test_scroll_state_scroll_helpers_nudge_offset_and_clear_tail_follow() {
         ..Default::default()
     };
 
-    // -- Exec & Check
+    // -- Exec & Check: helpers nudge the offset and clear tail follow.
     scroll.scroll_transcript_line_up();
     assert_eq!(scroll.scroll_offset, 4);
     assert!(!scroll.following_tail);
-
     scroll.scroll_transcript_line_down();
     assert_eq!(scroll.scroll_offset, 5);
-
     scroll.scroll_transcript_page_up(3);
     assert_eq!(scroll.scroll_offset, 2);
-
     scroll.scroll_transcript_page_down(3);
     assert_eq!(scroll.scroll_offset, 5);
-
     scroll.scroll_transcript_to_top();
     assert_eq!(scroll.scroll_offset, 0);
     assert!(!scroll.following_tail);
-
     scroll.scroll_transcript_to_bottom();
     assert!(scroll.following_tail);
-}
 
-#[test]
-fn test_scroll_state_pane_focus_cycles_both_directions() {
-    // -- Setup & Fixtures
-    let mut scroll = ScrollState::default();
-    assert_eq!(scroll.pane_focus, PaneFocus::Input);
-
-    // -- Exec & Check
-    scroll.focus_next_pane();
-    assert_eq!(scroll.pane_focus, PaneFocus::Transcript);
-    scroll.focus_prev_pane();
-    assert_eq!(scroll.pane_focus, PaneFocus::Input);
+    // -- Exec & Check: pane focus cycles both directions.
+    let mut focus = ScrollState::default();
+    assert_eq!(focus.pane_focus, PaneFocus::Input);
+    focus.focus_next_pane();
+    assert_eq!(focus.pane_focus, PaneFocus::Transcript);
+    focus.focus_prev_pane();
+    assert_eq!(focus.pane_focus, PaneFocus::Input);
+    Ok(())
 }

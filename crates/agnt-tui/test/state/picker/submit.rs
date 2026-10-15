@@ -1,8 +1,11 @@
 use super::*;
 
+/// Submitting a picker with no selection closes it without queueing a switch
+/// request; the command palette with zero matches opens no panel; a selection
+/// resolves to its payload switch action.
 #[test]
-fn picker_submit_without_selection_queues_no_switch_request() -> Result<()> {
-    // -- Exec & Check
+fn picker_submit_resolution() -> Result<()> {
+    // -- Exec & Check: no selection queues no switch request.
     for kind in [
         ActivePicker::Model,
         ActivePicker::Agent,
@@ -45,54 +48,45 @@ fn picker_submit_without_selection_queues_no_switch_request() -> Result<()> {
             "{kind:?} must not queue a switch request"
         );
     }
-    Ok(())
-}
 
-#[test]
-fn command_palette_submit_with_zero_matches_opens_no_panel() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-    open_command_palette_for_test(&mut state);
-    type_query(&mut state, "zzz")?;
+    // -- Setup & Fixtures: the command palette with zero matches.
+    let mut palette = AppState::default();
+    open_command_palette_for_test(&mut palette);
+    type_query(&mut palette, "zzz")?;
 
     // -- Exec
     let changed =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+        dispatch_terminal_event(&mut palette, &TerminalEvent::Key(TerminalKey::Enter), None);
 
-    // -- Check
+    // -- Check: the palette closes and no panel or launch request appears.
     assert!(changed, "Enter should be consumed by the palette");
-    assert_eq!(state.picker.render_kind(), None, "palette should close");
-    assert_eq!(state.info_panel, None, "Help panel must not open");
+    assert_eq!(palette.picker.render_kind(), None, "palette should close");
+    assert_eq!(palette.info_panel, None, "Help panel must not open");
     assert_eq!(
-        state.take_next_launch_request(),
+        palette.take_next_launch_request(),
         None,
         "no launch request may be queued"
     );
-    Ok(())
-}
 
-#[test]
-fn picker_submit_with_selection_resolves_payload_switch_action() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-    state.set_picker_options(ActivePicker::Model, test_model_options());
-    state.picker.open(ActivePicker::Model);
+    // -- Setup & Fixtures: a model picker with a selection.
+    let mut selected = AppState::default();
+    selected.set_picker_options(ActivePicker::Model, test_model_options());
+    selected.picker.open(ActivePicker::Model);
 
     // -- Exec
     let changed =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
+        dispatch_terminal_event(&mut selected, &TerminalEvent::Key(TerminalKey::Enter), None);
 
-    // -- Check
+    // -- Check: the selection resolves to its payload identity.
     assert!(changed, "submit should be handled");
     assert_eq!(
-        state.take_next_switch_request(),
+        selected.take_next_switch_request(),
         Some(SwitchRequest::Model(
             "anthropic/claude-3-5-sonnet".to_string()
-        )),
-        "selection must resolve to its payload identity, not the placeholder"
+        ))
     );
     assert_eq!(
-        state.picker.render_kind(),
+        selected.picker.render_kind(),
         None,
         "picker closes after submit"
     );

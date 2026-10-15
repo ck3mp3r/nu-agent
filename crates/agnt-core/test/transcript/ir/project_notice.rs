@@ -2,79 +2,55 @@ use super::*;
 
 // ── BlockSource::project — notice / banner / spacer / tool display ──────────
 
-/// A notice projects to a single line styled with the Normal hint (the lane
-/// role style), matching the pre-refactor `SystemMessage` styling.
+/// Notice, banner, spacer, and tool-display sources each own their projection.
 #[test]
-fn project_notice_is_single_normal_line() -> Result<()> {
+fn project_notice_banner_spacer_tool_display_table() -> Result<()> {
     // -- Setup & Fixtures
-    let source = BlockSource::Notice {
+    let notice = BlockSource::Notice {
         kind: NoticeKind::Compaction,
         text: "compacted 5 blocks".to_string(),
     };
-
-    // -- Exec
-    let projected = source.project(80);
-
-    // -- Check
-    assert_eq!(projected.len(), 1);
-    assert_eq!(projected[0].spans.len(), 1);
-    assert_eq!(projected[0].spans[0].text, "compacted 5 blocks");
-    assert_eq!(projected[0].spans[0].hint, StyleHint::Normal);
-    Ok(())
-}
-
-/// A banner projects one Normal line per source line.
-#[test]
-fn project_banner_is_one_normal_line_per_source_line() -> Result<()> {
-    // -- Setup & Fixtures
-    let source = BlockSource::Banner {
+    let banner = BlockSource::Banner {
         text: "line1\nline2".to_string(),
     };
-
-    // -- Exec
-    let projected = source.project(80);
-
-    // -- Check
-    assert_eq!(projected.len(), 2);
-    assert_eq!(projected[0].spans[0].text, "line1");
-    assert_eq!(projected[1].spans[0].text, "line2");
-    assert!(
-        projected
-            .iter()
-            .all(|l| l.spans[0].hint == StyleHint::Normal),
-        "banner lines are Normal"
-    );
-    Ok(())
-}
-
-/// A spacer projects to exactly one empty content line.
-#[test]
-fn project_spacer_is_one_empty_line() {
-    // -- Exec
-    let projected = BlockSource::Spacer.project(80);
-
-    // -- Check
-    assert_eq!(projected, vec![ContentLine::empty()]);
-}
-
-/// A tool display projects to a clone of its stored lines.
-#[test]
-fn project_tool_display_clones_lines() {
-    // -- Setup & Fixtures
     let lines = vec![
         ContentLine::single("diff a.rs".to_string(), StyleHint::DiffAdd),
         ContentLine::single("context".to_string(), StyleHint::Normal),
     ];
-    let source = BlockSource::ToolDisplay {
+    let tool_display = BlockSource::ToolDisplay {
         lines: lines.clone(),
     };
 
     // -- Exec
-    let projected = source.project(80);
+    let notice_projected = notice.project(80);
+    let banner_projected = banner.project(80);
+    let spacer_projected = BlockSource::Spacer.project(80);
+    let tool_display_projected = tool_display.project(80);
 
-    // -- Check
+    // -- Check: a notice is a single Normal line (the lane role style).
+    assert_eq!(notice_projected.len(), 1);
+    assert_eq!(notice_projected[0].spans.len(), 1);
+    assert_eq!(notice_projected[0].spans[0].text, "compacted 5 blocks");
+    assert_eq!(notice_projected[0].spans[0].hint, StyleHint::Normal);
+
+    // -- Check: a banner is one Normal line per source line.
+    assert_eq!(banner_projected.len(), 2);
+    assert_eq!(banner_projected[0].spans[0].text, "line1");
+    assert_eq!(banner_projected[1].spans[0].text, "line2");
+    assert!(
+        banner_projected
+            .iter()
+            .all(|l| l.spans[0].hint == StyleHint::Normal),
+        "banner lines are Normal"
+    );
+
+    // -- Check: a spacer is exactly one empty line.
+    assert_eq!(spacer_projected, vec![ContentLine::empty()]);
+
+    // -- Check: a tool display clones its stored lines verbatim.
     assert_eq!(
-        projected, lines,
+        tool_display_projected, lines,
         "ToolDisplay must clone its lines verbatim"
     );
+    Ok(())
 }

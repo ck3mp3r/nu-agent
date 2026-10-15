@@ -7,9 +7,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agnt_core::session::factory::create_store_in;
-use agnt_core::session::{SessionStoreBackend, StoreType};
+use agnt_core::session::{SessionStore, SessionStoreBackend, StoreType};
 use agnt_core::tools::handler::is_builtin_tool_name;
+use agnt_core::tools::mcp::client::McpToolDefinition;
 use agnt_core::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
+
+use agent_client_protocol::schema::v1::FileSystemCapabilities;
+use agent_client_protocol::{Agent, Channel, Client, ConnectionTo};
 
 use super::*;
 
@@ -380,6 +384,352 @@ async fn test_runtime_build_acp_runtime_client_mcp_server_wins_on_collision() ->
     assert!(
         !shared.enabled,
         "the client server must replace the config.toml server of the same name"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// client filesystem capabilities
+// ---------------------------------------------------------------------------
+
+/// A live in-memory `ConnectionTo<Client>` for a `ClientFsState`.
+///
+/// The connection runs over a duplex channel: no transport, no network, no
+/// subprocess. The client task owns the peer endpoint, so the channel stays
+/// open for the test's lifetime.
+async fn client_connection() -> Result<ConnectionTo<Client>> {
+    let (agent_channel, client_channel) = Channel::duplex();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let _ = Agent
+            .builder()
+            .connect_with(agent_channel, async move |cx| {
+                let _ = tx.send(cx);
+                std::future::pending::<()>().await;
+                Ok(())
+            })
+            .await;
+    });
+    let connection = rx.await?;
+    tokio::spawn(async move {
+        let _ = Client
+            .builder()
+            .name("agnt-acp-runtime-test-client")
+            .connect_to(client_channel)
+            .await;
+    });
+    Ok(connection)
+}
+
+fn client_fs_state(
+    connection: ConnectionTo<Client>,
+    capabilities: FileSystemCapabilities,
+) -> ClientFsState {
+    ClientFsState {
+        connection,
+        capabilities,
+    }
+}
+
+#[tokio::test]
+async fn test_runtime_build_acp_runtime_registers_client_fs_tools() -> Result<()> {
+    // -- Setup & Fixtures
+    force_env_only_vault();
+    // Enable the info level so the capability-summary log arguments are
+    // evaluated; without a logger the `log::info!` arguments are skipped.
+    log::set_max_level(log::LevelFilter::Info);
+    let temp = tempfile::tempdir()?;
+    let config_path = write_config(temp.path(), BASE_CONFIG)?;
+    let store = memory_store(temp.path()).await?;
+    let connection = client_connection().await?;
+    let capabilities = FileSystemCapabilities::new()
+        .read_text_file(true)
+        .write_text_file(true);
+    let mut params = make_params(temp.path().to_path_buf(), config_path, Vec::new(), store);
+    params.client_fs = Some(client_fs_state(connection, capabilities));
+
+    // -- Exec
+    let runtime = build_acp_runtime(params)
+        .await
+        .map_err(|e| format!("should build runtime: {e:?}"))?;
+    let names = visible_tool_names(&runtime);
+
+    // -- Check
+    for expected in ["read", "edit"] {
+        assert!(
+            names.iter().any(|name| name == expected),
+            "client-fs '{expected}' tool must be registered; got: {names:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_runtime_build_acp_runtime_client_fs_read_only_keeps_local_tools() -> Result<()> {
+    // -- Setup & Fixtures
+    force_env_only_vault();
+    let temp = tempfile::tempdir()?;
+    let config_path = write_config(temp.path(), BASE_CONFIG)?;
+    let store = memory_store(temp.path()).await?;
+    let connection = client_connection().await?;
+    // Only the read capability: the client cannot write, so the local
+    // filesystem tools must stay in place.
+    let capabilities = FileSystemCapabilities::new().read_text_file(true);
+    let mut params = make_params(temp.path().to_path_buf(), config_path, Vec::new(), store);
+    params.client_fs = Some(client_fs_state(connection, capabilities));
+
+    // -- Exec
+    let runtime = build_acp_runtime(params)
+        .await
+        .map_err(|e| format!("should build runtime: {e:?}"))?;
+    let names = visible_tool_names(&runtime);
+
+    // -- Check
+    for expected in ["read", "edit"] {
+        assert!(
+            names.iter().any(|name| name == expected),
+            "local '{expected}' tool must stay registered; got: {names:?}"
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// AGENTS.md load warnings
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_runtime_build_acp_runtime_unreadable_agents_md_is_non_fatal() -> Result<()> {
+    // -- Setup & Fixtures
+    force_env_only_vault();
+    // Enable the info level so the warning log arguments are evaluated.
+    log::set_max_level(log::LevelFilter::Info);
+    let temp = tempfile::tempdir()?;
+    let cwd = temp.path().join("session-cwd");
+    std::fs::create_dir_all(&cwd)?;
+    let agents_md = cwd.join("AGENTS.md");
+    std::fs::write(&agents_md, "UNREADABLE_MARKER")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&agents_md)?.permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&agents_md, perms)?;
+    }
+    let config_path = write_config(temp.path(), BASE_CONFIG)?;
+    let store = memory_store(temp.path()).await?;
+
+    // -- Exec
+    let runtime = build_acp_runtime(make_params(cwd.clone(), config_path, Vec::new(), store))
+        .await
+        .map_err(|e| {
+            format!("an unreadable AGENTS.md must not abort runtime construction: {e:?}")
+        })?;
+
+    // -- Check
+    let chain = runtime.persona.cached_agents_chain().unwrap_or("");
+    assert!(
+        !chain.contains("UNREADABLE_MARKER"),
+        "an unreadable AGENTS.md must not contribute to the chain, got: {chain}"
+    );
+
+    // Cleanup: restore permissions so the temp dir can be removed.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&agents_md)?.permissions();
+        perms.set_mode(0o644);
+        std::fs::set_permissions(&agents_md, perms)?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// config load error branches
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_runtime_build_acp_runtime_malformed_config_returns_config_error() -> Result<()> {
+    // -- Setup & Fixtures
+    force_env_only_vault();
+    let temp = tempfile::tempdir()?;
+    let config_path = write_config(temp.path(), "this is not = valid toml [[[")?;
+    let store = memory_store(temp.path()).await?;
+
+    // -- Exec
+    let result = build_acp_runtime(make_params(
+        temp.path().to_path_buf(),
+        config_path,
+        Vec::new(),
+        store,
+    ))
+    .await;
+
+    // -- Check
+    let err = result.err().ok_or("a malformed config.toml must fail")?;
+    assert!(
+        matches!(err, AcpError::Config(_)),
+        "a malformed config.toml must produce AcpError::Config, got: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("failed to load config"),
+        "error must mention the config load failure, got: {err}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_runtime_build_acp_runtime_missing_default_model_returns_config_error() -> Result<()> {
+    // -- Setup & Fixtures
+    force_env_only_vault();
+    let temp = tempfile::tempdir()?;
+    let config = "[providers.ollama]\nbase_url = \"http://localhost:11434\"\n";
+    let config_path = write_config(temp.path(), config)?;
+    let store = memory_store(temp.path()).await?;
+
+    // -- Exec
+    let result = build_acp_runtime(make_params(
+        temp.path().to_path_buf(),
+        config_path,
+        Vec::new(),
+        store,
+    ))
+    .await;
+
+    // -- Check
+    let err = result
+        .err()
+        .ok_or("a config without models.default must fail")?;
+    assert!(
+        matches!(err, AcpError::Config(_)),
+        "a config without models.default must produce AcpError::Config, got: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("no model configured"),
+        "error must mention the missing model, got: {err}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_runtime_build_acp_runtime_unresolvable_model_returns_config_error() -> Result<()> {
+    // -- Setup & Fixtures
+    force_env_only_vault();
+    let temp = tempfile::tempdir()?;
+    // An empty model name cannot be resolved into a runtime config.
+    let config = "[models.default]\nmodel = \"ollama/\"\n";
+    let config_path = write_config(temp.path(), config)?;
+    let store = memory_store(temp.path()).await?;
+
+    // -- Exec
+    let result = build_acp_runtime(make_params(
+        temp.path().to_path_buf(),
+        config_path,
+        Vec::new(),
+        store,
+    ))
+    .await;
+
+    // -- Check
+    let err = result.err().ok_or("an unresolvable model must fail")?;
+    assert!(
+        matches!(err, AcpError::Config(_)),
+        "an unresolvable model must produce AcpError::Config, got: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("failed to resolve model"),
+        "error must mention the resolve failure, got: {err}"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// MCP tool definition mapping
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_runtime_mcp_tool_definition_uses_tool_metadata() -> Result<()> {
+    // -- Setup & Fixtures
+    let tool = McpToolDefinition {
+        server: "srv".to_string(),
+        name: "mcp__srv__search".to_string(),
+        raw_name: "search".to_string(),
+        description: Some("Search things".to_string()),
+        parameters: Some(serde_json::json!({"type": "object"})),
+    };
+
+    // -- Exec
+    let def = mcp_tool_definition(&tool).map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(def.name.to_string(), "mcp__srv__search");
+    assert_eq!(def.description, "Search things");
+    assert_eq!(def.parameters, serde_json::json!({"type": "object"}));
+    Ok(())
+}
+
+#[test]
+fn test_runtime_mcp_tool_definition_falls_back_to_defaults() -> Result<()> {
+    // -- Setup & Fixtures
+    let tool = McpToolDefinition {
+        server: "srv".to_string(),
+        name: "mcp__srv__ping".to_string(),
+        raw_name: "ping".to_string(),
+        description: None,
+        parameters: None,
+    };
+
+    // -- Exec
+    let def = mcp_tool_definition(&tool).map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(def.description, "MCP tool from server 'srv'");
+    assert_eq!(def.parameters["type"], "object");
+    assert_eq!(def.parameters["required"][0], "args");
+    Ok(())
+}
+
+#[test]
+fn test_runtime_mcp_tool_definition_rejects_empty_tool_name() {
+    // -- Setup & Fixtures
+    let tool = McpToolDefinition {
+        server: "srv".to_string(),
+        name: String::new(),
+        raw_name: String::new(),
+        description: None,
+        parameters: None,
+    };
+
+    // -- Exec
+    let result = mcp_tool_definition(&tool);
+
+    // -- Check
+    assert!(result.is_err(), "an empty MCP tool name must be rejected");
+}
+
+#[tokio::test]
+async fn test_runtime_create_acp_store_creates_sqlite_store() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp = tempfile::tempdir()?;
+    // SAFETY: nextest gives each test its own process, so no other thread
+    // reads the environment concurrently.
+    unsafe { std::env::set_var("XDG_CACHE_HOME", temp.path()) };
+
+    // -- Exec
+    let store = create_acp_store()
+        .await
+        .map_err(|e| format!("should create the ACP store: {e:?}"))?;
+
+    // -- Check
+    let db = temp.path().join("nu-agent").join("sessions.db");
+    assert!(
+        db.exists(),
+        "the ACP store must be created under the XDG cache dir at {}",
+        db.display()
+    );
+    assert!(
+        store.list().await.map_err(|e| format!("{e:?}"))?.is_empty(),
+        "a fresh store must hold no sessions"
     );
     Ok(())
 }

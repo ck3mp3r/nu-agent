@@ -145,3 +145,11 @@ pub async fn attach_a2a_context_session(
 }
 
 // endregion: --- Functions
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/mode/mod.rs"]
+mod mode_test;
+
+// endregion: --- Tests

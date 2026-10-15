@@ -323,3 +323,11 @@ pub fn build_preamble_cache(
         cached_sub_agent_instruction,
     )
 }
+
+// region:    --- Tests
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../../test/conversation/runtime_build_integration.rs"]
+mod runtime_build_integration_test;
+
+// endregion: --- Tests

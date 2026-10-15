@@ -17,21 +17,17 @@ fn request_cancel_is_idempotent() {
     assert!(controller.request_cancel());
     assert!(!controller.request_cancel());
     assert!(controller.is_cancel_requested());
-}
 
-#[test]
-fn cancel_request_stays_visible_until_finalize_path() {
-    let controller = CancelController::default();
-    controller.request_cancel();
-
-    assert!(controller.is_cancel_requested());
-}
-
-#[test]
-fn repeated_request_after_initial_cancel_is_idempotent() {
+    // A repeated request after the initial cancel is idempotent.
     let controller = CancelController::default();
     assert!(controller.request_cancel());
     assert!(!controller.request_cancel());
+    assert!(controller.is_cancel_requested());
+
+    // The cancel request stays visible until the finalize path.
+    let controller = CancelController::default();
+    controller.request_cancel();
+
     assert!(controller.is_cancel_requested());
 }
 

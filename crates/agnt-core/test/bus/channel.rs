@@ -38,113 +38,77 @@ impl Metrics for CountingHook {
     }
 }
 
-// -- Broadcast
-
+/// Every channel backend increments the metrics hook once per send and once
+/// per receive.
 #[tokio::test]
-async fn broadcast_send_and_recv_increment_metrics() -> Result<()> {
-    // -- Setup & Fixtures
+async fn channel_metrics_increment_on_send_and_recv() -> Result<()> {
+    // -- Case 1: broadcast
     let (metrics, recorded) = recording();
     let tx: BroadcastTx<u32, RecordingMetrics> = BroadcastTx::with_metrics("tool", 8, metrics);
     let mut rx: BroadcastRx<u32, RecordingMetrics> = tx.subscribe();
-
-    // -- Exec
     tx.send(1).await?;
     let _msg = rx.recv().await?;
-
-    // -- Check
     assert_eq!(
         *recorded.lock().unwrap(),
         vec!["send", "recv"],
-        "metric increments must fire once each for send and recv"
+        "broadcast: metric increments must fire once each for send and recv"
     );
-    Ok(())
-}
 
-#[tokio::test]
-async fn broadcast_cloned_sender_shares_metrics() -> Result<()> {
-    // -- Setup & Fixtures
-    let (metrics, recorded) = recording();
-    let tx: BroadcastTx<u32, RecordingMetrics> = BroadcastTx::with_metrics("tool", 8, metrics);
-    let tx2 = tx.clone();
-    // Keep a receiver alive so broadcast sends do not fail with NoReceiver.
-    let mut _rx: BroadcastRx<u32, RecordingMetrics> = tx.subscribe();
-
-    // -- Exec
-    tx.send(1).await?;
-    tx2.send(2).await?;
-
-    // -- Check
-    assert_eq!(
-        *recorded.lock().unwrap(),
-        vec!["send", "send"],
-        "both senders must share the metrics hook"
-    );
-    Ok(())
-}
-
-// -- Mpsc
-
-#[tokio::test]
-async fn mpsc_send_and_recv_increment_metrics() -> Result<()> {
-    // -- Setup & Fixtures
+    // -- Case 2: mpsc
     let (metrics, recorded) = recording();
     let (tx, mut rx): (
         MpscTx<String, RecordingMetrics>,
         MpscRx<String, RecordingMetrics>,
     ) = MpscTx::channel_with_metrics("worker", 8, metrics);
-
-    // -- Exec
     tx.send("hi".to_string()).await?;
     let _msg = rx.recv().await?;
-
-    // -- Check
     assert_eq!(
         *recorded.lock().unwrap(),
         vec!["send", "recv"],
-        "metric increments must fire once each for send and recv"
+        "mpsc: metric increments must fire once each for send and recv"
     );
-    Ok(())
-}
 
-// -- Oneshot
-
-#[tokio::test]
-async fn oneshot_send_and_recv_increment_metrics() -> Result<()> {
-    // -- Setup & Fixtures
+    // -- Case 3: oneshot
     let (metrics, recorded) = recording();
     let (tx, rx): (
         OneshotTx<String, RecordingMetrics>,
         OneshotRx<String, RecordingMetrics>,
     ) = OneshotTx::channel_with_metrics("oneshot", metrics);
-
-    // -- Exec
     tx.send("done".to_string())?;
     let _msg = rx.await?;
-
-    // -- Check
     assert_eq!(
         *recorded.lock().unwrap(),
         vec!["send", "recv"],
-        "oneshot send must count once and the completed recv once"
+        "oneshot: send must count once and the completed recv once"
     );
     Ok(())
 }
 
-// -- Custom hook runs (not compiled out)
-
+/// A cloned broadcast sender shares the metrics hook, and a custom non-default
+/// hook is actually called.
 #[tokio::test]
-async fn custom_non_default_hook_is_called() -> Result<()> {
-    // -- Setup & Fixtures
+async fn broadcast_metrics_hook_is_shared_and_called() -> Result<()> {
+    // -- Case 1: a cloned sender shares the hook
+    let (metrics, recorded) = recording();
+    let tx: BroadcastTx<u32, RecordingMetrics> = BroadcastTx::with_metrics("tool", 8, metrics);
+    let tx2 = tx.clone();
+    // Keep a receiver alive so broadcast sends do not fail with NoReceiver.
+    let mut _rx: BroadcastRx<u32, RecordingMetrics> = tx.subscribe();
+    tx.send(1).await?;
+    tx2.send(2).await?;
+    assert_eq!(
+        *recorded.lock().unwrap(),
+        vec!["send", "send"],
+        "both senders must share the metrics hook"
+    );
+
+    // -- Case 2: a custom hook is called once per send and once per recv
     let counter = Arc::new(AtomicUsize::new(0));
     let hook = CountingHook(counter.clone());
     let tx: BroadcastTx<u32, CountingHook> = BroadcastTx::with_metrics("tool", 8, hook);
     let mut rx: BroadcastRx<u32, CountingHook> = tx.subscribe();
-
-    // -- Exec
     tx.send(1).await?;
     let _msg = rx.recv().await?;
-
-    // -- Check
     assert_eq!(
         counter.load(Ordering::SeqCst),
         2,
@@ -153,15 +117,12 @@ async fn custom_non_default_hook_is_called() -> Result<()> {
     Ok(())
 }
 
-// -- NoMetrics default compiles and works
-
+/// The default bus uses no metrics and its channels preserve FIFO order.
 #[tokio::test]
-async fn bus_default_uses_no_metrics() -> Result<()> {
-    // -- Setup & Fixtures
+async fn bus_default_uses_no_metrics_and_preserves_fifo() -> Result<()> {
+    // -- Case 1: the default bus still sends and receives
     let bus = create_bus();
     let mut rx = bus.ui_event().subscribe();
-
-    // -- Exec
     bus.ui_event()
         .send(UiEvent::ToolStarted {
             name: "read".into(),
@@ -171,30 +132,18 @@ async fn bus_default_uses_no_metrics() -> Result<()> {
         })
         .await?;
     let event = rx.recv().await?;
-
-    // -- Check
     assert!(
         matches!(event, UiEvent::ToolStarted { .. }),
         "default bus channels must still send and receive"
     );
-    Ok(())
-}
 
-// -- UiEvent FIFO
-
-#[tokio::test]
-async fn ui_event_channel_preserves_fifo_order() -> Result<()> {
-    // -- Setup & Fixtures
+    // -- Case 2: the ui_event channel preserves FIFO order
     let bus = create_bus();
     let mut rx: UiEventRx = bus.ui_event().subscribe();
-
-    // -- Exec
     bus.ui_event().send(UiEvent::Tick).await?;
     bus.ui_event().send(UiEvent::LlmStarted).await?;
     let first = rx.recv().await?;
     let second = rx.recv().await?;
-
-    // -- Check
     assert_eq!(first, UiEvent::Tick, "first event must arrive first");
     assert_eq!(
         second,

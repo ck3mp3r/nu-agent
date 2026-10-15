@@ -1,14 +1,22 @@
 use super::*;
 
 #[test]
-fn inline_slash_suggestions_open_on_leading_slash() {
+fn inline_slash_suggestions_open_and_close_table() {
+    // Suggestions open on a leading slash.
     let mut state = AppState::default();
-
-    // check_inline_slash is called by the coordinator after TextArea mutations.
-    // In the dispatch-only test, call it directly to set the state.
     state.check_inline_slash("/");
-
     assert_eq!(
+        state.picker.render_kind(),
+        Some(PickerRenderKind::InlineSlash)
+    );
+    assert_ne!(
+        state.picker.render_kind(),
+        Some(PickerRenderKind::CommandPalette)
+    );
+
+    // Suggestions close when the prefix is removed.
+    state.check_inline_slash("");
+    assert_ne!(
         state.picker.render_kind(),
         Some(PickerRenderKind::InlineSlash)
     );
@@ -19,14 +27,12 @@ fn inline_slash_suggestions_open_on_leading_slash() {
 }
 
 #[test]
-fn inline_slash_enter_on_compact_triggers_compaction_path() {
+fn inline_slash_command_routing_table() {
+    // Enter on /compact triggers the compaction path.
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("/compact".to_string()),
         ..Default::default()
     };
-    // InsertChar is now a no-op in the dispatch path (handled by TextArea).
-    // Set pending_submit_text directly so Submit routes the slash command.
-
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert!(changed);
@@ -43,18 +49,13 @@ fn inline_slash_enter_on_compact_triggers_compaction_path() {
         state.picker.render_kind(),
         Some(PickerRenderKind::CommandPalette)
     );
-}
 
-#[test]
-fn immediate_slash_commands_do_not_set_busy_or_spinner() {
+    // Immediate slash commands do not set busy or the spinner.
     for command in ["/compact", "/mcp", "/help", "/status", "/skills"] {
         let mut state = AppState {
             input: InputState::default().with_pending_submit_text(command.to_string()),
             ..Default::default()
         };
-
-        // InsertChar is now a no-op in the dispatch path (handled by TextArea).
-        // Set pending_submit_text directly so Submit routes the slash command.
 
         let changed =
             dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
@@ -65,25 +66,4 @@ fn immediate_slash_commands_do_not_set_busy_or_spinner() {
         assert!(state.prompt_items().is_empty());
         assert!(state.status.message.status_line() != "Thinking...");
     }
-}
-
-#[test]
-fn inline_slash_suggestions_close_when_prefix_removed() {
-    let mut state = AppState::default();
-    state.check_inline_slash("/");
-    assert_eq!(
-        state.picker.render_kind(),
-        Some(PickerRenderKind::InlineSlash)
-    );
-
-    state.check_inline_slash("");
-
-    assert_ne!(
-        state.picker.render_kind(),
-        Some(PickerRenderKind::InlineSlash)
-    );
-    assert_ne!(
-        state.picker.render_kind(),
-        Some(PickerRenderKind::CommandPalette)
-    );
 }

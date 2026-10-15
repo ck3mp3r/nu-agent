@@ -38,90 +38,65 @@ fn make_tool_call(name: &str, arguments: serde_json::Value) -> Result<ToolCall> 
 }
 
 #[test]
-fn test_pre_authorize_tool_call_nu_with_string_command_produces_code_preview() -> Result<()> {
+fn test_pre_authorize_tool_call_nu_table() -> Result<()> {
     // -- Setup & Fixtures
-    let command = "ls | where size > 1mb";
-    let tool_call = make_tool_call("nu", json!({"command": command}))?;
+    let cases: Vec<(&str, serde_json::Value, Option<&str>)> = vec![
+        (
+            "string command produces a code preview",
+            json!({"command": "ls | where size > 1mb"}),
+            Some("ls | where size > 1mb"),
+        ),
+        ("missing command defaults", json!({}), None),
+        ("non-string command defaults", json!({"command": 42}), None),
+    ];
 
-    // -- Exec
-    let output = pre_authorize_tool_call(
-        &tool_call,
-        ToolSource::Builtin,
-        &TestEngine {
-            cwd: PathBuf::from("/tmp"),
-        },
-    );
+    // -- Exec & Check
+    for (name, arguments, expected_command) in cases {
+        let tool_call = make_tool_call("nu", arguments)?;
+        let output = pre_authorize_tool_call(
+            &tool_call,
+            ToolSource::Builtin,
+            &TestEngine {
+                cwd: PathBuf::from("/tmp"),
+            },
+        );
 
-    // -- Check
-    let display = output
-        .display
-        .ok_or("nu with a command must produce a pre-authorize display")?;
-    assert_eq!(display.title, None);
-    let section = display.sections.first().ok_or("should have one section")?;
-    assert_eq!(
-        section.kind,
-        ContentKind::Code {
-            language: "nu".to_string()
+        match expected_command {
+            Some(command) => {
+                let display = output
+                    .display
+                    .ok_or("nu with a command must produce a pre-authorize display")?;
+                assert_eq!(display.title, None, "case '{name}': title");
+                let section = display.sections.first().ok_or("should have one section")?;
+                assert_eq!(
+                    section.kind,
+                    ContentKind::Code {
+                        language: "nu".to_string()
+                    },
+                    "case '{name}': section kind"
+                );
+                assert_eq!(section.content, command, "case '{name}': section content");
+                let ask_display = output
+                    .ask_context
+                    .pre_authorize_display
+                    .ok_or("nu must populate ask_context.pre_authorize_display")?;
+                assert_eq!(
+                    ask_display, display,
+                    "case '{name}': ask display mirrors display"
+                );
+            }
+            None => {
+                assert!(
+                    output.display.is_none(),
+                    "case '{name}': display must be None"
+                );
+                assert!(
+                    output.ask_context.pre_authorize_display.is_none(),
+                    "case '{name}': ask_context must stay empty"
+                );
+            }
         }
-    );
-    assert_eq!(section.content, command);
-    let ask_display = output
-        .ask_context
-        .pre_authorize_display
-        .ok_or("nu must populate ask_context.pre_authorize_display")?;
-    assert_eq!(ask_display, display);
-    Ok(())
-}
-
-#[test]
-fn test_pre_authorize_tool_call_nu_missing_command_defaults() -> Result<()> {
-    // -- Setup & Fixtures
-    let tool_call = make_tool_call("nu", json!({}))?;
-
-    // -- Exec
-    let output = pre_authorize_tool_call(
-        &tool_call,
-        ToolSource::Builtin,
-        &TestEngine {
-            cwd: PathBuf::from("/tmp"),
-        },
-    );
-
-    // -- Check
-    assert!(
-        output.display.is_none(),
-        "missing command should return default output"
-    );
-    assert!(
-        output.ask_context.pre_authorize_display.is_none(),
-        "missing command should leave ask_context empty"
-    );
-    Ok(())
-}
-
-#[test]
-fn test_pre_authorize_tool_call_nu_non_string_command_defaults() -> Result<()> {
-    // -- Setup & Fixtures
-    let tool_call = make_tool_call("nu", json!({"command": 42}))?;
-
-    // -- Exec
-    let output = pre_authorize_tool_call(
-        &tool_call,
-        ToolSource::Builtin,
-        &TestEngine {
-            cwd: PathBuf::from("/tmp"),
-        },
-    );
-
-    // -- Check
-    assert!(
-        output.display.is_none(),
-        "non-string command should return default output"
-    );
-    assert!(
-        output.ask_context.pre_authorize_display.is_none(),
-        "non-string command should leave ask_context empty"
-    );
+    }
     Ok(())
 }
 
@@ -153,228 +128,166 @@ fn test_pre_authorize_tool_call_edit_path_unchanged_missing_command() -> Result<
 }
 
 #[test]
-fn test_pre_authorize_tool_call_mcp_source_defaults() -> Result<()> {
+fn test_pre_authorize_tool_call_source_defaults_table() -> Result<()> {
     // -- Setup & Fixtures
-    let tool_call = make_tool_call("nu", json!({"command": "ls"}))?;
+    let cases = [
+        ("mcp source", ToolSource::Mcp),
+        ("unknown source", ToolSource::Unknown),
+    ];
 
-    // -- Exec
-    let output = pre_authorize_tool_call(
-        &tool_call,
-        ToolSource::Mcp,
-        &TestEngine {
-            cwd: PathBuf::from("/tmp"),
-        },
-    );
-
-    // -- Check
-    assert!(output.display.is_none(), "mcp source should return default");
-    assert!(output.ask_context.pre_authorize_display.is_none());
+    // -- Exec & Check
+    for (name, source) in cases {
+        let tool_call = make_tool_call("nu", json!({"command": "ls"}))?;
+        let output = pre_authorize_tool_call(
+            &tool_call,
+            source,
+            &TestEngine {
+                cwd: PathBuf::from("/tmp"),
+            },
+        );
+        assert!(
+            output.display.is_none(),
+            "case '{name}': display must be None"
+        );
+        assert!(
+            output.ask_context.pre_authorize_display.is_none(),
+            "case '{name}': ask_context must stay empty"
+        );
+    }
     Ok(())
 }
 
 #[test]
-fn test_pre_authorize_tool_call_unknown_source_defaults() -> Result<()> {
+fn test_pre_authorize_fs_tool_edit_preview_table() -> Result<()> {
     // -- Setup & Fixtures
-    let tool_call = make_tool_call("nu", json!({"command": "ls"}))?;
+    struct Case {
+        name: &'static str,
+        seed: Option<&'static str>,
+        build_args: fn(&std::path::Path) -> serde_json::Value,
+        expected_diff: Option<(&'static str, &'static str)>,
+    }
 
-    // -- Exec
-    let output = pre_authorize_tool_call(
-        &tool_call,
-        ToolSource::Unknown,
-        &TestEngine {
-            cwd: PathBuf::from("/tmp"),
+    let cases = vec![
+        Case {
+            name: "create apply produces a diff preview",
+            seed: None,
+            build_args: |target| {
+                json!({
+                    "path": target.to_string_lossy(),
+                    "operation": {"type": "create", "content": "hello\n"}
+                })
+            },
+            expected_diff: Some(("+hello", "+hello")),
         },
-    );
-
-    // -- Check
-    assert!(
-        output.display.is_none(),
-        "unknown source should return default"
-    );
-    assert!(output.ask_context.pre_authorize_display.is_none());
-    Ok(())
-}
-
-#[test]
-fn test_pre_authorize_fs_tool_edit_apply_produces_diff_preview() -> Result<()> {
-    // Regression guard: the nu preview arm must not touch the edit preview
-    // path. A valid create-mode edit produces a pre-authorize diff
-    // ToolDisplay in both slots.
-    // -- Setup & Fixtures
-    let tmp = tempfile::tempdir()?;
-    let target = tmp.path().join("new-file.txt");
-    let tool_call = make_tool_call(
-        "edit",
-        json!({
-            "path": target.to_string_lossy(),
-            "operation": {"type": "create", "content": "hello\n"}
-        }),
-    )?;
-
-    // -- Exec
-    let output = pre_authorize_tool_call(
-        &tool_call,
-        ToolSource::Builtin,
-        &TestEngine {
-            cwd: tmp.path().to_path_buf(),
+        Case {
+            name: "search_replace without expected_version produces a diff preview",
+            seed: Some("hello\nworld\n"),
+            build_args: |target| {
+                json!({
+                    "path": target.to_string_lossy(),
+                    "mode": "apply",
+                    "operation": {
+                        "type": "search_replace",
+                        "search": "world",
+                        "replacement": "there"
+                    }
+                })
+            },
+            expected_diff: Some(("-world", "+there")),
         },
-    );
+        Case {
+            name: "stale expected_version produces no preview",
+            seed: Some("hello\nworld\n"),
+            build_args: |target| {
+                json!({
+                    "path": target.to_string_lossy(),
+                    "mode": "apply",
+                    "expected_version": "deadbeef",
+                    "operation": {
+                        "type": "search_replace",
+                        "search": "world",
+                        "replacement": "there"
+                    }
+                })
+            },
+            expected_diff: None,
+        },
+        Case {
+            name: "noop produces no preview",
+            seed: Some("hello\nworld\n"),
+            build_args: |target| {
+                json!({
+                    "path": target.to_string_lossy(),
+                    "mode": "apply",
+                    "operation": {
+                        "type": "search_replace",
+                        "search": "world",
+                        "replacement": "world"
+                    }
+                })
+            },
+            expected_diff: None,
+        },
+    ];
 
-    // -- Check
-    let display = output
-        .display
-        .ok_or("edit apply must produce a pre-authorize display")?;
-    let section = display.sections.first().ok_or("should have one section")?;
-    assert!(
-        matches!(section.kind, ContentKind::Diff { .. }),
-        "section kind must be Diff, got {:?}",
-        section.kind
-    );
-    assert!(
-        section.content.contains("+hello"),
-        "diff must contain the created content, got: {:?}",
-        section.content
-    );
-    let ask_display = output
-        .ask_context
-        .pre_authorize_display
-        .ok_or("edit apply must populate ask_context.pre_authorize_display")?;
-    assert_eq!(ask_display, display);
-    Ok(())
-}
+    // -- Exec & Check
+    for case in cases {
+        let tmp = tempfile::tempdir()?;
+        let target = tmp.path().join("target.txt");
+        if let Some(seed) = case.seed {
+            std::fs::write(&target, seed)?;
+        }
+        let tool_call = make_tool_call("edit", (case.build_args)(&target))?;
 
-#[test]
-fn test_pre_authorize_fs_tool_edit_apply_search_replace_without_expected_version_produces_diff_preview()
--> Result<()> {
-    // The edit tool schema does not require `expected_version`, so the model
-    // legitimately omits it. Pre-authorize must still resolve a preview
-    // version from the file on disk so the permission prompt carries the
-    // diff instead of prompting bare.
-    // -- Setup & Fixtures
-    let tmp = tempfile::tempdir()?;
-    let target = tmp.path().join("existing.txt");
-    std::fs::write(&target, "hello\nworld\n")?;
-    let tool_call = make_tool_call(
-        "edit",
-        json!({
-            "path": target.to_string_lossy(),
-            "mode": "apply",
-            "operation": {
-                "type": "search_replace",
-                "search": "world",
-                "replacement": "there"
+        let output = pre_authorize_tool_call(
+            &tool_call,
+            ToolSource::Builtin,
+            &TestEngine {
+                cwd: tmp.path().to_path_buf(),
+            },
+        );
+
+        match case.expected_diff {
+            Some((removed, added)) => {
+                let display = output
+                    .display
+                    .ok_or("a valid edit plan must produce a pre-authorize display")?;
+                let section = display.sections.first().ok_or("should have one section")?;
+                assert!(
+                    matches!(section.kind, ContentKind::Diff { .. }),
+                    "case '{}': section kind must be Diff, got {:?}",
+                    case.name,
+                    section.kind
+                );
+                assert!(
+                    section.content.contains(removed) && section.content.contains(added),
+                    "case '{}': diff must contain {removed} and {added}, got: {:?}",
+                    case.name,
+                    section.content
+                );
+                let ask_display = output
+                    .ask_context
+                    .pre_authorize_display
+                    .ok_or("edit apply must populate ask_context.pre_authorize_display")?;
+                assert_eq!(
+                    ask_display, display,
+                    "case '{}': ask display mirrors display",
+                    case.name
+                );
             }
-        }),
-    )?;
-
-    // -- Exec
-    let output = pre_authorize_tool_call(
-        &tool_call,
-        ToolSource::Builtin,
-        &TestEngine {
-            cwd: tmp.path().to_path_buf(),
-        },
-    );
-
-    // -- Check
-    let display = output
-        .display
-        .ok_or("search_replace without expected_version must produce a display")?;
-    let section = display.sections.first().ok_or("should have one section")?;
-    assert!(
-        matches!(section.kind, ContentKind::Diff { .. }),
-        "section kind must be Diff, got {:?}",
-        section.kind
-    );
-    assert!(
-        section.content.contains("-world") && section.content.contains("+there"),
-        "diff must contain the replacement, got: {:?}",
-        section.content
-    );
-    let ask_display = output
-        .ask_context
-        .pre_authorize_display
-        .ok_or("search_replace must populate ask_context.pre_authorize_display")?;
-    assert_eq!(ask_display, display);
-    Ok(())
-}
-
-#[test]
-fn test_pre_authorize_fs_tool_edit_apply_search_replace_with_stale_expected_version_produces_no_preview()
--> Result<()> {
-    // A stale version yields a conflict plan, which has no diff to approve:
-    // the gate prompts bare instead of showing an empty diff block.
-    // -- Setup & Fixtures
-    let tmp = tempfile::tempdir()?;
-    let target = tmp.path().join("existing.txt");
-    std::fs::write(&target, "hello\nworld\n")?;
-    let tool_call = make_tool_call(
-        "edit",
-        json!({
-            "path": target.to_string_lossy(),
-            "mode": "apply",
-            "expected_version": "deadbeef",
-            "operation": {
-                "type": "search_replace",
-                "search": "world",
-                "replacement": "there"
+            None => {
+                assert!(
+                    output.display.is_none(),
+                    "case '{}': no diff to approve; pre-authorize must produce no display",
+                    case.name
+                );
+                assert!(
+                    output.ask_context.pre_authorize_display.is_none(),
+                    "case '{}': ask_context must stay empty",
+                    case.name
+                );
             }
-        }),
-    )?;
-
-    // -- Exec
-    let output = pre_authorize_tool_call(
-        &tool_call,
-        ToolSource::Builtin,
-        &TestEngine {
-            cwd: tmp.path().to_path_buf(),
-        },
-    );
-
-    // -- Check
-    assert!(
-        output.display.is_none(),
-        "a stale expected_version has no diff to approve; pre-authorize must produce no display"
-    );
-    assert!(output.ask_context.pre_authorize_display.is_none());
-    Ok(())
-}
-
-#[test]
-fn test_pre_authorize_fs_tool_edit_apply_noop_produces_no_preview() -> Result<()> {
-    // A replacement identical to the search yields a no-op plan, which has no
-    // diff to approve: the gate prompts bare.
-    // -- Setup & Fixtures
-    let tmp = tempfile::tempdir()?;
-    let target = tmp.path().join("existing.txt");
-    std::fs::write(&target, "hello\nworld\n")?;
-    let tool_call = make_tool_call(
-        "edit",
-        json!({
-            "path": target.to_string_lossy(),
-            "mode": "apply",
-            "operation": {
-                "type": "search_replace",
-                "search": "world",
-                "replacement": "world"
-            }
-        }),
-    )?;
-
-    // -- Exec
-    let output = pre_authorize_tool_call(
-        &tool_call,
-        ToolSource::Builtin,
-        &TestEngine {
-            cwd: tmp.path().to_path_buf(),
-        },
-    );
-
-    // -- Check
-    assert!(
-        output.display.is_none(),
-        "a no-op plan has no diff to approve; pre-authorize must produce no display"
-    );
-    assert!(output.ask_context.pre_authorize_display.is_none());
+        }
+    }
     Ok(())
 }

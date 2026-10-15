@@ -71,85 +71,6 @@ where
                         .to_string();
                 return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
             }
-            Err((crate::conversation::turn::TurnError::Cancelled { msg, messages }, ctx)) => {
-                // Path A: rig hook cancelled — persist chat_history delta if available.
-                // messages for Cancelled is rig's full_history() — it DOES include
-                // the current-turn user prompt and any tool exchanges. skip(pre_turn_message_count)
-                // yields only the new messages from this turn, preventing double-appending the
-                // prior session history when a cancelled turn follows prior session messages.
-                if let Some(session_id) = final_session_id {
-                    let delta: Vec<Message> = messages
-                        .iter()
-                        .skip(ctx.pre_turn_message_count)
-                        .cloned()
-                        .collect();
-                    log::debug!(
-                        "Path A cancelled: delta_count={} pre_turn={}",
-                        delta.len(),
-                        ctx.pre_turn_message_count
-                    );
-                    if !delta.is_empty() {
-                        let patched = inject_missing_tool_results(delta);
-                        let patched = close_open_tool_result_block(patched, "[cancelled]");
-                        self.append_to_memory_or_warn(
-                            session_id,
-                            patched,
-                            "recovered history for cancelled turn (path A)",
-                        )
-                        .await;
-                    }
-                }
-                // Stop-to-steering exhaustion: a repetition stop at the
-                // per-turn retry cap falls through to this block, which
-                // surfaces the terminal stop (mirroring the doom-loop stop
-                // surface).
-                // Surface the doom-loop stop reason if this cancellation was a doom stop.
-                // Fix 2: the reason rides `LlmEvent::Stopped`, never
-                // `AssistantMessage` — routing it through the assistant-stream
-                // dedup path would truncate the streamed repeated block.
-                let response_text = if msg.starts_with(DOOM_LOOP_STOP_PREFIX)
-                    || msg.starts_with(OUTPUT_REPETITION_STOP_PREFIX)
-                {
-                    let _ = self
-                        .tool_infra
-                        .bus
-                        .ui_event()
-                        .send(UiEvent::Warning {
-                            message: msg.clone(),
-                        })
-                        .await;
-                    let _ = self
-                        .tool_infra
-                        .bus
-                        .ui_event()
-                        .send(UiEvent::Stopped {
-                            reason: msg.clone(),
-                        })
-                        .await;
-                    msg
-                } else {
-                    String::new()
-                };
-                // Return a minimal cancelled response (not an error)
-                let llm_response = crate::llm::LlmResponse {
-                    text: response_text,
-                    usage: crate::llm::LlmUsage {
-                        input_tokens: 0,
-                        output_tokens: 0,
-                        total_tokens: 0,
-                        cached_input_tokens: 0,
-                        cache_creation_input_tokens: 0,
-                    },
-                    tool_calls: Vec::new(),
-                    tool_call_metadata: Vec::new(),
-                };
-                return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
-                    &llm_response,
-                    self.config,
-                    final_session_id,
-                    span,
-                )));
-            }
             Err((e, ctx)) => {
                 // Hard error: CompletionFailed or ToolExecutionFailed.
                 // If on_completion_call fired at least once, we have a partial history snapshot
@@ -165,8 +86,6 @@ where
                     crate::conversation::turn::TurnError::ToolExecutionFailed { msg } => {
                         (msg, None)
                     }
-                    // Other variants (Cancelled, MaxTurnsExceeded, UnknownTool) are already
-                    // handled above; this catch-all is for exhaustiveness.
                     _ => {
                         return Err(
                             LabeledError::new(e.to_string()).with_label(e.to_string(), span)

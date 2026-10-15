@@ -20,9 +20,8 @@ fn submit_path_appends_prompt_and_keeps_input_editable() {
 }
 
 #[test]
-fn backspace_and_cursor_movement_edit_in_dispatch_path() {
-    // Backspace and cursor movement are now handled by TextArea, not the dispatch path.
-    // The dispatch path's Backspace/Delete/MoveCursor actions are no-ops.
+fn dispatch_edit_actions_are_noops() {
+    // Backspace and cursor movement are handled by TextArea, not the dispatch path.
     let mut state = AppState::default();
 
     let changed = dispatch_terminal_event(
@@ -31,11 +30,8 @@ fn backspace_and_cursor_movement_edit_in_dispatch_path() {
         None,
     );
     assert!(!changed);
-}
 
-#[test]
-fn insert_mode_alt_and_shift_enter_insert_newline_while_enter_submits() {
-    // Alt+Enter and Shift+Enter are now handled by the coordinator (TextArea),
+    // Alt+Enter and Shift+Enter are handled by the coordinator (TextArea),
     // not the dispatch path. The dispatch path's InsertNewline is a no-op.
     let mut state = AppState::default();
 

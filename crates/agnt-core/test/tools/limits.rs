@@ -1,64 +1,87 @@
 use super::{MAX_TOOL_OUTPUT_BYTES, truncate_tool_output};
 
 #[test]
-fn short_output_returned_unchanged() {
-    let input = "hello, world".to_string();
-    let result = truncate_tool_output(input.clone(), MAX_TOOL_OUTPUT_BYTES);
-    assert_eq!(result, input, "short output must not be modified");
+fn truncate_tool_output_passthrough_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, String, usize)> = vec![
+        (
+            "short output",
+            "hello, world".to_string(),
+            MAX_TOOL_OUTPUT_BYTES,
+        ),
+        (
+            "short output just under the limit",
+            "a".repeat(MAX_TOOL_OUTPUT_BYTES - 1),
+            MAX_TOOL_OUTPUT_BYTES,
+        ),
+        ("zero limit disables truncation", "x".repeat(100_000), 0),
+        ("custom limit above the input", "a".repeat(25_000), 50_000),
+        (
+            "default limit above the input",
+            "a".repeat(40_000),
+            MAX_TOOL_OUTPUT_BYTES,
+        ),
+    ];
+
+    // -- Exec & Check
+    for (name, input, max_bytes) in cases {
+        let result = truncate_tool_output(input.clone(), max_bytes);
+        assert_eq!(
+            result, input,
+            "case '{name}': output must pass through unchanged"
+        );
+        assert!(
+            !result.contains("[output truncated:"),
+            "case '{name}': output must not contain a truncation marker"
+        );
+    }
 }
 
 #[test]
-fn short_output_writes_no_temp_file() {
-    // We can verify indirectly: output is unchanged, so no truncation marker appears
-    let input = "a".repeat(MAX_TOOL_OUTPUT_BYTES - 1);
-    let result = truncate_tool_output(input.clone(), MAX_TOOL_OUTPUT_BYTES);
-    assert_eq!(result, input);
-    assert!(
-        !result.contains("[output truncated:"),
-        "short output must not contain truncation marker"
-    );
-}
+fn truncate_tool_output_truncation_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, String, usize)> = vec![
+        (
+            "default limit",
+            "x".repeat(MAX_TOOL_OUTPUT_BYTES + 1_000),
+            MAX_TOOL_OUTPUT_BYTES,
+        ),
+        ("custom limit", "a".repeat(25_000), 20_000),
+        (
+            "default limit with 60KB",
+            "a".repeat(60_000),
+            MAX_TOOL_OUTPUT_BYTES,
+        ),
+    ];
 
-#[test]
-fn long_output_is_truncated_with_marker() {
-    let original_len = MAX_TOOL_OUTPUT_BYTES + 1_000;
-    let input = "x".repeat(original_len);
-    let result = truncate_tool_output(input, MAX_TOOL_OUTPUT_BYTES);
+    // -- Exec & Check
+    for (name, input, max_bytes) in cases {
+        let original_len = input.len();
+        let result = truncate_tool_output(input, max_bytes);
 
-    // Result must be shorter than input
-    assert!(
-        result.len() < original_len,
-        "truncated result must be shorter than input"
-    );
+        assert!(
+            result.len() < original_len,
+            "case '{name}': truncated result must be shorter than the input"
+        );
+        assert!(
+            result.contains(&format!("[output truncated: {original_len} bytes total")),
+            "case '{name}': marker must carry the original length, got: {}",
+            &result[result.len().saturating_sub(200)..]
+        );
+        assert!(
+            result.contains(&format!("showing first {max_bytes} bytes")),
+            "case '{name}': marker must mention the bytes shown"
+        );
 
-    // Must contain the truncation marker with original length
-    assert!(
-        result.contains(&format!("[output truncated: {} bytes total", original_len)),
-        "result must contain truncation marker with original length, got: {}",
-        &result[result.len().saturating_sub(200)..]
-    );
-
-    // Must contain the max bytes count
-    assert!(
-        result.contains(&format!("showing first {} bytes", MAX_TOOL_OUTPUT_BYTES)),
-        "result must mention bytes shown"
-    );
-}
-
-#[test]
-fn long_output_includes_file_path_in_marker() {
-    let input = "y".repeat(MAX_TOOL_OUTPUT_BYTES + 500);
-    let result = truncate_tool_output(input, MAX_TOOL_OUTPUT_BYTES);
-
-    // Must reference a temp file path OR the "could not be saved" fallback
-    let has_file =
-        result.contains("nu-agent-tool-output-") && result.contains("Use the `read` tool");
-    let has_fallback = result.contains("Full output could not be saved.");
-    assert!(
-        has_file || has_fallback,
-        "truncation marker must reference temp file or fallback, got: {}",
-        &result[result.len().saturating_sub(300)..]
-    );
+        let has_file =
+            result.contains("nu-agent-tool-output-") && result.contains("Use the `read` tool");
+        let has_fallback = result.contains("Full output could not be saved.");
+        assert!(
+            has_file || has_fallback,
+            "case '{name}': marker must reference a temp file or the fallback, got: {}",
+            &result[result.len().saturating_sub(300)..]
+        );
+    }
 }
 
 #[test]
@@ -141,60 +164,5 @@ fn truncation_respects_utf8_char_boundary() {
         prefix.len(),
         prefix_len,
         "truncation must fall at the char boundary just before '€'"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// New tests for configurable limit
-// ---------------------------------------------------------------------------
-
-#[test]
-fn truncate_tool_output_respects_custom_limit() {
-    let input = "a".repeat(25_000); // 25KB
-
-    // 25KB > 20KB → should be truncated
-    let result_20k = truncate_tool_output(input.clone(), 20_000);
-    assert!(
-        result_20k.contains("[output truncated"),
-        "25KB input must be truncated at 20KB limit, got: {}",
-        &result_20k[result_20k.len().saturating_sub(200)..]
-    );
-
-    // 25KB < 50KB → should pass through unchanged
-    let result_50k = truncate_tool_output(input.clone(), 50_000);
-    assert_eq!(
-        result_50k, input,
-        "25KB input must not be truncated at 50KB limit"
-    );
-}
-
-#[test]
-fn truncate_tool_output_zero_limit_passes_through() {
-    let input = "x".repeat(100_000); // 100KB
-
-    // max_bytes == 0 → truncation disabled, must return unchanged
-    let result = truncate_tool_output(input.clone(), 0);
-    assert_eq!(
-        result, input,
-        "zero limit must disable truncation and pass through unchanged"
-    );
-}
-
-#[test]
-fn truncate_tool_output_default_limit_still_works() {
-    // 60KB > 50KB (MAX_TOOL_OUTPUT_BYTES) → truncated
-    let long_input = "a".repeat(60_000);
-    let result_long = truncate_tool_output(long_input, MAX_TOOL_OUTPUT_BYTES);
-    assert!(
-        result_long.contains("[output truncated"),
-        "60KB input must be truncated at MAX_TOOL_OUTPUT_BYTES (50KB)"
-    );
-
-    // 40KB < 50KB → unchanged
-    let short_input = "a".repeat(40_000);
-    let result_short = truncate_tool_output(short_input.clone(), MAX_TOOL_OUTPUT_BYTES);
-    assert_eq!(
-        result_short, short_input,
-        "40KB input must not be truncated at MAX_TOOL_OUTPUT_BYTES (50KB)"
     );
 }

@@ -22,8 +22,8 @@ async fn journey_tool_result_truncated_at_configured_limit() -> Result<()> {
 
     // Mount responses: tool call first, then a plain text response
     {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, ResponseTemplate};
+        use agnt_testkit::matchers::{method, path};
+        use agnt_testkit::{Mock, ResponseTemplate};
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
@@ -31,23 +31,25 @@ async fn journey_tool_result_truncated_at_configured_limit() -> Result<()> {
                 ResponseTemplate::new(200)
                     .append_header("content-type", "text/event-stream")
                     .set_body_bytes(
-                        sse_tool_call_response("tc1", "nu__shell", "{\"command\":\"ls\"}")
-                            .into_bytes(),
+                        agnt_testkit::sse_tool_call_body(
+                            "tc1",
+                            "nu__shell",
+                            "{\"command\":\"ls\"}",
+                        )
+                        .into_bytes(),
                     ),
             )
             .up_to_n_times(1)
             .mount(&server)
             .await;
 
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .append_header("content-type", "text/event-stream")
-                    .set_body_bytes(sse_text_response("done").into_bytes()),
-            )
-            .mount(&server)
-            .await;
+        agnt_testkit::mount_sse_response(
+            &server,
+            "POST",
+            Some("/chat/completions"),
+            agnt_testkit::sse_text_body("done"),
+        )
+        .await;
     }
 
     // Tool returns 200 bytes — well over the 100-byte limit.
@@ -188,8 +190,8 @@ async fn journey_tool_result_limit_flows_from_config_to_adapter() -> Result<()> 
 
     // ── 3. Mount: tool call → text response ──────────────────────────────────
     {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, ResponseTemplate};
+        use agnt_testkit::matchers::{method, path};
+        use agnt_testkit::{Mock, ResponseTemplate};
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
@@ -197,23 +199,25 @@ async fn journey_tool_result_limit_flows_from_config_to_adapter() -> Result<()> 
                 ResponseTemplate::new(200)
                     .append_header("content-type", "text/event-stream")
                     .set_body_bytes(
-                        sse_tool_call_response("tc-adapter", "grep", "{\"pattern\":\"needle\"}")
-                            .into_bytes(),
+                        agnt_testkit::sse_tool_call_body(
+                            "tc-adapter",
+                            "grep",
+                            "{\"pattern\":\"needle\"}",
+                        )
+                        .into_bytes(),
                     ),
             )
             .up_to_n_times(1)
             .mount(&server)
             .await;
 
-        Mock::given(method("POST"))
-            .and(path("/chat/completions"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .append_header("content-type", "text/event-stream")
-                    .set_body_bytes(sse_text_response("done").into_bytes()),
-            )
-            .mount(&server)
-            .await;
+        agnt_testkit::mount_sse_response(
+            &server,
+            "POST",
+            Some("/chat/completions"),
+            agnt_testkit::sse_text_body("done"),
+        )
+        .await;
     }
 
     // ── 4. Run the turn with the BuiltinToolAdapter-backed ToolInfra ─────────

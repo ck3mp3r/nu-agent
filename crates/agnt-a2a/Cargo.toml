@@ -27,6 +27,7 @@ url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
+agnt-testkit = { workspace = true }
 anyhow = "1"
 serde_test = "1"
 tower = { version = "0.5", features = ["util"] }

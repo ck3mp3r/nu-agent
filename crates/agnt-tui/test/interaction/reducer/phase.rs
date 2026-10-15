@@ -1,7 +1,8 @@
 use super::*;
 
 #[test]
-fn submit_transition_is_deterministic_and_keeps_input_editable() {
+fn submit_and_lock_table() {
+    // Submit transition is deterministic and keeps the input editable.
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("status pods".to_string()),
         ..Default::default()
@@ -17,10 +18,98 @@ fn submit_transition_is_deterministic_and_keeps_input_editable() {
         state.transcript.blocks()[0].source.plain_text(),
         "status pods"
     );
+
+    // Locked input prevents typing and submission.
+    let mut state = AppState {
+        input: InputState::default().with_pending_submit_text("first".to_string()),
+        ..Default::default()
+    };
+    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+
+    state.input.pending_submit_text = Some("second".to_string());
+    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+
+    // Activate both prompts coalesced
+    let result = state.take_next_prompt_for_execution();
+    assert_eq!(result, Some("first\n\nsecond".to_string()));
+    // [User] — no leading or trailing spacer under the unified spacer rule
+    assert_eq!(state.transcript.len(), 1);
+    assert_eq!(
+        state.transcript.blocks()[0].source.plain_text(),
+        "first\n\nsecond"
+    );
+    // Complete first (active) prompt — other prompt is already Done
+    state.complete_active_prompt();
+    let result = state.take_next_prompt_for_execution();
+    assert_eq!(result, None);
+
+    // A whitespace-only prompt is a no-op.
+    let mut state = AppState {
+        input: InputState::default().with_pending_submit_text("  \t\n ".to_string()),
+        ..Default::default()
+    };
+
+    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+
+    assert_eq!(state.phase, UiPhase::Idle);
+    assert!(!state.input_locked);
+    assert!(state.transcript.blocks().is_empty());
 }
 
 #[test]
-fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
+fn abort_flow_table() {
+    // Esc then Esc confirm moves into abort requested without unlocking.
+    let mut state = AppState {
+        input: InputState::default().with_pending_submit_text("do work".to_string()),
+        ..Default::default()
+    };
+    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    let _ = state.activate_next_prompt();
+
+    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
+    assert_eq!(state.phase, UiPhase::AbortPending);
+    assert!(state.abort.pending);
+    assert_eq!(state.status.message.status_line(), ESC_ABORT_CONFIRM_STATUS);
+
+    let before_markers = state.transcript.len();
+    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
+    assert_eq!(state.phase, UiPhase::Idle);
+    assert!(!state.abort.pending);
+    assert_eq!(state.input.mode, InputMode::Insert);
+    assert_eq!(state.scroll.pane_focus, PaneFocus::Input);
+    assert!(state.status.message.status_line().is_empty());
+    // cancel no longer pushes a spacer — the unified rule separates blocks
+    assert_eq!(state.transcript.len(), before_markers);
+
+    // A race: completion before the second escape prevents re-entry into abort pending.
+    let mut state = AppState {
+        input: InputState::default().with_pending_submit_text("race".to_string()),
+        ..Default::default()
+    };
+    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    let _ = state.activate_next_prompt();
+
+    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
+    assert_eq!(state.phase, UiPhase::AbortPending);
+
+    reduce_with_cancel_controller(
+        &mut state,
+        event_input(UiEvent::Completed { tool_calls: 0 }),
+        None,
+    );
+    assert_eq!(state.phase, UiPhase::Idle);
+    assert!(!state.abort.pending);
+
+    let transcript_before = state.transcript.blocks().to_vec();
+    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
+    assert_eq!(state.phase, UiPhase::Idle);
+    assert!(!state.abort.pending);
+    assert_eq!(state.transcript.blocks(), transcript_before);
+}
+
+#[test]
+fn completion_finalize_table() {
+    // Intermediate events keep the cycle busy; Completed is the finalize boundary.
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("prompt".to_string()),
         ..Default::default()
@@ -74,35 +163,8 @@ fn table_driven_ui_event_mapping_keeps_completed_as_finalize_boundary() {
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
     assert!(!state.abort.pending);
-}
 
-#[test]
-fn esc_then_esc_confirm_moves_into_abort_requested_without_unlocking() {
-    let mut state = AppState {
-        input: InputState::default().with_pending_submit_text("do work".to_string()),
-        ..Default::default()
-    };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
-    let _ = state.activate_next_prompt();
-
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
-    assert_eq!(state.phase, UiPhase::AbortPending);
-    assert!(state.abort.pending);
-    assert_eq!(state.status.message.status_line(), ESC_ABORT_CONFIRM_STATUS);
-
-    let before_markers = state.transcript.len();
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
-    assert_eq!(state.phase, UiPhase::Idle);
-    assert!(!state.abort.pending);
-    assert_eq!(state.input.mode, InputMode::Insert);
-    assert_eq!(state.scroll.pane_focus, PaneFocus::Input);
-    assert!(state.status.message.status_line().is_empty());
-    // cancel no longer pushes a spacer — the unified rule separates blocks
-    assert_eq!(state.transcript.len(), before_markers);
-}
-
-#[test]
-fn completed_event_clears_pending_and_unlocks_input() {
+    // Completed event clears pending and unlocks input.
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("do work".to_string()),
         ..Default::default()
@@ -121,77 +183,8 @@ fn completed_event_clears_pending_and_unlocks_input() {
     assert!(!state.abort.pending);
     assert!(!state.input_locked);
     assert!(state.status.message.status_line().is_empty());
-}
 
-#[test]
-fn locked_input_prevents_typing_and_submission() {
-    let mut state = AppState {
-        input: InputState::default().with_pending_submit_text("first".to_string()),
-        ..Default::default()
-    };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
-
-    state.input.pending_submit_text = Some("second".to_string());
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
-
-    // Activate both prompts coalesced
-    let result = state.take_next_prompt_for_execution();
-    assert_eq!(result, Some("first\n\nsecond".to_string()));
-    // [User] — no leading or trailing spacer under the unified spacer rule
-    assert_eq!(state.transcript.len(), 1);
-    assert_eq!(
-        state.transcript.blocks()[0].source.plain_text(),
-        "first\n\nsecond"
-    );
-    // Complete first (active) prompt — other prompt is already Done
-    state.complete_active_prompt();
-    let result = state.take_next_prompt_for_execution();
-    assert_eq!(result, None);
-}
-
-#[test]
-fn submit_whitespace_only_prompt_is_noop() {
-    let mut state = AppState {
-        input: InputState::default().with_pending_submit_text("  \t\n ".to_string()),
-        ..Default::default()
-    };
-
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
-
-    assert_eq!(state.phase, UiPhase::Idle);
-    assert!(!state.input_locked);
-    assert!(state.transcript.blocks().is_empty());
-}
-
-#[test]
-fn race_completion_before_second_escape_prevents_reentry_into_abort_pending() {
-    let mut state = AppState {
-        input: InputState::default().with_pending_submit_text("race".to_string()),
-        ..Default::default()
-    };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
-    let _ = state.activate_next_prompt();
-
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
-    assert_eq!(state.phase, UiPhase::AbortPending);
-
-    reduce_with_cancel_controller(
-        &mut state,
-        event_input(UiEvent::Completed { tool_calls: 0 }),
-        None,
-    );
-    assert_eq!(state.phase, UiPhase::Idle);
-    assert!(!state.abort.pending);
-
-    let transcript_before = state.transcript.blocks().to_vec();
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
-    assert_eq!(state.phase, UiPhase::Idle);
-    assert!(!state.abort.pending);
-    assert_eq!(state.transcript.blocks(), transcript_before);
-}
-
-#[test]
-fn completed_event_unlocks_and_clears_abort_pending() {
+    // Completed event unlocks and clears abort pending.
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("finalize".to_string()),
         ..Default::default()
@@ -210,18 +203,14 @@ fn completed_event_unlocks_and_clears_abort_pending() {
     assert!(!state.input_locked);
     assert!(!state.abort.pending);
     assert!(state.status.message.status_line().is_empty());
-}
 
-#[test]
-fn turn_error_leaves_ui_in_recoverable_state() {
+    // A turn error leaves the UI in a recoverable state.
     let mut state = busy_state_with_clean_transcript();
 
-    // Preconditions: busy state with active prompt
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(active_prompt_id(&state).is_some());
     assert!(state.is_active_cycle());
 
-    // Dispatch TurnError
     reduce_with_cancel_controller(
         &mut state,
         event_input(UiEvent::TurnError {
@@ -230,13 +219,11 @@ fn turn_error_leaves_ui_in_recoverable_state() {
         None,
     );
 
-    // All stale state must be cleared (same as Completed handler)
     assert_eq!(active_prompt_id(&state), None);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.is_active_cycle());
     assert!(!state.abort.pending);
 
-    // Error message preserved in transcript
     let has_error_in_transcript = state
         .transcript
         .blocks()
@@ -247,13 +234,10 @@ fn turn_error_leaves_ui_in_recoverable_state() {
         "Expected error message in transcript"
     );
 
-    // Verify a second prompt submission is accepted (not blocked)
     state.input.pending_submit_text = Some("retry".to_string());
     reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
     assert_eq!(state.phase, UiPhase::Busy);
-    // Simulate handle_llm_start which sets the lock
     state.input_locked = true;
-    // Transcript entry for "retry" is deferred to activation
     let _ = state.take_next_prompt_for_execution();
     assert!(
         state

@@ -14,6 +14,7 @@ mod channels;
 mod context_parent;
 mod extensions;
 mod files;
+mod handlers;
 mod history;
 mod idempotency;
 mod list_tasks;

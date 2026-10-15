@@ -1,8 +1,33 @@
 use super::{McpAuthConfig, McpConfig};
 
 #[test]
-fn mcp_config_from_toml_reads_map_shape() {
-    let mcp_value: toml::Value = toml::from_str(
+fn mcp_config_from_toml_table() {
+    // -- Setup & Fixtures
+    fn verify_map_shape(parsed: &McpConfig) {
+        let c5t = parsed
+            .mcp
+            .iter()
+            .find(|s| s.name == "c5t")
+            .expect("c5t server exists");
+        assert_eq!(c5t.url.as_deref(), Some("http://0.0.0.0:3737/mcp"));
+        assert!(c5t.enabled);
+
+        let nu_server = parsed
+            .mcp
+            .iter()
+            .find(|s| s.name == "nu-server")
+            .expect("nu-server fixture exists");
+        assert_eq!(nu_server.command.as_deref(), Some("nu-mcp"));
+        assert_eq!(nu_server.cwd.as_deref(), Some("/tmp"));
+        assert_eq!(
+            nu_server.args,
+            vec!["--add-path".to_string(), "/tmp".to_string()]
+        );
+        assert_eq!(nu_server.env.get("GIT_PAGER").map(String::as_str), Some(""));
+        assert!(!nu_server.enabled);
+    }
+
+    let map_shape: toml::Value = toml::from_str(
         r#"
 [c5t]
 transport = "sse"
@@ -22,187 +47,155 @@ GIT_PAGER = ""
     )
     .unwrap();
 
-    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse mcp config");
-    assert_eq!(parsed.mcp.len(), 2);
+    type Case = (&'static str, toml::Value, usize, Option<fn(&McpConfig)>);
 
-    let c5t = parsed
-        .mcp
-        .iter()
-        .find(|s| s.name == "c5t")
-        .expect("c5t server exists");
-    assert_eq!(c5t.url.as_deref(), Some("http://0.0.0.0:3737/mcp"));
-    assert!(c5t.enabled);
+    let cases: Vec<Case> = vec![
+        ("map shape", map_shape, 2, Some(verify_map_shape)),
+        (
+            "missing mcp returns empty",
+            toml::Value::Table(toml::value::Table::new()),
+            0,
+            None,
+        ),
+        (
+            "non-table returns empty",
+            toml::Value::String("not a table".to_string()),
+            0,
+            None,
+        ),
+    ];
 
-    let nu_server = parsed
-        .mcp
-        .iter()
-        .find(|s| s.name == "nu-server")
-        .expect("nu-server fixture exists");
-    assert_eq!(nu_server.command.as_deref(), Some("nu-mcp"));
-    assert_eq!(nu_server.cwd.as_deref(), Some("/tmp"));
-    assert_eq!(
-        nu_server.args,
-        vec!["--add-path".to_string(), "/tmp".to_string()]
-    );
-    assert_eq!(nu_server.env.get("GIT_PAGER").map(String::as_str), Some(""));
-    assert!(!nu_server.enabled);
+    // -- Exec & Check
+    for (name, value, expected_len, verify) in cases {
+        let parsed = McpConfig::from_toml(&value).expect("should parse mcp config");
+        assert_eq!(
+            parsed.mcp.len(),
+            expected_len,
+            "case '{name}': server count"
+        );
+        if let Some(verify) = verify {
+            verify(&parsed);
+        }
+    }
 }
 
 #[test]
-fn mcp_config_enabled_defaults_true_when_omitted() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+fn mcp_config_enabled_defaults_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, &str)> = vec![
+        (
+            "omitted",
+            r#"
 [c5t]
 transport = "sse"
 url = "http://0.0.0.0:3737/mcp"
 "#,
-    )
-    .unwrap();
-
-    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse mcp config");
-    let c5t = parsed
-        .mcp
-        .iter()
-        .find(|s| s.name == "c5t")
-        .expect("c5t server exists");
-    assert!(c5t.enabled);
-}
-
-#[test]
-fn mcp_config_enabled_defaults_true_on_non_bool() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+        ),
+        (
+            "non-bool",
+            r#"
 [c5t]
 transport = "sse"
 url = "http://0.0.0.0:3737/mcp"
 enabled = "true"
 "#,
-    )
-    .unwrap();
+        ),
+    ];
 
-    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
-    let c5t = parsed.mcp.iter().find(|s| s.name == "c5t").unwrap();
-    assert!(c5t.enabled);
+    // -- Exec & Check
+    for (name, toml_src) in cases {
+        let value: toml::Value = toml::from_str(toml_src).unwrap();
+        let parsed = McpConfig::from_toml(&value).expect("should parse");
+        let c5t = parsed
+            .mcp
+            .iter()
+            .find(|s| s.name == "c5t")
+            .expect("c5t server exists");
+        assert!(c5t.enabled, "case '{name}': enabled must default to true");
+    }
 }
 
 #[test]
-fn mcp_config_validation_rejects_empty_stdio_cwd_when_set() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+fn mcp_config_validation_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, &str, &[&str])> = vec![
+        (
+            "empty stdio cwd",
+            r#"
 [nu]
 transport = "stdio"
 command = "nu-mcp"
 cwd = "   "
 "#,
-    )
-    .unwrap();
-
-    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("requires non-empty 'cwd'") || msg.contains("Invalid MCP configuration"));
-}
-
-#[test]
-fn mcp_config_from_toml_missing_mcp_returns_empty() {
-    let mcp_value: toml::Value = toml::Value::Table(toml::value::Table::new());
-
-    let parsed = McpConfig::from_toml(&mcp_value).expect("missing mcp should be ok");
-    assert!(parsed.mcp.is_empty());
-}
-
-#[test]
-fn mcp_config_from_toml_non_table_returns_empty() {
-    let mcp_value: toml::Value = toml::Value::String("not a table".to_string());
-
-    let parsed = McpConfig::from_toml(&mcp_value).expect("non-table should be empty");
-    assert!(parsed.mcp.is_empty());
-}
-
-#[test]
-fn mcp_config_validation_requires_command_for_stdio() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+            &["requires non-empty 'cwd'", "Invalid MCP configuration"],
+        ),
+        (
+            "stdio requires command",
+            r#"
 [nu]
 transport = "stdio"
 "#,
-    )
-    .unwrap();
-
-    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("requires non-empty 'command'") || msg.contains("Invalid MCP configuration")
-    );
-}
-
-#[test]
-fn mcp_config_validation_requires_url_for_remote_transports() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+            &["requires non-empty 'command'", "Invalid MCP configuration"],
+        ),
+        (
+            "remote requires url",
+            r#"
 [c5t]
 transport = "sse"
 "#,
-    )
-    .unwrap();
-
-    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("requires non-empty 'url'") || msg.contains("Invalid MCP configuration"));
-}
-
-#[test]
-fn mcp_config_rejects_unsupported_transport() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+            &["requires non-empty 'url'", "Invalid MCP configuration"],
+        ),
+        (
+            "unsupported transport",
+            r#"
 [x]
 transport = "unsupported"
 "#,
-    )
-    .unwrap();
-
-    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("unsupported transport") || msg.contains("Invalid transport"));
-}
-
-#[test]
-fn mcp_config_rejects_server_name_with_reserved_delimiter() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+            &["unsupported transport", "Invalid transport"],
+        ),
+        (
+            "reserved delimiter in server name",
+            r#"
 [gh__prod]
 transport = "sse"
 url = "http://0.0.0.0:3737/mcp"
 "#,
-    )
-    .unwrap();
+            &["reserved delimiter", "Invalid MCP configuration"],
+        ),
+    ];
 
-    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("reserved delimiter") || msg.contains("Invalid MCP configuration"));
+    // -- Exec & Check
+    for (name, toml_src, expected_any) in cases {
+        let value: toml::Value = toml::from_str(toml_src).unwrap();
+        let err = McpConfig::from_toml(&value).expect_err("should fail");
+        let msg = err.to_string();
+        assert!(
+            expected_any.iter().any(|fragment| msg.contains(fragment)),
+            "case '{name}': message must contain one of {expected_any:?}, got: {msg}"
+        );
+    }
 }
 
 // ── McpAuthConfig tests ──────────────────────────────────────────────────────
 
 #[test]
-fn mcp_auth_defaults_to_none_when_omitted() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+fn mcp_auth_parse_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, &str, &str, McpAuthConfig)> = vec![
+        (
+            "defaults to none when omitted",
+            "c5t",
+            r#"
 [c5t]
 transport = "sse"
 url = "http://0.0.0.0:3737/mcp"
 "#,
-    )
-    .unwrap();
-
-    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
-    let c5t = parsed.mcp.iter().find(|s| s.name == "c5t").unwrap();
-    assert_eq!(c5t.auth, McpAuthConfig::None);
-}
-
-#[test]
-fn mcp_auth_parses_none_explicitly() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+            McpAuthConfig::None,
+        ),
+        (
+            "parses none explicitly",
+            "c5t",
+            r#"
 [c5t]
 transport = "sse"
 url = "http://0.0.0.0:3737/mcp"
@@ -210,18 +203,12 @@ url = "http://0.0.0.0:3737/mcp"
 [c5t.auth]
 type = "none"
 "#,
-    )
-    .unwrap();
-
-    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
-    let c5t = parsed.mcp.iter().find(|s| s.name == "c5t").unwrap();
-    assert_eq!(c5t.auth, McpAuthConfig::None);
-}
-
-#[test]
-fn mcp_auth_parses_bearer() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+            McpAuthConfig::None,
+        ),
+        (
+            "parses bearer",
+            "api",
+            r#"
 [api]
 transport = "http"
 url = "https://api.example.com/mcp"
@@ -230,23 +217,14 @@ url = "https://api.example.com/mcp"
 type = "bearer"
 token = "abc123"
 "#,
-    )
-    .unwrap();
-
-    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
-    let api = parsed.mcp.iter().find(|s| s.name == "api").unwrap();
-    assert_eq!(
-        api.auth,
-        McpAuthConfig::Bearer {
-            token: "abc123".to_string()
-        }
-    );
-}
-
-#[test]
-fn mcp_auth_parses_oauth_with_scope() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+            McpAuthConfig::Bearer {
+                token: "abc123".to_string(),
+            },
+        ),
+        (
+            "parses oauth with scope",
+            "ctx",
+            r#"
 [ctx]
 transport = "http"
 url = "https://mcp.context7.com/mcp"
@@ -255,26 +233,17 @@ url = "https://mcp.context7.com/mcp"
 type = "oauth"
 scope = "profile email"
 "#,
-    )
-    .unwrap();
-
-    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
-    let ctx = parsed.mcp.iter().find(|s| s.name == "ctx").unwrap();
-    assert_eq!(
-        ctx.auth,
-        McpAuthConfig::OAuth {
-            client_id: None,
-            client_secret: None,
-            scope: Some("profile email".to_string()),
-            redirect_uri: None,
-        }
-    );
-}
-
-#[test]
-fn mcp_auth_parses_oauth_with_client_credentials() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+            McpAuthConfig::OAuth {
+                client_id: None,
+                client_secret: None,
+                scope: Some("profile email".to_string()),
+                redirect_uri: None,
+            },
+        ),
+        (
+            "parses oauth with client credentials",
+            "gh",
+            r#"
 [gh]
 transport = "http"
 url = "https://api.github.com/mcp"
@@ -285,26 +254,17 @@ client-id = "Iv1.example"
 client-secret = "secret123"
 scope = "repo read:org"
 "#,
-    )
-    .unwrap();
-
-    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
-    let gh = parsed.mcp.iter().find(|s| s.name == "gh").unwrap();
-    assert_eq!(
-        gh.auth,
-        McpAuthConfig::OAuth {
-            client_id: Some("Iv1.example".to_string()),
-            client_secret: Some("secret123".to_string()),
-            scope: Some("repo read:org".to_string()),
-            redirect_uri: None,
-        }
-    );
-}
-
-#[test]
-fn mcp_auth_unknown_type_defaults_to_none() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+            McpAuthConfig::OAuth {
+                client_id: Some("Iv1.example".to_string()),
+                client_secret: Some("secret123".to_string()),
+                scope: Some("repo read:org".to_string()),
+                redirect_uri: None,
+            },
+        ),
+        (
+            "unknown type defaults to none",
+            "x",
+            r#"
 [x]
 transport = "http"
 url = "http://example.com/mcp"
@@ -312,18 +272,54 @@ url = "http://example.com/mcp"
 [x.auth]
 type = "unknown"
 "#,
-    )
-    .unwrap();
+            McpAuthConfig::None,
+        ),
+        (
+            "non-table auth field defaults to none",
+            "x",
+            r#"
+[x]
+transport = "http"
+url = "http://example.com/mcp"
+auth = "bearer"
+"#,
+            McpAuthConfig::None,
+        ),
+        (
+            "missing type defaults to none",
+            "x",
+            r#"
+[x]
+transport = "http"
+url = "http://example.com/mcp"
 
-    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
-    let x = parsed.mcp.iter().find(|s| s.name == "x").unwrap();
-    assert_eq!(x.auth, McpAuthConfig::None);
+[x.auth]
+token = "abc"
+"#,
+            McpAuthConfig::None,
+        ),
+    ];
+
+    // -- Exec & Check
+    for (name, server_name, toml_src, expected) in cases {
+        let value: toml::Value = toml::from_str(toml_src).unwrap();
+        let parsed = McpConfig::from_toml(&value).expect("should parse");
+        let server = parsed
+            .mcp
+            .iter()
+            .find(|s| s.name == server_name)
+            .expect("server exists");
+        assert_eq!(server.auth, expected, "case '{name}': auth");
+    }
 }
 
 #[test]
-fn mcp_auth_rejects_bearer_with_empty_token() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+fn mcp_auth_validation_table() {
+    // -- Setup & Fixtures
+    let cases: Vec<(&str, &str, &[&str])> = vec![
+        (
+            "bearer with empty token",
+            r#"
 [x]
 transport = "http"
 url = "http://example.com/mcp"
@@ -332,18 +328,11 @@ url = "http://example.com/mcp"
 type = "bearer"
 token = ""
 "#,
-    )
-    .unwrap();
-
-    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
-    let msg = err.to_string();
-    assert!(msg.contains("empty token") || msg.contains("Invalid MCP configuration"));
-}
-
-#[test]
-fn mcp_auth_rejects_oauth_on_stdio() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
+            &["empty token", "Invalid MCP configuration"],
+        ),
+        (
+            "oauth on stdio",
+            r#"
 [x]
 transport = "stdio"
 command = "my-server"
@@ -353,14 +342,23 @@ cwd = "/tmp"
 type = "oauth"
 scope = "profile"
 "#,
-    )
-    .unwrap();
+            &[
+                "requires HTTP or SSE transport",
+                "Invalid MCP configuration",
+            ],
+        ),
+    ];
 
-    let err = McpConfig::from_toml(&mcp_value).expect_err("should fail");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("requires HTTP or SSE transport") || msg.contains("Invalid MCP configuration")
-    );
+    // -- Exec & Check
+    for (name, toml_src, expected_any) in cases {
+        let value: toml::Value = toml::from_str(toml_src).unwrap();
+        let err = McpConfig::from_toml(&value).expect_err("should fail");
+        let msg = err.to_string();
+        assert!(
+            expected_any.iter().any(|fragment| msg.contains(fragment)),
+            "case '{name}': message must contain one of {expected_any:?}, got: {msg}"
+        );
+    }
 }
 
 #[test]
@@ -384,40 +382,4 @@ Authorization = "Bearer abc123"
         api.headers.get("Authorization").map(String::as_str),
         Some("Bearer abc123")
     );
-}
-
-#[test]
-fn mcp_auth_non_table_auth_field_defaults_to_none() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
-[x]
-transport = "http"
-url = "http://example.com/mcp"
-auth = "bearer"
-"#,
-    )
-    .unwrap();
-
-    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
-    let x = parsed.mcp.iter().find(|s| s.name == "x").unwrap();
-    assert_eq!(x.auth, McpAuthConfig::None);
-}
-
-#[test]
-fn mcp_auth_missing_type_defaults_to_none() {
-    let mcp_value: toml::Value = toml::from_str(
-        r#"
-[x]
-transport = "http"
-url = "http://example.com/mcp"
-
-[x.auth]
-token = "abc"
-"#,
-    )
-    .unwrap();
-
-    let parsed = McpConfig::from_toml(&mcp_value).expect("should parse");
-    let x = parsed.mcp.iter().find(|s| s.name == "x").unwrap();
-    assert_eq!(x.auth, McpAuthConfig::None);
 }

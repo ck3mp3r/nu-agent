@@ -5,20 +5,22 @@ use agnt_core::bus::WarningEvent;
 use agnt_core::orchestrator::UiStateEvent;
 use agnt_core::protocol::contracts::McpUsabilityState;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
-fn reduce_ui_state_event_sets_active_model_identity() {
+fn reduce_ui_state_event_updates_status_fields() -> Result<()> {
+    // -- Setup & Fixtures
     let mut state = AppState::default();
+
+    // -- Exec & Check: model identity.
     assert!(
         state
             .status
             .reduce_ui_state_event(UiStateEvent::SetActiveModelIdentity("gpt-4".to_string()))
     );
     assert_eq!(state.status.identity.active_model_identity, "gpt-4");
-}
 
-#[test]
-fn reduce_ui_state_event_sets_active_persona_icon() {
-    let mut state = AppState::default();
+    // -- Exec & Check: persona icon.
     assert!(
         state
             .status
@@ -28,22 +30,16 @@ fn reduce_ui_state_event_sets_active_persona_icon() {
         state.status.identity.active_persona_icon.as_deref(),
         Some("🦀")
     );
-}
 
-#[test]
-fn reduce_ui_state_event_sets_context_window_max_tokens() {
-    let mut state = AppState::default();
+    // -- Exec & Check: context window max tokens.
     assert!(
         state
             .status
             .reduce_ui_state_event(UiStateEvent::SetContextWindowMaxTokens(Some(128_000)))
     );
     assert_eq!(state.status.tokens.context_window_max_tokens, Some(128_000));
-}
 
-#[test]
-fn reduce_ui_state_event_sets_mcp_server_state() {
-    let mut state = AppState::default();
+    // -- Exec & Check: mcp server state and visible tool count.
     state.status.mcp.set_mcp_servers(vec![McpServerState {
         name: "server-a".to_string(),
         state: McpServerUsabilityState::Disabled,
@@ -63,11 +59,8 @@ fn reduce_ui_state_event_sets_mcp_server_state() {
         McpServerUsabilityState::Enabled
     );
     assert_eq!(state.status.mcp.llm_visible_mcp_tool_count, 3);
-}
 
-#[test]
-fn reduce_ui_state_event_sets_mcp_visible_tool_count() {
-    let mut state = AppState::default();
+    // -- Exec & Check: per-server visible tool count.
     assert!(
         state
             .status
@@ -83,11 +76,8 @@ fn reduce_ui_state_event_sets_mcp_visible_tool_count() {
             .mcp_visible_tool_count_for_server_name("server-a"),
         5
     );
-}
 
-#[test]
-fn reduce_ui_state_event_sets_mcp_visible_tool_names() {
-    let mut state = AppState::default();
+    // -- Exec & Check: per-server visible tool names are sorted.
     assert!(
         state
             .status
@@ -103,189 +93,113 @@ fn reduce_ui_state_event_sets_mcp_visible_tool_names() {
             .mcp_visible_tool_names_for_server_name("server-a"),
         vec!["a".to_string(), "b".to_string()]
     );
-}
 
-#[test]
-fn reduce_ui_state_event_returns_false_for_unhandled() {
-    let mut state = AppState::default();
+    // -- Exec & Check: an unhandled event reports false.
     assert!(
         !state
             .status
             .reduce_ui_state_event(UiStateEvent::ClearTranscript)
     );
+    Ok(())
 }
 
 #[test]
-fn reduce_warning_event_message_sets_status_line_and_warning_kind() {
+fn status_message_kind_and_warning_events() -> Result<()> {
+    // -- Setup & Fixtures
     let mut state = AppState::default();
+
+    // -- Exec & Check: a warning event sets the status line and warning kind.
     assert!(state.status.reduce_warning_event(WarningEvent::Message {
         message: "hello".to_string()
     }));
     assert_eq!(state.status.message.status_line(), "hello");
     assert_eq!(state.status.message.kind(), StatusMessageKind::Warning);
-}
 
-#[test]
-fn set_message_resets_kind_to_neutral() {
-    let mut state = AppState::default();
-    state.status.message.set_warning("warned");
-    assert_eq!(state.status.message.kind(), StatusMessageKind::Warning);
-
+    // -- Exec & Check: set_message resets the kind to neutral.
     state.status.message.set_message("info");
     assert_eq!(state.status.message.kind(), StatusMessageKind::Neutral);
-}
 
-#[test]
-fn clear_empties_status_line_and_resets_kind_to_neutral() {
-    let mut state = AppState::default();
+    // -- Exec & Check: clear empties the line and resets the kind.
     state.status.message.set_warning("warned");
-
     state.status.message.clear();
-
     assert!(state.status.message.status_line().is_empty());
     assert_eq!(state.status.message.kind(), StatusMessageKind::Neutral);
-}
 
-#[test]
-fn reduce_warning_event_turn_error_returns_false() {
-    let mut state = AppState::default();
+    // -- Exec & Check: a turn-error warning event reports false.
     assert!(!state.status.reduce_warning_event(WarningEvent::TurnError {
         message: "boom".to_string()
     }));
+    Ok(())
 }
 
 #[test]
-fn expired_false_when_written_at_is_none_by_default() {
+fn status_message_expiry_matrix() -> Result<()> {
     // -- Setup & Fixtures
+    let far_future = Instant::now() + Duration::from_secs(3600);
+
+    // -- Exec & Check: an unstamped message never expires.
     let state = AppState::default();
+    assert!(!state.status.message.expired(far_future));
 
-    // -- Exec & Check
-    // A far-future now proves the None guard: a stamped message would expire.
+    // -- Exec & Check: a neutral message expires after the neutral TTL.
+    let mut neutral = AppState::default();
+    neutral.status.message.set_message("info");
+    assert!(!neutral.status.message.expired(Instant::now()));
     assert!(
-        !state
-            .status
-            .message
-            .expired(Instant::now() + Duration::from_secs(3600))
-    );
-}
-
-#[test]
-fn set_message_stamps_written_at_and_expires_after_neutral_ttl() {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-
-    // -- Exec
-    state.status.message.set_message("info");
-
-    // -- Check
-    assert!(!state.status.message.expired(Instant::now()));
-    assert!(
-        state
+        neutral
             .status
             .message
             .expired(Instant::now() + Duration::from_secs(5))
     );
-}
 
-#[test]
-fn set_warning_stamps_written_at_and_expires_after_warning_ttl() {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-
-    // -- Exec
-    state.status.message.set_warning("warned");
-
-    // -- Check
+    // -- Exec & Check: a warning expires after the warning TTL.
+    let mut warning = AppState::default();
+    warning.status.message.set_warning("warned");
     assert!(
-        !state
+        !warning
             .status
             .message
             .expired(Instant::now() + Duration::from_secs(5))
     );
     assert!(
-        state
+        warning
             .status
             .message
             .expired(Instant::now() + Duration::from_secs(15))
     );
+
+    // -- Exec & Check: clear resets written_at so the message never expires.
+    let mut cleared = AppState::default();
+    cleared.status.message.set_message("info");
+    cleared.status.message.clear();
+    assert!(!cleared.status.message.expired(far_future));
+
+    // -- Exec & Check: a `now` before written_at reports false, not panic.
+    let mut past = AppState::default();
+    let before = Instant::now() - Duration::from_secs(1);
+    past.status.message.set_message("info");
+    assert!(!past.status.message.expired(before));
+    Ok(())
 }
 
 #[test]
-fn clear_resets_written_at_so_message_never_expires() {
+fn status_message_pending_lifecycle() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    state.status.message.set_message("info");
 
-    // -- Exec
-    state.status.message.clear();
-
-    // -- Check
-    // A far-future now proves written_at is None: a stamped message would expire.
-    assert!(
-        !state
-            .status
-            .message
-            .expired(Instant::now() + Duration::from_secs(3600))
-    );
-}
-
-#[test]
-fn expired_false_when_now_is_not_after_written_at() {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-    let past = Instant::now() - Duration::from_secs(1);
-
-    // -- Exec
-    state.status.message.set_message("info");
-
-    // -- Check
-    // set_message stamps after `past` was captured, so `past` is not after
-    // written_at and the age check must report false, not panic.
-    assert!(!state.status.message.expired(past));
-}
-
-#[test]
-fn test_status_message_is_pending_false_by_default() {
-    // -- Setup & Fixtures
-    let state = AppState::default();
-
-    // -- Exec & Check
+    // -- Exec & Check: not pending by default.
     assert!(!state.status.message.is_pending());
-}
 
-#[test]
-fn test_status_message_is_pending_true_after_set_message() {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-
-    // -- Exec
+    // -- Exec & Check: pending after set_message.
     state.status.message.set_message("info");
-
-    // -- Check
     assert!(state.status.message.is_pending());
-}
 
-#[test]
-fn test_status_message_is_pending_true_after_set_warning() {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-
-    // -- Exec
+    // -- Exec & Check: pending after set_warning.
     state.status.message.set_warning("warned");
-
-    // -- Check
     assert!(state.status.message.is_pending());
-}
 
-#[test]
-fn test_status_message_is_pending_false_after_clear() {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-    state.status.message.set_message("info");
-
-    // -- Exec
+    // -- Exec & Check: not pending after clear.
     state.status.message.clear();
-
-    // -- Check
     assert!(!state.status.message.is_pending());
+    Ok(())
 }

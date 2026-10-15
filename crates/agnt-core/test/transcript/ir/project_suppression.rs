@@ -2,12 +2,12 @@ use super::*;
 
 // ── BlockSource::project — producer-decided title/label rows ────────────────
 
-/// WHEN a preview display carries `title: None`, THE title row SHALL NOT be
-/// rendered: the producer decides the row is redundant.
+/// The producer decides which rows are redundant: a `None` title or label
+/// renders no row, a `Some` one renders its own line, and stats always render.
 #[test]
-fn project_tool_display_with_no_title_omits_title_row() -> Result<()> {
+fn project_tool_suppression_table() -> Result<()> {
     // -- Setup & Fixtures: the production edit shape — no title, no label.
-    let source = BlockSource::Tool {
+    let no_title = BlockSource::Tool {
         name: ToolName("edit".to_string()),
         call: CallLine {
             summary: "→ foo.rs (diff)".to_string(),
@@ -25,33 +25,7 @@ fn project_tool_display_with_no_title_omits_title_row() -> Result<()> {
             }],
         }),
     };
-
-    // -- Exec
-    let projected = source.project(80);
-
-    // -- Check: the call line, then the diff lines; no title or label row.
-    let lines = projected_lines_text(&projected);
-    assert!(
-        !lines.iter().any(|l| l == "edit foo.rs"),
-        "a None title must render no title row, got: {lines:?}"
-    );
-    assert!(
-        !lines.iter().any(|l| l == "changes (diff)"),
-        "a None label must render no label row, got: {lines:?}"
-    );
-    assert!(
-        lines.iter().any(|l| l.contains("+++ b")),
-        "the diff content must still render, got: {lines:?}"
-    );
-    Ok(())
-}
-
-/// WHEN a preview display carries `title: Some(...)`, THE title row SHALL be
-/// rendered as its own line.
-#[test]
-fn project_tool_display_with_title_renders_title_row() -> Result<()> {
-    // -- Setup & Fixtures
-    let source = BlockSource::Tool {
+    let with_title = BlockSource::Tool {
         name: ToolName("run".to_string()),
         call: CallLine {
             summary: "nu".to_string(),
@@ -68,26 +42,7 @@ fn project_tool_display_with_title_renders_title_row() -> Result<()> {
             }],
         }),
     };
-
-    // -- Exec
-    let projected = source.project(80);
-
-    // -- Check: a whole line equals the title.
-    let lines = projected_lines_text(&projected);
-    assert!(
-        lines.iter().any(|l| l == "edit foo.rs"),
-        "a Some title must render as its own line, got: {lines:?}"
-    );
-    Ok(())
-}
-
-/// WHEN a section carries `label: Some(...)`, THE `label (language)` row SHALL
-/// be rendered.
-#[test]
-fn project_tool_section_with_label_renders_label_row() -> Result<()> {
-    // -- Setup & Fixtures: the label differs from the call summary so a
-    // whole-line check cannot be satisfied by the summary line.
-    let source = BlockSource::Tool {
+    let with_label = BlockSource::Tool {
         name: ToolName("edit".to_string()),
         call: CallLine {
             summary: "→ foo.rs (diff)".to_string(),
@@ -105,25 +60,8 @@ fn project_tool_section_with_label_renders_label_row() -> Result<()> {
             }],
         }),
     };
-
-    // -- Exec
-    let projected = source.project(80);
-
-    // -- Check
-    let lines = projected_lines_text(&projected);
-    assert!(
-        lines.iter().any(|l| l == "alpha.rs (diff)"),
-        "a Some label must render as `label (language)`, got: {lines:?}"
-    );
-    Ok(())
-}
-
-/// WHEN a section carries `label: None`, THE label row SHALL NOT be rendered
-/// even though the section content still renders.
-#[test]
-fn project_tool_section_without_label_omits_label_row() -> Result<()> {
-    // -- Setup & Fixtures: the production nu shape — no title, no label.
-    let source = BlockSource::Tool {
+    // The production nu shape — no title, no label.
+    let no_label = BlockSource::Tool {
         name: ToolName("nu".to_string()),
         call: CallLine {
             summary: "⏱ 120s".to_string(),
@@ -140,31 +78,7 @@ fn project_tool_section_without_label_omits_label_row() -> Result<()> {
             }],
         }),
     };
-
-    // -- Exec
-    let projected = source.project(80);
-
-    // -- Check: only the call line, then the highlighted command lines.
-    let expected = crate::transcript::markdown::project_code_block_lines("nu", "ls | select name");
-    assert_eq!(
-        projected[1..],
-        expected[..],
-        "code lines follow the call line with no label row"
-    );
-    let lines = projected_lines_text(&projected);
-    assert!(
-        !lines.iter().any(|l| l == "nu (nu)"),
-        "a None label must render no label row, got: {lines:?}"
-    );
-    Ok(())
-}
-
-/// WHEN a section carries stats, THE stats row SHALL be rendered regardless of
-/// the title/label shape: the producer decides, the renderer never suppresses.
-#[test]
-fn project_tool_section_with_stats_renders_stats_row() -> Result<()> {
-    // -- Setup & Fixtures
-    let source = BlockSource::Tool {
+    let with_stats = BlockSource::Tool {
         name: ToolName("edit".to_string()),
         call: CallLine {
             summary: "→ foo.rs (diff)".to_string(),
@@ -191,15 +105,58 @@ fn project_tool_section_with_stats_renders_stats_row() -> Result<()> {
     };
 
     // -- Exec
-    let projected = source.project(80);
+    let no_title_lines = projected_lines_text(&no_title.project(80));
+    let with_title_lines = projected_lines_text(&with_title.project(80));
+    let with_label_lines = projected_lines_text(&with_label.project(80));
+    let no_label_projected = no_label.project(80);
+    let no_label_lines = projected_lines_text(&no_label_projected);
+    let with_stats_lines = projected_lines_text(&with_stats.project(80));
 
-    // -- Check
-    let lines = projected_lines_text(&projected);
+    // -- Check: a None title and label render no rows; the diff still renders.
     assert!(
-        lines
+        !no_title_lines.iter().any(|l| l == "edit foo.rs"),
+        "a None title must render no title row, got: {no_title_lines:?}"
+    );
+    assert!(
+        !no_title_lines.iter().any(|l| l == "changes (diff)"),
+        "a None label must render no label row, got: {no_title_lines:?}"
+    );
+    assert!(
+        no_title_lines.iter().any(|l| l.contains("+++ b")),
+        "the diff content must still render, got: {no_title_lines:?}"
+    );
+
+    // -- Check: a Some title renders as its own line.
+    assert!(
+        with_title_lines.iter().any(|l| l == "edit foo.rs"),
+        "a Some title must render as its own line, got: {with_title_lines:?}"
+    );
+
+    // -- Check: a Some label renders as `label (language)`.
+    assert!(
+        with_label_lines.iter().any(|l| l == "alpha.rs (diff)"),
+        "a Some label must render as `label (language)`, got: {with_label_lines:?}"
+    );
+
+    // -- Check: a None label renders no label row; code lines follow the call line.
+    let expected_code =
+        crate::transcript::markdown::project_code_block_lines("nu", "ls | select name");
+    assert_eq!(
+        no_label_projected[1..],
+        expected_code[..],
+        "code lines follow the call line with no label row"
+    );
+    assert!(
+        !no_label_lines.iter().any(|l| l == "nu (nu)"),
+        "a None label must render no label row, got: {no_label_lines:?}"
+    );
+
+    // -- Check: stats render regardless of the title/label shape.
+    assert!(
+        with_stats_lines
             .iter()
             .any(|l| l.contains("files=2") && l.contains("+5") && l.contains("-1")),
-        "stats line must render, got: {lines:?}"
+        "stats line must render, got: {with_stats_lines:?}"
     );
     Ok(())
 }

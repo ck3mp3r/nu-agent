@@ -199,7 +199,8 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
 }
 
 #[test]
-fn permission_request_focuses_transcript_for_immediate_prompt_visibility() {
+fn permission_request_table() -> Result<()> {
+    // A permission request focuses the transcript for immediate prompt visibility.
     let mut state = AppState::default();
     state.scroll.pane_focus = crate::state::PaneFocus::Input;
 
@@ -224,15 +225,11 @@ fn permission_request_focuses_transcript_for_immediate_prompt_visibility() {
 
     assert_eq!(state.scroll.pane_focus, crate::state::PaneFocus::Input);
     assert!(state.permission.has_prompt());
-}
 
-#[test]
-fn permission_requested_dispatch_orders_tool_before_diff_preview_and_follows_tail() -> Result<()> {
-    // -- Setup & Fixtures
+    // PermissionRequested dispatch orders the tool before the diff preview and follows the tail.
     let mut state = AppState::default();
     state.scroll.following_tail = false;
 
-    // -- Exec
     dispatch_ui_event(
         &mut state,
         UiEvent::ToolStarted {
@@ -272,7 +269,6 @@ fn permission_requested_dispatch_orders_tool_before_diff_preview_and_follows_tai
         },
     );
 
-    // -- Check
     // The preview is its own ToolDisplay block pushed directly after the
     // pending Tool block, so there are exactly two blocks.
     assert_eq!(

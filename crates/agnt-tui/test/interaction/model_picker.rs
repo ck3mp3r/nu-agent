@@ -1,7 +1,109 @@
 use super::*;
 
 #[test]
-fn model_picker_query_accepts_j_and_k_characters() {
+fn model_picker_navigation_table() {
+    // Model picker Ctrl-N moves to the next item.
+    let mut state = AppState::default();
+    state.set_picker_options(
+        ActivePicker::Model,
+        vec![
+            agnt_core::protocol::picker::ModelPickerOption {
+                provider: "openai".to_string(),
+                model: "gpt-4o-mini".to_string(),
+                identity: "openai/gpt-4o-mini".to_string(),
+                display: "openai / gpt-4o-mini".to_string(),
+                active: true,
+                context_window: None,
+                max_output: None,
+                configured: false,
+                provider_display_name: String::new(),
+            },
+            agnt_core::protocol::picker::ModelPickerOption {
+                provider: "anthropic".to_string(),
+                model: "claude-3-5-sonnet".to_string(),
+                identity: "anthropic/claude-3-5-sonnet".to_string(),
+                display: "anthropic / claude-3-5-sonnet".to_string(),
+                active: false,
+                context_window: None,
+                max_output: None,
+                configured: false,
+                provider_display_name: String::new(),
+            },
+        ],
+    );
+    state.picker.open(ActivePicker::Model);
+
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
+
+    assert!(changed);
+    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+
+    // Query picker Ctrl-N moves to the next item consistently.
+    let mut palette_state = AppState::default();
+    let _ = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::CtrlP),
+        None,
+    );
+    assert_eq!(
+        palette_state.picker.render_kind(),
+        Some(PickerRenderKind::CommandPalette)
+    );
+
+    let palette_changed = dispatch_terminal_event(
+        &mut palette_state,
+        &TerminalEvent::Key(TerminalKey::CtrlN),
+        None,
+    );
+    assert!(palette_changed);
+    assert_eq!(palette_state.picker.active_state().unwrap().selection, 1);
+
+    // Model picker Ctrl-P moves the selection up.
+    let mut state = AppState::default();
+    state.set_picker_options(
+        ActivePicker::Model,
+        vec![
+            agnt_core::protocol::picker::ModelPickerOption {
+                provider: "openai".to_string(),
+                model: "gpt-4o-mini".to_string(),
+                identity: "openai/gpt-4o-mini".to_string(),
+                display: "openai / gpt-4o-mini".to_string(),
+                active: true,
+                context_window: None,
+                max_output: None,
+                configured: false,
+                provider_display_name: String::new(),
+            },
+            agnt_core::protocol::picker::ModelPickerOption {
+                provider: "anthropic".to_string(),
+                model: "claude-3-5-sonnet".to_string(),
+                identity: "anthropic/claude-3-5-sonnet".to_string(),
+                display: "anthropic / claude-3-5-sonnet".to_string(),
+                active: false,
+                context_window: None,
+                max_output: None,
+                configured: false,
+                provider_display_name: String::new(),
+            },
+        ],
+    );
+    state.picker.open(ActivePicker::Model);
+
+    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
+    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
+
+    assert!(changed);
+    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    assert_eq!(state.picker.render_kind(), Some(PickerRenderKind::Model));
+}
+
+#[test]
+fn model_picker_query_table() {
+    // The query accepts j and k characters.
     let mut state = AppState::default();
     state.set_picker_options(
         ActivePicker::Model,
@@ -47,10 +149,8 @@ fn model_picker_query_accepts_j_and_k_characters() {
     assert!(k_changed);
     assert_eq!(state.picker.active_state().unwrap().query, "jk");
     assert_eq!(state.picker.active_state().unwrap().filtered().len(), 2);
-}
 
-#[test]
-fn model_picker_navigation_does_not_consume_query_jk_input() {
+    // Navigation does not consume query jk input.
     let mut state = AppState::default();
     state.set_picker_options(
         ActivePicker::Model,
@@ -124,147 +224,4 @@ fn model_picker_navigation_does_not_consume_query_jk_input() {
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Up), None);
     assert!(up_changed);
     assert_eq!(state.picker.active_state().unwrap().selection, 0);
-}
-
-#[test]
-fn model_picker_ctrl_n_moves_to_next_item() {
-    let mut state = AppState::default();
-    state.set_picker_options(
-        ActivePicker::Model,
-        vec![
-            agnt_core::protocol::picker::ModelPickerOption {
-                provider: "openai".to_string(),
-                model: "gpt-4o-mini".to_string(),
-                identity: "openai/gpt-4o-mini".to_string(),
-                display: "openai / gpt-4o-mini".to_string(),
-                active: true,
-                context_window: None,
-                max_output: None,
-                configured: false,
-                provider_display_name: String::new(),
-            },
-            agnt_core::protocol::picker::ModelPickerOption {
-                provider: "anthropic".to_string(),
-                model: "claude-3-5-sonnet".to_string(),
-                identity: "anthropic/claude-3-5-sonnet".to_string(),
-                display: "anthropic / claude-3-5-sonnet".to_string(),
-                active: false,
-                context_window: None,
-                max_output: None,
-                configured: false,
-                provider_display_name: String::new(),
-            },
-        ],
-    );
-    state.picker.open(ActivePicker::Model);
-
-    let changed =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
-
-    assert!(changed);
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
-}
-
-#[test]
-fn query_picker_ctrl_n_moves_to_next_item_consistently() {
-    let mut palette_state = AppState::default();
-    let _ = dispatch_terminal_event(
-        &mut palette_state,
-        &TerminalEvent::Key(TerminalKey::CtrlP),
-        None,
-    );
-    assert_eq!(
-        palette_state.picker.render_kind(),
-        Some(PickerRenderKind::CommandPalette)
-    );
-
-    let palette_changed = dispatch_terminal_event(
-        &mut palette_state,
-        &TerminalEvent::Key(TerminalKey::CtrlN),
-        None,
-    );
-    assert!(palette_changed);
-    assert_eq!(palette_state.picker.active_state().unwrap().selection, 1);
-
-    let mut model_state = AppState::default();
-    model_state.set_picker_options(
-        ActivePicker::Model,
-        vec![
-            agnt_core::protocol::picker::ModelPickerOption {
-                provider: "openai".to_string(),
-                model: "gpt-4o-mini".to_string(),
-                identity: "openai/gpt-4o-mini".to_string(),
-                display: "openai / gpt-4o-mini".to_string(),
-                active: true,
-                context_window: None,
-                max_output: None,
-                configured: false,
-                provider_display_name: String::new(),
-            },
-            agnt_core::protocol::picker::ModelPickerOption {
-                provider: "anthropic".to_string(),
-                model: "claude-3-5-sonnet".to_string(),
-                identity: "anthropic/claude-3-5-sonnet".to_string(),
-                display: "anthropic / claude-3-5-sonnet".to_string(),
-                active: false,
-                context_window: None,
-                max_output: None,
-                configured: false,
-                provider_display_name: String::new(),
-            },
-        ],
-    );
-    model_state.picker.open(ActivePicker::Model);
-
-    let model_changed = dispatch_terminal_event(
-        &mut model_state,
-        &TerminalEvent::Key(TerminalKey::CtrlN),
-        None,
-    );
-    assert!(model_changed);
-    assert_eq!(model_state.picker.active_state().unwrap().selection, 1);
-}
-
-#[test]
-fn model_picker_ctrl_p_moves_selection_up() {
-    let mut state = AppState::default();
-    state.set_picker_options(
-        ActivePicker::Model,
-        vec![
-            agnt_core::protocol::picker::ModelPickerOption {
-                provider: "openai".to_string(),
-                model: "gpt-4o-mini".to_string(),
-                identity: "openai/gpt-4o-mini".to_string(),
-                display: "openai / gpt-4o-mini".to_string(),
-                active: true,
-                context_window: None,
-                max_output: None,
-                configured: false,
-                provider_display_name: String::new(),
-            },
-            agnt_core::protocol::picker::ModelPickerOption {
-                provider: "anthropic".to_string(),
-                model: "claude-3-5-sonnet".to_string(),
-                identity: "anthropic/claude-3-5-sonnet".to_string(),
-                display: "anthropic / claude-3-5-sonnet".to_string(),
-                active: false,
-                context_window: None,
-                max_output: None,
-                configured: false,
-                provider_display_name: String::new(),
-            },
-        ],
-    );
-    state.picker.open(ActivePicker::Model);
-
-    // Move down first
-    let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
-
-    let changed =
-        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
-
-    assert!(changed);
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
-    assert_eq!(state.picker.render_kind(), Some(PickerRenderKind::Model));
 }

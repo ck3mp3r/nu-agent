@@ -1,15 +1,12 @@
 use super::*;
 
+/// Agent cycling: `has_agents_to_cycle` needs two or more names, the next name
+/// cycles from the active identity, and the cycle request queues a switch.
 #[test]
-fn test_has_agents_to_cycle_empty() {
-    let state = AppState::default();
-    assert!(state.status.identity.agent_cycle_names.is_empty());
-    assert!(!state.has_agents_to_cycle());
-}
-
-#[test]
-fn test_has_agents_to_cycle_one() {
-    let state = AppState {
+fn agent_cycle_helpers() -> Result<()> {
+    // -- Setup & Fixtures
+    let empty = AppState::default();
+    let one = AppState {
         status: StatusState {
             identity: IdentityState {
                 agent_cycle_names: vec!["planner".to_string()],
@@ -19,27 +16,7 @@ fn test_has_agents_to_cycle_one() {
         },
         ..AppState::default()
     };
-    assert!(!state.has_agents_to_cycle());
-}
-
-#[test]
-fn test_has_agents_to_cycle_two() {
-    let state = AppState {
-        status: StatusState {
-            identity: IdentityState {
-                agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        ..AppState::default()
-    };
-    assert!(state.has_agents_to_cycle());
-}
-
-#[test]
-fn test_next_agent_cycle_name_cycles() {
-    let mut state = AppState {
+    let mut two = AppState {
         status: StatusState {
             identity: IdentityState {
                 agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
@@ -50,16 +27,20 @@ fn test_next_agent_cycle_name_cycles() {
         ..AppState::default()
     };
 
-    state.set_active_agent_identity("planner");
-    assert_eq!(state.next_agent_cycle_name(), Some("maker".to_string()));
+    // -- Exec & Check: has_agents_to_cycle requires two or more names.
+    assert!(empty.status.identity.agent_cycle_names.is_empty());
+    assert!(!empty.has_agents_to_cycle());
+    assert!(!one.has_agents_to_cycle());
+    assert!(two.has_agents_to_cycle());
 
-    state.set_active_agent_identity("maker");
-    assert_eq!(state.next_agent_cycle_name(), Some("planner".to_string()));
-}
+    // -- Exec & Check: the next name cycles from the active identity.
+    two.set_active_agent_identity("planner");
+    assert_eq!(two.next_agent_cycle_name(), Some("maker".to_string()));
+    two.set_active_agent_identity("maker");
+    assert_eq!(two.next_agent_cycle_name(), Some("planner".to_string()));
 
-#[test]
-fn test_next_agent_cycle_name_no_current() {
-    let state = AppState {
+    // -- Setup & Fixtures: no current identity.
+    let no_current = AppState {
         status: StatusState {
             identity: IdentityState {
                 agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
@@ -69,25 +50,19 @@ fn test_next_agent_cycle_name_no_current() {
         },
         ..AppState::default()
     };
-    assert_eq!(state.next_agent_cycle_name(), Some("maker".to_string()));
-}
 
-#[test]
-fn test_queue_cycle_agent_request() {
-    let mut state = AppState {
-        status: StatusState {
-            identity: IdentityState {
-                agent_cycle_names: vec!["planner".to_string(), "maker".to_string()],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        ..AppState::default()
-    };
-    state.set_active_agent_identity("planner");
+    // -- Exec & Check: with no current identity the next name is returned.
+    assert_eq!(
+        no_current.next_agent_cycle_name(),
+        Some("maker".to_string())
+    );
 
-    state.queue_cycle_agent_request();
-
-    let request = state.take_next_switch_request();
-    assert_eq!(request, Some(SwitchRequest::Agent("maker".to_string())));
+    // -- Exec & Check: the cycle request queues a switch to the next name.
+    two.set_active_agent_identity("planner");
+    two.queue_cycle_agent_request();
+    assert_eq!(
+        two.take_next_switch_request(),
+        Some(SwitchRequest::Agent("maker".to_string()))
+    );
+    Ok(())
 }

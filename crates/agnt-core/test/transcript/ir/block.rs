@@ -2,44 +2,27 @@ use super::*;
 
 // ── Block / BlockSource ──────────────────────────────────────────────────────
 
+/// A `Block` freezes source, lane, fill, and status at construction time for
+/// every source family.
 #[test]
-fn block_construction_stores_source_lane_fill_status() {
+fn block_construction_table() -> Result<()> {
     // -- Setup & Fixtures
     let msg = Message {
         role: MessageRole::User,
         markdown: "hi".to_string(),
     };
-
-    // -- Exec
-    let block = Block {
-        source: msg.source(),
-        lane: msg.lane(),
-        fill: msg.fill(),
-        status: None,
-    };
-
-    // -- Check
-    assert_eq!(
-        block.source,
-        BlockSource::Markdown {
-            role: MessageRole::User,
-            markdown: "hi".to_string(),
-        }
-    );
-    assert_eq!(block.lane, Lane::Marker("▏"));
-    assert_eq!(block.fill, Fill::Full);
-    assert!(block.status.is_none());
-}
-
-#[test]
-fn block_holds_tool_source_with_call_line() -> Result<()> {
-    // -- Setup & Fixtures
     let call = CallLine {
         summary: "→ {\"path\":\"a.rs\"}".to_string(),
     };
 
     // -- Exec
-    let block = Block {
+    let message_block = Block {
+        source: msg.source(),
+        lane: msg.lane(),
+        fill: msg.fill(),
+        status: None,
+    };
+    let tool_block = Block {
         source: BlockSource::Tool {
             name: ToolName("read".to_string()),
             call,
@@ -50,25 +33,33 @@ fn block_holds_tool_source_with_call_line() -> Result<()> {
         status: Some(ItemStatus::InProgress),
     };
 
-    // -- Check
+    // -- Check: a message block stores source, lane, fill, and no status.
+    assert_eq!(
+        message_block.source,
+        BlockSource::Markdown {
+            role: MessageRole::User,
+            markdown: "hi".to_string(),
+        }
+    );
+    assert_eq!(message_block.lane, Lane::Marker("▏"));
+    assert_eq!(message_block.fill, Fill::Full);
+    assert!(message_block.status.is_none());
+
+    // -- Check: a tool block stores its call line and status.
     let BlockSource::Tool {
         name,
         call,
         preview,
-    } = &block.source
+    } = &tool_block.source
     else {
         return Err("expected Tool source".into());
     };
     assert_eq!(name.0, "read");
     assert_eq!(call.summary, "→ {\"path\":\"a.rs\"}");
     assert!(preview.is_none());
-    assert_eq!(block.status, Some(ItemStatus::InProgress));
-    Ok(())
-}
+    assert_eq!(tool_block.status, Some(ItemStatus::InProgress));
 
-#[test]
-fn block_holds_notice_banner_and_spacer_sources() {
-    // -- Setup & Fixtures
+    // -- Check: notice, banner, and spacer sources round-trip through Block.
     let sources = [
         BlockSource::Notice {
             kind: NoticeKind::Compaction,
@@ -79,8 +70,6 @@ fn block_holds_notice_banner_and_spacer_sources() {
         },
         BlockSource::Spacer,
     ];
-
-    // -- Exec & Check
     assert!(
         matches!(
             sources[0],
@@ -99,6 +88,7 @@ fn block_holds_notice_banner_and_spacer_sources() {
         matches!(sources[2], BlockSource::Spacer),
         "third source must be a Spacer"
     );
+    Ok(())
 }
 
 // ── BlockFamily::is_tool_family ─────────────────────────────────────────────

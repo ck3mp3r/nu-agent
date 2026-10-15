@@ -3,237 +3,145 @@ use super::ir::{
     StyleHint, Tool, ToolName,
 };
 use super::items::*;
-use super::renderer::Renderable;
+use super::renderer::{ItemStatus, Renderable};
 use crate::protocol::tool_args::CallLine;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-// ── Message stores raw markdown ──────────────────────────────────────────────
+// ── Message ─────────────────────────────────────────────────────────────────
 
+/// A message stores its role and raw markdown, and answers the three
+/// `Renderable` questions per role.
 #[test]
-fn message_stores_role_and_raw_markdown() {
+fn message_stores_role_markdown_and_renderable_shape() {
     // -- Setup & Fixtures
-    let msg = Message {
+    let user = Message {
         role: MessageRole::User,
         markdown: "# Hello".to_string(),
     };
-
-    // -- Exec & Check
-    assert_eq!(msg.role, MessageRole::User);
-    assert_eq!(msg.markdown, "# Hello");
-}
-
-#[test]
-fn message_clone_is_equal() {
-    // -- Setup & Fixtures
-    let msg = Message {
+    let assistant = Message {
         role: MessageRole::Assistant,
         markdown: "**bold**".to_string(),
     };
 
-    // -- Exec & Check
-    assert_eq!(msg, msg.clone());
-}
+    // -- Exec & Check: raw markdown and role are stored verbatim.
+    assert_eq!(user.role, MessageRole::User);
+    assert_eq!(user.markdown, "# Hello");
+    assert_eq!(assistant, assistant.clone(), "clone must be equal");
 
-// ── Message: user carries marker lane and full fill ─────────────────────────
-
-#[test]
-fn user_message_lanes_marker_and_fills_full() {
-    // -- Setup & Fixtures
-    let msg = Message {
-        role: MessageRole::User,
-        markdown: "hi".to_string(),
-    };
-
-    // -- Exec & Check
-    assert_eq!(msg.lane(), Lane::Marker("▏"));
-    assert_eq!(msg.fill(), Fill::Full);
+    // -- Check: user carries the marker lane and full fill.
+    assert_eq!(user.lane(), Lane::Marker("▏"));
+    assert_eq!(user.fill(), Fill::Full);
     assert_eq!(
-        msg.source(),
+        user.source(),
         BlockSource::Markdown {
             role: MessageRole::User,
-            markdown: "hi".to_string(),
+            markdown: "# Hello".to_string(),
         }
     );
-}
 
-// ── Message: assistant carries blank lane and no fill ────────────────────────
-
-#[test]
-fn assistant_message_lanes_blank_and_fills_none() {
-    // -- Setup & Fixtures
-    let msg = Message {
-        role: MessageRole::Assistant,
-        markdown: "hello".to_string(),
-    };
-
-    // -- Exec & Check
-    assert_eq!(msg.lane(), Lane::Blank);
-    assert_eq!(msg.fill(), Fill::None);
+    // -- Check: assistant carries the blank lane and no fill.
+    assert_eq!(assistant.lane(), Lane::Blank);
+    assert_eq!(assistant.fill(), Fill::None);
     assert_eq!(
-        msg.source(),
+        assistant.source(),
         BlockSource::Markdown {
             role: MessageRole::Assistant,
-            markdown: "hello".to_string(),
+            markdown: "**bold**".to_string(),
         }
     );
 }
 
-// ── Notice ───────────────────────────────────────────────────────────────────
+// ── Notice / Spacer / Banner ────────────────────────────────────────────────
 
+/// Notice, spacer, and banner each answer the three `Renderable` questions.
 #[test]
-fn notice_compaction_lanes_tilde_marker() {
+fn notice_spacer_banner_renderable_table() {
     // -- Setup & Fixtures
-    let notice = Notice {
+    let compaction = Notice {
         kind: NoticeKind::Compaction,
         text: "compacted 5 blocks".to_string(),
     };
+    let system = Notice {
+        kind: NoticeKind::System,
+        text: "system note".to_string(),
+    };
+    let spacer = Spacer;
+    let banner = Banner {
+        text: "line1\nline2".to_string(),
+    };
 
-    // -- Exec & Check
-    assert_eq!(notice.lane(), Lane::Marker("~"));
-    assert_eq!(notice.fill(), Fill::None);
+    // -- Exec & Check: compaction notice — tilde marker, no fill, notice source.
+    assert_eq!(compaction.lane(), Lane::Marker("~"));
+    assert_eq!(compaction.fill(), Fill::None);
     assert_eq!(
-        notice.source(),
+        compaction.source(),
         BlockSource::Notice {
             kind: NoticeKind::Compaction,
             text: "compacted 5 blocks".to_string(),
         }
     );
-}
 
-#[test]
-fn notice_system_lanes_dot_marker() {
-    // -- Setup & Fixtures
-    let notice = Notice {
-        kind: NoticeKind::System,
-        text: "system note".to_string(),
-    };
+    // -- Check: system notice — dot marker, no fill.
+    assert_eq!(system.lane(), Lane::Marker("·"));
+    assert_eq!(system.fill(), Fill::None);
 
-    // -- Exec & Check
-    assert_eq!(notice.lane(), Lane::Marker("·"));
-    assert_eq!(notice.fill(), Fill::None);
-}
-
-// ── Spacer / Banner ──────────────────────────────────────────────────────────
-
-#[test]
-fn spacer_is_blank_lane_with_no_fill() {
-    // -- Setup & Fixtures
-    let spacer = Spacer;
-
-    // -- Exec & Check
+    // -- Check: spacer — blank lane, no fill, Spacer source.
     assert!(matches!(spacer.source(), BlockSource::Spacer));
     assert_eq!(spacer.lane(), Lane::Blank);
     assert_eq!(spacer.fill(), Fill::None);
-}
 
-#[test]
-fn banner_is_system_blank_lane_with_no_fill() {
-    // -- Setup & Fixtures
-    let banner = Banner {
-        text: "line1\nline2".to_string(),
-    };
-
-    // -- Exec & Check
+    // -- Check: banner — system-blank lane, no fill, Banner source.
     assert!(matches!(banner.source(), BlockSource::Banner { .. }));
     assert_eq!(banner.lane(), Lane::SystemBlank);
     assert_eq!(banner.fill(), Fill::None);
 }
 
-// ── CallLine::from_json_summary ──────────────────────────────────────────────
+// ── CallLine::from_json_summary / annotate_diff_hint ────────────────────────
 
+/// The JSON fallback summary is arrow-prefixed; `annotate_diff_hint`
+/// classifies each diff line role.
 #[test]
-fn call_line_from_json_summary_prefixes_arrow() {
-    // -- Exec & Check
-    let line = crate::protocol::tool_args::CallLine::from_json_summary(r#"{"path":"a.rs"}"#);
+fn call_line_and_annotate_diff_hint_table() {
+    // -- Exec & Check: the JSON fallback summary is arrow-prefixed.
+    let line = CallLine::from_json_summary(r#"{"path":"a.rs"}"#);
     assert_eq!(line.summary, r#"→ {"path":"a.rs"}"#);
+
+    // -- Check: annotate_diff_hint classifies each diff line role.
+    let cases = [
+        ("+added", StyleHint::DiffAdd),
+        ("-removed", StyleHint::DiffRemove),
+        ("@@ -1,2 +1,2 @@", StyleHint::DiffHunk),
+        ("--- a.rs", StyleHint::Meta),
+        ("+++ b.rs", StyleHint::Meta),
+        ("plain", StyleHint::Normal),
+    ];
+    for (text, expected) in cases {
+        assert_eq!(
+            annotate_diff_hint(text),
+            expected,
+            "{text:?} classified wrong"
+        );
+    }
 }
 
-// ── annotate_diff_hint ───────────────────────────────────────────────────────
+// ── Tool: source, lane, and fill from preview content kind ──────────────────
 
+/// A tool projects its name and call line, uses the gear marker lane, and
+/// fills `Code` only when its preview carries diff or code content.
 #[test]
-fn annotate_diff_hint_identifies_plus_lines() {
-    assert_eq!(annotate_diff_hint("+added"), StyleHint::DiffAdd);
-}
-
-#[test]
-fn annotate_diff_hint_identifies_minus_lines() {
-    assert_eq!(annotate_diff_hint("-removed"), StyleHint::DiffRemove);
-}
-
-#[test]
-fn annotate_diff_hint_identifies_hunk_lines() {
-    assert_eq!(annotate_diff_hint("@@ -1,2 +1,2 @@"), StyleHint::DiffHunk);
-}
-
-#[test]
-fn annotate_diff_hint_identifies_file_headers() {
-    assert_eq!(annotate_diff_hint("--- a.rs"), StyleHint::Meta);
-    assert_eq!(annotate_diff_hint("+++ b.rs"), StyleHint::Meta);
-}
-
-#[test]
-fn annotate_diff_hint_returns_normal_for_plain() {
-    assert_eq!(annotate_diff_hint("plain"), StyleHint::Normal);
-}
-
-// ── Tool: fill from preview content kind ────────────────────────────────────
-
-#[test]
-fn tool_source_carries_tool_name() -> Result<()> {
+fn tool_source_lane_and_fill_table() -> Result<()> {
     // -- Setup & Fixtures
-    let tool = Tool {
-        name: ToolName("grep".to_string()),
-        call: CallLine {
-            summary: "→ pattern in src".to_string(),
-        },
-        preview: None,
-        result: None,
-        status: super::renderer::ItemStatus::InProgress,
-    };
-
-    // -- Exec
-    let source = tool.source();
-
-    // -- Check
-    let BlockSource::Tool { name, call, .. } = source else {
-        return Err("Tool must project to BlockSource::Tool".into());
-    };
-    assert_eq!(name, ToolName("grep".to_string()));
-    assert_eq!(call.summary, "→ pattern in src");
-    Ok(())
-}
-
-#[test]
-fn tool_without_preview_fills_none() {
-    // -- Setup & Fixtures
-    let tool = Tool {
+    let no_preview = Tool {
         name: ToolName("edit".to_string()),
         call: CallLine {
             summary: "→ a.rs (diff)".to_string(),
         },
         preview: None,
         result: None,
-        status: super::renderer::ItemStatus::InProgress,
+        status: ItemStatus::InProgress,
     };
-
-    // -- Exec & Check
-    assert_eq!(tool.fill(), Fill::None);
-    assert_eq!(tool.lane(), Lane::Marker("⚙"));
-    assert_eq!(
-        tool.source(),
-        BlockSource::Tool {
-            name: ToolName("edit".to_string()),
-            call: tool.call.clone(),
-            preview: None,
-        }
-    );
-}
-
-#[test]
-fn tool_with_diff_preview_fills_code() {
-    // -- Setup & Fixtures
-    let tool = Tool {
+    let diff_preview = Tool {
         name: ToolName("edit".to_string()),
         call: CallLine {
             summary: String::new(),
@@ -251,17 +159,9 @@ fn tool_with_diff_preview_fills_code() {
             }],
         }),
         result: None,
-        status: super::renderer::ItemStatus::InProgress,
+        status: ItemStatus::InProgress,
     };
-
-    // -- Exec & Check
-    assert_eq!(tool.fill(), Fill::Code);
-}
-
-#[test]
-fn tool_with_code_preview_fills_code() {
-    // -- Setup & Fixtures
-    let tool = Tool {
+    let code_preview = Tool {
         name: ToolName("nu".to_string()),
         call: CallLine {
             summary: String::new(),
@@ -278,17 +178,9 @@ fn tool_with_code_preview_fills_code() {
             }],
         }),
         result: None,
-        status: super::renderer::ItemStatus::InProgress,
+        status: ItemStatus::InProgress,
     };
-
-    // -- Exec & Check
-    assert_eq!(tool.fill(), Fill::Code);
-}
-
-#[test]
-fn tool_with_plain_preview_fills_none() {
-    // -- Setup & Fixtures
-    let tool = Tool {
+    let plain_preview = Tool {
         name: ToolName("custom".to_string()),
         call: CallLine {
             summary: String::new(),
@@ -303,15 +195,40 @@ fn tool_with_plain_preview_fills_none() {
             }],
         }),
         result: None,
-        status: super::renderer::ItemStatus::InProgress,
+        status: ItemStatus::InProgress,
     };
 
-    // -- Exec & Check
-    assert_eq!(tool.fill(), Fill::None);
+    // -- Exec & Check: the source carries the tool name and call line.
+    let BlockSource::Tool { name, call, .. } = no_preview.source() else {
+        return Err("Tool must project to BlockSource::Tool".into());
+    };
+    assert_eq!(name, ToolName("edit".to_string()));
+    assert_eq!(call.summary, "→ a.rs (diff)");
+
+    // -- Check: no preview — no fill, gear marker lane, no preview in source.
+    assert_eq!(no_preview.fill(), Fill::None);
+    assert_eq!(no_preview.lane(), Lane::Marker("⚙"));
+    assert_eq!(
+        no_preview.source(),
+        BlockSource::Tool {
+            name: ToolName("edit".to_string()),
+            call: no_preview.call.clone(),
+            preview: None,
+        }
+    );
+
+    // -- Check: diff and code previews fill code; a plain preview does not.
+    assert_eq!(diff_preview.fill(), Fill::Code);
+    assert_eq!(code_preview.fill(), Fill::Code);
+    assert_eq!(plain_preview.fill(), Fill::None);
+    Ok(())
 }
 
+// ── Display::has_code_or_diff ───────────────────────────────────────────────
+
+/// `has_code_or_diff` is true only for diff or code sections.
 #[test]
-fn display_has_code_or_diff_true_for_diff_and_code_only() {
+fn display_has_code_or_diff_table() {
     // -- Setup & Fixtures
     let diff_display = Display {
         title: Some("d".to_string()),
@@ -343,19 +260,4 @@ fn display_has_code_or_diff_true_for_diff_and_code_only() {
     assert!(diff_display.has_code_or_diff());
     assert!(!plain_display.has_code_or_diff());
     assert!(!empty_display.has_code_or_diff());
-}
-
-// ── Notice: both kinds (pre-existing, kept as regression guard) ─────────────
-
-#[test]
-fn notice_compaction_lanes_tilde_marker_regression() {
-    // -- Setup & Fixtures
-    let notice = Notice {
-        kind: NoticeKind::Compaction,
-        text: "compacted".to_string(),
-    };
-
-    // -- Exec & Check
-    assert_eq!(notice.lane(), Lane::Marker("~"));
-    assert_eq!(notice.fill(), Fill::None);
 }

@@ -4,6 +4,8 @@ use crate::*;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+mod handle;
+
 /// Non-blocking configuration: these tests assert on the in-progress task, so
 /// the server must not wait for a terminal state (spec §3.2.2).
 fn non_blocking() -> Option<SendMessageConfiguration> {

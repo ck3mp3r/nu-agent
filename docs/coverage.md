@@ -167,13 +167,15 @@ Tests run under [`cargo-nextest`](https://nexte.st). Profiles are defined in `.c
 
 Integration test modules are gated behind the `integration` cargo feature, so the default profile runs unit tests only. The `integration` feature is defined in `agnt-a2a`, `agnt-core`, `agnt-tui`, and `agnt-plugin`; enabling it on `agnt-plugin` or `agnt-tui` propagates to the other two crates.
 
-The Nix dev shell wraps the profiles as `tests` (unit only), `tests-all` (unit + integration), and `tests-integration` (integration only, with retries).
+The Nix dev shell wraps the profiles as `tests` (unit only), `tests-all` (unit + integration), and `tests-integration` (integration only, with retries). The `coverage` wrapper runs the full workspace coverage suite under the `integration` profile and writes an HTML report to `coverage/`.
 
 Coverage runs against the same profiles. `cargo-llvm-cov` accepts a nextest subcommand:
 
 ```sh
-cargo llvm-cov nextest --workspace --features integration --html --ignore-filename-regex '(/test/|/test$)'
+cargo llvm-cov nextest --workspace --features integration --profile integration --cargo-profile coverage --html --output-dir coverage/ --ignore-filename-regex '(/test/|/test$)'
 ```
+
+`--profile integration` selects the nextest profile. `--cargo-profile coverage` selects the `[profile.coverage]` cargo build profile, which inherits `test` with `debug = "line-tables-only"` and `opt-level = 0` for faster instrumented builds.
 
 Without `nextest`, `cargo llvm-cov` runs `cargo test`, which covers unit tests only unless `--features integration` is passed.
 

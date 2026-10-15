@@ -4,10 +4,6 @@ mod memory;
 #[path = "../../test/task_store/store.rs"]
 mod store_test;
 
-#[cfg(all(test, feature = "integration"))]
-#[path = "../../test/task_store/test.rs"]
-mod test;
-
 pub use backend::*;
 pub use memory::InMemoryTaskStore;
 pub use memory::is_valid_transition;

@@ -4,259 +4,215 @@ use super::*;
 // Tool call lifecycle and status bookkeeping
 // ---------------------------------------------------------------------------
 
+/// The call-line summary depends on the tool and the call line the producer
+/// supplies: `nu` renders its command in the preview block (empty summary),
+/// other tools keep the arrow summary, and long summaries truncate.
 #[test]
-fn tool_end_transcript_line_shows_args_summary_without_result_payload_dump() {
+fn tool_start_call_line_summary_matrix() -> Result<()> {
+    // -- Setup & Fixtures
+    enum Expect {
+        Empty,
+        Arrow,
+        TruncatedArrow,
+    }
+    let long_args = format!("{{\"payload\":\"{}\"}}", "x".repeat(300));
+    let cases: Vec<(&str, ToolEvent, Expect)> = vec![
+        (
+            "nu raw command",
+            started_with_call_line(
+                "nu",
+                r#"{"command":"ls | select name type size"}"#,
+                CallLine {
+                    summary: String::new(),
+                },
+            ),
+            Expect::Empty,
+        ),
+        (
+            "nu multi-line command",
+            started_with_call_line(
+                "nu",
+                r#"{"command":"ls | where size > 1mb\n| select name type\n| sort-by modified"}"#,
+                CallLine {
+                    summary: String::new(),
+                },
+            ),
+            Expect::Empty,
+        ),
+        (
+            "nu without command key",
+            started("nu", r#"{"timeout_seconds":5}"#),
+            Expect::Arrow,
+        ),
+        (
+            "non-nu tool",
+            started("k8s__list_pods", r#"{"namespace":"prod"}"#),
+            Expect::Arrow,
+        ),
+        (
+            "long args truncate",
+            started("k8s__describe", &long_args),
+            Expect::TruncatedArrow,
+        ),
+    ];
+
+    // -- Exec & Check
+    for (label, event, expect) in cases {
+        let mut state = AppState::default();
+        reduce_tool(&mut state, event);
+        let BlockSource::Tool { call, .. } = &state.transcript.blocks()[0].source else {
+            return Err(format!("expected Tool variant for {label}").into());
+        };
+        match expect {
+            Expect::Empty => assert_eq!(call.summary, String::new(), "{label}"),
+            Expect::Arrow => assert!(call.summary.starts_with("→ "), "{label}: {}", call.summary),
+            Expect::TruncatedArrow => {
+                assert!(call.summary.starts_with("→ "), "{label}");
+                assert!(call.summary.ends_with('…'), "{label}");
+                assert!(call.summary.chars().count() < 180, "{label}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Tool row lifecycle: a start materializes one Tool block with the args
+/// summary and InProgress status; a Completed event transitions it to Done or
+/// Failed and keeps the args summary without dumping the payload; the
+/// low-level bookkeeping API records Done or Unknown; the status line stays
+/// empty; and starts/ends store one content block each with no separators.
+#[test]
+fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
+    // -- Setup & Fixtures
     let mut state = AppState::default();
+
+    // -- Exec: a tool start.
     reduce_tool(
         &mut state,
         started("k8s__list_pods", r#"{"namespace":"prod"}"#),
     );
+
+    // -- Check: one Tool block, args summary, InProgress, empty status line.
+    assert_eq!(state.transcript.len(), 1);
+    let block = &state.transcript.blocks()[0];
+    let BlockSource::Tool { call, .. } = &block.source else {
+        return Err("expected Tool variant".into());
+    };
+    assert!(call.summary.contains("namespace"));
+    assert_eq!(block.status, Some(ItemStatus::InProgress));
+    assert!(state.status.message.status_line().is_empty());
+
+    // -- Exec & Check: a Completed event transitions the row to Done or Failed.
+    let cases: [(&str, bool, ItemStatus); 2] = [
+        ("done", true, ItemStatus::Done),
+        ("failed", false, ItemStatus::Failed),
+    ];
+    for (label, success, expected) in cases {
+        let mut completed = AppState::default();
+        reduce_tool(&mut completed, started("gh__get_pr", r#"{"number":1}"#));
+        reduce_tool(
+            &mut completed,
+            ToolEvent::Completed {
+                name: "gh__get_pr".to_string(),
+                source: "mcp".to_string(),
+                arguments: r#"{"number":1}"#.to_string(),
+                success,
+                result: "ok".to_string(),
+                display: None,
+                error_kind: if success {
+                    None
+                } else {
+                    Some("tool_error".to_string())
+                },
+                message: if success {
+                    None
+                } else {
+                    Some("boom".to_string())
+                },
+            },
+        );
+        assert_eq!(completed.transcript.len(), 1, "{label}");
+        assert_eq!(
+            completed.transcript.blocks()[0].status,
+            Some(expected),
+            "{label}"
+        );
+    }
+
+    // -- Exec & Check: the bookkeeping API records Done or Unknown.
+    let bookkeeping: [(&str, Option<bool>, ItemStatus); 2] = [
+        ("done", Some(true), ItemStatus::Done),
+        ("unknown", None, ItemStatus::Unknown),
+    ];
+    for (label, success, expected) in bookkeeping {
+        let mut state = AppState::default();
+        let mut evicted = 0usize;
+        state.tool.start_tool_call(
+            &mut state.transcript,
+            "k8s__list_pods",
+            r#"{"namespace":"prod"}"#,
+            CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
+            &mut evicted,
+        );
+        state.tool.finish_tool_call(
+            &mut state.transcript,
+            "k8s__list_pods",
+            r#"{"namespace":"prod"}"#,
+            success,
+        );
+        assert_eq!(state.transcript.len(), 1, "{label}");
+        assert_eq!(
+            state.transcript.blocks()[0].status,
+            Some(expected),
+            "{label}"
+        );
+    }
+
+    // -- Exec & Check: a Completed event keeps the args summary without the payload.
+    let mut summary = AppState::default();
     reduce_tool(
-        &mut state,
+        &mut summary,
+        started("k8s__list_pods", r#"{"namespace":"prod"}"#),
+    );
+    reduce_tool(
+        &mut summary,
         ToolEvent::Completed {
             name: "k8s__list_pods".to_string(),
             source: "mcp".to_string(),
             arguments: r#"{"namespace":"prod"}"#.to_string(),
             success: true,
-            result: "[{\"name\":\"api-0\",\"ns\":\"prod\"}]".to_string(),
+            result: r#"[{"name":"api-0","ns":"prod"}]"#.to_string(),
             display: None,
             error_kind: None,
             message: None,
         },
     );
+    assert_eq!(summary.transcript.len(), 1);
+    let BlockSource::Tool { call, .. } = &summary.transcript.blocks()[0].source else {
+        return Err("expected Tool variant".into());
+    };
+    assert!(call.summary.contains("namespace"));
+    assert!(!call.summary.contains("api-0"));
+    assert!(!call.summary.contains("[{"));
+    assert!(summary.status.message.status_line().is_empty());
 
-    // [Tool] — no leading spacer under the unified spacer rule
-    assert_eq!(state.transcript.len(), 1);
-    let block = &state.transcript.blocks()[0];
-    if let BlockSource::Tool { call, .. } = &block.source {
-        assert!(call.summary.contains("namespace"));
-        assert!(!call.summary.contains("api-0"));
-        assert!(!call.summary.contains("[{"));
-    } else {
-        panic!("Expected Tool variant");
+    // -- Exec & Check: starts and ends store one content block each, no separators.
+    let mixes: [(&str, &[&str]); 3] = [
+        ("two plain tools", &["read", "write"]),
+        ("nu after plain", &["read", "nu"]),
+        ("plain after nu", &["nu", "read"]),
+    ];
+    for (label, names) in mixes {
+        let mut state = AppState::default();
+        for name in names {
+            reduce_tool(&mut state, started(name, "{}"));
+        }
+        assert_eq!(state.transcript.len(), names.len(), "{label}");
+        for block in state.transcript.blocks() {
+            assert!(matches!(block.source, BlockSource::Tool { .. }), "{label}");
+        }
     }
-}
-
-#[test]
-fn tool_row_materializes_immediately_on_tool_start_with_args_and_running_status() {
     let mut state = AppState::default();
-
-    reduce_tool(
-        &mut state,
-        started("k8s__list_pods", r#"{"namespace":"prod"}"#),
-    );
-
-    assert_eq!(state.transcript.len(), 1);
-    let block = &state.transcript.blocks()[0];
-    if let BlockSource::Tool { call, .. } = &block.source {
-        assert!(call.summary.contains("namespace"));
-    } else {
-        panic!("Expected Tool variant");
-    }
-    assert_eq!(
-        state.transcript.blocks()[0].status,
-        Some(ItemStatus::InProgress)
-    );
-}
-
-#[test]
-fn tool_start_nu_sets_call_line_to_code_block_with_raw_command() {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-
-    // -- Exec
-    reduce_tool(
-        &mut state,
-        started_with_call_line(
-            "nu",
-            r#"{"command":"ls | select name type size"}"#,
-            CallLine {
-                summary: String::new(),
-            },
-        ),
-    );
-
-    // -- Check: the command renders in the preview block, so the call line
-    // carries no summary.
-    let block = &state.transcript.blocks()[0];
-    if let BlockSource::Tool { call, .. } = &block.source {
-        assert_eq!(call.summary, String::new());
-    } else {
-        panic!("Expected Tool variant");
-    }
-}
-
-#[test]
-fn tool_start_nu_multi_line_command_preserves_newlines_in_call_line() {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-
-    // -- Exec
-    reduce_tool(
-        &mut state,
-        started_with_call_line(
-            "nu",
-            r#"{"command":"ls | where size > 1mb\n| select name type\n| sort-by modified"}"#,
-            CallLine {
-                summary: String::new(),
-            },
-        ),
-    );
-
-    // -- Check: a multi-line command does not leak onto the call line either.
-    let block = &state.transcript.blocks()[0];
-    if let BlockSource::Tool { call, .. } = &block.source {
-        assert_eq!(call.summary, String::new());
-    } else {
-        panic!("Expected Tool variant");
-    }
-}
-
-#[test]
-fn tool_start_nu_without_command_key_falls_back_to_summary_arrow() {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-
-    // -- Exec
-    reduce_tool(&mut state, started("nu", r#"{"timeout_seconds":5}"#));
-
-    // -- Check
-    let block = &state.transcript.blocks()[0];
-    if let BlockSource::Tool { call, .. } = &block.source {
-        assert!(
-            call.summary.starts_with("→ "),
-            "fallback must use the arrow summary, got: {:?}",
-            call.summary
-        );
-    } else {
-        panic!("Expected Tool variant");
-    }
-}
-
-#[test]
-fn tool_start_non_nu_keeps_args_summary_arrow() {
-    // -- Setup & Fixtures
-    let mut state = AppState::default();
-
-    // -- Exec
-    reduce_tool(
-        &mut state,
-        started("k8s__list_pods", r#"{"namespace":"prod"}"#),
-    );
-
-    // -- Check
-    let block = &state.transcript.blocks()[0];
-    if let BlockSource::Tool { call, .. } = &block.source {
-        assert!(call.summary.starts_with("→ "));
-    } else {
-        panic!("Expected Tool variant");
-    }
-}
-
-#[test]
-fn tool_end_transitions_same_row_to_done_or_failed_status() {
-    let mut state = AppState::default();
-
-    reduce_tool(&mut state, started("gh__get_pr", r#"{"number":1}"#));
-    reduce_tool(
-        &mut state,
-        ToolEvent::Completed {
-            name: "gh__get_pr".to_string(),
-            source: "mcp".to_string(),
-            arguments: r#"{"number":1}"#.to_string(),
-            success: true,
-            result: "ok".to_string(),
-            display: None,
-            error_kind: None,
-            message: None,
-        },
-    );
-
-    // [Tool] — no leading spacer under the unified spacer rule
-    assert_eq!(state.transcript.len(), 1);
-    assert_eq!(state.transcript.blocks()[0].status, Some(ItemStatus::Done));
-
-    let mut failed = AppState::default();
-    reduce_tool(&mut failed, started("gh__get_pr", r#"{"number":2}"#));
-    reduce_tool(
-        &mut failed,
-        ToolEvent::Completed {
-            name: "gh__get_pr".to_string(),
-            source: "mcp".to_string(),
-            arguments: r#"{"number":2}"#.to_string(),
-            success: false,
-            result: "err".to_string(),
-            display: None,
-            error_kind: Some("tool_error".to_string()),
-            message: Some("boom".to_string()),
-        },
-    );
-    assert_eq!(failed.transcript.len(), 1);
-    assert_eq!(
-        failed.transcript.blocks()[0].status,
-        Some(ItemStatus::Failed)
-    );
-}
-
-#[test]
-fn tool_start_leaves_status_line_empty() {
-    let mut state = AppState::default();
-    reduce_tool(&mut state, started("k8s__list_pods", "{}"));
-    assert!(state.status.message.status_line().is_empty());
-}
-
-#[test]
-fn tool_end_leaves_status_line_empty() {
-    let mut state = AppState::default();
-    reduce_tool(&mut state, started("k8s__list_pods", "{}"));
-    reduce_tool(
-        &mut state,
-        ToolEvent::Completed {
-            name: "k8s__list_pods".to_string(),
-            source: "mcp".to_string(),
-            arguments: "{}".to_string(),
-            success: true,
-            result: "[]".to_string(),
-            display: None,
-            error_kind: None,
-            message: None,
-        },
-    );
-    assert!(state.status.message.status_line().is_empty());
-}
-
-#[test]
-fn tool_start_truncates_long_args_summary_with_ellipsis() {
-    let mut state = AppState::default();
-    let long_args = format!("{{\"payload\":\"{}\"}}", "x".repeat(300));
-
-    reduce_tool(&mut state, started("k8s__describe", &long_args));
-
-    // [Tool] — no leading spacer under the unified spacer rule
-    assert_eq!(state.transcript.len(), 1);
-    if let BlockSource::Tool { call, .. } = &state.transcript.blocks()[0].source {
-        assert!(call.summary.starts_with("→ "));
-        assert!(call.summary.ends_with('…'));
-        assert!(call.summary.chars().count() < 180);
-    } else {
-        panic!("Expected Tool variant");
-    }
-}
-
-#[test]
-fn handle_tool_start_pushes_tool_block_without_leading_spacer() {
-    let mut state = AppState::default();
-    reduce_tool(&mut state, started("read", "{}"));
-    assert!(matches!(
-        state.transcript.blocks()[0].source,
-        BlockSource::Tool { .. }
-    ));
-}
-
-#[test]
-fn handle_tool_end_stores_two_content_blocks_without_separators() {
-    let mut state = AppState::default();
-    // Two tool calls within the same block
     for name in ["read", "write"] {
         reduce_tool(&mut state, started(name, "{}"));
         reduce_tool(
@@ -273,129 +229,20 @@ fn handle_tool_end_stores_two_content_blocks_without_separators() {
             },
         );
     }
-
-    // transcript: [Tool, Tool] — the store holds content blocks only;
-    // separators are a render-time concern (SpacerStateMachine).
     assert_eq!(state.transcript.len(), 2);
-    assert!(matches!(
-        state.transcript.blocks()[0].source,
-        BlockSource::Tool { .. }
-    ));
-    assert!(matches!(
-        state.transcript.blocks()[1].source,
-        BlockSource::Tool { .. }
-    ));
+    for block in state.transcript.blocks() {
+        assert!(matches!(block.source, BlockSource::Tool { .. }));
+    }
+    Ok(())
 }
 
 #[test]
-fn tool_start_nu_after_plain_tool_stores_two_content_blocks() {
-    let mut state = AppState::default();
-    // Plain tool call (no background block)
-    reduce_tool(&mut state, started("read", "{}"));
-    // nu tool call (renders a background block)
-    reduce_tool(&mut state, started("nu", r#"{"command":"ls"}"#));
-
-    // transcript: [Tool(read), Tool(nu)] — no Spacer blocks in the store.
-    assert_eq!(state.transcript.len(), 2);
-    assert!(matches!(
-        state.transcript.blocks()[0].source,
-        BlockSource::Tool { .. }
-    ));
-    assert!(matches!(
-        state.transcript.blocks()[1].source,
-        BlockSource::Tool { .. }
-    ));
-}
-
-#[test]
-fn tool_start_plain_after_nu_stores_two_content_blocks() {
-    let mut state = AppState::default();
-    // nu tool call (renders a background block)
-    reduce_tool(&mut state, started("nu", r#"{"command":"ls"}"#));
-    // plain tool call after nu
-    reduce_tool(&mut state, started("read", "{}"));
-
-    // transcript: [Tool(nu), Tool(read)] — no Spacer blocks in the store.
-    assert_eq!(state.transcript.len(), 2);
-    assert!(matches!(
-        state.transcript.blocks()[0].source,
-        BlockSource::Tool { .. }
-    ));
-    assert!(matches!(
-        state.transcript.blocks()[1].source,
-        BlockSource::Tool { .. }
-    ));
-}
-
-#[test]
-fn tool_start_two_plain_tools_store_two_content_blocks() {
-    let mut state = AppState::default();
-    reduce_tool(&mut state, started("read", "{}"));
-    reduce_tool(&mut state, started("write", "{}"));
-
-    // transcript: [Tool(read), Tool(write)] — no Spacer blocks in the store.
-    assert_eq!(state.transcript.len(), 2);
-    assert!(matches!(
-        state.transcript.blocks()[0].source,
-        BlockSource::Tool { .. }
-    ));
-    assert!(matches!(
-        state.transcript.blocks()[1].source,
-        BlockSource::Tool { .. }
-    ));
-}
-
-#[test]
-fn bookkeeping_start_finish_tracks_row_status() {
+fn concurrent_same_name_tool_calls_get_correct_statuses() -> Result<()> {
+    // -- Setup & Fixtures
     let mut state = AppState::default();
     let mut evicted = 0usize;
-    state.tool.start_tool_call(
-        &mut state.transcript,
-        "k8s__list_pods",
-        r#"{"namespace":"prod"}"#,
-        CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
-        &mut evicted,
-    );
-    assert_eq!(state.transcript.len(), 1);
-    state.tool.finish_tool_call(
-        &mut state.transcript,
-        "k8s__list_pods",
-        r#"{"namespace":"prod"}"#,
-        Some(true),
-    );
-    assert_eq!(state.transcript.blocks()[0].status, Some(ItemStatus::Done));
-}
 
-#[test]
-fn bookkeeping_start_finish_unknown_renders_unknown_status() {
-    let mut state = AppState::default();
-    let mut evicted = 0usize;
-    state.tool.start_tool_call(
-        &mut state.transcript,
-        "k8s__list_pods",
-        r#"{"namespace":"prod"}"#,
-        CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
-        &mut evicted,
-    );
-    state.tool.finish_tool_call(
-        &mut state.transcript,
-        "k8s__list_pods",
-        r#"{"namespace":"prod"}"#,
-        None,
-    );
-    assert_eq!(
-        state.transcript.blocks()[0].status,
-        Some(ItemStatus::Unknown),
-        "flag-absent tool rows must render unknown, not guessed success"
-    );
-}
-
-#[test]
-fn concurrent_same_name_tool_calls_get_correct_statuses() {
-    let mut state = AppState::default();
-
-    // Start two tool calls with the same name but different arguments
-    let mut evicted = 0usize;
+    // -- Exec
     state.tool.start_tool_call(
         &mut state.transcript,
         "k8s__get_pod",
@@ -411,8 +258,7 @@ fn concurrent_same_name_tool_calls_get_correct_statuses() {
         &mut evicted,
     );
 
-    // Both should be InProgress. The store holds two content blocks; no
-    // Separator blocks are inserted.
+    // -- Check
     assert_eq!(state.transcript.len(), 2);
     assert_eq!(
         state.transcript.blocks()[0].status,
@@ -423,7 +269,7 @@ fn concurrent_same_name_tool_calls_get_correct_statuses() {
         Some(ItemStatus::InProgress)
     );
 
-    // Finish in reverse order
+    // Finish out of order: each call gets its own status.
     state.tool.finish_tool_call(
         &mut state.transcript,
         "k8s__get_pod",
@@ -436,11 +282,10 @@ fn concurrent_same_name_tool_calls_get_correct_statuses() {
         r#"{"name":"api-0"}"#,
         Some(false),
     );
-
-    // Each should get the correct status
     assert_eq!(
         state.transcript.blocks()[0].status,
         Some(ItemStatus::Failed)
     );
     assert_eq!(state.transcript.blocks()[1].status, Some(ItemStatus::Done));
+    Ok(())
 }

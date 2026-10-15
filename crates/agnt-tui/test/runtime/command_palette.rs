@@ -1,12 +1,18 @@
 use super::*;
 
+/// The command palette table renders the required columns and rows, includes
+/// the Skills/Models actions, emits an overflow cue at a small viewport, and
+/// the inline slash suggestions render inline with a single hint contract.
 #[test]
-fn command_palette_table_renders_required_columns_and_rows() {
+fn command_palette_table_and_inline_slash() -> Result<()> {
+    // -- Setup & Fixtures
     let mut state = AppState::default();
     open_command_palette_for_test(&mut state);
 
+    // -- Exec
     let model = command_palette_table_model_for_test(&state, 80, 10);
 
+    // -- Check: columns, actions, and selection.
     assert_eq!(model.columns, vec!["Action", "Summary"]);
     let actions = model
         .rows
@@ -19,79 +25,54 @@ fn command_palette_table_renders_required_columns_and_rows() {
     );
     assert!(model.rows.iter().all(|row| row[2].is_empty()));
     assert_eq!(model.selected, Some(0));
-}
-
-#[test]
-fn command_palette_table_renders_skills_action_row() {
-    let mut state = AppState::default();
-    open_command_palette_for_test(&mut state);
-
-    let model = command_palette_table_model_for_test(&state, 80, 10);
-    let actions = model
-        .rows
-        .iter()
-        .map(|row| row[0].as_str())
-        .collect::<Vec<_>>();
-
     assert!(actions.contains(&"Skills"));
     assert!(actions.contains(&"Models"));
-}
 
-#[test]
-fn inline_slash_suggestions_render_inline_with_single_hint_contract() {
-    let mut state = AppState::default();
-    state.check_inline_slash("/");
-
-    let rows = inline_slash_lines_for_test(&state);
-    assert!(!rows.is_empty());
-    assert!(rows[0].contains("/compact"));
-    assert!(rows[0].starts_with('❯'));
-
-    let title = super::command_palette_title(None);
-    assert!(title.contains("↑/↓ or Ctrl-N · Enter · Esc"));
-}
-
-#[test]
-fn command_palette_table_emits_overflow_position_cue_when_viewport_is_small() -> Result<()> {
-    let mut state = AppState::default();
-    open_command_palette_for_test(&mut state);
-
-    let model = command_palette_table_model_for_test(&state, 80, 5);
-    let cue = model
+    // -- Exec & Check: the overflow cue at a small viewport.
+    let small = command_palette_table_model_for_test(&state, 80, 5);
+    let cue = small
         .overflow_cue
         .ok_or("should have overflow cue when rows exceed viewport")?;
     assert!(cue.contains("/"));
     assert!(cue.contains("Esc close"));
+
+    // -- Setup & Fixtures: inline slash suggestions.
+    let mut slash = AppState::default();
+    slash.check_inline_slash("/");
+
+    // -- Exec & Check: the inline rows and the single hint contract.
+    let rows = inline_slash_lines_for_test(&slash);
+    assert!(!rows.is_empty());
+    assert!(rows[0].contains("/compact"));
+    assert!(rows[0].starts_with('❯'));
+    let title = super::command_palette_title(None);
+    assert!(title.contains("↑/↓ or Ctrl-N · Enter · Esc"));
     Ok(())
 }
 
+/// The modal layout policy applies consistently across panels: Help is large,
+/// Status is compact, and the remaining panels share the default size.
 #[test]
-fn help_modal_uses_large_readable_layout() {
+fn modal_layout_policy() -> Result<()> {
     let area = ratatui::layout::Rect::new(0, 0, 120, 40);
-    let popup = super::render::frame::modal_rect_for_panel(
+
+    // -- Exec & Check: Help is large.
+    let help = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Help,
     );
+    assert!(help.width >= 72);
+    assert!(help.height >= 18);
 
-    assert!(popup.width >= 72);
-    assert!(popup.height >= 18);
-}
-
-#[test]
-fn status_modal_uses_compact_layout() {
-    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
-    let popup = super::render::frame::modal_rect_for_panel(
+    // -- Exec & Check: Status is compact.
+    let status = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Status,
     );
+    assert!(status.width <= 72);
+    assert!(status.height <= 14);
 
-    assert!(popup.width <= 72);
-    assert!(popup.height <= 14);
-}
-
-#[test]
-fn modal_layout_policy_applies_consistently_across_panels() {
-    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    // -- Exec & Check: Skills and MCPs share a size; the palette is narrower.
     let command_palette = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::CommandPalette,
@@ -104,64 +85,49 @@ fn modal_layout_policy_applies_consistently_across_panels() {
         area,
         super::render::frame::ModalPanelKind::Mcps,
     );
-
     assert_eq!(skills.width, mcps.width);
     assert_eq!(skills.height, mcps.height);
     assert!(command_palette.width < skills.width);
-}
 
-#[test]
-fn models_modal_uses_layout_policy_defaults() {
-    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
+    // -- Exec & Check: Models and Themes use the layout policy defaults.
     let models = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
     );
-    let skills = super::render::frame::modal_rect_for_panel(
-        area,
-        super::render::frame::ModalPanelKind::Skills,
-    );
-
-    assert_eq!(models.width, skills.width);
-    assert_eq!(models.height, skills.height);
-}
-
-#[test]
-fn themes_modal_uses_layout_policy_defaults() {
-    let area = ratatui::layout::Rect::new(0, 0, 120, 40);
     let themes = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Themes,
     );
-    let models = super::render::frame::modal_rect_for_panel(
-        area,
-        super::render::frame::ModalPanelKind::Models,
-    );
-
+    assert_eq!(models.width, skills.width);
+    assert_eq!(models.height, skills.height);
     assert_eq!(themes.width, models.width);
     assert_eq!(themes.height, models.height);
+    Ok(())
 }
 
+/// A modal open state applies the dimmed backdrop; the inline model picker
+/// respects the border/backdrop policy; a permission prompt does not open the
+/// global backdrop; and an empty model catalog shows a deterministic empty
+/// state.
 #[test]
-fn modal_open_state_applies_dimmed_backdrop() {
+fn modal_backdrop_and_empty_state() -> Result<()> {
+    // -- Setup & Fixtures: the command palette open.
     let mut state = AppState::default();
     open_command_palette_for_test(&mut state);
 
+    // -- Exec & Check: the dimmed backdrop applies.
     assert!(modal_open_state_applies_dimmed_backdrop_for_test(&state));
-}
 
-#[test]
-fn inline_model_picker_modal_respects_border_and_backdrop_policy() {
-    let mut state = AppState::default();
-    state.picker.open(ActivePicker::Model);
+    // -- Setup & Fixtures: the inline model picker open.
+    let mut model = AppState::default();
+    model.picker.open(ActivePicker::Model);
 
-    assert!(inline_model_picker_modal_respects_border_and_backdrop_policy_for_test(&state));
-}
+    // -- Exec & Check: the border/backdrop policy is respected.
+    assert!(inline_model_picker_modal_respects_border_and_backdrop_policy_for_test(&model));
 
-#[test]
-fn permission_does_not_open_global_dimmed_modal_backdrop() {
-    let mut state = AppState::default();
-    state
+    // -- Setup & Fixtures: a permission prompt.
+    let mut permission = AppState::default();
+    permission
         .permission
         .open_prompt(crate::state::PermissionPrompt {
             request_id: "ask-0000000000000001".to_string(),
@@ -175,18 +141,29 @@ fn permission_does_not_open_global_dimmed_modal_backdrop() {
             summary: "→ {\"command\":\"echo hi\"}".to_string(),
         });
 
-    assert!(!modal_open_state_applies_dimmed_backdrop_for_test(&state));
-}
+    // -- Exec & Check: no global backdrop.
+    assert!(!modal_open_state_applies_dimmed_backdrop_for_test(
+        &permission
+    ));
 
-#[test]
-fn model_picker_empty_catalog_shows_deterministic_empty_state() {
-    let mut state = AppState::default();
+    // -- Setup & Fixtures: an empty model catalog.
+    let mut empty = AppState::default();
     assert_eq!(
         crate::runtime::panels::MODEL_PICKER_EMPTY_STATE_MESSAGE,
         "No models available in cached startup config."
     );
-    state.picker.open(ActivePicker::Model);
-    assert!(state.picker.active_state().unwrap().filtered().is_empty());
+    empty.picker.open(ActivePicker::Model);
+
+    // -- Exec & Check: the deterministic empty state.
+    assert!(
+        empty
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .filtered()
+            .is_empty()
+    );
+    Ok(())
 }
 
 #[test]
@@ -206,15 +183,11 @@ fn render_modal_frame_inner_is_inset_by_one_cell() {
 }
 
 #[test]
-fn scrollbar_state_does_not_panic_on_empty_transcript() {
-    let mut state = ratatui::widgets::ScrollbarState::new(0).position(0);
-    let _ = &mut state;
-}
-
-#[test]
-fn scrollbar_state_does_not_panic_on_single_entry() {
-    let mut state = ratatui::widgets::ScrollbarState::new(1).position(0);
-    let _ = &mut state;
+fn scrollbar_state_does_not_panic_on_empty_or_single_entry() {
+    let mut empty = ratatui::widgets::ScrollbarState::new(0).position(0);
+    let _ = &mut empty;
+    let mut single = ratatui::widgets::ScrollbarState::new(1).position(0);
+    let _ = &mut single;
 }
 
 #[test]

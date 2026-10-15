@@ -3,8 +3,10 @@ use crate::protocol::event::ToolDisplay;
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
 use crate::protocol::tool_args::CallLine;
 
+/// Tool and LLM events convert to their UI counterparts.
 #[test]
-fn tool_start_converts_to_tool_start() {
+fn tool_and_llm_events_convert() {
+    // -- Case 1: ToolEvent::Started
     let event = ToolEvent::Started {
         name: "read".to_string(),
         source: "user".to_string(),
@@ -21,10 +23,8 @@ fn tool_start_converts_to_tool_start() {
             call_line: CallLine::from_json_summary("{}"),
         })
     );
-}
 
-#[test]
-fn tool_end_converts_to_tool_end() {
+    // -- Case 2: ToolEvent::Completed
     let event = ToolEvent::Completed {
         name: "read".to_string(),
         source: "user".to_string(),
@@ -49,17 +49,12 @@ fn tool_end_converts_to_tool_end() {
             message: None,
         })
     );
-}
 
-#[test]
-fn llm_start_converts_to_llm_start() {
-    let event = LlmEvent::Started;
-    let ui: Option<UiEvent> = event.into();
+    // -- Case 3: LlmEvent::Started
+    let ui: Option<UiEvent> = LlmEvent::Started.into();
     assert_eq!(ui, Some(UiEvent::LlmStarted));
-}
 
-#[test]
-fn llm_end_converts_to_llm_end() {
+    // -- Case 4: LlmEvent::Completed
     let event = LlmEvent::Completed {
         response_chars: 100,
         tool_calls: 2,
@@ -78,10 +73,8 @@ fn llm_end_converts_to_llm_end() {
             total_tokens: 30,
         })
     );
-}
 
-#[test]
-fn llm_assistant_message_converts() {
+    // -- Case 5: LlmEvent::AssistantMessage
     let event = LlmEvent::AssistantMessage {
         text: "hello".to_string(),
     };
@@ -95,8 +88,11 @@ fn llm_assistant_message_converts() {
     );
 }
 
+/// Warning and compaction events convert to their UI counterparts, except
+/// `CompactionEvent::Requested`, which does not render.
 #[test]
-fn warning_message_converts_to_warning() {
+fn warning_and_compaction_events_convert() {
+    // -- Case 1: WarningEvent::Message
     let event = WarningEvent::Message {
         message: "warn".to_string(),
     };
@@ -107,10 +103,8 @@ fn warning_message_converts_to_warning() {
             message: "warn".to_string(),
         })
     );
-}
 
-#[test]
-fn warning_turn_error_converts() {
+    // -- Case 2: WarningEvent::TurnError
     let event = WarningEvent::TurnError {
         message: "err".to_string(),
     };
@@ -121,10 +115,8 @@ fn warning_turn_error_converts() {
             message: "err".to_string(),
         })
     );
-}
 
-#[test]
-fn compaction_requested_does_not_render_to_ui() {
+    // -- Case 3: CompactionEvent::Requested does not render
     let event = CompactionEvent::Requested {
         source: "auto".to_string(),
     };
@@ -133,10 +125,8 @@ fn compaction_requested_does_not_render_to_ui() {
         ui, None,
         "CompactionEvent::Requested must not render to a UiEvent"
     );
-}
 
-#[test]
-fn compaction_started_converts_with_source() {
+    // -- Case 4: CompactionEvent::Started
     let event = CompactionEvent::Started {
         source: "auto".to_string(),
     };
@@ -147,10 +137,8 @@ fn compaction_started_converts_with_source() {
             source: "auto".to_string(),
         })
     );
-}
 
-#[test]
-fn compaction_summary_chunk_converts() {
+    // -- Case 5: CompactionEvent::SummaryChunk
     let event = CompactionEvent::SummaryChunk {
         source: "auto".to_string(),
         delta: "d".to_string(),
@@ -165,10 +153,8 @@ fn compaction_summary_chunk_converts() {
             aggregated: "a".to_string(),
         })
     );
-}
 
-#[test]
-fn compaction_completed_converts() {
+    // -- Case 6: CompactionEvent::Completed
     let event = CompactionEvent::Completed {
         source: "auto".to_string(),
         summary_preview: "p".to_string(),
@@ -183,10 +169,8 @@ fn compaction_completed_converts() {
             summary_body: "b".to_string(),
         })
     );
-}
 
-#[test]
-fn compaction_failed_converts() {
+    // -- Case 7: CompactionEvent::Failed
     let event = CompactionEvent::Failed {
         source: "auto".to_string(),
         message: "fail".to_string(),
@@ -201,64 +185,55 @@ fn compaction_failed_converts() {
     );
 }
 
+/// Turn and session events do not render to the UI, except
+/// `TurnEvent::Completed`.
 #[test]
-fn turn_started_dropped() {
+fn turn_and_session_events_do_not_render() {
+    // -- Case 1: TurnEvent::Started does not render
     let event = TurnEvent::Started {
         prompt: "hi".to_string(),
         task_id: None,
     };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(ui, None);
-}
 
-#[test]
-fn turn_completed_converts() {
+    // -- Case 2: TurnEvent::Completed renders
     let event = TurnEvent::Completed { tool_calls: 3 };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(ui, Some(UiEvent::Completed { tool_calls: 3 }));
-}
 
-#[test]
-fn turn_task_completed_dropped() {
+    // -- Case 3: TurnEvent::TaskCompleted does not render
     let event = TurnEvent::TaskCompleted {
         output: "out".to_string(),
         task_id: "t1".to_string(),
     };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(ui, None);
-}
 
-#[test]
-fn turn_task_failed_dropped() {
+    // -- Case 4: TurnEvent::TaskFailed does not render
     let event = TurnEvent::TaskFailed {
         task_id: "t1".to_string(),
         error: "boom".to_string(),
     };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(ui, None);
-}
 
-#[test]
-fn session_started_dropped() {
+    // -- Case 5: SessionEvent::Started does not render
     let event = SessionEvent::Started {
         session_id: "s1".to_string(),
         hydrated: false,
     };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(ui, None);
-}
 
-#[test]
-fn session_ended_dropped() {
+    // -- Case 6: SessionEvent::Ended does not render
     let event = SessionEvent::Ended {
         session_id: "s1".to_string(),
     };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(ui, None);
-}
 
-#[test]
-fn session_switched_dropped() {
+    // -- Case 7: SessionEvent::Switched does not render
     let event = SessionEvent::Switched {
         from_session_id: None,
         to_session_id: "s2".to_string(),
@@ -285,8 +260,10 @@ fn make_permission_context() -> PermissionRequestContext {
     }
 }
 
+/// Permission events convert to their UI counterparts.
 #[test]
-fn permission_requested_converts() {
+fn permission_events_convert() {
+    // -- Case 1: PermissionEvent::Requested
     let context = make_permission_context();
     let event = PermissionEvent::Requested {
         request_id: "r1".to_string(),
@@ -300,10 +277,8 @@ fn permission_requested_converts() {
             context,
         })
     );
-}
 
-#[test]
-fn permission_decision_submitted_converts() {
+    // -- Case 2: PermissionEvent::DecisionSubmitted
     let event = PermissionEvent::DecisionSubmitted {
         request_id: "r1".to_string(),
         decision: PermissionDecision::AllowOnce,
@@ -318,10 +293,8 @@ fn permission_decision_submitted_converts() {
             matched_rule_identity: "identity".to_string(),
         })
     );
-}
 
-#[test]
-fn permission_decision_timed_out_converts() {
+    // -- Case 3: PermissionEvent::DecisionTimedOut
     let event = PermissionEvent::DecisionTimedOut {
         request_id: "r1".to_string(),
     };
@@ -332,10 +305,8 @@ fn permission_decision_timed_out_converts() {
             request_id: "r1".to_string(),
         })
     );
-}
 
-#[test]
-fn permission_decision_ignored_converts() {
+    // -- Case 4: PermissionEvent::DecisionIgnored
     let event = PermissionEvent::DecisionIgnored {
         request_id: "r1".to_string(),
         reason: "auto".to_string(),

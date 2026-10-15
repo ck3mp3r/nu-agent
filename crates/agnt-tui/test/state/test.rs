@@ -17,26 +17,17 @@ fn defaults_start_idle_with_unlocked_input_and_no_abort_pending() {
 }
 
 #[test]
-fn mode_helpers_toggle_between_insert_and_normal() {
+fn mode_helpers_toggle_between_insert_and_normal_and_steer_pane_focus() {
     let mut state = AppState::default();
     assert_eq!(state.input.mode, InputMode::Insert);
-
-    state.enter_normal_mode();
-    assert_eq!(state.input.mode, InputMode::Normal);
-
-    state.enter_insert_mode();
-    assert_eq!(state.input.mode, InputMode::Insert);
-}
-
-#[test]
-fn normal_mode_defaults_focus_to_transcript_and_insert_focuses_input() {
-    let mut state = AppState::default();
     assert_eq!(state.scroll.pane_focus, PaneFocus::Input);
 
     state.enter_normal_mode();
+    assert_eq!(state.input.mode, InputMode::Normal);
     assert_eq!(state.scroll.pane_focus, PaneFocus::Transcript);
 
     state.enter_insert_mode();
+    assert_eq!(state.input.mode, InputMode::Insert);
     assert_eq!(state.scroll.pane_focus, PaneFocus::Input);
 }
 

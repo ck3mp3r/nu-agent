@@ -1,151 +1,232 @@
 use std::time::Duration;
 
-#[test]
-fn test_timeout_accessor() {
-    // We can't easily create a real EngineInterface without plugin context,
-    // but we can test that the timeout value is correctly stored and retrieved.
-    // This test validates the struct's basic functionality.
-    let timeout = Duration::from_secs(30);
+// ---------------------------------------------------------------------------
+// Behavioral tests: closure invocation, audit logging, result handling
+// ---------------------------------------------------------------------------
 
-    // For now, we'll test the timeout value is correct
-    // Full integration tests with EngineInterface will be in integration tests
-    assert_eq!(timeout, Duration::from_secs(30));
+use super::*;
+
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+use nu_protocol::BlockId;
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+// region:    --- Test Support
+
+/// A scripted engine: `eval_closure` sleeps for `delay`, then returns the
+/// queued reply (or `nothing` when the queue is empty).
+struct MockEngine {
+    reply: Mutex<Option<core::result::Result<Value, String>>>,
+    delay: Duration,
 }
 
-#[test]
-fn test_default_timeout_value() {
-    // Test that we can create different timeout durations
-    let short_timeout = Duration::from_secs(5);
-    let long_timeout = Duration::from_secs(120);
+impl MockEngine {
+    fn replying(reply: core::result::Result<Value, String>) -> Self {
+        Self {
+            reply: Mutex::new(Some(reply)),
+            delay: Duration::ZERO,
+        }
+    }
 
-    assert!(short_timeout < long_timeout);
-    assert_eq!(short_timeout, Duration::from_secs(5));
-    assert_eq!(long_timeout, Duration::from_secs(120));
+    fn delaying(delay: Duration) -> Self {
+        Self {
+            reply: Mutex::new(None),
+            delay,
+        }
+    }
 }
 
-// Test stubs for closure invocation with timeout enforcement
-// Note: Real closure execution tests require EngineInterface which needs plugin context.
-// These tests serve as placeholders and documentation for expected behavior.
-// Integration tests with actual Nushell environment will provide full validation.
+impl EngineInterfaceLike for MockEngine {
+    fn get_span_contents(&self, _span: Span) -> core::result::Result<Vec<u8>, String> {
+        Ok(Vec::new())
+    }
+
+    fn eval_closure(
+        &self,
+        _closure: &Spanned<Closure>,
+        _positional: Vec<Value>,
+        _input: Option<Value>,
+    ) -> core::result::Result<Value, String> {
+        if !self.delay.is_zero() {
+            std::thread::sleep(self.delay);
+        }
+        self.reply
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or(Ok(Value::nothing(Span::unknown())))
+    }
+}
+
+fn spanned_closure() -> Spanned<Closure> {
+    Spanned {
+        item: Closure {
+            block_id: BlockId::new(0),
+            captures: Vec::new(),
+        },
+        span: Span::unknown(),
+    }
+}
+
+fn executor(engine: MockEngine, log_path: PathBuf, timeout: Duration) -> ToolExecutor {
+    ToolExecutor::new(
+        Arc::new(engine),
+        Arc::new(AuditLogger::new(log_path)),
+        timeout,
+    )
+}
+
+fn read_log(path: &std::path::Path) -> Result<String> {
+    Ok(std::fs::read_to_string(path)?)
+}
+
+// endregion: --- Test Support
 
 #[tokio::test]
-#[ignore = "Requires EngineInterface mock or integration test setup"]
-async fn timeout_slow_closure() {
-    // This test validates that slow closures timeout correctly
-    //
-    // Expected behavior:
-    // - Create a closure that sleeps longer than timeout
-    // - Execute with short timeout (e.g., 10ms)
-    // - Should return ToolError::Timeout
-    //
-    // Conceptual implementation:
-    // let slow_closure = {|x| sleep 100ms; $x + 1 };
-    // let executor = ToolExecutor::new(engine, logger, Duration::from_millis(10));
-    // let result = executor.invoke_closure(slow_closure, Value::int(5), span).await;
-    // assert!(matches!(result, Err(ToolError::Timeout { .. })));
+async fn test_tools_executor_invoke_closure_returns_value_and_logs_ok() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp = tempfile::tempdir()?;
+    let log_path = temp.path().join("audit.log");
+    let executor = executor(
+        MockEngine::replying(Ok(Value::int(7, Span::unknown()))),
+        log_path.clone(),
+        Duration::from_secs(5),
+    );
+
+    // -- Exec
+    let result = executor
+        .invoke_closure(
+            &spanned_closure(),
+            vec![Value::int(1, Span::unknown())],
+            Span::unknown(),
+        )
+        .await;
+
+    // -- Check
+    let value = result.map_err(|e| format!("invoke_closure must succeed: {e:?}"))?;
+    assert_eq!(value.as_int().map_err(|e| format!("{e:?}"))?, 7);
+
+    let log = read_log(&log_path)?;
+    let entry: serde_json::Value = serde_json::from_str(log.trim())?;
+    assert!(
+        entry["tool_name"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Closure"),
+        "audit log must record the tool name, got: {log}"
+    );
+    assert!(
+        entry["duration_ms"].is_number(),
+        "audit log must record duration_ms, got: {log}"
+    );
+    assert_eq!(
+        entry["result"]["Int"]["val"], 7,
+        "audit log must record the Ok result, got: {log}"
+    );
+    Ok(())
 }
 
 #[tokio::test]
-#[ignore = "Requires EngineInterface mock or integration test setup"]
-async fn fast_closure_completes() {
-    // This test validates that fast closures complete successfully
-    //
-    // Expected behavior:
-    // - Create a simple closure that executes quickly
-    // - Execute with reasonable timeout (e.g., 30s)
-    // - Should return Ok(Value) with correct result
-    //
-    // Conceptual implementation:
-    // let fast_closure = {|x| $x + 1 };
-    // let executor = ToolExecutor::new(engine, logger, Duration::from_secs(30));
-    // let result = executor.invoke_closure(fast_closure, Value::int(5), span).await;
-    // assert_eq!(result.unwrap(), Value::int(6));
+async fn test_tools_executor_invoke_closure_propagates_execution_error() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp = tempfile::tempdir()?;
+    let log_path = temp.path().join("audit.log");
+    let executor = executor(
+        MockEngine::replying(Err("boom".to_string())),
+        log_path.clone(),
+        Duration::from_secs(5),
+    );
+
+    // -- Exec
+    let result = executor
+        .invoke_closure(&spanned_closure(), Vec::new(), Span::unknown())
+        .await;
+
+    // -- Check
+    let err = result.err().ok_or("an engine failure must fail the call")?;
+    assert!(
+        matches!(err, ToolError::Execution(_)),
+        "an engine failure must surface as ToolError::Execution, got: {err:?}"
+    );
+    let log = read_log(&log_path)?;
+    assert!(
+        log.contains("Execution error: Closure execution failed"),
+        "audit log must record the execution error, got: {log}"
+    );
+    Ok(())
 }
 
 #[tokio::test]
-#[ignore = "Requires EngineInterface mock or integration test setup"]
-async fn closure_execution_error() {
-    // This test validates that closure execution errors are propagated correctly
-    //
-    // Expected behavior:
-    // - Create a closure that throws an error
-    // - Execute with reasonable timeout
-    // - Should return ToolError::Execution with the underlying error
-    //
-    // Conceptual implementation:
-    // let error_closure = {|x| error make { msg: "test error" } };
-    // let executor = ToolExecutor::new(engine, logger, Duration::from_secs(30));
-    // let result = executor.invoke_closure(error_closure, Value::int(5), span).await;
-    // assert!(matches!(result, Err(ToolError::Execution(_))));
+async fn test_tools_executor_invoke_closure_times_out() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp = tempfile::tempdir()?;
+    let log_path = temp.path().join("audit.log");
+    let executor = executor(
+        MockEngine::delaying(Duration::from_millis(300)),
+        log_path.clone(),
+        Duration::from_millis(20),
+    );
+
+    // -- Exec
+    let result = executor
+        .invoke_closure(&spanned_closure(), Vec::new(), Span::unknown())
+        .await;
+
+    // -- Check
+    let err = result.err().ok_or("a slow closure must time out")?;
+    assert!(
+        matches!(err, ToolError::Timeout { .. }),
+        "a slow closure must surface as ToolError::Timeout, got: {err:?}"
+    );
+    let log = read_log(&log_path)?;
+    assert!(
+        log.contains("Timeout after"),
+        "audit log must record the timeout, got: {log}"
+    );
+    Ok(())
 }
 
 #[tokio::test]
-#[ignore = "Requires EngineInterface mock or integration test setup"]
-async fn logs_successful_closure_execution() {
-    // This test validates that successful closure execution is logged to audit file
-    //
-    // Expected behavior:
-    // - Create temporary directory with audit log
-    // - Execute a simple closure successfully
-    // - Verify audit log entry exists with:
-    //   - tool_name
-    //   - args (as JSON)
-    //   - result (as JSON)
-    //   - duration_ms
-    //   - timestamp
-    //
-    // Conceptual implementation:
-    // use tempfile::TempDir;
-    // use crate::tools::audit::AuditLogger;
-    //
-    // let temp_dir = TempDir::new().unwrap();
-    // let log_path = temp_dir.path().join("audit.log");
-    // let logger = Arc::new(AuditLogger::with_path(log_path.clone()));
-    //
-    // let executor = ToolExecutor::new(engine, logger, Duration::from_secs(30));
-    // let closure = /* simple closure {|x| $x + 1} */;
-    // let result = executor.invoke_closure(&closure, Value::int(5), span).await;
-    //
-    // assert!(result.is_ok());
-    //
-    // // Read and verify audit log
-    // let content = tokio::fs::read_to_string(&log_path).await.unwrap();
-    // assert!(content.contains("tool_name"));
-    // assert!(content.contains("duration_ms"));
-    // assert!(content.contains("\"result\":{\"Ok\":"));
+async fn test_tools_executor_invoke_closure_survives_audit_log_failure() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp = tempfile::tempdir()?;
+    // A log path whose parent directory does not exist: `log()` fails and the
+    // executor must warn rather than fail the call.
+    let log_path = temp.path().join("missing-dir").join("audit.log");
+    let executor = executor(
+        MockEngine::replying(Ok(Value::int(3, Span::unknown()))),
+        log_path,
+        Duration::from_secs(5),
+    );
+
+    // -- Exec
+    let result = executor
+        .invoke_closure(&spanned_closure(), Vec::new(), Span::unknown())
+        .await;
+
+    // -- Check
+    let value = result.map_err(|e| format!("an audit failure must not fail the call: {e:?}"))?;
+    assert_eq!(value.as_int().map_err(|e| format!("{e:?}"))?, 3);
+    Ok(())
 }
 
 #[tokio::test]
-#[ignore = "Requires EngineInterface mock or integration test setup"]
-async fn logs_timeout_error() {
-    // This test validates that timeout errors are also logged
-    //
-    // Expected behavior:
-    // - Create temporary directory with audit log
-    // - Execute a slow closure with short timeout
-    // - Should return ToolError::Timeout
-    // - Verify audit log entry exists with:
-    //   - tool_name
-    //   - args (as JSON)
-    //   - result: {"Err": "Timeout after..."}
-    //   - duration_ms
-    //
-    // Conceptual implementation:
-    // use tempfile::TempDir;
-    // use crate::tools::audit::AuditLogger;
-    //
-    // let temp_dir = TempDir::new().unwrap();
-    // let log_path = temp_dir.path().join("audit.log");
-    // let logger = Arc::new(AuditLogger::with_path(log_path.clone()));
-    //
-    // let executor = ToolExecutor::new(engine, logger, Duration::from_millis(10));
-    // let closure = /* slow closure {|x| sleep 100ms; $x} */;
-    // let result = executor.invoke_closure(&closure, Value::int(5), span).await;
-    //
-    // assert!(matches!(result, Err(ToolError::Timeout { .. })));
-    //
-    // // Read and verify audit log
-    // let content = tokio::fs::read_to_string(&log_path).await.unwrap();
-    // assert!(content.contains("\"Err\":\"Timeout"));
-    // assert!(content.contains("duration_ms"));
+async fn test_tools_executor_accessors_expose_engine_and_timeout() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp = tempfile::tempdir()?;
+    let executor = executor(
+        MockEngine::replying(Ok(Value::nothing(Span::unknown()))),
+        temp.path().join("audit.log"),
+        Duration::from_secs(42),
+    );
+
+    // -- Exec & Check
+    assert_eq!(executor.timeout(), Duration::from_secs(42));
+    assert!(
+        executor.engine().get_span_contents(Span::unknown()).is_ok(),
+        "the engine accessor must expose the injected engine"
+    );
+    Ok(())
 }

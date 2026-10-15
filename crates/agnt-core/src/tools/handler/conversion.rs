@@ -89,3 +89,11 @@ pub fn nu_value_to_json(value: &Value) -> Result<JsonValue, Box<GenericError>> {
         ))),
     }
 }
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/tools/handler/conversion.rs"]
+mod conversion_test;
+
+// endregion: --- Tests

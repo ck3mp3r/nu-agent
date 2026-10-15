@@ -1,10 +1,11 @@
 use std::time::{Duration, Instant};
 
 use mdns_sd::{Receiver, ResolvedService, ServiceDaemon, ServiceEvent, ServiceInfo};
+use tokio::sync::mpsc;
 
 use crate::discovery::static_discovery::StaticPeerDiscovery;
 use crate::discovery::{
-    DiscoveryBrowser, DiscoveryService, PeerDiscoveryImpl, mdns_name_for_switch,
+    DiscoveryBrowser, DiscoveryService, PeerDiscoveryImpl, PeerEvent, mdns_name_for_switch,
 };
 use crate::{AgentCard, Peer};
 
@@ -320,4 +321,141 @@ fn test_peer_discovery_impl_rename_static_does_not_panic() {
 fn discovery_service_noop_does_not_crash() {
     let service = DiscoveryService { _daemon: None };
     drop(service);
+}
+
+// ---------------------------------------------------------------------------
+// PeerEvent dispatch tests
+// ---------------------------------------------------------------------------
+
+/// Verify that sending a [`PeerEvent::PeerDiscovered`] through the channel
+/// preserves event order.
+#[tokio::test]
+async fn test_peer_event_roundtrip_discovered() -> Result<()> {
+    let (tx, mut rx) = mpsc::channel::<PeerEvent>(16);
+
+    let peer = Box::new(peer_from_fields("alpha", "10.0.0.1", 9001, "alpha.local."));
+    tx.send(PeerEvent::PeerDiscovered(peer)).await.unwrap();
+    drop(tx);
+
+    let event = rx
+        .recv()
+        .await
+        .ok_or("should receive PeerEvent after send")?;
+    match event {
+        PeerEvent::PeerDiscovered(p) => {
+            assert_eq!(p.name, "alpha");
+            assert_eq!(p.port, 9001);
+        }
+        other => panic!("Expected PeerDiscovered, got: {other:?}"),
+    }
+    Ok(())
+}
+
+/// Verify that sending multiple discovered events in sequence works.
+#[tokio::test]
+async fn test_peer_event_roundtrip_multiple() {
+    let (tx, mut rx) = mpsc::channel::<PeerEvent>(16);
+
+    let alpha = Box::new(peer_from_fields("alpha", "10.0.0.1", 9001, "alpha.local."));
+    let beta = Box::new(peer_from_fields("beta", "10.0.0.2", 9002, "beta.local."));
+    tx.send(PeerEvent::PeerDiscovered(alpha)).await.unwrap();
+    tx.send(PeerEvent::PeerDiscovered(beta)).await.unwrap();
+    drop(tx);
+
+    let mut names = Vec::new();
+    while let Some(event) = rx.recv().await {
+        if let PeerEvent::PeerDiscovered(p) = event {
+            names.push(p.name);
+        }
+    }
+
+    assert!(names.iter().any(|n| n == "alpha"));
+    assert!(names.iter().any(|n| n == "beta"));
+}
+
+/// Verify that sending a [`PeerEvent::PeerLost`] is received correctly.
+#[tokio::test]
+async fn test_peer_event_roundtrip_lost() {
+    let (tx, mut rx) = mpsc::channel::<PeerEvent>(16);
+
+    let peer = Box::new(peer_from_fields(
+        "removable",
+        "10.0.0.1",
+        9001,
+        "removable.local.",
+    ));
+    tx.send(PeerEvent::PeerDiscovered(peer)).await.unwrap();
+    tx.send(PeerEvent::PeerLost("removable".to_string()))
+        .await
+        .unwrap();
+    drop(tx);
+
+    let mut discovered = false;
+    let mut lost = false;
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            PeerEvent::PeerDiscovered(p) => {
+                if p.name == "removable" {
+                    discovered = true;
+                }
+            }
+            PeerEvent::PeerLost(name) => {
+                if name == "removable" {
+                    lost = true;
+                }
+            }
+        }
+    }
+
+    assert!(discovered, "Should have received PeerDiscovered");
+    assert!(lost, "Should have received PeerLost");
+}
+
+// ---------------------------------------------------------------------------
+// StaticPeerDiscovery — configured peers
+// ---------------------------------------------------------------------------
+
+/// Verify that [`StaticPeerDiscovery`] emits all configured peers through
+/// the channel on first call to [`take_peer_rx`].
+#[tokio::test]
+async fn test_static_discovery_emits_configured_peers() -> Result<()> {
+    let peers = vec![
+        Peer {
+            name: "alpha".into(),
+            url: "http://10.0.0.1:9001".into(),
+            host: "alpha.local.".into(),
+            port: 9001,
+            ..Default::default()
+        },
+        Peer {
+            name: "beta".into(),
+            url: "http://10.0.0.2:9002".into(),
+            host: "beta.local.".into(),
+            port: 9002,
+            ..Default::default()
+        },
+    ];
+
+    let mut discovery = StaticPeerDiscovery::new(peers);
+    let mut rx = discovery.take_peer_rx().ok_or("should have peer_rx")?;
+
+    // Collect all events non-blockingly.
+    let mut names: Vec<String> = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let PeerEvent::PeerDiscovered(peer) = event {
+            names.push(peer.name.clone());
+        }
+    }
+
+    assert_eq!(names.len(), 2, "should emit two peers");
+    assert!(names.contains(&"alpha".to_string()));
+    assert!(names.contains(&"beta".to_string()));
+
+    // Second call returns None.
+    assert!(
+        discovery.take_peer_rx().is_none(),
+        "second take should be None"
+    );
+    Ok(())
 }

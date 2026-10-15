@@ -1,47 +1,83 @@
 use super::*;
 
+/// The runtime renderer forwards events to the inner renderer only in non-TUI
+/// mode; in TUI-active mode it swallows spinner progress and payload-like
+/// events.
 #[test]
-fn runtime_renderer_in_tui_mode_does_not_forward_spinner_progress_to_inner_renderer() {
+fn runtime_renderer_forwarding_by_mode() -> Result<()> {
+    // -- Setup & Fixtures: TUI-active mode.
     let events = Arc::new(Mutex::new(Vec::new()));
     let inner = CapturingRenderer::new(events.clone());
     let scripted = ScriptedTerminalEvents::from_script("");
-    let mut runtime_renderer =
-        TuiRuntimeRenderer::new_tui_active_for_test(inner, scripted, 120, 30);
+    let mut tui_active = TuiRuntimeRenderer::new_tui_active_for_test(inner, scripted, 120, 30);
 
-    runtime_renderer.emit(&UiEvent::LlmStarted);
-    runtime_renderer.emit(&UiEvent::Tick);
-    runtime_renderer.emit(&UiEvent::Completed { tool_calls: 0 });
+    // -- Exec
+    tui_active.emit(&UiEvent::LlmStarted);
+    tui_active.emit(&UiEvent::Tick);
+    tui_active.emit(&UiEvent::Completed { tool_calls: 0 });
 
+    // -- Check: nothing is forwarded.
     assert!(events.lock().expect("events").is_empty());
-}
 
-#[test]
-fn runtime_renderer_non_tui_mode_forwards_events_to_inner_renderer() {
+    // -- Setup & Fixtures: non-TUI mode.
     let events = Arc::new(Mutex::new(Vec::new()));
     let inner = CapturingRenderer::new(events.clone());
     let scripted = ScriptedTerminalEvents::from_script("");
-    let mut runtime_renderer = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
+    let mut non_tui = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
 
-    runtime_renderer.emit(&UiEvent::Warning {
+    // -- Exec
+    non_tui.emit(&UiEvent::Warning {
         message: "warn".to_string(),
     });
 
+    // -- Check: the warning is forwarded.
     let captured = events.lock().expect("events").clone();
     assert_eq!(captured.len(), 1);
     assert!(matches!(captured[0], UiEvent::Warning { .. }));
+
+    // -- Setup & Fixtures: TUI-active mode with payload-like events.
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let inner = CapturingRenderer::new(events.clone());
+    let scripted = ScriptedTerminalEvents::from_script("");
+    let mut payload = TuiRuntimeRenderer::new_tui_active_for_test(inner, scripted, 120, 30);
+
+    // -- Exec
+    payload.emit(&UiEvent::ToolCompleted {
+        name: "k8s__list_pods".to_string(),
+        source: "mcp".to_string(),
+        arguments: r#"{"namespace":"prod"}"#.to_string(),
+        success: true,
+        result: r#"[{"name":"api-0"}]"#.to_string(),
+        display: None,
+        error_kind: None,
+        message: None,
+    });
+    payload.emit(&UiEvent::AssistantMessage {
+        delta: "response".to_string(),
+        text: "response".to_string(),
+    });
+    payload.emit(&UiEvent::Completed { tool_calls: 1 });
+
+    // -- Check: nothing is forwarded.
+    assert!(events.lock().expect("events").is_empty());
+    Ok(())
 }
 
-#[test]
-fn assistant_message_event_is_appended_to_tui_transcript() {
+/// An assistant message event is appended as one raw-markdown block, projects
+/// its markdown, and flows after a user turn without a separator.
+#[tokio::test]
+async fn assistant_message_event_transcript_flow() -> Result<()> {
+    // -- Setup & Fixtures
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+
+    // -- Exec
     coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
         delta: "hello\nworld".to_string(),
         text: "hello\nworld".to_string(),
     });
     coordinator.drain_transport();
 
-    // After the raw-markdown refactor, a single AssistantMessage event produces
-    // exactly one assistant markdown block (the entire text is stored as raw markdown).
+    // -- Check: one assistant block with the raw markdown.
     let assistant_entries: Vec<_> = coordinator
         .state()
         .transcript
@@ -57,44 +93,29 @@ fn assistant_message_event_is_appended_to_tui_transcript() {
             )
         })
         .collect();
-    assert_eq!(
-        assistant_entries.len(),
-        1,
-        "one assistant block per message block"
-    );
-    assert!(
-        assistant_entries[0].source.plain_text().contains("hello"),
-        "raw markdown should contain 'hello'"
-    );
-    assert!(
-        assistant_entries[0].source.plain_text().contains("world"),
-        "raw markdown should contain 'world'"
-    );
-}
+    assert_eq!(assistant_entries.len(), 1);
+    assert!(assistant_entries[0].source.plain_text().contains("hello"));
+    assert!(assistant_entries[0].source.plain_text().contains("world"));
 
-#[test]
-fn assistant_markdown_message_is_projected_before_transcript_append() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    let markdown = markdown_fixture("lists_blockquote.md");
-    coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
-        delta: markdown.clone(),
-        text: markdown,
+    // -- Setup & Fixtures: a markdown fixture.
+    let mut markdown = RuntimeCoordinator::new(120, 30, Some(true));
+    let fixture = markdown_fixture("lists_blockquote.md");
+
+    // -- Exec
+    markdown.enqueue_ui_event(UiEvent::AssistantMessage {
+        delta: fixture.clone(),
+        text: fixture,
     });
-    coordinator.drain_transport();
+    markdown.drain_transport();
 
-    // After the raw-markdown refactor, the transcript stores the source markdown.
-    // Projection happens at render time. Verify the raw markdown is stored and
-    // produces the expected rendered output when projected.
-    let raw_texts: Vec<String> = coordinator
+    // -- Check: the projection produces list markers and quote rails.
+    let raw_texts: Vec<String> = markdown
         .state()
         .transcript
         .blocks()
         .iter()
         .map(|block| block.source.plain_text())
         .collect();
-
-    // The entire markdown is stored in a single assistant block.
-    // Project it and verify the list markers appear.
     let projected: Vec<String> = raw_texts
         .iter()
         .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
@@ -105,43 +126,24 @@ fn assistant_markdown_message_is_projected_before_transcript_append() {
                 .collect::<String>()
         })
         .collect();
-
     assert!(projected.iter().any(|l| l.contains("• one")));
     assert!(projected.iter().any(|l| l.contains("• two")));
     assert!(projected.iter().any(|l| l.contains("1. first")));
     assert!(projected.iter().any(|l| l.contains("2. second")));
     assert!(projected.iter().any(|l| l.contains("│ quoted")));
     assert!(projected.iter().any(|l| l.contains("│ second")));
-}
 
-#[test]
-fn assistant_markdown_message_preserves_inline_span_styles_in_transcript_state() {
-    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
-        delta: "hello **bold** and `code`".to_string(),
-        text: "hello **bold** and `code`".to_string(),
-    });
-    coordinator.drain_transport();
-
-    // TranscriptEntry no longer has a `.rendered` field - test removed
-    // Previously tested that assistant markdown was rendered with bold formatting
-}
-
-#[tokio::test]
-async fn user_then_assistant_flows_without_turn_separator() -> Result<()> {
-    // -- Setup & Fixtures
+    // -- Setup & Fixtures: a user turn then an assistant message.
     let mut driver = RenderLoopDriver::new(120, 30);
 
-    // -- Exec: type and submit "h" through the real terminal arm.
+    // -- Exec
     driver
         .advance(&[key(TerminalKey::Char('h')), key(TerminalKey::Enter)])
         .await?;
-    // Activate the queued prompt so the User transcript entry is written
     let _ = driver
         .coordinator_mut()
         .state
         .take_next_prompt_for_execution();
-
     driver
         .coordinator_mut()
         .enqueue_ui_event(UiEvent::AssistantMessage {
@@ -150,17 +152,14 @@ async fn user_then_assistant_flows_without_turn_separator() -> Result<()> {
         });
     driver.coordinator_mut().drain_transport();
 
-    // -- Check
+    // -- Check: [User, Assistant] with no separator.
     assert_eq!(
         driver
             .state()
             .transcript
             .blocks()
             .iter()
-            .map(|block| {
-                let role = block_to_role(block);
-                (role, block.source.plain_text())
-            })
+            .map(|block| (block_to_role(block), block.source.plain_text()))
             .collect::<Vec<_>>(),
         vec![
             (TranscriptRole::User, "h".to_string()),
@@ -183,42 +182,15 @@ fn busy_input_line_has_no_spinner_prefix_and_never_shows_locked_label() {
     assert_eq!(busy_line, "");
 }
 
-#[test]
-fn tui_active_mode_does_not_forward_payload_like_events_to_inner_renderer() {
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let inner = CapturingRenderer::new(events.clone());
-    let scripted = ScriptedTerminalEvents::from_script("");
-    let mut runtime_renderer =
-        TuiRuntimeRenderer::new_tui_active_for_test(inner, scripted, 120, 30);
-
-    runtime_renderer.emit(&UiEvent::ToolCompleted {
-        name: "k8s__list_pods".to_string(),
-        source: "mcp".to_string(),
-        arguments: r#"{"namespace":"prod"}"#.to_string(),
-        success: true,
-        result: r#"[{"name":"api-0"}]"#.to_string(),
-        display: None,
-        error_kind: None,
-        message: None,
-    });
-    runtime_renderer.emit(&UiEvent::AssistantMessage {
-        delta: "response".to_string(),
-        text: "response".to_string(),
-    });
-    runtime_renderer.emit(&UiEvent::Completed { tool_calls: 1 });
-
-    assert!(events.lock().expect("events").is_empty());
-}
-
+/// Tick and Completed events update the status area only, without touching the
+/// input buffer or polluting the input line.
 #[tokio::test]
-async fn tick_and_completed_events_update_status_only_without_touching_input_buffer() -> Result<()>
-{
+async fn tick_and_completed_events_update_status_only() -> Result<()> {
     // -- Setup & Fixtures
     let mut driver = RenderLoopDriver::new(120, 30);
 
     // -- Exec
     driver.advance(&[key(TerminalKey::Char('x'))]).await?;
-
     driver.coordinator_mut().enqueue_ui_event(UiEvent::Tick);
     driver.coordinator_mut().drain_transport();
 
@@ -233,41 +205,30 @@ async fn tick_and_completed_events_update_status_only_without_touching_input_buf
 
     // -- Check
     assert!(driver.state().status.message.status_line().is_empty());
-    Ok(())
-}
 
-#[tokio::test]
-async fn status_updates_stay_in_status_area_and_do_not_pollute_input_line() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut driver = RenderLoopDriver::new(120, 30);
+    // -- Setup & Fixtures: a busy turn.
+    let mut busy = RenderLoopDriver::new(120, 30);
 
-    // -- Exec: type k and 9 through the real terminal arm.
-    driver
-        .advance(&[key(TerminalKey::Char('k')), key(TerminalKey::Char('9'))])
+    // -- Exec
+    busy.advance(&[key(TerminalKey::Char('k')), key(TerminalKey::Char('9'))])
         .await?;
+    busy.coordinator_mut().state.phase = UiPhase::Busy;
+    busy.coordinator_mut().enqueue_ui_event(UiEvent::Tick);
+    busy.coordinator_mut().drain_transport();
 
-    // -- Exec: mark the turn busy so the model activity label reports it.
-    driver.coordinator_mut().state.phase = UiPhase::Busy;
-    driver.coordinator_mut().enqueue_ui_event(UiEvent::Tick);
-    driver.coordinator_mut().drain_transport();
-
+    // -- Check: the status area reports busy.
     let status_lines =
-        crate::runtime::status_lines_for_test(&mut driver.coordinator_mut().state, "openai/gpt-4");
-    let joined = status_lines.join("\n");
-
-    // -- Check
-    assert!(joined.contains("(busy)"));
+        crate::runtime::status_lines_for_test(&mut busy.coordinator_mut().state, "openai/gpt-4");
+    assert!(status_lines.join("\n").contains("(busy)"));
 
     // -- Exec
-    driver
-        .coordinator_mut()
+    busy.coordinator_mut()
         .enqueue_ui_event(UiEvent::Completed { tool_calls: 0 });
-    driver.coordinator_mut().drain_transport();
+    busy.coordinator_mut().drain_transport();
 
+    // -- Check: the status area reports idle; the input line is not polluted.
     let status_lines =
-        crate::runtime::status_lines_for_test(&mut driver.coordinator_mut().state, "openai/gpt-4");
-
-    // -- Check
+        crate::runtime::status_lines_for_test(&mut busy.coordinator_mut().state, "openai/gpt-4");
     assert!(status_lines[0].contains("(idle)"));
     assert!(
         !status_lines

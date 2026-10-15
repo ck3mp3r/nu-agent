@@ -128,4 +128,59 @@ pub(super) fn started_with_call_line(
     }
 }
 
+/// Reduce a `Completed` event carrying an optional display.
+pub(super) fn complete_with_display(
+    state: &mut AppState,
+    name: &str,
+    arguments: &str,
+    display: Option<ToolDisplay>,
+) {
+    reduce_tool(
+        state,
+        ToolEvent::Completed {
+            name: name.to_string(),
+            source: "closure".to_string(),
+            arguments: arguments.to_string(),
+            success: true,
+            result: "{}".to_string(),
+            display,
+            error_kind: None,
+            message: None,
+        },
+    );
+}
+
+/// Build a diff `ToolDisplaySection` with the shared test path.
+pub(super) fn diff_section(label: Option<&str>, content: &str) -> ToolDisplaySection {
+    ToolDisplaySection {
+        label: label.map(str::to_string),
+        kind: ContentKind::Diff {
+            language: "diff".to_string(),
+            path: "test.rs".to_string(),
+        },
+        content: content.to_string(),
+        stats: None,
+    }
+}
+
+/// Build a permission request context with the shared test defaults.
+pub(super) fn permission_context(
+    tool: &str,
+    tool_key: &str,
+    display: Option<ToolDisplay>,
+) -> agnt_core::protocol::event::PermissionRequestContext {
+    agnt_core::protocol::event::PermissionRequestContext {
+        tool: tool.to_string(),
+        tool_key: tool_key.to_string(),
+        source: "closure".to_string(),
+        mode: Some("apply".to_string()),
+        matched_rule_identity: "tool:edit".to_string(),
+        scope: "tool".to_string(),
+        target_field: None,
+        pattern: "edit".to_string(),
+        summary: "→ {...}".to_string(),
+        pre_authorize_display: display,
+    }
+}
+
 // endregion: --- Test Support

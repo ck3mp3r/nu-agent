@@ -6,312 +6,141 @@ use crate::config::{AgentsConfig, ModelRoleConfig, PluginConfig, ProviderConfig}
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+struct Case {
+    name: &'static str,
+    plugin_config: PluginConfig,
+    model: &'static str,
+    provider: &'static str,
+    expected_model: &'static str,
+    api_key: Option<&'static str>,
+    base_url: Option<&'static str>,
+}
+
 #[test]
-fn resolve_model_handles_two_part_format() -> Result<()> {
-    // Test that traditional 2-part format still works (backward compatibility)
-    let plugin_config = PluginConfig {
-        models: {
-            let mut m = HashMap::new();
-            m.insert(
-                "default".to_string(),
-                ModelRoleConfig {
-                    model: "openai/gpt-4".to_string(),
-                    ..ModelRoleConfig::default()
-                },
-            );
-            m
+fn resolve_model_handles_multi_part_format() -> Result<()> {
+    // -- Setup & Fixtures
+    let cases = vec![
+        Case {
+            name: "two-part format",
+            plugin_config: plugin_config_with_provider("openai", Some("sk-test123"), None),
+            model: "openai/gpt-4",
+            provider: "openai",
+            expected_model: "gpt-4",
+            api_key: Some("sk-test123"),
+            base_url: None,
         },
-        providers: {
-            let mut providers = HashMap::new();
-            providers.insert(
-                "openai".to_string(),
-                ProviderConfig {
-                    name: None,
-                    api_key: Some("sk-test123".to_string()),
-                    base_url: None,
-                    provider: None,
-                    preamble: None,
-                    models: HashMap::new(),
-                },
-            );
-            providers
+        Case {
+            name: "three-part format splits on the first slash",
+            plugin_config: plugin_config_with_provider(
+                "github-copilot",
+                Some("test-key"),
+                Some("https://api.githubcopilot.com"),
+            ),
+            model: "github-copilot/anthropic/claude-sonnet-4-20250514",
+            provider: "github-copilot",
+            expected_model: "anthropic/claude-sonnet-4-20250514",
+            api_key: Some("test-key"),
+            base_url: Some("https://api.githubcopilot.com"),
         },
-        compaction: None,
-        agents: AgentsConfig::default(),
-        a2a_enabled: None,
-        session_store: None,
-        vault: None,
-        models_cache: None,
-        permissions: None,
-        mcp: None,
-        theme: None,
-    };
+        Case {
+            name: "three-part format with an openai backend",
+            plugin_config: plugin_config_with_provider(
+                "github-copilot",
+                Some("test-key"),
+                Some("https://api.githubcopilot.com"),
+            ),
+            model: "github-copilot/openai/gpt-4o-mini",
+            provider: "github-copilot",
+            expected_model: "openai/gpt-4o-mini",
+            api_key: Some("test-key"),
+            base_url: Some("https://api.githubcopilot.com"),
+        },
+        Case {
+            name: "simple two-part format",
+            plugin_config: plugin_config_with_provider(
+                "openai",
+                Some("test-key"),
+                Some("https://api.githubcopilot.com"),
+            ),
+            model: "openai/gpt-4",
+            provider: "openai",
+            expected_model: "gpt-4",
+            api_key: Some("test-key"),
+            base_url: Some("https://api.githubcopilot.com"),
+        },
+    ];
 
-    let role_config = ModelRoleConfig {
-        model: "openai/gpt-4".to_string(),
-        ..ModelRoleConfig::default()
-    };
-    let config = plugin_config
-        .resolve_model(&role_config)
-        .map_err(|e| format!("should resolve 2-part format: {e:?}"))?;
-
-    assert_eq!(config.provider, "openai");
-    assert_eq!(config.model, "gpt-4");
-    assert_eq!(config.api_key, Some("sk-test123".to_string()));
+    // -- Exec & Check
+    for case in cases {
+        let role_config = ModelRoleConfig {
+            model: case.model.to_string(),
+            ..ModelRoleConfig::default()
+        };
+        let config = case
+            .plugin_config
+            .resolve_model(&role_config)
+            .map_err(|e| format!("{}: {e:?}", case.name))?;
+        assert_eq!(config.provider, case.provider, "{}", case.name);
+        assert_eq!(config.model, case.expected_model, "{}", case.name);
+        assert_eq!(config.api_key.as_deref(), case.api_key, "{}", case.name);
+        assert_eq!(config.base_url.as_deref(), case.base_url, "{}", case.name);
+    }
     Ok(())
 }
 
 #[test]
-fn resolve_model_validates_empty_parts() -> Result<()> {
-    // Test that empty parts in model specification are rejected
-    let plugin_config = PluginConfig {
-        models: {
-            let mut m = HashMap::new();
-            m.insert(
-                "default".to_string(),
-                ModelRoleConfig {
-                    model: "provider/model".to_string(),
-                    ..ModelRoleConfig::default()
-                },
-            );
-            m
-        },
-        providers: HashMap::new(),
-        compaction: None,
-        agents: AgentsConfig::default(),
-        a2a_enabled: None,
-        session_store: None,
-        vault: None,
-        models_cache: None,
-        permissions: None,
-        mcp: None,
-        theme: None,
-    };
+fn resolve_model_rejects_empty_parts() -> Result<()> {
+    // -- Setup & Fixtures
+    let plugin_config = plugin_config_with_provider("openai", None, None);
+    let cases = ["/model", "provider/", "/"];
 
-    // Empty provider
-    let result = plugin_config.resolve_model(&ModelRoleConfig {
-        model: "/model".to_string(),
-        ..ModelRoleConfig::default()
-    });
-    let err = match result {
-        Ok(_) => return Err("empty provider part should fail".into()),
-        Err(e) => e,
-    };
-    assert!(err.contains("cannot be empty"));
-
-    // Empty model
-    let result = plugin_config.resolve_model(&ModelRoleConfig {
-        model: "provider/".to_string(),
-        ..ModelRoleConfig::default()
-    });
-    let err = match result {
-        Ok(_) => return Err("empty model part should fail".into()),
-        Err(e) => e,
-    };
-    assert!(err.contains("cannot be empty"));
-
-    // Both empty
-    let result = plugin_config.resolve_model(&ModelRoleConfig {
-        model: "/".to_string(),
-        ..ModelRoleConfig::default()
-    });
-    assert!(result.is_err());
+    // -- Exec & Check
+    for model in cases {
+        let role_config = ModelRoleConfig {
+            model: model.to_string(),
+            ..ModelRoleConfig::default()
+        };
+        let err = match plugin_config.resolve_model(&role_config) {
+            Ok(_) => return Err(format!("{model} should fail resolution").into()),
+            Err(e) => e,
+        };
+        assert!(err.contains("cannot be empty"), "{model}: got {err}");
+    }
     Ok(())
 }
 
-#[test]
-fn resolve_model_uses_split_once_for_multi_part_models() -> Result<()> {
-    let plugin_config = PluginConfig {
-        models: {
-            let mut m = HashMap::new();
-            m.insert(
-                "default".to_string(),
-                ModelRoleConfig {
-                    model: "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
-                    ..ModelRoleConfig::default()
-                },
-            );
-            m
+// region:    --- Test Support
+
+fn plugin_config_with_provider(
+    provider: &str,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+) -> PluginConfig {
+    let mut providers = HashMap::new();
+    providers.insert(
+        provider.to_string(),
+        ProviderConfig {
+            name: None,
+            api_key: api_key.map(str::to_string),
+            base_url: base_url.map(str::to_string),
+            provider: None,
+            preamble: None,
+            models: HashMap::new(),
         },
-        providers: {
-            let mut map = HashMap::new();
-            map.insert(
-                "github-copilot".to_string(),
-                ProviderConfig {
-                    name: None,
-                    provider: None,
-                    api_key: Some("test-key".to_string()),
-                    base_url: Some("https://api.githubcopilot.com".to_string()),
-                    preamble: None,
-                    models: HashMap::new(),
-                },
-            );
-            map
-        },
-        compaction: None,
-        agents: AgentsConfig::default(),
-        a2a_enabled: None,
-        session_store: None,
-        vault: None,
-        models_cache: None,
-        permissions: None,
-        mcp: None,
-        theme: None,
-    };
-
-    let role_config = ModelRoleConfig {
-        model: "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
-        ..ModelRoleConfig::default()
-    };
-    let config = plugin_config
-        .resolve_model(&role_config)
-        .map_err(|e| format!("Should resolve github-copilot model: {e:?}"))?;
-
-    // Provider should be "github-copilot"
-    assert_eq!(config.provider, "github-copilot");
-
-    // Model should be "anthropic/claude-sonnet-4-20250514" (everything after first /)
-    assert_eq!(config.model, "anthropic/claude-sonnet-4-20250514");
-
-    // API key should come from provider config
-    assert_eq!(config.api_key, Some("test-key".to_string()));
-    Ok(())
-}
-
-#[test]
-fn resolve_model_works_with_simple_two_part() -> Result<()> {
-    let plugin_config = PluginConfig {
-        models: {
-            let mut m = HashMap::new();
-            m.insert(
-                "default".to_string(),
-                ModelRoleConfig {
-                    model: "openai/gpt-4".to_string(),
-                    ..ModelRoleConfig::default()
-                },
-            );
-            m
-        },
-        providers: {
-            let mut map = HashMap::new();
-            map.insert(
-                "openai".to_string(),
-                ProviderConfig {
-                    name: None,
-                    provider: None,
-                    api_key: Some("test-key".to_string()),
-                    base_url: Some("https://api.githubcopilot.com".to_string()),
-                    preamble: None,
-                    models: HashMap::new(),
-                },
-            );
-            map
-        },
-        compaction: None,
-        agents: AgentsConfig::default(),
-        a2a_enabled: None,
-        session_store: None,
-        vault: None,
-        models_cache: None,
-        permissions: None,
-        mcp: None,
-        theme: None,
-    };
-
-    let role_config = ModelRoleConfig {
-        model: "openai/gpt-4".to_string(),
-        ..ModelRoleConfig::default()
-    };
-    let config = plugin_config
-        .resolve_model(&role_config)
-        .map_err(|e| format!("Should resolve openai model: {e:?}"))?;
-
-    assert_eq!(config.provider, "openai");
-    assert_eq!(config.model, "gpt-4");
-    Ok(())
-}
-
-#[test]
-fn integration_github_copilot_with_backend_in_model() -> Result<()> {
-    // This simulates the full flow:
-    // 1. Config has github-copilot provider
-    // 2. User specifies model as "github-copilot/anthropic/claude-sonnet-4-20250514"
-    // 3. resolve_model extracts provider="github-copilot", model="anthropic/claude-sonnet-4-20250514"
-    // 4. github-copilot provider receives model string and parses backend internally
-
-    let plugin_config = PluginConfig {
-        models: {
-            let mut m = HashMap::new();
-            m.insert(
-                "default".to_string(),
-                ModelRoleConfig {
-                    model: "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
-                    ..ModelRoleConfig::default()
-                },
-            );
-            m.insert(
-                "light".to_string(),
-                ModelRoleConfig {
-                    model: "github-copilot/openai/gpt-4o-mini".to_string(),
-                    ..ModelRoleConfig::default()
-                },
-            );
-            m
-        },
-        providers: {
-            let mut map = HashMap::new();
-            map.insert(
-                "github-copilot".to_string(),
-                ProviderConfig {
-                    name: None,
-                    provider: None,
-                    api_key: Some("test-key".to_string()),
-                    base_url: Some("https://api.githubcopilot.com".to_string()),
-                    preamble: None,
-                    models: HashMap::new(),
-                },
-            );
-            map
-        },
-        compaction: None,
-        agents: AgentsConfig::default(),
-        a2a_enabled: None,
-        session_store: None,
-        vault: None,
-        models_cache: None,
-        permissions: None,
-        mcp: None,
-        theme: None,
-    };
-
-    // Test default model
-    let default_role = ModelRoleConfig {
-        model: "github-copilot/anthropic/claude-sonnet-4-20250514".to_string(),
-        ..ModelRoleConfig::default()
-    };
-    let config = plugin_config
-        .resolve_model(&default_role)
-        .map_err(|e| format!("Should resolve github-copilot anthropic model: {e:?}"))?;
-
-    assert_eq!(config.provider, "github-copilot");
-    assert_eq!(config.model, "anthropic/claude-sonnet-4-20250514");
-    assert_eq!(config.api_key, Some("test-key".to_string()));
-    assert_eq!(
-        config.base_url,
-        Some("https://api.githubcopilot.com".to_string())
     );
-
-    // Test small model (OpenAI backend)
-    let light_role = ModelRoleConfig {
-        model: "github-copilot/openai/gpt-4o-mini".to_string(),
-        ..ModelRoleConfig::default()
-    };
-    let config = plugin_config
-        .resolve_model(&light_role)
-        .map_err(|e| format!("Should resolve github-copilot openai model: {e:?}"))?;
-
-    assert_eq!(config.provider, "github-copilot");
-    assert_eq!(config.model, "openai/gpt-4o-mini");
-    assert_eq!(config.api_key, Some("test-key".to_string()));
-    Ok(())
+    PluginConfig {
+        models: HashMap::new(),
+        providers,
+        compaction: None,
+        agents: AgentsConfig::default(),
+        a2a_enabled: None,
+        session_store: None,
+        vault: None,
+        models_cache: None,
+        permissions: None,
+        mcp: None,
+        theme: None,
+    }
 }
+
+// endregion: --- Test Support

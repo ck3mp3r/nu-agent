@@ -4,46 +4,42 @@ use super::*;
 // Strategy tests
 // ============================================================
 
+/// The default strategy is `SlidingSummary`; legacy aliases normalize to it;
+/// and `CompactionParams` round-trips through serde.
 #[test]
-fn compaction_strategy_defaults_to_sliding_summary_only() {
+fn compaction_strategy_and_params() -> core::result::Result<(), Box<dyn std::error::Error>> {
+    // -- Case 1: the default is SlidingSummary
     let cfg = CompactionParams::default();
     assert_eq!(cfg.compaction_strategy, CompactionStrategy::SlidingSummary);
     assert_eq!(cfg.compaction_strategy.as_str(), "sliding_summary");
-}
 
-#[test]
-fn legacy_strategy_values_normalize_to_sliding_summary() {
-    let truncate: CompactionStrategy =
-        serde_json::from_str("\"truncate\"").expect("truncate alias");
-    let sliding: CompactionStrategy = serde_json::from_str("\"sliding\"").expect("sliding alias");
-    let summarize: CompactionStrategy =
-        serde_json::from_str("\"summarize\"").expect("summarize alias");
-    let sliding_window: CompactionStrategy =
-        serde_json::from_str("\"sliding_window\"").expect("sliding_window alias");
-    let token_truncate: CompactionStrategy =
-        serde_json::from_str("\"token_truncate\"").expect("token_truncate alias");
-    let canonical: CompactionStrategy =
-        serde_json::from_str("\"sliding_summary\"").expect("canonical");
+    // -- Case 2: legacy strategy values normalize to SlidingSummary
+    for alias in [
+        "truncate",
+        "sliding",
+        "summarize",
+        "sliding_window",
+        "token_truncate",
+        "sliding_summary",
+    ] {
+        let parsed: CompactionStrategy = serde_json::from_str(&format!("\"{alias}\""))?;
+        assert_eq!(
+            parsed,
+            CompactionStrategy::SlidingSummary,
+            "alias {alias} must normalize to SlidingSummary"
+        );
+    }
 
-    assert_eq!(truncate, CompactionStrategy::SlidingSummary);
-    assert_eq!(sliding, CompactionStrategy::SlidingSummary);
-    assert_eq!(summarize, CompactionStrategy::SlidingSummary);
-    assert_eq!(sliding_window, CompactionStrategy::SlidingSummary);
-    assert_eq!(token_truncate, CompactionStrategy::SlidingSummary);
-    assert_eq!(canonical, CompactionStrategy::SlidingSummary);
-}
-
-#[test]
-fn compaction_params_roundtrip_preserves_sliding_summary_mode() {
+    // -- Case 3: CompactionParams round-trips
     let cfg = CompactionParams {
         compaction_strategy: CompactionStrategy::SlidingSummary,
     };
-    let json = serde_json::to_string(&cfg).expect("serialize");
+    let json = serde_json::to_string(&cfg)?;
     assert!(json.contains("sliding_summary"));
-
-    let decoded: CompactionParams = serde_json::from_str(&json).expect("deserialize");
+    let decoded: CompactionParams = serde_json::from_str(&json)?;
     assert_eq!(
         decoded.compaction_strategy,
         CompactionStrategy::SlidingSummary
     );
+    Ok(())
 }

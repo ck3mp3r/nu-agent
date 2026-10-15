@@ -317,3 +317,11 @@ fn resolve_mode(input_is_nothing: bool) -> CliMode {
 }
 
 // endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/dispatch/agent.rs"]
+mod agent_test;
+
+// endregion: --- Tests

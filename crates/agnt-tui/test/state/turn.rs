@@ -17,7 +17,8 @@ fn finalize_turn(state: &mut AppState) {
 }
 
 #[test]
-fn finalize_keeps_last_block_content_for_unified_rule() -> Result<()> {
+fn finalize_cycle_effects() -> Result<()> {
+    // -- Setup & Fixtures
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("prompt".to_string()),
         ..Default::default()
@@ -34,35 +35,25 @@ fn finalize_keeps_last_block_content_for_unified_rule() -> Result<()> {
         fill: msg.fill(),
         status: None,
     });
+    state.transcript.assistant_stream_start = Some(3);
 
-    // Dispatch the turn Completed event which calls finalize
+    // -- Exec
     finalize_turn(&mut state);
 
-    // No explicit spacer is pushed at finalize; the last block stays content.
+    // -- Check: the last block stays content, the cycle finalizes, input
+    // unlocks, and the streaming cursor resets.
     let last = state
         .transcript
         .blocks()
         .last()
         .ok_or("should have last transcript block")?;
     assert!(matches!(last.source, BlockSource::Markdown { .. }));
-    Ok(())
-}
-
-#[test]
-fn completed_event_finalizes_cycle_and_unlocks_input() {
-    let mut state = AppState {
-        input: InputState::default().with_pending_submit_text("finalize".to_string()),
-        ..Default::default()
-    };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
-    let _ = state.activate_next_prompt();
-
-    finalize_turn(&mut state);
-
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
     assert!(!state.abort.pending);
     assert!(state.status.message.status_line().is_empty());
+    assert!(state.transcript.assistant_stream_start.is_none());
+    Ok(())
 }
 
 #[test]
@@ -90,16 +81,6 @@ fn turn_started_and_task_outcomes_are_render_noops() {
             error: "boom".to_string(),
         },
     ));
-}
-
-#[test]
-fn finalize_resets_assistant_stream_start() {
-    let mut state = AppState::default();
-    state.transcript.assistant_stream_start = Some(3);
-
-    finalize_turn(&mut state);
-
-    assert!(state.transcript.assistant_stream_start.is_none());
 }
 
 /// Fix 1 (deterministic): `finalize` clears only Neutral-kind status messages.

@@ -590,3 +590,7 @@ fn node_to_sexp(
 #[cfg(test)]
 #[path = "../../../test/tools/handler/tree_sitter.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../test/tools/handler/tree_sitter_grammar.rs"]
+mod grammar_tests;
