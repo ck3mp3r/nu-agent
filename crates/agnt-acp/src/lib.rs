@@ -50,7 +50,10 @@ type SharedSessions = Arc<AcpSessionManager<DefaultRuntimeBuilder>>;
 // region:    --- Public Functions
 
 /// Serve the ACP protocol over stdio until the client disconnects.
-pub async fn serve() -> Result<()> {
+///
+/// `agent` selects the agent whose permissions overlay applies to every
+/// session; `None` falls back to the configured default agent.
+pub async fn serve(agent: Option<String>) -> Result<()> {
     let config_path = toml_config::config_path()
         .map_err(|e| AcpError::Config(format!("failed to resolve config path: {e}")))?;
     let store = create_acp_store().await?;
@@ -65,7 +68,8 @@ pub async fn serve() -> Result<()> {
     let sessions: SharedSessions = Arc::new(
         AcpSessionManager::new(store, config_path, tokio::runtime::Handle::current())
             .with_models_cache(models_cache)
-            .with_client_fs(Arc::clone(&client_fs)),
+            .with_client_fs(Arc::clone(&client_fs))
+            .with_agent_name(agent),
     );
 
     Agent
@@ -99,7 +103,7 @@ pub async fn serve() -> Result<()> {
                         .collect();
                     let result = sessions.new_session(request.cwd, mcp_servers).await;
                     match result {
-                        Ok(session_id) => match sessions.model_config_options(&session_id).await {
+                        Ok(session_id) => match sessions.config_options(&session_id).await {
                             Ok(options) => responder.respond(
                                 NewSessionResponse::new(SessionId::new(session_id))
                                     .config_options(options),
@@ -288,13 +292,15 @@ fn to_acp_error(err: AcpError) -> Error {
 
 /// Apply one `session/set_config_option` request and build its response.
 ///
-/// Only the model selector is supported; any other config id is rejected.
-/// The requested value must be one of the advertised model values.
+/// The model and agent selectors are supported; any other config id is
+/// rejected. The requested value must be one of the advertised values of the
+/// addressed selector.
 async fn handle_set_config_option<R: RuntimeBuilder>(
     sessions: &AcpSessionManager<R>,
     request: SetSessionConfigOptionRequest,
 ) -> Result<SetSessionConfigOptionResponse> {
-    if request.config_id.to_string() != MODEL_CONFIG_ID {
+    let config_id = request.config_id.to_string();
+    if config_id != MODEL_CONFIG_ID && config_id != AGENT_CONFIG_ID {
         return Err(AcpError::Config(format!(
             "unknown config option '{}'",
             request.config_id
@@ -305,9 +311,12 @@ async fn handle_set_config_option<R: RuntimeBuilder>(
         .as_value_id()
         .map(|id| id.to_string())
         .ok_or_else(|| AcpError::Config("config option value must be a string id".to_string()))?;
-    let options = sessions
-        .set_model(&request.session_id.to_string(), &value)
-        .await?;
+    let session_id = request.session_id.to_string();
+    let options = if config_id == AGENT_CONFIG_ID {
+        sessions.set_agent(&session_id, &value).await?
+    } else {
+        sessions.set_model(&session_id, &value).await?
+    };
     Ok(SetSessionConfigOptionResponse::new(options))
 }
 

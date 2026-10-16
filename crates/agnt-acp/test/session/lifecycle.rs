@@ -134,6 +134,60 @@ async fn test_session_manager_open_session_passes_none_client_fs_without_initial
 }
 
 // ---------------------------------------------------------------------------
+// agent name
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_session_manager_open_session_passes_configured_agent_name() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp = tempfile::tempdir()?;
+    let (manager, captured) = manager_capturing_agent_name(temp.path()).await?;
+    let manager = manager.with_agent_name(Some("dev".to_string()));
+    let cwd = session_cwd(temp.path(), "session-cwd")?;
+
+    // -- Exec
+    manager.new_session(cwd.clone(), Vec::new()).await?;
+    manager.new_session(cwd, Vec::new()).await?;
+
+    // -- Check
+    let captured = captured
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
+    assert_eq!(
+        captured,
+        vec![Some("dev".to_string()), Some("dev".to_string())],
+        "every session must carry the configured agent name"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_session_manager_open_session_passes_none_agent_name_by_default() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp = tempfile::tempdir()?;
+    let (manager, captured) = manager_capturing_agent_name(temp.path()).await?;
+    let cwd = session_cwd(temp.path(), "session-cwd")?;
+
+    // -- Exec
+    manager.new_session(cwd, Vec::new()).await?;
+
+    // -- Check
+    let captured = captured
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
+    let passed = captured
+        .first()
+        .ok_or("the runtime builder must be called once")?;
+    assert!(
+        passed.is_none(),
+        "without a configured agent name the params must carry None"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // get_session
 // ---------------------------------------------------------------------------
 

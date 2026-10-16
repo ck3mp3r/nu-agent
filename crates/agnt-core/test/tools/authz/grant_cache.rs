@@ -245,3 +245,78 @@ fn clear_for_server_table() {
         }
     }
 }
+
+// ── SessionGrantCache mode-agnostic grant tests ───────────────────────────
+
+/// The `mode` tool argument is not part of the grant scope. A grant made with
+/// one mode value covers later calls with any other mode value, and a grant
+/// made without a mode covers later calls that carry one.
+#[test]
+fn grant_covers_call_with_different_mode() {
+    // -- Setup & Fixtures
+    struct Case {
+        name: &'static str,
+        tool: &'static str,
+        granted_args: serde_json::Map<String, serde_json::Value>,
+        checked_args: serde_json::Map<String, serde_json::Value>,
+    }
+
+    let cases = vec![
+        Case {
+            name: "granted preview covers apply",
+            tool: "edit",
+            granted_args: args_map!({"path": "file.txt", "mode": "preview"}),
+            checked_args: args_map!({"path": "file.txt", "mode": "apply"}),
+        },
+        Case {
+            name: "granted apply covers preview",
+            tool: "edit",
+            granted_args: args_map!({"path": "file.txt", "mode": "apply"}),
+            checked_args: args_map!({"path": "file.txt", "mode": "preview"}),
+        },
+        Case {
+            name: "granted without mode covers markdown",
+            tool: "http",
+            granted_args: args_map!({"url": "https://example.com"}),
+            checked_args: args_map!({"url": "https://example.com", "mode": "markdown"}),
+        },
+        Case {
+            name: "granted markdown covers raw",
+            tool: "http",
+            granted_args: args_map!({"url": "https://example.com", "mode": "markdown"}),
+            checked_args: args_map!({"url": "https://example.com", "mode": "raw"}),
+        },
+    ];
+
+    // -- Exec & Check
+    for case in cases {
+        let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
+        let mut cache = SessionGrantCache::default();
+
+        let granted = parsed.evaluate(case.tool, &case.granted_args);
+        assert_eq!(
+            granted.action,
+            PermissionAction::Ask,
+            "case '{}': granted call must start as Ask",
+            case.name
+        );
+        let _ = apply_ask_choice(
+            granted,
+            AskChoice::AllowAlways,
+            &mut cache,
+            case.tool,
+            "closure",
+            &case.granted_args,
+        );
+
+        let checked = parsed.evaluate(case.tool, &case.checked_args);
+        let overridden =
+            apply_session_grant_override(checked, &cache, case.tool, "closure", &case.checked_args);
+        assert_eq!(
+            overridden.action,
+            PermissionAction::Allow,
+            "case '{}' must inherit the session grant across mode values",
+            case.name
+        );
+    }
+}

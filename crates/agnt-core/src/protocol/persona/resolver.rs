@@ -194,6 +194,13 @@ impl FsPersonaResolver {
 
 impl PersonaFileResolver for FsPersonaResolver {
     fn resolve(&self, persona_name: &str) -> Result<(PathBuf, String), PersonaError> {
+        if !is_valid_persona_name(persona_name) {
+            log::debug!("persona resolve: invalid name={persona_name:?}");
+            return Err(PersonaError::InvalidName {
+                name: persona_name.to_string(),
+            });
+        }
+
         log::debug!(
             "persona resolve: name={persona_name:?}, cwd={:?}, config_dir={:?}",
             self.cwd,
@@ -232,3 +239,13 @@ impl PersonaFileResolver for FsPersonaResolver {
         })
     }
 }
+
+// region:    --- Support
+
+/// A persona name is valid when it is a single path component: non-empty, not
+/// `.` or `..`, and free of path separators.
+fn is_valid_persona_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\'])
+}
+
+// endregion: --- Support

@@ -208,3 +208,76 @@ fn clear_session_grants_for_server_on_empty_state() {
         None
     );
 }
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+fn permission_state_with_cli_overlay(cli_overlay: Option<PermissionsOverlay>) -> PermissionState {
+    let config = PermissionsConfig::safe_defaults(true);
+    PermissionState::new(
+        config.clone(),
+        config,
+        cli_overlay,
+        SessionGrantCache::default(),
+        "test state".to_string(),
+    )
+}
+
+#[test]
+fn with_agent_overlay_empty_reports_inactive() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = permission_state_with_cli_overlay(None);
+    let overlay = PermissionsOverlay::default();
+
+    // -- Exec
+    let summary = state.with_agent_overlay(&overlay);
+
+    // -- Check
+    assert!(
+        summary.contains("overlay_active=false"),
+        "empty overlay must report inactive, got: {summary}"
+    );
+    Ok(())
+}
+
+#[test]
+fn with_agent_overlay_non_empty_reports_active() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = permission_state_with_cli_overlay(None);
+    let mapping =
+        noyalib::from_str::<noyalib::Mapping>(r#"read: "allow""#).map_err(|_| "valid YAML")?;
+    let overlay = PermissionsOverlay::parse_from_yaml(&mapping)?;
+
+    // -- Exec
+    let summary = state.with_agent_overlay(&overlay);
+
+    // -- Check
+    assert!(
+        summary.contains("overlay_active=true"),
+        "non-empty overlay must report active, got: {summary}"
+    );
+    Ok(())
+}
+
+#[test]
+fn with_agent_overlay_preserves_cli_precedence() -> Result<()> {
+    // -- Setup & Fixtures
+    let cli_mapping =
+        noyalib::from_str::<noyalib::Mapping>(r#""*": "allow""#).map_err(|_| "valid YAML")?;
+    let cli_overlay = PermissionsOverlay::parse_from_yaml(&cli_mapping)?;
+    let mut state = permission_state_with_cli_overlay(Some(cli_overlay));
+
+    let persona_mapping =
+        noyalib::from_str::<noyalib::Mapping>(r#""*": "deny""#).map_err(|_| "valid YAML")?;
+    let persona_overlay = PermissionsOverlay::parse_from_yaml(&persona_mapping)?;
+
+    // -- Exec
+    state.with_agent_overlay(&persona_overlay);
+
+    // -- Check
+    assert_eq!(
+        state.permissions().summary().global,
+        PermissionAction::Allow,
+        "CLI overlay must win over the persona overlay"
+    );
+    Ok(())
+}

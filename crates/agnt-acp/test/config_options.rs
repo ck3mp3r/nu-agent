@@ -1,7 +1,7 @@
-//! Unit tests for the model config option builder.
+//! Unit tests for the model and agent config option builders.
 //!
-//! Every test drives `build_model_config_options` directly, so nothing touches
-//! the network or the filesystem.
+//! Every test drives `build_model_config_options` or `build_agent_config_options`
+//! directly, so nothing touches the network.
 
 use agent_client_protocol::schema::v1::{
     SessionConfigKind, SessionConfigOptionCategory, SessionConfigSelectOptions,
@@ -120,6 +120,22 @@ fn test_build_model_config_options_sets_model_category() -> Result<()> {
     let option = options.first().ok_or("one option must be advertised")?;
     assert_eq!(option.id.to_string(), MODEL_CONFIG_ID);
     assert_eq!(option.category, Some(SessionConfigOptionCategory::Model));
+    Ok(())
+}
+
+#[test]
+fn test_build_agent_config_options_sets_mode_category() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp = tempfile::tempdir()?;
+    let agents_config = AgentsConfig::default();
+
+    // -- Exec
+    let options = build_agent_config_options(&agents_config, temp.path(), None);
+
+    // -- Check
+    let option = options.first().ok_or("one option must be advertised")?;
+    assert_eq!(option.id.to_string(), AGENT_CONFIG_ID);
+    assert_eq!(option.category, Some(SessionConfigOptionCategory::Mode));
     Ok(())
 }
 

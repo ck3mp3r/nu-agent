@@ -120,7 +120,19 @@ fn test_cli_parses_utility_subcommands() -> Result<()> {
     }
 
     let cli = Cli::try_parse_from(["agent", "acp"])?;
-    assert!(matches!(cli.command, Some(Command::Acp)));
+    match cli.command {
+        Some(Command::Acp(args)) => assert!(
+            args.agent.is_none(),
+            "acp without --agent must leave the agent unset"
+        ),
+        _ => return Err("expected acp".into()),
+    }
+
+    let cli = Cli::try_parse_from(["agent", "acp", "--agent", "dev"])?;
+    match cli.command {
+        Some(Command::Acp(args)) => assert_eq!(args.agent.as_deref(), Some("dev")),
+        _ => return Err("expected acp".into()),
+    }
     Ok(())
 }
 

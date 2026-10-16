@@ -50,9 +50,12 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// The runtime is built without config.toml, without a `reqwest::Client`, and
 /// without TLS initialization, so session tests stay fast. When
 /// `captured_client_fs` is set, every build records the `client_fs` it received.
+/// When `captured_agent_name` is set, every build records the `agent_name` it
+/// received.
 #[derive(Default)]
 pub(super) struct MockRuntimeBuilder {
     captured_client_fs: Option<Arc<Mutex<Vec<Option<ClientFsState>>>>>,
+    captured_agent_name: Option<Arc<Mutex<Vec<Option<String>>>>>,
 }
 
 impl RuntimeBuilder for MockRuntimeBuilder {
@@ -68,9 +71,13 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             store,
             session_id,
             client_fs,
+            agent_name,
         } = params;
         if let Some(captured) = &self.captured_client_fs {
             captured.lock().unwrap().push(client_fs);
+        }
+        if let Some(captured) = &self.captured_agent_name {
+            captured.lock().unwrap().push(agent_name);
         }
 
         let bus = create_bus();
@@ -245,6 +252,28 @@ pub(super) async fn manager_capturing_client_fs(
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder {
             captured_client_fs: Some(Arc::clone(&captured)),
+            ..MockRuntimeBuilder::default()
+        },
+    );
+    Ok((manager, captured))
+}
+
+/// A manager whose runtime builder records the `agent_name` of every build.
+pub(super) async fn manager_capturing_agent_name(
+    dir: &Path,
+) -> Result<(
+    AcpSessionManager<MockRuntimeBuilder>,
+    Arc<Mutex<Vec<Option<String>>>>,
+)> {
+    let store = memory_store(dir).await?;
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let manager = AcpSessionManager::with_runtime_builder(
+        store,
+        dir.join("config.toml"),
+        tokio::runtime::Handle::current(),
+        MockRuntimeBuilder {
+            captured_agent_name: Some(Arc::clone(&captured)),
+            ..MockRuntimeBuilder::default()
         },
     );
     Ok((manager, captured))

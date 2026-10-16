@@ -14,6 +14,8 @@ pub enum PersonaError {
         path: PathBuf,
         source: std::io::Error,
     },
+    /// Persona name is not a valid single path component
+    InvalidName { name: String },
 }
 
 impl fmt::Display for PersonaError {
@@ -38,6 +40,9 @@ impl fmt::Display for PersonaError {
                     source
                 )
             }
+            PersonaError::InvalidName { name } => {
+                write!(f, "Invalid persona name: '{name}'")
+            }
         }
     }
 }
@@ -47,6 +52,7 @@ impl std::error::Error for PersonaError {
         match self {
             PersonaError::NotFound { .. } => None,
             PersonaError::ReadFailed { source, .. } => Some(source),
+            PersonaError::InvalidName { .. } => None,
         }
     }
 }

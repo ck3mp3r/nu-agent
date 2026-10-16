@@ -491,6 +491,10 @@ impl PermissionsOverlay {
         Ok(overlay)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.global.is_none() && self.tool_rules.is_empty() && self.nested_field_rules.is_empty()
+    }
+
     pub fn parse_from_yaml(mapping: &noyalib::Mapping) -> Result<Self, String> {
         let mut overlay = Self::default();
 
@@ -579,29 +583,26 @@ struct SessionGrantScopedKey {
     matched_rule_identity: String,
     tool_name: String,
     source: String,
-    mode: Option<String>,
     target_field: Option<String>,
 }
 
 impl SessionGrantScopedKey {
     /// Deterministic cache key for allow_always session grants.
     ///
-    /// Scope fields intentionally include matched rule identity *and* request context to prevent
-    /// grant leakage across unrelated tools (for example when broad global ask rules match).
+    /// Scope fields intentionally include matched rule identity *and* request context (tool name,
+    /// source, and target field) to prevent grant leakage across unrelated tools (for example
+    /// when broad global ask rules match). Tool-call arguments are not part of the key, so a grant
+    /// covers every call that shares the same tool, source, and matched rule identity.
     fn from_request(
         decision: &PermissionDecision,
         tool_name: &str,
         source: &str,
-        args: &JsonMap<String, JsonValue>,
+        _args: &JsonMap<String, JsonValue>,
     ) -> Self {
         Self {
             matched_rule_identity: decision.matched_rule.identity.clone(),
             tool_name: tool_name.to_string(),
             source: source.to_string(),
-            mode: args
-                .get("mode")
-                .and_then(JsonValue::as_str)
-                .map(ToString::to_string),
             target_field: decision.matched_rule.target_field.clone(),
         }
     }

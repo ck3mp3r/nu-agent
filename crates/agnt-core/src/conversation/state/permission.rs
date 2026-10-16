@@ -61,7 +61,7 @@ impl PermissionState {
     ///
     /// Unlike `set_permissions`, this builds from `self.base` and re-applies
     /// `self.cli_overlay` so that the CLI `--permissions` flag always wins.
-    pub fn with_agent_overlay(&mut self, overlay: &PermissionsOverlay) {
+    pub fn with_agent_overlay(&mut self, overlay: &PermissionsOverlay) -> String {
         let mut config = self.base.clone();
         config = config.with_overlay(overlay);
         if let Some(cli) = &self.cli_overlay {
@@ -70,12 +70,14 @@ impl PermissionState {
         let summary = config.summary();
         self.permissions = config;
         self.startup_summary = format!(
-            "permissions policy (switch): overlay_active=true global={} tool_rules={}",
+            "permissions policy (switch): overlay_active={} global={} tool_rules={}",
+            !overlay.is_empty(),
             summary.global.as_str(),
             summary.tool_rule_count,
         );
         // Reset so the next execute_turn emits the summary immediately.
         self.startup_emitted = false;
+        self.startup_summary.clone()
     }
 
     /// Clear all session grants. Used when switching agents so that

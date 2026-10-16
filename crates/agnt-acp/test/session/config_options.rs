@@ -46,7 +46,7 @@ async fn manager_with_cache(
 }
 
 /// The current value of the first option.
-fn current_value(options: &[SessionConfigOption]) -> Option<String> {
+pub(super) fn current_value(options: &[SessionConfigOption]) -> Option<String> {
     let option = options.first()?;
     let SessionConfigKind::Select(select) = &option.kind else {
         return None;
@@ -55,7 +55,7 @@ fn current_value(options: &[SessionConfigOption]) -> Option<String> {
 }
 
 /// The selectable values of the first option.
-fn select_values(options: &[SessionConfigOption]) -> Vec<String> {
+pub(super) fn select_values(options: &[SessionConfigOption]) -> Vec<String> {
     let Some(option) = options.first() else {
         return Vec::new();
     };

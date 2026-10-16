@@ -23,6 +23,7 @@ use agnt_core::config::ModelsCache;
 use agnt_core::conversation::managers::ProviderManager;
 use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::protocol::contracts::CoreRuntime;
+use agnt_core::protocol::model_switching::ModelSwitching;
 use agnt_core::session::resolver::generate_session_id;
 use agnt_core::session::{
     SessionInfo, SessionStore, SessionStoreBackend, StoreEntry, extract_llm_context,
@@ -35,7 +36,9 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::error::{AcpError, Result};
 use crate::permission::{AcpPermissionBridge, PermissionRequestSink};
-use crate::runtime::{AcpRuntimeParams, build_acp_runtime, build_model_config_options};
+use crate::runtime::{
+    AcpRuntimeParams, build_acp_runtime, build_agent_config_options, build_model_config_options,
+};
 use crate::translator::{EventTranslator, SessionUpdateSink, run_turn_with_notifications};
 
 // endregion: --- Modules
@@ -153,6 +156,7 @@ pub struct AcpSessionManager<R: RuntimeBuilder> {
     runtime_builder: R,
     models_cache: Option<Arc<ModelsCache>>,
     client_fs: Arc<StdMutex<Option<ClientFsState>>>,
+    agent_name: Option<String>,
 }
 
 // endregion: --- Types
@@ -193,6 +197,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             runtime_builder,
             models_cache: None,
             client_fs: Arc::new(StdMutex::new(None)),
+            agent_name: None,
         }
     }
 
@@ -211,6 +216,15 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     /// runtimes fall back to the local filesystem.
     pub fn with_client_fs(mut self, state: Arc<StdMutex<Option<ClientFsState>>>) -> Self {
         self.client_fs = state;
+        self
+    }
+
+    /// Attach the agent whose permissions overlay applies to every session.
+    ///
+    /// `None` falls back to the configured default agent. The name is carried
+    /// into every [`AcpRuntimeParams`] this manager builds.
+    pub fn with_agent_name(mut self, agent_name: Option<String>) -> Self {
+        self.agent_name = agent_name;
         self
     }
 
@@ -270,10 +284,29 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     pub async fn model_config_options(&self, session_id: &str) -> Result<Vec<SessionConfigOption>> {
         let session = self.session(session_id)?;
         let runtime = session.runtime.lock().await;
-        Ok(build_model_config_options(
-            runtime.provider.provider_config(),
-            self.models_cache.as_deref(),
-        ))
+        Ok(model_options(&runtime, self.models_cache.as_deref()))
+    }
+
+    /// The agent config options advertised for `session_id`.
+    ///
+    /// Returns [`AcpError::SessionNotFound`] when no live session has that id.
+    pub async fn agent_config_options(&self, session_id: &str) -> Result<Vec<SessionConfigOption>> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        Ok(agent_options(&runtime))
+    }
+
+    /// The agent and model config options advertised for `session_id`.
+    ///
+    /// The agent option comes first. Every response that changes one selector
+    /// carries both, so the client never drops the other.
+    /// Returns [`AcpError::SessionNotFound`] when no live session has that id.
+    pub async fn config_options(&self, session_id: &str) -> Result<Vec<SessionConfigOption>> {
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        let mut options = agent_options(&runtime);
+        options.extend(model_options(&runtime, self.models_cache.as_deref()));
+        Ok(options)
     }
 
     /// Switch `session_id` to `model_value` and return the updated config options.
@@ -290,10 +323,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     ) -> Result<Vec<SessionConfigOption>> {
         let session = self.session(session_id)?;
         let mut runtime = session.runtime.lock().await;
-        let options = build_model_config_options(
-            runtime.provider.provider_config(),
-            self.models_cache.as_deref(),
-        );
+        let options = model_options(&runtime, self.models_cache.as_deref());
         if !select_values(&options)
             .iter()
             .any(|value| value == model_value)
@@ -319,10 +349,33 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             }
         };
         *runtime.dyn_model.lock().unwrap() = dyn_model;
-        Ok(build_model_config_options(
-            runtime.provider.provider_config(),
-            self.models_cache.as_deref(),
-        ))
+        let mut options = model_options(&runtime, self.models_cache.as_deref());
+        options.extend(agent_options(&runtime));
+        Ok(options)
+    }
+
+    /// Switch `session_id` to `agent_name` and return the updated config options.
+    ///
+    /// `agent_name` must name an available persona; anything else is rejected
+    /// with [`AcpError::Config`]. The switch runs the core agent-switch flow, so
+    /// the persona body, model, config overrides, permissions overlay, session
+    /// grants, and tool definitions all follow the same path as the plugin and
+    /// TUI runtimes. Returns [`AcpError::SessionNotFound`] when no live session
+    /// has that id.
+    pub async fn set_agent(
+        &self,
+        session_id: &str,
+        agent_name: &str,
+    ) -> Result<Vec<SessionConfigOption>> {
+        let session = self.session(session_id)?;
+        let mut runtime = session.runtime.lock().await;
+        runtime
+            .switch_agent(agent_name)
+            .await
+            .map_err(AcpError::Config)?;
+        let mut options = agent_options(&runtime);
+        options.extend(model_options(&runtime, self.models_cache.as_deref()));
+        Ok(options)
     }
 
     /// Run one prompt turn on `session_id` and report why it stopped.
@@ -473,6 +526,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                 store: Arc::clone(&self.store),
                 session_id: Some(session_id.to_string()),
                 client_fs,
+                agent_name: self.agent_name.clone(),
             })
             .await?;
         let bus = runtime.bus.clone();
@@ -505,6 +559,23 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
 // endregion: --- AcpSessionManager Impl
 
 // region:    --- Support
+
+/// The agent config options of a locked session runtime.
+fn agent_options(runtime: &AgentConversationRuntime) -> Vec<SessionConfigOption> {
+    build_agent_config_options(
+        runtime.multi_agent.agents_config(),
+        &runtime.cwd,
+        runtime.persona.agent_identity(),
+    )
+}
+
+/// The model config options of a locked session runtime.
+fn model_options(
+    runtime: &AgentConversationRuntime,
+    models_cache: Option<&ModelsCache>,
+) -> Vec<SessionConfigOption> {
+    build_model_config_options(runtime.provider.provider_config(), models_cache)
+}
 
 /// Replay the stored conversation of `session_id` to `sink`.
 ///

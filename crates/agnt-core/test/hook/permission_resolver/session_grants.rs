@@ -107,7 +107,7 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
     // Simulate what apply_ask_choice(AllowAlways) would write into the cache.
     // The evaluate() for ASK_TOOL ("some_mcp_tool") against safe_defaults(true)
     // matches the global rule: identity="global:*", source="unknown" (not in any
-    // registry), mode=None, target_field=None.
+    // registry), target_field=None.
     {
         let mut cache = session_grants.lock().expect("test lock");
         let synthetic_decision = AuthzPermissionDecision {
@@ -121,7 +121,7 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
             },
             diagnostics: Vec::new(),
         };
-        // insert_allow_always writes the grant keyed by (identity, tool_name, source, mode, target_field).
+        // insert_allow_always writes the grant keyed by (identity, tool_name, source, target_field).
         cache.insert_allow_always(
             &synthetic_decision,
             ASK_TOOL,

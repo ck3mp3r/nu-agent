@@ -49,7 +49,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Run the Agent Client Protocol server over stdio.
-    Acp,
+    Acp(AcpArgs),
     /// Run the A2A agent server.
     A2a(A2aArgs),
     /// Manage the agent configuration file.
@@ -187,6 +187,17 @@ pub enum SessionCommand {
 pub struct SessionIdArgs {
     /// Session ID.
     pub id: String,
+}
+
+/// Arguments for the ACP stdio server.
+#[derive(Debug, Args)]
+pub struct AcpArgs {
+    /// Agent whose permissions overlay applies to every session.
+    ///
+    /// Overrides `agents.default` from config.toml. When omitted, the
+    /// configured default agent is used.
+    #[arg(long)]
+    pub agent: Option<String>,
 }
 
 /// Arguments for the A2A agent server.
@@ -327,7 +338,7 @@ fn main() {
 
     let result = runtime.block_on(async {
         match command {
-            Some(Command::Acp) => dispatch::run_acp().await,
+            Some(Command::Acp(acp)) => dispatch::run_acp(acp.agent).await,
             Some(Command::A2a(a2a)) => dispatch::run_a2a(&args, &a2a).await,
             Some(Command::Config(cmd)) => dispatch::run_config_command(&cmd),
             Some(Command::Models(cmd)) => dispatch::run_models_command(&cmd),

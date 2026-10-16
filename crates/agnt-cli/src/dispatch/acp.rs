@@ -5,8 +5,11 @@ use crate::error::{Error, Result};
 // region:    --- Functions
 
 /// Serve the ACP protocol over stdio until the client disconnects.
-pub async fn run_acp() -> Result<()> {
-    agnt_acp::serve()
+///
+/// `agent` selects the agent whose permissions overlay applies to every
+/// session; `None` falls back to the configured default agent.
+pub async fn run_acp(agent: Option<String>) -> Result<()> {
+    agnt_acp::serve(agent)
         .await
         .map_err(|e| Error::Custom(format!("ACP server error: {e}")))
 }

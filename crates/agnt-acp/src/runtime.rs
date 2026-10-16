@@ -3,13 +3,13 @@
 // region:    --- Modules
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1::{
     SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
 };
-use agnt_core::config::{Config, ModelsCache, defaults, load_and_resolve_config};
+use agnt_core::config::{AgentsConfig, Config, ModelsCache, defaults, load_and_resolve_config};
 use agnt_core::conversation::builder::{build_compaction_params, builtin_tool_definitions};
 use agnt_core::conversation::compaction::compactor::NuCompactor;
 use agnt_core::conversation::runtime::{AgentConversationRuntime, PendingPermissions};
@@ -18,6 +18,8 @@ use agnt_core::conversation::state::{
 };
 use agnt_core::hook::DoomLoopState;
 use agnt_core::hook::output_repetition::RepetitionState;
+use agnt_core::protocol::model_switching::ModelSwitching;
+use agnt_core::protocol::persona::{FsPersonaResolver, PersonaLister};
 use agnt_core::session::{SessionStoreBackend, StoreType, create_store};
 use agnt_core::tools::authz::{PermissionsConfig, SessionGrantCache};
 use agnt_core::tools::closure::{ClosureRegistry, EngineInterfaceLike};
@@ -62,6 +64,12 @@ pub struct AcpRuntimeParams {
     /// The ACP client's filesystem capabilities and connection, when the client
     /// advertised them at `initialize`.
     pub client_fs: Option<ClientFsState>,
+    /// Agent whose permissions overlay applies to this session.
+    ///
+    /// When `Some`, it overrides the default agent resolved from
+    /// `agents.default` in config.toml. When `None`, the configured default
+    /// agent is used.
+    pub agent_name: Option<String>,
 }
 
 // endregion: --- Types
@@ -78,6 +86,9 @@ pub async fn create_acp_store() -> Result<Arc<SessionStoreBackend>> {
 
 /// The id of the model selector config option.
 pub const MODEL_CONFIG_ID: &str = "model";
+
+/// The id of the agent selector config option.
+pub const AGENT_CONFIG_ID: &str = "agent";
 
 /// Build the model selector advertised to ACP clients.
 ///
@@ -116,6 +127,44 @@ pub fn build_model_config_options(
     ]
 }
 
+/// Build the agent selector advertised to ACP clients.
+///
+/// One value per available persona: the enabled built-ins first, then the
+/// filesystem personas of the session's cwd and the XDG config directory.
+/// `current` is the session's agent identity; when it is not among the
+/// available personas it is added, so the client still renders a selector for
+/// the active agent.
+pub fn build_agent_config_options(
+    agents_config: &AgentsConfig,
+    cwd: &Path,
+    current: Option<&str>,
+) -> Vec<SessionConfigOption> {
+    let config_dir = agnt_core::utils::xdg::config_dir()
+        .map(|base| base.join("nu-agent"))
+        .unwrap_or_else(|_| cwd.to_path_buf());
+    let resolver = FsPersonaResolver::new(cwd.to_path_buf(), config_dir, agents_config.clone());
+    let mut options: Vec<SessionConfigSelectOption> = resolver
+        .list_available()
+        .into_iter()
+        .map(|summary| SessionConfigSelectOption::new(summary.name.clone(), summary.name))
+        .collect();
+    let current = current.unwrap_or_default();
+    if !current.is_empty()
+        && !options
+            .iter()
+            .any(|option| option.value.to_string() == current)
+    {
+        options.push(SessionConfigSelectOption::new(
+            current.to_string(),
+            current.to_string(),
+        ));
+    }
+    vec![
+        SessionConfigOption::select(AGENT_CONFIG_ID, "Agent", current.to_string(), options)
+            .category(SessionConfigOptionCategory::Mode),
+    ]
+}
+
 /// Build an `AgentConversationRuntime` for one ACP session.
 ///
 /// Configuration comes from `params.config_path` only — ACP has no CLI flags.
@@ -130,6 +179,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
         store,
         session_id,
         client_fs,
+        agent_name,
     } = params;
 
     // -- Config resolution (shared with the plugin path)
@@ -264,8 +314,10 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     tool_definitions.extend(mcp_definitions);
     let baseline_tool_definitions = tool_definitions.clone();
 
-    // -- Permissions from config.toml. ACP prompts the client, so the
-    // interactive defaults apply.
+    // -- Permissions from config.toml only. ACP prompts the client, so the
+    // interactive defaults apply. ACP has no CLI permission flags, so the CLI
+    // overlay is always `None`. The effective agent's persona overlay is
+    // applied by the startup switch below.
     let base_permissions = PermissionsConfig::from_plugin_config(&plugin_config, true);
     let effective_permissions = base_permissions.clone();
     let permissions_summary = effective_permissions.summary();
@@ -319,7 +371,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     // must publish `UiEvent::PermissionRequested` and await the bridge's decision.
     let pending: PendingPermissions = Arc::new(Mutex::new(HashMap::new()));
 
-    Ok(AgentConversationRuntime {
+    let mut runtime = AgentConversationRuntime {
         runtime: runtime_handle,
         tool_server_handle,
         provider,
@@ -376,7 +428,27 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             params: compaction_params,
             threshold_tokens,
         },
-    })
+    };
+
+    // -- Populate the persona state for the effective agent by running the core
+    // switch flow once. This resolves the persona body, applies the persona's
+    // model and config overrides, applies the permissions overlay, and sets the
+    // agent identity the agent selector reports.
+    let effective_agent = match agent_name {
+        Some(name) => Some(name),
+        None => plugin_config
+            .agents
+            .resolve_default_agent()
+            .map_err(|e| AcpError::Config(format!("failed to resolve default agent: {e}")))?,
+    };
+    if let Some(name) = effective_agent {
+        runtime
+            .switch_agent(&name)
+            .await
+            .map_err(AcpError::Config)?;
+    }
+
+    Ok(runtime)
 }
 
 // endregion: --- Public Functions
@@ -460,7 +532,35 @@ fn map_config_load_error(err: agnt_core::config::ConfigLoadError) -> AcpError {
 mod config_options_test;
 
 #[cfg(all(test, feature = "integration"))]
-#[path = "../test/runtime.rs"]
-mod runtime_test;
+#[path = "../test/runtime/support.rs"]
+mod runtime_support;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/runtime/construction.rs"]
+mod runtime_construction;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/runtime/mcp.rs"]
+mod runtime_mcp;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/runtime/client_fs.rs"]
+mod runtime_client_fs;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/runtime/config_errors.rs"]
+mod runtime_config_errors;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/runtime/store.rs"]
+mod runtime_store;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/runtime/agent_overlay.rs"]
+mod runtime_agent_overlay;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/runtime/agent_flag.rs"]
+mod runtime_agent_flag;
 
 // endregion: --- Tests

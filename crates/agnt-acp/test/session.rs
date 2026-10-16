@@ -8,6 +8,9 @@
 
 // region:    --- Modules
 
+#[path = "session/agent_options.rs"]
+mod agent_options;
+
 #[path = "session/cancel.rs"]
 mod cancel;
 

@@ -145,3 +145,84 @@ fn resolve_read_error() {
         let _ = fs::set_permissions(&persona_file, perms);
     }
 }
+
+#[test]
+fn resolve_rejects_path_separators() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp_cwd = TempDir::new().map_err(|e| format!("temp cwd: {e}"))?;
+    let temp_config = TempDir::new().map_err(|e| format!("temp config: {e}"))?;
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        AgentsConfig::default(),
+    );
+
+    // -- Exec & Check
+    for name in ["../../x", "a/b", "a\\b", "/etc/passwd", "..\\..\\x"] {
+        let err = resolver
+            .resolve(name)
+            .err()
+            .ok_or("resolve should reject separator names")?;
+        assert!(
+            matches!(err, PersonaError::InvalidName { .. }),
+            "expected InvalidName for {name:?}, got {err:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn resolve_rejects_dot_and_empty_names() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp_cwd = TempDir::new().map_err(|e| format!("temp cwd: {e}"))?;
+    let temp_config = TempDir::new().map_err(|e| format!("temp config: {e}"))?;
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        AgentsConfig::default(),
+    );
+
+    // -- Exec & Check
+    for name in ["", ".", ".."] {
+        let err = resolver
+            .resolve(name)
+            .err()
+            .ok_or("resolve should reject dot and empty names")?;
+        assert!(
+            matches!(err, PersonaError::InvalidName { .. }),
+            "expected InvalidName for {name:?}, got {err:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn resolve_rejects_traversal_without_reading_outside_file() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp_cwd = TempDir::new().map_err(|e| format!("temp cwd: {e}"))?;
+    let temp_config = TempDir::new().map_err(|e| format!("temp config: {e}"))?;
+
+    // A file that `../secret` would reach if traversal were allowed.
+    let outside_file = temp_cwd.path().join("secret.md");
+    fs::write(&outside_file, "# Escaped persona").map_err(|e| format!("write secret: {e}"))?;
+
+    let resolver = FsPersonaResolver::new(
+        temp_cwd.path().to_path_buf(),
+        temp_config.path().to_path_buf(),
+        AgentsConfig::default(),
+    );
+
+    // -- Exec
+    let err = resolver
+        .resolve("../secret")
+        .err()
+        .ok_or("resolve should reject traversal name")?;
+
+    // -- Check
+    assert!(
+        matches!(err, PersonaError::InvalidName { .. }),
+        "expected InvalidName, got {err:?}"
+    );
+    assert!(err.to_string().contains("../secret"));
+    Ok(())
+}

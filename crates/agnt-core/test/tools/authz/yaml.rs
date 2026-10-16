@@ -124,3 +124,47 @@ fn parse_from_yaml_mixed() {
     let patterns = cmd_rules.get("command").unwrap();
     assert_eq!(patterns.len(), 2);
 }
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+#[test]
+fn is_empty_true_for_default_and_empty_mapping() -> Result<()> {
+    // -- Setup & Fixtures
+    let empty_mapping = noyalib::Mapping::new();
+
+    // -- Exec
+    let default_overlay = PermissionsOverlay::default();
+    let parsed_empty = PermissionsOverlay::parse_from_yaml(&empty_mapping)?;
+
+    // -- Check
+    assert!(default_overlay.is_empty(), "default overlay must be empty");
+    assert!(
+        parsed_empty.is_empty(),
+        "overlay parsed from an empty mapping must be empty"
+    );
+    Ok(())
+}
+
+#[test]
+fn is_empty_false_for_global_and_tool_rule() -> Result<()> {
+    // -- Setup & Fixtures
+    let global_yaml =
+        noyalib::from_str::<noyalib::Mapping>(r#""*": "allow""#).map_err(|_| "valid YAML")?;
+    let tool_yaml =
+        noyalib::from_str::<noyalib::Mapping>(r#"read: "allow""#).map_err(|_| "valid YAML")?;
+
+    // -- Exec
+    let global_overlay = PermissionsOverlay::parse_from_yaml(&global_yaml)?;
+    let tool_overlay = PermissionsOverlay::parse_from_yaml(&tool_yaml)?;
+
+    // -- Check
+    assert!(
+        !global_overlay.is_empty(),
+        "a global action must make the overlay non-empty"
+    );
+    assert!(
+        !tool_overlay.is_empty(),
+        "a tool rule must make the overlay non-empty"
+    );
+    Ok(())
+}

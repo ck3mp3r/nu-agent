@@ -69,9 +69,9 @@ fn session_grants_are_keyed_by_scoped_request_context_not_call_arguments() {
     assert_eq!(overridden.action, PermissionAction::Allow);
 }
 
-/// A session grant is scoped by (tool name, source, mode, matched rule
-/// identity). Every axis must isolate the grant: a grant on one axis must not
-/// leak into a request that differs on any other axis.
+/// A session grant is scoped by (tool name, source, matched rule identity).
+/// Every axis must isolate the grant: a grant on one axis must not leak into a
+/// request that differs on any other axis.
 #[test]
 fn session_grant_scope_isolation_table() {
     // -- Setup & Fixtures
@@ -116,21 +116,6 @@ fn session_grant_scope_isolation_table() {
             checked_source: "closure",
             checked_args: args_map!({"filePath": "README.md"}),
             checked_identity: "global:*",
-        },
-        Case {
-            name: "same tool name but a different mode",
-            toml: r#"
-"*" = "ask"
-"edit" = "ask"
-"#,
-            granted_tool: "edit",
-            granted_source: "closure",
-            granted_args: args_map!({"path": "file.txt", "mode": "preview"}),
-            granted_identity: "tool:edit",
-            checked_tool: "edit",
-            checked_source: "closure",
-            checked_args: args_map!({"path": "file.txt", "mode": "apply"}),
-            checked_identity: "tool:edit",
         },
         Case {
             name: "same tool name and mode but a different source",
