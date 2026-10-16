@@ -833,7 +833,25 @@ This keeps pipelines stable while preserving interactive feedback.
 ## TUI transcript markdown and fenced code
 
 When running in TUI mode, assistant markdown is projected into transcript-friendly
-lines.
+lines. Each markdown element maps to a dedicated style. Colors are named; the
+concrete RGB values come from the active theme (`--theme`, default
+`catppuccin-mocha`).
+
+| Element | Style |
+|---------|-------|
+| Heading level 1-6 | bold, one color per level: red, peach, yellow, green, sapphire, lavender |
+| Table header cells | bold blue (the generic heading style) |
+| Table data cells | default text color |
+| Bold / italic / bold italic | red, with the matching bold/italic modifier |
+| Block quote text and `│` prefix | pink |
+| Link label | lavender |
+| Link URL suffix | blue, italic, underline |
+| Inline code | green, no dim |
+| List markers (`•`, `1.`) | teal |
+| Code keyword / type / function | mauve / yellow / blue |
+| Code variable / constant | text / peach |
+| Code string / number / operator | green / peach / sky |
+| Code punctuation / comment | overlay2 / overlay2 italic |
 
 - Supported markdown constructs (for example headings, emphasis, lists,
   blockquotes, and code fences) are rendered with deterministic formatting.
@@ -844,6 +862,23 @@ lines.
 
 The fallback behavior keeps transcript output predictable even when model output
 contains malformed markdown or uncommon language identifiers.
+
+In TTY mode the same elements are approximated with ANSI-16 SGR codes, because
+truecolor is not guaranteed. The codes are:
+
+| Element | SGR |
+|---------|-----|
+| Heading level 1-6 | `1;31`, `1;33`, `1;33`, `1;32`, `1;36`, `1;95` |
+| Table header cells | `1;34` |
+| Bold / italic / bold italic | `1;31` / `3;31` / `1;3;31` |
+| Block quote | `35` |
+| Link label / URL suffix | `95` / `3;4;34` |
+| Inline code | `32` |
+| List markers | `36` |
+| Code keyword / type / function | `35` / `33` / `34` |
+| Code variable / constant | `39` / `33` |
+| Code string / number / operator | `32` / `33` / `36` |
+| Code punctuation / comment | `90` / `3;90` |
 
 See also: [Contribution guardrails](./contribution-guardrails.md) for contributor-facing invariants and test mapping.
 

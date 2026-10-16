@@ -462,6 +462,11 @@ pub enum StyleHint {
     MdCodePunctuation,
     MdCodeComment,
     MdCodePlain,
+    MdHeading(u8),
+    MdLink,
+    MdLinkUrl,
+    MdQuote,
+    MdListMarker,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

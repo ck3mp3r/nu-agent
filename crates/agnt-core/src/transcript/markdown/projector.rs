@@ -66,6 +66,11 @@ struct Projector {
     list_stack: Vec<ListState>,
     blockquote_depth: usize,
     heading_depth: usize,
+    /// Heading level of the innermost open heading (1-6), or 0 when no heading
+    /// is open. Drives the per-level `MdHeading` hint.
+    heading_level: u8,
+    /// Nesting depth of open links. While > 0, plain text is the link label.
+    link_depth: usize,
     link_destinations: Vec<String>,
     image_destinations: Vec<String>,
     code_block: Option<CodeBlockState>,
@@ -89,7 +94,7 @@ impl Projector {
 
     fn emit_link_suffix(&mut self) {
         if let Some(dest) = self.link_destinations.pop() {
-            self.push_text(&format!(" ({dest})"), StyleHint::Normal);
+            self.push_text(&format!(" ({dest})"), StyleHint::MdLinkUrl);
         }
     }
 
@@ -121,7 +126,8 @@ impl Projector {
             }
         }
         if !prefix.is_empty() {
-            self.current_spans.push(IrSpan::normal(prefix));
+            self.current_spans
+                .push(IrSpan::new(prefix, StyleHint::MdQuote));
         }
     }
 
@@ -226,7 +232,7 @@ impl Projector {
         self.flush_line();
 
         // Header row: │ cell │ cell │
-        let header_hint = StyleHint::MdBold;
+        let header_hint = StyleHint::MdHeading(0);
         self.push_text("│", StyleHint::Normal);
         for (i, cell) in table.header_row.iter().enumerate() {
             let cell_width = UnicodeWidthStr::width(cell.as_str());
@@ -287,9 +293,10 @@ impl Projector {
             Tag::Paragraph => {
                 self.insert_block_separator();
             }
-            Tag::Heading { .. } => {
+            Tag::Heading { level, .. } => {
                 self.insert_block_separator();
                 self.flush_line();
+                self.heading_level = level as u8;
                 self.heading_depth = self.heading_depth.saturating_add(1);
             }
             Tag::Emphasis => {
@@ -324,7 +331,7 @@ impl Projector {
                     };
                     let marker_width = indent.chars().count() + marker.chars().count();
                     self.item_hang_indent = Some(marker_width);
-                    self.push_text(&(indent + &marker), StyleHint::Normal);
+                    self.push_text(&(indent + &marker), StyleHint::MdListMarker);
                 }
             }
             Tag::CodeBlock(kind) => {
@@ -337,6 +344,7 @@ impl Projector {
             }
             Tag::Link { dest_url, .. } => {
                 self.link_destinations.push(dest_url.to_string());
+                self.link_depth = self.link_depth.saturating_add(1);
             }
             Tag::Image { dest_url, .. } => {
                 self.image_destinations.push(dest_url.to_string());
@@ -373,6 +381,7 @@ impl Projector {
             }
             TagEnd::Heading(_) => {
                 self.heading_depth = self.heading_depth.saturating_sub(1);
+                self.heading_level = 0;
                 self.flush_line();
             }
             TagEnd::Emphasis => {
@@ -401,6 +410,7 @@ impl Projector {
             }
             TagEnd::Link => {
                 self.emit_link_suffix();
+                self.link_depth = self.link_depth.saturating_sub(1);
             }
             TagEnd::Image => {
                 self.emit_image_suffix();
@@ -448,7 +458,17 @@ impl Projector {
                 }
 
                 let hint = if self.heading_depth > 0 {
-                    StyleHint::MdBold
+                    if self.heading_level == 0 {
+                        StyleHint::MdBold
+                    } else {
+                        StyleHint::MdHeading(self.heading_level)
+                    }
+                } else if self.link_depth > 0 && self.style_state.current() == StyleHint::Normal {
+                    StyleHint::MdLink
+                } else if self.blockquote_depth > 0
+                    && self.style_state.current() == StyleHint::Normal
+                {
+                    StyleHint::MdQuote
                 } else {
                     self.style_state.current()
                 };

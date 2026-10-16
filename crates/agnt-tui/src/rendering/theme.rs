@@ -256,6 +256,17 @@ pub struct TuiTheme {
     pub diff_add_bg: Color,
     pub diff_remove_bg: Color,
     pub diff_context_bg: Option<Color>,
+    /// Markdown element styles. `md_heading[0]` is the generic heading style
+    /// (table header cells); `md_heading[1..=6]` are the per-level heading
+    /// styles.
+    pub md_heading: [Style; 7],
+    pub md_link: Style,
+    pub md_link_url: Style,
+    pub md_quote: Style,
+    pub md_list_marker: Style,
+    /// Foreground for markdown emphasis (`MdBold`/`MdItalic`/`MdBoldItalic`);
+    /// the arms add the BOLD/ITALIC modifiers on top.
+    pub md_emphasis: Style,
 }
 
 fn fg(color: Color) -> Style {
@@ -333,22 +344,38 @@ impl TuiTheme {
             status_done: fg(palette.green),
             status_failed: fg(palette.red),
             status_cancelled: fg(palette.overlay0),
-            inline_code: fg_dim(palette.yellow),
+            inline_code: fg(palette.green),
             syntax_keyword: fg(palette.mauve),
             syntax_type: fg(palette.yellow),
             syntax_function: fg(palette.blue),
-            syntax_variable: fg(palette.lavender),
-            syntax_constant: fg(palette.red),
+            syntax_variable: fg(palette.text),
+            syntax_constant: fg(palette.peach),
             syntax_string: fg(palette.green),
             syntax_number: fg(palette.peach),
-            syntax_operator: fg(palette.sapphire),
-            syntax_punctuation: fg(palette.overlay1),
-            syntax_comment: fg_dim(palette.overlay0),
+            syntax_operator: fg(palette.sky),
+            syntax_punctuation: fg(palette.overlay2),
+            syntax_comment: fg(palette.overlay2).add_modifier(Modifier::ITALIC),
             surface0: palette.surface0,
             base: palette.base,
             diff_add_bg: dimmed_diff_bg(palette.green, palette.base),
             diff_remove_bg: dimmed_diff_bg(palette.red, palette.base),
             diff_context_bg: None,
+            md_heading: [
+                fg(palette.blue).add_modifier(Modifier::BOLD),
+                fg(palette.red).add_modifier(Modifier::BOLD),
+                fg(palette.peach).add_modifier(Modifier::BOLD),
+                fg(palette.yellow).add_modifier(Modifier::BOLD),
+                fg(palette.green).add_modifier(Modifier::BOLD),
+                fg(palette.sapphire).add_modifier(Modifier::BOLD),
+                fg(palette.lavender).add_modifier(Modifier::BOLD),
+            ],
+            md_link: fg(palette.lavender),
+            md_link_url: fg(palette.blue)
+                .add_modifier(Modifier::ITALIC)
+                .add_modifier(Modifier::UNDERLINED),
+            md_quote: fg(palette.pink),
+            md_list_marker: fg(palette.teal),
+            md_emphasis: fg(palette.red),
         }
     }
 }
@@ -386,9 +413,10 @@ pub fn hint_to_style(hint: &StyleHint, role_style: Style, theme: &TuiTheme) -> S
         StyleHint::DiffRemove => theme.status_failed,
         StyleHint::DiffHunk => theme.role_system.add_modifier(Modifier::BOLD),
         StyleHint::Cancelled => role_style.add_modifier(theme.cancelled_modifier),
-        StyleHint::MdBold => Style::default().add_modifier(Modifier::BOLD),
-        StyleHint::MdItalic => Style::default().add_modifier(Modifier::ITALIC),
-        StyleHint::MdBoldItalic => Style::default()
+        StyleHint::MdBold => theme.md_emphasis.add_modifier(Modifier::BOLD),
+        StyleHint::MdItalic => theme.md_emphasis.add_modifier(Modifier::ITALIC),
+        StyleHint::MdBoldItalic => theme
+            .md_emphasis
             .add_modifier(Modifier::BOLD)
             .add_modifier(Modifier::ITALIC),
         StyleHint::MdInlineCode => theme.inline_code,
@@ -403,5 +431,13 @@ pub fn hint_to_style(hint: &StyleHint, role_style: Style, theme: &TuiTheme) -> S
         StyleHint::MdCodePunctuation => theme.syntax_punctuation,
         StyleHint::MdCodeComment => theme.syntax_comment,
         StyleHint::MdCodePlain => theme.row_assistant,
+        StyleHint::MdHeading(level) => match level {
+            1..=6 => theme.md_heading[usize::from(*level)],
+            _ => theme.md_heading[0],
+        },
+        StyleHint::MdLink => theme.md_link,
+        StyleHint::MdLinkUrl => theme.md_link_url,
+        StyleHint::MdQuote => theme.md_quote,
+        StyleHint::MdListMarker => theme.md_list_marker,
     }
 }

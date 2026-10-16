@@ -1,20 +1,10 @@
 use ratatui::style::{Color, Modifier};
 
-use crate::rendering::theme::{CatppuccinPalette, ThemeName, TuiTheme, diff_tint_to_bg};
-use agnt_core::transcript::ir::DiffTint;
-
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
-
-const MOCHA_RED: Color = Color::Rgb(243, 139, 168);
-const MOCHA_YELLOW: Color = Color::Rgb(249, 226, 175);
-const MOCHA_GREEN: Color = Color::Rgb(166, 227, 161);
-const MOCHA_BLUE: Color = Color::Rgb(137, 180, 250);
-const MOCHA_SAPPHIRE: Color = Color::Rgb(116, 199, 236);
-const MOCHA_LAVENDER: Color = Color::Rgb(180, 190, 254);
-const MOCHA_MAUVE: Color = Color::Rgb(203, 166, 247);
-const MOCHA_PEACH: Color = Color::Rgb(250, 179, 135);
-const MOCHA_OVERLAY0: Color = Color::Rgb(108, 112, 134);
-const MOCHA_OVERLAY1: Color = Color::Rgb(127, 132, 156);
+use super::theme_support_test::{
+    MOCHA_BLUE, MOCHA_GREEN, MOCHA_LAVENDER, MOCHA_MAUVE, MOCHA_OVERLAY0, MOCHA_OVERLAY1,
+    MOCHA_OVERLAY2, MOCHA_PEACH, MOCHA_RED, MOCHA_SAPPHIRE, MOCHA_SKY, MOCHA_TEXT, MOCHA_YELLOW,
+};
+use crate::rendering::theme::{CatppuccinPalette, ThemeName, TuiTheme};
 
 #[test]
 fn mocha_palette_matches_official_values() {
@@ -151,14 +141,55 @@ fn syntax_channels_map_to_catppuccin_mocha_colors_and_styles() {
     assert_eq!(theme.syntax_keyword.fg, Some(MOCHA_MAUVE));
     assert_eq!(theme.syntax_type.fg, Some(MOCHA_YELLOW));
     assert_eq!(theme.syntax_function.fg, Some(MOCHA_BLUE));
-    assert_eq!(theme.syntax_variable.fg, Some(MOCHA_LAVENDER));
-    assert_eq!(theme.syntax_constant.fg, Some(MOCHA_RED));
+    assert_eq!(theme.syntax_variable.fg, Some(MOCHA_TEXT));
+    assert_eq!(theme.syntax_constant.fg, Some(MOCHA_PEACH));
     assert_eq!(theme.syntax_string.fg, Some(MOCHA_GREEN));
     assert_eq!(theme.syntax_number.fg, Some(MOCHA_PEACH));
-    assert_eq!(theme.syntax_operator.fg, Some(MOCHA_SAPPHIRE));
-    assert_eq!(theme.syntax_punctuation.fg, Some(MOCHA_OVERLAY1));
-    assert_eq!(theme.syntax_comment.fg, Some(MOCHA_OVERLAY0));
-    assert!(theme.syntax_comment.add_modifier.contains(Modifier::DIM));
+    assert_eq!(theme.syntax_operator.fg, Some(MOCHA_SKY));
+    assert_eq!(theme.syntax_punctuation.fg, Some(MOCHA_OVERLAY2));
+    assert_eq!(theme.syntax_comment.fg, Some(MOCHA_OVERLAY2));
+    assert!(theme.syntax_comment.add_modifier.contains(Modifier::ITALIC));
+    assert!(!theme.syntax_comment.add_modifier.contains(Modifier::DIM));
+}
+
+/// WHEN the theme is built from any palette, THE recolored syntax channels and
+/// inline code SHALL follow the catppuccin/nvim spec: variable = text,
+/// constant = peach, operator = sky, punctuation = overlay2, comment =
+/// overlay2 + italic with no dim, and inline code = green with no dim.
+#[test]
+fn recolored_syntax_channels_follow_nvim_spec_for_all_flavors() {
+    let cases = [
+        (TuiTheme::catppuccin_mocha(), CatppuccinPalette::mocha()),
+        (TuiTheme::catppuccin_latte(), CatppuccinPalette::latte()),
+        (TuiTheme::catppuccin_frappe(), CatppuccinPalette::frappe()),
+        (
+            TuiTheme::catppuccin_macchiato(),
+            CatppuccinPalette::macchiato(),
+        ),
+    ];
+
+    for (theme, palette) in cases {
+        assert_eq!(theme.syntax_variable.fg, Some(palette.text));
+        assert_eq!(theme.syntax_constant.fg, Some(palette.peach));
+        assert_eq!(theme.syntax_operator.fg, Some(palette.sky));
+        assert_eq!(theme.syntax_punctuation.fg, Some(palette.overlay2));
+
+        assert_eq!(theme.syntax_comment.fg, Some(palette.overlay2));
+        assert!(
+            theme.syntax_comment.add_modifier.contains(Modifier::ITALIC),
+            "comment must be italic"
+        );
+        assert!(
+            !theme.syntax_comment.add_modifier.contains(Modifier::DIM),
+            "comment must not be dim"
+        );
+
+        assert_eq!(theme.inline_code.fg, Some(palette.green));
+        assert!(
+            !theme.inline_code.add_modifier.contains(Modifier::DIM),
+            "inline code must not be dim"
+        );
+    }
 }
 
 #[test]
@@ -177,102 +208,6 @@ fn existing_role_and_status_channels_remain_unchanged() {
     assert_eq!(theme.status_failed.fg, Some(MOCHA_RED));
     assert_eq!(theme.status_cancelled.fg, Some(MOCHA_OVERLAY0));
     assert_eq!(theme.row_user_bg, Color::Rgb(43, 44, 61));
-}
-
-#[test]
-fn theme_name_resolves_to_constructor() {
-    assert_eq!(
-        ThemeName::CatppuccinMocha.resolve(),
-        TuiTheme::catppuccin_mocha()
-    );
-    assert_eq!(
-        ThemeName::CatppuccinLatte.resolve(),
-        TuiTheme::catppuccin_latte()
-    );
-    assert_eq!(
-        ThemeName::CatppuccinFrappe.resolve(),
-        TuiTheme::catppuccin_frappe()
-    );
-    assert_eq!(
-        ThemeName::CatppuccinMacchiato.resolve(),
-        TuiTheme::catppuccin_macchiato()
-    );
-}
-
-#[test]
-fn theme_name_all_returns_four_flavors() {
-    assert_eq!(
-        ThemeName::all(),
-        [
-            ThemeName::CatppuccinMocha,
-            ThemeName::CatppuccinLatte,
-            ThemeName::CatppuccinFrappe,
-            ThemeName::CatppuccinMacchiato,
-        ]
-    );
-}
-
-#[test]
-fn theme_name_from_name_accepts_new_flavors() {
-    assert_eq!(
-        ThemeName::from_name("catppuccin-frappe"),
-        Some(ThemeName::CatppuccinFrappe)
-    );
-    assert_eq!(
-        ThemeName::from_name("catppuccin-macchiato"),
-        Some(ThemeName::CatppuccinMacchiato)
-    );
-}
-
-#[test]
-fn theme_name_kebab_name_returns_canonical_kebab_case() {
-    assert_eq!(ThemeName::CatppuccinMocha.kebab_name(), "catppuccin-mocha");
-    assert_eq!(ThemeName::CatppuccinLatte.kebab_name(), "catppuccin-latte");
-    assert_eq!(
-        ThemeName::CatppuccinFrappe.kebab_name(),
-        "catppuccin-frappe"
-    );
-    assert_eq!(
-        ThemeName::CatppuccinMacchiato.kebab_name(),
-        "catppuccin-macchiato"
-    );
-}
-
-#[test]
-fn theme_name_kebab_name_round_trips_through_from_name() {
-    for name in ThemeName::all() {
-        let kebab = name.kebab_name();
-        assert_eq!(
-            ThemeName::from_name(kebab),
-            Some(name),
-            "kebab name {kebab} must resolve back to {name:?}"
-        );
-    }
-}
-
-#[test]
-fn theme_pref_kebab_value_resolves_after_round_trip() -> Result<()> {
-    // -- Setup & Fixtures
-    let dir = tempfile::TempDir::new().map_err(|e| format!("failed to create temp dir: {e}"))?;
-    let path = dir.path().join("theme.json");
-    let pref = agnt_core::theme_pref::ThemePreference {
-        theme: Some("catppuccin-frappe".to_string()),
-    };
-
-    // -- Exec
-    pref.save_to(&path)?;
-    let loaded = agnt_core::theme_pref::ThemePreference::load_from(&path)?;
-    let name = loaded
-        .theme
-        .as_deref()
-        .ok_or("theme should be present after round-trip")?;
-
-    // -- Check: the persisted kebab name still resolves to a ThemeName.
-    assert_eq!(
-        ThemeName::from_name(name),
-        Some(ThemeName::CatppuccinFrappe)
-    );
-    Ok(())
 }
 
 #[test]
@@ -374,104 +309,4 @@ fn latte_body_text_uses_dark_text_fg() {
     assert_eq!(theme.row_assistant.fg, Some(text));
     assert_eq!(theme.row_tool.fg, Some(text));
     assert_eq!(theme.row_system.fg, Some(text));
-}
-
-// ========== diff tint backgrounds (task 669b4dac) ==========
-
-/// WHEN `diff_tint_to_bg` receives `DiffTint::Add`, THE function SHALL return
-/// `Some(theme.diff_add_bg)`.
-#[test]
-fn diff_tint_to_bg_add_returns_add_background() {
-    let theme = TuiTheme::default();
-
-    assert_eq!(
-        diff_tint_to_bg(&DiffTint::Add, &theme),
-        Some(theme.diff_add_bg)
-    );
-}
-
-/// WHEN `diff_tint_to_bg` receives `DiffTint::Remove`, THE function SHALL
-/// return `Some(theme.diff_remove_bg)`.
-#[test]
-fn diff_tint_to_bg_remove_returns_remove_background() {
-    let theme = TuiTheme::default();
-
-    assert_eq!(
-        diff_tint_to_bg(&DiffTint::Remove, &theme),
-        Some(theme.diff_remove_bg)
-    );
-}
-
-/// WHEN `diff_tint_to_bg` receives `DiffTint::Context` and the theme leaves
-/// `diff_context_bg` as `None`, THE function SHALL return `None`.
-#[test]
-fn diff_tint_to_bg_context_returns_none_by_default() {
-    let theme = TuiTheme::default();
-
-    assert_eq!(theme.diff_context_bg, None);
-    assert_eq!(diff_tint_to_bg(&DiffTint::Context, &theme), None);
-}
-
-/// WHEN `diff_tint_to_bg` receives `DiffTint::Context` and the theme sets
-/// `diff_context_bg`, THE function SHALL return that colour.
-#[test]
-fn diff_tint_to_bg_context_returns_configured_background() {
-    let theme = TuiTheme {
-        diff_context_bg: Some(Color::Rgb(1, 2, 3)),
-        ..TuiTheme::default()
-    };
-
-    assert_eq!(
-        diff_tint_to_bg(&DiffTint::Context, &theme),
-        Some(Color::Rgb(1, 2, 3))
-    );
-}
-
-/// WHEN the theme is built from a palette, THE add/remove diff backgrounds
-/// SHALL be dimmed tints of the palette green/red — pulled toward the theme
-/// base so syntax foreground colours stay readable on top.
-#[test]
-fn diff_backgrounds_are_dimmed_palette_accents() {
-    let cases = [
-        (TuiTheme::catppuccin_mocha(), CatppuccinPalette::mocha()),
-        (TuiTheme::catppuccin_latte(), CatppuccinPalette::latte()),
-        (TuiTheme::catppuccin_frappe(), CatppuccinPalette::frappe()),
-        (
-            TuiTheme::catppuccin_macchiato(),
-            CatppuccinPalette::macchiato(),
-        ),
-    ];
-
-    for (theme, palette) in cases {
-        assert!(
-            is_tint_of(theme.diff_add_bg, palette.green, palette.base),
-            "add tint {:?} must be a dimmed tint of the palette green {:?} over base {:?}",
-            theme.diff_add_bg,
-            palette.green,
-            palette.base
-        );
-        assert!(
-            is_tint_of(theme.diff_remove_bg, palette.red, palette.base),
-            "remove tint {:?} must be a dimmed tint of the palette red {:?} over base {:?}",
-            theme.diff_remove_bg,
-            palette.red,
-            palette.base
-        );
-    }
-}
-
-/// Whether `tint` is a dimmed version of `accent` over `base`: an RGB colour
-/// that is strictly closer to the background than the accent is, i.e. the
-/// accent pulled toward the base so the syntax foreground stays readable.
-fn is_tint_of(tint: Color, accent: Color, base: Color) -> bool {
-    let (Color::Rgb(tr, tg, tb), Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) =
-        (tint, accent, base)
-    else {
-        return false;
-    };
-    let dist_sq = |r: u8, g: u8, b: u8| {
-        let d = |a: u8, b: u8| i64::from(a) - i64::from(b);
-        d(r, br).pow(2) + d(g, bg).pow(2) + d(b, bb).pow(2)
-    };
-    tint != accent && dist_sq(tr, tg, tb) < dist_sq(ar, ag, ab)
 }

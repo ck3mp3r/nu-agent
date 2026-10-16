@@ -10,7 +10,8 @@ fn markdown_projection_table_structure_table() -> Result<()> {
     let lines = project_markdown_to_lines(markdown, None);
     let plain: Vec<String> = lines.iter().map(plain_line).collect();
 
-    // -- Check: the header row carries the column names and is bold.
+    // -- Check: the header row carries the column names and the generic
+    // heading hint (MdHeading(0)).
     let header_line = lines
         .iter()
         .find(|l| plain_line(l).contains("Commit") && plain_line(l).contains("Message"))
@@ -19,8 +20,8 @@ fn markdown_projection_table_structure_table() -> Result<()> {
         header_line
             .spans
             .iter()
-            .any(|s| s.hint == StyleHint::MdBold),
-        "header cells should be bold"
+            .any(|s| s.hint == StyleHint::MdHeading(0)),
+        "header cells should carry the generic heading hint"
     );
 
     // -- Check: the separator row carries horizontal lines with a junction and

@@ -11,7 +11,7 @@ fn markdown_projection_fixture_supported_basics_renders_lines_and_inline_styles(
         lines[0]
             .spans
             .iter()
-            .all(|span| span.hint == StyleHint::MdBold)
+            .all(|span| span.hint == StyleHint::MdHeading(1))
     );
 
     let body = &lines[2].spans;

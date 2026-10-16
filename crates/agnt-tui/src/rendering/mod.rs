@@ -17,5 +17,21 @@ mod modal_test;
 mod selection_test;
 
 #[cfg(test)]
-#[path = "../../test/rendering/theme.rs"]
-mod theme_test;
+#[path = "../../test/rendering/theme/support.rs"]
+mod theme_support_test;
+
+#[cfg(test)]
+#[path = "../../test/rendering/theme/palette.rs"]
+mod theme_palette_test;
+
+#[cfg(test)]
+#[path = "../../test/rendering/theme/theme_name.rs"]
+mod theme_name_test;
+
+#[cfg(test)]
+#[path = "../../test/rendering/theme/diff.rs"]
+mod theme_diff_test;
+
+#[cfg(test)]
+#[path = "../../test/rendering/theme/markdown.rs"]
+mod theme_markdown_test;

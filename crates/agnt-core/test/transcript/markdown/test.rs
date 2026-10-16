@@ -8,6 +8,9 @@
 #[path = "test/diff.rs"]
 mod diff;
 
+#[path = "test/elements.rs"]
+mod elements;
+
 #[path = "test/math.rs"]
 mod math;
 
