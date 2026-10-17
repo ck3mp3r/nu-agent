@@ -1,3 +1,4 @@
+pub mod cmd_refs;
 pub mod copilot_tokens;
 pub mod defaults;
 pub mod dotenv;

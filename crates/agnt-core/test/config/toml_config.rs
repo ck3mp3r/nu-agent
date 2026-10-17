@@ -1,6 +1,7 @@
 use super::*;
 use crate::compaction::CompactionStrategy;
 use crate::config::AgentsConfig;
+use crate::config::cmd_refs::{CmdRunError, CmdRunner};
 use crate::utils::env_map::EnvMap;
 use tempfile::TempDir;
 
@@ -21,6 +22,39 @@ fn env_for(dir: &TempDir) -> EnvMap {
         "XDG_CONFIG_HOME".to_string(),
         dir.path().to_string_lossy().to_string(),
     )])
+}
+
+/// Answers `gh auth token` and `op read 'OpenAI API Key'`; fails everything else.
+struct StubRunner;
+
+impl CmdRunner for StubRunner {
+    fn run(&self, program: &str, args: &[&str]) -> core::result::Result<String, CmdRunError> {
+        match (program, args) {
+            ("gh", ["auth", "token"]) => Ok("ghp_from_stub\n".to_string()),
+            ("op", ["read", "OpenAI API Key"]) => Ok("sk-op\n".to_string()),
+            _ => Err(CmdRunError::Io(std::io::Error::other(format!(
+                "unexpected command: {program} {args:?}"
+            )))),
+        }
+    }
+}
+
+/// Fails every command with a non-zero exit.
+struct FailingRunner;
+
+impl CmdRunner for FailingRunner {
+    fn run(&self, _program: &str, _args: &[&str]) -> core::result::Result<String, CmdRunError> {
+        Err(CmdRunError::Io(std::io::Error::other("stub failure")))
+    }
+}
+
+/// Write `contents` to `<dir>/nu-agent/config.toml` and return the path.
+fn write_config(dir: &TempDir, contents: &str) -> Result<std::path::PathBuf> {
+    let config_dir = dir.path().join("nu-agent");
+    std::fs::create_dir_all(&config_dir).expect("create config dir");
+    let path = config_dir.join("config.toml");
+    std::fs::write(&path, contents).expect("write config");
+    Ok(path)
 }
 
 #[test]
@@ -55,6 +89,121 @@ fn load_parses_minimal_config() -> Result<()> {
         let config = load_from(&config_dir.join("config.toml"))
             .map_err(|e| format!("load should succeed: {e:?}"))?;
         assert_eq!(config, PluginConfig::default());
+        Ok(())
+    })
+}
+
+#[test]
+fn load_from_with_resolves_cmd_reference_in_mcp_env() -> Result<()> {
+    with_xdg_config_home(|dir| {
+        let path = write_config(
+            dir,
+            r#"
+[mcp.gh]
+command = "npx"
+
+[mcp.gh.env]
+GITHUB_TOKEN = "cmd:gh auth token"
+"#,
+        )?;
+
+        let config = load_from_with(&path, &StubRunner)
+            .map_err(|e| format!("load should succeed: {e:?}"))?;
+
+        let token = config
+            .mcp
+            .as_ref()
+            .and_then(|mcp| mcp.get("gh"))
+            .and_then(|gh| gh.get("env"))
+            .and_then(|env| env.get("GITHUB_TOKEN"))
+            .and_then(toml::Value::as_str);
+        assert_eq!(token, Some("ghp_from_stub"));
+        Ok(())
+    })
+}
+
+#[test]
+fn load_from_with_resolves_cmd_reference_in_api_key() -> Result<()> {
+    with_xdg_config_home(|dir| {
+        let path = write_config(
+            dir,
+            r#"
+[providers.openai]
+api_key = "cmd:op read 'OpenAI API Key'"
+"#,
+        )?;
+
+        let config = load_from_with(&path, &StubRunner)
+            .map_err(|e| format!("load should succeed: {e:?}"))?;
+
+        let openai = config.providers.get("openai").ok_or("openai provider")?;
+        assert_eq!(openai.api_key.as_deref(), Some("sk-op"));
+        Ok(())
+    })
+}
+
+#[test]
+fn load_from_with_reports_cmd_helper_failure() -> Result<()> {
+    with_xdg_config_home(|dir| {
+        let path = write_config(
+            dir,
+            r#"
+[mcp.gh.env]
+GITHUB_TOKEN = "cmd:gh auth token"
+"#,
+        )?;
+
+        let err = match load_from_with(&path, &FailingRunner) {
+            Ok(_) => return Err("a failing cmd: reference must error".into()),
+            Err(e) => e,
+        };
+
+        let TomlConfigError::CmdHelper(message) = err else {
+            return Err("expected CmdHelper error".into());
+        };
+        assert!(
+            message.contains("mcp.gh.env.GITHUB_TOKEN"),
+            "message must name the key path: {message}"
+        );
+        assert!(
+            message.contains("gh auth token"),
+            "message must name the command: {message}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn load_from_with_leaves_config_without_cmd_references_unchanged() -> Result<()> {
+    with_xdg_config_home(|dir| {
+        let path = write_config(
+            dir,
+            r#"
+[models.default]
+model = "openai/gpt-4"
+
+[providers.openai]
+api_key = "store:openai"
+
+[mcp.gh.env]
+GITHUB_TOKEN = "env:GITHUB_TOKEN"
+"#,
+        )?;
+
+        let config = load_from_with(&path, &FailingRunner)
+            .map_err(|e| format!("load should succeed: {e:?}"))?;
+
+        assert_eq!(config.models["default"].model, "openai/gpt-4");
+        let openai = config.providers.get("openai").ok_or("openai provider")?;
+        assert_eq!(openai.api_key.as_deref(), Some("store:openai"));
+        let token = config
+            .mcp
+            .as_ref()
+            .and_then(|mcp| mcp.get("gh"))
+            .and_then(|gh| gh.get("env"))
+            .and_then(|env| env.get("GITHUB_TOKEN"))
+            .and_then(toml::Value::as_str);
+        assert_eq!(token, Some("env:GITHUB_TOKEN"));
         Ok(())
     })
 }
@@ -263,6 +412,10 @@ api_key = "sk-raw-literal"
         assert!(
             message.contains("agent provider auth login openai"),
             "message must suggest the login command: {message}"
+        );
+        assert!(
+            message.contains("cmd:"),
+            "message must list the cmd: reference: {message}"
         );
         Ok(())
     })

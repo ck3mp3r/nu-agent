@@ -158,7 +158,7 @@ preamble = "You are helpful." # optional provider preamble
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `api_key` | String | A `store:` or `env:` reference (see [Secret Storage](#2-secret-storage)). Omit the field for the default vault lookup. A raw key literal is rejected at startup. |
+| `api_key` | String | A `store:`, `env:`, or `cmd:` reference (see [Secret Storage](#2-secret-storage)). Omit the field for the default vault lookup. A raw key literal is rejected at startup. |
 | `base_url` | String | Custom API endpoint URL |
 | `provider` | String | Provider implementation to use (e.g. `"openai"` for a `github-copilot` provider or any OpenAI-compatible endpoint) |
 | `name` | String | Provider display name |
@@ -615,6 +615,26 @@ api_key = "env:MY_GATEWAY_KEY"
 
 At runtime, the resolver reads `MY_GATEWAY_KEY` from the environment. Use `env:` for a non-standard variable name. The automatic `{PROVIDER}_API_KEY` reading (for example `OPENAI_API_KEY`) needs no `env:` reference. When the named variable is absent, the resolver sets `api_key` to None and logs a warning. The resolver never uses the `env:VAR_NAME` string as a key.
 
+### `cmd:` reference syntax
+
+Run a command and use its stdout as the value. The `cmd:` prefix works in any string value in `config.toml`, not only `api_key`:
+
+```toml
+[providers.openai]
+api_key = "cmd:op read 'OpenAI API Key'"
+
+[mcp.gh.env]
+GITHUB_TOKEN = "cmd:gh auth token"
+```
+
+The loader splits the text after `cmd:` with POSIX word-splitting rules, so a quoted argument keeps its spaces. It runs the command once at load time and substitutes the trimmed stdout. A resolved value is never resolved again, so an output that starts with `cmd:` stays literal.
+
+The command must exit with status 0 and write a non-empty stdout. Any other result is a hard error at startup. The agent refuses to start and reports the key path, the command, the exit code or I/O error, and stderr. The error never contains the command's stdout.
+
+The default timeout is 30 seconds. Set `AGENT_CMD_TIMEOUT_SECS` in the environment, or `cmd_timeout_secs` in `config.toml`, to change it. The environment variable wins.
+
+The loader runs the command directly, without a shell. It does not interpret Windows shell syntax.
+
 ### Default vault lookup
 
 Omit the `api_key` field to look up the credential by provider element name:
@@ -632,10 +652,10 @@ A raw key literal in `config.toml` is a hard error at startup:
 
 ```toml
 [providers.openai]
-api_key = "sk-raw-literal"   # REJECTED: not a store: or env: reference
+api_key = "sk-raw-literal"   # REJECTED: not a store:, env:, or cmd: reference
 ```
 
-The agent refuses to start and reports: `api_key in [providers.openai] must be a store: or env: reference, not a raw value. Use: agent provider auth login openai`. Every `providers.<name>.api_key` value must start with `store:` or `env:`, or the field must be omitted.
+The agent refuses to start and reports: `api_key in [providers.openai] must be a store:, env:, or cmd: reference, not a raw value. Use: agent provider auth login openai`. Every `providers.<name>.api_key` value must start with `store:`, `env:`, or `cmd:`, or the field must be omitted.
 
 ### Precedence
 
@@ -645,7 +665,7 @@ Highest priority first:
 |----------|--------|-------|
 | 1 | CLI flags | `--api-key` overrides all other sources |
 | 2 | Environment variables | Set in the shell, or read from a `.env` file. Includes `{PROVIDER}_API_KEY` and `env:` references |
-| 3 | `config.toml` `api_key` | A `store:` or `env:` reference |
+| 3 | `config.toml` `api_key` | A `store:`, `env:`, or `cmd:` reference. A `cmd:` reference resolves at load |
 | 4 | Vault | Resolves a `store:` reference, or the default `provider:<name>` lookup when `api_key` is omitted |
 | 5 | Built-in defaults | Hardcoded fallbacks |
 
