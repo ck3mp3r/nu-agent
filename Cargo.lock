@@ -100,7 +100,6 @@ version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
  "agnt-core",
- "agnt-testkit",
  "chrono",
  "log",
  "nu-protocol",
@@ -115,6 +114,7 @@ dependencies = [
 name = "agnt-cli"
 version = "0.1.0"
 dependencies = [
+ "agent-client-protocol",
  "agnt-a2a",
  "agnt-acp",
  "agnt-core",

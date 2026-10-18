@@ -64,7 +64,7 @@ impl TestEnv {
             config_home,
             cache_home,
             cwd,
-            binary: agent_binary()?,
+            binary: PathBuf::from(env!("CARGO_BIN_EXE_agent")),
         })
     }
 
@@ -93,26 +93,6 @@ impl TestEnv {
                 .env("HOME", self.temp.path().to_string_lossy().into_owned()),
         )
     }
-}
-
-/// Locate the `agent` binary next to the running test binary.
-///
-/// The test binary lives in `<target>/debug/deps/`, so the agent binary is two
-/// directories up. `cargo nextest run` builds the workspace binaries before it
-/// runs the tests, so the file is present.
-fn agent_binary() -> Result<PathBuf> {
-    let exe = std::env::current_exe()?;
-    let deps = exe.parent().ok_or("test binary has no parent directory")?;
-    let target = deps.parent().ok_or("deps directory has no parent")?;
-    let binary = target.join(format!("agent{}", std::env::consts::EXE_SUFFIX));
-    if !binary.exists() {
-        return Err(format!(
-            "agent binary not found at {} — run `cargo build --workspace` first",
-            binary.display()
-        )
-        .into());
-    }
-    Ok(binary)
 }
 
 // endregion: --- TestEnv

@@ -402,8 +402,4 @@ mod error_test;
 #[path = "../test/permission.rs"]
 mod permission_test;
 
-#[cfg(all(test, feature = "integration"))]
-#[path = "../test/integration.rs"]
-mod integration_test;
-
 // endregion: --- Tests

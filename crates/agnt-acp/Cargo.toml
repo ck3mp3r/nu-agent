@@ -18,6 +18,4 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
-agent-client-protocol = { version = "3", features = ["process"] }
 tempfile = { workspace = true }
-agnt-testkit = { workspace = true }

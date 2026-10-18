@@ -1,22 +1,14 @@
-//! End-to-end ACP stdio integration tests.
-//!
-//! Every test launches `agent acp` as a real subprocess through the
-//! ACP SDK client and drives the protocol over stdio. The LLM is a local
-//! wiremock server, so no API key and no network access are required.
+//! ACP session lifecycle tests: initialize, prompt, cancel, load, list, delete.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    CancelNotification, DeleteSessionRequest, InitializeRequest, ListSessionsRequest,
-    SessionConfigKind, SessionConfigOptionCategory, StopReason,
+    CancelNotification, DeleteSessionRequest, InitializeRequest, ListSessionsRequest, StopReason,
 };
 
-mod support;
-use support::*;
-
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+use super::*;
 
 // ---------------------------------------------------------------------------
 // initialize -> session/new -> session/prompt
@@ -269,111 +261,6 @@ async fn test_integration_session_delete_removes_session() -> Result<()> {
     assert!(
         !ids.contains(&session_id),
         "a deleted session must not be listed; got: {ids:?}"
-    );
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// session/request_permission
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_integration_permission_request_allows_tool_call() -> Result<()> {
-    // -- Setup & Fixtures
-    let llm = start_llm_server().await?;
-    mount_tool_then_text(
-        &llm,
-        "read",
-        serde_json::json!({ "path": "note.txt" }),
-        "read complete",
-    )
-    .await?;
-    let env = TestEnv::new(&llm.uri(), "[permissions]\nread = \"ask\"\n")?;
-    std::fs::write(env.cwd().join("note.txt"), "permission probe content")?;
-    let recorder = Arc::new(Recorder::default());
-
-    // -- Exec
-    let (text, stop_reason) = build_client(Arc::clone(&recorder))
-        .connect_with(env.agent(), async |cx| {
-            cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
-                .block_task()
-                .await?;
-            let mut session = cx
-                .build_session(env.cwd())
-                .block_task()
-                .start_session()
-                .await?;
-            session.send_prompt("read note.txt")?;
-            let (text, stop_reason) = read_turn(&mut session).await.map_err(acp_err)?;
-            Ok((text, stop_reason))
-        })
-        .await?;
-
-    // -- Check
-    let requests = recorder.permission_requests();
-    assert_eq!(
-        requests.len(),
-        1,
-        "the gated read tool must trigger exactly one permission request"
-    );
-    assert_eq!(stop_reason, StopReason::EndTurn);
-    assert!(
-        text.contains("read complete"),
-        "the turn must continue after the tool call; got: {text:?}"
-    );
-    let bodies = llm_request_bodies(&llm).await;
-    let second = bodies
-        .get(1)
-        .ok_or("the tool result must be fed back to the model as a second completion")?;
-    assert!(
-        second.contains("permission probe content"),
-        "the second completion must carry the tool result; got: {second}"
-    );
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// session/new config options
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_integration_new_session_advertises_model_config_option() -> Result<()> {
-    // -- Setup & Fixtures
-    let llm = start_llm_server().await?;
-    mount_text_response(&llm, "unused", None).await?;
-    let env = TestEnv::new(&llm.uri(), "")?;
-    let recorder = Arc::new(Recorder::default());
-
-    // -- Exec
-    let options = build_client(recorder)
-        .connect_with(env.agent(), async |cx| {
-            cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
-                .block_task()
-                .await?;
-            let session = cx
-                .build_session(env.cwd())
-                .block_task()
-                .start_session()
-                .await?;
-            session
-                .config_options()
-                .map(|options| options.to_vec())
-                .ok_or_else(|| acp_err("session/new must advertise config options"))
-        })
-        .await?;
-
-    // -- Check
-    let model = options
-        .iter()
-        .find(|option| option.category == Some(SessionConfigOptionCategory::Model))
-        .ok_or("a model config option must be advertised")?;
-    let SessionConfigKind::Select(select) = &model.kind else {
-        return Err("the model config option must be a select".into());
-    };
-    assert_eq!(
-        select.current_value.to_string(),
-        "ollama/llama3",
-        "the advertised model must match the resolved config"
     );
     Ok(())
 }

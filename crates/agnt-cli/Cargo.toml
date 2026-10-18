@@ -10,6 +10,11 @@ path = "src/main.rs"
 [features]
 integration = []
 
+[[test]]
+name = "acp_e2e"
+path = "test/acp_e2e.rs"
+required-features = ["integration"]
+
 [dependencies]
 agnt-a2a = { workspace = true }
 agnt-acp = { workspace = true }
@@ -35,6 +40,7 @@ tokio = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+agent-client-protocol = { version = "3", features = ["process"] }
 agnt-testkit = { workspace = true }
 serial_test = { workspace = true }
 tempfile = { workspace = true }

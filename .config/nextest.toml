@@ -24,11 +24,11 @@ final-status-level = "flaky"
 filter = 'package(agnt-a2a)'
 retries = 1
 
-# agnt-acp integration tests spawn a real `agent` subprocess per test and carry
-# internal 30s budgets; give them a longer slow-timeout and reserve two thread
-# slots to avoid CPU oversubscription.
+# The agnt-cli `acp_e2e` tests spawn a real `agent` subprocess per test and
+# carry internal 30s budgets; give them a longer slow-timeout and reserve two
+# thread slots to avoid CPU oversubscription.
 [[profile.integration.overrides]]
-filter = 'package(agnt-acp)'
+filter = 'package(agnt-cli) and binary(acp_e2e)'
 slow-timeout = { period = "40s", terminate-after = 2, grace-period = "5s" }
 threads-required = 2
 

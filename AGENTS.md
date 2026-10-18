@@ -84,7 +84,7 @@ Integration test modules are gated behind the `integration` cargo feature:
 mod test;
 ```
 
-The feature is defined in `crates/agnt-a2a/Cargo.toml`, `crates/agnt-core/Cargo.toml`, `crates/agnt-tui/Cargo.toml`, and `crates/agnt-plugin/Cargo.toml`. Enabling it on `agnt-plugin` or `agnt-tui` propagates to `agnt-core` and `agnt-a2a`.
+The feature is defined in `crates/agnt-a2a/Cargo.toml`, `crates/agnt-acp/Cargo.toml`, `crates/agnt-cli/Cargo.toml`, `crates/agnt-core/Cargo.toml`, `crates/agnt-tui/Cargo.toml`, and `crates/agnt-plugin/Cargo.toml`. Enabling it on `agnt-plugin` or `agnt-tui` propagates to `agnt-core` and `agnt-a2a`.
 
 `cargo nextest` is the test runner. Profiles live in `.config/nextest.toml`:
 
@@ -110,6 +110,8 @@ The pre-push hook runs the full suite: `cargo clippy --all-features --tests -- -
 Integration test modules:
 
 - `agnt-a2a` — `test/server/`, `test/agent/`, `test/client/a2a_client.rs`, `test/client/functions.rs`, `test/discovery/test.rs`, `test/tools/test.rs`, `test/task_store/test.rs`
+- `agnt-acp` — `test/runtime/`
+- `agnt-cli` — `test/integration/`, plus the `acp_e2e` `[[test]]` target (`test/acp_e2e.rs`) gated by `required-features = ["integration"]` — the workspace's first true test target
 - `agnt-core` — `test/conversation/turn/test.rs`, `test/conversation/turn/executor/`, `test/session/sqlite_store.rs`, `test/tools/mcp/oauth_callback.rs`
 - `agnt-plugin` — `test/command/session/clear.rs`, `test/command/session/inspect.rs`, `test/command/session/list.rs`
 
