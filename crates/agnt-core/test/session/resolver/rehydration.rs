@@ -141,6 +141,125 @@ fn hydrate_unflagged_tool_results_rehydrate_as_success() {
     }
 }
 
+// --- multi-call display pairing tests ---
+
+/// A display-yielding result pairs with its own call: with calls [A, B, C] in
+/// one assistant message and only A yielding a display, the display snapshot
+/// lands between A and B.
+#[test]
+fn hydrate_multi_call_turn_pairs_display_with_owning_call() {
+    // -- Setup & Fixtures
+    let entries = multi_call_entries(&[
+        ("call_nu_a", "nu", json!({"command": "ls"})),
+        ("call_get_b", "c5t__get_task", json!({"task_id": "b"})),
+        ("call_get_c", "c5t__get_task", json!({"task_id": "c"})),
+    ]);
+
+    // -- Exec
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+
+    // -- Check
+    let roles: Vec<&str> = snapshots.iter().map(|snapshot| snapshot.role()).collect();
+    assert_eq!(
+        roles,
+        vec!["tool", "tool_display", "tool", "tool"],
+        "the nu display must dock under its own call, before the get_task rows"
+    );
+    let display_content = snapshots[1]
+        .tool_display()
+        .and_then(|display| display.sections.first())
+        .map(|section| section.content.as_str());
+    assert_eq!(
+        display_content,
+        Some("ls"),
+        "the display under the nu call must be its command preview"
+    );
+}
+
+/// Every display-yielding call in one assistant message interleaves with its
+/// own tool snapshot in call order.
+#[test]
+fn hydrate_multi_call_turn_interleaves_every_display() {
+    // -- Setup & Fixtures
+    let entries = multi_call_entries(&[
+        ("call_nu_a", "nu", json!({"command": "ls"})),
+        ("call_nu_b", "nu", json!({"command": "pwd"})),
+        ("call_nu_c", "nu", json!({"command": "date"})),
+    ]);
+
+    // -- Exec
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+
+    // -- Check
+    let roles: Vec<&str> = snapshots.iter().map(|snapshot| snapshot.role()).collect();
+    assert_eq!(
+        roles,
+        vec![
+            "tool",
+            "tool_display",
+            "tool",
+            "tool_display",
+            "tool",
+            "tool_display"
+        ],
+        "each display must follow its own tool snapshot"
+    );
+    let display_contents: Vec<Option<&str>> = snapshots
+        .iter()
+        .filter(|snapshot| snapshot.role() == "tool_display")
+        .map(|snapshot| {
+            snapshot
+                .tool_display()
+                .and_then(|display| display.sections.first())
+                .map(|section| section.content.as_str())
+        })
+        .collect();
+    assert_eq!(
+        display_contents,
+        vec![Some("ls"), Some("pwd"), Some("date")],
+        "displays must follow call order"
+    );
+}
+
+/// A ToolResult whose call id has no matching ToolCall yields no display
+/// snapshot. The payload embeds a valid `display` object so the pin bites: a
+/// regression that derives and emits a display for an orphan result would
+/// otherwise pass this test vacuously.
+#[test]
+fn hydrate_orphan_tool_result_emits_no_display() {
+    // -- Setup & Fixtures
+    let entries = vec![StoreEntry::Message(Message::User {
+        content: vec![UserContent::ToolResult(ToolResult {
+            call: CallId::from_wire("call_orphan"),
+            name: ToolName::new("nu").expect("non-empty tool name"),
+            content: vec![ToolResultContent::Text(Text::new(
+                json!({
+                    "stdout": "",
+                    "stderr": "",
+                    "exit_code": 0,
+                    "display": {
+                        "sections": [{"language": "", "content": "orphan display"}]
+                    }
+                })
+                .to_string(),
+            ))],
+            is_error: false,
+        })],
+    })];
+
+    // -- Exec
+    let snapshots =
+        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+
+    // -- Check
+    assert!(
+        snapshots.is_empty(),
+        "an orphan result must emit no snapshot, got: {snapshots:?}"
+    );
+}
+
 /// A persisted verdict flag decides tool_success, regardless of the output
 /// text.
 #[test]
@@ -176,4 +295,43 @@ fn hydrate_flagged_tool_results_use_persisted_verdict() {
         Some(false),
         "persisted nu_agent_success=false must rehydrate as failure"
     );
+}
+
+// -- Test Support
+
+/// Build [assistant with one ToolCall per `calls` entry, user with one
+/// ToolResult per entry]. Every result text is a JSON object, so the
+/// result-sourced display path is reachable for each call.
+fn multi_call_entries(calls: &[(&str, &str, serde_json::Value)]) -> Vec<StoreEntry> {
+    let tool_calls = calls
+        .iter()
+        .map(|(call_id, tool_name, arguments)| {
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire(*call_id),
+                ToolFunction::new(
+                    ToolName::new(*tool_name).expect("should be non-empty"),
+                    arguments.clone(),
+                ),
+            ))
+        })
+        .collect();
+    let tool_results = calls
+        .iter()
+        .map(|(call_id, tool_name, _)| {
+            UserContent::ToolResult(ToolResult {
+                call: CallId::from_wire(*call_id),
+                name: ToolName::new(*tool_name).expect("non-empty tool name"),
+                content: vec![ToolResultContent::Text(Text::new(
+                    json!({"stdout": "", "stderr": "", "exit_code": 0}).to_string(),
+                ))],
+                is_error: false,
+            })
+        })
+        .collect();
+    vec![
+        StoreEntry::Message(Message::Assistant(AssistantMessage::new(tool_calls))),
+        StoreEntry::Message(Message::User {
+            content: tool_results,
+        }),
+    ]
 }

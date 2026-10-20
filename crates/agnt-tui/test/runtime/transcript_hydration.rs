@@ -353,6 +353,58 @@ fn assistant_message_event_sanitizes_pseudo_and_control_tags() -> Result<()> {
     Ok(())
 }
 
+/// A tool display snapshot that directly follows its owning tool call hydrates
+/// as a ToolDisplay block between the two Tool blocks.
+#[test]
+fn hydration_pairs_tool_display_with_owning_call() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    let display = ToolDisplay {
+        title: None,
+        sections: vec![agnt_core::protocol::event::ToolDisplaySection {
+            label: None,
+            kind: agnt_core::transcript::ir::ContentKind::Code {
+                language: "nu".to_string(),
+            },
+            content: "ls".to_string(),
+            stats: None,
+        }],
+    };
+
+    // -- Exec
+    coordinator.hydrate_transcript_from_messages(
+        vec![
+            UiMessageSnapshot::new("tool", "tool[nu] → \"ls\" · done")
+                .with_tool_name("nu".to_string())
+                .with_tool_details(Some(r#"{"command":"ls"}"#.to_string()), None, Some(true)),
+            UiMessageSnapshot::new("tool_display", String::new()).with_tool_display(display),
+            UiMessageSnapshot::new("tool", "tool[read_file] → \"a.txt\" · done")
+                .with_tool_name("read_file".to_string())
+                .with_tool_details(Some(r#"{"path":"a.txt"}"#.to_string()), None, Some(true)),
+        ],
+        None,
+    );
+
+    // -- Check
+    let sources: Vec<&str> = coordinator
+        .state()
+        .transcript
+        .blocks()
+        .iter()
+        .map(|block| match &block.source {
+            BlockSource::Tool { .. } => "tool",
+            BlockSource::ToolDisplay { .. } => "tool_display",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(
+        sources,
+        vec!["tool", "tool_display", "tool"],
+        "the display block must sit between its owning call and the next call"
+    );
+    Ok(())
+}
+
 /// Hydration does not duplicate lines on a single call, and an empty message
 /// snapshot leaves the empty-session behavior unchanged.
 #[test]

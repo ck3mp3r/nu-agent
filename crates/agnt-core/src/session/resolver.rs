@@ -220,9 +220,9 @@ pub(crate) fn hydrate_transcript_from_store_entries(
     entries: &[StoreEntry],
     cwd: &Path,
 ) -> Vec<UiMessageSnapshot> {
-    // Pass 1: collect call_id → tool_name from all ToolCalls and
-    //         call_id → success from all ToolResults. Success is the inverse
-    //         of the persisted `ToolResult::is_error` flag.
+    // Pass 1: collect call_id → tool_name and call_id → arguments from all
+    //         ToolCalls, and call_id → success from all ToolResults. Success
+    //         is the inverse of the persisted `ToolResult::is_error` flag.
     let mut tool_names: HashMap<CallId, String> = HashMap::new();
     let mut tool_arguments: HashMap<CallId, String> = HashMap::new();
     let mut tool_success_map: HashMap<CallId, bool> = HashMap::new();
@@ -251,12 +251,54 @@ pub(crate) fn hydrate_transcript_from_store_entries(
             _ => {}
         }
     }
+    // Pass 1b: derive each result's display. A result whose call id has no
+    //          matching ToolCall yields no display — the same guard the
+    //          ToolResult branch used to apply.
+    let mut tool_displays: HashMap<CallId, ToolDisplay> = HashMap::new();
+    for entry in entries {
+        let StoreEntry::Message(Message::User { content }) = entry else {
+            continue;
+        };
+        for item in content.iter() {
+            let UserContent::ToolResult(tr) = item else {
+                continue;
+            };
+            let Some(tool_name) = tool_names.get(&tr.call) else {
+                continue;
+            };
+            let result_text: String = tr
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    ToolResultContent::Text(t) => Some(t.text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let Ok(json) = serde_json::from_str::<serde_json::Value>(&result_text) else {
+                continue;
+            };
+            // Result-sourced display wins (an embedded `display` object, or
+            // the edit diff). When the result carries none, fall back to the
+            // argument-sourced preview the live path shows at the permission
+            // gate — this is what makes a `nu` call render its command code
+            // block after rehydration.
+            let display = tool_display_from_result(tool_name, &json).or_else(|| {
+                tool_arguments
+                    .get(&tr.call)
+                    .and_then(|args_json| tool_display_from_arguments(tool_name, args_json, cwd))
+            });
+            if let Some(display) = display {
+                tool_displays.insert(tr.call.clone(), display);
+            }
+        }
+    }
     // Pass 2: generate snapshots with tool display reconstruction
     entries
         .iter()
         .flat_map(|entry| match entry {
             StoreEntry::Message(msg) => {
-                hydrate_single_message(msg, &tool_names, &tool_success_map, &tool_arguments, cwd)
+                hydrate_single_message(msg, &tool_success_map, &tool_displays)
             }
             StoreEntry::Marker(marker) => {
                 vec![UiMessageSnapshot::new(
@@ -286,61 +328,22 @@ fn format_compaction_content(marker: &CompactionMarker) -> String {
 /// - `Message::User { content }` with `UserContent::Text` → user transcript item
 /// - `Message::User { content }` with `UserContent::ToolResult` → skipped (not shown in TUI)
 /// - `Message::Assistant(AssistantMessage { content, .. })` with `AssistantContent::Text` → assistant text
-/// - `Message::Assistant(AssistantMessage { content, .. })` with `AssistantContent::ToolCall` → tool call display
+/// - `Message::Assistant(AssistantMessage { content, .. })` with `AssistantContent::ToolCall` → tool call display,
+///   followed by the call's own `tool_display` snapshot when its result yielded one
 /// - `Message::System { content }` → system/compaction summary display
 pub(crate) fn hydrate_single_message(
     msg: &Message,
-    tool_names: &HashMap<CallId, String>,
     tool_success_map: &HashMap<CallId, bool>,
-    tool_arguments: &HashMap<CallId, String>,
-    cwd: &Path,
+    tool_displays: &HashMap<CallId, ToolDisplay>,
 ) -> Vec<UiMessageSnapshot> {
     let mut snapshots = Vec::new();
 
     match msg {
         Message::User { content } => {
             for item in content.iter() {
-                match item {
-                    UserContent::Text(text) => {
-                        snapshots.push(UiMessageSnapshot::new("user", text.text.clone()));
-                    }
-                    UserContent::ToolResult(tr) => {
-                        if let Some(tool_name) = tool_names.get(&tr.call) {
-                            let result_text: String = tr
-                                .content
-                                .iter()
-                                .filter_map(|c| match c {
-                                    ToolResultContent::Text(t) => Some(t.text.as_str()),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            if let Ok(json) =
-                                serde_json::from_str::<serde_json::Value>(&result_text)
-                            {
-                                // Result-sourced display wins (an embedded
-                                // `display` object, or the edit diff). When the
-                                // result carries none, fall back to the
-                                // argument-sourced preview the live path shows
-                                // at the permission gate — this is what makes a
-                                // `nu` call render its command code block after
-                                // rehydration.
-                                let display =
-                                    tool_display_from_result(tool_name, &json).or_else(|| {
-                                        tool_arguments.get(&tr.call).and_then(|args_json| {
-                                            tool_display_from_arguments(tool_name, args_json, cwd)
-                                        })
-                                    });
-                                if let Some(display) = display {
-                                    snapshots.push(
-                                        UiMessageSnapshot::new("tool_display", String::new())
-                                            .with_tool_display(display),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    _ => {} // Image, etc. — skip
+                // ToolResult, Image, etc. — skip
+                if let UserContent::Text(text) = item {
+                    snapshots.push(UiMessageSnapshot::new("user", text.text.clone()));
                 }
             }
         }
@@ -369,6 +372,15 @@ pub(crate) fn hydrate_single_message(
                                     tool_success_map.get(&tool_call.id).copied(),
                                 ),
                         );
+                        // The display snapshot follows its own call's snapshot,
+                        // so the TUI docks it under this header rather than
+                        // under the last Tool block of the turn.
+                        if let Some(display) = tool_displays.get(&tool_call.id) {
+                            snapshots.push(
+                                UiMessageSnapshot::new("tool_display", String::new())
+                                    .with_tool_display(display.clone()),
+                            );
+                        }
                     }
                     _ => {} // Reasoning, Image, etc.
                 }

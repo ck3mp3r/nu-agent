@@ -18,20 +18,11 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// Helper function to convert rig messages to UI snapshots for testing.
 /// Delegates to the actual hydrate_single_message function in resolver.rs.
 pub(super) fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnapshot> {
-    let tool_names = std::collections::HashMap::new();
     let tool_success_map = std::collections::HashMap::new();
-    let tool_arguments = std::collections::HashMap::new();
+    let tool_displays = std::collections::HashMap::new();
     messages
         .iter()
-        .flat_map(|m| {
-            super::resolver::hydrate_single_message(
-                m,
-                &tool_names,
-                &tool_success_map,
-                &tool_arguments,
-                std::path::Path::new("."),
-            )
-        })
+        .flat_map(|m| super::resolver::hydrate_single_message(m, &tool_success_map, &tool_displays))
         .collect()
 }
 
