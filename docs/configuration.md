@@ -713,7 +713,7 @@ agent models list                       # all models in the cache
 agent models list --provider openai     # only openai models
 ```
 
-Outputs one row per model with `provider`, `model`, `name`, `context`, `output`, and `tool_call`. If the cache does not exist, it instructs you to run `agent models sync` first.
+Outputs one row per model with `provider`, `model`, `name`, `context`, `output`, `tool_call`, `input_cost`, and `output_cost`. The cost fields hold the price in USD per million tokens, or null when the cache has no price for the model. The CLI table shows the same prices in a `COST` column formatted as `$3.00/$15.00` (input/output), or `-` when no price is cached. If the cache does not exist, it instructs you to run `agent models sync` first.
 
 When a models cache is present, the model picker and `resolve_model()` use its context/output limits to fill missing `max_context_tokens` / `max_output_tokens` values (see [resolution priority](#resolution-priority)).
 

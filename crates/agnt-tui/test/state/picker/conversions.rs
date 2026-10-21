@@ -1,25 +1,27 @@
 use super::*;
 
-/// `PickerOption::from` forwards the model's configured flag and context
-/// window, and the agent's description.
+/// `PickerOption::from` forwards the model's configured flag, context
+/// window, and cost, and the agent's description.
 #[test]
 fn picker_option_from_carries_payload_fields() -> Result<()> {
     // -- Setup & Fixtures
-    let model = |configured: bool, context_window: Option<u32>| ModelPickerOption {
-        provider: "openai".to_string(),
-        model: "gpt-4o-mini".to_string(),
-        identity: "openai/gpt-4o-mini".to_string(),
-        display: "openai / gpt-4o-mini".to_string(),
-        active: true,
-        context_window,
-        max_output: None,
-        configured,
-        provider_display_name: String::new(),
-    };
+    let model =
+        |configured: bool, context_window: Option<u32>, cost: Option<String>| ModelPickerOption {
+            provider: "openai".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            identity: "openai/gpt-4o-mini".to_string(),
+            display: "openai / gpt-4o-mini".to_string(),
+            active: true,
+            context_window,
+            max_output: None,
+            configured,
+            provider_display_name: String::new(),
+            cost,
+        };
 
     // -- Exec & Check: the configured flag is forwarded.
     for configured in [true, false] {
-        let option = PickerOption::from(model(configured, None));
+        let option = PickerOption::from(model(configured, None, None));
         match option.payload {
             PickerPayload::Model {
                 configured: actual, ..
@@ -30,12 +32,21 @@ fn picker_option_from_carries_payload_fields() -> Result<()> {
 
     // -- Exec & Check: the context window is forwarded.
     for context_window in [Some(200_000u32), None] {
-        let option = PickerOption::from(model(true, context_window));
+        let option = PickerOption::from(model(true, context_window, None));
         match option.payload {
             PickerPayload::Model {
                 context_window: actual,
                 ..
             } => assert_eq!(actual, context_window),
+            _ => return Err("expected PickerPayload::Model".into()),
+        }
+    }
+
+    // -- Exec & Check: the cost is forwarded.
+    for cost in [Some("$3.00/$15.00".to_string()), None] {
+        let option = PickerOption::from(model(true, None, cost.clone()));
+        match option.payload {
+            PickerPayload::Model { cost: actual, .. } => assert_eq!(actual, cost),
             _ => return Err("expected PickerPayload::Model".into()),
         }
     }

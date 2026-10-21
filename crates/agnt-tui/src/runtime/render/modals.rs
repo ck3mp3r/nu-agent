@@ -224,7 +224,7 @@ impl RuntimeCoordinator {
             let mut current_provider: Option<String> = None;
             let mut selected_row = 0;
             for (model_idx, opt) in options.iter().enumerate() {
-                let (provider, provider_display_name, identity, configured, context_window) =
+                let (provider, provider_display_name, identity, configured, context_window, cost) =
                     match &opt.payload {
                         PickerPayload::Model {
                             provider,
@@ -232,12 +232,14 @@ impl RuntimeCoordinator {
                             identity,
                             configured,
                             context_window,
+                            cost,
                         } => (
                             provider,
                             provider_display_name,
                             identity,
                             *configured,
                             *context_window,
+                            cost,
                         ),
                         _ => unreachable!(),
                     };
@@ -257,11 +259,13 @@ impl RuntimeCoordinator {
                 let context_cell = context_window
                     .map(|n| format!("{}k", n / 1000))
                     .unwrap_or_default();
+                let cost_cell = cost.clone().unwrap_or_default();
                 table_rows.push(Row::new(vec![
                     Cell::from(format!("  {identity}")),
+                    Cell::from(Line::from(context_cell).right_aligned()),
+                    Cell::from(Line::from(cost_cell).right_aligned()),
                     Cell::from(active),
                     Cell::from(configured_glyph),
-                    Cell::from(context_cell),
                 ]));
                 if model_idx == picker_state.selection {
                     selected_row = table_rows.len() - 1;
@@ -272,12 +276,25 @@ impl RuntimeCoordinator {
                 table_rows,
                 [
                     Constraint::Min(20),
-                    Constraint::Length(1),
-                    Constraint::Length(1),
                     Constraint::Length(6),
+                    Constraint::Length(16),
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                    Constraint::Length(2),
                 ],
             )
-            .column_spacing(1)
+            .header(
+                Row::new(vec![
+                    Cell::from("MODEL"),
+                    Cell::from(Line::from("CTX").right_aligned()),
+                    Cell::from(Line::from("PRICE").right_aligned()),
+                    Cell::from(""),
+                    Cell::from(""),
+                    Cell::from(""),
+                ])
+                .style(self.theme.subtle_meta),
+            )
+            .column_spacing(2)
             .highlight_symbol("❯ ")
             .row_highlight_style(self.theme.focus);
             let mut table_state = TableState::default();

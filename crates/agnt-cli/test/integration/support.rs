@@ -263,7 +263,8 @@ pub const MODELS_CACHE: &str = r#"
         "id": "llama3",
         "name": "Llama 3",
         "tool_call": true,
-        "limit": { "context": 8192, "output": 2048 }
+        "limit": { "context": 8192, "output": 2048 },
+        "cost": { "input": 0.5, "output": 2.0 }
       },
       "qwen3": {
         "id": "qwen3",

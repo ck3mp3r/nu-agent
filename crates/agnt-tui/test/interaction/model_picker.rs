@@ -17,6 +17,7 @@ fn model_picker_navigation_table() {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
             agnt_core::protocol::picker::ModelPickerOption {
                 provider: "anthropic".to_string(),
@@ -28,6 +29,7 @@ fn model_picker_navigation_table() {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
         ],
     );
@@ -74,6 +76,7 @@ fn model_picker_navigation_table() {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
             agnt_core::protocol::picker::ModelPickerOption {
                 provider: "anthropic".to_string(),
@@ -85,6 +88,7 @@ fn model_picker_navigation_table() {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
         ],
     );
@@ -118,6 +122,7 @@ fn model_picker_query_table() {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
             agnt_core::protocol::picker::ModelPickerOption {
                 provider: "jk-provider-b".to_string(),
@@ -129,6 +134,7 @@ fn model_picker_query_table() {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
         ],
     );
@@ -165,6 +171,7 @@ fn model_picker_query_table() {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
             agnt_core::protocol::picker::ModelPickerOption {
                 provider: "jk-provider-b".to_string(),
@@ -176,6 +183,7 @@ fn model_picker_query_table() {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
             agnt_core::protocol::picker::ModelPickerOption {
                 provider: "jk-provider-c".to_string(),
@@ -187,6 +195,7 @@ fn model_picker_query_table() {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
         ],
     );

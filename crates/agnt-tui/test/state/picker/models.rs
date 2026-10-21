@@ -94,6 +94,7 @@ fn model_picker_lifecycle() -> Result<()> {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
             ModelPickerOption {
                 provider: "a-provider".to_string(),
@@ -105,6 +106,7 @@ fn model_picker_lifecycle() -> Result<()> {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
         ],
     );

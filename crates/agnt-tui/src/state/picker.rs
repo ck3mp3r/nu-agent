@@ -75,6 +75,7 @@ pub enum PickerPayload {
         provider_display_name: String,
         configured: bool,
         context_window: Option<u32>,
+        cost: Option<String>,
     },
     Agent {
         name: String,
@@ -486,6 +487,7 @@ impl From<ModelPickerOption> for PickerOption {
                 provider_display_name: opt.provider_display_name,
                 configured: opt.configured,
                 context_window: opt.context_window,
+                cost: opt.cost,
             },
         }
     }

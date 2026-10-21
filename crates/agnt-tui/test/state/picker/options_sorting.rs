@@ -131,6 +131,7 @@ fn set_picker_options_sorting_and_open() -> Result<()> {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
             ModelPickerOption {
                 provider: "a-provider".to_string(),
@@ -142,6 +143,7 @@ fn set_picker_options_sorting_and_open() -> Result<()> {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
         ],
     );
@@ -170,6 +172,7 @@ fn set_picker_options_sorting_and_open() -> Result<()> {
                 max_output: None,
                 configured: false,
                 provider_display_name: String::new(),
+                cost: None,
             },
             ModelPickerOption {
                 provider: "openai".to_string(),
@@ -181,6 +184,7 @@ fn set_picker_options_sorting_and_open() -> Result<()> {
                 max_output: None,
                 configured: true,
                 provider_display_name: String::new(),
+                cost: None,
             },
         ],
     );

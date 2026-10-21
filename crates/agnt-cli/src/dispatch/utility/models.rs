@@ -1,6 +1,6 @@
 //! `agent models` subcommand dispatch.
 
-use agnt_core::config::ModelsCache;
+use agnt_core::config::{ModelSpec, ModelsCache};
 
 use crate::ModelsCommand;
 use crate::ModelsListArgs;
@@ -51,12 +51,32 @@ fn run_models_list(args: &ModelsListArgs) -> Result<()> {
                 spec.limit.context.to_string(),
                 spec.limit.output.to_string(),
                 if spec.tool_call { "yes" } else { "no" }.to_string(),
+                cost_cell(spec),
             ]
         })
         .collect();
 
-    print_table(&["PROVIDER", "MODEL", "CONTEXT", "OUTPUT", "TOOLS"], &rows);
+    print_table(
+        &["PROVIDER", "MODEL", "CONTEXT", "OUTPUT", "TOOLS", "COST"],
+        &rows,
+    );
     Ok(())
 }
 
+/// Format the input/output price per million tokens for a table cell.
+fn cost_cell(spec: &ModelSpec) -> String {
+    match &spec.cost {
+        Some(cost) => format!("${:.2}/${:.2}", cost.input, cost.output),
+        None => "-".to_string(),
+    }
+}
+
 // endregion: --- Functions
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/dispatch/utility/models.rs"]
+mod models_test;
+
+// endregion: --- Tests

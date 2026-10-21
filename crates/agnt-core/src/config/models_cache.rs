@@ -49,6 +49,10 @@ pub struct ModelLimit {
 pub struct ModelCost {
     pub input: f64,
     pub output: f64,
+    #[serde(default)]
+    pub cache_read: Option<f64>,
+    #[serde(default)]
+    pub cache_write: Option<f64>,
 }
 
 /// Input/output modalities supported by a model.

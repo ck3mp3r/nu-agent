@@ -89,7 +89,7 @@ fn modal_layout_policy() -> Result<()> {
     assert_eq!(skills.height, mcps.height);
     assert!(command_palette.width < skills.width);
 
-    // -- Exec & Check: Models and Themes use the layout policy defaults.
+    // -- Exec & Check: Models is narrower than the shared default; Themes keeps it.
     let models = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -98,10 +98,10 @@ fn modal_layout_policy() -> Result<()> {
         area,
         super::render::frame::ModalPanelKind::Themes,
     );
-    assert_eq!(models.width, skills.width);
+    assert!(models.width < skills.width);
     assert_eq!(models.height, skills.height);
-    assert_eq!(themes.width, models.width);
-    assert_eq!(themes.height, models.height);
+    assert_eq!(themes.width, skills.width);
+    assert_eq!(themes.height, skills.height);
     Ok(())
 }
 

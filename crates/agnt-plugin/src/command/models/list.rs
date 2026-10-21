@@ -1,6 +1,6 @@
-use agnt_core::config::ModelsCache;
+use agnt_core::config::{ModelSpec, ModelsCache};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
-use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
+use nu_protocol::{Category, Example, LabeledError, Signature, Span, SyntaxShape, Value};
 
 use crate::plugin::AgentPlugin;
 
@@ -58,20 +58,44 @@ impl SimplePluginCommand for AgentModelsList {
         let models = cache.list_models(provider_filter.as_deref());
         let rows: Vec<Value> = models
             .iter()
-            .map(|(provider, model, spec)| {
-                Value::record(
-                    nu_protocol::record! {
-                        "provider" => Value::string(*provider, call.head),
-                        "model" => Value::string(*model, call.head),
-                        "name" => Value::string(&spec.name, call.head),
-                        "context" => Value::int(spec.limit.context as i64, call.head),
-                        "output" => Value::int(spec.limit.output as i64, call.head),
-                        "tool_call" => Value::bool(spec.tool_call, call.head),
-                    },
-                    call.head,
-                )
-            })
+            .map(|(provider, model, spec)| model_record(provider, model, spec, call.head))
             .collect();
         Ok(Value::list(rows, call.head))
     }
 }
+
+// region:    --- Functions
+
+/// Build the record for one cached model.
+fn model_record(provider: &str, model: &str, spec: &ModelSpec, span: Span) -> Value {
+    let (input_cost, output_cost) = match &spec.cost {
+        Some(cost) => (
+            Value::float(cost.input, span),
+            Value::float(cost.output, span),
+        ),
+        None => (Value::nothing(span), Value::nothing(span)),
+    };
+    Value::record(
+        nu_protocol::record! {
+            "provider" => Value::string(provider, span),
+            "model" => Value::string(model, span),
+            "name" => Value::string(&spec.name, span),
+            "context" => Value::int(spec.limit.context as i64, span),
+            "output" => Value::int(spec.limit.output as i64, span),
+            "tool_call" => Value::bool(spec.tool_call, span),
+            "input_cost" => input_cost,
+            "output_cost" => output_cost,
+        },
+        span,
+    )
+}
+
+// endregion: --- Functions
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/command/models/list.rs"]
+mod list_test;
+
+// endregion: --- Tests

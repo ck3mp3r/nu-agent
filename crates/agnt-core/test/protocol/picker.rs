@@ -2,11 +2,13 @@ use super::*;
 
 use std::collections::HashMap;
 
-use crate::config::models_cache::{ModelLimit, ModelSpec, ProviderSpec};
+use crate::config::models_cache::{ModelCost, ModelLimit, ModelSpec, ProviderSpec};
 use crate::config::{ModelConfig, ProviderConfig};
 use crate::protocol::persona::PersonaSummary;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+type CostedModelFixture<'a> = (&'a str, &'a str, u32, u32, Option<(f64, f64)>);
 
 // region:    --- Test Support
 
@@ -46,6 +48,42 @@ fn provider_spec(id: &str, name: &str, models: &[(&str, &str, u32, u32)]) -> Pro
                     output: *output,
                 },
                 cost: None,
+                modalities: None,
+            },
+        );
+    }
+    ProviderSpec {
+        id: id.to_string(),
+        name: name.to_string(),
+        env: Vec::new(),
+        api: None,
+        models: map,
+    }
+}
+
+fn provider_spec_with_cost(
+    id: &str,
+    name: &str,
+    models: &[CostedModelFixture<'_>],
+) -> ProviderSpec {
+    let mut map = HashMap::new();
+    for (model_id, model_name, context, output, cost) in models {
+        map.insert(
+            (*model_id).to_string(),
+            ModelSpec {
+                id: (*model_id).to_string(),
+                name: (*model_name).to_string(),
+                tool_call: true,
+                limit: ModelLimit {
+                    context: *context,
+                    output: *output,
+                },
+                cost: cost.map(|(input, output)| ModelCost {
+                    input,
+                    output,
+                    cache_read: None,
+                    cache_write: None,
+                }),
                 modalities: None,
             },
         );
@@ -212,6 +250,44 @@ fn test_picker_build_model_picker_catalog_sorts_configured_first() -> Result<()>
     // -- Check
     let models: Vec<&str> = options.iter().map(|o| o.model.as_str()).collect();
     assert_eq!(models, vec!["zzz", "aaa"]);
+    Ok(())
+}
+
+#[test]
+fn test_picker_build_model_picker_catalog_with_cost_formats_price() -> Result<()> {
+    // -- Setup & Fixtures
+    let cache = models_cache(&[provider_spec_with_cost(
+        "ollama",
+        "Ollama",
+        &[("llama3", "Llama 3", 8192, 2048, Some((3.0, 15.0)))],
+    )]);
+    let config = plugin_config(&[("ollama", &["llama3"])]);
+
+    // -- Exec
+    let options = build_model_picker_catalog(Some(&cache), &config, "ollama/llama3");
+
+    // -- Check
+    let option = options.first().ok_or("catalog must hold llama3")?;
+    assert_eq!(option.cost.as_deref(), Some("$3.00/$15.00"));
+    Ok(())
+}
+
+#[test]
+fn test_picker_build_model_picker_catalog_without_cost_is_none() -> Result<()> {
+    // -- Setup & Fixtures
+    let cache = models_cache(&[provider_spec_with_cost(
+        "ollama",
+        "Ollama",
+        &[("llama3", "Llama 3", 8192, 2048, None)],
+    )]);
+    let config = plugin_config(&[("ollama", &["llama3"])]);
+
+    // -- Exec
+    let options = build_model_picker_catalog(Some(&cache), &config, "ollama/llama3");
+
+    // -- Check
+    let option = options.first().ok_or("catalog must hold llama3")?;
+    assert_eq!(option.cost, None);
     Ok(())
 }
 

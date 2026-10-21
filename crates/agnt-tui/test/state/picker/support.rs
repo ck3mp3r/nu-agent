@@ -37,6 +37,7 @@ pub(super) fn test_model_options() -> Vec<ModelPickerOption> {
             max_output: None,
             configured: false,
             provider_display_name: String::new(),
+            cost: None,
         },
         ModelPickerOption {
             provider: "anthropic".to_string(),
@@ -48,6 +49,7 @@ pub(super) fn test_model_options() -> Vec<ModelPickerOption> {
             max_output: None,
             configured: false,
             provider_display_name: String::new(),
+            cost: None,
         },
     ]
 }

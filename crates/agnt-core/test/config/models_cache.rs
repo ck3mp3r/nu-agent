@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::{ModelLimit, ModelSpec, ModelsCache, ModelsCacheError, ProviderSpec};
+use super::{ModelCost, ModelLimit, ModelSpec, ModelsCache, ModelsCacheError, ProviderSpec};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -88,4 +88,99 @@ fn list_models_filters_by_provider() {
 
     let empty = cache.list_models(Some("anthropic"));
     assert!(empty.is_empty());
+}
+
+#[test]
+fn test_models_cache_parse_cost_with_cache_fields() -> Result<()> {
+    // -- Setup & Fixtures
+    let json = r#"{
+        "openai": {
+            "id": "openai",
+            "name": "OpenAI",
+            "models": {
+                "gpt-4": {
+                    "id": "gpt-4",
+                    "name": "GPT-4",
+                    "limit": { "context": 128000, "output": 4096 },
+                    "cost": {
+                        "input": 1.0,
+                        "output": 2.7,
+                        "cache_read": 0.05,
+                        "cache_write": 1.25
+                    }
+                }
+            }
+        }
+    }"#;
+
+    // -- Exec
+    let cache: ModelsCache = serde_json::from_str(json)?;
+
+    // -- Check
+    let cost = cache
+        .get_spec("openai", "gpt-4")
+        .ok_or("spec should be found")?
+        .cost
+        .as_ref()
+        .ok_or("cost should be present")?;
+    assert_eq!(cost.input, 1.0);
+    assert_eq!(cost.output, 2.7);
+    assert_eq!(cost.cache_read, Some(0.05));
+    assert_eq!(cost.cache_write, Some(1.25));
+    Ok(())
+}
+
+#[test]
+fn test_models_cache_load_from_cost_without_cache_fields() -> Result<()> {
+    // -- Setup & Fixtures
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("models.json");
+    let json = r#"{
+        "openai": {
+            "id": "openai",
+            "name": "OpenAI",
+            "models": {
+                "gpt-4": {
+                    "id": "gpt-4",
+                    "name": "GPT-4",
+                    "limit": { "context": 128000, "output": 4096 },
+                    "cost": { "input": 1.0, "output": 2.7 }
+                }
+            }
+        }
+    }"#;
+    std::fs::write(&path, json)?;
+
+    // -- Exec
+    let cache = ModelsCache::load_from(&path)?;
+
+    // -- Check
+    let cost = cache
+        .get_spec("openai", "gpt-4")
+        .ok_or("spec should be found")?
+        .cost
+        .as_ref()
+        .ok_or("cost should be present")?;
+    assert_eq!(cost.cache_read, None);
+    assert_eq!(cost.cache_write, None);
+    Ok(())
+}
+
+#[test]
+fn test_models_cache_cost_round_trip_preserves_cache_fields() -> Result<()> {
+    // -- Setup & Fixtures
+    let cost = ModelCost {
+        input: 1.0,
+        output: 2.7,
+        cache_read: Some(0.05),
+        cache_write: Some(1.25),
+    };
+
+    // -- Exec
+    let json = serde_json::to_string(&cost)?;
+    let restored: ModelCost = serde_json::from_str(&json)?;
+
+    // -- Check
+    assert_eq!(restored, cost);
+    Ok(())
 }

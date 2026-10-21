@@ -10,6 +10,7 @@ pub struct ModelPickerOption {
     pub active: bool,
     pub context_window: Option<u32>,
     pub max_output: Option<u32>,
+    pub cost: Option<String>,
     pub configured: bool,
     pub provider_display_name: String,
 }
@@ -76,6 +77,10 @@ pub fn build_model_picker_catalog(
                     active: identity == active_model_identity,
                     context_window: Some(model_spec.limit.context),
                     max_output: Some(model_spec.limit.output),
+                    cost: model_spec
+                        .cost
+                        .as_ref()
+                        .map(|cost| format!("${:.2}/${:.2}", cost.input, cost.output)),
                     configured,
                     provider_display_name: provider_spec.name.clone(),
                 });
@@ -92,6 +97,7 @@ pub fn build_model_picker_catalog(
                     active: identity == active_model_identity,
                     context_window: None,
                     max_output: None,
+                    cost: None,
                     configured: true,
                     provider_display_name: provider_display_name.clone(),
                 });
