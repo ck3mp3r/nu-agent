@@ -21,9 +21,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "3.2.0"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0d09e5bd7214b0aa5f0fd3f2eefae4a8c0069fd6a4c1ae4e733d3691e36ec19"
+checksum = "72adac0ce6b0d0390df9b7a498392b24ebcf9c65c3451e5d618d936f50256289"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -44,9 +44,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "3.2.0"
+version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8b4e3a708345c6c952bd0091abb58f3169e839ee9c7023285a7e22ab96ba4f3"
+checksum = "25b7ae92f0d1ba46ca61e7e03d4a9758e877d100b783aa1c62b140d5a9d59fb2"
 dependencies = [
  "quote",
  "syn 3.0.9",
@@ -54,9 +54,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "1.10.2"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c3ffd489b0e2f96a134d7966c2f43d874d91299e951b66093b91b54b00b7f8f"
+checksum = "430e900fdb40a811c1a3e0d85b1134e485d96699f8b90889a15c1da6a0b26c3f"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -351,9 +351,9 @@ dependencies = [
 
 [[package]]
 name = "arboard"
-version = "3.6.1"
+version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0348a1c054491f4bfe6ab86a7b6ab1e44e45d899005de92f58b3df180b36ddaf"
+checksum = "aeb9553e62312c8756a5979254fc6d7da8bbeb5986a1e17037fab932f7037917"
 dependencies = [
  "clipboard-win",
  "image",
@@ -365,7 +365,7 @@ dependencies = [
  "objc2-foundation",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
  "x11rb",
 ]
 
@@ -2345,9 +2345,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.11.1"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43"
+checksum = "2c3e324da4c95177d6291d4c8730197c0d1822f8a9766814a4a44fa5ab797c9c"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -6947,9 +6947,9 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "1.26.1"
+version = "1.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce"
+checksum = "7cc1186384beb7dd8eedea376413fd654937285ea6c9cfbb928dc3043ea4b606"
 dependencies = [
  "atomic",
  "getrandom 0.4.3",
@@ -7006,9 +7006,9 @@ dependencies = [
 
 [[package]]
 name = "want"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e"
+checksum = "ec4cdd0dd910afe868b7ef477227d8d538b46b3075031afee8a9f2acb0a2ed0b"
 dependencies = [
  "try-lock",
 ]
