@@ -12,7 +12,6 @@ use super::executor_test_support::*;
 use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
 use crate::conversation::state::memory::MemoryState;
-use crate::session::{FsSessionStore, StoreEntry};
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 
 #[test]
@@ -70,12 +69,11 @@ fn turn_executor_take_response_data_returns_none_before_execute() {
 // Completed turn: rig writes JSONL via memory.append() — no explicit store write
 // ---------------------------------------------------------------------------
 
-/// After a successful (non-cancelled) turn, JSONL receives messages via
-/// JournalConversationMemory.append() called by rig — no explicit store.append() needed.
+/// After a successful (non-cancelled) turn, the rig-memory store holds the
+/// conversation — the executor writes nothing itself.
 ///
-/// This verifies the double-write elimination: executor.rs no longer calls
-/// conversation_store().append() for completed turns. The single write happens
-/// through memory.append() which rig calls internally at turn end.
+/// This verifies the double-write elimination: executor.rs no longer appends
+/// for completed turns. The single write happens inside rig's save at run end.
 #[tokio::test]
 async fn completed_turn_no_explicit_store_append_needed() -> Result<()> {
     let config = test_config();
@@ -124,22 +122,13 @@ async fn completed_turn_no_explicit_store_append_needed() -> Result<()> {
         "completed turn must return TurnOutcome::Completed"
     );
 
-    // rig wrote to JSONL via memory.append() — no explicit store.append() in executor
-    let persisted_entries = memory_state
-        .inner_memory()
-        .load_all(session_id)
-        .await
-        .map_err(|e| format!("store load should succeed: {e:?}"))?;
-    let persisted: Vec<crate::types::Message> = persisted_entries
-        .iter()
-        .filter_map(|e| match e {
-            StoreEntry::Message(m) => Some(m.clone()),
-            _ => None,
-        })
-        .collect();
-    assert!(
-        !persisted.is_empty(),
-        "completed turn: JSONL must contain messages written via memory.append()"
+    // rig saved the conversation through the rig-memory store — the executor
+    // writes nothing itself.
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        persisted.len(),
+        2,
+        "completed turn: the rig store holds the prompt and the reply; got {persisted:?}"
     );
 
     // Response data must be available
@@ -237,10 +226,7 @@ async fn last_total_tokens_updated_on_completed_turn() -> Result<()> {
 /// asynchronously; the summary is applied on the next turn via the marker).
 #[tokio::test]
 async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
-    use rig::memory::ConversationMemory;
-
     let config = test_config();
-    let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-compaction-fires";
 
     let bus = crate::bus::create_bus();
@@ -259,37 +245,30 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
         .collect();
     let compactor_model = MockCompletionModel::from_stream_turns(compactor_turns);
     let compactor_handle = std::sync::Arc::new(std::sync::Mutex::new(compactor_model.erase()));
-    // Attach a store to the compactor so it can read/write compaction markers.
-    let store_arc = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
+    // The compactor plans against the rig-memory store of the session.
     let compactor = crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
         compactor_handle,
         bus.clone(),
-        None,
-    )
-    .with_store(Arc::clone(&store_arc));
+        rig_memory::CompactionPolicy::default(),
+        crate::conversation::compaction::compactor::resolve_model_spec(
+            "openai",
+            "gpt-4o",
+            Some(8_000),
+            Some(1_024),
+        ),
+    );
 
-    let mut memory_state = MemoryState::new(Arc::clone(&store_arc));
+    let mut memory_state = MemoryState::new(crate::session::RigStoreConfig::in_memory());
 
     // Pre-populate a conversation that far exceeds the token threshold with
-    // distinct user/assistant pairs (10 pairs = 20 messages).
+    // distinct user/assistant pairs (10 pairs = 20 messages). The agent loads
+    // its history from the rig store, so the seed goes there.
+    let mut seeded: Vec<crate::types::Message> = Vec::new();
     for i in 0..10 {
-        memory_state
-            .inner_memory()
-            .append(
-                &rig::id::ConversationId::from(session_id),
-                vec![crate::types::Message::user(format!("user-{i}"))],
-            )
-            .await
-            .map_err(|e| format!("append user: {e:?}"))?;
-        memory_state
-            .inner_memory()
-            .append(
-                &rig::id::ConversationId::from(session_id),
-                vec![crate::types::Message::assistant(format!("assistant-{i}"))],
-            )
-            .await
-            .map_err(|e| format!("append assistant: {e:?}"))?;
+        seeded.push(crate::types::Message::user(format!("user-{i}")));
+        seeded.push(crate::types::Message::assistant(format!("assistant-{i}")));
     }
+    seed_rig_store(&memory_state, session_id, seeded)?;
 
     // The model must be scripted to produce a final text response on the agent
     // turn. Clone before moving so we can inspect the agent request's

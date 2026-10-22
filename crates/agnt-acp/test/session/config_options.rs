@@ -35,9 +35,8 @@ async fn manager_with_cache(
     dir: &Path,
     cache: ModelsCache,
 ) -> Result<AcpSessionManager<MockRuntimeBuilder>> {
-    let store = memory_store(dir).await?;
     Ok(AcpSessionManager::with_runtime_builder(
-        store,
+        rig_config(dir),
         dir.join("config.toml"),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder::default(),
@@ -114,7 +113,10 @@ async fn test_session_manager_model_config_options_unknown_session_returns_error
 async fn test_session_manager_set_model_valid_updates_current_value() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let cache = models_cache("ollama", &[("llama3", "Llama 3"), ("llama4", "Llama 4")])?;
+    let cache = models_cache(
+        "ollama-cloud",
+        &[("llama3", "Llama 3"), ("llama4", "Llama 4")],
+    )?;
     let manager = manager_with_cache(temp.path(), cache).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
     let session_id = manager.new_session(cwd, Vec::new()).await?;
@@ -137,7 +139,7 @@ async fn test_session_manager_set_model_valid_updates_current_value() -> Result<
 async fn test_session_manager_set_model_unknown_value_returns_error() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let cache = models_cache("ollama", &[("llama3", "Llama 3")])?;
+    let cache = models_cache("ollama-cloud", &[("llama3", "Llama 3")])?;
     let manager = manager_with_cache(temp.path(), cache).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
     let session_id = manager.new_session(cwd, Vec::new()).await?;
@@ -199,6 +201,8 @@ async fn test_session_manager_set_model_build_failure_restores_config() -> Resul
         runtime.provider.invalidate_cache();
         let config = runtime.provider.provider_config_mut();
         config.provider = "bad-provider".to_string();
+        // The sabotaged block declares no catalog, so its name is its section.
+        config.catalog = None;
         config.model = "initial".to_string();
     }
 
@@ -232,7 +236,10 @@ async fn test_session_manager_set_model_build_failure_restores_config() -> Resul
 async fn test_handle_set_config_option_valid_value_returns_updated_options() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let cache = models_cache("ollama", &[("llama3", "Llama 3"), ("llama4", "Llama 4")])?;
+    let cache = models_cache(
+        "ollama-cloud",
+        &[("llama3", "Llama 3"), ("llama4", "Llama 4")],
+    )?;
     let manager = manager_with_cache(temp.path(), cache).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
     let session_id = manager.new_session(cwd, Vec::new()).await?;

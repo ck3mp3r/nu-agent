@@ -37,6 +37,7 @@ async fn filtered_tool_proxy_cancels_during_execution() -> Result<()> {
     let proxy = FilteredToolProxy {
         tool_name: ToolName::new("sleeping_tool")?,
         tool_definition: ToolDefinition {
+            annotations: crate::types::ToolAnnotations::default(),
             name: ToolName::new("sleeping_tool")?,
             description: "test".to_string(),
             parameters: serde_json::json!({}),

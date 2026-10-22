@@ -25,13 +25,12 @@ use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::protocol::contracts::CoreRuntime;
 use agnt_core::protocol::model_switching::ModelSwitching;
 use agnt_core::session::resolver::generate_session_id;
-use agnt_core::session::{
-    SessionInfo, SessionStore, SessionStoreBackend, StoreEntry, extract_llm_context,
-};
+use agnt_core::session::{RigStoreConfig, SessionInfo};
 use agnt_core::tools::mcp::config::McpServerConfig;
 use agnt_core::types::{AssistantContent, Message, UserContent};
 use chrono::{DateTime, Utc};
 use nu_protocol::{LabeledError, Span, Value};
+use rig_memory::Store as _;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::error::{AcpError, Result};
@@ -144,13 +143,15 @@ pub struct ClientFsState {
 
 /// Registry of the live sessions of one ACP connection.
 ///
-/// Every session shares `store`, so a session opened here can later be resumed
+/// Every session shares `rig`, so a session opened here can later be resumed
 /// from the same store by another connection. The map itself is behind a plain
 /// mutex that is only ever held for a lookup or an insert — never across an
 /// await — so a long-running turn cannot block `cancel()`.
 pub struct AcpSessionManager<R: RuntimeBuilder> {
     sessions: StdMutex<HashMap<String, Arc<AcpSession>>>,
-    store: Arc<SessionStoreBackend>,
+    /// How the rig-memory store of a session is made. The agent writes its
+    /// conversation there, so `session/load` and `session/resume` read it.
+    rig: RigStoreConfig,
     config_path: PathBuf,
     runtime_handle: tokio::runtime::Handle,
     runtime_builder: R,
@@ -164,17 +165,19 @@ pub struct AcpSessionManager<R: RuntimeBuilder> {
 // region:    --- AcpSessionManager Impl
 
 impl AcpSessionManager<DefaultRuntimeBuilder> {
-    /// Create a manager that shares `store` across every session it opens.
+    /// Create a manager whose sessions all share `rig`.
     ///
-    /// `config_path` is the config.toml every session runtime is built from;
-    /// `runtime_handle` is the process tokio runtime the sessions spawn on.
-    /// Session runtimes are built by [`DefaultRuntimeBuilder`].
+    /// `rig` is how each session's rig-memory store is made — the store the
+    /// agent writes its conversation to. `config_path` is the config.toml every
+    /// session runtime is built from; `runtime_handle` is the process tokio
+    /// runtime the sessions spawn on. Session runtimes are built by
+    /// [`DefaultRuntimeBuilder`].
     pub fn new(
-        store: Arc<SessionStoreBackend>,
+        rig: RigStoreConfig,
         config_path: impl Into<PathBuf>,
         runtime_handle: tokio::runtime::Handle,
     ) -> Self {
-        Self::with_runtime_builder(store, config_path, runtime_handle, DefaultRuntimeBuilder)
+        Self::with_runtime_builder(rig, config_path, runtime_handle, DefaultRuntimeBuilder)
     }
 }
 
@@ -184,14 +187,14 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     /// Use this to substitute the runtime builder — for example a mock builder
     /// that never touches the network.
     pub fn with_runtime_builder(
-        store: Arc<SessionStoreBackend>,
+        rig: RigStoreConfig,
         config_path: impl Into<PathBuf>,
         runtime_handle: tokio::runtime::Handle,
         runtime_builder: R,
     ) -> Self {
         Self {
             sessions: StdMutex::new(HashMap::new()),
-            store,
+            rig,
             config_path: config_path.into(),
             runtime_handle,
             runtime_builder,
@@ -461,13 +464,18 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
 
     /// Drop the live session with `id` and delete it from the store.
     ///
-    /// Idempotent: deleting an id that is neither live nor persisted succeeds.
+    /// The session's rig-memory store is deleted with it, so no log is left
+    /// orphaned. Idempotent: deleting an id that is neither live nor persisted
+    /// succeeds.
     pub async fn delete_session(&self, id: &str) -> Result<()> {
         self.sessions.lock().unwrap().remove(id);
-        self.store
-            .delete(id)
-            .await
-            .map_err(|e| AcpError::Runtime(format!("failed to delete session '{id}': {e}")))?;
+        let rig = self
+            .rig
+            .open(id)
+            .map_err(|e| AcpError::Runtime(format!("failed to open session '{id}': {e}")))?;
+        rig.destroy().map_err(|e| {
+            AcpError::Runtime(format!("failed to delete the session log of '{id}': {e}"))
+        })?;
         Ok(())
     }
 
@@ -523,7 +531,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                 mcp_servers,
                 config_path: self.config_path.clone(),
                 runtime_handle: self.runtime_handle.clone(),
-                store: Arc::clone(&self.store),
+                store_type: self.rig.store_type(),
                 session_id: Some(session_id.to_string()),
                 client_fs,
                 agent_name: self.agent_name.clone(),
@@ -545,14 +553,29 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     }
 
     /// The stored entries of `session_id`, or [`AcpError::SessionNotFound`].
-    async fn load_entries(&self, session_id: &str) -> Result<Vec<StoreEntry>> {
-        let (_, entries) = self
-            .store
-            .load(session_id)
-            .await
-            .map_err(|e| AcpError::Runtime(format!("failed to load session '{session_id}': {e}")))?
-            .ok_or_else(|| AcpError::SessionNotFound(session_id.to_string()))?;
-        Ok(entries)
+    ///
+    /// The conversation lives in the rig-memory store the agent writes; the
+    /// session store is not consulted. `rig_memory::load` returns an empty
+    /// conversation for a log that does not exist, so absence is detected from
+    /// the store's log names first.
+    async fn load_entries(&self, session_id: &str) -> Result<Vec<Message>> {
+        let store = self.rig.open(session_id).map_err(|e| {
+            AcpError::Runtime(format!("failed to open session '{session_id}': {e}"))
+        })?;
+        let logs = store.logs().map_err(|e| {
+            AcpError::Runtime(format!("failed to list session logs '{session_id}': {e}"))
+        })?;
+        if !logs.iter().any(|log| log == session_id) {
+            return Err(AcpError::SessionNotFound(session_id.to_string()));
+        }
+        let conversation = rig_memory::load(&*store, session_id).map_err(|e| {
+            AcpError::Runtime(format!("failed to load session '{session_id}': {e}"))
+        })?;
+        Ok(conversation
+            .messages()
+            .iter()
+            .map(|message| (**message).clone())
+            .collect())
     }
 }
 
@@ -586,9 +609,9 @@ fn model_options(
 fn replay_history<S: SessionUpdateSink>(
     sink: &S,
     session_id: &str,
-    entries: &[StoreEntry],
+    messages: &[Message],
 ) -> Result<()> {
-    for message in extract_llm_context(entries) {
+    for message in messages {
         match message {
             Message::User { content } => {
                 for item in content.iter() {

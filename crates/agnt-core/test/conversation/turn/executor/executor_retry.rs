@@ -6,7 +6,6 @@ use super::executor_test_support::*;
 use super::test_utils::{MockResolver, test_config};
 use super::*;
 use crate::config::Config;
-use crate::session::StoreEntry;
 
 // ---------------------------------------------------------------------------
 // Gap 3 — Retry-with-backoff tests
@@ -63,22 +62,11 @@ async fn retry_succeeds_on_second_attempt() -> Result<()> {
     let outcome = result.map_err(|e| format!("retry should succeed on second attempt: {e:?}"))?;
     assert!(matches!(outcome, TurnOutcome::Completed));
 
-    let persisted_entries = memory_state
-        .inner_memory()
-        .load_all(session_id)
-        .await
-        .map_err(|e| format!("store load should succeed: {e:?}"))?;
-    let persisted: Vec<crate::types::Message> = persisted_entries
-        .iter()
-        .filter_map(|e| match e {
-            StoreEntry::Message(m) => Some(m.clone()),
-            _ => None,
-        })
-        .collect();
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
         2,
-        "successful retry must produce 2 messages (user + assistant); got {}",
+        "successful retry must save 2 messages (user + assistant); got {}",
         persisted.len()
     );
 
@@ -265,7 +253,6 @@ fn retry_not_attempted_when_no_partial_history() {
     // Empty history: has_partial_history guard must be false.
     let ctx_empty = TurnContext {
         last_known_history: vec![],
-        pre_turn_message_count: 0,
     };
     let has_partial_history = !ctx_empty.last_known_history.is_empty();
 
@@ -279,7 +266,6 @@ fn retry_not_attempted_when_no_partial_history() {
     // Confirm the mirror case: non-empty history enables the guard.
     let ctx_non_empty = TurnContext {
         last_known_history: vec![crate::types::Message::user("prompt")],
-        pre_turn_message_count: 0,
     };
     let has_partial_history_non_empty = !ctx_non_empty.last_known_history.is_empty();
     assert!(

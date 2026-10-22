@@ -42,9 +42,8 @@ async fn test_session_manager_new_session_registers_session() -> Result<()> {
 async fn test_session_manager_new_session_builder_error_returns_error() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let store = memory_store(temp.path()).await?;
     let manager = AcpSessionManager::with_runtime_builder(
-        store,
+        rig_config(temp.path()),
         temp.path().join("config.toml"),
         tokio::runtime::Handle::current(),
         FailingRuntimeBuilder,
@@ -341,5 +340,28 @@ async fn test_session_manager_delete_session_keeps_other_sessions() -> Result<()
     // -- Check
     assert_eq!(listed.len(), 1, "only the deleted session must be gone");
     assert_eq!(listed[0].id, second);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_session_manager_delete_session_deletes_the_rig_log() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp = tempfile::tempdir()?;
+    let (manager, rig) = manager_with_rig_store(temp.path()).await?;
+    let session_id = "persisted-session";
+    seed_session(&rig, session_id)?;
+    assert!(
+        rig.holds(session_id)?,
+        "the fixture must start with a persisted rig log"
+    );
+
+    // -- Exec
+    manager.delete_session(session_id).await?;
+
+    // -- Check
+    assert!(
+        !rig.holds(session_id)?,
+        "deleting a session must delete its rig log, not orphan it"
+    );
     Ok(())
 }

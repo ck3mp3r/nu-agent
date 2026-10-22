@@ -1,10 +1,8 @@
 //! Shared fixtures for the `build_acp_runtime()` integration tests.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use agnt_core::session::factory::create_store_in;
-use agnt_core::session::{SessionStoreBackend, StoreType};
+use agnt_core::session::StoreType;
 use agnt_core::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
 use super::*;
@@ -39,25 +37,23 @@ pub(super) fn force_env_only_vault() {
     unsafe { std::env::set_var("AGENT_VAULT_BACKEND", "env") };
 }
 
-pub(super) async fn memory_store(dir: &Path) -> Result<Arc<SessionStoreBackend>> {
-    let store = create_store_in(StoreType::Memory, dir)
-        .await
-        .map_err(|e| format!("should create in-memory store: {e:?}"))?;
-    Ok(Arc::new(store))
+/// The session store backend the runtime tests build against.
+pub(super) fn memory_store_type() -> StoreType {
+    StoreType::Memory
 }
 
 pub(super) fn make_params(
     cwd: PathBuf,
     config_path: PathBuf,
     mcp_servers: Vec<McpServerConfig>,
-    store: Arc<SessionStoreBackend>,
+    store_type: StoreType,
 ) -> AcpRuntimeParams {
     AcpRuntimeParams {
         cwd,
         mcp_servers,
         config_path,
         runtime_handle: tokio::runtime::Handle::current(),
-        store,
+        store_type,
         session_id: None,
         client_fs: None,
         agent_name: None,

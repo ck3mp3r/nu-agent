@@ -1,10 +1,9 @@
 use super::clear::{AgentSessionClear, CwdInterface};
 use agnt_core::session::prefix::dir_prefix_legacy;
-use agnt_core::session::{FsSessionStore, SessionStore, SessionStoreBackend};
+use agnt_core::session::{RigStoreConfig, StoreType};
 use agnt_core::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{LabeledError, Span, Value};
-use std::sync::Arc;
 use tempfile::TempDir;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -32,57 +31,52 @@ fn make_call(session_id: &str) -> EvaluatedCall {
 
 #[tokio::test]
 async fn test_agent_session_clear_deletes_existing_session() -> Result<()> {
+    // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    )));
+    let rig = rig_at(&temp_dir);
+    let prefix = agnt_core::session::prefix::dir_prefix(temp_dir.path());
+    let full_id = format!("{prefix}-test-session");
+    seed(&rig, &full_id, vec![Message::user("hello")])?;
 
-    // Create a session with a few messages
-    let messages: Vec<Message> = (0..5)
-        .map(|i| Message::user(format!("Message {}", i)))
-        .collect();
-    store
-        .create("test-session", &messages)
+    // -- Exec
+    let command = AgentSessionClear;
+    let engine = MockCwd {
+        dir: temp_dir.path().to_string_lossy().to_string(),
+    };
+    let call = make_call("test-session");
+    command
+        .run_inner(&engine, &call, &rig)
         .await
         .map_err(|e| format!("{e:?}"))?;
 
-    // Verify session file exists
-    let session_path = temp_dir.path().join("test-session.jsonl");
+    // -- Check
     assert!(
-        session_path.exists(),
-        "Session file should exist before deletion"
-    );
-
-    // Execute command - delete the session
-    let result = store.delete("test-session");
-
-    // Verify result
-    assert!(result.await.is_ok(), "Should successfully delete session");
-
-    // Verify session file no longer exists
-    assert!(
-        !session_path.exists(),
-        "Session file should be deleted after clear"
+        !rig.holds(&full_id).map_err(|e| format!("{e:?}"))?,
+        "the session's rig store must be gone after clear"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn test_agent_session_clear_is_idempotent_for_nonexistent_session() {
-    // Setup: Create temp directory with no sessions
+async fn test_agent_session_clear_reports_a_missing_session() -> Result<()> {
+    // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    )));
+    let rig = rig_at(&temp_dir);
 
-    // Execute command - try to delete non-existent session
-    let result = store.delete("nonexistent");
+    // -- Exec
+    let command = AgentSessionClear;
+    let engine = MockCwd {
+        dir: temp_dir.path().to_string_lossy().to_string(),
+    };
+    let call = make_call("nonexistent");
+    let result = command.run_inner(&engine, &call, &rig).await;
 
-    // Deletion of non-existent session is a no-op success
+    // -- Check
     assert!(
-        result.await.is_ok(),
-        "Should succeed (no-op) for nonexistent session"
+        result.is_err(),
+        "clearing a session that does not exist must report it"
     );
+    Ok(())
 }
 
 #[test]
@@ -102,77 +96,91 @@ fn test_agent_session_clear_command_signature() {
 }
 
 #[tokio::test]
-async fn test_delete_session_removes_only_target_file() -> Result<()> {
-    // Setup: Create multiple sessions
+async fn test_delete_session_removes_only_target_session() -> Result<()> {
+    // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    )));
+    let rig = rig_at(&temp_dir);
+    let prefix = agnt_core::session::prefix::dir_prefix(temp_dir.path());
+    let ids: Vec<String> = ["session-1", "session-2", "session-3"]
+        .into_iter()
+        .map(|name| format!("{prefix}-{name}"))
+        .collect();
+    for id in &ids {
+        seed(&rig, id, vec![Message::user("hello")])?;
+    }
 
-    // Create three sessions (each with a minimal message so the file exists)
-    store
-        .create("session-1", &[Message::user("hello")])
+    // -- Exec
+    let command = AgentSessionClear;
+    let engine = MockCwd {
+        dir: temp_dir.path().to_string_lossy().to_string(),
+    };
+    let call = make_call("session-2");
+    command
+        .run_inner(&engine, &call, &rig)
         .await
         .map_err(|e| format!("{e:?}"))?;
-    store
-        .create("session-2", &[Message::user("hello")])
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    store
-        .create("session-3", &[Message::user("hello")])
-        .await
-        .map_err(|e| format!("{e:?}"))?;
 
-    // Verify all three session files exist
-    let path1 = temp_dir.path().join("session-1.jsonl");
-    let path2 = temp_dir.path().join("session-2.jsonl");
-    let path3 = temp_dir.path().join("session-3.jsonl");
-
-    assert!(path1.exists());
-    assert!(path2.exists());
-    assert!(path3.exists());
-
-    // Delete only session-2
-    let result = store.delete("session-2");
-    assert!(result.await.is_ok());
-
-    // Verify only session-2 was deleted
-    assert!(path1.exists(), "session-1 should still exist");
-    assert!(!path2.exists(), "session-2 should be deleted");
-    assert!(path3.exists(), "session-3 should still exist");
+    // -- Check
+    assert!(
+        rig.holds(&ids[0]).map_err(|e| format!("{e:?}"))?,
+        "session-1 should still exist"
+    );
+    assert!(
+        !rig.holds(&ids[1]).map_err(|e| format!("{e:?}"))?,
+        "session-2 should be deleted"
+    );
+    assert!(
+        rig.holds(&ids[2]).map_err(|e| format!("{e:?}"))?,
+        "session-3 should still exist"
+    );
     Ok(())
 }
 
 #[tokio::test]
 async fn clear_deletes_legacy_prefixed_session_via_fallback() -> Result<()> {
+    // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    )));
+    let rig = rig_at(&temp_dir);
 
     // Create a session with the legacy 7-char prefix (as if created before the
     // prefix length increase).
     let legacy_prefix = dir_prefix_legacy(temp_dir.path());
     let legacy_id = format!("{legacy_prefix}-old-session");
-    store
-        .create(&legacy_id, &[Message::user("hello")])
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    seed(&rig, &legacy_id, vec![Message::user("hello")])?;
 
+    // -- Exec
     let command = AgentSessionClear;
     let engine = MockCwd {
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call("old-session");
+    command
+        .run_inner(&engine, &call, &rig)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
-    let result = command.run_inner(&engine, &call, &store).await;
-    assert!(result.is_ok(), "run_inner failed: {:?}", result.err());
-
-    // The legacy-prefixed session should now be deleted
-    let loaded = store.load(&legacy_id).await.map_err(|e| format!("{e:?}"))?;
+    // -- Check
     assert!(
-        loaded.is_none(),
+        !rig.holds(&legacy_id).map_err(|e| format!("{e:?}"))?,
         "legacy-prefixed session should be deleted after clear"
     );
+    Ok(())
+}
+
+// -- Test Support
+
+/// A `DirStore` rig store rooted at `temp_dir`.
+fn rig_at(temp_dir: &TempDir) -> RigStoreConfig {
+    RigStoreConfig::new(StoreType::Jsonl).with_cache_dir(temp_dir.path())
+}
+
+/// Seed the rig-memory store of `session_id` with `messages`.
+fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
+    let store = rig.open(session_id).map_err(|e| format!("{e:?}"))?;
+    let mut conversation =
+        agnt_core::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
+    conversation.extend(messages);
+    agnt_core::rig_memory::save(&*store, session_id, &mut conversation)
+        .map_err(|e| format!("{e:?}"))?;
     Ok(())
 }

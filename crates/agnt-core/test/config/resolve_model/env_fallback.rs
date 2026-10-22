@@ -25,6 +25,7 @@ fn test_resolve_model_with_env_fallback() -> Result<()> {
                     base_url: None,
                     provider: None,
                     preamble: None,
+                    catalog: None,
                     models: HashMap::new(),
                 },
             );

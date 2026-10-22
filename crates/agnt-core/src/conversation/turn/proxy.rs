@@ -35,9 +35,10 @@ impl FilteredToolProxy {
             Box::pin(async move {
                 // Serialize args back to string for the handle.execute call
                 let args_str = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
+                let toolset = handle.toolset();
                 let mut cancel_rx = bus.cancel().subscribe();
                 tokio::select! {
-                    result = handle.execute(&tool_name, &args_str, context) => {
+                    result = toolset.execute(&tool_name, args_str, context) => {
                         map_tool_result(&result)
                     }
                     Ok(_) = cancel_rx.recv() => {

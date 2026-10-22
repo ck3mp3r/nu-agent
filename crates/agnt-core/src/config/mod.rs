@@ -7,6 +7,7 @@ pub mod file_backend;
 pub mod keychain_backend;
 pub mod loader;
 pub mod models_cache;
+pub mod pricing;
 pub mod resolver;
 pub mod toml_config;
 pub mod types;

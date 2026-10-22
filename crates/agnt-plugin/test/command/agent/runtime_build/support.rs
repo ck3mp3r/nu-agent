@@ -57,6 +57,7 @@ pub(super) fn make_plugin_config(models: HashMap<String, ModelRoleConfig>) -> Pl
                     base_url: None,
                     provider: None,
                     preamble: None,
+                    catalog: None,
                     models: std::collections::HashMap::new(),
                 },
             );
@@ -87,6 +88,7 @@ pub(super) fn make_provider_config(
         base_url: None,
         provider: None,
         preamble: preamble.map(|s| s.to_string()),
+        catalog: None,
         models,
     }
 }
@@ -98,6 +100,7 @@ pub(super) fn make_model_config(preamble: Option<&str>) -> ModelConfig {
         temperature: None,
         preamble: preamble.map(|s| s.to_string()),
         tool_call: None,
+        pricing: None,
     }
 }
 

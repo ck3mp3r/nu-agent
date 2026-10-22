@@ -37,7 +37,9 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
             tool_calls: 0,
             input_tokens: 20,
             output_tokens: 10,
-            total_tokens: 30,
+            total_tokens: Some(30),
+            cost: Some(0.001),
+            cost_complete: true,
         },
     );
 
@@ -55,7 +57,9 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
             tool_calls: 0,
             input_tokens: 5,
             output_tokens: 7,
-            total_tokens: 12,
+            total_tokens: Some(12),
+            cost: Some(0.002),
+            cost_complete: true,
         },
     );
 
@@ -76,7 +80,9 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
             tool_calls: 0,
             input_tokens: 4,
             output_tokens: 8,
-            total_tokens: 12,
+            total_tokens: Some(12),
+            cost: None,
+            cost_complete: false,
         },
     );
 

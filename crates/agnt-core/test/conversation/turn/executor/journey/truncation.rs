@@ -125,6 +125,7 @@ async fn grep_via_builtin_adapter(
     use crate::types::ToolDefinition;
 
     let tool_def = ToolDefinition {
+        annotations: crate::types::ToolAnnotations::default(),
         name: crate::types::ToolName::new("grep")?,
         description: "Search file contents".to_string(),
         parameters: serde_json::json!({
@@ -146,6 +147,7 @@ async fn grep_via_builtin_adapter(
     Ok(default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
+            annotations: crate::types::ToolAnnotations::default(),
             name: crate::types::ToolName::new("grep")?,
             description: "Search file contents".to_string(),
             parameters: serde_json::json!({

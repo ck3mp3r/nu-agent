@@ -99,7 +99,9 @@ fn lane_2_context_line_two_lane_and_updates() -> Result<()> {
         tool_calls: 0,
         input_tokens: 2_500,
         output_tokens: 500,
-        total_tokens: 3_000,
+        total_tokens: Some(3_000),
+        cost: None,
+        cost_complete: false,
     });
     coordinator.drain_transport();
 
@@ -121,7 +123,9 @@ fn lane_2_context_line_two_lane_and_updates() -> Result<()> {
         tool_calls: 0,
         input_tokens: 2,
         output_tokens: 8,
-        total_tokens: 10,
+        total_tokens: Some(10),
+        cost: None,
+        cost_complete: false,
     });
     updating.drain_transport();
 
@@ -136,7 +140,9 @@ fn lane_2_context_line_two_lane_and_updates() -> Result<()> {
         tool_calls: 0,
         input_tokens: 8,
         output_tokens: 32,
-        total_tokens: 40,
+        total_tokens: Some(40),
+        cost: None,
+        cost_complete: false,
     });
     updating.drain_transport();
     let second = crate::runtime::lane_2_status_line_for_test(updating.state(), 120);

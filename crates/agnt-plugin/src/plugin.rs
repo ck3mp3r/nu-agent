@@ -1,5 +1,3 @@
-use std::sync::Mutex;
-
 use nu_plugin::{Plugin, PluginCommand};
 
 use crate::command::agent::Agent;
@@ -10,18 +8,14 @@ use crate::command::provider::{
     AgentProviderAuthLogin, AgentProviderAuthLogout, AgentProviderAuthStatus,
 };
 use crate::command::session::{AgentSessionClear, AgentSessionInspect, AgentSessionList};
-use agnt_core::session::{SessionStoreBackend, StoreError, StoreType, create_store};
+use agnt_core::session::StoreType;
 
 pub struct AgentPlugin {
     /// The shared tokio runtime, or the error that prevented its construction.
     /// Stored as a `Result` so `new()` stays infallible; the error surfaces on
-    /// first use via `runtime()` / `create_store()`.
+    /// first use via `runtime()`.
     runtime: Result<tokio::runtime::Runtime, String>,
     store_type: StoreType,
-    /// Cached in-memory session store, created once and reused for the agent's
-    /// entire runtime. A fresh `:memory:` SQLite database is empty each time,
-    /// so it must be created exactly once and shared across all commands.
-    cached_memory_store: Mutex<Option<SessionStoreBackend>>,
 }
 
 impl AgentPlugin {
@@ -42,39 +36,6 @@ impl AgentPlugin {
             .map_err(|e| nu_protocol::LabeledError::new(e.to_string()))
     }
 
-    /// Creates the session store on first use. Called by each command's `run()`
-    /// method to obtain the store lazily rather than at plugin construction.
-    pub fn create_store(&self) -> Result<SessionStoreBackend, StoreError> {
-        self.create_store_with(self.store_type)
-    }
-
-    /// Creates the session store with a specific store type.
-    /// Used when the CLI `--store` flag overrides the default.
-    pub fn create_store_with(
-        &self,
-        store_type: StoreType,
-    ) -> Result<SessionStoreBackend, StoreError> {
-        let runtime = self
-            .runtime
-            .as_ref()
-            .map_err(|e| runtime_store_error(&e.to_string()))?;
-        if store_type == StoreType::Memory {
-            let mut cache = self
-                .cached_memory_store
-                .lock()
-                .expect("cached memory store mutex poisoned");
-            if cache.is_none() {
-                let store = runtime.block_on(create_store(store_type))?;
-                *cache = Some(store);
-            }
-            return cache
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| runtime_store_error("memory store not yet created"));
-        }
-        runtime.block_on(create_store(store_type))
-    }
-
     /// Resolve store type from CLI `--store` flag, falling back to plugin default.
     pub fn resolve_store_type(
         &self,
@@ -92,22 +53,15 @@ impl AgentPlugin {
 }
 
 impl Default for AgentPlugin {
-    /// Creates a new AgentPlugin. The session store is NOT created at construction
-    /// time — it is created lazily on first use via `create_store()`. This avoids
+    /// Creates a new AgentPlugin. No session store is created at construction
+    /// time — each command opens the rig-memory store it needs. This avoids
     /// panics during `plugin add` when the cache directory may not exist.
     fn default() -> Self {
         Self {
             runtime: Self::build_runtime(),
             store_type: StoreType::Sqlite,
-            cached_memory_store: Mutex::new(None),
         }
     }
-}
-
-/// Converts a runtime construction error string into a `StoreError` for the
-/// `create_store_with` fallible path.
-fn runtime_store_error(msg: &str) -> StoreError {
-    StoreError::Io(std::io::Error::other(msg))
 }
 
 impl Plugin for AgentPlugin {

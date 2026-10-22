@@ -17,6 +17,9 @@ mod persistence;
 #[path = "test/proxy_cancel.rs"]
 mod proxy_cancel;
 
+#[path = "test/rig_memory.rs"]
+mod rig_persistence;
+
 #[path = "test/support.rs"]
 mod support;
 

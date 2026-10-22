@@ -1,5 +1,6 @@
 pub mod crypto;
 pub mod env_map;
+pub mod paths;
 pub mod value_ext;
 pub mod xdg;
 

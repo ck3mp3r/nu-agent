@@ -417,7 +417,9 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                     let _ = self.writer.write_all(remaining.as_bytes());
                 }
                 let _ = self.writer.write_all(b"\n");
-                if !self.policy.quiet && *total_tokens > 0 {
+                if !self.policy.quiet
+                    && let Some(total_tokens) = (*total_tokens).filter(|total| *total > 0)
+                {
                     let line = format!(
                         "  {total_tokens} tokens ({input_tokens} in + {output_tokens} out)"
                     );

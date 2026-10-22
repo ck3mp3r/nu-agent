@@ -146,9 +146,19 @@ async fn test_tools_executor_invoke_closure_propagates_execution_error() -> Resu
 
     // -- Check
     let err = result.err().ok_or("an engine failure must fail the call")?;
+    assert_eq!(
+        err.kind,
+        ToolErrorKind::Runtime,
+        "an engine failure must surface as ToolErrorKind::Runtime, got: {err:?}"
+    );
     assert!(
-        matches!(err, ToolError::Execution(_)),
-        "an engine failure must surface as ToolError::Execution, got: {err:?}"
+        err.message.starts_with("Tool execution failed: "),
+        "the execution message must keep its prefix, got: {}",
+        err.message
+    );
+    assert!(
+        err.details.is_none(),
+        "an executor failure must not carry details"
     );
     let log = read_log(&log_path)?;
     assert!(
@@ -176,10 +186,17 @@ async fn test_tools_executor_invoke_closure_times_out() -> Result<()> {
 
     // -- Check
     let err = result.err().ok_or("a slow closure must time out")?;
-    assert!(
-        matches!(err, ToolError::Timeout { .. }),
-        "a slow closure must surface as ToolError::Timeout, got: {err:?}"
+    assert_eq!(
+        err.kind,
+        ToolErrorKind::Timeout,
+        "a slow closure must surface as ToolErrorKind::Timeout, got: {err:?}"
     );
+    assert!(
+        err.message.starts_with("Tool '") && err.message.ends_with("timed out after 20ms"),
+        "the timeout message must keep its shape, got: {}",
+        err.message
+    );
+    assert!(err.details.is_none(), "a timeout must not carry details");
     let log = read_log(&log_path)?;
     assert!(
         log.contains("Timeout after"),

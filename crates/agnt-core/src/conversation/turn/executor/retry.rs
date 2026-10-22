@@ -2,9 +2,13 @@
 //!
 //! The loop runs the turn future repeatedly, applying four independent retry
 //! budgets (backoff `attempt`, `feedback_retries`, `max_turns_feedback_retries`,
-//! `rep_stop_retries`), the OutputBudget max_tokens auto-raise, and the
-//! session-less steering carrier. It returns the final `TurnResult` or the
-//! terminal `(TurnError, TurnContext)` for post-loop dispatch.
+//! `rep_stop_retries`) and the OutputBudget max_tokens auto-raise. It returns
+//! the final `TurnResult` or the terminal `(TurnError, TurnContext)` for
+//! post-loop dispatch.
+//!
+//! Steering rides the retry prompt: a steering message is prepended to the next
+//! attempt's prompt and nothing is persisted, so a session and a session-less
+//! turn steer alike.
 
 use std::sync::Arc;
 
@@ -17,8 +21,6 @@ use crate::hook::output_repetition::{
     OUTPUT_REPETITION_BACKOFF_MESSAGE, OUTPUT_REPETITION_STOP_PREFIX,
 };
 use crate::hook::permission_resolver::AsyncPermissionResolver;
-use crate::session::repair::inject_missing_tool_results;
-use crate::types::Message;
 
 use super::core::TurnExecutor;
 use super::error_kind::CompletionErrorKind;
@@ -27,12 +29,11 @@ use crate::conversation::turn::TurnError;
 use crate::conversation::turn::TurnResult;
 use crate::protocol::event::UiEvent;
 
-impl<'a, ST, S> TurnExecutor<'a, S, ST>
+impl<'a, S> TurnExecutor<'a, S>
 where
-    ST: crate::session::SessionStore + Clone + Send + Sync + 'static,
     S: crate::conversation::managers::SessionManager<
-            Memory = crate::conversation::state::memory::MemoryOf<ST>,
-            InnerMemory = crate::session::CachedMemory<ST>,
+            Memory = crate::conversation::state::memory::MemoryOf,
+            InnerMemory = crate::session::CachedMemory,
         >,
 {
     /// Run the retry/steering loop. Returns the final `TurnResult` (Ok) or the
@@ -62,11 +63,10 @@ where
         // MAX_REPETITION_STOP_RETRIES cap; a stop at the cap is terminal.
         // Independent of the other retry counters.
         let mut rep_stop_retries = 0u8;
-        // Session-less steering carrier: with no session (final_session_id
-        // None) the steering message cannot be appended to session memory, so
-        // the conversion path prepends it to the retry prompt instead
-        // (transient in-memory delivery; nothing is persisted).
-        let mut session_less_steering: Option<String> = None;
+        // Steering carrier: the steering message for the next attempt, prepended
+        // to the retry prompt. Steering is transient prompt content — nothing is
+        // persisted, so a session and a session-less turn steer alike.
+        let mut steering: Option<String> = None;
         // Per-attempt Config override for the OutputBudget max_tokens auto-raise.
         // When set, this clone (with a raised max_tokens) is used for the next
         // attempt instead of `self.config`. Cleared implicitly by being replaced
@@ -100,8 +100,8 @@ where
                     compaction: self.compaction.clone(),
                 },
                 TurnInput {
-                    prompt: match &session_less_steering {
-                        Some(steering) => format!("{steering}\n\n{prompt}"),
+                    prompt: match &steering {
+                        Some(message) => format!("{message}\n\n{prompt}"),
                         None => prompt.clone(),
                     },
                     preamble: preamble.as_deref(),
@@ -148,7 +148,6 @@ where
                     if is_model_correctable(kind)
                         && feedback_retries < defaults::MAX_PROVIDER_FEEDBACK_RETRIES
                         && has_partial_history
-                        && let Some(session_id) = final_session_id
                     {
                         feedback_retries += 1;
                         // Escalating steering: the first feedback is a gentle
@@ -214,12 +213,7 @@ where
                             // config, not the inherited raised max_tokens.
                             attempt_config = None;
                         }
-                        self.append_to_memory_or_warn(
-                            session_id,
-                            vec![Message::user(feedback)],
-                            "provider feedback retry",
-                        )
-                        .await;
+                        steering = Some(feedback);
                         continue;
                     }
                     if kind.is_retryable()
@@ -259,7 +253,6 @@ where
                             },
                             error::TurnContext {
                                 last_known_history: ctx.last_known_history.clone(),
-                                pre_turn_message_count: ctx.pre_turn_message_count,
                             },
                         ));
                     }
@@ -281,7 +274,6 @@ where
                             },
                             error::TurnContext {
                                 last_known_history: ctx.last_known_history.clone(),
-                                pre_turn_message_count: ctx.pre_turn_message_count,
                             },
                         ));
                     }
@@ -295,59 +287,19 @@ where
                     },
                     ctx,
                 )) => {
-                    // Path A (non-cancelled): MaxTurns carries full chat_history.
-                    // Persist only the delta (new messages from this turn) so the session
-                    // remembers the failed turn without re-appending messages already in
-                    // persistent storage. This runs on every MaxTurnsExceeded, before the
-                    // retry decision, so completed sub-turns survive either outcome.
-                    if let Some(session_id) = final_session_id {
-                        // messages for MaxTurns is rig's full accumulated
-                        // chat_history (from AgentRun::full_history()), which DOES include the
-                        // current-turn user prompt and any tool call exchanges from this turn.
-                        // This is unlike last_known_history (from on_completion_call's `history`
-                        // parameter), which contains only prior messages. skip(pre_turn_message_count)
-                        // correctly yields [user_prompt, assistant_tool_calls...] — the new messages.
-                        let delta: Vec<Message> = messages
-                            .iter()
-                            .skip(ctx.pre_turn_message_count)
-                            .cloned()
-                            .collect();
-                        log::debug!(
-                            "Path A non-cancelled: delta_count={} pre_turn={}",
-                            delta.len(),
-                            ctx.pre_turn_message_count
-                        );
-                        if !delta.is_empty() {
-                            let patched = inject_missing_tool_results(delta);
-                            self.append_to_memory_or_warn(
-                                session_id,
-                                patched,
-                                "recovered history for failed turn (path A)",
-                            )
-                            .await;
-                        }
-                    }
                     // Steering retry: exhaustion is a steering opportunity, not a
-                    // hard stop. Append the model-facing steering message and
-                    // re-run the turn once with a fresh tool-call budget, capped
-                    // per turn by MAX_TURNS_FEEDBACK_RETRIES. Session-less turns
-                    // cannot append feedback, so they fall through to the
-                    // hard-error path.
-                    if max_turns_feedback_retries < defaults::MAX_TURNS_FEEDBACK_RETRIES
-                        && let Some(session_id) = final_session_id
-                    {
+                    // hard stop. Prepend the model-facing steering message and
+                    // re-run the turn with a fresh tool-call budget, capped per
+                    // turn by MAX_TURNS_FEEDBACK_RETRIES. Nothing is persisted:
+                    // rig saves only a successful run, and a session-less turn
+                    // steers the same way.
+                    if max_turns_feedback_retries < defaults::MAX_TURNS_FEEDBACK_RETRIES {
                         max_turns_feedback_retries += 1;
-                        let steering = build_max_turns_feedback_message(*max_turns);
                         log::warn!(
                             "Max turns exceeded, steering retry {max_turns_feedback_retries}/{}.",
                             defaults::MAX_TURNS_FEEDBACK_RETRIES
                         );
-                        self.append_to_memory_or_warn(
-                            session_id,
-                            vec![Message::user(steering)],
-                            "max-turns steering retry",
-                        )
-                        .await;
+                        steering = Some(build_max_turns_feedback_message(*max_turns));
                         continue;
                     }
                     let msg_preview = &msg[..msg.floor_char_boundary(200)];
@@ -361,7 +313,6 @@ where
                         },
                         error::TurnContext {
                             last_known_history: ctx.last_known_history.clone(),
-                            pre_turn_message_count: ctx.pre_turn_message_count,
                         },
                     ));
                 }
@@ -374,11 +325,10 @@ where
                     // Path C stop-to-steering: the repetition guard stopped the
                     // stream mid-turn and the Ok-cancelled result carries the
                     // reason. Below the retry cap, publish the steering notice,
-                    // deliver the repetition steering message (session append,
-                    // or prompt prepend when there is no session), reset the
-                    // escalation ladder (the retry starts fresh at First), and
-                    // re-run the turn. A stop at the cap exhausts it and falls
-                    // through to the terminal surface after the loop.
+                    // prepend the repetition steering message to the retry prompt,
+                    // reset the escalation ladder (the retry starts fresh at
+                    // First), and re-run the turn. A stop at the cap exhausts it
+                    // and falls through to the terminal surface after the loop.
                     if rep_stop_retries < defaults::MAX_REPETITION_STOP_RETRIES {
                         rep_stop_retries += 1;
                         log::warn!(
@@ -393,22 +343,7 @@ where
                                 message: super::core::REPETITION_STEERING_NOTICE.to_string(),
                             })
                             .await;
-                        match final_session_id {
-                            Some(session_id) => {
-                                self.append_to_memory_or_warn(
-                                    session_id,
-                                    vec![Message::user(OUTPUT_REPETITION_BACKOFF_MESSAGE)],
-                                    "repetition stop steering retry",
-                                )
-                                .await;
-                            }
-                            None => {
-                                // No session: carry the steering in the retry
-                                // prompt (transient, nothing persisted).
-                                session_less_steering =
-                                    Some(OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string());
-                            }
-                        }
+                        steering = Some(OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string());
                         self.tool_infra
                             .output_repetition
                             .lock()

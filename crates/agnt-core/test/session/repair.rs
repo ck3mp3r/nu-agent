@@ -35,7 +35,6 @@ use support::*;
 
 use super::repair::{
     fix_empty_tool_results, fix_invalid_tool_arguments, fix_tool_call_integrity,
-    inject_assistant_after_dangling_tool_results, inject_missing_tool_results,
-    merge_consecutive_same_role, remove_empty_messages, repair_messages, trim_trailing_user,
+    inject_assistant_after_dangling_tool_results, merge_consecutive_same_role,
+    remove_empty_messages, repair_messages, trim_trailing_user,
 };
-use super::store_test::assert_msgs_eq;

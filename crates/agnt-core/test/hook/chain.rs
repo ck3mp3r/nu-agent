@@ -8,6 +8,9 @@
 #[path = "chain/compaction.rs"]
 mod compaction;
 
+#[path = "chain/cost.rs"]
+mod cost;
+
 #[path = "chain/output_repetition.rs"]
 mod output_repetition;
 
@@ -36,7 +39,7 @@ use crate::hook::output_repetition::RepetitionState;
 use crate::hook::permission_resolver::{InteractivePermissionResolver, PolicyPermissionResolver};
 use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 use crate::protocol::event::UiEvent;
-use crate::session::{CachedMemory, FsSessionStore, SessionStore, StoreEntry};
+use crate::session::CachedMemory;
 use crate::tools::handler::builtin_tool::BuiltinTool;
 use crate::types::{Message, ToolName};
 use futures::StreamExt;

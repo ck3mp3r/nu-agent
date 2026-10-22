@@ -37,8 +37,17 @@ impl LlmState {
                 input_tokens,
                 output_tokens,
                 total_tokens,
+                cost,
+                cost_complete,
                 ..
-            } => handle_llm_end(status, input_tokens, output_tokens, total_tokens),
+            } => handle_llm_end(
+                status,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                cost,
+                cost_complete,
+            ),
             LlmEvent::AssistantMessage { text } => {
                 log::trace!("reducer: AssistantMessage text_len={}", text.len());
                 self.assistant_message(store, scroll, &text, &mut evicted)
@@ -157,11 +166,14 @@ fn handle_llm_end(
     status: &mut StatusState,
     input_tokens: u64,
     output_tokens: u64,
-    total_tokens: u64,
+    total_tokens: Option<u64>,
+    cost: Option<f64>,
+    cost_complete: bool,
 ) -> bool {
     status
         .tokens
         .record_token_usage(input_tokens, output_tokens, total_tokens);
+    status.tokens.session_cost.record(cost, cost_complete);
     true
 }
 

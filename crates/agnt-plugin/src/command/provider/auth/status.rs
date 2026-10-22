@@ -3,7 +3,7 @@ use nu_protocol::{Category, Example, LabeledError, Signature, Value};
 
 use agnt_core::config::copilot_tokens::read_copilot_token_record;
 use agnt_core::config::vault::{CredentialType, Vault};
-use agnt_core::types::default_token_dir;
+use agnt_core::types::copilot_token_dir;
 
 use crate::plugin::AgentPlugin;
 
@@ -91,7 +91,7 @@ impl SimplePluginCommand for AgentProviderAuthStatus {
             .collect();
 
         // github-copilot stores its tokens in files, not the vault.
-        if let Some(dir) = default_token_dir()
+        if let Some(dir) = copilot_token_dir()
             && let Some(record) = read_copilot_token_record(&dir).map_err(LabeledError::new)?
         {
             let expiry = record

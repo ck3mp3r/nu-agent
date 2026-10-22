@@ -1,3 +1,5 @@
+use crate::config::models_cache::ModelCost;
+use crate::config::pricing::{PricingView, ResolvedPricing};
 use crate::config::{ModelsCache, PluginConfig};
 use crate::protocol::persona::PersonaSummary;
 
@@ -51,57 +53,61 @@ pub fn build_model_picker_catalog(
     active_model_identity: &str,
 ) -> Vec<ModelPickerOption> {
     let mut options: Vec<ModelPickerOption> = Vec::new();
+    // The cost column reads the pricing ladder, so a model the session prices
+    // by a configured price or by its own catalog row shows that price here
+    // too.
+    let pricing = models_cache.map(PricingView::new);
+    let cost_of = |provider_id: &str, model_id: &str, config_pricing: Option<&ModelCost>| {
+        match pricing.as_ref() {
+            Some(view) => view.pricing_for(provider_id, model_id, config_pricing),
+            None => ResolvedPricing::from_config(config_pricing),
+        }
+        .pricing
+        .map(|pricing| format!("${:.2}/${:.2}", pricing.input, pricing.output))
+    };
 
-    // Only show models from providers that have a provider block in config.toml
+    // Only show models from providers that have a provider block in config.toml.
+    // A block whose resolved cache section exists is a full-catalog endpoint,
+    // so every section row is runnable through it. A block with no section
+    // serves only what it declares. The cache section supplies metadata either
+    // way, joined by model id.
     for (provider_id, provider_cfg) in &plugin_config.providers {
-        let provider_display_name = if let Some(cache) = models_cache
-            && let Some(spec) = cache.providers.get(provider_id)
-        {
-            spec.name.clone()
-        } else {
-            provider_id.clone()
-        };
+        let section = plugin_config.cache_section(provider_id);
+        let provider_spec = models_cache.and_then(|cache| cache.provider_spec(section));
+        let section_models = provider_spec.map(|spec| &spec.models);
 
-        // If cache is available, show ALL models for this provider (not just configured ones)
-        if let Some(cache) = models_cache
-            && let Some(provider_spec) = cache.providers.get(provider_id)
-        {
-            for (model_id, model_spec) in &provider_spec.models {
-                let identity = format!("{provider_id}/{model_id}");
-                let configured = provider_cfg.models.contains_key(model_id);
-                options.push(ModelPickerOption {
-                    provider: provider_id.clone(),
-                    model: model_id.clone(),
-                    identity: identity.clone(),
-                    display: format!("{} / {}", provider_spec.name, model_spec.name),
-                    active: identity == active_model_identity,
-                    context_window: Some(model_spec.limit.context),
-                    max_output: Some(model_spec.limit.output),
-                    cost: model_spec
-                        .cost
-                        .as_ref()
-                        .map(|cost| format!("${:.2}/${:.2}", cost.input, cost.output)),
-                    configured,
-                    provider_display_name: provider_spec.name.clone(),
-                });
+        let mut model_ids: Vec<&str> = section_models
+            .map(|models| models.keys().map(String::as_str).collect())
+            .unwrap_or_default();
+        for model_id in provider_cfg.models.keys() {
+            if !model_ids.contains(&model_id.as_str()) {
+                model_ids.push(model_id.as_str());
             }
-        } else {
-            // No cache — show only configured models for this provider
-            for model_id in provider_cfg.models.keys() {
-                let identity = format!("{provider_id}/{model_id}");
-                options.push(ModelPickerOption {
-                    provider: provider_id.clone(),
-                    model: model_id.clone(),
-                    identity: identity.clone(),
-                    display: format!("{provider_id} / {model_id}"),
-                    active: identity == active_model_identity,
-                    context_window: None,
-                    max_output: None,
-                    cost: None,
-                    configured: true,
-                    provider_display_name: provider_display_name.clone(),
-                });
-            }
+        }
+
+        for model_id in model_ids {
+            let identity = format!("{provider_id}/{model_id}");
+            let model_spec = provider_spec.and_then(|spec| spec.models.get(model_id));
+            let model_name = model_spec
+                .map(|spec| spec.name.as_str())
+                .unwrap_or(model_id);
+            let model_cfg = provider_cfg.models.get(model_id);
+            options.push(ModelPickerOption {
+                provider: provider_id.clone(),
+                model: model_id.to_string(),
+                identity: identity.clone(),
+                display: format!("{provider_id} / {model_name}"),
+                active: identity == active_model_identity,
+                context_window: model_spec.map(|spec| spec.limit.context),
+                max_output: model_spec.map(|spec| spec.limit.output),
+                cost: cost_of(
+                    section,
+                    model_id,
+                    model_cfg.and_then(|cfg| cfg.pricing.as_ref()),
+                ),
+                configured: model_cfg.is_some(),
+                provider_display_name: provider_id.clone(),
+            });
         }
     }
 

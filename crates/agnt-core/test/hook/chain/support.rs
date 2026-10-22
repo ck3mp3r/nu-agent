@@ -15,8 +15,7 @@ pub(super) use crate::hook::output_repetition::RepetitionState;
 pub(super) use crate::hook::permission_resolver::PolicyPermissionResolver;
 pub(super) use crate::hook::{HookChain, HookState};
 pub(super) use crate::protocol::event::UiEvent;
-pub(super) use crate::session::{CachedMemory, FsSessionStore, SessionStore, StoreEntry};
-pub(super) use crate::types::Message;
+pub(super) use crate::session::CachedMemory;
 
 pub(super) use futures::StreamExt;
 pub(super) use rig::DynModel;
@@ -26,66 +25,6 @@ pub(super) use tempfile::TempDir;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-/// A `SessionStore` whose `load` always fails, used to verify store errors are
-/// surfaced (not swallowed) by `load_marker_context`.
-#[derive(Clone)]
-pub(super) struct FailingStore;
-
-#[derive(Debug)]
-pub(super) struct StoreError;
-
-impl std::fmt::Display for StoreError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "store exploded")
-    }
-}
-
-impl std::error::Error for StoreError {}
-
-impl SessionStore for FailingStore {
-    type Error = StoreError;
-
-    async fn create(
-        &self,
-        _id: &str,
-        _first_messages: &[Message],
-    ) -> core::result::Result<(), Self::Error> {
-        Ok(())
-    }
-
-    async fn load(
-        &self,
-        _id: &str,
-    ) -> core::result::Result<Option<(crate::session::SessionMetadata, Vec<StoreEntry>)>, Self::Error>
-    {
-        Err(StoreError)
-    }
-
-    async fn append(
-        &self,
-        _id: &str,
-        _entries: &[StoreEntry],
-    ) -> core::result::Result<(), Self::Error> {
-        Ok(())
-    }
-
-    async fn replace_entries(
-        &self,
-        _id: &str,
-        _entries: &[StoreEntry],
-    ) -> core::result::Result<(), Self::Error> {
-        Ok(())
-    }
-
-    async fn list(&self) -> core::result::Result<Vec<crate::session::SessionInfo>, Self::Error> {
-        Ok(Vec::new())
-    }
-
-    async fn delete(&self, _id: &str) -> core::result::Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Compaction threshold with real token count
 // ---------------------------------------------------------------------------
@@ -94,22 +33,29 @@ impl SessionStore for FailingStore {
 /// store (no markers), a compactor backed by a deterministic mock model, an
 /// empty `last_total_tokens` slot, and the compaction config + bus.
 pub(super) struct DecideFixture {
-    pub(super) memory: Arc<CachedMemory<FsSessionStore>>,
-    pub(super) compaction: CompactionConfig<FsSessionStore>,
+    pub(super) memory: Arc<CachedMemory>,
+    pub(super) compaction: CompactionConfig,
     pub(super) bus: Bus,
     pub(super) last_total_tokens: Arc<Mutex<Option<u64>>>,
+    /// The summarizer model, kept so a test can assert it was never called.
+    pub(super) summary_model: MockCompletionModel,
 }
 
 /// Build the fixtures shared by the `decide_compaction` threshold tests.
 pub(super) fn decide_fixture() -> Result<DecideFixture> {
-    let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
-    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
-    let model = MockCompletionModel::from_stream_turns([[
+    let summary_model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("summary".to_string()),
         MockStreamEvent::final_response_with_default_usage(),
     ]]);
-    let compactor = NuCompactor::new(model.erase(), Bus::default(), None).with_store(store.clone());
-    let memory = Arc::new(CachedMemory::new(store));
+    let compactor = NuCompactor::new(
+        summary_model.clone().erase(),
+        Bus::default(),
+        rig_memory::CompactionPolicy::default(),
+        test_model_spec(),
+    );
+    let memory = Arc::new(CachedMemory::new(
+        crate::session::RigStoreConfig::in_memory(),
+    ));
     let bus = Bus::default();
     let compaction = CompactionConfig {
         compactor,
@@ -122,16 +68,17 @@ pub(super) fn decide_fixture() -> Result<DecideFixture> {
         compaction,
         bus,
         last_total_tokens,
+        summary_model,
     })
 }
 
-/// A short single-message history (so the per-turn context is not empty) plus a
-/// short prompt. The context chars/4 estimate is far below the threshold; the
-/// decision must be driven by `last_total_tokens` when it is `Some`.
-pub(super) fn small_history_and_prompt() -> (Vec<Message>, Message) {
-    (
-        vec![Message::user("short context message")],
-        Message::user("hi"),
+/// The model spec the test compactors plan against.
+pub(super) fn test_model_spec() -> Option<rig::catalog::ModelSpec> {
+    crate::conversation::compaction::compactor::resolve_model_spec(
+        "openai",
+        "gpt-4o",
+        Some(200_000),
+        Some(1_024),
     )
 }
 
@@ -147,7 +94,7 @@ pub(super) fn small_history_and_prompt() -> (Vec<Message>, Message) {
 pub(super) struct RepetitionTurnFixture {
     pub(super) bus: Bus,
     dyn_model: Arc<std::sync::Mutex<DynModel<Completion>>>,
-    hook_state: HookState<FsSessionStore>,
+    hook_state: HookState,
     _temp_dir: TempDir, // keeps the store backing the memory alive
 }
 
@@ -156,8 +103,9 @@ impl RepetitionTurnFixture {
     /// queued scripted model, and a real bus.
     pub(super) fn new() -> Result<Self> {
         let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
-        let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
-        let memory = Arc::new(CachedMemory::new(store));
+        let memory = Arc::new(CachedMemory::new(
+            crate::session::RigStoreConfig::in_memory(),
+        ));
         Ok(Self {
             bus: Bus::default(),
             dyn_model: Arc::new(std::sync::Mutex::new(
@@ -176,7 +124,8 @@ impl RepetitionTurnFixture {
                     compactor: NuCompactor::new(
                         MockCompletionModel::text("summary").erase(),
                         Bus::default(),
-                        None,
+                        rig_memory::CompactionPolicy::default(),
+                        test_model_spec(),
                     ),
                     params: CompactionParams::default(),
                     threshold_tokens: None,

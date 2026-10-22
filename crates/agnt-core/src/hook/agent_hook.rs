@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::state::memory::MemoryOf;
-use crate::session::SessionStore;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 pub use crate::hook::chain::HookChain;
@@ -21,7 +20,7 @@ pub use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDe
 /// signatures), plus the memory backend, compactor, compaction policy, and
 /// force-compact flag used by the hook's compaction logic.
 #[derive(Clone)]
-pub struct HookState<S: SessionStore + Clone + Send + Sync> {
+pub struct HookState {
     pub circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
     pub doom_state: Arc<Mutex<DoomLoopState>>,
     /// Session-scoped assistant-output repetition state, shared across turns
@@ -32,11 +31,11 @@ pub struct HookState<S: SessionStore + Clone + Send + Sync> {
     /// detection). When `false`, the hook chain skips all detector calls.
     pub repetition_guard: bool,
     /// Memory backing the conversation (shared with the turn executor).
-    pub memory: MemoryOf<S>,
+    pub memory: MemoryOf,
     /// The session/conversation id this hook compacts.
     pub conversation_id: String,
     /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
-    pub compaction: CompactionConfig<S>,
+    pub compaction: CompactionConfig,
     /// Real token count from the last LLM completion (from `Usage.total_tokens`),
     /// shared across turns via the hook. `None` before the first completion and
     /// after a compaction reset; the compaction threshold falls back to the

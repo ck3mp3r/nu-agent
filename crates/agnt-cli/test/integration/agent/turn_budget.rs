@@ -2,9 +2,10 @@
 //!
 //! The tool-call budget (`max_tool_turns`) is observable end-to-end: a mock
 //! that answers every request with a tool call makes the agent issue exactly
-//! one completion per tool-call round, so the request count equals the budget.
-//! The tests drive the real precedence chain — CLI flag > persona front matter
-//! > pipeline-mode default.
+//! one completion per tool-call round, so the request count is the budget times
+//! the max-turns steering retries (the retry re-runs the turn once with a fresh
+//! budget). The tests drive the real precedence chain — CLI flag > persona front
+//! matter > pipeline-mode default.
 
 use super::*;
 
@@ -43,9 +44,11 @@ async fn test_integration_agent_run_agent_persona_max_tool_turns_bounds_tool_loo
         "the turn must fail on the exhausted tool-call budget; got: {err}"
     );
     let bodies = agnt_testkit::received_request_bodies(env.llm()).await;
+    // The budget bounds the tool-call rounds; the max-turns steering retry
+    // re-runs the turn once with a fresh budget.
     assert_eq!(
         bodies.len(),
-        9,
+        9 * (1 + usize::from(agnt_core::config::defaults::MAX_TURNS_FEEDBACK_RETRIES)),
         "the persona max_tool_turns value must bound the tool-call rounds"
     );
     Ok(())
@@ -86,9 +89,11 @@ async fn test_integration_agent_run_agent_cli_max_turns_overrides_persona() -> R
         "the turn must fail on the exhausted tool-call budget; got: {err}"
     );
     let bodies = agnt_testkit::received_request_bodies(env.llm()).await;
+    // The CLI budget bounds the tool-call rounds; the max-turns steering retry
+    // re-runs the turn once with a fresh budget.
     assert_eq!(
         bodies.len(),
-        3,
+        3 * (1 + usize::from(agnt_core::config::defaults::MAX_TURNS_FEEDBACK_RETRIES)),
         "the CLI --max-turns value must win over the persona max_tool_turns value"
     );
     Ok(())
@@ -116,9 +121,11 @@ async fn test_integration_agent_run_agent_default_max_tool_turns_is_twenty() -> 
         "the turn must fail on the exhausted tool-call budget; got: {err}"
     );
     let bodies = agnt_testkit::received_request_bodies(env.llm()).await;
+    // The default budget bounds the tool-call rounds; the max-turns steering
+    // retry re-runs the turn once with a fresh budget.
     assert_eq!(
         bodies.len(),
-        20,
+        20 * (1 + usize::from(agnt_core::config::defaults::MAX_TURNS_FEEDBACK_RETRIES)),
         "stderr mode must apply the pipeline-mode default budget of 20 tool-call rounds"
     );
     Ok(())

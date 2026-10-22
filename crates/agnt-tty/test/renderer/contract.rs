@@ -60,7 +60,9 @@ fn run_mock_flow<R: UiRenderer>(renderer: &mut R) {
         tool_calls: 1,
         input_tokens: 2,
         output_tokens: 1,
-        total_tokens: 3,
+        total_tokens: Some(3),
+        cost: None,
+        cost_complete: false,
     });
     renderer.emit(&UiEvent::ToolStarted {
         name: "t".to_string(),
@@ -121,7 +123,9 @@ fn stderr_renderer_writes_only_to_stderr_sink() {
         tool_calls: 0,
         input_tokens: 3,
         output_tokens: 2,
-        total_tokens: 5,
+        total_tokens: Some(5),
+        cost: None,
+        cost_complete: false,
     });
     renderer.flush();
 
@@ -195,7 +199,9 @@ fn default_busy_flow_uses_spinner_without_redundant_persistent_busy_lines() {
         tool_calls: 0,
         input_tokens: 30,
         output_tokens: 12,
-        total_tokens: 42,
+        total_tokens: Some(42),
+        cost: None,
+        cost_complete: false,
     });
     renderer.flush();
 

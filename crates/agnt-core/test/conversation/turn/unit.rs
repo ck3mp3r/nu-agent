@@ -31,7 +31,6 @@ fn turn_result_can_be_constructed() {
         cancelled: false,
         cancel_reason: None,
         last_total_tokens: 0,
-        pre_turn_message_count: 0,
         last_known_history: vec![],
     };
 
@@ -211,7 +210,6 @@ fn path_b_cancelled_with_partial_text_constructs_user_and_assistant_messages() {
         cancelled: true,
         cancel_reason: None,
         last_total_tokens: 0,
-        pre_turn_message_count: 0,
         last_known_history: vec![],
     };
 
@@ -264,7 +262,6 @@ fn path_b_cancelled_with_empty_text_constructs_only_user_message() {
         cancelled: true,
         cancel_reason: None,
         last_total_tokens: 0,
-        pre_turn_message_count: 0,
         last_known_history: vec![],
     };
 
@@ -297,7 +294,6 @@ fn turn_result_cancelled_flag_propagates() {
         cancelled: true,
         cancel_reason: None,
         last_total_tokens: 0,
-        pre_turn_message_count: 0,
         last_known_history: vec![],
     };
 
@@ -320,7 +316,6 @@ fn turn_result_cancelled_flag_propagates() {
         cancelled: false,
         cancel_reason: None,
         last_total_tokens: 0,
-        pre_turn_message_count: 0,
         last_known_history: vec![],
     };
 

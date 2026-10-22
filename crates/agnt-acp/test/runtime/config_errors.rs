@@ -28,7 +28,7 @@ async fn test_runtime_build_acp_runtime_unreadable_agents_md_is_non_fatal() -> R
         std::fs::set_permissions(&agents_md, perms)?;
     }
     let config_path = write_config(temp.path(), BASE_CONFIG)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let runtime = build_acp_runtime(make_params(cwd.clone(), config_path, Vec::new(), store))
@@ -65,7 +65,7 @@ async fn test_runtime_build_acp_runtime_malformed_config_returns_config_error() 
     force_env_only_vault();
     let temp = tempfile::tempdir()?;
     let config_path = write_config(temp.path(), "this is not = valid toml [[[")?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let result = build_acp_runtime(make_params(
@@ -96,7 +96,7 @@ async fn test_runtime_build_acp_runtime_missing_default_model_returns_config_err
     let temp = tempfile::tempdir()?;
     let config = "[providers.ollama]\nbase_url = \"http://localhost:11434\"\n";
     let config_path = write_config(temp.path(), config)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let result = build_acp_runtime(make_params(
@@ -130,7 +130,7 @@ async fn test_runtime_build_acp_runtime_unresolvable_model_returns_config_error(
     // An empty model name cannot be resolved into a runtime config.
     let config = "[models.default]\nmodel = \"ollama/\"\n";
     let config_path = write_config(temp.path(), config)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let result = build_acp_runtime(make_params(

@@ -12,11 +12,11 @@ use crate::config::Config;
 // ---------------------------------------------------------------------------
 
 /// A model-correctable provider failure classified by HTTP status (413 →
-/// RequestTooLarge via `classify_by_status`) must append exactly one user-role
-/// feedback message to the session memory and re-run the turn — proven by a
-/// second scripted turn succeeding.
+/// RequestTooLarge via `classify_by_status`) must steer the retry prompt with
+/// exactly one feedback message and re-run the turn — proven by a second
+/// scripted turn succeeding.
 #[tokio::test]
-async fn model_correctable_failure_appends_feedback_and_reruns_turn() -> Result<()> {
+async fn model_correctable_failure_steers_and_reruns_turn() -> Result<()> {
     // -- Setup & Fixtures
     let config = Config {
         max_retries: Some(3),
@@ -80,7 +80,7 @@ async fn model_correctable_failure_appends_feedback_and_reruns_turn() -> Result<
     assert_eq!(
         feedback_message_count(&persisted),
         1,
-        "exactly one feedback message must be appended; got {persisted:?}"
+        "the saved prompt must carry exactly one feedback message; got {persisted:?}"
     );
     let feedback_msg = persisted
         .iter()
@@ -101,6 +101,10 @@ async fn model_correctable_failure_appends_feedback_and_reruns_turn() -> Result<
 /// Four consecutive model-correctable failures with a cap of
 /// MAX_PROVIDER_FEEDBACK_RETRIES (3) must produce exactly three feedback
 /// messages and then fall through to the hard-error path.
+///
+/// The carrier is replaced, never accumulated: retry 1 carries the First
+/// remedy, retries 2 and 3 carry the Backoff remedy and none of the First
+/// remedy's text. Under accumulation retry 2 would carry both.
 #[tokio::test]
 async fn feedback_cap_three_produces_three_messages_then_hard_error() -> Result<()> {
     // -- Setup & Fixtures
@@ -169,20 +173,54 @@ async fn feedback_cap_three_produces_three_messages_then_hard_error() -> Result<
         err.msg
     );
 
+    // Each retry's prompt carries the feedback message above the original
+    // prompt; the failed run saves nothing.
+    let requests = probe.requests();
+    assert_eq!(request_prompt(&requests[0]), "hello");
+    for (i, request) in requests.iter().enumerate().skip(1) {
+        let prompt = request_prompt(request);
+        assert!(
+            prompt.starts_with(crate::conversation::turn::feedback::FEEDBACK_PREFIX),
+            "retry {i} must carry the feedback message; got: {prompt}"
+        );
+        assert!(
+            prompt.ends_with("hello"),
+            "retry {i} must keep the original prompt; got: {prompt}"
+        );
+    }
+    // Latest-wins: the carrier is replaced, never accumulated. Retry 1 carries
+    // the First remedy; retries 2 and 3 carry the Backoff remedy and none of
+    // the First remedy's distinctive text. Under accumulation retry 2 would
+    // carry both.
+    let first_prompt = request_prompt(&requests[1]);
+    assert!(
+        first_prompt.contains(crate::config::defaults::DEFAULT_OUTPUT_BUDGET_EMPTY_REMEDY),
+        "retry 1 must carry the First remedy; got: {first_prompt}"
+    );
+    for (i, request) in requests.iter().enumerate().skip(2) {
+        let prompt = request_prompt(request);
+        assert!(
+            prompt.contains("still hitting the output token limit"),
+            "retry {i} must carry the Backoff remedy; got: {prompt}"
+        );
+        assert!(
+            !prompt.contains("before any answer"),
+            "retry {i} must not carry the First remedy (latest-wins, not accumulation); got: {prompt}"
+        );
+    }
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert_eq!(
-        feedback_message_count(&persisted),
-        3,
-        "cap 3 must produce exactly three feedback messages; got {persisted:?}"
+    assert!(
+        persisted.is_empty(),
+        "a failed turn saves nothing; got {persisted:?}"
     );
 
     Ok(())
 }
 
-/// A retryable-kind failure (429 RateLimit) must append no feedback message
-/// and must not consume the feedback budget.
+/// A retryable-kind failure (429 RateLimit) must get no feedback steering and
+/// must not consume the feedback budget.
 #[tokio::test]
-async fn retryable_kind_failure_appends_no_feedback_message() -> Result<()> {
+async fn retryable_kind_failure_gets_no_feedback_steering() -> Result<()> {
     // -- Setup & Fixtures
     let config = Config {
         max_retries: Some(0),
@@ -230,20 +268,25 @@ async fn retryable_kind_failure_appends_no_feedback_message() -> Result<()> {
         "retryable kinds must not trigger a feedback retry"
     );
 
-    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    let requests = probe.requests();
     assert_eq!(
-        feedback_message_count(&persisted),
-        0,
-        "retryable kinds must not append feedback messages; got {persisted:?}"
+        request_prompt(&requests[0]),
+        "hello",
+        "retryable kinds must not steer the prompt"
+    );
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert!(
+        persisted.is_empty(),
+        "a failed turn saves nothing; got {persisted:?}"
     );
 
     Ok(())
 }
 
-/// After a successful feedback retry, the session store must contain the
-/// feedback message exactly once and the turn's exchange exactly once.
+/// After a successful feedback retry, the retry prompt carries the feedback
+/// message and the saved exchange carries it exactly once.
 #[tokio::test]
-async fn successful_feedback_retry_persists_feedback_exactly_once() -> Result<()> {
+async fn successful_feedback_retry_delivers_feedback_exactly_once() -> Result<()> {
     // -- Setup & Fixtures
     let config = Config {
         max_retries: Some(3),
@@ -261,6 +304,7 @@ async fn successful_feedback_retry_persists_feedback_exactly_once() -> Result<()
             MockStreamEvent::final_response_with_default_usage(),
         ],
     ]);
+    let probe = model.clone();
     let shared_model = super::test_utils::shared_model_handle(model);
 
     let mut executor = make_executor(
@@ -290,24 +334,29 @@ async fn successful_feedback_retry_persists_feedback_exactly_once() -> Result<()
         "feedback retry must complete the turn"
     );
 
+    // The feedback rides the retry prompt, so the saved user message carries it
+    // exactly once.
+    let requests = probe.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "the feedback retry re-runs the turn once"
+    );
+    assert!(
+        request_prompt(&requests[1])
+            .starts_with(crate::conversation::turn::feedback::FEEDBACK_PREFIX),
+        "the retry prompt must carry the feedback message"
+    );
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        3,
-        "store must hold feedback + user prompt + assistant response; got {persisted:?}"
+        2,
+        "the completed run saves the prompt and the reply; got {persisted:?}"
     );
     assert_eq!(
         feedback_message_count(&persisted),
         1,
-        "feedback message must be persisted exactly once; got {persisted:?}"
-    );
-    let prompt_count = persisted
-        .iter()
-        .filter(|m| message_text(m).as_deref() == Some("hello"))
-        .count();
-    assert_eq!(
-        prompt_count, 1,
-        "user prompt must be persisted exactly once"
+        "the saved prompt carries the feedback message exactly once; got {persisted:?}"
     );
     let reply_count = persisted
         .iter()
@@ -321,11 +370,11 @@ async fn successful_feedback_retry_persists_feedback_exactly_once() -> Result<()
     Ok(())
 }
 
-/// A turn with no session (final_session_id None) must not append feedback
-/// messages: the second scripted turn stays unconsumed, proving the feedback
-/// branch never fired.
+/// A turn with no session (final_session_id None) gets the feedback steering
+/// too: the retry prompt carries the feedback message and the second scripted
+/// turn completes the run.
 #[tokio::test]
-async fn no_session_turn_appends_no_feedback_message() -> Result<()> {
+async fn no_session_turn_gets_feedback_steering() -> Result<()> {
     // -- Setup & Fixtures
     let config = Config {
         max_retries: Some(3),
@@ -366,18 +415,21 @@ async fn no_session_turn_appends_no_feedback_message() -> Result<()> {
         .await;
 
     // -- Check
-    let err = result
-        .err()
-        .ok_or("session-less model-correctable failure must return Err")?;
+    let outcome = result.map_err(|e| format!("session-less feedback retry must recover: {e:?}"))?;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed),
+        "session-less turns get the feedback steering too"
+    );
     assert_eq!(
         probe.request_count(),
-        1,
-        "session-less turns must not re-run via feedback"
+        2,
+        "the session-less turn must re-run once via feedback"
     );
+    let requests = probe.requests();
+    let retry_prompt = request_prompt(&requests[1]);
     assert!(
-        err.msg.contains("max_output_tokens"),
-        "hard-error message must describe the OutputBudget failure; got: {}",
-        err.msg
+        retry_prompt.starts_with(crate::conversation::turn::feedback::FEEDBACK_PREFIX),
+        "the session-less retry prompt must carry the feedback message; got: {retry_prompt}"
     );
 
     Ok(())
@@ -440,11 +492,24 @@ async fn feedback_retries_do_not_consume_backoff_budget() -> Result<()> {
         err.msg
     );
 
-    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    // The two model-correctable failures steer the next attempt; the 429
+    // backoff retry reuses the carrier.
+    let requests = probe.requests();
+    let steered = requests
+        .iter()
+        .filter(|request| {
+            request_prompt(request)
+                .starts_with(crate::conversation::turn::feedback::FEEDBACK_PREFIX)
+        })
+        .count();
     assert_eq!(
-        feedback_message_count(&persisted),
-        2,
-        "only the two model-correctable failures append feedback; got {persisted:?}"
+        steered, 3,
+        "the two feedback retries and the backoff retry carry the feedback message"
+    );
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert!(
+        persisted.is_empty(),
+        "a failed turn saves nothing; got {persisted:?}"
     );
 
     Ok(())

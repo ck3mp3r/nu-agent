@@ -11,6 +11,7 @@ fn openai_wiremock_config(server_uri: &str, model: &str) -> crate::config::Confi
     crate::config::Config {
         provider: "openai".to_string(),
         provider_impl: None,
+        catalog: None,
         model: model.to_string(),
         api_key: Some("fake-key".to_string()),
         base_url: Some(server_uri.to_string()),
@@ -37,6 +38,7 @@ fn openai_wiremock_config(server_uri: &str, model: &str) -> crate::config::Confi
         a2a_enabled: None,
         a2a_port: None,
         session_store_type: None,
+        pricing: None,
     }
 }
 

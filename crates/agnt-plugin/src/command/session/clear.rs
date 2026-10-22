@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 
 use crate::plugin::AgentPlugin;
-use agnt_core::session::SessionStore;
-use agnt_core::session::SessionStoreBackend;
+use agnt_core::session::RigStoreConfig;
 use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
@@ -33,7 +32,7 @@ impl AgentSessionClear {
         &self,
         engine: &C,
         call: &EvaluatedCall,
-        store: &SessionStoreBackend,
+        rig: &RigStoreConfig,
     ) -> Result<Value, LabeledError> {
         // Get session_id parameter
         let session_id: String = call.req(0)?;
@@ -47,32 +46,13 @@ impl AgentSessionClear {
         // Determine which prefixed ID exists, trying the new prefix first and
         // falling back to the legacy prefix for sessions created before the
         // prefix length increase.
-        let new_exists = store
-            .load(&new_id)
-            .await
-            .map_err(|e| LabeledError::new(format!("Failed to load session: {e}")))?
-            .is_some();
-        let target_id = if new_exists {
-            new_id
-        } else {
-            let legacy_exists = store
-                .load(&legacy_id)
-                .await
-                .map_err(|e| LabeledError::new(format!("Failed to load session: {e}")))?
-                .is_some();
-            if legacy_exists {
-                legacy_id
-            } else {
-                return Err(LabeledError::new(format!(
-                    "Session not found: {session_id}"
-                )));
-            }
-        };
+        let target_id = [new_id, legacy_id]
+            .into_iter()
+            .find(|id| rig.holds(id).unwrap_or(false))
+            .ok_or_else(|| LabeledError::new(format!("Session not found: {session_id}")))?;
 
-        // Delete the session
-        store
-            .delete(&target_id)
-            .await
+        // Delete the session's rig-memory store: its logs and its files.
+        rig.destroy(&target_id)
             .map_err(|e| LabeledError::new(format!("Failed to delete session: {e}")))?;
 
         // Return empty value (success)
@@ -127,9 +107,7 @@ impl SimplePluginCommand for AgentSessionClear {
         _input: &Value,
     ) -> Result<Value, LabeledError> {
         let store_type = plugin.resolve_store_type(call)?;
-        let store = plugin
-            .create_store_with(store_type)
-            .map_err(|e| LabeledError::new(format!("Failed to create session store: {e}")))?;
-        crate::block_on!(plugin, self.run_inner(engine, call, &store))
+        let rig = RigStoreConfig::new(store_type);
+        crate::block_on!(plugin, self.run_inner(engine, call, &rig))
     }
 }

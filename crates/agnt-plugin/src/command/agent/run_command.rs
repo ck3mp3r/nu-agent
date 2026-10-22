@@ -106,11 +106,6 @@ pub(super) fn run_command(
 
     // Resolve session store type with CLI > env > config > default precedence
     let store_type = plugin.resolve_store_type(call)?;
-    let store = Arc::new(
-        plugin
-            .create_store_with(store_type)
-            .map_err(|e| LabeledError::new(format!("Failed to create session store: {e}")))?,
-    );
 
     // Pipeline mode gets a bounded tool-turn budget unless explicitly configured.
     // User-specified value (via --max-turns or config file) always wins.
@@ -243,7 +238,8 @@ pub(super) fn run_command(
         )
         .map_err(|e| LabeledError::new("Invalid tool name").with_label(e.to_string(), call.head))?;
 
-        let resolver = DefaultSessionResolver::new(Arc::clone(&store));
+        let resolver =
+            DefaultSessionResolver::new(agnt_core::session::RigStoreConfig::new(store_type));
         let mut session_resolution = resolver
             .resolve(SessionResolutionInput {
                 use_tui: false,
@@ -304,7 +300,7 @@ pub(super) fn run_command(
             vault: plugin_config.vault.clone(),
             mcp_registry,
             engine: engine_arc.clone(),
-            store: store.clone(),
+            store_type,
             final_session_id: session_resolution.final_session_id,
             compaction_params,
             proactive_threshold_pct: merged_compaction.proactive_threshold_pct,

@@ -91,6 +91,7 @@ async fn execute_turn_cancel_returns_cancelled_true() -> Result<()> {
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: handle,
         visible_tool_definitions: vec![ToolDefinition {
+            annotations: crate::types::ToolAnnotations::default(),
             name: ToolName::new("test_cancel_tool")?,
             description: "cancels the turn".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
@@ -232,7 +233,7 @@ async fn execute_turn_sends_no_max_tokens_when_both_unset() -> Result<()> {
     Ok(())
 }
 
-/// Test that TurnContext uses CompactingMemoryOf<FsSessionStore>.
+/// Test that TurnContext holds a `MemoryOf` over the rig store.
 #[test]
 fn turn_context_uses_compacting_memory() {
     let (_temp_dir, memory) = make_compacting_memory();

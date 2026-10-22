@@ -3,6 +3,7 @@ use super::super::providers::{
     CachedProviderClient, ClientCacheKey, build_anthropic_client, build_copilot_client,
     build_ollama_client, build_openai_client, resolve_provider_type,
 };
+use crate::config::pricing::PricingView;
 use crate::config::{Config, ModelRoleConfig, PluginConfig};
 use nu_protocol::LabeledError;
 
@@ -121,6 +122,11 @@ impl ProviderState {
     /// completion model into a `DynModel<Completion>` built from the **bare**
     /// model name (`self.config.model`). Both startup and model switching route
     /// through it so the bare-name extraction lives in exactly one place.
+    ///
+    /// The model is bound to the pricing ladder over the startup models cache,
+    /// so `DynModel::spec()` answers with the ladder's prices. Without a cache
+    /// the configured price still applies; with neither, the wire keeps the
+    /// built-in catalog's answer.
     pub async fn build_dyn_model(
         &mut self,
     ) -> Result<rig::DynModel<rig::operation::Completion>, LabeledError> {
@@ -129,7 +135,17 @@ impl ProviderState {
             .cached_client
             .as_ref()
             .ok_or_else(|| LabeledError::new("client must be cached after ensure_client_cached"))?;
-        client.build_dyn_model(&self.config.model)
+        let cache = self
+            .startup_plugin_config
+            .as_ref()
+            .and_then(|config| config.models_cache.as_ref());
+        let pricing = cache.map(PricingView::new);
+        client.build_dyn_model(
+            &self.config.model,
+            self.config.cache_section(),
+            pricing.as_ref(),
+            self.config.pricing.as_ref(),
+        )
     }
 }
 

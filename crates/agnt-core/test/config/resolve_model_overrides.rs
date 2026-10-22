@@ -22,6 +22,7 @@ fn test_plugin_config_resolve_model_role_level_overrides() -> Result<()> {
                 preamble: None,
                 tool_call: None,
                 limit: None,
+                pricing: None,
             },
         );
         let mut providers = HashMap::new();
@@ -33,6 +34,7 @@ fn test_plugin_config_resolve_model_role_level_overrides() -> Result<()> {
                 base_url: None,
                 provider: None,
                 preamble: None,
+                catalog: None,
                 models,
             },
         );
@@ -215,6 +217,7 @@ fn test_resolve_model_role_max_output_tokens_overrides_model_limit() -> Result<(
                     base_url: None,
                     provider: None,
                     preamble: None,
+                    catalog: None,
                     models: {
                         let mut models = HashMap::new();
                         models.insert(
@@ -228,6 +231,7 @@ fn test_resolve_model_role_max_output_tokens_overrides_model_limit() -> Result<(
                                     context: Some(128000),
                                     output: Some(8192),
                                 }),
+                                pricing: None,
                             },
                         );
                         models

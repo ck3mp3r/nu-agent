@@ -80,6 +80,7 @@ fn plugin_config_read_timeout_secs_propagates_to_resolved_config() -> Result<()>
             base_url: None,
             provider: None,
             preamble: None,
+            catalog: None,
             models: HashMap::new(),
         },
     );
@@ -141,6 +142,7 @@ fn plugin_config_without_read_timeout_secs_resolves_to_none() -> Result<()> {
             base_url: None,
             provider: None,
             preamble: None,
+            catalog: None,
             models: HashMap::new(),
         },
     );
@@ -216,7 +218,7 @@ fn exchange_body() -> String {
 /// Write a live cached session key into `dir`, as a completed login would.
 fn seed_cached_key(dir: &Path) -> Result<()> {
     std::fs::write(
-        dir.join("api-key.json"),
+        dir.join("copilot.json"),
         serde_json::json!({ "token": EXCHANGED_KEY, "expires_at": i64::MAX }).to_string(),
     )?;
     Ok(())
@@ -232,7 +234,7 @@ fn recorded_authorization(http: &RecordingHttpClient) -> Option<String> {
 }
 
 /// The Authorization header a completion request would carry.
-fn completion_authorization(client: &Copilot) -> Result<String> {
+fn completion_authorization(client: &rig::providers::openai::OpenAI) -> Result<String> {
     let model = client.completion("gpt-4o");
     let encoded = model
         .wire
@@ -447,3 +449,10 @@ async fn copilot_oauth_keeps_an_explicit_base_url() -> Result<()> {
     assert_eq!(client.config().api_key.expose(), EXCHANGED_KEY);
     Ok(())
 }
+
+// region:    --- Modules
+
+#[path = "providers/pricing.rs"]
+mod pricing;
+
+// endregion: --- Modules

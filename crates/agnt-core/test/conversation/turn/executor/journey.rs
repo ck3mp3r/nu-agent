@@ -42,6 +42,5 @@ use crate::hook::output_repetition::{
     OUTPUT_REPETITION_THRESHOLD,
 };
 use crate::protocol::event::UiEvent;
-use crate::session::StoreEntry;
 use crate::types::Message;
 use crate::utils::value_ext::extract_response_text_from_value;

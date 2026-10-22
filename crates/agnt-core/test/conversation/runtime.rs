@@ -54,12 +54,8 @@ use crate::types::{ToolDefinition, ToolName};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-/// Build a `MemoryState<FsSessionStore>` (no compaction — `CachedMemory` used
-/// directly) so tests never invoke a real LLM.
-fn test_memory_state() -> super::super::state::memory::MemoryState<crate::session::FsSessionStore> {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = std::sync::Arc::new(crate::session::FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    ));
-    super::super::state::memory::MemoryState::new(store)
+/// Build a `MemoryState` over an in-memory rig store (no compaction —
+/// `CachedMemory` used directly) so tests never invoke a real LLM.
+fn test_memory_state() -> super::super::state::memory::MemoryState {
+    super::super::state::memory::MemoryState::new(crate::session::RigStoreConfig::in_memory())
 }

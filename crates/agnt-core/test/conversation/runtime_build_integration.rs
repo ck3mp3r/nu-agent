@@ -9,8 +9,7 @@ use super::*;
 use crate::bus::create_bus;
 use crate::compaction::CompactionParams;
 use crate::config::AgentsConfig;
-use crate::session::factory::create_store_in;
-use crate::session::{SessionStoreBackend, StoreType};
+use crate::session::StoreType;
 use crate::tools::authz::PermissionsConfig;
 use crate::tools::closure::{ClosureRegistry, CwdEngine};
 use crate::tools::handler::McpToolRegistry;
@@ -30,17 +29,10 @@ fn offline_config() -> Config {
     }
 }
 
-async fn memory_store(dir: &std::path::Path) -> Result<Arc<SessionStoreBackend>> {
-    let store = create_store_in(StoreType::Memory, dir)
-        .await
-        .map_err(|e| format!("should create in-memory store: {e:?}"))?;
-    Ok(Arc::new(store))
-}
-
 fn make_params(
     cwd: std::path::PathBuf,
     config: Config,
-    store: Arc<SessionStoreBackend>,
+    store_type: StoreType,
 ) -> RuntimeBuildParams {
     RuntimeBuildParams {
         runtime: tokio::runtime::Handle::current(),
@@ -57,7 +49,7 @@ fn make_params(
         vault: None,
         mcp_registry: McpToolRegistry::empty(),
         engine: CwdEngine::shared(cwd.to_string_lossy().to_string()),
-        store,
+        store_type,
         final_session_id: None,
         compaction_params: CompactionParams::default(),
         proactive_threshold_pct: None,
@@ -90,10 +82,10 @@ async fn test_runtime_build_build_runtime_constructs_runtime_from_params() -> Re
     let temp = tempfile::tempdir()?;
     let cwd = temp.path().join("session-cwd");
     std::fs::create_dir_all(&cwd)?;
-    let store = memory_store(temp.path()).await?;
+    let store_type = StoreType::Memory;
 
     // -- Exec
-    let runtime = build_runtime(make_params(cwd.clone(), offline_config(), store))
+    let runtime = build_runtime(make_params(cwd.clone(), offline_config(), store_type))
         .await
         .map_err(|e| format!("should build runtime: {e:?}"))?;
 
@@ -115,7 +107,7 @@ async fn test_runtime_build_build_runtime_constructs_runtime_from_params() -> Re
 async fn test_runtime_build_build_runtime_uses_default_compaction_threshold() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let store = memory_store(temp.path()).await?;
+    let store_type = StoreType::Memory;
     let expected =
         (defaults::MAX_CONTEXT_TOKENS as f64 * defaults::PROACTIVE_THRESHOLD_PCT) as usize;
 
@@ -123,7 +115,7 @@ async fn test_runtime_build_build_runtime_uses_default_compaction_threshold() ->
     let runtime = build_runtime(make_params(
         temp.path().to_path_buf(),
         offline_config(),
-        store,
+        store_type,
     ))
     .await
     .map_err(|e| format!("should build runtime: {e:?}"))?;
@@ -137,7 +129,7 @@ async fn test_runtime_build_build_runtime_uses_default_compaction_threshold() ->
 async fn test_runtime_build_build_runtime_unsupported_provider_reports_model_error() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let store = memory_store(temp.path()).await?;
+    let store_type = StoreType::Memory;
     let config = Config {
         provider: "not-a-provider".to_string(),
         model: "whatever".to_string(),
@@ -145,7 +137,7 @@ async fn test_runtime_build_build_runtime_unsupported_provider_reports_model_err
     };
 
     // -- Exec
-    let error = build_runtime(make_params(temp.path().to_path_buf(), config, store))
+    let error = build_runtime(make_params(temp.path().to_path_buf(), config, store_type))
         .await
         .err()
         .ok_or("an unsupported provider must fail")?;

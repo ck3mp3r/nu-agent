@@ -1,154 +1,111 @@
-//! A standalone summarizer service that summarizes evicted messages with the
-//! LLM and emits TUI events on the bus.
+//! The compactor: summarizes a conversation's older messages with the LLM and
+//! splices the summary in through rig-memory's compaction machinery.
 //!
-//! `NuCompactor` is invoked directly by the `HookChain` compaction logic (via
-//! `RequestPatch::history`), not through a rig `Compactor` trait. It produces a
-//! `SummaryArtifact` that converts into a `Message::User` with the required
-//! "What we did thus far:" header.
+//! `NuCompactor` is invoked directly by the `HookChain` compaction logic. It
+//! owns the `CompactionPolicy` and the `ModelSpec` the policy plans against, and
+//! it emits TUI events on the bus while the summary streams.
 
 use std::sync::{Arc, Mutex};
 
 use crate::bus::{Bus, CompactionEvent};
-use crate::session::{CompactionMarker, SessionStore, StoreEntry};
-use crate::types::{Message, UserContent};
-use chrono::Utc;
+use crate::session::MemoryError;
+use crate::types::Message;
 
 use futures::StreamExt;
 use rig::DynModel;
-use rig::memory::MemoryError;
+use rig::catalog::ModelSpec;
 use rig::operation::Completion;
+use rig::providers::registry::{Format, ProviderId};
+use rig_memory::{CompactReason, CompactionPolicy, Summarizer, SummaryPlan, summary_author};
 
-/// The header every artifact body must start with.
+/// The leading text of every compaction summary message.
 ///
-/// `merge_consecutive_same_role` in `session/repair.rs` checks this header
-/// instead of a content marker so a summary artifact is never folded into the
-/// next `User` turn.
-pub(crate) const SUMMARY_HEADER: &str = "What we did thus far:\n\n";
-/// Marker appended when the artifact body is truncated to `max_bytes`.
-const TRUNCATION_MARKER: &str = "[…truncated…]";
+/// `merge_consecutive_same_role` in `session/repair.rs` checks this prefix so a
+/// summary is never folded into the next `User` turn. It matches the text
+/// `rig_memory::SummaryState::message()` writes.
+pub(crate) const SUMMARY_PREFIX: &str =
+    "The conversation before this point was compacted into this summary:";
 
-const COMPACTION_SUMMARY_PROMPT: &str = include_str!("prompts/compaction_summary.md");
-const COMPACTION_ROLLING_PROMPT: &str = include_str!("prompts/compaction_rolling.md");
-
-/// The artifact produced by `NuCompactor::compact()`.
-///
-/// Converts into a `Message::User` whose text is the summary (with an optional
-/// truncation marker when the artifact is capped to `max_bytes`).
+/// What a compaction that ran left behind.
 #[derive(Debug, Clone)]
-pub struct SummaryArtifact {
-    summary: String,
-    total_tokens: Option<u64>,
+pub struct CompactionOutcome {
+    /// The conversation after the splice, as rig holds it.
+    pub messages: Vec<Message>,
 }
 
-impl SummaryArtifact {
-    /// Construct an artifact from a persisted marker summary (cached-summary
-    /// path), with no token attribution.
-    pub fn from_marker_summary(summary: impl Into<String>) -> Self {
-        Self {
-            summary: summary.into(),
-            total_tokens: None,
-        }
-    }
-
-    /// The summarized text, ready to be converted into a user message.
-    pub fn summary(&self) -> &str {
-        &self.summary
-    }
-
-    /// Total tokens reported by the provider for the summarizer call, if any.
-    pub fn total_tokens(&self) -> Option<u64> {
-        self.total_tokens
-    }
-}
-
-impl From<SummaryArtifact> for Message {
-    fn from(artifact: SummaryArtifact) -> Self {
-        let text = format!("{SUMMARY_HEADER}{}", artifact.summary);
-        Message::User {
-            content: vec![UserContent::Text(crate::types::Text::new(text))],
-        }
-    }
-}
-
-/// A `Compactor` that summarizes a batch of evicted messages with the LLM and
-/// emits `CompactionEvent::Started`/`SummaryChunk` events on the bus during
-/// streaming.
+/// The `ModelSpec` the compaction policy plans against, resolved from our
+/// config.
 ///
-/// The summarizer input is `carry_over` text (if any) prepended to the formatted
-/// evicted messages, wrapped in the compaction summary prompt.
+/// The provider name is mapped to a rig `ProviderId` once, here: a name this
+/// build registers, else a catalog-only id. A name that resolves to neither
+/// disables compaction for the session — the spec is never mislabelled with an
+/// arbitrary registered provider.
+pub fn resolve_model_spec(
+    provider: &str,
+    model: &str,
+    context_window: Option<u32>,
+    max_output_tokens: Option<u32>,
+) -> Option<ModelSpec> {
+    let Some(id) =
+        ProviderId::new(provider, Format::OpenAi).or_else(|| ProviderId::catalog(provider))
+    else {
+        log::warn!(
+            "Compaction disabled: provider '{provider}' resolves to no registered or catalog \
+             rig provider id"
+        );
+        return None;
+    };
+    let mut spec = ModelSpec::new(id, model);
+    if let Some(tokens) = context_window {
+        spec = spec.with_context_window(tokens);
+    }
+    if let Some(tokens) = max_output_tokens {
+        spec = spec.with_max_output_tokens(tokens);
+    }
+    Some(spec)
+}
+
+/// A compactor that summarizes a conversation's older messages with the LLM and
+/// splices the summary in through rig-memory.
 ///
 /// The model is held as `Arc<Mutex<DynModel<Completion>>>` so it can be swapped
 /// at runtime via `set_model()` — `DynModel` is rig's erased, cloneable model
-/// handle, so the concrete `NuCompactor<S>` type stays fixed regardless of
-/// provider. The model is constructed eagerly at startup and never empty.
-pub struct NuCompactor<S = NoopStore>
-where
-    S: SessionStore + Clone + Send + Sync,
-{
+/// handle, so the concrete type stays fixed regardless of provider. The model is
+/// constructed eagerly at startup and never empty.
+///
+/// A `None` spec means the configured provider resolved to no rig provider id:
+/// compaction is disabled for the session and `compact()` does nothing.
+pub struct NuCompactor {
     model: Arc<Mutex<DynModel<Completion>>>,
     bus: Bus,
-    max_bytes: Option<usize>,
-    /// Backing store for persisting compaction markers. When set, `compact()`
-    /// appends a `CompactionMarker` after producing the artifact.
-    store: Option<Arc<S>>,
+    policy: CompactionPolicy,
+    spec: Option<ModelSpec>,
 }
 
-impl<S: SessionStore + Clone + Send + Sync> Clone for NuCompactor<S> {
+impl Clone for NuCompactor {
     fn clone(&self) -> Self {
         Self {
             model: Arc::clone(&self.model),
             bus: self.bus.clone(),
-            max_bytes: self.max_bytes,
-            store: self.store.clone(),
+            policy: self.policy.clone(),
+            spec: self.spec.clone(),
         }
     }
 }
 
-/// A `SessionStore` that is never used — the default `S` type parameter so
-/// `NuCompactor` can be named without an explicit store when marker
-/// persistence is not needed (e.g. unit tests of the compactor itself).
-#[derive(Debug, Clone)]
-pub struct NoopStore;
-
-impl SessionStore for NoopStore {
-    type Error = std::io::Error;
-
-    async fn create(&self, _id: &str, _first_messages: &[Message]) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    async fn load(
-        &self,
-        _id: &str,
-    ) -> Result<Option<(crate::session::SessionMetadata, Vec<StoreEntry>)>, Self::Error> {
-        Ok(None)
-    }
-
-    async fn append(&self, _id: &str, _entries: &[StoreEntry]) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    async fn replace_entries(&self, _id: &str, _entries: &[StoreEntry]) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    async fn list(&self) -> Result<Vec<crate::session::SessionInfo>, Self::Error> {
-        Ok(Vec::new())
-    }
-
-    async fn delete(&self, _id: &str) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
-impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
-    /// Construct a `NuCompactor` with no marker store.
-    pub fn new(model: DynModel<Completion>, bus: Bus, max_bytes: Option<usize>) -> Self {
+impl NuCompactor {
+    /// Construct a `NuCompactor` that owns its model.
+    pub fn new(
+        model: DynModel<Completion>,
+        bus: Bus,
+        policy: CompactionPolicy,
+        spec: Option<ModelSpec>,
+    ) -> Self {
         Self {
             model: Arc::new(Mutex::new(model)),
             bus,
-            max_bytes,
-            store: None,
+            policy,
+            spec,
         }
     }
 
@@ -161,21 +118,15 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
     pub fn from_shared_model(
         model_arc: Arc<Mutex<DynModel<Completion>>>,
         bus: Bus,
-        max_bytes: Option<usize>,
+        policy: CompactionPolicy,
+        spec: Option<ModelSpec>,
     ) -> Self {
         Self {
             model: model_arc,
             bus,
-            max_bytes,
-            store: None,
+            policy,
+            spec,
         }
-    }
-
-    /// Attach a backing store so `compact()` persists a `CompactionMarker`
-    /// after producing the artifact.
-    pub fn with_store(mut self, store: Arc<S>) -> Self {
-        self.store = Some(store);
-        self
     }
 
     /// Swap the model used by subsequent `compact()` calls.
@@ -187,22 +138,82 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
         *self.model.lock().expect("model mutex poisoned") = model;
     }
 
-    /// Summarize `evicted` messages and return the artifact.
+    /// The policy this compactor plans with.
+    pub fn policy(&self) -> &CompactionPolicy {
+        &self.policy
+    }
+
+    /// The spec this compactor plans against, `None` when compaction is
+    /// disabled for the session.
+    pub fn spec(&self) -> Option<&ModelSpec> {
+        self.spec.as_ref()
+    }
+
+    /// The model this compactor summarizes with, cloned from the shared slot.
     ///
-    /// `carry_over` (a previous artifact) is prepended to the summarizer input to
-    /// preserve rolling context across compactions.
+    /// Not the spec [`Self::spec`] returns: that one is built from our config
+    /// and carries no pricing. This model's own `spec()` is the catalog-bound
+    /// one, priced.
+    pub fn model(&self) -> DynModel<Completion> {
+        self.model.lock().expect("model mutex poisoned").clone()
+    }
+
+    /// Compact `conversation_id` in `store` for `reason`.
+    ///
+    /// Loads the conversation, clears old tool outputs per the policy, plans the
+    /// summary, streams it, splices it in through `apply_summary`, and saves.
+    /// Returns `None` when nothing would be summarized (or compaction is
+    /// disabled for the session).
+    ///
+    /// # Errors
+    ///
+    /// When the store cannot be read or written, or the summary cannot be
+    /// produced. Every failure is also emitted as `CompactionEvent::Failed`.
     pub async fn compact(
         &self,
+        store: &dyn rig_memory::Store,
         conversation_id: &str,
-        evicted: &[Message],
-        carry_over: Option<&SummaryArtifact>,
+        reason: &CompactReason,
         source: &str,
-    ) -> Result<SummaryArtifact, MemoryError> {
-        // Load any persisted marker once, to use its summary as carry-over for
-        // the rolling prompt. On restart `CompactingMemory` re-evicts the same
-        // prefix (its in-process `absorbed` watermark is 0), so the marker's
-        // summary keeps the rolling context across sessions.
-        let last_marker = self.last_marker(conversation_id, source).await?;
+    ) -> Result<Option<CompactionOutcome>, MemoryError> {
+        let Some(spec) = self.spec.as_ref() else {
+            log::debug!("Compaction skipped: no model spec, compaction is disabled");
+            return Ok(None);
+        };
+
+        let mut conversation = match rig_memory::load(store, conversation_id) {
+            Ok(conversation) => conversation,
+            Err(e) => {
+                let message = format!("Compaction load error: {e}");
+                self.emit_failed(source, &message).await;
+                return Err(MemoryError::backend(message));
+            }
+        };
+
+        // Old tool outputs are cleared before the summary is asked for, so the
+        // summarizer reads the freed context rather than the raw outputs.
+        let cleared = self
+            .policy
+            .clearing
+            .clear_conversation(&mut conversation, summary_author());
+        if cleared.results > 0 {
+            self.save(store, conversation_id, &mut conversation, source)
+                .await?;
+        }
+
+        let state = rig_memory::summary_state(&conversation);
+        let plan = match self
+            .policy
+            .plan_summary(&conversation, &state, reason, spec)
+        {
+            Ok(Some(plan)) => plan,
+            Ok(None) => return Ok(None),
+            Err(e) => {
+                let message = format!("Compaction plan error: {e}");
+                self.emit_failed(source, &message).await;
+                return Err(MemoryError::backend(message));
+            }
+        };
 
         // Announce start before the slow summarizer LLM call so the status
         // spinner turns on immediately.
@@ -214,21 +225,35 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
             })
             .await;
 
-        let input = self.format_messages(evicted);
-        // The in-process `carry_over` is empty after a restart, but the store
-        // may hold the previous summary from an earlier session. Use it so the
-        // rolling summary incorporates the prior compaction.
-        let carry_text = match carry_over {
-            Some(artifact) => Some(artifact.summary()),
-            None => last_marker.as_ref().map(|marker| marker.summary.as_str()),
-        };
-        let prompt_text = match carry_text {
-            Some(summary) => COMPACTION_ROLLING_PROMPT
-                .replace("{prior_summary}", summary)
-                .replace("{history}", &input),
-            None => COMPACTION_SUMMARY_PROMPT.replace("{history}", &input),
-        };
+        let summary = self.stream_summary(&plan, source).await?;
 
+        let mut next_state = plan.state;
+        next_state.summary = summary;
+        if rig_memory::apply_summary(&mut conversation, plan.keep_from, &next_state).is_none() {
+            let message = "Compaction summary could not be spliced in".to_string();
+            self.emit_failed(source, &message).await;
+            return Err(MemoryError::backend(message));
+        }
+        self.save(store, conversation_id, &mut conversation, source)
+            .await?;
+
+        let messages = conversation
+            .messages()
+            .iter()
+            .map(|message| (**message).clone())
+            .collect();
+        self.emit_completed(&next_state.summary, source).await;
+        Ok(Some(CompactionOutcome { messages }))
+    }
+
+    /// Stream the summary `plan` asks for and return its validated text.
+    ///
+    /// Emits `SummaryChunk` per text delta and `Failed` on every rejection.
+    async fn stream_summary(
+        &self,
+        plan: &SummaryPlan,
+        source: &str,
+    ) -> Result<String, MemoryError> {
         // Lock the shared model and clone it so the LLM call runs against a
         // stable model; a concurrent `set_model()` then only affects the next
         // call. The model is constructed eagerly at startup, so it is always
@@ -238,19 +263,12 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
         // `DynModel::stream` opens the reply synchronously; a failure to open
         // (transport, auth, malformed request) surfaces here rather than as a
         // stream item.
-        let stream = match model.stream(rig::completion::CompletionRequest::new(prompt_text)) {
+        let stream = match model.stream(plan.request.clone()) {
             Ok(stream) => stream,
             Err(e) => {
                 let message = format!("Compaction stream error: {e}");
-                let _ = self
-                    .bus
-                    .compaction()
-                    .send(CompactionEvent::Failed {
-                        source: source.to_string(),
-                        message: message.clone(),
-                    })
-                    .await;
-                return Err(MemoryError::Backend(message.into()));
+                self.emit_failed(source, &message).await;
+                return Err(MemoryError::backend(message));
             }
         };
 
@@ -286,20 +304,18 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
                             rig::streaming::Item::Event(rig::streaming::StreamEvent::Start {
                                 ..
                             }) => {
-                                // A part opened. No v0.42 equivalent; nothing to do.
                                 log::trace!("Compaction stream part started: {chunk:?}");
                             }
                             rig::streaming::Item::Event(rig::streaming::StreamEvent::End {
                                 content: crate::types::AssistantContent::ToolCall(_),
                                 ..
-                            }) => {
-                                let _ = self.bus.compaction().send(CompactionEvent::Failed {
-                                    source: source.to_string(),
-                                    message: "Unexpected tool call during compaction".to_string(),
-                                }).await;
-                                return Err(MemoryError::Backend(
-                                    "Unexpected tool call during compaction".to_string().into(),
-                                ));
+                            })
+                            | rig::streaming::Item::Event(
+                                rig::streaming::StreamEvent::Arguments { .. },
+                            ) => {
+                                let message = "Unexpected tool call during compaction".to_string();
+                                self.emit_failed(source, &message).await;
+                                return Err(MemoryError::backend(message));
                             }
                             rig::streaming::Item::Event(rig::streaming::StreamEvent::End {
                                 ..
@@ -307,256 +323,82 @@ impl<S: SessionStore + Clone + Send + Sync> NuCompactor<S> {
                                 // The finalized part content is not summary text.
                                 // Provider usage is read from the stream after the loop.
                             }
-                            rig::streaming::Item::Event(rig::streaming::StreamEvent::Arguments {
-                                ..
-                            }) => {
-                                let _ = self.bus.compaction().send(CompactionEvent::Failed {
-                                    source: source.to_string(),
-                                    message: "Unexpected tool call during compaction".to_string(),
-                                }).await;
-                                return Err(MemoryError::Backend(
-                                    "Unexpected tool call during compaction".to_string().into(),
-                                ));
-                            }
                             rig::streaming::Item::Unknown(_) => {
-                                let _ = self.bus.compaction().send(CompactionEvent::Failed {
-                                    source: source.to_string(),
-                                    message: "Unexpected stream chunk: unknown".to_string(),
-                                }).await;
-                                return Err(MemoryError::Backend(
-                                    "Unexpected stream chunk: unknown".to_string().into(),
-                                ));
+                                let message = "Unexpected stream chunk: unknown".to_string();
+                                self.emit_failed(source, &message).await;
+                                return Err(MemoryError::backend(message));
                             }
                         },
                         Some(Err(e)) => {
                             let message = format!("Compaction stream error: {e}");
-                            let _ = self.bus.compaction().send(CompactionEvent::Failed {
-                                source: source.to_string(),
-                                message: message.clone(),
-                            }).await;
-                            return Err(MemoryError::Backend(message.into()));
+                            self.emit_failed(source, &message).await;
+                            return Err(MemoryError::backend(message));
                         }
                         None => break,
                     }
                 }
                 Ok(_) = cancel_rx.recv() => {
-                    let _ = self.bus.compaction().send(CompactionEvent::Failed {
-                        source: source.to_string(),
-                        message: "Compaction cancelled by user".to_string(),
-                    }).await;
-                    return Err(MemoryError::Backend(
-                        "Compaction cancelled by user".to_string().into(),
-                    ));
+                    let message = "Compaction cancelled by user".to_string();
+                    self.emit_failed(source, &message).await;
+                    return Err(MemoryError::backend(message));
                 }
             }
         }
 
-        // v0.43 has no `Final` stream event; the provider's usage arrives on the
-        // folded response, which `partial()` exposes once the stream ended.
-        let total_tokens = stream.partial().usage.total_tokens;
-
-        // Reject an empty summary before writing a marker. A compaction that
-        // produced no text (e.g. the model emitted only reasoning) must not
-        // persist an empty marker nor report completion.
-        if aggregated.is_empty() {
-            let _ = self
-                .bus
-                .compaction()
-                .send(CompactionEvent::Failed {
-                    source: source.to_string(),
-                    message: "Compaction produced an empty summary".to_string(),
-                })
-                .await;
-            return Err(MemoryError::Backend(
-                "Compaction produced an empty summary".to_string().into(),
-            ));
-        }
-
-        let summary = self.apply_cap(aggregated);
-        let artifact = SummaryArtifact {
-            summary,
-            total_tokens,
-        };
-
-        // Persist a compaction marker so a later process restart can seed the
-        // cache from the store instead of re-compacting the same prefix.
-        if let Some(store) = &self.store {
-            let marker = CompactionMarker::new(artifact.summary.clone(), Utc::now());
-            if let Err(e) = store
-                .append(conversation_id, &[StoreEntry::Marker(marker)])
-                .await
-            {
-                let _ = self
-                    .bus
-                    .compaction()
-                    .send(CompactionEvent::Failed {
-                        source: source.to_string(),
-                        message: e.to_string(),
-                    })
-                    .await;
-                return Err(MemoryError::Backend(e.to_string().into()));
-            }
-        }
-
-        self.emit_completed(&artifact, source).await;
-
-        Ok(artifact)
-    }
-
-    /// Load the last `CompactionMarker` persisted for `conversation_id`, if any.
-    ///
-    /// Returns `None` when no store is attached, the store returns no entries,
-    /// or no marker is present among the entries.
-    pub async fn last_marker(
-        &self,
-        conversation_id: &str,
-        source: &str,
-    ) -> Result<Option<CompactionMarker>, MemoryError> {
-        let Some(store) = &self.store else {
-            return Ok(None);
-        };
-        let loaded = store.load(conversation_id).await;
-        let loaded = match loaded {
-            Ok(v) => v,
+        // The provider's usage arrives on the folded response, which `partial()`
+        // exposes once the stream ended. `summary_text` validates the folded
+        // answer: a truncated, tool-calling, or empty summary is refused.
+        match Summarizer::summary_text(&stream.partial()) {
+            Ok(text) => Ok(text),
             Err(e) => {
-                let _ = self
-                    .bus
-                    .compaction()
-                    .send(CompactionEvent::Failed {
-                        source: source.to_string(),
-                        message: e.to_string(),
-                    })
-                    .await;
-                return Err(MemoryError::Backend(e.to_string().into()));
+                let message = format!("Compaction produced an unusable summary: {e}");
+                self.emit_failed(source, &message).await;
+                Err(MemoryError::backend(message))
             }
-        };
-        let Some((_, entries)) = loaded else {
-            return Ok(None);
-        };
-        Ok(entries.iter().rev().find_map(|entry| match entry {
-            StoreEntry::Marker(marker) => Some(marker.clone()),
-            StoreEntry::Message(_) => None,
-        }))
+        }
     }
 
-    /// Emit `CompactionEvent::Completed` for `artifact`. Used on both the LLM
-    /// path and the cached-summary deduplication path so the TUI shows the
-    /// restored summary and clears any spinner.
-    async fn emit_completed(&self, artifact: &SummaryArtifact, source: &str) {
-        let preview: String = artifact.summary.chars().take(200).collect();
+    /// Save `conversation` to `store`, emitting `Failed` when the write fails.
+    async fn save(
+        &self,
+        store: &dyn rig_memory::Store,
+        conversation_id: &str,
+        conversation: &mut rig::conversation::Conversation,
+        source: &str,
+    ) -> Result<(), MemoryError> {
+        match rig_memory::save(store, conversation_id, conversation) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let message = format!("Compaction save error: {e}");
+                self.emit_failed(source, &message).await;
+                Err(MemoryError::backend(message))
+            }
+        }
+    }
+
+    /// Emit `CompactionEvent::Completed` for `summary`.
+    async fn emit_completed(&self, summary: &str, source: &str) {
+        let preview: String = summary.chars().take(200).collect();
         let _ = self
             .bus
             .compaction()
             .send(CompactionEvent::Completed {
                 source: source.to_string(),
                 summary_preview: preview,
-                summary_body: artifact.summary.clone(),
+                summary_body: summary.to_string(),
             })
             .await;
     }
 
-    /// Format a message batch into the text fed to the summarizer prompt.
-    ///
-    /// Includes textual representations of every content type so the structured
-    /// summary can capture tool calls, tool results, reasoning, and images.
-    fn format_messages(&self, messages: &[Message]) -> String {
-        messages
-            .iter()
-            .map(|msg| {
-                let role = match msg {
-                    Message::User { .. } => "user",
-                    Message::Assistant(_) => "assistant",
-                    Message::System { .. } => "system",
-                };
-                let content = match msg {
-                    Message::User { content } => content
-                        .iter()
-                        .map(|c| match c {
-                            UserContent::Text(t) => t.text.clone(),
-                            UserContent::ToolResult(tr) => {
-                                let result_text: String = tr
-                                    .content
-                                    .iter()
-                                    .filter_map(|tc| match tc {
-                                        crate::types::ToolResultContent::Text(t) => {
-                                            Some(t.text.as_str())
-                                        }
-                                        _ => None,
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join(" ");
-                                format!("[Tool result]: {}", truncate(&result_text, 2000))
-                            }
-                            UserContent::Image(_) => "[Attached image]".to_string(),
-                            UserContent::Audio(_) => "[Attached audio]".to_string(),
-                            UserContent::Video(_) => "[Attached video]".to_string(),
-                            UserContent::Document(_) => "[Attached document]".to_string(),
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    Message::Assistant(assistant) => assistant
-                        .content
-                        .iter()
-                        .map(|c| match c {
-                            crate::types::AssistantContent::Text(t) => t.text.clone(),
-                            crate::types::AssistantContent::ToolCall(tc) => {
-                                let args = serde_json::to_string(&tc.function.arguments)
-                                    .unwrap_or_default();
-                                format!("[Assistant tool call]: {}({})", tc.function.name, args)
-                            }
-                            crate::types::AssistantContent::Reasoning(r) => {
-                                format!("[Assistant reasoning]: {r:?}")
-                            }
-                            crate::types::AssistantContent::Image(_) => {
-                                "[Attached image]".to_string()
-                            }
-                            _ => "[Provider item]".to_string(),
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    Message::System { content } => content.clone(),
-                };
-                format!("{role}: {content}")
+    /// Emit `CompactionEvent::Failed` carrying `message`.
+    async fn emit_failed(&self, source: &str, message: &str) {
+        let _ = self
+            .bus
+            .compaction()
+            .send(CompactionEvent::Failed {
+                source: source.to_string(),
+                message: message.to_string(),
             })
-            .collect::<Vec<_>>()
-            .join("\n\n")
+            .await;
     }
-
-    /// Apply the optional `max_bytes` cap, truncating the body at a UTF-8
-    /// boundary and appending the truncation marker when truncated.
-    fn apply_cap(&self, summary: String) -> String {
-        let Some(max) = self.max_bytes else {
-            return summary;
-        };
-        let header_len = SUMMARY_HEADER.len();
-        let marker_len = TRUNCATION_MARKER.len();
-
-        // If the full artifact fits, no truncation is needed.
-        if header_len + summary.len() <= max {
-            return summary;
-        }
-
-        let body_budget = max.saturating_sub(header_len + marker_len);
-
-        // Truncate the body to `body_budget` bytes at a UTF-8 char boundary.
-        let boundary = summary
-            .char_indices()
-            .take_while(|(idx, _)| *idx <= body_budget)
-            .map(|(idx, _)| idx)
-            .last()
-            .unwrap_or(0);
-        let truncated_body = &summary[..boundary];
-        format!("{truncated_body}{TRUNCATION_MARKER}")
-    }
-}
-
-/// Truncate `text` to at most `max_chars` characters at a UTF-8 char boundary,
-/// appending an ellipsis when truncated. Used to bound tool-result text fed to
-/// the summarizer so a single oversized result cannot blow up the prompt.
-fn truncate(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let truncated: String = text.chars().take(max_chars).collect();
-    format!("{truncated}…")
 }

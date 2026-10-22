@@ -1,6 +1,6 @@
 use super::audit::{AuditEntry, AuditLogger, AuditResult};
 use super::closure::EngineInterfaceLike;
-use super::error::ToolError;
+use super::handler::{ToolErrorKind, ToolHandlerError};
 use chrono::Utc;
 use nu_protocol::shell_error::generic::GenericError;
 use nu_protocol::{ShellError, Span, Spanned, Value, engine::Closure};
@@ -42,8 +42,10 @@ impl ToolExecutor {
     /// # Returns
     ///
     /// * `Ok(Value)` - The result of the closure execution
-    /// * `Err(ToolError::Timeout)` - If execution exceeds the configured timeout
-    /// * `Err(ToolError::Execution)` - If the closure execution fails
+    /// * `Err(ToolHandlerError)` with kind `ToolErrorKind::Timeout` - If
+    ///   execution exceeds the configured timeout
+    /// * `Err(ToolHandlerError)` with kind `ToolErrorKind::Runtime` - If the
+    ///   closure execution fails
     ///
     /// # Example
     ///
@@ -65,7 +67,7 @@ impl ToolExecutor {
         closure: &Spanned<Closure>,
         args: Vec<Value>,
         span: Span,
-    ) -> Result<Value, ToolError> {
+    ) -> Result<Value, ToolHandlerError> {
         let start = Instant::now();
         // Best-effort tool name for error messages and audit logging
         let tool_name = format!("{:?}", closure.item);
@@ -111,7 +113,12 @@ impl ToolExecutor {
             // Timeout succeeded, spawn_blocking succeeded, eval_closure failed
             Ok(Ok(Err(e))) => {
                 let audit = AuditResult::Err(format!("Execution error: {e}"));
-                (audit, Err(ToolError::Execution(e)))
+                let err = ToolHandlerError {
+                    kind: ToolErrorKind::Runtime,
+                    message: format!("Tool execution failed: {e}"),
+                    details: None,
+                };
+                (audit, Err(err))
             }
             // Timeout succeeded, spawn_blocking failed (task panic)
             Ok(Err(join_error)) => {
@@ -120,14 +127,20 @@ impl ToolExecutor {
                 let shell_error: ShellError =
                     GenericError::new("Closure execution panicked", join_error.to_string(), span)
                         .into();
-                (audit, Err(ToolError::Execution(Box::new(shell_error))))
+                let err = ToolHandlerError {
+                    kind: ToolErrorKind::Runtime,
+                    message: format!("Tool execution failed: {shell_error}"),
+                    details: None,
+                };
+                (audit, Err(err))
             }
             // Timeout elapsed
             Err(_elapsed) => {
                 let audit = AuditResult::Err(format!("Timeout after {:?}", self.timeout));
-                let err = ToolError::Timeout {
-                    tool_name: tool_name.clone(),
-                    timeout: self.timeout,
+                let err = ToolHandlerError {
+                    kind: ToolErrorKind::Timeout,
+                    message: format!("Tool '{tool_name}' timed out after {:?}", self.timeout),
+                    details: None,
                 };
                 (audit, Err(err))
             }

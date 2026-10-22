@@ -5,74 +5,63 @@ use super::*;
 // ---------------------------------------------------------------------------
 
 /// Verifies that a session corrupted before Gap 1A (user(ToolResult) → user(Text)
-/// with no assistant between) is transparently healed on load and the next turn succeeds.
-///
-/// The repair happens inside `JournalConversationMemory::load()` via `repair_messages()`.
-/// This test proves end-to-end that a corrupt session is healed and a new turn can succeed.
+/// with no assistant between) is tolerated: it is seeded into the rig store
+/// unchanged, rig's pairing pass accepts it when it builds the request, and the
+/// next turn succeeds.
 #[tokio::test]
-async fn journey_corrupt_session_healed_by_repair_on_load() -> Result<()> {
-    use std::io::Write;
-
+async fn journey_corrupt_session_is_tolerated_on_load() -> Result<()> {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let path = temp_dir.path().to_path_buf();
     let session_id = "journey-repair-load";
     let config = test_config();
 
-    // Write corrupt JSONL directly to the session file using rig's own serialization.
-    // The corrupt pattern: user(ToolResult) immediately followed by user(Text), no asst between.
-    {
-        use crate::types::{
-            AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolName,
-            ToolResult, ToolResultContent, UserContent,
-        };
+    use crate::types::{
+        AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolName,
+        ToolResult, ToolResultContent, UserContent,
+    };
 
-        let session_file = path.join(format!("{}.jsonl", session_id));
-        let mut f = std::fs::File::create(&session_file).expect("create session file");
-
-        // metadata line (required by JsonlConversationStore::load as first line)
-        let metadata = serde_json::json!({
-            "type": "session",
-            "session_id": session_id,
-            "created_at": "2024-01-01T00:00:00Z"
-        });
-        writeln!(f, "{}", serde_json::to_string(&metadata).unwrap()).unwrap();
-
-        // Build the corrupt messages using rig types and serialize them.
-        // This ensures the JSONL format matches what rig can parse back.
-        let corrupt_messages: Vec<Message> = vec![
-            // user("run something")
-            Message::user("run something"),
-            // assistant(tool_call tc1 nu__shell)
-            Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
-                ToolCall::new(
-                    CallId::from_wire("tc1"),
-                    ToolFunction::new(
-                        ToolName::new("nu__shell").expect("non-empty tool name"),
-                        serde_json::json!({"command": "git pull"}),
-                    ),
+    // The corrupt pattern: user(ToolResult) immediately followed by user(Text),
+    // no assistant between.
+    let corrupt_messages: Vec<Message> = vec![
+        // user("run something")
+        Message::user("run something"),
+        // assistant(tool_call tc1 nu__shell)
+        Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+            ToolCall::new(
+                CallId::from_wire("tc1"),
+                ToolFunction::new(
+                    ToolName::new("nu__shell").expect("non-empty tool name"),
+                    serde_json::json!({"command": "git pull"}),
                 ),
-            )])),
-            // user(tool_result tc1) — pure ToolResult message
-            Message::User {
-                content: vec![UserContent::ToolResult(ToolResult {
-                    call: CallId::from_wire("tc1"),
-                    name: ToolName::new("nu__shell").expect("non-empty tool name"),
-                    content: vec![ToolResultContent::text("Already up to date.")],
-                    is_error: false,
-                })],
-            },
-            // user("continue") — immediately after ToolResult, no assistant between them → CORRUPT
-            Message::user("continue"),
-        ];
+            ),
+        )])),
+        // user(tool_result tc1) — pure ToolResult message
+        Message::User {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: CallId::from_wire("tc1"),
+                name: ToolName::new("nu__shell").expect("non-empty tool name"),
+                content: vec![ToolResultContent::text("Already up to date.")],
+                is_error: false,
+            })],
+        },
+        // user("continue") — immediately after ToolResult, no assistant between them → CORRUPT
+        Message::user("continue"),
+    ];
 
-        for msg in &corrupt_messages {
-            writeln!(f, "{}", serde_json::to_string(msg).unwrap()).unwrap();
-        }
-    }
-
-    // Now create a MemoryState pointing to the same directory (simulating a new CLI invocation
-    // that loads the corrupt JSONL). Repair fires inside load().
+    // Seed the corrupt history into the session's rig store, as a session
+    // written by an earlier run would hold it.
     let mut ms = memory_state_at(path.clone());
+    {
+        let store = ms
+            .inner_memory()
+            .rig_store(session_id)
+            .map_err(|e| format!("rig store open: {e:?}"))?;
+        let mut conversation =
+            rig_memory::load(&*store, session_id).map_err(|e| format!("rig store load: {e:?}"))?;
+        conversation.extend(corrupt_messages.clone());
+        rig_memory::save(&*store, session_id, &mut conversation)
+            .map_err(|e| format!("rig store save: {e:?}"))?;
+    }
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("The git pull succeeded.".into()),
@@ -99,33 +88,41 @@ async fn journey_corrupt_session_healed_by_repair_on_load() -> Result<()> {
         )
         .await;
 
-    // The turn must succeed — repair healed the corrupt session on load.
+    // The turn must succeed — rig tolerates the corrupt history.
     assert!(
         outcome.is_ok(),
-        "turn must succeed after corrupt session is healed on load; got: {outcome:?}"
+        "turn must succeed after the corrupt session is tolerated; got: {outcome:?}"
     );
 
-    // Verify the raw JSONL contains the expected message count.
-    // The corrupt JSONL had 4 messages. Repair is applied in-memory on load (not written
-    // back to JSONL). The turn then appends 2 new messages (user prompt + assistant reply).
-    // Raw JSONL = 4 original (corrupt) + 2 new = 6 total.
-    let entries = ms
+    // Verify the rig store: the seeded history is the repaired one (the
+    // dangling tool result gets a synthetic close and the trailing orphan user
+    // message is trimmed), and the new exchange follows.
+    let store = ms
         .inner_memory()
-        .load_all(session_id)
-        .await
-        .map_err(|e| format!("store load: {e:?}"))?;
-    let raw: Vec<Message> = entries
+        .rig_store(session_id)
+        .map_err(|e| format!("rig store open: {e:?}"))?;
+    let conversation =
+        rig_memory::load(&*store, session_id).map_err(|e| format!("rig store load: {e:?}"))?;
+    let saved: Vec<Message> = conversation
+        .messages()
         .iter()
-        .filter_map(|e| match e {
-            StoreEntry::Message(m) => Some(m.clone()),
-            _ => None,
-        })
+        .map(|message| (**message).clone())
         .collect();
+    // rig appends a turn's messages to the log; it does not rewrite the
+    // history it loaded. The repair is applied to the in-memory history the
+    // run used, so the log keeps the seeded prefix and gains the new exchange.
     assert_eq!(
-        raw.len(),
-        6,
-        "raw JSONL must have 6 messages (4 original + 2 new); got: {raw:?}"
+        saved.len(),
+        corrupt_messages.len() + 2,
+        "the store holds the seeded history and the new exchange; got: {saved:?}"
     );
+    assert_eq!(
+        &saved[..corrupt_messages.len()],
+        corrupt_messages.as_slice(),
+        "the seeded prefix is unchanged"
+    );
+    assert_user_text(&saved[saved.len() - 2], "what happened?");
+    assert_assistant_text_contains(&saved[saved.len() - 1], "The git pull succeeded.");
     Ok(())
 }
 
@@ -153,7 +150,6 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
         AssistantContent, AssistantMessage, CallId, ToolCall, ToolFunction, ToolName, ToolResult,
         ToolResultContent, UserContent,
     };
-    use rig::memory::ConversationMemory;
 
     let mut h = JourneyHarness::new("journey-gap6-empty-tool-result");
 
@@ -182,9 +178,7 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
 
     h.memory_state
         .memory_mut()
-        .append(&rig::id::ConversationId::from(h.session_id), prior_messages)
-        .await
-        .map_err(|e| format!("pre-populate cache: {e:?}"))?;
+        .reset_context(h.session_id, prior_messages);
 
     // Now run a follow-up turn — pre-flight repair must fix the empty ToolResult.
     let model = MockCompletionModel::from_stream_turns([[
@@ -201,7 +195,7 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
     let all_msgs = h
         .memory_state
         .memory_mut()
-        .load(&rig::id::ConversationId::from(h.session_id))
+        .load(h.session_id)
         .await
         .map_err(|e| format!("load messages: {e:?}"))?;
 
@@ -238,73 +232,59 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
 /// The `fix_invalid_tool_arguments` pass clears `invalid_arguments` and resets the
 /// arguments to `{}` before rig sees the history.
 #[tokio::test]
-async fn journey_invalid_args_tool_call_repaired_on_load() {
-    use std::io::Write;
-
+async fn journey_invalid_args_tool_call_repaired_on_load() -> Result<()> {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let path = temp_dir.path().to_path_buf();
     let session_id = "journey-invalid-args-repair";
     let config = test_config();
 
-    // Write corrupt JSONL directly to the session file.
-    // The corrupt pattern: ToolCall with non-object arguments and its matching ToolResult.
-    {
-        use crate::types::{
-            AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolName,
-            ToolResult, ToolResultContent, UserContent,
-        };
+    // The corrupt pattern: ToolCall with non-object arguments and its matching
+    // ToolResult.
+    use crate::types::{
+        AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolName,
+        ToolResult, ToolResultContent, UserContent,
+    };
 
-        let session_file = path.join(format!("{session_id}.jsonl"));
-        let mut f = std::fs::File::create(&session_file).expect("create session file");
-
-        // metadata line (required by JsonlConversationStore::load as first line)
-        let metadata = serde_json::json!({
-            "type": "session",
-            "session_id": session_id,
-            "created_at": "2024-01-01T00:00:00Z"
-        });
-        writeln!(
-            f,
-            "{}",
-            serde_json::to_string(&metadata).expect("serialize metadata")
-        )
-        .expect("write metadata");
-
-        let corrupt_messages: Vec<Message> = vec![
-            // user("run something")
-            Message::user("run something"),
-            // assistant(tool_call tc1 with non-object arguments) — THE POISON
-            Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
-                ToolCall::new(
-                    CallId::from_wire("tc_poison"),
-                    ToolFunction {
-                        name: ToolName::new("tmux__send_and_capture").expect("non-empty tool name"),
-                        arguments: serde_json::Map::new(),
-                        invalid_arguments: Some("not an object".to_string()),
-                    },
-                ),
-            )])),
-            // user(tool_result tc1 — the Skip reason)
-            Message::User {
-                content: vec![UserContent::ToolResult(ToolResult {
-                    call: CallId::from_wire("tc_poison"),
+    let corrupt_messages: Vec<Message> = vec![
+        // user("run something")
+        Message::user("run something"),
+        // assistant(tool_call tc1 with non-object arguments) — THE POISON
+        Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+            ToolCall::new(
+                CallId::from_wire("tc_poison"),
+                ToolFunction {
                     name: ToolName::new("tmux__send_and_capture").expect("non-empty tool name"),
-                    content: vec![ToolResultContent::text("Tool not available")],
-                    is_error: false,
-                })],
-            },
-            // assistant closing text
-            Message::assistant("I see the tool is unavailable."),
-        ];
+                    arguments: serde_json::Map::new(),
+                    invalid_arguments: Some("not an object".to_string()),
+                },
+            ),
+        )])),
+        // user(tool_result tc1 — the Skip reason)
+        Message::User {
+            content: vec![UserContent::ToolResult(ToolResult {
+                call: CallId::from_wire("tc_poison"),
+                name: ToolName::new("tmux__send_and_capture").expect("non-empty tool name"),
+                content: vec![ToolResultContent::text("Tool not available")],
+                is_error: false,
+            })],
+        },
+        // assistant closing text
+        Message::assistant("I see the tool is unavailable."),
+    ];
 
-        for msg in &corrupt_messages {
-            writeln!(f, "{}", serde_json::to_string(msg).expect("serialize msg"))
-                .expect("write msg");
-        }
-    }
-
-    // Create a fresh MemoryState that loads the corrupt JSONL. Repair fires inside load().
+    // Seed the poison into the session's rig store. Repair fires inside load().
     let mut ms = memory_state_at(path.clone());
+    {
+        let store = ms
+            .inner_memory()
+            .rig_store(session_id)
+            .map_err(|e| format!("rig store open: {e:?}"))?;
+        let mut conversation =
+            rig_memory::load(&*store, session_id).map_err(|e| format!("rig store load: {e:?}"))?;
+        conversation.extend(corrupt_messages);
+        rig_memory::save(&*store, session_id, &mut conversation)
+            .map_err(|e| format!("rig store save: {e:?}"))?;
+    }
 
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("The tool was unavailable but we can continue.".into()),
@@ -336,4 +316,5 @@ async fn journey_invalid_args_tool_call_repaired_on_load() {
         outcome.is_ok(),
         "turn must succeed after invalid-args ToolCall is repaired on load; got: {outcome:?}"
     );
+    Ok(())
 }

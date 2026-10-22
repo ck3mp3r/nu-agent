@@ -93,6 +93,13 @@ fn load_parses_minimal_config() -> Result<()> {
     })
 }
 
+// region:    --- Modules
+
+#[path = "toml_config/pricing.rs"]
+mod pricing;
+
+// endregion: --- Modules
+
 #[test]
 fn load_from_with_resolves_cmd_reference_in_mcp_env() -> Result<()> {
     with_xdg_config_home(|dir| {

@@ -1,19 +1,14 @@
 use super::*;
 
 // ---------------------------------------------------------------------------
-// Scenario 7: Repeated errors grow JSONL linearly — regression for duplication bug
+// Scenario 7: Repeated errors leave the store unchanged
 // ---------------------------------------------------------------------------
 
-/// Direct regression test for the history duplication bug.
-///
-/// Before the fix: each error turn re-appended the entire accumulated history,
-/// growing as 2+3+4+5=14. After the fix: each error turn appends exactly the
-/// delta (1 new user prompt), growing linearly as 2+1+1+1=5.
-///
-/// Turn 1 (success): 2 messages total.
-/// Turns 2, 3, 4 (error): each appends 1 message → totals 3, 4, 5.
+/// rig saves a conversation only when a run succeeds, so a failed turn writes
+/// nothing. One successful turn saves two messages; three failed turns after it
+/// leave the store at two.
 #[tokio::test]
-async fn journey_repeated_errors_grow_linearly() -> Result<()> {
+async fn journey_repeated_errors_leave_the_store_unchanged() -> Result<()> {
     let mut h = JourneyHarness::new("journey-linear-errors");
 
     // Turn 1: success → 2 messages
@@ -34,8 +29,7 @@ async fn journey_repeated_errors_grow_linearly() -> Result<()> {
         "after turn 1: expected 2 messages"
     );
 
-    // Turns 2, 3, 4: error → each appends 1 message (user prompt delta)
-    // Before the fix: 2+3+4+5=14. After: 2+1+1+1=5.
+    // Turns 2, 3, 4: error → each saves nothing
     for (i, prompt) in ["t2", "t3", "t4"].iter().enumerate() {
         let (r, _) = h
             .turn(
@@ -47,14 +41,11 @@ async fn journey_repeated_errors_grow_linearly() -> Result<()> {
             )
             .await;
         assert!(r.is_err(), "turn {} must error", i + 2);
-        let expected = 3 + i; // 3, 4, 5
         assert_eq!(
             h.raw_messages().await?.len(),
-            expected,
-            "after error turn {}: expected {} messages, got {}",
-            i + 2,
-            expected,
-            h.raw_messages().await?.len()
+            2,
+            "after error turn {}: a failed turn saves nothing",
+            i + 2
         );
     }
     Ok(())
@@ -64,39 +55,9 @@ async fn journey_repeated_errors_grow_linearly() -> Result<()> {
 // Scenario 4: Error mid-tool-loop then successful recovery turn
 // ---------------------------------------------------------------------------
 
-/// Two-turn journey. Turn 1 has 2 successful tool sub-turns then errors on
-/// sub-turn 3. Turn 2 continues successfully with the full 5-message prior context.
-///
-/// on_completion_call for sub-turn 3 fires with:
-///   prompt = user(ToolResult tc2), history = [user(prompt1), asst(tc1), user(tr1), asst(tc2)]
-///   → last_known_history = [user(prompt1), asst(tc1), user(tr1), asst(tc2), user(tr2)]
-/// pre_turn_count = 0, delta = all 5 → persisted as-is.
-///
-/// Turn 2 sees the 5-message prior context. rig sends: 5 prior + current "continue" prompt = 6
-/// messages in chat_history (but the note states N_prior+1, so 5+1=6... but the task description
-/// says "verify rig sent the 5 real prior messages to the LLM on turn 2" and asserts prior.len()==5).
-/// The task description's assertion uses prior.len()==5, meaning those are the non-current messages.
-/// Wait — the task description says: `let prior: Vec<_> = req.chat_history.iter().collect();`
-/// and `assert_eq!(prior.len(), 5, "turn 2 must see exactly 5 prior messages as context");`
-/// But rig appends the current prompt into chat_history too.
-/// So turn 2: 5 prior messages + 1 current "continue" = 6 total in chat_history.
-/// However, the task description explicitly says prior.len()==5. Let me check what
-/// scenario 1 does: turn 3 has 4 prior + 1 current = 5 and asserts history.len()==5.
-/// So the pattern is: chat_history = all prior + current = N_prior + 1.
-/// For turn 2 here with 5 prior messages: 5 + 1 = 6, NOT 5.
-/// But the task description says assert_eq!(prior.len(), 5). This is inconsistent with the note
-/// about "chat_history always includes the current prompt".
-///
-/// Resolution: The task description EXPLICITLY says `prior.len(), 5`. Trust it.
-/// The "5 prior messages as context" assertion counts only the prior messages
-/// (not including the new "continue" prompt), meaning rig didn't include "continue"
-/// in chat_history for this request... or the assertion is counting something else.
-///
-/// Looking at scenario 1: 4 prior + current "last" = 5 → history.len()==5. ✓
-/// For scenario 4 turn 2: 5 prior + current "continue" = 6 → but task says 5?
-///
-/// The task says "not synthetic placeholders, not doubled" and specifically
-/// `prior.len(), 5`. Following the task description exactly as given.
+/// Two-turn journey. Turn 1 runs two tool sub-turns and then fails on
+/// sub-turn 3, so rig saves nothing. Turn 2 succeeds and starts from an empty
+/// conversation: its request carries only the new prompt.
 #[tokio::test]
 async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
     let mut h = JourneyHarness::new("journey-error-recovery");
@@ -116,26 +77,14 @@ async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
     let (r1, _) = h.turn("do things", model1, echo_tool("real_result")?).await;
     assert!(r1.is_err(), "CompletionError must propagate");
 
-    let msgs = h.raw_messages().await?;
-    assert_eq!(
-        msgs.len(),
-        6,
-        "6 messages: prompt+tc1+tr1+tc2+tr2+asst(close); got: {msgs:?}"
-    );
-    assert_user_text(&msgs[0], "do things");
-    assert_tool_call_in_msg(&msgs[1], "tc1", "test_echo")?;
-    assert_tool_result_in_msg(&msgs[2], "tc1", "real_result")?;
-    assert_tool_call_in_msg(&msgs[3], "tc2", "test_echo")?;
-    assert_tool_result_in_msg(&msgs[4], "tc2", "real_result")?;
-    // msgs[5] is the synthetic assistant close-block appended by close_open_tool_result_block
+    // A failed run saves nothing — the real tool results are not persisted.
+    let after_failure = h.raw_messages().await?;
     assert!(
-        matches!(&msgs[5], crate::types::Message::Assistant(_)),
-        "msgs[5] must be the synthetic assistant close-block; got: {:?}",
-        msgs[5]
+        after_failure.is_empty(),
+        "a failed turn must save nothing; got: {after_failure:?}"
     );
-    assert_no_interrupted(&msgs);
 
-    // Turn 2: recovery — plain text, sees 6-message prior context
+    // Turn 2: recovery — plain text, starts from an empty conversation
     let model2 = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("recovered".into()),
         MockStreamEvent::final_response_with_default_usage(),
@@ -145,26 +94,27 @@ async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
     assert!(r2.is_ok(), "recovery turn must succeed: {r2:?}");
 
     let msgs = h.raw_messages().await?;
-    assert_eq!(msgs.len(), 8, "6 prior + 2 new; got: {msgs:?}");
-    assert_user_text(&msgs[6], "continue");
-    assert_assistant_text_contains(&msgs[7], "recovered");
+    assert_eq!(
+        msgs.len(),
+        2,
+        "the recovery turn saves its own exchange; got: {msgs:?}"
+    );
+    assert_user_text(&msgs[0], "continue");
+    assert_assistant_text_contains(&msgs[1], "recovered");
 
-    // Verify rig sent the correct context on turn 2.
-    // rig's CompletionRequestBuilder::build() pushes the current prompt into
-    // chat_history before sending (see rig-core request.rs ~line 914).
-    // So: 6 prior messages + 1 current "continue" prompt = 7 total in chat_history.
+    // The recovery request carries only the new prompt: the failed turn left
+    // no history behind.
     assert_eq!(
         model2_spy.request_count(),
         1,
         "turn 2 model must have received exactly 1 request"
     );
     let req = &model2_spy.requests()[0];
-    let prior: Vec<_> = req.chat_history.iter().collect();
-    // 6 prior messages + 1 current "continue" prompt = 7
     assert_eq!(
-        prior.len(),
-        7,
-        "turn 2 chat_history must be 7 (6 prior + current prompt), got: {prior:?}"
+        req.chat_history.len(),
+        1,
+        "turn 2 chat_history must hold only the current prompt, got: {:?}",
+        req.chat_history
     );
     Ok(())
 }
@@ -174,20 +124,7 @@ async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Turn 1 executes a real tool call that cancels the turn from within `call()`.
-///
-/// The cancellation is published to the shared bus from `TestNuShellCancellingTool::call()`
-/// after producing its result, so the tool result IS recorded before cancellation takes effect.
-///
-/// **Sequence:**
-/// 1. `on_completion_call(sub-turn 1)` → `Continue`
-/// 2. LLM responds with `tool_call(tc1, "nu__shell")`
-/// 3. `TestNuShellCancellingTool::call()` returns `"Already up to date."` then fires cancel token
-/// 4. `on_outcome` records `User(ToolResult tc1)` in `new_messages`
-/// 5. `on_completion_call(sub-turn 2)` → `is_cancelled()` → `Terminate`
-/// 6. `Cancelled { chat_history: [user(prompt), asst(tc1), user(tr1)] }`
-/// 7. Path C: delta = 3 messages persisted
-///
-/// Turn 2 sees the 3-message prior context.
+/// A cancelled run saves nothing, so turn 2 starts from an empty conversation.
 #[tokio::test]
 async fn journey_cancelled_turn_then_continuation() -> Result<()> {
     let mut h = JourneyHarness::new("journey-cancel-tool");
@@ -220,23 +157,12 @@ async fn journey_cancelled_turn_then_continuation() -> Result<()> {
     assert!(matches!(r1, TurnOutcome::EarlyReturn(_)));
 
     let msgs = h.raw_messages().await?;
-    assert_eq!(
-        msgs.len(),
-        4,
-        "expect [user(prompt), asst(tool_call), user(tool_result), asst(close)]; got: {msgs:?}"
-    );
-    assert_user_text(&msgs[0], "run a git command");
-    assert_tool_call_in_msg(&msgs[1], "tc1", "nu__shell")?;
-    assert_tool_result_in_msg(&msgs[2], "tc1", "Already up to date.")?;
-    // msgs[3] is the synthetic assistant close-block appended by close_open_tool_result_block
     assert!(
-        matches!(&msgs[3], crate::types::Message::Assistant(_)),
-        "msgs[3] must be the synthetic assistant close-block; got: {:?}",
-        msgs[3]
+        msgs.is_empty(),
+        "a cancelled turn must save nothing; got: {msgs:?}"
     );
-    assert_no_interrupted(&msgs);
 
-    // Turn 2: continuation sees prior 4-message context
+    // Turn 2: continuation starts from an empty conversation
     let model2 = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("I can see the git pull completed. How can I help next?".into()),
         MockStreamEvent::final_response_with_default_usage(),
@@ -244,15 +170,15 @@ async fn journey_cancelled_turn_then_continuation() -> Result<()> {
     let model2_spy = model2.clone();
     let (r2, _) = h.turn("what happened?", model2, no_tools()).await;
     assert!(r2.is_ok());
-    assert_eq!(h.raw_messages().await?.len(), 6);
+    assert_eq!(h.raw_messages().await?.len(), 2);
     let requests = model2_spy.requests();
-    let prior: Vec<_> = requests[0].chat_history.iter().collect();
-    // rig appends the current prompt into chat_history before sending (see rig-core request.rs).
-    // So: 4 prior messages + 1 current "what happened?" prompt = 5 total in chat_history.
+    // The cancelled turn left no history, so the request carries only the
+    // current prompt.
     assert_eq!(
-        prior.len(),
-        5,
-        "turn 2 chat_history must be 5 (4 prior + current prompt), got: {prior:?}"
+        requests[0].chat_history.len(),
+        1,
+        "turn 2 chat_history must hold only the current prompt, got: {:?}",
+        requests[0].chat_history
     );
     Ok(())
 }
@@ -263,7 +189,8 @@ async fn journey_cancelled_turn_then_continuation() -> Result<()> {
 
 /// Two separate `MemoryState` instances on the same tempdir path.
 /// Verifies that a fresh `MemoryState` (simulating a new CLI invocation) correctly
-/// loads prior JSONL and passes it as context to the LLM on the second turn.
+/// loads the prior conversation from the rig store and passes it as context to
+/// the LLM on the second turn.
 ///
 /// Does NOT use `JourneyHarness` — uses `TurnExecutor` directly to keep two
 /// separate `MemoryState` lifetimes.
@@ -338,18 +265,17 @@ async fn journey_session_reload_from_disk() -> Result<()> {
             .await;
         assert!(r.is_ok(), "turn 2 must succeed");
 
-        // Verify the total JSONL: 2 from turn1 + 2 from turn2
-        let entries = ms
+        // Verify the rig store: 2 from turn1 + 2 from turn2
+        let store = ms
             .inner_memory()
-            .load_all(session_id)
-            .await
-            .map_err(|e| format!("store load: {e:?}"))?;
-        let msgs: Vec<Message> = entries
+            .rig_store(session_id)
+            .map_err(|e| format!("rig store open: {e:?}"))?;
+        let conversation =
+            rig_memory::load(&*store, session_id).map_err(|e| format!("rig store load: {e:?}"))?;
+        let msgs: Vec<Message> = conversation
+            .messages()
             .iter()
-            .filter_map(|e| match e {
-                StoreEntry::Message(m) => Some(m.clone()),
-                _ => None,
-            })
+            .map(|message| (**message).clone())
             .collect();
         assert_eq!(
             msgs.len(),

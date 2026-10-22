@@ -27,6 +27,10 @@ fn generate_config_content_has_templates() {
         content.contains("github-copilot"),
         "should have Copilot template"
     );
+    assert!(
+        content.contains("catalog = \"openai\""),
+        "should document the catalog field"
+    );
 }
 
 #[test]

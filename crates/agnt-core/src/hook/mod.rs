@@ -7,6 +7,7 @@ pub mod history_snapshot;
 pub mod output_repetition;
 pub mod permission_resolver;
 pub mod subturn_cap;
+pub mod unpriced_warnings;
 
 pub use adapter::{ClosureToolAdapter, adapt_closures};
 pub use agent_hook::{DoomLoopState, HookState};

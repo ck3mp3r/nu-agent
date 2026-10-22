@@ -1,4 +1,4 @@
-use serde_json::Value as JsonValue;
+use rig::tool::ToolExecutionError;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolSource {
@@ -71,15 +71,22 @@ impl ToolHandlerError {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ToolFailureOutcome {
-    pub tool_name: String,
-    pub tool_call_id: String,
-    pub source: ToolSource,
-    pub error_kind: ToolErrorKind,
-    pub message: String,
-    pub details: Option<JsonValue>,
+// region:    --- Functions
+
+/// Map a handler error kind to the matching rig `ToolExecutionError`
+/// constructor so downstream retry and refusal policy sees the real
+/// classification instead of a flat provider failure.
+pub(crate) fn execution_error_for_kind(kind: ToolErrorKind, message: String) -> ToolExecutionError {
+    match kind {
+        ToolErrorKind::Validation => ToolExecutionError::invalid_args(message),
+        ToolErrorKind::Timeout => ToolExecutionError::timeout(message),
+        ToolErrorKind::Authorization => ToolExecutionError::permission_denied(message),
+        ToolErrorKind::Transport => ToolExecutionError::network(message),
+        ToolErrorKind::Runtime | ToolErrorKind::Unknown => ToolExecutionError::other(message),
+    }
 }
+
+// endregion: --- Functions
 
 #[derive(Debug, Clone)]
 pub struct McpToolRegistry {
@@ -285,3 +292,7 @@ impl McpToolRegistry {
             .unwrap_or(false)
     }
 }
+
+#[cfg(test)]
+#[path = "../../../test/tools/handler/types.rs"]
+mod tests;

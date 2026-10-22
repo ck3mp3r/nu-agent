@@ -6,8 +6,9 @@
 use super::*;
 
 use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy};
-use agnt_core::session::{SessionStore, StoreType, create_store};
+use agnt_core::session::{RigStoreConfig, StoreType};
 use agnt_core::types::{Message, Text, UserContent};
+use agnt_core::utils::paths::APP_DIR_NAME;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -15,13 +16,19 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Seed one session whose id carries `prefix`, and return the bare id.
 async fn seed_session(prefix: &str, bare_id: &str) -> Result<()> {
-    let store = create_store(StoreType::Sqlite).await?;
-    let messages = vec![Message::User {
+    let rig = RigStoreConfig::new(StoreType::Sqlite);
+    let id = format!("{prefix}-{bare_id}");
+    let store = rig.open(&id)?;
+    let mut conversation = agnt_core::rig_memory::load(&*store, &id)?;
+    conversation.extend([Message::User {
         content: vec![UserContent::Text(Text::new("seeded prompt"))],
-    }];
-    store
-        .create(&format!("{prefix}-{bare_id}"), &messages)
-        .await?;
+    }]);
+    agnt_core::rig_memory::save(&*store, &id, &mut conversation)?;
+    agnt_core::session::rig_state::write_state_records(
+        &*store,
+        "test/model",
+        Some("seeded prompt"),
+    )?;
     Ok(())
 }
 
@@ -62,8 +69,9 @@ async fn test_integration_session_list_renders_seeded_session() -> Result<()> {
 
     // -- Check
     assert!(
-        env.cache_home_path("nu-agent/sessions.db").exists(),
-        "the sqlite store must live under the tempdir cache home"
+        env.cache_home_path(&format!("{APP_DIR_NAME}/rig-sessions.db"))
+            .exists(),
+        "the rig sqlite store must live under the tempdir cache home"
     );
     Ok(())
 }
@@ -118,9 +126,11 @@ async fn test_integration_session_clear_deletes_seeded_session() -> Result<()> {
     dispatch::run_session_command(&args, &command).await?;
 
     // -- Check
-    let store = create_store(StoreType::Sqlite).await?;
-    let loaded = store.load(&format!("{prefix}-clearcase")).await?;
-    assert!(loaded.is_none(), "the cleared session must be gone");
+    let rig = RigStoreConfig::new(StoreType::Sqlite);
+    assert!(
+        !rig.holds(&format!("{prefix}-clearcase"))?,
+        "the cleared session must be gone"
+    );
     Ok(())
 }
 
@@ -138,9 +148,11 @@ async fn test_integration_session_clear_falls_back_to_legacy_prefix() -> Result<
     dispatch::run_session_command(&args, &command).await?;
 
     // -- Check
-    let store = create_store(StoreType::Sqlite).await?;
-    let loaded = store.load(&format!("{legacy_prefix}-legacycase")).await?;
-    assert!(loaded.is_none(), "the legacy session must be gone");
+    let rig = RigStoreConfig::new(StoreType::Sqlite);
+    assert!(
+        !rig.holds(&format!("{legacy_prefix}-legacycase"))?,
+        "the legacy session must be gone"
+    );
     Ok(())
 }
 

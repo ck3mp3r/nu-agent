@@ -10,27 +10,25 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 use super::harness::*;
 use super::*;
 use crate::protocol::contracts::CoreRuntime;
-use crate::session::StoreEntry;
 use crate::utils::value_ext::extract_response_text_from_value;
 
-/// Collect the persisted `Message` entries for a session.
+/// Collect the conversation the rig-memory store holds for a session.
 async fn persisted_messages(
     fixture: &RuntimeFixture,
     session_id: &str,
 ) -> Result<Vec<crate::types::Message>> {
-    let entries = fixture
+    let store = fixture
         .runtime
         .session
         .inner_memory()
-        .load_all(session_id)
-        .await
-        .map_err(|e| format!("store load should succeed: {e:?}"))?;
-    Ok(entries
+        .rig_store(session_id)
+        .map_err(|e| format!("rig store open should succeed: {e:?}"))?;
+    let conversation = rig_memory::load(&*store, session_id)
+        .map_err(|e| format!("rig store load should succeed: {e:?}"))?;
+    Ok(conversation
+        .messages()
         .iter()
-        .filter_map(|e| match e {
-            StoreEntry::Message(m) => Some(m.clone()),
-            _ => None,
-        })
+        .map(|message| (**message).clone())
         .collect())
 }
 
@@ -147,14 +145,9 @@ async fn execute_turn_surfaces_a_provider_failure() -> Result<()> {
         "the error must be user-facing; got: {error}"
     );
     let messages = persisted_messages(&fixture, &session_id).await?;
-    assert_eq!(
-        messages.len(),
-        1,
-        "a failed turn persists the partial history it captured before the failure"
-    );
     assert!(
-        matches!(messages[0], crate::types::Message::User { .. }),
-        "the persisted partial history must start with the user prompt"
+        messages.is_empty(),
+        "a failed turn saves nothing; got: {messages:?}"
     );
     Ok(())
 }

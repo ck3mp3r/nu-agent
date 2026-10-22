@@ -25,7 +25,6 @@ use crate::types::Message;
 #[derive(Debug)]
 pub(crate) struct TurnContext {
     pub last_known_history: Vec<Message>,
-    pub pre_turn_message_count: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -77,7 +76,7 @@ pub enum TurnError {
         kind: CompletionErrorKind,
     },
 
-    /// Tool execution infrastructure failure (`ToolError` / `ToolSetError`).
+    /// Tool execution infrastructure failure (`ToolHandlerError` / `ToolSetError`).
     ToolExecutionFailed {
         /// Display message from the underlying error.
         msg: String,
@@ -139,8 +138,8 @@ impl From<rig::completion::PromptError> for TurnError {
             },
             rig::completion::PromptError::Provider(e) => completion_error_to_turn_error(e),
             // Conversation memory failed to load or persist history.
-            rig::completion::PromptError::Memory(e) => Self::CompletionFailed {
-                msg: e.to_string(),
+            rig::completion::PromptError::Memory { error, .. } => Self::CompletionFailed {
+                msg: error.to_string(),
                 kind: CompletionErrorKind::Unknown,
             },
             // A relayed report preserves the origin's status and message.

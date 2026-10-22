@@ -80,6 +80,7 @@ pub(super) fn test_provider(
         base_url: None,
         provider: None,
         preamble: None,
+        catalog: None,
         models: models
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))

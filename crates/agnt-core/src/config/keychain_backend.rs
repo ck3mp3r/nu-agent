@@ -13,8 +13,9 @@ use super::vault::{BackendKind, VaultBackend, VaultError};
 
 // region:    --- Constants
 
-/// Keychain service name. Every secret lives under this service.
-pub const SERVICE_NAME: &str = "nu-agent";
+/// Keychain service name. Every secret lives under this service. Debug builds
+/// use `nu-agent-dev`, so they never touch production keychain entries.
+pub const SERVICE_NAME: &str = crate::utils::paths::APP_DIR_NAME;
 
 /// Registry index key. Holds a JSON array of every key stored in the keychain.
 pub const INDEX_KEY: &str = "nu-agent:index";

@@ -56,7 +56,6 @@ type SharedSessions = Arc<AcpSessionManager<DefaultRuntimeBuilder>>;
 pub async fn serve(agent: Option<String>) -> Result<()> {
     let config_path = toml_config::config_path()
         .map_err(|e| AcpError::Config(format!("failed to resolve config path: {e}")))?;
-    let store = create_acp_store().await?;
     let models_cache = match ModelsCache::load() {
         Ok(cache) => Some(Arc::new(cache)),
         Err(err) => {
@@ -65,8 +64,11 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
         }
     };
     let client_fs: Arc<StdMutex<Option<ClientFsState>>> = Arc::new(StdMutex::new(None));
+    // The agent writes each session's conversation to the rig-memory store of
+    // the configured backend; `session/load` and `session/resume` read it back.
+    let rig = agnt_core::session::RigStoreConfig::new(agnt_core::session::StoreType::Sqlite);
     let sessions: SharedSessions = Arc::new(
-        AcpSessionManager::new(store, config_path, tokio::runtime::Handle::current())
+        AcpSessionManager::new(rig, config_path, tokio::runtime::Handle::current())
             .with_models_cache(models_cache)
             .with_client_fs(Arc::clone(&client_fs))
             .with_agent_name(agent),

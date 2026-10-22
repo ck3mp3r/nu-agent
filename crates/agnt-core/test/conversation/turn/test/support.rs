@@ -8,7 +8,6 @@ use crate::conversation::state::memory::MemoryOf;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::output_repetition::RepetitionState;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
-use crate::session::FsSessionStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;
@@ -36,20 +35,21 @@ pub(crate) fn default_last_total_tokens() -> Arc<std::sync::Mutex<Option<u64>>> 
     Arc::new(std::sync::Mutex::new(None))
 }
 
-/// Build a `MemoryOf<FsSessionStore>` over a tempdir store (no compaction —
+/// Build a `MemoryOf` over an in-memory rig store (no compaction —
 /// `CachedMemory` is used directly).
-pub(super) fn make_compacting_memory() -> (tempfile::TempDir, MemoryOf<FsSessionStore>) {
+pub(super) fn make_compacting_memory() -> (tempfile::TempDir, MemoryOf) {
     let temp_dir = tempfile::tempdir().expect("tempdir");
-    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
-    let memory = Arc::new(crate::session::CachedMemory::new(store));
+    let memory = Arc::new(crate::session::CachedMemory::new(
+        crate::session::RigStoreConfig::in_memory(),
+    ));
     (temp_dir, memory)
 }
 
-/// Build a `CompactionConfig<FsSessionStore>` (no marker store) with a
-/// deterministic streaming mock model so compaction never invokes a real LLM.
+/// Build a `CompactionConfig` (no marker store) with a deterministic streaming
+/// mock model so compaction never invokes a real LLM.
 pub(super) fn test_compaction_config(
     bus: crate::bus::Bus,
-) -> crate::conversation::compaction::CompactionConfig<FsSessionStore> {
+) -> crate::conversation::compaction::CompactionConfig {
     use crate::conversation::compaction::compactor::NuCompactor;
     use rig::test_utils::MockCompletionModel;
 
@@ -66,7 +66,13 @@ pub(super) fn test_compaction_config(
         compactor: NuCompactor::from_shared_model(
             std::sync::Arc::new(std::sync::Mutex::new(model.erase())),
             bus.clone(),
-            None,
+            rig_memory::CompactionPolicy::default(),
+            crate::conversation::compaction::compactor::resolve_model_spec(
+                "openai",
+                "gpt-4o",
+                Some(8_000),
+                Some(1_024),
+            ),
         ),
         params: crate::compaction::CompactionParams::default(),
         threshold_tokens: None,
@@ -101,7 +107,7 @@ pub(super) fn make_turn_context<'a>(
     dyn_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>>,
     config: &'a Config,
     bus: crate::bus::Bus,
-) -> TurnContext<'a, FsSessionStore> {
+) -> TurnContext<'a> {
     let (temp_dir, memory) = make_compacting_memory();
     let _keep_alive = temp_dir;
     let conversation = TurnConversation {

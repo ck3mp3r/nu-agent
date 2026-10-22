@@ -2,7 +2,7 @@ use crate::tools::limits::truncate_tool_output;
 use crate::types::EmptyToolName;
 use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use rmcp::handler::client::ClientHandler;
-use rmcp::model::ClientInfo;
+use rmcp::model::ClientConfig;
 use rmcp::service::{NotificationContext, RoleClient, RunningService, ServiceExt};
 use rmcp::transport::IntoTransport;
 use std::error::Error;
@@ -243,7 +243,7 @@ fn mcp_result_output(result: &rmcp::model::CallToolResult) -> Result<String, Too
 /// This handler follows the same pattern as rig's McpClientHandler but adds a
 /// namespacing layer to prevent tool name collisions across MCP servers.
 pub struct NamespacedClientHandler {
-    client_info: ClientInfo,
+    client_config: ClientConfig,
     tool_server_handle: rig::tool::server::ToolServerHandle,
     server_prefix: String,
     delimiter: String,
@@ -256,20 +256,20 @@ impl NamespacedClientHandler {
     /// Create a new NamespacedClientHandler.
     ///
     /// # Arguments
-    /// * `client_info` - MCP client information
+    /// * `client_config` - MCP client configuration
     /// * `tool_server_handle` - Handle to rig's ToolServer for registering tools
     /// * `server_prefix` - The server name to use as prefix (e.g., "nu", "context7")
     /// * `delimiter` - The delimiter between prefix and tool name (typically "__")
     /// * `max_tool_result_bytes` - Maximum bytes before truncation (0 = disabled)
     pub fn new(
-        client_info: ClientInfo,
+        client_config: ClientConfig,
         tool_server_handle: rig::tool::server::ToolServerHandle,
         server_prefix: String,
         delimiter: String,
         max_tool_result_bytes: usize,
     ) -> Self {
         Self {
-            client_info,
+            client_config,
             tool_server_handle,
             server_prefix,
             delimiter,
@@ -336,8 +336,8 @@ impl NamespacedClientHandler {
 }
 
 impl ClientHandler for NamespacedClientHandler {
-    fn get_info(&self) -> ClientInfo {
-        self.client_info.clone()
+    fn get_info(&self) -> ClientConfig {
+        self.client_config.clone()
     }
 
     async fn on_tool_list_changed(&self, context: NotificationContext<RoleClient>) {

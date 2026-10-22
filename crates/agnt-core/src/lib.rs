@@ -14,6 +14,12 @@ pub mod transcript;
 pub mod types;
 pub mod utils;
 
+/// The rig-memory crate this workspace's session persistence is built on.
+///
+/// Re-exported because [`session::SessionManager::rig_store`] and
+/// [`session::RigStoreConfig`] hand out its types.
+pub use rig_memory;
+
 #[cfg(test)]
 #[path = "../test/support.rs"]
 pub(crate) mod test_support;

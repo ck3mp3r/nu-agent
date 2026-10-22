@@ -1,26 +1,26 @@
 //! `SessionState`, `SessionPersistence`, and accessor tests driven through the
 //! real `AgentConversationRuntime`.
 
-use rig::memory::ConversationMemory;
-
 use super::harness::*;
 use super::*;
 use crate::protocol::session_management::{SessionPersistence, SessionState};
-use crate::session::SessionStore;
 use crate::session::prefix::dir_prefix;
 
-/// Create a session in the fixture's store with the given first messages.
+/// Seed the rig-memory store of `id` with `messages`.
 async fn seed_session(
     fixture: &RuntimeFixture,
     id: &str,
     messages: &[crate::types::Message],
 ) -> Result<()> {
-    fixture
+    let store = fixture
         .runtime
-        .store
-        .create(id, messages)
-        .await
-        .map_err(|e| format!("session create should succeed: {e:?}"))?;
+        .session
+        .inner_memory()
+        .rig_store(id)
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let mut conversation = rig_memory::load(&*store, id)?;
+    conversation.extend(messages.iter().cloned());
+    rig_memory::save(&*store, id, &mut conversation)?;
     Ok(())
 }
 
@@ -33,16 +33,10 @@ async fn clear_session_empties_memory_and_token_tracking() -> Result<()> {
         .final_session_id
         .clone()
         .ok_or("fixture must carry a session id")?;
-    fixture
-        .runtime
-        .session
-        .memory_mut()
-        .append(
-            &rig::id::ConversationId::from(session_id.as_str()),
-            vec![crate::types::Message::user("hello")],
-        )
-        .await
-        .map_err(|e| format!("memory append should succeed: {e:?}"))?;
+    fixture.runtime.session.memory_mut().reset_context(
+        session_id.as_str(),
+        vec![crate::types::Message::user("hello")],
+    );
     fixture.runtime.session.last_total_tokens_mut().replace(99);
 
     // -- Exec
@@ -150,16 +144,22 @@ async fn run_compaction_on_an_empty_session_is_a_noop() -> Result<()> {
 #[tokio::test]
 async fn run_compaction_summarizes_a_populated_session() -> Result<()> {
     // -- Setup & Fixtures
+    // The conversation lives in the rig-memory store, which is what a run loads.
     let mut fixture = make_runtime(text_model("unused"))?;
-    seed_session(
-        &fixture,
-        "test-session",
-        &[
-            crate::types::Message::user("first"),
-            crate::types::Message::assistant("reply"),
-        ],
-    )
-    .await?;
+    let store = fixture
+        .runtime
+        .session
+        .inner_memory()
+        .rig_store("test-session")
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let mut conversation = rig_memory::load(&*store, "test-session")?;
+    conversation.extend([
+        crate::types::Message::user("first"),
+        crate::types::Message::assistant("reply"),
+        crate::types::Message::user("second"),
+        crate::types::Message::assistant("second reply"),
+    ]);
+    rig_memory::save(&*store, "test-session", &mut conversation)?;
 
     // -- Exec
     fixture
@@ -169,16 +169,16 @@ async fn run_compaction_summarizes_a_populated_session() -> Result<()> {
         .map_err(|e| format!("compaction should succeed: {e}"))?;
 
     // -- Check
-    let entries = fixture
-        .runtime
-        .session
-        .inner_memory()
-        .load_all("test-session")
-        .await
-        .map_err(|e| format!("store load should succeed: {e:?}"))?;
-    assert!(
-        !entries.is_empty(),
-        "a successful compaction must rewrite the session context"
+    // The log records the splice under the `rig.compaction` author.
+    let stored = rig_memory::load(&*store, "test-session")?;
+    let first = stored
+        .entries()
+        .next()
+        .ok_or("the compacted conversation is non-empty")?;
+    assert_eq!(
+        first.author,
+        Some(&rig_memory::summary_author()),
+        "a successful compaction must splice the summary under rig.compaction"
     );
     Ok(())
 }

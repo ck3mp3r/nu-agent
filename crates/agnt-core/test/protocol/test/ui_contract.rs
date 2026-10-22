@@ -12,7 +12,9 @@ fn ui_event_and_permission_contracts() {
             tool_calls: 1,
             input_tokens: 7,
             output_tokens: 5,
-            total_tokens: 12,
+            total_tokens: Some(12),
+            cost: Some(0.001),
+            cost_complete: true,
         },
         UiEvent::ToolStarted {
             name: "k8s__list_pods".to_string(),

@@ -9,7 +9,7 @@ use super::super::test::{
     default_output_repetition, default_repetition_guard,
 };
 use super::executor_test_support::*;
-use super::test_utils::{MockResolver, message_text, test_compaction_config, test_config};
+use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
 use crate::config::Config;
 use crate::tools::closure::ClosureRegistry;
@@ -63,6 +63,7 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
+                annotations: crate::types::ToolAnnotations::default(),
                 name: crate::types::ToolName::new("echo_tool")?,
                 description: "echoes a fixed result".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
@@ -104,34 +105,27 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
         "max-turns steering must re-run the turn exactly once"
     );
 
+    // The first attempt carries the bare prompt; the steering retry's prompt
+    // carries the max-turns steering message (latest-wins carrier).
+    let requests = probe.requests();
+    assert_eq!(
+        request_prompt(&requests[0]),
+        "hello",
+        "the first attempt must carry the bare prompt"
+    );
+    assert!(
+        request_prompt(&requests[1])
+            .starts_with(crate::conversation::turn::feedback::MAX_TURNS_FEEDBACK_PREFIX),
+        "the steering retry's prompt must carry the max-turns steering message; got {:?}",
+        request_prompt(&requests[1])
+    );
+
+    // The retry succeeded, so rig saved the completed conversation.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
-        max_turns_steering_message_count(&persisted),
-        1,
-        "exactly one steering message must be appended; got {persisted:?}"
-    );
-    let steering_msg = persisted
-        .iter()
-        .find(|m| {
-            message_text(m).is_some_and(|t| {
-                t.starts_with(crate::conversation::turn::feedback::MAX_TURNS_FEEDBACK_PREFIX)
-            })
-        })
-        .ok_or("should have the appended steering message in the session history")?;
-    assert!(
-        matches!(steering_msg, crate::types::Message::User { .. }),
-        "appended steering message must have User role; got {steering_msg:?}"
-    );
-    let has_tool_result = persisted.iter().any(|m| {
-        matches!(
-            m,
-            crate::types::Message::User { content }
-                if content.iter().any(|c| matches!(c, crate::types::UserContent::ToolResult(_)))
-        )
-    });
-    assert!(
-        has_tool_result,
-        "the exhausted turn's delta (with tool result) must be persisted before the retry; got {persisted:?}"
+        persisted.len(),
+        2,
+        "the successful retry must save its prompt and reply; got {persisted:?}"
     );
 
     Ok(())
@@ -182,6 +176,7 @@ async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Re
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
+                annotations: crate::types::ToolAnnotations::default(),
                 name: crate::types::ToolName::new("echo_tool")?,
                 description: "echoes a fixed result".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
@@ -226,21 +221,30 @@ async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Re
         err.msg
     );
 
+    // The steering retry's prompt carries the max-turns steering message.
+    let requests = probe.requests();
+    assert!(
+        request_prompt(&requests[1])
+            .starts_with(crate::conversation::turn::feedback::MAX_TURNS_FEEDBACK_PREFIX),
+        "the steering retry's prompt must carry the max-turns steering message; got {:?}",
+        request_prompt(&requests[1])
+    );
+
+    // The turn failed, so rig saved nothing.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert_eq!(
-        max_turns_steering_message_count(&persisted),
-        1,
-        "cap 1 must produce exactly one steering message; got {persisted:?}"
+    assert!(
+        persisted.is_empty(),
+        "a failed turn must save nothing to the rig store; got {persisted:?}"
     );
 
     Ok(())
 }
 
-/// A MaxTurnsExceeded turn with no session (final_session_id None) must
-/// return Err without appending a steering message and without re-running:
-/// the second scripted turn stays unconsumed.
+/// A MaxTurnsExceeded turn with no session (final_session_id None) steers the
+/// same way a session turn does: one steering retry, then the cap falls through
+/// to the hard error. Nothing is persisted — there is no rig store.
 #[tokio::test]
-async fn no_session_max_turns_failure_returns_err_without_steering() -> Result<()> {
+async fn no_session_max_turns_failure_steers_once_then_hard_errors() -> Result<()> {
     // -- Setup & Fixtures
     let config = Config {
         max_tool_turns: Some(1),
@@ -278,6 +282,7 @@ async fn no_session_max_turns_failure_returns_err_without_steering() -> Result<(
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
+                annotations: crate::types::ToolAnnotations::default(),
                 name: crate::types::ToolName::new("echo_tool")?,
                 description: "echoes a fixed result".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
@@ -307,19 +312,26 @@ async fn no_session_max_turns_failure_returns_err_without_steering() -> Result<(
         )
         .await;
 
-    // -- Check
-    let err = result
-        .err()
-        .ok_or("session-less max-turns failure must return Err")?;
+    // -- Check: the session-less turn steered and the retry succeeded
+    let outcome =
+        result.map_err(|e| format!("the steering retry should recover the turn: {e:?}"))?;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed),
+        "the session-less steering retry must complete the turn"
+    );
     assert_eq!(
         probe.request_count(),
-        1,
-        "session-less turns must not re-run via steering"
+        2,
+        "a session-less turn steers once, then the retry runs"
     );
+
+    // The steering retry's prompt carries the max-turns steering message.
+    let requests = probe.requests();
     assert!(
-        err.msg.contains("Max turns (1) exceeded"),
-        "hard-error message must be the existing max-turns failure; got: {}",
-        err.msg
+        request_prompt(&requests[1])
+            .starts_with(crate::conversation::turn::feedback::MAX_TURNS_FEEDBACK_PREFIX),
+        "the session-less steering retry's prompt must carry the steering message; got {:?}",
+        request_prompt(&requests[1])
     );
 
     Ok(())

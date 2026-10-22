@@ -50,6 +50,7 @@ pub(crate) async fn nu_shell_multibyte_tool() -> Result<ToolInfra> {
     Ok(default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
+            annotations: crate::types::ToolAnnotations::default(),
             name: crate::types::ToolName::new("nu__shell")?,
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),

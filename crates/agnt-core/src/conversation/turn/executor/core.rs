@@ -20,7 +20,6 @@ pub const REPETITION_STEERING_NOTICE: &str =
 use std::sync::{Arc, Mutex};
 
 use nu_protocol::{LabeledError, Span, Value};
-use rig::memory::ConversationMemory;
 
 use crate::bus::Bus;
 use crate::config::Config;
@@ -29,13 +28,12 @@ use crate::conversation::managers::SessionManager;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::output_repetition::RepetitionState;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
-use crate::protocol::event::UiEvent;
-use crate::session::{CachedMemory, SessionStore};
+use crate::session::CachedMemory;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
-use crate::types::{Message, ToolDefinition};
+use crate::types::ToolDefinition;
 
 /// Outcome of `TurnExecutor::execute` — either a completed turn whose results
 /// have been persisted and whose UI events have been emitted, or an early-exit
@@ -92,11 +90,7 @@ pub struct ToolInfra {
     pub render_registry: ToolRenderRegistry,
 }
 
-pub struct TurnExecutor<
-    'a,
-    S: SessionManager,
-    ST: SessionStore + Clone + Send + Sync = crate::session::SessionStoreBackend,
-> {
+pub struct TurnExecutor<'a, S: SessionManager> {
     pub config: &'a Config,
     pub memory_state: &'a mut S,
     pub tool_infra: ToolInfra,
@@ -105,17 +99,16 @@ pub struct TurnExecutor<
     /// `switch_model()`.
     pub dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
     /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
-    pub compaction: CompactionConfig<ST>,
+    pub compaction: CompactionConfig,
     /// Stored after a completed turn so the delegate can extract it for response formatting.
     pub(super) response_data: Option<TurnResponseData>,
 }
 
-impl<'a, ST, S> TurnExecutor<'a, S, ST>
+impl<'a, S> TurnExecutor<'a, S>
 where
-    ST: SessionStore + Clone + Send + Sync + 'static,
     S: SessionManager<
-            Memory = crate::conversation::state::memory::MemoryOf<ST>,
-            InnerMemory = CachedMemory<ST>,
+            Memory = crate::conversation::state::memory::MemoryOf,
+            InnerMemory = CachedMemory,
         >,
 {
     pub fn new(
@@ -123,7 +116,7 @@ where
         memory_state: &'a mut S,
         tool_infra: ToolInfra,
         dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
-        compaction: CompactionConfig<ST>,
+        compaction: CompactionConfig,
     ) -> Self {
         Self {
             config,
@@ -181,38 +174,7 @@ where
             )
             .await;
 
-        self.dispatch_result(visitor_result, prompt, span, final_session_id)
+        self.dispatch_result(visitor_result, span, final_session_id)
             .await
-    }
-
-    /// Append messages to the session memory, surfacing failures instead of
-    /// dropping them silently. A failed append means this turn's messages are
-    /// NOT in the session store, so the failure is logged at error level and
-    /// surfaced to the user as a `WarningEvent::Message` on the bus warning
-    /// channel. `label` names the append site for the log and the warning.
-    pub(super) async fn append_to_memory_or_warn(
-        &mut self,
-        session_id: &str,
-        messages: Vec<Message>,
-        label: &str,
-    ) {
-        if let Err(mem_err) = self
-            .memory_state
-            .memory_mut()
-            .append(&rig::id::ConversationId::from(session_id), messages)
-            .await
-        {
-            log::error!("Failed to append session memory ({label}): {mem_err}");
-            let _ = self
-                .tool_infra
-                .bus
-                .ui_event()
-                .send(UiEvent::Warning {
-                    message: format!(
-                        "Session memory update failed: {label} — this turn may not be saved."
-                    ),
-                })
-                .await;
-        }
     }
 }

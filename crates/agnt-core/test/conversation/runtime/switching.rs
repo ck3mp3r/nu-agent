@@ -47,6 +47,7 @@ fn allow_decision() -> PermissionDecision {
 
 fn tool_definition(name: &str) -> Result<ToolDefinition> {
     Ok(ToolDefinition {
+        annotations: crate::types::ToolAnnotations::default(),
         name: ToolName::new(name)?,
         description: format!("{name} tool"),
         parameters: serde_json::json!({"type": "object", "properties": {}}),

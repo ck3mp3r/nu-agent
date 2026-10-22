@@ -1,4 +1,4 @@
-use crate::types::{EmptyToolName, ToolDefinition, ToolName};
+use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
 use nu_plugin::EngineInterface;
 use nu_protocol::{Span, Spanned, Value, engine::Closure};
 use serde_json::json;
@@ -123,6 +123,7 @@ pub fn closure_to_tool_definition(
     });
 
     Ok(ToolDefinition {
+        annotations: ToolAnnotations::default(),
         name: ToolName::new(name)?,
         description: desc,
         parameters: schema,
@@ -140,6 +141,7 @@ fn fallback_tool_definition(
     });
 
     Ok(ToolDefinition {
+        annotations: ToolAnnotations::default(),
         name: ToolName::new(name)?,
         description,
         parameters: schema,

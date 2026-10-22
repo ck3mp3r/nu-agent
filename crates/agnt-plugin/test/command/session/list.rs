@@ -1,10 +1,9 @@
 use super::list::{AgentSessionList, CwdInterface};
 use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy};
-use agnt_core::session::{FsSessionStore, SessionStore, SessionStoreBackend};
+use agnt_core::session::{RigStoreConfig, StoreType};
 use agnt_core::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{LabeledError, Span, Value};
-use std::sync::Arc;
 use tempfile::TempDir;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -32,72 +31,72 @@ fn make_call() -> EvaluatedCall {
 
 #[tokio::test]
 async fn test_agent_session_list_returns_table_with_session_stats() -> Result<()> {
+    // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    )));
-
-    // Create session 1 with 5 messages
+    let rig = rig_at(&temp_dir);
+    let prefix = dir_prefix(temp_dir.path());
+    let session1 = format!("{prefix}-session1");
+    let session2 = format!("{prefix}-session2");
     let messages1: Vec<Message> = (0..5)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    store
-        .create("session1", &messages1)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-
-    // Create session 2 with 10 messages
     let messages2: Vec<Message> = (0..10)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    store
-        .create("session2", &messages2)
+    seed(&rig, &session1, messages1)?;
+    seed(&rig, &session2, messages2)?;
+
+    // -- Exec
+    let command = AgentSessionList;
+    let engine = MockCwd {
+        dir: temp_dir.path().to_string_lossy().to_string(),
+    };
+    let call = make_call();
+    let result = command
+        .run_inner(&engine, &call, &rig)
         .await
         .map_err(|e| format!("{e:?}"))?;
 
-    // Test the underlying list() directly
-    let sessions = store.list().await.map_err(|e| format!("{e:?}"))?;
-
-    // Verify result (newest first)
-    assert_eq!(sessions.len(), 2, "Should have 2 sessions");
-
-    // Find session1 and verify its message count
-    let session1_info = sessions
-        .iter()
-        .find(|s| s.id == "session1")
-        .ok_or("should find session1")?;
-
-    assert_eq!(
-        session1_info.message_count, 5,
-        "Session1 should have 5 messages"
-    );
-
-    // Find session2 and verify its message count
-    let session2_info = sessions
-        .iter()
-        .find(|s| s.id == "session2")
-        .ok_or("should find session2")?;
-
-    assert_eq!(
-        session2_info.message_count, 10,
-        "Session2 should have 10 messages"
-    );
+    // -- Check
+    let Value::List { vals, .. } = &result else {
+        panic!("Expected list result");
+    };
+    assert_eq!(vals.len(), 2, "Should have 2 sessions");
+    let count_of = |id: &str| -> Option<i64> {
+        vals.iter().find_map(|v| match v {
+            Value::Record { val, .. } if val.get("id")?.as_str().ok()? == id => {
+                val.get("messages")?.as_int().ok()
+            }
+            _ => None,
+        })
+    };
+    assert_eq!(count_of("session1"), Some(5), "session1 message count");
+    assert_eq!(count_of("session2"), Some(10), "session2 message count");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_agent_session_list_returns_empty_list_when_no_sessions() -> Result<()> {
-    // Setup: Create temp directory for sessions (but don't create any)
+    // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    )));
+    let rig = rig_at(&temp_dir);
 
-    // Test the underlying list() directly
-    let sessions = store.list().await.map_err(|e| format!("{e:?}"))?;
+    // -- Exec
+    let command = AgentSessionList;
+    let engine = MockCwd {
+        dir: temp_dir.path().to_string_lossy().to_string(),
+    };
+    let call = make_call();
+    let result = command
+        .run_inner(&engine, &call, &rig)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
 
-    // Verify result
-    assert_eq!(sessions.len(), 0, "Should have 0 sessions");
+    // -- Check
+    let Value::List { vals, .. } = &result else {
+        panic!("Expected list result");
+    };
+    assert_eq!(vals.len(), 0, "Should have 0 sessions");
     Ok(())
 }
 
@@ -115,41 +114,36 @@ fn test_agent_session_list_command_signature() {
 
 #[tokio::test]
 async fn list_returns_both_new_and_legacy_prefixed_sessions() -> Result<()> {
+    // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    )));
-
+    let rig = rig_at(&temp_dir);
     let new_prefix = dir_prefix(temp_dir.path());
     let legacy_prefix = dir_prefix_legacy(temp_dir.path());
 
     // Create one session with the new 16-char prefix and one with the legacy 7-char prefix
-    store
-        .create(
-            &format!("{new_prefix}-new-session"),
-            &[Message::user("hello")],
-        )
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    store
-        .create(
-            &format!("{legacy_prefix}-legacy-session"),
-            &[Message::user("hello")],
-        )
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    seed(
+        &rig,
+        &format!("{new_prefix}-new-session"),
+        vec![Message::user("hello")],
+    )?;
+    seed(
+        &rig,
+        &format!("{legacy_prefix}-legacy-session"),
+        vec![Message::user("hello")],
+    )?;
 
+    // -- Exec
     let command = AgentSessionList;
     let engine = MockCwd {
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call();
     let result = command
-        .run_inner(&engine, &call, &store)
+        .run_inner(&engine, &call, &rig)
         .await
         .map_err(|e| format!("{e:?}"))?;
 
-    // Extract the display IDs from the returned list
+    // -- Check
     let Value::List { vals, .. } = &result else {
         panic!("Expected list result");
     };
@@ -172,5 +166,26 @@ async fn list_returns_both_new_and_legacy_prefixed_sessions() -> Result<()> {
         ids.contains(&"legacy-session".to_string()),
         "expected legacy-prefixed session in list, got: {ids:?}"
     );
+    Ok(())
+}
+
+// -- Test Support
+
+/// A `DirStore` rig store rooted at `temp_dir`.
+fn rig_at(temp_dir: &TempDir) -> RigStoreConfig {
+    RigStoreConfig::new(StoreType::Jsonl).with_cache_dir(temp_dir.path())
+}
+
+/// Seed the rig-memory store of `session_id` with `messages`, then write its
+/// state records so its `meta.json` listing exists.
+fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
+    let store = rig.open(session_id).map_err(|e| format!("{e:?}"))?;
+    let mut conversation =
+        agnt_core::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
+    conversation.extend(messages);
+    agnt_core::rig_memory::save(&*store, session_id, &mut conversation)
+        .map_err(|e| format!("{e:?}"))?;
+    agnt_core::session::rig_state::write_state_records(&*store, "test/model", Some("hello"))
+        .map_err(|e| format!("{e:?}"))?;
     Ok(())
 }

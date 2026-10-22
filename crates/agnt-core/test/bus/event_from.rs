@@ -60,7 +60,9 @@ fn tool_and_llm_events_convert() {
         tool_calls: 2,
         input_tokens: 10,
         output_tokens: 20,
-        total_tokens: 30,
+        total_tokens: Some(30),
+        cost: Some(0.012),
+        cost_complete: true,
     };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(
@@ -70,7 +72,9 @@ fn tool_and_llm_events_convert() {
             tool_calls: 2,
             input_tokens: 10,
             output_tokens: 20,
-            total_tokens: 30,
+            total_tokens: Some(30),
+            cost: Some(0.012),
+            cost_complete: true,
         })
     );
 

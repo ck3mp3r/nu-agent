@@ -6,6 +6,8 @@
 
 use super::*;
 
+use agnt_core::utils::paths::APP_DIR_NAME;
+
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // region:    --- Tests
@@ -43,7 +45,7 @@ async fn test_integration_provider_login_status_logout_round_trip() -> Result<()
     dispatch::run_provider_command(&login).await?;
 
     // -- Check
-    let secrets = env.data_home_path("nu-agent/secrets.json");
+    let secrets = env.data_home_path(&format!("{APP_DIR_NAME}/secrets.json"));
     assert!(
         secrets.exists(),
         "the file vault must hold the stored API key"

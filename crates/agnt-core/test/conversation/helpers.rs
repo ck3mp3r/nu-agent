@@ -36,6 +36,7 @@ pub fn mcp_tool(server: &str, name: &str, raw_name: &str) -> McpToolDefinition {
 
 pub fn tool_definition_named(name: &str) -> Result<ToolDefinition, EmptyToolName> {
     Ok(ToolDefinition {
+        annotations: crate::types::ToolAnnotations::default(),
         name: ToolName::new(name)?,
         description: format!("tool {name}"),
         parameters: serde_json::json!({"type":"object"}),

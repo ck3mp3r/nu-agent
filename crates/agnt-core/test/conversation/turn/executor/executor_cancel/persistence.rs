@@ -64,6 +64,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
+                annotations: crate::types::ToolAnnotations::default(),
                 name: crate::types::ToolName::new("test_cancel_tool")?,
                 description: "cancels the turn".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
@@ -104,36 +105,12 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
         "cancelled Ok path must return TurnOutcome::EarlyReturn, not TurnOutcome::Completed"
     );
 
-    // 2. Conversation store must have been written with the cancelled messages
-    //    (via JournalConversationMemory.append() — single write to both JSONL and cache)
-    let persisted_entries = memory_state
-        .inner_memory()
-        .load_all(session_id)
-        .await
-        .map_err(|e| format!("store load should succeed: {e:?}"))?;
-    let persisted: Vec<crate::types::Message> = persisted_entries
-        .iter()
-        .filter_map(|e| match e {
-            StoreEntry::Message(m) => Some(m.clone()),
-            _ => None,
-        })
-        .collect();
-    // The cancelling tool produces a result and then cancels, so path C appends
-    // the delta from Cancelled::chat_history plus the synthetic assistant
-    // close-block: [user("hello"), asst(tool_call), user(tool_result),
-    // asst(close)]. We assert the delta is non-empty and small (<= 4) to catch
-    // duplication (which would produce more).
+    // 2. rig saves nothing on a cancelled run, so the rig store gains nothing.
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert!(
-        !persisted.is_empty() && persisted.len() <= 4,
-        "cancelled turn: expected 1-4 messages, got {}; messages: {:?}",
-        persisted.len(),
-        persisted
+        persisted.is_empty(),
+        "a cancelled turn must save nothing to the rig store; got {persisted:?}"
     );
-
-    // 2b. memory.load() returns repair-filtered view — raw messages are in JSONL (asserted
-    //     above). The cache is updated by append(), but load() applies repair which may
-    //     trim a trailing user-only message from an immediately-cancelled turn.
-    // The key invariant is JSONL durability (step 2 above), not the repair-filtered view.
 
     // 3. UiEvent::Completed must have been published on the bus ui_event channel
     let mut saw_completed = false;
@@ -166,8 +143,6 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
 /// `memory().load()` return the same messages after a cancelled turn.
 #[tokio::test]
 async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
-    use rig::memory::ConversationMemory;
-
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-single-write-cancelled";
@@ -203,6 +178,7 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
+                annotations: crate::types::ToolAnnotations::default(),
                 name: crate::types::ToolName::new("test_cancel_tool")?,
                 description: "cancels the turn".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
@@ -235,32 +211,18 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
     let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
 
-    // Both store (JSONL) and memory cache must have the messages
-    let from_store_entries = memory_state
-        .inner_memory()
-        .load_all(session_id)
-        .await
-        .map_err(|e| format!("store load should succeed: {e:?}"))?;
-    let from_store: Vec<crate::types::Message> = from_store_entries
-        .iter()
-        .filter_map(|e| match e {
-            StoreEntry::Message(m) => Some(m.clone()),
-            _ => None,
-        })
-        .collect();
-
+    // rig saves nothing on a cancelled run, so the rig store gains nothing.
+    let from_store = load_persisted_messages(&memory_state, session_id).await?;
     assert!(
-        !from_store.is_empty(),
-        "JSONL must have cancelled messages (via single memory.append())"
+        from_store.is_empty(),
+        "a cancelled turn must save nothing to the rig store; got {from_store:?}"
     );
 
-    // memory.load() returns the repair-filtered view. For immediately-cancelled turns
-    // where only a trailing user message was stored, repair trims it to an empty slice.
-    // The key invariant is JSONL durability (from_store above), not the repair-filtered view.
-    // Verify that memory.load() succeeds (doesn't panic/error) — content is repair-determined.
+    // memory.load() still succeeds (it reads the rig store, then the frozen old
+    // store as a fallback) — content is repair-determined.
     let _ = memory_state
         .inner_memory()
-        .load(&rig::id::ConversationId::from(session_id))
+        .load(session_id)
         .await
         .map_err(|e| format!("memory load should succeed without error: {e:?}"))?;
 
@@ -291,14 +253,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
         crate::types::Message::user("prior work"),
         crate::types::Message::assistant("done"),
     ];
-    {
-        use rig::memory::ConversationMemory;
-        memory_state
-            .inner_memory()
-            .append(&rig::id::ConversationId::from(session_id), prior_msgs)
-            .await
-            .map_err(|e| format!("append prior messages: {e:?}"))?;
-    }
+    seed_rig_store(&memory_state, session_id, prior_msgs)?;
 
     let model = MockCompletionModel::from_stream_turns([
         vec![
@@ -329,6 +284,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
+                annotations: crate::types::ToolAnnotations::default(),
                 name: crate::types::ToolName::new("test_cancel_tool")?,
                 description: "cancels the turn".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),
@@ -361,32 +317,13 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
     let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
 
-    let persisted_entries = memory_state
-        .inner_memory()
-        .load_all(session_id)
-        .await
-        .map_err(|e| format!("store load should succeed: {e:?}"))?;
-    let persisted: Vec<crate::types::Message> = persisted_entries
-        .iter()
-        .filter_map(|e| match e {
-            StoreEntry::Message(m) => Some(m.clone()),
-            _ => None,
-        })
-        .collect();
-
-    // MUST NOT include the full prior history again. The turn is cancelled by the
-    // cancelling tool, so the new-message delta is [user("new question"),
-    // asst(tool_call), user(tool_result), asst(close)] = up to 4 new messages.
-    // Total must be 2 prior + delta (<= 6), NOT the prior history doubled.
-    assert!(
-        persisted.len() <= 6,
-        "cancelled turn after prior history must not double the store; got {} messages (expected <= 6)",
-        persisted.len()
-    );
-    assert!(
-        persisted.len() >= 2,
-        "prior messages must be preserved; got {}",
-        persisted.len()
+    // rig saves nothing on a cancelled run: the store keeps exactly the prior
+    // conversation, with no delta re-appended.
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        persisted.len(),
+        2,
+        "a cancelled turn must leave the rig store at the 2 prior messages; got {persisted:?}"
     );
 
     Ok(())

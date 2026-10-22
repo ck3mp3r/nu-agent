@@ -1,4 +1,5 @@
 use crate::config::vault::VaultBackend;
+use crate::utils::paths::APP_DIR_NAME;
 
 use super::{INDEX_KEY, PROBE_KEY, SERVICE_NAME};
 
@@ -17,7 +18,10 @@ fn test_keychain_backend_constants_match_key_naming_convention() -> Result<()> {
     let probe_key = PROBE_KEY;
 
     // -- Check
-    assert_eq!(service, "nu-agent", "service name is fixed");
+    assert_eq!(
+        service, APP_DIR_NAME,
+        "service name follows the application directory name"
+    );
     assert_eq!(
         index_key, "nu-agent:index",
         "index key follows the convention"

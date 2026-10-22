@@ -366,12 +366,12 @@ pub(crate) async fn connect_server(
     String,
 > {
     let server_name = server.name.as_str();
-    let client_info = rmcp::model::ClientInfo::new(
+    let client_config = rmcp::model::ClientConfig::new(
         rmcp::model::ClientCapabilities::default(),
         rmcp::model::Implementation::new("nu-agent", env!("CARGO_PKG_VERSION")),
     );
     let handler = NamespacedClientHandler::new(
-        client_info,
+        client_config,
         tool_server_handle.clone(),
         server.name.clone(),
         MCP_TOOL_NAMESPACE_DELIMITER.to_string(),
@@ -467,14 +467,14 @@ pub(crate) async fn connect_server(
                     auth_manager.set_credential_store(vault_cred_store);
                     auth_manager.set_state_store(vault_state_store);
 
-                    // Discover OAuth metadata (required before the manager can use stored credentials)
-                    let metadata = auth_manager.discover_metadata().await.map_err(|e| {
+                    // Resolve OAuth metadata (required before the manager can use stored credentials)
+                    let resolution = auth_manager.resolve_metadata().await.map_err(|e| {
                         format!(
                             "failed to discover OAuth metadata for '{}': {e}",
                             server.name
                         )
                     })?;
-                    auth_manager.set_metadata(metadata);
+                    auth_manager.set_metadata(resolution.metadata);
 
                     // Configure the OAuth client with client_id and client_secret from config.
                     // The redirect_uri is not used at runtime (no callback server), but

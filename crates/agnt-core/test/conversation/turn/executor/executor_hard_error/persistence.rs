@@ -4,14 +4,13 @@ use super::*;
 // Error path persistence tests
 // ---------------------------------------------------------------------------
 
-/// MaxTurns carries full chat_history — executor must persist it and return Err.
+/// MaxTurns carries full chat_history, but rig saves only a successful run, so
+/// a MaxTurns failure saves nothing.
 ///
 /// Setup: mock returns a tool_call on turn 1. Config limits tool turns to 0, so rig
-/// raises MaxTurns after the first tool call attempt. After Fix 1, TurnError
-/// gets messages=Some(chat_history). After Fix 2, executor persists those messages
-/// before returning LabeledError.
+/// raises MaxTurns after the first tool call attempt.
 #[tokio::test]
-async fn max_turns_error_persists_full_history() -> Result<()> {
+async fn max_turns_error_saves_nothing() -> Result<()> {
     // max_tool_turns=0: rig raises MaxTurns as soon as a tool-call turn would
     // be scheduled (current_turn > 0 + 1 after the first tool response).
     let config = Config {
@@ -56,34 +55,23 @@ async fn max_turns_error_persists_full_history() -> Result<()> {
         "MaxTurns must propagate as LabeledError to caller"
     );
 
-    // JSONL must have been written with the partial chat history
-    let persisted = memory_state
-        .inner_memory()
-        .load_all(session_id)
-        .await
-        .map_err(|e| format!("store load should succeed: {e:?}"))?;
-    let persisted: Vec<crate::types::Message> = persisted
-        .iter()
-        .filter_map(|e| match e {
-            StoreEntry::Message(m) => Some(m.clone()),
-            _ => None,
-        })
-        .collect();
+    // rig saves nothing on a failed run
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert!(
-        !persisted.is_empty(),
-        "MaxTurns must persist chat_history to JSONL (Fix 1 + Fix 2 path A history)"
+        persisted.is_empty(),
+        "a MaxTurns failure must save nothing to the rig store; got {persisted:?}"
     );
 
     Ok(())
 }
 
-/// UnknownToolCall carries full chat_history — executor must persist it and return Err.
+/// UnknownToolCall carries full chat_history, but rig saves only a successful
+/// run, so an unknown-tool failure saves nothing.
 ///
 /// Setup: mock returns a tool_call for "nonexistent_tool" which is not registered
-/// in the agent's tool list. Rig raises UnknownToolCall. After Fix 1, TurnError
-/// gets messages=Some(chat_history). After Fix 2, executor persists them.
+/// in the agent's tool list. Rig raises UnknownToolCall.
 #[tokio::test]
-async fn unknown_tool_error_persists_full_history() -> Result<()> {
+async fn unknown_tool_error_saves_nothing() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-unknown-tool";
@@ -127,36 +115,20 @@ async fn unknown_tool_error_persists_full_history() -> Result<()> {
         "UnknownToolCall must propagate as LabeledError to caller"
     );
 
-    // JSONL must have been written with the partial chat history
-    let persisted_entries = memory_state
-        .inner_memory()
-        .load_all(session_id)
-        .await
-        .map_err(|e| format!("store load should succeed: {e:?}"))?;
-    let persisted: Vec<crate::types::Message> = persisted_entries
-        .iter()
-        .filter_map(|e| match e {
-            StoreEntry::Message(m) => Some(m.clone()),
-            _ => None,
-        })
-        .collect();
+    // rig saves nothing on a failed run
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert!(
-        !persisted.is_empty(),
-        "UnknownToolCall must persist chat_history to JSONL (Fix 1 + Fix 2 path A history)"
+        persisted.is_empty(),
+        "an unknown-tool failure must save nothing to the rig store; got {persisted:?}"
     );
 
     Ok(())
 }
 
-/// Network/CompletionError on a fresh session — executor persists the user prompt
-/// via the delta path (last_known_history = [user_prompt] after fix).
-///
-/// After the `on_completion_call` fix, `last_known_history` = `history + [prompt]` =
-/// `[] + [user_msg]` = `[user_msg]`. delta = skip(0) = `[user_msg]` (non-empty),
-/// so the delta path fires and persists just the user message. The placeholder path
-/// is no longer triggered for this case.
+/// A network/CompletionError on a fresh session saves nothing: rig saves only a
+/// successful run.
 #[tokio::test]
-async fn network_error_on_fresh_session_persists_user_message() -> Result<()> {
+async fn network_error_on_fresh_session_saves_nothing() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-network-error";
@@ -194,50 +166,20 @@ async fn network_error_on_fresh_session_persists_user_message() -> Result<()> {
         "network error must propagate as LabeledError to caller"
     );
 
-    // After the fix: last_known_history = [user_msg], delta = skip(0) = [user_msg].
-    // Delta path fires → 1 message persisted (just the user prompt).
-    // The placeholder path no longer fires because the delta is non-empty.
-    let persisted_entries = memory_state
-        .inner_memory()
-        .load_all(session_id)
-        .await
-        .map_err(|e| format!("store load should succeed: {e:?}"))?;
-    let persisted: Vec<crate::types::Message> = persisted_entries
-        .iter()
-        .filter_map(|e| match e {
-            StoreEntry::Message(m) => Some(m.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        persisted.len(),
-        1,
-        "hard error on fresh session must persist exactly 1 message (user prompt via delta path); got {} messages",
-        persisted.len()
-    );
-    // The single persisted message must be the user prompt
+    // rig saves nothing on a failed run
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert!(
-        matches!(persisted[0], crate::types::Message::User { .. }),
-        "persisted[0] must be a User message"
+        persisted.is_empty(),
+        "a network failure must save nothing to the rig store; got {persisted:?}"
     );
 
     Ok(())
 }
 
-/// When `on_completion_call` fires before a CompletionError on a fresh session,
-/// the executor persists the user prompt via the delta path (not a placeholder pair).
-///
-/// After the fix, `on_completion_call(prompt, history=[]`) stores `[] + [user_prompt]`
-/// = `[user_prompt]`. `pre_turn_message_count = 0`, so `delta = skip(0) = [user_prompt]`
-/// (non-empty) → delta path fires → 1 message persisted (just the user prompt).
-///
-/// The placeholder path (which would produce 2 messages) is no longer triggered
-/// because the delta is now always non-empty when `on_completion_call` has fired.
-///
-/// This is CORRECT: we now save the user's question even if the API fails to respond,
-/// which is better than saving a fake `[Turn failed:]` assistant message.
+/// A CompletionError on the first LLM call saves nothing: rig saves only a
+/// successful run.
 #[tokio::test]
-async fn hard_error_on_first_llm_call_persists_user_message() -> Result<()> {
+async fn hard_error_on_first_llm_call_saves_nothing() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-hard-error-no-hook-history";
@@ -277,32 +219,11 @@ async fn hard_error_on_first_llm_call_persists_user_message() -> Result<()> {
         "hard error must propagate as Err to caller"
     );
 
-    // After the fix: last_known_history = [user_msg], delta = [user_msg], 1 message persisted.
-    let persisted_entries = memory_state
-        .inner_memory()
-        .load_all(session_id)
-        .await
-        .map_err(|e| format!("store load should succeed: {e:?}"))?;
-    let persisted: Vec<crate::types::Message> = persisted_entries
-        .iter()
-        .filter_map(|e| match e {
-            StoreEntry::Message(m) => Some(m.clone()),
-            _ => None,
-        })
-        .collect();
-
-    assert_eq!(
-        persisted.len(),
-        1,
-        "hard error on fresh session must persist exactly 1 message (user prompt); got {:?}",
-        persisted
-    );
-
-    // The single persisted message must be the user prompt (not a placeholder)
+    // rig saves nothing on a failed run
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert!(
-        matches!(persisted[0], crate::types::Message::User { .. }),
-        "persisted[0] must be a User message; got {:?}",
-        persisted[0]
+        persisted.is_empty(),
+        "a hard error on the first LLM call must save nothing to the rig store; got {persisted:?}"
     );
 
     Ok(())
@@ -310,6 +231,9 @@ async fn hard_error_on_first_llm_call_persists_user_message() -> Result<()> {
 
 /// When there is no session (transient invocation), hard errors must NOT write
 /// anything to the store — there is no conversation to record.
+///
+/// No append call exists any more: rig saves only a successful run, and a
+/// session-less turn has no rig store at all.
 #[tokio::test]
 async fn hard_error_no_session_persists_nothing() {
     let config = test_config();

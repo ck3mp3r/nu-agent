@@ -15,7 +15,7 @@ use super::tmux_pane::TmuxPaneTool;
 use super::tmux_session::TmuxSessionTool;
 use super::tmux_window::TmuxWindowTool;
 use super::tree_sitter::{AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool};
-use super::{ToolErrorKind, ToolHandlerError};
+use super::{ToolHandlerError, execution_error_for_kind};
 use crate::bus::Bus;
 use crate::protocol::event::ToolDisplay;
 use crate::protocol::tool_args::CallLine;
@@ -236,23 +236,6 @@ pub async fn register_builtin(
     };
     tool_server.add_dynamic_tool(tool);
 }
-
-// region:    --- Support
-
-/// Map a handler error kind to the matching rig `ToolExecutionError`
-/// constructor so downstream retry and refusal policy sees the real
-/// classification instead of a flat provider failure.
-fn execution_error_for_kind(kind: ToolErrorKind, message: String) -> ToolExecutionError {
-    match kind {
-        ToolErrorKind::Validation => ToolExecutionError::invalid_args(message),
-        ToolErrorKind::Timeout => ToolExecutionError::timeout(message),
-        ToolErrorKind::Authorization => ToolExecutionError::permission_denied(message),
-        ToolErrorKind::Transport => ToolExecutionError::network(message),
-        ToolErrorKind::Runtime | ToolErrorKind::Unknown => ToolExecutionError::other(message),
-    }
-}
-
-// endregion: --- Support
 
 #[cfg(test)]
 #[path = "../../../test/tools/handler/builtin_tool.rs"]

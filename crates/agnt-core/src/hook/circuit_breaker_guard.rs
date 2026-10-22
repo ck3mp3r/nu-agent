@@ -72,7 +72,7 @@ impl CircuitBreakerGuard {
 
         // Auth errors bypass the circuit breaker — they are user-actionable
         // (re-login, scope grant) rather than transport-level failures. The
-        // HTTP status is the only structural auth signal: rmcp 2.2.0's
+        // HTTP status is the only structural auth signal: rmcp 3.5's
         // ServiceError/ErrorData carry no auth-specific structure.
         if let Some(auth_err) = raw_result
             .error()
@@ -146,7 +146,7 @@ fn source_is_transport(error: &ToolExecutionError) -> bool {
 
 /// Map the error's HTTP status to the user-actionable auth error to log.
 ///
-/// rmcp 2.2.0's ServiceError/ErrorData carry no auth structure (no HTTP
+/// rmcp 3.5's ServiceError/ErrorData carry no auth structure (no HTTP
 /// status, no auth error codes — verified), so `http_status()` is the only
 /// honest signal. 401 → AuthRequired, 403 → InsufficientScope; auth
 /// identifiable only by server prose falls through to the failure branch,

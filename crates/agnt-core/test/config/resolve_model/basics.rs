@@ -44,6 +44,7 @@ fn test_resolve_model_basic() -> Result<()> {
                     base_url: None,
                     provider: None,
                     preamble: None,
+                    catalog: None,
                     models: {
                         let mut models = HashMap::new();
                         models.insert(
@@ -57,6 +58,7 @@ fn test_resolve_model_basic() -> Result<()> {
                                     context: Some(128000),
                                     output: Some(4096),
                                 }),
+                                pricing: None,
                             },
                         );
                         models

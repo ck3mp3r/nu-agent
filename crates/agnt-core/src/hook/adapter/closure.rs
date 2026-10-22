@@ -5,9 +5,8 @@ use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use std::sync::Arc;
 
 use crate::tools::closure::{ClosureRegistry, ResolvedClosure};
-use crate::tools::error::ToolError;
 use crate::tools::executor::ToolExecutor;
-use crate::tools::handler::{json_to_nu_value, nu_value_to_json};
+use crate::tools::handler::{execution_error_for_kind, json_to_nu_value, nu_value_to_json};
 
 /// Adapts a Nushell closure to rig's DynamicTool interface.
 ///
@@ -117,7 +116,7 @@ impl ClosureToolAdapter {
                     let result = executor
                         .invoke_closure(&resolved.closure, positional_args, span)
                         .await
-                        .map_err(map_tool_error)?;
+                        .map_err(|e| execution_error_for_kind(e.kind, e.message))?;
 
                     // Convert result back to JSON
                     let result_json = nu_value_to_json(&result).map_err(|e| {
@@ -179,21 +178,6 @@ pub fn adapt_closures(
         .map(|adapter| adapter.and_then(ClosureToolAdapter::into_dynamic_tool))
         .collect()
 }
-
-// region:    --- Support
-
-/// Map a `ToolError` to rig's `ToolExecutionError`, preserving the variant
-/// classification (timeout vs. other) while keeping the Display message
-/// model-visible.
-fn map_tool_error(e: ToolError) -> ToolExecutionError {
-    let message = e.to_string();
-    match e {
-        ToolError::Timeout { .. } => ToolExecutionError::timeout(message),
-        ToolError::Execution(_) | ToolError::Audit(_) => ToolExecutionError::other(message),
-    }
-}
-
-// endregion: --- Support
 
 #[cfg(test)]
 #[path = "../../../test/hook/adapter/closure.rs"]

@@ -1,7 +1,7 @@
 use crate::plugin::AgentPlugin;
 use agnt_core::compaction::CompactionParams;
+use agnt_core::session::RigStoreConfig;
 use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy};
-use agnt_core::session::{SessionStore, SessionStoreBackend, StoreEntry};
 use agnt_core::types::{AssistantContent, Message, UserContent};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Record, Signature, SyntaxShape, Value};
@@ -32,7 +32,7 @@ impl AgentSessionInspect {
         &self,
         engine: &C,
         call: &EvaluatedCall,
-        store: &SessionStoreBackend,
+        rig: &RigStoreConfig,
     ) -> Result<Value, LabeledError> {
         let session_id: String = call.req(0)?;
 
@@ -42,33 +42,20 @@ impl AgentSessionInspect {
         let new_id = format!("{new_prefix}-{session_id}");
         let legacy_id = format!("{legacy_prefix}-{session_id}");
 
-        // Load session metadata and entries from the store, trying the new
-        // prefix first and falling back to the legacy prefix for sessions
-        // created before the prefix length increase.
-        let loaded = store
-            .load(&new_id)
-            .await
-            .map_err(|e| LabeledError::new(format!("Failed to load session: {e}")))?;
-        let (metadata, entries) = match loaded {
-            Some(v) => v,
-            None => {
-                let legacy = store
-                    .load(&legacy_id)
-                    .await
-                    .map_err(|e| LabeledError::new(format!("Failed to load session: {e}")))?;
-                legacy
-                    .ok_or_else(|| LabeledError::new(format!("Session not found: {session_id}")))?
-            }
-        };
+        // Open the session's rig-memory store, trying the new prefix first and
+        // falling back to the legacy prefix for sessions created before the
+        // prefix length increase.
+        let id = [new_id, legacy_id]
+            .into_iter()
+            .find(|id| rig.holds(id).unwrap_or(false))
+            .ok_or_else(|| LabeledError::new(format!("Session not found: {session_id}")))?;
 
-        // Filter messages from entries (skip compaction markers)
-        let messages: Vec<&Message> = entries
-            .iter()
-            .filter_map(|e| match e {
-                StoreEntry::Message(msg) => Some(msg),
-                StoreEntry::Marker(_) => None,
-            })
-            .collect();
+        let view = rig
+            .view(&id)
+            .map_err(|e| LabeledError::new(format!("Failed to read session: {e}")))?;
+
+        // Collect the stored messages
+        let messages: Vec<&Message> = view.messages.iter().collect();
 
         // Helper function to extract role and text from rig Message
         fn extract_message_info(msg: &Message) -> (String, String) {
@@ -142,16 +129,40 @@ impl AgentSessionInspect {
 
         // Build the final session record
         let mut session_record = Record::new();
-        session_record.push("id", Value::string(metadata.session_id, call.head));
+        session_record.push("id", Value::string(id, call.head));
         session_record.push(
             "created_at",
-            Value::string(metadata.created_at.to_rfc3339(), call.head),
+            Value::string(
+                view.started_ms
+                    .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms as i64))
+                    .unwrap_or_else(chrono::Utc::now)
+                    .to_rfc3339(),
+                call.head,
+            ),
+        );
+        session_record.push(
+            "title",
+            Value::string(view.title.unwrap_or_default(), call.head),
+        );
+        session_record.push(
+            "model",
+            Value::string(view.model.unwrap_or_default(), call.head),
         );
         session_record.push(
             "message_count",
             Value::int(messages.len() as i64, call.head),
         );
         session_record.push("config", Value::record(config_record, call.head));
+        session_record.push(
+            "repairs",
+            Value::list(
+                view.repairs
+                    .iter()
+                    .map(|repair| Value::string(repair.to_string(), call.head))
+                    .collect(),
+                call.head,
+            ),
+        );
         session_record.push("messages", Value::list(message_values, call.head));
 
         Ok(Value::record(session_record, call.head))
@@ -205,9 +216,7 @@ impl SimplePluginCommand for AgentSessionInspect {
         _input: &Value,
     ) -> Result<Value, LabeledError> {
         let store_type = plugin.resolve_store_type(call)?;
-        let store = plugin
-            .create_store_with(store_type)
-            .map_err(|e| LabeledError::new(format!("Failed to create session store: {e}")))?;
-        crate::block_on!(plugin, self.run_inner(engine, call, &store))
+        let rig = RigStoreConfig::new(store_type);
+        crate::block_on!(plugin, self.run_inner(engine, call, &rig))
     }
 }

@@ -11,6 +11,7 @@ agnt-a2a = { workspace = true }
 nu-plugin = { workspace = true }
 nu-protocol = { workspace = true }
 rig = { workspace = true }
+rig-memory = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 async-trait = "0.1"

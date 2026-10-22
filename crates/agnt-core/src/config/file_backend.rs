@@ -1,8 +1,9 @@
 //! Plaintext-file backend for the [`Vault`](super::vault::Vault).
 //!
-//! Stores `key -> value` as JSON at `$XDG_DATA_HOME/nu-agent/secrets.json`
-//! with 0600 permissions and `fs2` file locking. The Vault serializes its
-//! typed values, so this backend only ever sees strings.
+//! Stores `key -> value` as JSON at `$XDG_DATA_HOME/{APP_DIR_NAME}/secrets.json`
+//! with 0600 permissions and `fs2` file locking. `APP_DIR_NAME` is
+//! `nu-agent-dev` in debug builds and `nu-agent` in release builds. The Vault
+//! serializes its typed values, so this backend only ever sees strings.
 
 // region:    --- Modules
 
@@ -20,10 +21,7 @@ use super::vault::{BackendKind, VaultBackend, VaultError};
 
 // region:    --- Constants
 
-/// Subdirectory of the XDG data directory holding the secrets file.
-const DATA_SUBDIR: &str = "nu-agent";
-
-/// Secrets file name inside [`DATA_SUBDIR`].
+/// Secrets file name inside the application directory.
 const SECRETS_FILE: &str = "secrets.json";
 
 // endregion: --- Constants
@@ -53,7 +51,7 @@ impl FileBackend {
 
     /// Probe whether the XDG data directory is writable.
     ///
-    /// Creates the `nu-agent/` subdirectory when missing, then proves
+    /// Creates the application subdirectory when missing, then proves
     /// writability by creating and dropping a probe file inside it.
     pub fn probe() -> Result<Self, VaultError> {
         Self::probe_in(&Self::default_path()?)
@@ -77,15 +75,16 @@ impl FileBackend {
         &self.path
     }
 
-    /// Resolve `$XDG_DATA_HOME/nu-agent/secrets.json`.
+    /// Resolve `$XDG_DATA_HOME/{APP_DIR_NAME}/secrets.json`.
     pub fn default_path() -> Result<PathBuf, VaultError> {
         Self::default_path_with(&process_env())
     }
 
-    /// Resolve `$XDG_DATA_HOME/nu-agent/secrets.json` from an explicit env map.
+    /// Resolve `$XDG_DATA_HOME/{APP_DIR_NAME}/secrets.json` from an explicit env
+    /// map.
     pub fn default_path_with(env: &EnvMap) -> Result<PathBuf, VaultError> {
-        let dir = crate::utils::xdg::data_dir_with(env).map_err(|_| VaultError::NoDataDir)?;
-        Ok(dir.join(DATA_SUBDIR).join(SECRETS_FILE))
+        let dir = crate::utils::paths::data_app_dir_with(env).map_err(|_| VaultError::NoDataDir)?;
+        Ok(dir.join(SECRETS_FILE))
     }
 
     // --- Support ---

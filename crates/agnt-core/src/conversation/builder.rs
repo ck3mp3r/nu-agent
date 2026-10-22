@@ -10,7 +10,7 @@ use crate::protocol::persona::PersonaSummary;
 use crate::tools::audit::AuditLogger;
 use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use crate::tools::executor::ToolExecutor;
-use crate::types::{EmptyToolName, ToolDefinition, ToolName};
+use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
 use rig::tool::server::ToolServerHandle;
 use serde_json::json;
 
@@ -53,6 +53,7 @@ pub fn build_compaction_params(merged: &CompactionConfig) -> CompactionParams {
 pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> {
     Ok(vec![
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("read")?,
             description: "Read file content with optional line windowing and return content/version metadata".to_string(),
             parameters: json!({
@@ -66,6 +67,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("edit")?,
             description: "Edit or create files. Use operation.type = 'search_replace' with 'search' and 'replacement' string fields (no line numbers needed). Or use operation.type = 'create' with 'content' field. Requires expected_version from a prior read for existing files.".to_string(),
             parameters: json!({
@@ -91,6 +93,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("skill")?,
             description: "Load skill content by explicit name from local or home skill roots".to_string(),
             parameters: json!({
@@ -102,6 +105,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("http")?,
             description: "Fetch content from a URL. Returns markdown extracted from HTML pages, \
                 preserving structure (headings, lists, links, code blocks, tables). \
@@ -127,6 +131,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
                 "required": ["url"]
             }),
         },        ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("grep")?,
             description: "Search file contents recursively using a regex pattern. Respects .gitignore. Returns structured matches with file path, line number, and line content.".to_string(),
             parameters: json!({
@@ -157,6 +162,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("glob")?,
             description: "Find files matching a glob pattern. Respects .gitignore. Returns matching file paths relative to the search root. Use patterns like '**/*.rs' or 'src/**/*.{ts,tsx}'.".to_string(),
             parameters: json!({
@@ -175,6 +181,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("tmux_session")?,
             description: "Manage tmux sessions. List all sessions, get info about a specific session, create a new session (in a directory), or kill a session. Killing requires force=true.".to_string(),
             parameters: json!({
@@ -190,6 +197,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("tmux_window")?,
             description: "Manage tmux windows within a session. Create a new window (optionally with a name, directory, and target index) or kill a window. Create returns the new window's window_id (e.g. @5) and window_index. Killing requires force=true.".to_string(),
             parameters: json!({
@@ -207,6 +215,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("tmux_pane")?,
             description: "Control tmux panes within a session. List panes, find a pane by name or context, inspect the running process, capture visible output, send a command, split a pane (horizontally or vertically with a size percentage and optional directory), or kill a pane. Panes are addressed as session:window.pane; list/find responses include a target field (session:window_index.pane_index) to copy verbatim. Killing requires force=true.".to_string(),
             parameters: json!({
@@ -229,6 +238,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("tmux_layout")?,
             description: "Select a layout for arranging panes in a tmux window. Non-destructive operation that only changes visual arrangement. Layouts: even-horizontal (equal width columns), even-vertical (equal height rows), main-horizontal (large top pane), main-vertical (large left pane), tiled (grid).".to_string(),
             parameters: json!({
@@ -243,6 +253,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("nu")?,
             description: "Execute a Nushell command in a stateless one-shot process. Returns stdout and stderr as text. Use Nushell syntax ONLY (NOT bash/sh/zsh). Each call is independent — no state preserved between calls. Use pipes to chain commands within a single call. The working directory is already set to the project directory; `cd` has no effect and is never needed.".to_string(),
             parameters: json!({
@@ -262,6 +273,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("ast_query")?,
             description: "Run an S-expression tree-sitter query against source code. Returns matching captures with positions. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
             parameters: json!({
@@ -278,6 +290,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("ast_nodes")?,
             description: "List AST nodes of a given type in source code. Returns node positions. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
             parameters: json!({
@@ -293,6 +306,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("ast_refs")?,
             description: "Find references to a named symbol in source code. Returns positions of matching identifiers. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
             parameters: json!({
@@ -307,6 +321,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("ast_tree")?,
             description: "Dump the full S-expression parse tree of source code. Requires tree-sitter grammars installed via `tree-sitter` CLI.".to_string(),
             parameters: json!({
@@ -324,6 +339,7 @@ pub fn builtin_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> 
 /// Tool definitions available to any agent that can send messages.
 pub fn messaging_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> {
     Ok(vec![ToolDefinition {
+        annotations: ToolAnnotations::default(),
         name: ToolName::new("send_message")?,
         description: "Send a message to another agent. Messages are delivered as conversation turns to the target agent. \
                        Use the agent names provided in your task instructions — you know your own name and your \
@@ -370,6 +386,7 @@ pub fn orchestrator_tool_definitions(
 
     Ok(vec![
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("spawn_agent")?,
             description,
             parameters: json!({
@@ -382,6 +399,7 @@ pub fn orchestrator_tool_definitions(
             }),
         },
         ToolDefinition {
+            annotations: ToolAnnotations::default(),
             name: ToolName::new("terminate_agent")?,
             description:
                 "Terminate a running sub-agent by name. Kills its tmux pane and deregisters it."
@@ -400,6 +418,7 @@ pub fn orchestrator_tool_definitions(
 /// Tool definitions available only to orchestrator agents that can list peers.
 pub fn list_agents_tool_definitions() -> Result<Vec<ToolDefinition>, EmptyToolName> {
     Ok(vec![ToolDefinition {
+        annotations: ToolAnnotations::default(),
         name: ToolName::new("list_agents")?,
         description: "List all connected agents and their names".to_string(),
         parameters: json!({
@@ -451,6 +470,7 @@ pub fn assemble_tool_definitions(
             .into_iter()
             .map(|def| {
                 Ok(ToolDefinition {
+                    annotations: ToolAnnotations::default(),
                     name: ToolName::new(def.name)?,
                     description: def.description,
                     parameters: def.parameters,
@@ -476,6 +496,7 @@ pub fn assemble_tool_definitions(
         .iter()
         .map(|tool| {
             Ok(ToolDefinition {
+                annotations: ToolAnnotations::default(),
                 name: ToolName::new(tool.name.clone())?,
                 description: tool
                     .description
@@ -582,9 +603,8 @@ impl<'a> AgentRuntimeBuilder<'a> {
         } = self.input;
 
         // Create audit log directory ONCE before prompt loop
-        let log_dir = crate::utils::xdg::data_dir()
-            .map_err(|e| LabeledError::new(format!("XDG data directory error: {e}")))?
-            .join("nu-agent");
+        let log_dir = crate::utils::paths::data_app_dir()
+            .map_err(|e| LabeledError::new(format!("XDG data directory error: {e}")))?;
         std::fs::create_dir_all(&log_dir)
             .map_err(|e| LabeledError::new(format!("Failed to create audit log directory: {e}")))?;
         let log_path = log_dir.join("tool_audit.log");

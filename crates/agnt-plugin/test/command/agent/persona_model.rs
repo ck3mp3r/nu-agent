@@ -36,6 +36,7 @@ fn apply_persona_model_overrides_plugin_config() -> Result<()> {
             base_url: None,
             provider: None,
             preamble: None,
+            catalog: None,
             models: HashMap::new(),
         },
     );
@@ -157,6 +158,7 @@ fn apply_persona_model_clears_provider_impl() -> Result<()> {
             base_url: None,
             provider: None,
             preamble: None,
+            catalog: None,
             models: HashMap::new(),
         },
     );

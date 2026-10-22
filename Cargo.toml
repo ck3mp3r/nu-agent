@@ -36,8 +36,9 @@ nu-protocol = "0.116.1"
 nu-parser = "0.116.1"
 
 # LLM / AI
-rig = { version = "0.44", default-features = false, features = ["agent", "derive", "reqwest", "test-utils"] }
-rmcp = { version = "2.2", default-features = false, features = [
+rig = { version = "0.45", default-features = false, features = ["agent", "derive", "reqwest", "test-utils"] }
+rig-memory = { version = "0.45", features = ["fs"] }
+rmcp = { version = "3.5", default-features = false, features = [
   "client",
   "transport-child-process",
   "transport-streamable-http-client",

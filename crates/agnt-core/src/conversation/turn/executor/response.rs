@@ -1,31 +1,10 @@
 use super::core::TurnResponseData;
 use crate::config::Config;
-use crate::types::Message;
 use nu_protocol::{Span, Value};
 
 // ---------------------------------------------------------------------------
 // TurnVisitor — module-level so it can be generic over P: AsyncPermissionResolver
 // ---------------------------------------------------------------------------
-
-/// If the last message in `messages` is a `User` message whose content
-/// consists entirely of `ToolResult` items, appends a synthetic assistant
-/// message to close the tool block. This prevents `user(ToolResult) →
-/// user(Text)` on the next turn, which both Anthropic and OpenAI reject.
-/// Returns the (possibly extended) message list.
-pub fn close_open_tool_result_block(messages: Vec<Message>, error_msg: &str) -> Vec<Message> {
-    let needs_closing = matches!(
-        messages.last(),
-        Some(Message::User { content }) if content.iter().all(|c| matches!(c, crate::types::UserContent::ToolResult(_)))
-    );
-    if needs_closing {
-        log::debug!("close_open_tool_result_block: appending synthetic assistant");
-        let mut msgs = messages;
-        msgs.push(Message::assistant(format!("[Turn failed: {error_msg}]")));
-        msgs
-    } else {
-        messages
-    }
-}
 
 /// Build the final response `Value` from turn data. Called by the delegate after
 /// auto-compaction has been evaluated.

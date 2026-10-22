@@ -37,7 +37,15 @@ pub enum LlmEvent {
         tool_calls: usize,
         input_tokens: u64,
         output_tokens: u64,
-        total_tokens: u64,
+        /// The total the wire reported, or `None` when it reported none. A
+        /// wire may omit it (ollama-cloud's OpenAI-compatible endpoint does),
+        /// and an absent total is not a zero.
+        total_tokens: Option<u64>,
+        /// What the call cost in USD, when the provider reported it or the
+        /// catalog priced it. `None` for a call nothing priced.
+        cost: Option<f64>,
+        /// Whether `cost` is the whole charge rather than a lower bound.
+        cost_complete: bool,
     },
     AssistantMessage {
         text: String,
@@ -208,12 +216,16 @@ impl From<LlmEvent> for Option<UiEvent> {
                 input_tokens,
                 output_tokens,
                 total_tokens,
+                cost,
+                cost_complete,
             } => Some(UiEvent::LlmCompleted {
                 response_chars,
                 tool_calls,
                 input_tokens,
                 output_tokens,
                 total_tokens,
+                cost,
+                cost_complete,
             }),
             LlmEvent::AssistantMessage { text } => Some(UiEvent::AssistantMessage {
                 delta: text.clone(),

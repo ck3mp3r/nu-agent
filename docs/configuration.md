@@ -149,6 +149,7 @@ base_url = "https://api.openai.com/v1"   # optional override
 provider = "openai"            # provider implementation (default: the key itself)
 name = "OpenAI"                # optional display name
 preamble = "You are helpful." # optional provider preamble
+catalog = "openai"             # models.dev cache section (default: the block name)
 
 [providers.openai.models.gpt-4o]
 # per-model overrides (temperature, limits, name, tool_call, preamble)
@@ -163,7 +164,33 @@ preamble = "You are helpful." # optional provider preamble
 | `provider` | String | Provider implementation to use (e.g. `"openai"` for a `github-copilot` provider or any OpenAI-compatible endpoint) |
 | `name` | String | Provider display name |
 | `preamble` | String | Optional system preamble |
+| `catalog` | String | The models.dev cache section this block's endpoint serves. Defaults to the block name. See [The models cache](#the-models-cache). |
 | `models` | table | Per-model configuration keyed by model id |
+
+#### The models cache
+
+The local models cache (`agent models sync`) files each provider's models under
+its models.dev key. That key often differs from the name you give the block:
+models.dev files a local Ollama under `ollama-cloud`, and GitHub Copilot under
+`github-copilot`.
+
+`catalog` is how a block reaches its section. There is no name mapping: a block
+named `ollama` reaches no section unless it declares one.
+
+```toml
+[providers.ollama]
+provider = "ollama"
+catalog = "ollama-cloud"   # the block now serves the ollama-cloud section
+```
+
+A block that declares a section owns it: the model picker lists every row in
+that section, and the pricing ladder and the limits fill read the block's rows.
+A block with no declared section serves only the models it declares, and joins
+no cache metadata or price for them.
+
+`agent models list --provider <name>` filters the cache by its own keys, not by
+config block names, so `agent models list --provider ollama` lists nothing —
+the cache has no `ollama` section. Use `--provider ollama-cloud`.
 
 > **Note:** The `[providers.<name>]` block is **optional**. If omitted, the model is resolved from `models.default.model` with environment variables as the fallback for API keys and base URLs. Providers that don't require authentication (like Ollama) can be used with just `models.default.model = "ollama-cloud/glm-5.2"` and no provider block at all.
 
@@ -175,6 +202,35 @@ All models use `provider/model` format:
 - `openai/gpt-4o`
 - `anthropic/claude-sonnet-4-6`
 - `github-copilot/claude-sonnet-4.6`
+
+#### Per-model pricing
+
+A model no shipped catalog prices — a local Ollama classic, a private
+gateway model — stays tokens-only unless you price it yourself. Set
+`pricing` on the model's block:
+
+```toml
+[providers.ollama.models."llama3.3".pricing]
+input = 0.0        # required, USD per million input tokens
+output = 0.0       # required, USD per million output tokens
+cache_read = 0.0   # optional, USD per million cached input tokens
+cache_write = 0.0  # optional, USD per million cache-write tokens
+```
+
+Quote a model id that contains a dot: TOML reads an unquoted
+`models.llama3.3` as the nested keys `llama3` → `3`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `input` | Float | Required. USD per million uncached input tokens. |
+| `output` | Float | Required. USD per million output tokens, reasoning included. |
+| `cache_read` | Float | Optional. USD per million input tokens read from the cache. Omit it and a call that reads the cache reports a lower-bound cost. |
+| `cache_write` | Float | Optional. USD per million input tokens written to the cache. Omit it and a call that writes the cache reports a lower-bound cost. |
+
+This is the pricing ladder's config outcome, and it **wins**: a configured
+price re-prices the model even when its models.dev row lists a cost. The
+shipped row is the fallback. See [Model pricing](usage.md#model-pricing) for
+the full ladder.
 
 ### OpenAI-compatible providers
 
@@ -716,6 +772,8 @@ agent models list --provider openai     # only openai models
 Outputs one row per model with `provider`, `model`, `name`, `context`, `output`, `tool_call`, `input_cost`, and `output_cost`. The cost fields hold the price in USD per million tokens, or null when the cache has no price for the model. The CLI table shows the same prices in a `COST` column formatted as `$3.00/$15.00` (input/output), or `-` when no price is cached. If the cache does not exist, it instructs you to run `agent models sync` first.
 
 When a models cache is present, the model picker and `resolve_model()` use its context/output limits to fill missing `max_context_tokens` / `max_output_tokens` values (see [resolution priority](#resolution-priority)).
+
+When a provider block's name equals its cache section key (for example `ollama-cloud`), the model picker lists that section's full model set, with rows the block does not declare rendered unmarked.
 
 ## Resolution priority
 

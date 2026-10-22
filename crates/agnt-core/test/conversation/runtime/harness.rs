@@ -24,7 +24,6 @@ use crate::conversation::state::provider::ProviderState;
 use crate::conversation::state::tool::ToolState;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::output_repetition::RepetitionState;
-use crate::session::{FsSessionStore, SessionStoreBackend};
 use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
 use crate::tools::closure::{ClosureRegistry, CwdEngine};
 use crate::tools::handler::McpToolRegistry;
@@ -112,10 +111,6 @@ fn build_fixture(
 ) -> Result<RuntimeFixture> {
     let temp_dir = tempfile::tempdir()?;
     let cwd = temp_dir.path().to_path_buf();
-    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
-        cwd.join("sessions"),
-    )));
-    let store_for_session = Arc::clone(&store);
     let bus = crate::bus::create_bus();
     let provider =
         ProviderState::with_client(runtime_config(), CachedProviderClient::Mock(model.clone()));
@@ -123,7 +118,13 @@ fn build_fixture(
         compactor: NuCompactor::from_shared_model(
             Arc::new(Mutex::new(summary_model().erase())),
             bus.clone(),
-            None,
+            rig_memory::CompactionPolicy::default(),
+            crate::conversation::compaction::compactor::resolve_model_spec(
+                "openai",
+                "gpt-4o",
+                Some(200_000),
+                Some(1_024),
+            ),
         ),
         params: crate::compaction::CompactionParams::default(),
         threshold_tokens: None,
@@ -149,7 +150,6 @@ fn build_fixture(
             "test permissions summary".to_string(),
         ),
         engine: CwdEngine::shared(cwd.to_string_lossy().to_string()),
-        store,
         final_session_id: Some("test-session".to_string()),
         cwd,
         interactive_pending: None,
@@ -167,7 +167,7 @@ fn build_fixture(
             tool_definitions,
             ClosureRegistry::default(),
         ),
-        session: MemoryState::new(store_for_session),
+        session: MemoryState::new(crate::session::RigStoreConfig::in_memory()),
         persona: PersonaState::new(
             Some("persona body".to_string()),
             Some("test-agent".to_string()),

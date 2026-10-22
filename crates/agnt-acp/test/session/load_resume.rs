@@ -8,9 +8,9 @@ use super::*;
 async fn test_session_manager_load_session_replays_history() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let (manager, store) = manager_with_store(temp.path()).await?;
+    let (manager, rig) = manager_with_rig_store(temp.path()).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
-    seed_session(&store, "sess-1").await?;
+    seed_session(&rig, "sess-1")?;
     let sink = RecordingSink::default();
 
     // -- Exec
@@ -43,9 +43,9 @@ async fn test_session_manager_load_session_replays_history() -> Result<()> {
 async fn test_session_manager_load_session_registers_session() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let (manager, store) = manager_with_store(temp.path()).await?;
+    let (manager, rig) = manager_with_rig_store(temp.path()).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
-    seed_session(&store, "sess-1").await?;
+    seed_session(&rig, "sess-1")?;
     let sink = RecordingSink::default();
 
     // -- Exec
@@ -64,7 +64,7 @@ async fn test_session_manager_load_session_registers_session() -> Result<()> {
 async fn test_session_manager_load_session_missing_returns_error() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let (manager, _store) = manager_with_store(temp.path()).await?;
+    let (manager, _rig) = manager_with_rig_store(temp.path()).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
     let sink = RecordingSink::default();
 
@@ -88,9 +88,9 @@ async fn test_session_manager_load_session_missing_returns_error() -> Result<()>
 async fn test_session_manager_load_session_failing_sink_returns_error() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let (manager, store) = manager_with_store(temp.path()).await?;
+    let (manager, rig) = manager_with_rig_store(temp.path()).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
-    seed_session(&store, "sess-1").await?;
+    seed_session(&rig, "sess-1")?;
     let sink = RecordingSink::failing();
 
     // -- Exec
@@ -115,9 +115,9 @@ async fn test_session_manager_load_session_failing_sink_returns_error() -> Resul
 async fn test_session_manager_resume_session_returns_id() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let (manager, store) = manager_with_store(temp.path()).await?;
+    let (manager, rig) = manager_with_rig_store(temp.path()).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
-    seed_session(&store, "sess-1").await?;
+    seed_session(&rig, "sess-1")?;
 
     // -- Exec
     let session_id = manager.resume_session("sess-1", cwd.clone()).await?;
@@ -135,7 +135,7 @@ async fn test_session_manager_resume_session_returns_id() -> Result<()> {
 async fn test_session_manager_resume_session_missing_returns_error() -> Result<()> {
     // -- Setup & Fixtures
     let temp = tempfile::tempdir()?;
-    let (manager, _store) = manager_with_store(temp.path()).await?;
+    let (manager, _rig) = manager_with_rig_store(temp.path()).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
 
     // -- Exec

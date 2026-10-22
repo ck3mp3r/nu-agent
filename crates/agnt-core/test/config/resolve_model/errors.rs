@@ -73,6 +73,7 @@ fn test_resolve_model_resolves_without_provider_or_model_config() -> Result<()> 
                     base_url: None,
                     provider: None,
                     preamble: None,
+                    catalog: None,
                     models: HashMap::new(),
                 },
             );

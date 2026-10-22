@@ -14,7 +14,6 @@ use crate::conversation::turn::test::{
     default_circuit_breaker, default_doom_state, default_last_total_tokens,
     default_output_repetition, default_repetition_guard,
 };
-use crate::session::{FsSessionStore, StoreEntry};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;
@@ -47,9 +46,9 @@ pub(crate) fn default_tool_infra(
 
 pub(crate) struct JourneyHarness {
     _temp_dir: tempfile::TempDir, // leading underscore keeps TempDir alive
-    pub(crate) memory_state: MemoryState<FsSessionStore>,
+    pub(crate) memory_state: MemoryState,
     dyn_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>>,
-    compaction_config: crate::conversation::compaction::CompactionConfig<FsSessionStore>,
+    compaction_config: crate::conversation::compaction::CompactionConfig,
     pub(crate) session_id: &'static str,
     config: crate::config::Config,
 }
@@ -62,18 +61,23 @@ impl JourneyHarness {
     /// Create a harness with a custom config (e.g., to set max_tool_result_bytes).
     pub(crate) fn new_with_config(session_id: &'static str, config: crate::config::Config) -> Self {
         let temp_dir = tempfile::tempdir().expect("tempdir");
-        let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
         let bus = crate::bus::create_bus();
         let compaction_config = crate::conversation::compaction::CompactionConfig {
             compactor: crate::conversation::compaction::compactor::NuCompactor::from_shared_model(
                 test_utils::shared_mock_model(),
                 bus.clone(),
-                None,
+                rig_memory::CompactionPolicy::default(),
+                crate::conversation::compaction::compactor::resolve_model_spec(
+                    "openai",
+                    "gpt-4o",
+                    Some(8_000),
+                    Some(1_024),
+                ),
             ),
             params: crate::compaction::CompactionParams::default(),
             threshold_tokens: None,
         };
-        let memory_state = MemoryState::new(store);
+        let memory_state = MemoryState::new(crate::session::RigStoreConfig::in_memory());
         Self {
             _temp_dir: temp_dir,
             memory_state,
@@ -121,21 +125,38 @@ impl JourneyHarness {
         (outcome, events)
     }
 
-    /// Raw messages from store — no repair, no filtering.
+    /// Raw messages from the rig-memory store — no repair, no filtering.
+    ///
+    /// The session store is frozen after S2b, so the conversation the agent
+    /// wrote lives in the rig store.
     pub(crate) async fn raw_messages(&self) -> Result<Vec<Message>> {
-        let entries = self
+        let store = self
             .memory_state
             .inner_memory()
-            .load_all(self.session_id)
-            .await
-            .map_err(|e| format!("store load: {e:?}"))?;
-        Ok(entries
-            .into_iter()
-            .filter_map(|e| match e {
-                StoreEntry::Message(m) => Some(m),
-                _ => None,
-            })
+            .rig_store(self.session_id)
+            .map_err(|e| format!("rig store open: {e:?}"))?;
+        let conversation = rig_memory::load(&*store, self.session_id)
+            .map_err(|e| format!("rig store load: {e:?}"))?;
+        Ok(conversation
+            .messages()
+            .iter()
+            .map(|message| (**message).clone())
             .collect())
+    }
+
+    /// Seed the rig-memory store with `messages` before the first turn.
+    pub(crate) fn seed_history(&self, messages: Vec<Message>) -> Result<()> {
+        let store = self
+            .memory_state
+            .inner_memory()
+            .rig_store(self.session_id)
+            .map_err(|e| format!("rig store open: {e:?}"))?;
+        let mut conversation = rig_memory::load(&*store, self.session_id)
+            .map_err(|e| format!("rig store load: {e:?}"))?;
+        conversation.extend(messages);
+        rig_memory::save(&*store, self.session_id, &mut conversation)
+            .map_err(|e| format!("rig store save: {e:?}"))?;
+        Ok(())
     }
 
     /// Starts a mock server on the harness runtime.
@@ -168,7 +189,7 @@ impl JourneyHarness {
         // Swap the mock client's model into the shared slot so the agent
         // (built from the model) routes to this client's model.
         *self.dyn_model.lock().expect("model mutex poisoned") = client
-            .build_dyn_model(&self.config.model)
+            .build_dyn_model(&self.config.model, &self.config.provider, None, None)
             .map_err(|e| format!("build model from cached client: {e:?}"))?;
         let mut executor = TurnExecutor::new(
             &self.config,
@@ -204,8 +225,12 @@ pub(crate) fn no_tools() -> ToolInfra {
     default_tool_infra(handle, vec![])
 }
 
-/// Build a `MemoryState<FsSessionStore>` over a specific session-store path.
-pub(crate) fn memory_state_at(path: std::path::PathBuf) -> MemoryState<FsSessionStore> {
-    let store = Arc::new(FsSessionStore::new(path));
-    MemoryState::new(store)
+/// Build a `MemoryState` over a specific session-store path.
+///
+/// The rig store is file-backed under the same path, so a second
+/// `MemoryState` over that path reads the conversation the first one saved.
+pub(crate) fn memory_state_at(path: std::path::PathBuf) -> MemoryState {
+    MemoryState::new(
+        crate::session::RigStoreConfig::new(crate::session::StoreType::Sqlite).with_cache_dir(path),
+    )
 }

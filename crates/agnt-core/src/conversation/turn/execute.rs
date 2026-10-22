@@ -10,15 +10,11 @@ use std::sync::Arc;
 
 use crate::bus::Bus;
 use crate::config::defaults;
-use crate::conversation::state::memory::MemoryOf;
 use crate::hook::agent_hook::HookState;
 use crate::hook::chain::HookChain;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::protocol::event::UiEvent;
-use crate::session::SessionStore;
-use crate::session::repair::repair_messages;
 use crate::types::{Message, Text, ToolDefinition, UserContent};
-use rig::memory::ConversationMemory;
 use rig::tool::DynamicTool;
 
 use super::context::TurnContext;
@@ -54,16 +50,9 @@ pub struct TurnResult {
     /// This is the per-sub-call value representing actual context window usage,
     /// NOT the aggregated total across all sub-calls in this turn.
     pub last_total_tokens: u64,
-    /// Number of messages in persistent storage before this turn started.
-    /// Used by cancelled-turn paths (A cancelled, C) in executor.rs to slice only
-    /// the new-message delta from `messages` (rig's full chat_history) so the store
-    /// is not doubled when a cancelled turn follows prior session history.
-    pub pre_turn_message_count: usize,
     /// History snapshot from hook, captured before the last LLM call.
     /// Populated from `HookChain::last_known_history()` Arc after the turn completes.
-    /// Used by executor's Path B cancel fallback when `messages` is `None` (tokio::select
-    /// cancelled before rig yielded Cancelled) to persist completed tool calls
-    /// instead of synthesizing a minimal `[user(prompt)]` placeholder.
+    /// The retry loop reads it to decide whether a retry has partial history.
     pub last_known_history: Vec<Message>,
 }
 
@@ -85,55 +74,45 @@ pub struct TurnResult {
 /// Returns `TurnError` if:
 /// - The agent completion fails (LLM error, network, etc.)
 /// - User cancels via UI
-pub(crate) async fn execute_turn<S, P>(
-    ctx: TurnContext<'_, S>,
+pub(crate) async fn execute_turn<P>(
+    ctx: TurnContext<'_>,
     permission_resolver: P,
 ) -> Result<TurnResult, (TurnError, error::TurnContext)>
 where
-    S: SessionStore + Clone + Send + Sync + 'static,
     P: AsyncPermissionResolver,
 {
     log::info!("execute_turn: starting turn");
 
-    // Snapshot message count before this turn. Used by error paths to slice only
-    // the new-message delta from the error variant's history fields.
-    // Cache-first load: no JSONL I/O if the cache is already warm.
+    // The conversation the run starts from, for the context-window estimate.
+    // Cache-first load: no store I/O if the cache is already warm.
     let pre_turn_messages: Vec<Message> = if ctx.conversation.has_session {
-        let conversation_id =
-            rig::id::ConversationId::from(ctx.conversation.conversation_id.clone());
         ctx.conversation
             .memory
-            .load(&conversation_id)
+            .load(&ctx.conversation.conversation_id)
             .await
             .unwrap_or_default()
     } else {
         vec![]
     };
-    let pre_turn_count = pre_turn_messages.len();
-    log::debug!(
-        "execute_turn: pre_turn_count={pre_turn_count} session={}",
-        ctx.conversation.has_session
-    );
 
-    // Pre-flight repair: fix structural violations before handing history to rig.
-    // Ephemeral — applies for this turn only; the JSONL backing store is not written.
-    let (repaired_messages, repair_issues) = repair_messages(pre_turn_messages.clone());
-    if !repair_issues.is_empty() {
-        log::warn!(
-            "Pre-flight repair applied {} fix(es) before turn: {:?}",
-            repair_issues.len(),
-            repair_issues
-        );
-        ctx.conversation
+    // The rig-memory store and log this turn keeps its conversation in. A
+    // session-less turn persists nothing, so it gets no memory.
+    let rig_memory = if ctx.conversation.has_session {
+        match ctx
+            .conversation
             .memory
-            .reset_context(&ctx.conversation.conversation_id, repaired_messages.clone());
-    }
+            .rig_store(&ctx.conversation.conversation_id)
+        {
+            Ok(store) => Some((store, ctx.conversation.conversation_id.clone())),
+            Err(error) => {
+                log::warn!("Failed to open the session store: {error}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
-    // Note: on warm-cache paths `repair_messages()` is typically a no-op because
-    // `JournalConversationMemory::load()` already runs the same repair pipeline on
-    // every JSONL load. This second pass catches anything that slipped through at a
-    // higher layer (e.g. an in-memory cache populated directly without going through
-    // `load()`).
     // Build the hook using HookChain<P> — no HookDriver needed.
     // Cancellation is driven through the shared bus's cancel channel.
     let bus = ctx.tool_infra.bus.clone();
@@ -179,9 +158,7 @@ where
             .clone(),
         preamble: preamble_owned,
         prompt: user_message,
-        memory: ctx.conversation.memory,
-        conversation_id: ctx.conversation.conversation_id,
-        has_session: ctx.conversation.has_session,
+        rig_memory,
         tool_server_handle: ctx.tool_infra.tool_server_handle,
         visible_tool_definitions: ctx.tool_infra.visible_tool_definitions,
         max_turns: ctx.input.max_turns,
@@ -193,6 +170,7 @@ where
             .max_tokens
             .or(ctx.config.max_output_tokens)
             .map(|t| t as u64),
+        model: format!("{}/{}", ctx.config.provider, ctx.config.model),
     };
 
     let prompt_future = Box::pin(build_agent_and_stream(config));
@@ -201,7 +179,7 @@ where
     // read from the bus directly by the TUI render loop and the TTY stderr
     // subscriber.
     if let Some(limit) = ctx.config.model_context_tokens {
-        let estimated = token_estimate::estimate_token_count(&repaired_messages);
+        let estimated = token_estimate::estimate_token_count(&pre_turn_messages);
         let threshold = (limit as f32
             * ctx
                 .config
@@ -249,7 +227,6 @@ where
                 .lock()
                 .expect("mutex poisoned")
                 .clone(),
-            pre_turn_message_count: pre_turn_count,
         };
         (err, ctx)
     })?;
@@ -261,7 +238,6 @@ where
                 .lock()
                 .expect("mutex poisoned")
                 .clone(),
-            pre_turn_message_count: pre_turn_count,
         };
         (err, ctx)
     })?;
@@ -281,27 +257,23 @@ where
         cancelled: response.cancelled,
         cancel_reason: response.cancel_reason,
         last_total_tokens: response.last_total_tokens,
-        pre_turn_message_count: pre_turn_count,
         last_known_history: last_known_history_arc.lock().unwrap().clone(),
     })
 }
 
 /// Configuration for building and prompting an agent.
-struct AgentPromptConfig<S: SessionStore + Clone + Send + Sync, P: AsyncPermissionResolver> {
-    hook: HookChain<P, S>,
+struct AgentPromptConfig<P: AsyncPermissionResolver> {
+    hook: HookChain<P>,
     /// Erased completion model the agent is built from. Cloned out of the
     /// shared `Arc<Mutex<…>>` so a concurrent `switch_model()` only affects the
     /// next turn.
     dyn_model: rig::DynModel<rig::operation::Completion>,
     preamble: Option<String>,
     prompt: Message,
-    memory: MemoryOf<S>,
-    conversation_id: String,
-    /// Whether this turn belongs to a persistent session.
-    ///
-    /// When `false`, `.memory()` is NOT attached to the rig `AgentBuilder` so
-    /// rig never calls `memory.append()` and no JSONL file is written to disk.
-    has_session: bool,
+    /// The rig-memory store and log this turn keeps its conversation in. rig
+    /// loads the conversation before the run and saves it once the run
+    /// succeeds; `None` for a session-less turn, which persists nothing.
+    rig_memory: Option<(Arc<dyn rig_memory::Store>, String)>,
     tool_server_handle: rig::tool::server::ToolServerHandle,
     visible_tool_definitions: Vec<ToolDefinition>,
     max_turns: Option<u32>,
@@ -309,6 +281,9 @@ struct AgentPromptConfig<S: SessionStore + Clone + Send + Sync, P: AsyncPermissi
     additional_params: Option<serde_json::Value>,
     temperature: Option<f64>,
     max_tokens: Option<u64>,
+    /// The model this turn runs, `vendor/model`, saved as the session's
+    /// `rig::model` state record once the run persists.
+    model: String,
 }
 
 /// Result from streaming agent execution
@@ -333,11 +308,10 @@ struct StreamingTurnResult {
 ///
 /// The error is boxed: rig 0.44's `PromptError` is large enough to trip
 /// `clippy::result_large_err`.
-async fn build_agent_and_stream<S, P>(
-    config: AgentPromptConfig<S, P>,
+async fn build_agent_and_stream<P>(
+    config: AgentPromptConfig<P>,
 ) -> Result<StreamingTurnResult, Box<rig::completion::PromptError>>
 where
-    S: SessionStore + Clone + Send + Sync + 'static,
     P: AsyncPermissionResolver,
 {
     let AgentPromptConfig {
@@ -345,9 +319,7 @@ where
         dyn_model,
         preamble,
         prompt,
-        memory,
-        conversation_id,
-        has_session,
+        rig_memory,
         tool_server_handle,
         visible_tool_definitions,
         max_turns,
@@ -355,6 +327,7 @@ where
         additional_params,
         temperature,
         max_tokens,
+        model,
     } = config;
     // Create proxy tools that expose only the filtered definitions to the LLM
     // while delegating execution to the original shared tool server handle.
@@ -375,24 +348,18 @@ where
     // model out of the shared `Arc<Mutex<…>>` before each turn, so a
     // `switch_model()` between turns takes effect on the next turn.
 
-    // Only attach memory when this is a persistent session.
-    //
-    // For transient (no-session) invocations, omitting `.memory()` prevents rig
-    // from calling `memory.append()` at turn end — which would otherwise write a
-    // `transient-{millis}.jsonl` file to disk that is never reused and never
-    // cleaned up.  When memory is absent rig manages the turn's history in-memory
-    // within its own prompt call, which is exactly correct for a stateless
-    // one-shot invocation.
-    let mut builder = if has_session {
-        rig::agent::AgentBuilder::new(dyn_model.clone())
-            .add_hook(hook)
-            .memory(memory)
-            .dynamic_tools(proxy_tools)
-    } else {
-        rig::agent::AgentBuilder::new(dyn_model)
-            .add_hook(hook)
-            .dynamic_tools(proxy_tools)
-    };
+    // The agent keeps its conversation in the rig-memory store: rig loads it
+    // before the run and saves it once the run succeeds. A session-less turn
+    // gets no store, so rig neither loads nor saves a conversation.
+    let mut builder = rig::agent::AgentBuilder::new(dyn_model)
+        .add_hook(hook)
+        .dynamic_tools(proxy_tools);
+    // Keep the store handle for the host-written state records below: rig saves
+    // the conversation at run end, and the state records and listing are ours.
+    let state_store = rig_memory.as_ref().map(|(store, _)| Arc::clone(store));
+    if let Some((store, log)) = rig_memory {
+        builder = builder.memory(store).conversation(log);
+    }
     if let Some(p) = preamble {
         builder = builder.preamble(&p);
     }
@@ -411,7 +378,6 @@ where
 
     let stream = agent
         .prompt(prompt)
-        .conversation(conversation_id.as_str())
         .max_turns(effective_max_turns as usize)
         .max_invalid_tool_call_retries(3)
         .stream();
@@ -532,6 +498,20 @@ where
                 log::trace!("Stream completed normally");
                 break;
             }
+        }
+    }
+
+    // rig saved the conversation at run end. Write the host-owned state records
+    // and refresh the listing, so `SavedAgent::model()`/`title()` and the session
+    // list see this turn. A cancelled turn saves nothing, so it writes nothing.
+    if !cancelled && let Some(store) = &state_store {
+        let title = messages
+            .as_deref()
+            .and_then(crate::session::rig_state::title_of_messages);
+        if let Err(error) =
+            crate::session::rig_state::write_state_records(&**store, &model, title.as_deref())
+        {
+            log::warn!("Failed to write session state records: {error}");
         }
     }
 

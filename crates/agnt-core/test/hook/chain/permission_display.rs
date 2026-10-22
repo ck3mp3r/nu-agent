@@ -64,8 +64,9 @@ fn suppress_previewed_display_none_input_stays_none_either_way() {
 async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
-    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
-    let memory = Arc::new(CachedMemory::new(store));
+    let memory = Arc::new(CachedMemory::new(
+        crate::session::RigStoreConfig::in_memory(),
+    ));
     let bus = Bus::default();
     let pending = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let resolver = InteractivePermissionResolver::new(
@@ -113,7 +114,8 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
                 compactor: NuCompactor::new(
                     MockCompletionModel::text("summary").erase(),
                     Bus::default(),
-                    None,
+                    rig_memory::CompactionPolicy::default(),
+                    test_model_spec(),
                 ),
                 params: CompactionParams::default(),
                 threshold_tokens: None,
@@ -179,9 +181,9 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
 #[tokio::test]
 async fn on_dispatch_publishes_registry_rendered_call_line() -> Result<()> {
     // -- Setup & Fixtures
-    let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
-    let store = Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
-    let memory = Arc::new(CachedMemory::new(store));
+    let memory = Arc::new(CachedMemory::new(
+        crate::session::RigStoreConfig::in_memory(),
+    ));
     let bus = Bus::default();
     let mut render_registry = crate::tools::handler::builtin_tool::ToolRenderRegistry::default();
     render_registry.register(
@@ -226,7 +228,8 @@ async fn on_dispatch_publishes_registry_rendered_call_line() -> Result<()> {
                 compactor: NuCompactor::new(
                     MockCompletionModel::text("summary").erase(),
                     Bus::default(),
-                    None,
+                    rig_memory::CompactionPolicy::default(),
+                    test_model_spec(),
                 ),
                 params: CompactionParams::default(),
                 threshold_tokens: None,

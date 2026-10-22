@@ -64,8 +64,9 @@ fn resolved_closure() -> ResolvedClosure {
 /// The names registered on `handle`, in registration order.
 fn registered_names(handle: &rig::tool::server::ToolServerHandle) -> Vec<String> {
     handle
-        .static_tool_defs()
-        .into_iter()
+        .snapshot()
+        .definitions()
+        .iter()
         .map(|def| def.name.as_str().to_string())
         .collect()
 }

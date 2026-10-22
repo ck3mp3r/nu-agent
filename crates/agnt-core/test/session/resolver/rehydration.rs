@@ -1,91 +1,5 @@
 use super::*;
 
-// --- Compaction marker with stats test (task spec) ---
-
-/// A Vec<StoreEntry> containing pre-compaction messages, a Marker, and
-/// post-compaction messages produces a transcript where the compaction entry
-/// appears at the correct position, has role "compaction", and carries the
-/// full summary body.
-#[test]
-fn hydrate_store_entries_marker_shows_summary_body() {
-    // -- Case 1: the marker sits between the pre- and post-compaction messages
-    let entries = vec![
-        StoreEntry::Message(Message::User {
-            content: vec![UserContent::Text(Text::new("pre-compaction message 1"))],
-        }),
-        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
-            AssistantContent::Text(Text::new("pre-compaction reply")),
-        ]))),
-        StoreEntry::Marker(CompactionMarker::new(
-            "History summarized: user asked about Rust, assistant explained ownership.".to_string(),
-            Utc::now(),
-        )),
-        StoreEntry::Message(Message::User {
-            content: vec![UserContent::Text(Text::new("post-compaction question"))],
-        }),
-        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
-            AssistantContent::Text(Text::new("post-compaction answer")),
-        ]))),
-    ];
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
-
-    assert_eq!(
-        snapshots.len(),
-        5,
-        "expected 5 snapshots, got: {snapshots:?}"
-    );
-    assert_eq!(snapshots[0].role(), "user");
-    assert_eq!(snapshots[0].content(), "pre-compaction message 1");
-    assert_eq!(snapshots[1].role(), "assistant");
-    assert_eq!(snapshots[1].content(), "pre-compaction reply");
-    assert_eq!(
-        snapshots[2].role(),
-        "compaction",
-        "expected compaction role at index 2"
-    );
-    assert!(
-        snapshots[2].content().contains("History summarized"),
-        "expected summary body in compaction content, got: {}",
-        snapshots[2].content()
-    );
-    assert_eq!(snapshots[3].role(), "user");
-    assert_eq!(snapshots[3].content(), "post-compaction question");
-    assert_eq!(snapshots[4].role(), "assistant");
-    assert_eq!(snapshots[4].content(), "post-compaction answer");
-
-    // -- Case 2: a long summary is shown in full (no truncation)
-    let long_summary = "x".repeat(600);
-    let entries = vec![StoreEntry::Marker(CompactionMarker::new(
-        long_summary.clone(),
-        Utc::now(),
-    ))];
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
-    assert_eq!(snapshots.len(), 1);
-    assert_eq!(
-        snapshots[0].content(),
-        long_summary,
-        "expected full summary in content"
-    );
-
-    // -- Case 3: the marker body contains the summary text
-    let summary = "The user asked about weather and got a response about rain.";
-    let entries = vec![StoreEntry::Marker(CompactionMarker::new(
-        summary.to_string(),
-        Utc::now(),
-    ))];
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
-    assert_eq!(snapshots.len(), 1);
-    assert_eq!(snapshots[0].role(), "compaction");
-    assert!(
-        snapshots[0].content().contains(summary),
-        "expected summary body in content, got: {}",
-        snapshots[0].content()
-    );
-}
-
 // --- tool_success rehydration tests ---
 
 /// A row without a persisted verdict flag rehydrates as tool_success ==
@@ -127,10 +41,7 @@ fn hydrate_unflagged_tool_results_rehydrate_as_success() {
     // -- Exec & Check
     for (name, call_id, text) in cases {
         let entries = tool_call_entries(call_id, text, false);
-        let snapshots = super::resolver::hydrate_transcript_from_store_entries(
-            &entries,
-            std::path::Path::new("."),
-        );
+        let snapshots = hydrate(&entries, std::path::Path::new("."));
         assert_eq!(snapshots.len(), 1, "{name}: one tool snapshot expected");
         assert_eq!(snapshots[0].role(), "tool", "{name}");
         assert_eq!(
@@ -156,8 +67,7 @@ fn hydrate_multi_call_turn_pairs_display_with_owning_call() {
     ]);
 
     // -- Exec
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+    let snapshots = hydrate(&entries, std::path::Path::new("."));
 
     // -- Check
     let roles: Vec<&str> = snapshots.iter().map(|snapshot| snapshot.role()).collect();
@@ -189,8 +99,7 @@ fn hydrate_multi_call_turn_interleaves_every_display() {
     ]);
 
     // -- Exec
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+    let snapshots = hydrate(&entries, std::path::Path::new("."));
 
     // -- Check
     let roles: Vec<&str> = snapshots.iter().map(|snapshot| snapshot.role()).collect();
@@ -230,7 +139,7 @@ fn hydrate_multi_call_turn_interleaves_every_display() {
 #[test]
 fn hydrate_orphan_tool_result_emits_no_display() {
     // -- Setup & Fixtures
-    let entries = vec![StoreEntry::Message(Message::User {
+    let entries = vec![Message::User {
         content: vec![UserContent::ToolResult(ToolResult {
             call: CallId::from_wire("call_orphan"),
             name: ToolName::new("nu").expect("non-empty tool name"),
@@ -247,11 +156,10 @@ fn hydrate_orphan_tool_result_emits_no_display() {
             ))],
             is_error: false,
         })],
-    })];
+    }];
 
     // -- Exec
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+    let snapshots = hydrate(&entries, std::path::Path::new("."));
 
     // -- Check
     assert!(
@@ -270,8 +178,7 @@ fn hydrate_flagged_tool_results_use_persisted_verdict() {
         "Tool 'nonexistent' is not available.",
         false,
     );
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+    let snapshots = hydrate(&entries, std::path::Path::new("."));
     assert_eq!(snapshots.len(), 1, "flag must not change snapshot count");
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
@@ -286,8 +193,7 @@ fn hydrate_flagged_tool_results_use_persisted_verdict() {
         "read failed: No such file or directory (os error 2)",
         true,
     );
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+    let snapshots = hydrate(&entries, std::path::Path::new("."));
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");
     assert_eq!(
@@ -302,7 +208,7 @@ fn hydrate_flagged_tool_results_use_persisted_verdict() {
 /// Build [assistant with one ToolCall per `calls` entry, user with one
 /// ToolResult per entry]. Every result text is a JSON object, so the
 /// result-sourced display path is reachable for each call.
-fn multi_call_entries(calls: &[(&str, &str, serde_json::Value)]) -> Vec<StoreEntry> {
+fn multi_call_entries(calls: &[(&str, &str, serde_json::Value)]) -> Vec<Message> {
     let tool_calls = calls
         .iter()
         .map(|(call_id, tool_name, arguments)| {
@@ -329,9 +235,9 @@ fn multi_call_entries(calls: &[(&str, &str, serde_json::Value)]) -> Vec<StoreEnt
         })
         .collect();
     vec![
-        StoreEntry::Message(Message::Assistant(AssistantMessage::new(tool_calls))),
-        StoreEntry::Message(Message::User {
+        Message::Assistant(AssistantMessage::new(tool_calls)),
+        Message::User {
             content: tool_results,
-        }),
+        },
     ]
 }

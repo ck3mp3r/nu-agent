@@ -1,7 +1,7 @@
 use super::*;
 
 // ---------------------------------------------------------------------------
-// Gap 1A: mock-server diagnostics + close_open_tool_result_block integration test
+// Gap 1A: mock-server diagnostics + a failed turn saves nothing
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -25,13 +25,10 @@ async fn journey_wiremock_basic_text_smoke() -> Result<()> {
 }
 
 /// Turn 1: LLM calls nu__shell, tool executes (sub-turn 1 succeeds), sub-turn 2
-/// returns HTTP 500 (server error). The executor must:
-///   1. Persist [user(prompt), asst(tc1), user(tr1)] via inject_missing_tool_results
-///   2. Append a synthetic assistant close-block message via close_open_tool_result_block
-///   3. Return Err
+/// returns HTTP 500 (server error). rig saves nothing for a failed run, so the
+/// session holds no partial history.
 ///
-/// Turn 2: Normal text response. Must succeed — proves the session is no longer broken
-/// (the message history ends with Assistant, so the next User can follow without API error).
+/// Turn 2: Normal text response. Must succeed and save its own exchange.
 #[tokio::test]
 async fn journey_hard_error_after_tool_results_session_remains_valid() -> Result<()> {
     let mut h = JourneyHarness::new("journey-gap1a");
@@ -72,20 +69,15 @@ async fn journey_hard_error_after_tool_results_session_remains_valid() -> Result
         .await?;
     assert!(r1.is_err(), "turn 1 must fail with server error");
 
+    // A failed run saves nothing: the tool results and the synthetic close
+    // block live only in the run transcript.
     let msgs = h.raw_messages().await?;
-    assert_eq!(
-        msgs.len(),
-        4,
-        "expect [user, asst(tc1), user(tr1), asst(close)]"
-    );
-    // last message must be the synthetic assistant that closes the tool block
     assert!(
-        matches!(&msgs[3], rig::message::Message::Assistant(_)),
-        "last message must be Assistant, got: {:?}",
-        msgs[3]
+        msgs.is_empty(),
+        "a failed turn must save nothing; got: {msgs:?}"
     );
 
-    // Turn 2: must succeed — proves the session is no longer broken
+    // Turn 2: must succeed and save its own exchange
     agnt_testkit::mount_sse_response(
         &server,
         "POST",
@@ -96,7 +88,7 @@ async fn journey_hard_error_after_tool_results_session_remains_valid() -> Result
 
     let (r2, _) = h.turn_with_client("continue", &client, no_tools()).await?;
     assert!(r2.is_ok(), "turn 2 must succeed after repair — was: {r2:?}");
-    assert_eq!(h.raw_messages().await?.len(), 6);
+    assert_eq!(h.raw_messages().await?.len(), 2);
     Ok(())
 }
 
@@ -116,34 +108,28 @@ async fn journey_context_warning_emitted_near_limit() -> Result<()> {
     let mut h = JourneyHarness::new_with_config("journey-ctx-warn", config);
     let (server, client) = h.start_mock_server().await?;
 
-    // Pre-populate session with enough content to exceed threshold.
-    // Execute a first turn to build up history.
-    {
-        // Non-repeating filler content: identical 20-char delta chunks would
-        // legitimately trip the output-repetition detector (5 identical deltas).
-        let filler: String = (0..200)
-            .map(|i| {
-                format!(
-                    "{}{}",
-                    char::from_u32(0x4e00 + (i % 500) as u32).unwrap_or('x'),
-                    i / 500
-                )
-            })
-            .collect();
-        agnt_testkit::mount_sse_response(
-            &server,
-            "POST",
-            Some("/chat/completions"),
-            agnt_testkit::sse_text_body(&filler),
-        )
-        .await;
-    }
-    let _ = h
-        .turn_with_client("initial prompt with some content here", &client, no_tools())
-        .await?;
+    // Seed the rig store with enough content to exceed the threshold. The
+    // token estimate reads the conversation the agent loads, which is the rig
+    // store.
+    //
+    // Non-repeating filler content: identical 20-char chunks would
+    // legitimately trip the output-repetition detector.
+    let filler: String = (0..200)
+        .map(|i| {
+            format!(
+                "{}{}",
+                char::from_u32(0x4e00 + (i % 500) as u32).unwrap_or('x'),
+                i / 500
+            )
+        })
+        .collect();
+    h.seed_history(vec![
+        Message::user("initial prompt with some content here"),
+        Message::assistant(filler),
+    ])?;
 
-    // Execute a second turn — pre_turn_messages will include the first turn's history
-    // which should exceed the 50-token threshold (100 * 0.5).
+    // Execute a turn — the seeded history exceeds the 50-token threshold
+    // (100 * 0.5).
     agnt_testkit::mount_sse_response(
         &server,
         "POST",

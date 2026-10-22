@@ -263,20 +263,33 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
         steering_notices, 3,
         "each conversion must emit the steering notice; got: {events:?}"
     );
-    // The conversion's steering message is the FIRST user message whose text
-    // starts with "Output repetition" (it precedes the retry turn, whose
-    // rig-side ladder feedback appends the First/Backoff detection texts
-    // later). Rig's ladder feedback rides retry_with_feedback into
-    // chat_history and is persisted at turn end, so a bare count would also
-    // match those; ordering is the discriminator.
-    let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    let first_steering = persisted
+    // The conversion delivers the steering through the retry prompt: the
+    // attempt right after the first stop carries the repetition backoff message
+    // above the original prompt. The carrier is sticky within the turn, so
+    // every later attempt carries it too.
+    let requests = probe.requests();
+    let first_steered = requests
         .iter()
-        .find_map(|m| message_text(m).filter(|t| t.starts_with("Output repetition")))
-        .ok_or("the conversion must append a repetition steering message")?;
+        .position(|request| {
+            let prompt = request_prompt(request);
+            prompt.starts_with(OUTPUT_REPETITION_BACKOFF_MESSAGE) && prompt.ends_with("hello")
+        })
+        .ok_or("the conversion must steer a retry prompt")?;
+    assert!(
+        first_steered > 0,
+        "the steering must arrive on a retry, not the first attempt"
+    );
+    assert!(
+        request_prompt(&requests[first_steered]).ends_with("hello"),
+        "the steered prompt keeps the original prompt"
+    );
+    // The four below-threshold turns saved their exchanges; the stopped
+    // attempts saved nothing.
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
-        first_steering, OUTPUT_REPETITION_BACKOFF_MESSAGE,
-        "the conversion's steering message must be the repetition backoff text, got: {first_steering}"
+        persisted.len(),
+        8,
+        "only the four completed turns are saved; got {persisted:?}"
     );
 
     Ok(())
@@ -389,18 +402,21 @@ async fn repetition_stop_reset_ladder_lets_retry_sequence_restart_at_first() -> 
         15,
         "the fresh identical turn must resolve at First (retry), proving the ladder was reset"
     );
-    // Exactly one BACKOFF-text repetition message: the conversion's steering.
-    // The fresh sequence's first detection is First (rig appends the DETECTED
-    // text as retry feedback); an unreset ladder would append a SECOND
-    // BACKOFF-text message there (count 2), so the count is the discriminator.
-    let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    let backoff_steering_count = persisted
+    // The conversion delivers the steering through the retry prompt: the
+    // attempt right after the stop carries the repetition backoff message. The
+    // carrier is sticky within the turn, so later attempts carry it too; the
+    // reset proof is the request count above.
+    let requests = probe.requests();
+    let first_steered = requests
         .iter()
-        .filter(|m| message_text(m).is_some_and(|t| t == OUTPUT_REPETITION_BACKOFF_MESSAGE))
-        .count();
-    assert_eq!(
-        backoff_steering_count, 1,
-        "only the stop conversion must append a repetition steering message; got {persisted:?}"
+        .position(|request| {
+            let prompt = request_prompt(request);
+            prompt.starts_with(OUTPUT_REPETITION_BACKOFF_MESSAGE) && prompt.ends_with("hello")
+        })
+        .ok_or("the conversion must steer a retry prompt")?;
+    assert!(
+        first_steered > 0,
+        "the steering must arrive on a retry, not the first attempt"
     );
 
     Ok(())

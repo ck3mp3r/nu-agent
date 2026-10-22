@@ -49,7 +49,9 @@ fn test_translator_llm_completed_produces_usage_update() -> Result<()> {
         tool_calls: 1,
         input_tokens: 100,
         output_tokens: 50,
-        total_tokens: 150,
+        total_tokens: Some(150),
+        cost: None,
+        cost_complete: false,
     };
     let mut translator = EventTranslator::with_context_size(SESSION, 200_000);
 
@@ -76,7 +78,9 @@ fn test_translator_llm_completed_default_context_size_is_builtin_default() -> Re
         tool_calls: 0,
         input_tokens: 0,
         output_tokens: 0,
-        total_tokens: 7,
+        total_tokens: Some(7),
+        cost: None,
+        cost_complete: false,
     };
 
     // -- Exec

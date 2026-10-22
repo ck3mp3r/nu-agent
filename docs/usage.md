@@ -142,6 +142,83 @@ Resolution rules:
 3. **Unknown role** (no slash, not in the map) → error at startup
 4. **No `model:` field** → falls back to `models.default`
 
+## Model pricing
+
+Every model the runtime can serve resolves a price through one ladder. The
+ladder runs once, when the model binding is constructed, and the resolved
+prices ride the model's wire facts. The cost hook reads them; it holds no
+rung logic of its own.
+
+Outcomes, highest precedence first:
+
+1. **Endpoint-reported** — the provider's own reply states the cost. This is
+   authoritative and always wins.
+2. **User-configured pricing** — a `pricing` block on the model's config
+   record. The user stated what they pay, so it wins over the shipped rate.
+   See [Per-model pricing](configuration.md#per-model-pricing).
+3. **Own cache row** — the model's own row in the local models cache
+   (`agent models sync`) lists a cost.
+4. **Residual** — nothing prices the model. The call stays tokens-only.
+
+The cache row reads the same cache the model picker renders, so the price a
+session computes and the price the picker shows come from one source.
+
+There is no cross-vendor borrowing: a model id priced only under another
+section stays tokens-only unless the block declares that section as its
+`catalog`.
+
+Pricing is per **model id**, not per wire. The vendor whose wire serves the
+model scopes only the base spec's shape — the modalities and compatibility
+rig's built-in catalog lists for that vendor. The price comes from the ladder
+over the models cache, keyed by the model id and the block's declared cache
+section. A provider block named for a reseller therefore prices from the
+section it declares: a block named `ollama-cloud` that serves through the
+openai wire (`provider = "openai"`, `base_url = "https://ollama.com/v1"`)
+prices its models from the `ollama-cloud` section, even though the wire
+reports `openai`.
+
+### Provider names and the cache
+
+The cache stores models.dev provider keys. A config block reaches its section
+through `catalog`; without it, the block name is its own section key. There is
+no name mapping, so a block named `ollama` reaches no section unless it
+declares `catalog = "ollama-cloud"`. See
+[The models cache](configuration.md#the-models-cache).
+
+### The Ollama caveat
+
+`ollama` reaches no cache section, so its models stay tokens-only. Declare
+`catalog = "ollama-cloud"` and the block prices from that section, whose
+rates are Ollama Cloud list prices for those model ids. A local Ollama server
+is not billed those rates, so the session cost line then reads as if the
+tokens were billed at cloud list prices.
+
+### The residual
+
+A model no rung prices stays tokens-only. The existing signals say so
+explicitly: the model picker leaves its price column blank, and the session
+cost line shows tokens alone, or a figure ending in `+` while any call was
+unpriced. The residual classes are:
+
+- a model id the cache lists with no cost — a local Ollama classic whose id
+  no hosted vendor uses is the common case;
+- a model the cache does not list at all, or one whose block declares no
+  `catalog` and whose name is not a cache section key.
+
+A blank price is never invented. If a model you use lands in the residual,
+run `agent models sync` first — a newer cache may price it — or set a
+`pricing` block for it in config.toml.
+
+A reply that reports no input or output token count also stays tokens-only:
+the rates apply to those counters. A missing `total_tokens` never blocks a
+price — some endpoints omit it, and the total is not what the rates
+multiply.
+
+A session whose calls are only partly priced shows the summed price with a
+`+` suffix. That happens when a call reports cache tokens the model's row
+lists no rate for: the known parts are summed, and the `+` says the figure is
+a lower bound.
+
 ## Tool authorization (permissions DSL)
 
 Authorization uses a **map-style** `permissions` DSL (not a rules array).
@@ -520,6 +597,70 @@ built-ins.
 "continue" | agent --session "session-id"
 ```
 
+### Session storage
+
+A session's conversation lives in a rig-memory store. The `--store` flag picks
+the backend:
+
+| `--store` | Where the session lives |
+|-----------|--------------------------|
+| `sqlite` (default) | `{cache}/{APP_DIR_NAME}/rig-sessions.db` — one database holds every session |
+| `jsonl` | `{cache}/{APP_DIR_NAME}/sessions/{session_id}/` — a `DirStore` directory per session, holding `logs/`, `files/` (with `files/blobs/`), and the `name` file |
+| `memory` | An in-memory database. Nothing survives the process, so it is for tests and one-shot runs |
+
+`APP_DIR_NAME` is `nu-agent-dev` in debug builds and `nu-agent` in release
+builds. The rig database is separate from the old `sessions.db`: the rig store
+refuses a database that holds the pre-rig-memory schema.
+
+**Legacy sessions are refused, not migrated.** A session saved by a version of
+nu-agent before rig-memory makes the store report *"this session was made by
+another version of nu-agent; start a new session"*. The old files are left as
+they are. Start a new session.
+
+**A cancelled turn persists nothing.** rig saves a turn only when it succeeds,
+so a cancel mid-turn leaves the session log byte-identical and writes no state
+record.
+
+**Re-login after upgrading from a pre-0.45 build.** The rig 0.45 upgrade
+changed how provider credentials are read. A Copilot login made by an older
+build is not picked up; run `agent provider auth login` again.
+
+### Session metadata
+
+The host writes the session's state records itself, because rig 0.45's save path
+writes only the header and change records:
+
+- `rig::model` — the `provider/model` string the turn ran, taken from the
+  resolved config rather than the wire descriptor (a custom provider on an
+  OpenAI-shaped wire would otherwise be mislabelled).
+- `rig::title` — the start of the session's **first** user message, so a resumed
+  session keeps its original title.
+- `meta.json` — the listing: title, labels, `updated`, model, message count, and
+  plugins' listed values.
+
+A model switch rewrites the model record and relists; it passes no title, so the
+title is preserved.
+
+`agent session list` and `agent session inspect` read these records. The plugin
+command shows all six listing fields (`id`, `title`, `model`, `messages`,
+`updated`, `labels`, `listed` — `listed` as JSON text). The CLI's `agent session
+list` table shows five of them (`ID`, `TITLE`, `MODEL`, `MESSAGES`, `UPDATED`):
+`labels` and `listed` are plugin-owned metadata, so the CLI table leaves them
+out. Use the plugin command when you need them.
+
+A session whose store cannot be opened is skipped with a warning, so one
+unreadable log does not hide the others.
+
+### Open-store bound
+
+A session's store is opened on first use and kept. At most **32** stores stay
+open at once; the oldest is dropped when the bound is reached. A turn that still
+holds the store keeps it alive through its `Arc`, and the next access reopens it.
+
+On the `memory` backend nothing persists across opens, so an evicted session
+disappears from `agent session list` entirely — its conversation lived only in
+the store that was dropped.
+
 ### Compaction triggers and persistence
 
 - Auto compaction trigger evaluation uses threshold tolerance and hysteresis:
@@ -531,8 +672,8 @@ built-ins.
   - unknown slash commands emit a warning and processing continues
 - Slash command text is runtime control input and is not forwarded as prompt text to the LLM.
 - Manual and auto trigger sources share one execution path, and compaction persistence is durable:
-  - session JSONL content is rewritten through session APIs
-  - compacted message set and `compaction_count` metadata are persisted
+  - the splice is written to the session's rig-memory log through rig's own save path
+  - the compacted message set is what the next run loads
   - transcript-visible compaction summary artifact includes source + summarized counts
   - compaction summary artifact includes summary preview/body from the produced summary text
 

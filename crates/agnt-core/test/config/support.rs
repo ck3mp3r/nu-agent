@@ -17,6 +17,7 @@ pub(super) fn plugin_config_with_cache() -> PluginConfig {
             base_url: None,
             provider: None,
             preamble: None,
+            catalog: None,
             models: HashMap::new(),
         },
     );

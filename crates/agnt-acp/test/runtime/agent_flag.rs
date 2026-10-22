@@ -34,7 +34,7 @@ async fn test_runtime_build_acp_runtime_agent_flag_overrides_default_agent() -> 
         "dev",
         "---\nname: dev\npermissions:\n  http: allow\n---\n\nDev agent.\n",
     )?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
     let mut params = make_params(cwd.clone(), config_path, Vec::new(), store);
     params.agent_name = Some("dev".to_string());
 
@@ -67,7 +67,7 @@ async fn test_runtime_build_acp_runtime_agent_flag_unknown_agent_returns_error()
     let config = format!("{BASE_CONFIG}\n[agents]\ndefault = \"strict\"\n");
     let config_path = write_config(temp.path(), &config)?;
     write_persona(&cwd, "strict", "---\nname: strict\n---\n\nStrict agent.\n")?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
     let mut params = make_params(cwd.clone(), config_path, Vec::new(), store);
     params.agent_name = Some("ghost".to_string());
 

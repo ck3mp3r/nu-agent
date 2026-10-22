@@ -61,10 +61,6 @@ mod executor_repetition_test;
 mod executor_construction_test;
 
 #[cfg(all(test, feature = "integration"))]
-#[path = "../../../../test/conversation/turn/executor/executor_memory_append.rs"]
-mod executor_memory_append_test;
-
-#[cfg(all(test, feature = "integration"))]
 #[path = "../../../../test/conversation/turn/executor/executor_dispatch.rs"]
 mod executor_dispatch_test;
 

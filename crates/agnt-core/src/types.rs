@@ -14,7 +14,7 @@ pub use rig::completion::message::{
 };
 
 // Tool definitions (used in runtime and turn execution)
-pub use rig::completion::ToolDefinition;
+pub use rig::completion::{ToolAnnotations, ToolDefinition};
 
 // Runtime model types (used by the ACP and plugin runtimes)
 pub use rig::DynModel;
@@ -22,11 +22,13 @@ pub use rig::operation::Completion;
 
 // Tool server types (used to register and dispatch dynamic tools)
 pub use rig::tool::server::{ToolServer, ToolServerHandle};
-pub use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
+pub use rig::tool::{DynamicTool, ToolContext, ToolExecutionError, ToolOutput, ToolSet};
 
-// Copilot provider config and OAuth device-code auth
-pub use rig::providers::copilot::CopilotConfig;
-pub use rig::providers::copilot::auth::*;
+// Copilot provider OAuth device-code auth
+pub use crate::config::copilot_tokens::copilot_token_dir;
+pub use rig::providers::copilot::auth::{
+    AuthError, AuthSource, Authenticator, DeviceCodeHandler, FileTokenStore,
+};
 
 // Test double for provider models (used by downstream crate tests)
 pub use rig::test_utils::MockCompletionModel;

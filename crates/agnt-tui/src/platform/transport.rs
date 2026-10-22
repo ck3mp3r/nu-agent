@@ -4,7 +4,7 @@ use agnt_core::protocol::event::UiEvent;
 
 use crate::interaction::reducer::{ReducerInput, UserAction};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TransportItem {
     User(UserAction),
     Event(Box<UiEvent>),

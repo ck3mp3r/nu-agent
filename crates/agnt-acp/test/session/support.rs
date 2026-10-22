@@ -28,8 +28,7 @@ pub(super) use agnt_core::conversation::state::{
 pub(super) use agnt_core::hook::DoomLoopState;
 pub(super) use agnt_core::hook::output_repetition::RepetitionState;
 pub(super) use agnt_core::protocol::event::PermissionDecision;
-pub(super) use agnt_core::session::factory::create_store_in;
-pub(super) use agnt_core::session::{SessionStore, SessionStoreBackend, StoreType};
+pub(super) use agnt_core::session::{RigStoreConfig, StoreType};
 pub(super) use agnt_core::tools::authz::{PermissionsConfig, SessionGrantCache};
 pub(super) use agnt_core::tools::closure::ClosureRegistry;
 pub(super) use agnt_core::tools::handler::McpToolRegistry;
@@ -68,7 +67,7 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             mcp_servers: _,
             config_path: _,
             runtime_handle,
-            store,
+            store_type,
             session_id,
             client_fs,
             agent_name,
@@ -85,6 +84,9 @@ impl RuntimeBuilder for MockRuntimeBuilder {
         let compactor_model = model.clone();
         let config = Config {
             provider: "ollama".to_string(),
+            // The session's block serves the ollama-cloud cache section, as a
+            // real `[providers.ollama] catalog = "ollama-cloud"` block does.
+            catalog: Some("ollama-cloud".to_string()),
             model: "llama3".to_string(),
             ..Config::default()
         };
@@ -96,9 +98,14 @@ impl RuntimeBuilder for MockRuntimeBuilder {
         let compactor = NuCompactor::from_shared_model(
             Arc::new(Mutex::new(compactor_model.erase())),
             bus.clone(),
-            None,
-        )
-        .with_store(Arc::clone(&store));
+            rig_memory::CompactionPolicy::default(),
+            agnt_core::conversation::compaction::compactor::resolve_model_spec(
+                "openai",
+                "gpt-4o",
+                Some(8_000),
+                Some(1_024),
+            ),
+        );
 
         Ok(AgentConversationRuntime {
             runtime: runtime_handle,
@@ -115,7 +122,6 @@ impl RuntimeBuilder for MockRuntimeBuilder {
                 None,
             ),
             engine: Arc::new(crate::AcpEngineStub::new(cwd.to_string_lossy().to_string())),
-            store: Arc::clone(&store),
             final_session_id: session_id,
             permission_state: PermissionState::new(
                 PermissionsConfig::safe_defaults(true),
@@ -124,7 +130,7 @@ impl RuntimeBuilder for MockRuntimeBuilder {
                 SessionGrantCache::default(),
                 String::new(),
             ),
-            session: MemoryState::new(Arc::clone(&store)),
+            session: MemoryState::new(agnt_core::session::RigStoreConfig::new(store_type)),
             persona: PersonaState::new(None, None, None, None, None, None, None),
             multi_agent: MultiAgentState::new(Vec::new(), AgentsConfig::default()),
             cwd,
@@ -161,17 +167,16 @@ impl RuntimeBuilder for FailingRuntimeBuilder {
     }
 }
 
-pub(super) async fn memory_store(dir: &Path) -> Result<Arc<SessionStoreBackend>> {
-    let store = create_store_in(StoreType::Memory, dir)
-        .await
-        .map_err(|e| format!("should create in-memory store: {e:?}"))?;
-    Ok(Arc::new(store))
+/// The rig-memory store config the manager reads conversations from.
+///
+/// File-backed under `dir`, so every `open` reaches the same database.
+pub(super) fn rig_config(dir: &Path) -> RigStoreConfig {
+    RigStoreConfig::new(StoreType::Sqlite).with_cache_dir(dir)
 }
 
 pub(super) async fn manager(dir: &Path) -> Result<AcpSessionManager<MockRuntimeBuilder>> {
-    let store = memory_store(dir).await?;
     Ok(AcpSessionManager::with_runtime_builder(
-        store,
+        rig_config(dir),
         dir.join("config.toml"),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder::default(),
@@ -184,35 +189,34 @@ pub(super) fn session_cwd(dir: &Path, name: &str) -> Result<PathBuf> {
     Ok(cwd)
 }
 
-/// A manager plus the store it shares, so a test can seed persisted sessions.
-pub(super) async fn manager_with_store(
+/// A manager plus the rig-memory store config it reads conversations from, so a
+/// test can seed a persisted session.
+pub(super) async fn manager_with_rig_store(
     dir: &Path,
-) -> Result<(
-    AcpSessionManager<MockRuntimeBuilder>,
-    Arc<SessionStoreBackend>,
-)> {
-    let store = memory_store(dir).await?;
+) -> Result<(AcpSessionManager<MockRuntimeBuilder>, RigStoreConfig)> {
+    let rig = rig_config(dir);
     let manager = AcpSessionManager::with_runtime_builder(
-        Arc::clone(&store),
+        rig.clone(),
         dir.join("config.toml"),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder::default(),
     );
-    Ok((manager, store))
+    Ok((manager, rig))
 }
 
-/// Persist a two-message conversation under `session_id`.
-pub(super) async fn seed_session(store: &SessionStoreBackend, session_id: &str) -> Result<()> {
-    store
-        .create(
-            session_id,
-            &[
-                Message::user("hello".to_string()),
-                Message::assistant("hi there".to_string()),
-            ],
-        )
-        .await
-        .map_err(|e| format!("should seed session: {e:?}"))?;
+/// Persist a two-message conversation under `session_id` in the rig store.
+pub(super) fn seed_session(rig: &RigStoreConfig, session_id: &str) -> Result<()> {
+    let store = rig
+        .open(session_id)
+        .map_err(|e| format!("should open rig store: {e:?}"))?;
+    let mut conversation = rig_memory::load(&*store, session_id)
+        .map_err(|e| format!("should load rig conversation: {e:?}"))?;
+    conversation.extend([
+        Message::user("hello".to_string()),
+        Message::assistant("hi there".to_string()),
+    ]);
+    rig_memory::save(&*store, session_id, &mut conversation)
+        .map_err(|e| format!("should seed rig conversation: {e:?}"))?;
     Ok(())
 }
 
@@ -244,10 +248,9 @@ pub(super) async fn manager_capturing_client_fs(
     AcpSessionManager<MockRuntimeBuilder>,
     Arc<Mutex<Vec<Option<ClientFsState>>>>,
 )> {
-    let store = memory_store(dir).await?;
     let captured = Arc::new(Mutex::new(Vec::new()));
     let manager = AcpSessionManager::with_runtime_builder(
-        store,
+        rig_config(dir),
         dir.join("config.toml"),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder {
@@ -265,10 +268,9 @@ pub(super) async fn manager_capturing_agent_name(
     AcpSessionManager<MockRuntimeBuilder>,
     Arc<Mutex<Vec<Option<String>>>>,
 )> {
-    let store = memory_store(dir).await?;
     let captured = Arc::new(Mutex::new(Vec::new()));
     let manager = AcpSessionManager::with_runtime_builder(
-        store,
+        rig_config(dir),
         dir.join("config.toml"),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder {

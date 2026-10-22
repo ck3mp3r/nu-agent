@@ -1,14 +1,4 @@
 //! Tests for the Nushell-closure tool adapter.
-//!
-//! The suite is split into topical sub-files. Shared imports live here; each
-//! sub-file pulls them in with `use super::*;`.
-
-// region:    --- Modules
-
-#[path = "closure/map_tool_error.rs"]
-mod map_tool_error;
-
-// endregion: --- Modules
 
 use super::*;
 
@@ -189,15 +179,18 @@ async fn adapt_closures_tool_invocation_converts_json_args_and_result() -> TestR
     let handle = tool_server(tools);
 
     // -- Exec
-    let defs = handle.static_tool_defs();
+    let defs = handle.snapshot();
     let mut context = rig::tool::ToolContext::new();
     let result = handle
+        .toolset()
         .execute("echo", r#"{"x":"hello"}"#, &mut context)
         .await;
 
     // -- Check
     assert!(
-        defs.iter().any(|def| def.name.as_str() == "echo"),
+        defs.definitions()
+            .iter()
+            .any(|def| def.name.as_str() == "echo"),
         "the adapted closure must be registered on the tool server"
     );
     assert!(
@@ -254,6 +247,7 @@ async fn adapt_closures_tool_invocation_serializes_structured_result() -> TestRe
     // -- Exec
     let mut context = rig::tool::ToolContext::new();
     let result = handle
+        .toolset()
         .execute("stats", r#"{"x":"ignored"}"#, &mut context)
         .await;
 
@@ -293,7 +287,7 @@ async fn adapt_closures_tool_missing_argument_passes_nothing() -> TestResult<()>
 
     // -- Exec
     let mut context = rig::tool::ToolContext::new();
-    let result = handle.execute("echo", "{}", &mut context).await;
+    let result = handle.toolset().execute("echo", "{}", &mut context).await;
 
     // -- Check
     assert!(
@@ -322,7 +316,10 @@ async fn adapt_closures_tool_truncates_output_at_max_bytes() -> TestResult<()> {
 
     // -- Exec
     let mut context = rig::tool::ToolContext::new();
-    let result = handle.execute("big", r#"{"x":"a"}"#, &mut context).await;
+    let result = handle
+        .toolset()
+        .execute("big", r#"{"x":"a"}"#, &mut context)
+        .await;
 
     // -- Check
     assert!(
@@ -354,7 +351,10 @@ async fn adapt_closures_tool_maps_engine_failure_to_tool_error() -> TestResult<(
 
     // -- Exec
     let mut context = rig::tool::ToolContext::new();
-    let result = handle.execute("boom", r#"{"x":"a"}"#, &mut context).await;
+    let result = handle
+        .toolset()
+        .execute("boom", r#"{"x":"a"}"#, &mut context)
+        .await;
 
     // -- Check
     assert!(
@@ -385,7 +385,10 @@ async fn adapt_closures_tool_rejects_unconvertible_result() -> TestResult<()> {
 
     // -- Exec
     let mut context = rig::tool::ToolContext::new();
-    let result = handle.execute("dated", r#"{"x":"a"}"#, &mut context).await;
+    let result = handle
+        .toolset()
+        .execute("dated", r#"{"x":"a"}"#, &mut context)
+        .await;
 
     // -- Check
     assert!(

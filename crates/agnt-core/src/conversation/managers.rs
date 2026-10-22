@@ -78,10 +78,10 @@ pub trait ToolManager {
 /// Manages conversation memory and session IDs.
 pub trait SessionManager {
     /// The concrete memory type backed by this manager.
-    type Memory: rig::memory::ConversationMemory;
+    type Memory;
 
     /// The inner concrete memory backend wrapped by the compacting facade.
-    type InnerMemory: rig::memory::ConversationMemory;
+    type InnerMemory;
 
     /// Return a shared reference to the underlying memory.
     fn memory(&self) -> &Self::Memory;
@@ -93,6 +93,12 @@ pub trait SessionManager {
     /// held by the memory state). Used by callers that need the concrete
     /// `CachedMemory` API (store rewrites, marker writes, raw loads).
     fn inner_memory(&self) -> &Self::InnerMemory;
+
+    /// The rig-memory store of `session_id`, made on first use and kept.
+    fn rig_store(
+        &self,
+        session_id: &str,
+    ) -> Result<std::sync::Arc<dyn rig_memory::Store>, crate::session::MemoryError>;
 
     /// Clear all messages from conversation memory and reset token tracking.
     fn clear(&mut self);

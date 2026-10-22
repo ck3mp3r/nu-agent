@@ -7,7 +7,6 @@ use crate::compaction::CompactionParams;
 use crate::config::{AgentsConfig, Config, ModelRoleConfig, PluginConfig, defaults, vault::Vault};
 use crate::conversation::runtime::AgentConversationRuntime;
 use crate::protocol::persona::PersonaSummary;
-use crate::session::SessionStoreBackend;
 use crate::tools::authz::{PermissionsConfig, PermissionsOverlay};
 use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use crate::tools::handler::McpToolRegistry;
@@ -35,7 +34,8 @@ pub struct RuntimeBuildParams {
     pub vault: Option<Arc<Vault>>,
     pub mcp_registry: McpToolRegistry,
     pub engine: Arc<dyn EngineInterfaceLike>,
-    pub store: Arc<SessionStoreBackend>,
+    /// The session store backend the runtime's rig-memory stores are made from.
+    pub store_type: crate::session::StoreType,
     pub final_session_id: Option<String>,
     pub compaction_params: CompactionParams,
     pub proactive_threshold_pct: Option<f64>,
@@ -67,9 +67,6 @@ pub async fn build_runtime(
         state::provider::ProviderState, state::tool::ToolState,
     };
 
-    // CRITICAL: clone store BEFORE moving params.store into the struct literal
-    // so both AgentRuntime.store and MemoryState share the same backing store.
-    let store_for_session = Arc::clone(&params.store);
     // Extract max_tool_result_bytes before params.config is moved.
     let max_tool_result_bytes = params
         .config
@@ -88,6 +85,15 @@ pub async fn build_runtime(
         .config
         .repetition_guard
         .unwrap_or(defaults::REPETITION_GUARD_ENABLED);
+    // Resolve the compaction model spec inputs before params.config is moved: the
+    // spec is built once, here, from the provider name and the limits our config
+    // carries.
+    let compaction_spec = crate::conversation::compaction::compactor::resolve_model_spec(
+        &params.config.provider,
+        &params.config.model,
+        u32::try_from(max_context_tokens).ok(),
+        params.config.max_output_tokens,
+    );
 
     // The shared model is the single point of model identity: the agent is
     // built from it on every turn and the compactor summarizes with it. It is
@@ -110,13 +116,23 @@ pub async fn build_runtime(
         .await
         .map_err(|e| LabeledError::new(format!("Failed to build compactor model: {e}")))?;
     let compactor_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(compactor_model));
-    let compactor =
-        NuCompactor::from_shared_model(Arc::clone(&compactor_model), params.bus.clone(), None)
-            .with_store(Arc::clone(&store_for_session));
+    let compactor = NuCompactor::from_shared_model(
+        Arc::clone(&compactor_model),
+        params.bus.clone(),
+        rig_memory::CompactionPolicy::default(),
+        compaction_spec,
+    );
 
     // The memory state holds the `CachedMemory` backend directly; all compaction
-    // logic lives in the hook.
-    let session = MemoryState::new(store_for_session);
+    // logic lives in the hook. The rig-memory store of each session is made on
+    // first use from the configured backend.
+    let session = MemoryState::new(crate::session::RigStoreConfig::new(params.store_type));
+
+    // Surface what reading the session repaired, such as an image whose blob is
+    // gone. A session that cannot be read still opens; the next save reports it.
+    if let Some(session_id) = params.final_session_id.as_deref() {
+        session.warn_repairs(session_id);
+    }
 
     // Threshold used by the hook to decide when to compact: proactive_threshold_pct
     // (default 0.8) of model_context_tokens (falling back to max_context_tokens).
@@ -150,7 +166,6 @@ pub async fn build_runtime(
             params.vault,
         ),
         engine: params.engine,
-        store: params.store,
         final_session_id: params.final_session_id,
         permission_state: PermissionState::new(
             params.base_permissions,

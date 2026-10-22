@@ -3,12 +3,13 @@ use crate::tools::mcp::{
     config::McpServerConfig,
     runtime::{McpRuntime, McpServerLifecycle},
 };
-use crate::types::{EmptyToolName, ToolDefinition, ToolName};
+use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
 
 fn mcp_tool_definition_from_discovered(
     tool: &crate::tools::mcp::client::McpToolDefinition,
 ) -> Result<ToolDefinition, EmptyToolName> {
     Ok(ToolDefinition {
+        annotations: ToolAnnotations::default(),
         name: ToolName::new(tool.name.clone())?,
         description: tool
             .description

@@ -5,7 +5,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// Write a live cached Copilot session key into `dir`, as a completed login would.
 fn seed_cached_session_key(dir: &std::path::Path) -> Result<()> {
     std::fs::write(
-        dir.join("api-key.json"),
+        dir.join("copilot.json"),
         serde_json::json!({ "token": "tid=cached-session", "expires_at": i64::MAX }).to_string(),
     )?;
     Ok(())
@@ -28,6 +28,7 @@ async fn build_copilot_client_no_auth_returns_ok() -> Result<()> {
         a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "gpt-4".to_string(),
         api_key: None,
         base_url: None,
@@ -53,6 +54,7 @@ async fn build_copilot_client_no_auth_returns_ok() -> Result<()> {
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     };
 
     let result = build_copilot_client_with(&config, &EnvMap::new(), Some(token_dir.path())).await;
@@ -80,6 +82,7 @@ async fn build_copilot_client_oauth_path_succeeds_at_build_time() -> Result<()> 
         a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "gpt-4".to_string(),
         api_key: None,
         base_url: None,
@@ -105,6 +108,7 @@ async fn build_copilot_client_oauth_path_succeeds_at_build_time() -> Result<()> 
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     };
 
     let result = build_copilot_client_with(&config, &EnvMap::new(), Some(token_dir.path())).await;

@@ -20,7 +20,7 @@ async fn test_runtime_build_acp_runtime_merges_distinct_mcp_servers() -> Result<
         "{BASE_CONFIG}\n[mcp.config_only]\ntransport = \"http\"\nurl = \"http://127.0.0.1:9/mcp\"\nenabled = false\n"
     );
     let config_path = write_config(temp.path(), &config)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
     let client_servers = vec![disabled_http_server("client_only")];
 
     // -- Exec
@@ -55,7 +55,7 @@ async fn test_runtime_build_acp_runtime_client_mcp_server_wins_on_collision() ->
         "{BASE_CONFIG}\n[mcp.shared]\ntransport = \"http\"\nurl = \"http://127.0.0.1:9/mcp\"\nenabled = true\n"
     );
     let config_path = write_config(temp.path(), &config)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
     let client_servers = vec![disabled_http_server("shared")];
 
     // -- Exec

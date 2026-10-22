@@ -7,12 +7,11 @@ use super::*;
 #[test]
 fn runtime_struct_has_memory_field() {
     // Compile-time check that the field exists with correct type: the runtime
-    // memory is an `Arc<CachedMemory<SessionStoreBackend>>`.
+    // memory is an `Arc<CachedMemory>`.
     use crate::conversation::state::memory::MemoryOf;
-    use crate::session::SessionStoreBackend;
 
     // Compile-time check that the field exists with correct type
-    fn _assert_field_exists(_: &MemoryOf<SessionStoreBackend>) {}
+    fn _assert_field_exists(_: &MemoryOf) {}
 
     let _type_check: fn(&AgentConversationRuntime) = |r| {
         _assert_field_exists(r.session.memory());
@@ -21,12 +20,10 @@ fn runtime_struct_has_memory_field() {
 
 #[test]
 fn runtime_struct_has_session_store() {
-    // Verify MemoryState wraps a store-backed CachedMemory (via inner_memory).
-    use crate::session::FsSessionStore;
-
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store = std::sync::Arc::new(FsSessionStore::new(temp_dir.path().to_path_buf()));
-    let ms = crate::conversation::state::memory::MemoryState::new(store);
+    // Verify MemoryState wraps a rig-store-backed CachedMemory (via inner_memory).
+    let ms = crate::conversation::state::memory::MemoryState::new(
+        crate::session::RigStoreConfig::in_memory(),
+    );
     assert!(ms.last_total_tokens().is_none());
 }
 

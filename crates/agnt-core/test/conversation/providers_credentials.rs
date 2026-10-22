@@ -96,7 +96,7 @@ async fn build_dyn_model_erases_every_cached_variant() -> Result<()> {
     // -- Exec & Check
     for (name, client) in cases {
         let model = client
-            .build_dyn_model("test-model")
+            .build_dyn_model("test-model", name, None, None)
             .map_err(|e| format!("case '{name}': build_dyn_model must succeed: {e:?}"))?;
         if name == "mock" {
             let text = drive_erased_model(&model).await?;

@@ -1,5 +1,6 @@
 use crate::config::vault::VaultBackend;
 use crate::utils::env_map::EnvMap;
+use crate::utils::paths::APP_DIR_NAME;
 
 use super::FileBackend;
 
@@ -231,7 +232,7 @@ fn test_file_backend_concurrent_sets_do_not_lose_keys() -> Result<()> {
 fn test_file_backend_probe_succeeds_with_writable_data_dir() -> Result<()> {
     // -- Setup & Fixtures
     let dir = tempfile::TempDir::new()?;
-    let path = dir.path().join("nu-agent").join("secrets.json");
+    let path = dir.path().join(APP_DIR_NAME).join("secrets.json");
 
     // -- Exec
     let probed = FileBackend::probe_in(&path);
@@ -240,8 +241,8 @@ fn test_file_backend_probe_succeeds_with_writable_data_dir() -> Result<()> {
     let backend = probed.map_err(|e| format!("probe should succeed: {e}"))?;
     let path = backend.path().to_string_lossy();
     assert!(
-        path.contains("nu-agent"),
-        "probe path lives under nu-agent/"
+        path.contains(APP_DIR_NAME),
+        "probe path lives under the application directory"
     );
     assert!(
         path.contains("secrets.json"),
@@ -264,10 +265,10 @@ fn test_file_backend_default_path_uses_xdg_data_home() -> Result<()> {
 
     // -- Check
     let path = resolved.map_err(|e| format!("should resolve: {e}"))?;
-    let expected = dir.path().join("nu-agent").join("secrets.json");
+    let expected = dir.path().join(APP_DIR_NAME).join("secrets.json");
     assert_eq!(
         path, expected,
-        "path is $XDG_DATA_HOME/nu-agent/secrets.json"
+        "path is $XDG_DATA_HOME/{APP_DIR_NAME}/secrets.json"
     );
     Ok(())
 }
@@ -276,11 +277,14 @@ fn test_file_backend_default_path_uses_xdg_data_home() -> Result<()> {
 fn test_file_backend_probe_fails_when_data_dir_not_writable() -> Result<()> {
     // -- Setup & Fixtures
     // Point the probe at a path whose parent is a regular file, so the
-    // nu-agent/ subdirectory cannot be created.
+    // application subdirectory cannot be created.
     let dir = tempfile::TempDir::new()?;
     let blocker = dir.path().join("blocker");
     std::fs::write(&blocker, "not a directory")?;
-    let path = blocker.join("nested").join("nu-agent").join("secrets.json");
+    let path = blocker
+        .join("nested")
+        .join(APP_DIR_NAME)
+        .join("secrets.json");
 
     // -- Exec
     let probed = FileBackend::probe_in(&path);

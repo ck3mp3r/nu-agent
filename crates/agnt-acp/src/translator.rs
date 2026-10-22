@@ -163,7 +163,9 @@ impl EventTranslator {
                 )))
             }
             UiEvent::LlmCompleted { total_tokens, .. } => Some(SessionUpdate::UsageUpdate(
-                UsageUpdate::new(total_tokens, self.max_context_tokens),
+                // `UsageUpdate` takes a plain count, so a wire that omits the
+                // total still reports 0 to ACP clients — unchanged behavior.
+                UsageUpdate::new(total_tokens.unwrap_or(0), self.max_context_tokens),
             )),
             UiEvent::CompactionStarted { source } => {
                 Some(compaction_update("started", &source, None))

@@ -3,7 +3,7 @@ use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value
 
 use agnt_core::config::copilot_tokens::read_copilot_token_record;
 use agnt_core::config::vault::Vault;
-use agnt_core::types::default_token_dir;
+use agnt_core::types::copilot_token_dir;
 
 use crate::plugin::AgentPlugin;
 
@@ -71,7 +71,7 @@ impl SimplePluginCommand for AgentProviderAuthLogout {
 
         // github-copilot stores its tokens in files, not the vault.
         if (name == "github-copilot" || name == "copilot")
-            && let Some(dir) = default_token_dir()
+            && let Some(dir) = copilot_token_dir()
             && read_copilot_token_record(&dir)
                 .map_err(LabeledError::new)?
                 .is_some()
@@ -104,9 +104,12 @@ impl SimplePluginCommand for AgentProviderAuthLogout {
 
 // region:    --- Support
 
-/// Delete the two Copilot token files, leaving the directory in place.
+/// Delete the Copilot credential files, leaving the directory in place.
+///
+/// `copilot.json` is rig 0.45's record; `access-token` and `api-key.json` are
+/// the pre-0.45 layout, removed so a logout also clears an upgraded install.
 fn remove_copilot_token_files(dir: &std::path::Path) -> Result<(), String> {
-    for file in ["access-token", "api-key.json"] {
+    for file in ["copilot.json", "access-token", "api-key.json"] {
         let path = dir.join(file);
         match std::fs::remove_file(&path) {
             Ok(()) => {}

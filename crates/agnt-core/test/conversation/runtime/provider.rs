@@ -13,6 +13,7 @@ fn provider_dispatch_unsupported_provider_returns_error() {
         a2a_port: None,
         provider: "unsupported-provider".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "some-model".to_string(),
         api_key: Some("test-key".to_string()),
         base_url: None,
@@ -38,6 +39,7 @@ fn provider_dispatch_unsupported_provider_returns_error() {
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     };
 
     // This test will compile once we add the dispatch logic
@@ -60,6 +62,7 @@ fn client_cache_key_contains_provider_and_model() {
         a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "test-model".to_string(),
         api_key: Some("test-key".to_string()),
         base_url: None,
@@ -85,6 +88,7 @@ fn client_cache_key_contains_provider_and_model() {
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     };
 
     // client_cache_key clones (provider, api_key, base_url) from config.
@@ -115,6 +119,7 @@ fn client_cache_key_includes_base_url_when_set() {
         a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "test-model".to_string(),
         api_key: Some("test-key".to_string()),
         base_url: Some("https://custom.example.com".to_string()),
@@ -140,6 +145,7 @@ fn client_cache_key_includes_base_url_when_set() {
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     };
 
     let key: ClientCacheKey = (
@@ -170,6 +176,7 @@ fn active_model_identity_returns_provider_slash_model() {
         a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "claude-sonnet-4".to_string(),
         api_key: None,
         base_url: None,
@@ -195,6 +202,7 @@ fn active_model_identity_returns_provider_slash_model() {
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     };
 
     // Replicate the method body exactly
@@ -255,6 +263,7 @@ fn provider_state_client_cache_key_contains_provider_and_api_key() {
         a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "test-model".to_string(),
         api_key: Some("fake-key".to_string()),
         base_url: None,
@@ -280,6 +289,7 @@ fn provider_state_client_cache_key_contains_provider_and_api_key() {
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     };
 
     // Replicate client_cache_key body

@@ -141,7 +141,9 @@ fn completion_finalize_table() {
             tool_calls: 1,
             input_tokens: 4,
             output_tokens: 8,
-            total_tokens: 12,
+            total_tokens: Some(12),
+            cost: None,
+            cost_complete: false,
         },
         UiEvent::Warning {
             message: "warned".to_string(),

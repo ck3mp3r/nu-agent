@@ -1,10 +1,9 @@
 //! Depth tests for the `AgentRuntime` trait surface that the other sub-files
 //! leave uncovered: the `execute_turn` early-return branch, the persona
 //! `additional_params` overlay, the `ModelSwitching` trait accessors, the
-//! non-message store entries `run_compaction` skips, and the `load_session`
+//! rig-store splice `run_compaction` persists, and the `load_session`
 //! contains-match fallback.
 
-use chrono::Utc;
 use nu_protocol::Span;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
@@ -14,7 +13,6 @@ use crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
 use crate::protocol::contracts::CoreRuntime;
 use crate::protocol::model_switching::ModelSwitching;
 use crate::protocol::session_management::SessionPersistence;
-use crate::session::{CompactionMarker, SessionStore, StoreEntry};
 use crate::types::Message;
 use crate::utils::value_ext::extract_response_text_from_value;
 
@@ -28,14 +26,17 @@ additional_params:
 You are the params agent.
 "#;
 
-/// Create a session in the fixture's store with the given first messages.
+/// Seed the rig-memory store of `id` with `messages`.
 async fn seed_session(fixture: &RuntimeFixture, id: &str, messages: &[Message]) -> Result<()> {
-    fixture
+    let store = fixture
         .runtime
-        .store
-        .create(id, messages)
-        .await
-        .map_err(|e| format!("session create should succeed: {e:?}"))?;
+        .session
+        .inner_memory()
+        .rig_store(id)
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let mut conversation = rig_memory::load(&*store, id)?;
+    conversation.extend(messages.iter().cloned());
+    rig_memory::save(&*store, id, &mut conversation)?;
     Ok(())
 }
 
@@ -133,31 +134,24 @@ async fn model_switching_trait_accessors_read_the_provider_and_persona() {
 }
 
 #[tokio::test]
-async fn run_compaction_skips_non_message_store_entries() -> Result<()> {
+async fn run_compaction_splices_the_rig_store_and_refreshes_the_cache() -> Result<()> {
     // -- Setup & Fixtures
+    // The conversation lives in the rig-memory store, which is what a run loads.
     let mut fixture = make_runtime(text_model("unused"))?;
-    seed_session(&fixture, "test-session", &[Message::user("first")]).await?;
-    fixture
+    let store = fixture
         .runtime
-        .store
-        .append(
-            "test-session",
-            &[StoreEntry::Marker(CompactionMarker::new(
-                "prior summary".to_string(),
-                Utc::now(),
-            ))],
-        )
-        .await
-        .map_err(|e| format!("marker append should succeed: {e:?}"))?;
-    fixture
-        .runtime
-        .store
-        .append(
-            "test-session",
-            &[StoreEntry::Message(Message::assistant("after the marker"))],
-        )
-        .await
-        .map_err(|e| format!("message append should succeed: {e:?}"))?;
+        .session
+        .inner_memory()
+        .rig_store("test-session")
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let mut conversation = rig_memory::load(&*store, "test-session")?;
+    conversation.extend([
+        Message::user("first"),
+        Message::assistant("reply"),
+        Message::user("second"),
+        Message::assistant("second reply"),
+    ]);
+    rig_memory::save(&*store, "test-session", &mut conversation)?;
 
     // -- Exec
     fixture
@@ -167,8 +161,8 @@ async fn run_compaction_skips_non_message_store_entries() -> Result<()> {
         .map_err(|e| format!("compaction should succeed: {e}"))?;
 
     // -- Check
-    // The compaction rewrote the in-memory context with the summary message,
-    // which proves the marker entry was skipped rather than treated as history.
+    // The cache is refreshed with the post-splice conversation, which is what the
+    // next run loads from the store.
     let cached = fixture
         .runtime
         .session
@@ -177,8 +171,19 @@ async fn run_compaction_skips_non_message_store_entries() -> Result<()> {
         .ok_or("a successful compaction must rewrite the cached context")?;
     assert_eq!(
         cached.len(),
-        1,
-        "the compacted context must hold exactly the summary message; got: {cached:?}"
+        2,
+        "the compacted context must hold the summary and the newest message; got: {cached:?}"
+    );
+    let summary = cached.first().ok_or("the compacted context is non-empty")?;
+    assert!(
+        matches!(summary, Message::User { .. }),
+        "the splice must lead with the summary user message, got: {summary:?}"
+    );
+    let stored = rig_memory::load(&*store, "test-session")?;
+    assert_eq!(
+        stored.messages().len(),
+        2,
+        "the splice must be persisted to the rig store"
     );
     Ok(())
 }

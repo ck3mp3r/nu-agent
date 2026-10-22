@@ -18,7 +18,6 @@ use agnt_core::conversation::runtime_build::{
     RuntimeBuildParams, apply_persona_config, apply_persona_model, build_preamble_cache,
     build_runtime,
 };
-use agnt_core::session::create_store;
 use agnt_core::session::resolver::{
     DefaultSessionResolver, SessionResolutionInput, SessionResolver,
 };
@@ -78,11 +77,6 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     let (mut config, plugin_config) = resolve_config_from_clap(args)?;
 
     let store_type = resolve_store_type_from_clap(args)?;
-    let store = Arc::new(
-        create_store(store_type)
-            .await
-            .map_err(|e| Error::Custom(format!("Failed to create session store: {e}")))?,
-    );
 
     // Apply mode-specific defaults for max_tool_turns if not explicitly configured.
     // User-specified value (via --max-turns or config file) always wins.
@@ -218,7 +212,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     )
     .map_err(|e| Error::Custom(format!("Invalid tool name: {e}")))?;
 
-    let resolver = DefaultSessionResolver::new(Arc::clone(&store));
+    let resolver = DefaultSessionResolver::new(agnt_core::session::RigStoreConfig::new(store_type));
     let mut session_resolution = resolver
         .resolve(SessionResolutionInput {
             use_tui: mode.is_tui(),
@@ -289,7 +283,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         vault: plugin_config.vault.clone(),
         mcp_registry,
         engine,
-        store: Arc::clone(&store),
+        store_type,
         final_session_id: session_resolution.final_session_id.clone(),
         compaction_params,
         proactive_threshold_pct: merged_compaction.proactive_threshold_pct,

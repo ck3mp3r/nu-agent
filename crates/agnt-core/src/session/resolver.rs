@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::protocol::event::ToolDisplay;
-use crate::session::{CompactionMarker, Session, SessionStore, StoreEntry};
+use crate::session::{RigStoreConfig, Session};
 use crate::types::{AssistantContent, CallId, Message, ToolResultContent, UserContent};
 use std::collections::HashMap;
 
@@ -42,17 +42,17 @@ pub trait SessionResolver {
     ) -> impl std::future::Future<Output = Result<SessionResolution, LabeledError>> + Send;
 }
 
-pub struct DefaultSessionResolver<S: SessionStore + Clone + Send + Sync> {
-    store: Arc<S>,
+pub struct DefaultSessionResolver {
+    rig: RigStoreConfig,
 }
 
-impl<S: SessionStore + Clone + Send + Sync> DefaultSessionResolver<S> {
-    pub fn new(store: Arc<S>) -> Self {
-        Self { store }
+impl DefaultSessionResolver {
+    pub fn new(rig: RigStoreConfig) -> Self {
+        Self { rig }
     }
 }
 
-impl<S: SessionStore + Clone + Send + Sync> SessionResolver for DefaultSessionResolver<S> {
+impl SessionResolver for DefaultSessionResolver {
     async fn resolve(
         &self,
         input: SessionResolutionInput,
@@ -66,22 +66,12 @@ impl<S: SessionStore + Clone + Send + Sync> SessionResolver for DefaultSessionRe
                 let legacy_id = format!("{legacy_prefix}-{id}");
                 // Try the new prefix first, then fall back to the legacy prefix
                 // for sessions created before the prefix length increase.
-                let new_exists = self
-                    .store
-                    .load(&new_id)
-                    .await
-                    .map_err(|e| LabeledError::new(format!("Failed to load session: {e}")))?
-                    .is_some();
-                let resolved = if new_exists {
+                let resolved = if self.holds(&new_id)? {
                     new_id
+                } else if self.holds(&legacy_id)? {
+                    legacy_id
                 } else {
-                    let legacy_exists = self
-                        .store
-                        .load(&legacy_id)
-                        .await
-                        .map_err(|e| LabeledError::new(format!("Failed to load session: {e}")))?
-                        .is_some();
-                    if legacy_exists { legacy_id } else { new_id }
+                    new_id
                 };
                 SessionRequest::Attach(resolved)
             }
@@ -97,88 +87,70 @@ impl<S: SessionStore + Clone + Send + Sync> SessionResolver for DefaultSessionRe
                 last_total_tokens: None,
             }),
             SessionRequest::Attach(id) => {
-                let (session, existed_before_attach) =
-                    load_or_create_session(&self.store, &id).await?;
-                let (initial_messages, last_total_tokens) = if existed_before_attach {
-                    // Load store entries (messages + markers) from the store
-                    let (_metadata, entries) = self
-                        .store
-                        .load(&id)
-                        .await
-                        .map_err(|e| LabeledError::new(format!("Failed to load messages: {e}")))?
-                        .unwrap_or_else(|| {
-                            // Session exists but has no entries yet — shouldn't happen
-                            // after load_or_create_session returned existed=true,
-                            // but handle gracefully.
-                            (
-                                crate::session::SessionMetadata {
-                                    metadata_type: "session".to_string(),
-                                    session_id: id.clone(),
-                                    created_at: chrono::Utc::now(),
-                                    title: None,
-                                },
-                                Vec::new(),
-                            )
-                        });
-
-                    // Convert to UiMessageSnapshots for transcript display.
-                    // Token count is not estimated here — rig's CompactingMemory
-                    // tracks the context and last_total_tokens stays None on attach.
-                    (
-                        hydrate_transcript_from_store_entries(&entries, &input.cwd),
-                        None,
-                    )
+                let store = self.open(&id)?;
+                let existed_before_attach = holds(&store, &id)?;
+                // Token count is not estimated here — rig's CompactingMemory
+                // tracks the context and last_total_tokens stays None on attach.
+                let initial_messages = if existed_before_attach {
+                    hydrate_transcript(&store, &id, &input.cwd)?
                 } else {
-                    (Vec::new(), None)
+                    Vec::new()
                 };
 
                 Ok(SessionResolution {
-                    final_session_id: Some(id),
-                    session: Some(session),
+                    final_session_id: Some(id.clone()),
+                    session: Some(Session::new(id)),
                     should_hydrate_transcript: !initial_messages.is_empty(),
                     initial_messages,
-                    last_total_tokens,
-                })
-            }
-            SessionRequest::Create(id) => {
-                let session = create_session(&id);
-                Ok(SessionResolution {
-                    final_session_id: Some(id),
-                    session: Some(session),
-                    should_hydrate_transcript: false,
-                    initial_messages: Vec::new(),
                     last_total_tokens: None,
                 })
             }
+            SessionRequest::Create(id) => Ok(SessionResolution {
+                final_session_id: Some(id.clone()),
+                session: Some(Session::new(id)),
+                should_hydrate_transcript: false,
+                initial_messages: Vec::new(),
+                last_total_tokens: None,
+            }),
         }
     }
 }
 
-/// Create a new Session with the given ID.
-fn create_session(id: &str) -> Session {
-    Session::new(id.to_string())
+impl DefaultSessionResolver {
+    /// The rig-memory store of `session_id`.
+    fn open(&self, session_id: &str) -> Result<Arc<dyn rig_memory::Store>, LabeledError> {
+        self.rig
+            .open(session_id)
+            .map_err(|e| LabeledError::new(format!("Failed to open session '{session_id}': {e}")))
+    }
+
+    /// Whether the rig store holds `session_id`.
+    fn holds(&self, session_id: &str) -> Result<bool, LabeledError> {
+        holds(&self.open(session_id)?, session_id)
+    }
 }
 
-/// Load an existing session or create a new one.
-/// Returns `(Session, existed_before_attach)`.
-async fn load_or_create_session<S: SessionStore + Clone + Send + Sync>(
-    store: &Arc<S>,
+/// Whether `store` holds a log for `session_id`.
+fn holds(store: &Arc<dyn rig_memory::Store>, session_id: &str) -> Result<bool, LabeledError> {
+    let logs = store.logs().map_err(|e| {
+        LabeledError::new(format!("Failed to list session logs '{session_id}': {e}"))
+    })?;
+    Ok(logs.iter().any(|log| log == session_id))
+}
+
+/// The transcript of `session_id`, read from the rig store.
+fn hydrate_transcript(
+    store: &Arc<dyn rig_memory::Store>,
     session_id: &str,
-) -> Result<(Session, bool), LabeledError> {
-    match store.load(session_id).await {
-        Ok(Some((metadata, _entries))) => {
-            let session = Session::from_metadata(metadata);
-            Ok((session, true))
-        }
-        Ok(None) => {
-            // Session doesn't exist yet — create it
-            let session = create_session(session_id);
-            Ok((session, false))
-        }
-        Err(e) => Err(LabeledError::new(format!(
-            "Failed to attach session '{session_id}': {e}"
-        ))),
-    }
+    cwd: &Path,
+) -> Result<Vec<UiMessageSnapshot>, LabeledError> {
+    let conversation = rig_memory::load(&**store, session_id)
+        .map_err(|e| LabeledError::new(format!("Failed to load session '{session_id}': {e}")))?;
+    let messages: Vec<Message> = conversation
+        .entries()
+        .map(|entry| entry.message.clone())
+        .collect();
+    Ok(hydrate_transcript_messages(&messages, cwd))
 }
 
 pub fn generate_session_id() -> String {
@@ -202,22 +174,20 @@ pub fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> Ses
     }
 }
 
-/// Converts store entries (messages + compaction markers) into UiMessageSnapshots
-/// for TUI transcript hydration.
+/// Converts rig messages into UiMessageSnapshots for TUI transcript hydration.
 ///
-/// This function maps store entry types to transcript display items:
-/// - `StoreEntry::Message` → delegated to `hydrate_single_message`
-/// - `StoreEntry::Marker` → compaction snapshot with the summary text
+/// Each message is delegated to `hydrate_single_message`. Compaction summaries
+/// live in the rig-memory log, not in the session store.
 ///
 /// # Arguments
-/// * `entries` - Slice of StoreEntry from SessionStore::load()
+/// * `messages` - The conversation's messages, as rig reads them
 /// * `cwd` - Working directory the session was executed in; used to
 ///   reconstruct tool previews that depend on the filesystem root
 ///
 /// # Returns
 /// Iterator of UiMessageSnapshot ready for transcript hydration
-pub(crate) fn hydrate_transcript_from_store_entries(
-    entries: &[StoreEntry],
+pub(crate) fn hydrate_transcript_messages(
+    messages: &[Message],
     cwd: &Path,
 ) -> Vec<UiMessageSnapshot> {
     // Pass 1: collect call_id → tool_name and call_id → arguments from all
@@ -226,9 +196,9 @@ pub(crate) fn hydrate_transcript_from_store_entries(
     let mut tool_names: HashMap<CallId, String> = HashMap::new();
     let mut tool_arguments: HashMap<CallId, String> = HashMap::new();
     let mut tool_success_map: HashMap<CallId, bool> = HashMap::new();
-    for entry in entries {
-        match entry {
-            StoreEntry::Message(Message::Assistant(assistant)) => {
+    for message in messages {
+        match message {
+            Message::Assistant(assistant) => {
                 let content = &assistant.content;
                 for item in content.iter() {
                     if let AssistantContent::ToolCall(tc) = item {
@@ -241,7 +211,7 @@ pub(crate) fn hydrate_transcript_from_store_entries(
                     }
                 }
             }
-            StoreEntry::Message(Message::User { content }) => {
+            Message::User { content } => {
                 for item in content.iter() {
                     if let UserContent::ToolResult(tr) = item {
                         tool_success_map.insert(tr.call.clone(), !tr.is_error);
@@ -255,8 +225,8 @@ pub(crate) fn hydrate_transcript_from_store_entries(
     //          matching ToolCall yields no display — the same guard the
     //          ToolResult branch used to apply.
     let mut tool_displays: HashMap<CallId, ToolDisplay> = HashMap::new();
-    for entry in entries {
-        let StoreEntry::Message(Message::User { content }) = entry else {
+    for message in messages {
+        let Message::User { content } = message else {
             continue;
         };
         for item in content.iter() {
@@ -294,32 +264,10 @@ pub(crate) fn hydrate_transcript_from_store_entries(
         }
     }
     // Pass 2: generate snapshots with tool display reconstruction
-    entries
+    messages
         .iter()
-        .flat_map(|entry| match entry {
-            StoreEntry::Message(msg) => {
-                hydrate_single_message(msg, &tool_success_map, &tool_displays)
-            }
-            StoreEntry::Marker(marker) => {
-                vec![UiMessageSnapshot::new(
-                    "compaction",
-                    format_compaction_content(marker),
-                )]
-            }
-        })
+        .flat_map(|message| hydrate_single_message(message, &tool_success_map, &tool_displays))
         .collect()
-}
-
-/// Format a `CompactionMarker` into display content for the TUI transcript.
-///
-/// Produces the full summary body:
-/// ```text
-/// Summary text here...
-/// ```
-///
-/// If the summary is empty, an empty string is emitted.
-fn format_compaction_content(marker: &CompactionMarker) -> String {
-    marker.summary.trim().to_string()
 }
 
 /// Converts a single rig Message into UiMessageSnapshots.

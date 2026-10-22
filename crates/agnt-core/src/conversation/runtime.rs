@@ -8,8 +8,6 @@ use crate::bus::Bus;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::SessionInfo;
-use crate::session::SessionStore;
-use crate::session::SessionStoreBackend;
 use crate::tools::closure::EngineInterfaceLike;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
@@ -98,7 +96,6 @@ where
     pub mcp_state: super::state::mcp::McpState,
     pub permission_state: super::state::permission::PermissionState,
     pub engine: Arc<dyn EngineInterfaceLike>,
-    pub store: Arc<SessionStoreBackend>,
     pub final_session_id: Option<String>,
     pub cwd: PathBuf,
     /// Shared pending-decision map for interactive (TUI) mode.
@@ -152,14 +149,14 @@ where
     /// `switch_model()` call.
     pub dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
     /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
-    pub compaction: crate::conversation::compaction::CompactionConfig<SessionStoreBackend>,
+    pub compaction: crate::conversation::compaction::CompactionConfig,
 }
 
 /// Concrete production runtime: all managers use their default state types.
 pub type AgentConversationRuntime = AgentRuntime<
     super::state::provider::ProviderState,
     super::state::tool::ToolState,
-    super::state::memory::MemoryState<SessionStoreBackend>,
+    super::state::memory::MemoryState,
     super::state::persona::PersonaState,
     super::state::multi_agent::MultiAgentState,
 >;
@@ -170,8 +167,8 @@ where
     Prov: ProviderManager + Send,
     Tools: ToolManager + Send,
     Sess: SessionManager<
-            InnerMemory = crate::session::CachedMemory<SessionStoreBackend>,
-            Memory = super::state::memory::MemoryOf<SessionStoreBackend>,
+            InnerMemory = crate::session::CachedMemory,
+            Memory = super::state::memory::MemoryOf,
         > + Send,
     Persona: PersonaManager + Send,
     Multi: MultiAgentManager + Send,
@@ -382,6 +379,25 @@ where
             .await
             .map_err(|e| e.to_string())?;
         *self.dyn_model.lock().expect("model mutex poisoned") = new_model;
+        // Record the new model on the session so a listing shows it. The write
+        // is best effort: the switch already took effect, and a store that
+        // cannot be written must not undo it.
+        if let Some(session_id) = self.final_session_id.clone() {
+            match self.session.rig_store(&session_id) {
+                Ok(store) => {
+                    if let Err(error) =
+                        crate::session::rig_state::write_state_records(&*store, &identity, None)
+                    {
+                        log::warn!(
+                            "failed to write the model state record of '{session_id}': {error}"
+                        );
+                    }
+                }
+                Err(error) => {
+                    log::warn!("failed to open the session store of '{session_id}': {error}");
+                }
+            }
+        }
         Ok((identity, max_tokens))
     }
 
@@ -507,8 +523,10 @@ impl<Prov, Tools, Sess, Persona, Multi> SessionPersistence
 where
     Prov: ProviderManager + Send + Sync,
     Tools: ToolManager + Send + Sync,
-    Sess: SessionManager<InnerMemory = crate::session::CachedMemory<SessionStoreBackend>>
-        + Send
+    Sess: SessionManager<
+            InnerMemory = crate::session::CachedMemory,
+            Memory = super::state::memory::MemoryOf,
+        > + Send
         + Sync,
     Persona: PersonaManager + Send + Sync,
     Multi: MultiAgentManager + Send + Sync,
@@ -526,31 +544,15 @@ where
             return Ok(());
         };
 
-        // Load the full history from the store-backed memory. The `CachedMemory`
-        // cache may be stale (the store is the source of truth for compaction),
-        // so read the raw entries directly.
-        let memory = self.session.inner_memory();
-        let entries = memory
-            .load_all(&session_id)
-            .await
-            .map_err(|e| format!("Failed to load session '{session_id}': {e}"))?;
-        let history: Vec<crate::types::Message> = entries
-            .iter()
-            .filter_map(|e| match e {
-                crate::session::StoreEntry::Message(m) => Some(m.clone()),
-                _ => None,
-            })
-            .collect();
-
-        // Run compaction. `source` is `"auto"` or `"slash"`. `run_compaction`
-        // emits `Started`/`SummaryChunk`/`Completed`/`Failed` (via `compact()`)
-        // and writes the marker. It returns the patched history
-        // (`Some([summary_message])`) when compaction actually ran, or `None`
-        // when there was nothing to evict.
+        // Run compaction against the rig-memory store of the session: the splice
+        // `compact()` makes IS what the next run loads, so the cache is refreshed
+        // from the post-splice messages. `source` is `"auto"` or `"slash"`.
+        // `run_compaction` emits `Started`/`SummaryChunk`/`Completed`/`Failed`
+        // (via `compact()`) and returns the post-splice history when compaction
+        // actually ran, or `None` when there was nothing to summarize.
         if let Some(patched) = crate::hook::chain::run_compaction(
-            &history,
             &session_id,
-            memory,
+            self.session.inner_memory(),
             &self.compaction,
             source,
             &self.last_total_tokens,
@@ -559,7 +561,7 @@ where
         .await
         {
             // Update the in-memory cache so the next `CachedMemory::load()`
-            // returns `[summary, ...new_messages]` as the conversation continues.
+            // returns the spliced conversation as it continues.
             self.session
                 .inner_memory()
                 .reset_context(&session_id, patched);
@@ -568,90 +570,114 @@ where
     }
 
     async fn load_session(&mut self, session_id: &str) -> Result<Vec<UiMessageSnapshot>, String> {
-        let store = Arc::clone(&self.store);
-        let sid = session_id.to_string();
+        let memory = Arc::clone(self.session.memory());
 
-        // Phase 1: try exact match
-        let result = store
-            .load(&sid)
-            .await
-            .map_err(|e| format!("Failed to load session '{session_id}': {e}"))?;
-
-        // Phase 2: prefix/contains match if exact failed
-        let (metadata, entries) = match result {
-            Some(data) => data,
-            None => {
-                let sessions = store
-                    .list()
-                    .await
-                    .map_err(|e| format!("Failed to list sessions: {e}"))?;
-
-                let matched = sessions
-                    .iter()
-                    .find(|s| {
-                        s.id.to_ascii_lowercase()
-                            .ends_with(&sid.to_ascii_lowercase())
-                    })
-                    .or_else(|| {
-                        sessions.iter().find(|s| {
-                            s.id.to_ascii_lowercase()
-                                .contains(&sid.to_ascii_lowercase())
-                        })
-                    })
-                    .ok_or_else(|| format!("Session '{session_id}' not found"))?;
-
-                let matched_id = matched.id.clone();
-                store
-                    .load(&matched_id)
-                    .await
-                    .map_err(|e| format!("Failed to load session '{}': {e}", matched.id))?
-                    .ok_or_else(|| format!("Session '{}' not found", matched.id))?
-            }
+        // Phase 1: exact match; Phase 2: suffix, then contains, over the
+        // sessions the rig-memory store holds.
+        let matched_id = if rig_holds(&memory, session_id)? {
+            session_id.to_string()
+        } else {
+            let sid = session_id.to_ascii_lowercase();
+            let sessions = memory
+                .session_ids()
+                .map_err(|e| format!("Failed to list sessions: {e}"))?;
+            sessions
+                .iter()
+                .find(|id| id.to_ascii_lowercase().ends_with(&sid))
+                .or_else(|| {
+                    sessions
+                        .iter()
+                        .find(|id| id.to_ascii_lowercase().contains(&sid))
+                })
+                .cloned()
+                .ok_or_else(|| format!("Session '{session_id}' not found"))?
         };
 
         // Phase 3: update state and hydrate
+        let messages = rig_messages(&memory, &matched_id)?;
         self.session.clear();
-        self.final_session_id = Some(metadata.session_id.clone());
+        self.final_session_id = Some(matched_id.clone());
+        self.session.inner_memory().warn_repairs(&matched_id);
 
-        Ok(crate::session::resolver::hydrate_transcript_from_store_entries(&entries, &self.cwd))
+        Ok(crate::session::resolver::hydrate_transcript_messages(
+            &messages, &self.cwd,
+        ))
     }
 
     async fn list_sessions(&self, cwd: &std::path::Path) -> Result<Vec<SessionInfo>, String> {
-        let sessions = self
-            .store
-            .list()
-            .await
+        let memory = Arc::clone(self.session.memory());
+        let ids = memory
+            .session_ids()
             .map_err(|e| format!("Failed to list sessions: {e}"))?;
+        let mut sessions = Vec::new();
+        for id in ids {
+            let Ok(store) = memory.rig_store(&id) else {
+                // One unreadable session must not hide the others.
+                log::warn!("failed to open the session store of '{id}'");
+                continue;
+            };
+            let meta = rig_memory::SessionMeta::read(&*store).unwrap_or_default();
+            let last_active = match meta.updated {
+                0 => chrono::Utc::now(),
+                ms => chrono::DateTime::from_timestamp_millis(ms as i64)
+                    .unwrap_or_else(chrono::Utc::now),
+            };
+            sessions.push(SessionInfo {
+                id,
+                message_count: meta.messages,
+                last_active,
+                title: (!meta.title.is_empty()).then_some(meta.title),
+            });
+        }
         Ok(crate::session::prefix::filter_sessions_by_cwd(
             sessions, cwd,
         ))
     }
 
     async fn attach_session(&mut self, session_id: &str) -> Result<Vec<UiMessageSnapshot>, String> {
-        let store = Arc::clone(&self.store);
-        let sid = session_id.to_string();
-
-        let loaded = store
-            .load(&sid)
-            .await
-            .map_err(|e| format!("Failed to load session '{session_id}': {e}"))?;
+        let memory = Arc::clone(self.session.memory());
+        let messages = if rig_holds(&memory, session_id)? {
+            rig_messages(&memory, session_id)?
+        } else {
+            Vec::new()
+        };
 
         // Switch the runtime to the derived session. Clearing the memory cache
         // forces the next turn to re-read the session from the store, so a
         // resumed session continues from its persisted history and a fresh
         // session starts empty.
         self.session.clear();
-        self.final_session_id = Some(sid);
+        self.final_session_id = Some(session_id.to_string());
+        self.session.inner_memory().warn_repairs(session_id);
 
-        match loaded {
-            Some((_metadata, entries)) => Ok(
-                crate::session::resolver::hydrate_transcript_from_store_entries(
-                    &entries, &self.cwd,
-                ),
-            ),
-            None => Ok(Vec::new()),
-        }
+        Ok(crate::session::resolver::hydrate_transcript_messages(
+            &messages, &self.cwd,
+        ))
     }
+}
+
+/// Whether the rig-memory store holds a log for `session_id`.
+fn rig_holds(memory: &crate::session::CachedMemory, session_id: &str) -> Result<bool, String> {
+    memory
+        .rig_holds(session_id)
+        .map_err(|e| format!("Failed to open session '{session_id}': {e}"))
+}
+
+/// The messages of `session_id`, read from the rig-memory store.
+fn rig_messages(
+    memory: &crate::session::CachedMemory,
+    session_id: &str,
+) -> Result<Vec<crate::types::Message>, String> {
+    let store = memory
+        .rig_store(session_id)
+        .map_err(|e| format!("Failed to open session '{session_id}': {e}"))?;
+    let conversation = rig_memory::load(&*store, session_id)
+        .map_err(|e| format!("Failed to load session '{session_id}': {e}"))?;
+    Ok(conversation
+        .messages()
+        .iter()
+        .map(|message| (**message).clone())
+        .collect())
 }
 
 impl<Prov, Tools, Sess, Persona, Multi> AgentRuntime<Prov, Tools, Sess, Persona, Multi>
@@ -659,8 +685,8 @@ where
     Prov: ProviderManager,
     Tools: ToolManager,
     Sess: SessionManager<
-            InnerMemory = crate::session::CachedMemory<SessionStoreBackend>,
-            Memory = super::state::memory::MemoryOf<SessionStoreBackend>,
+            InnerMemory = crate::session::CachedMemory,
+            Memory = super::state::memory::MemoryOf,
         >,
     Persona: PersonaManager,
     Multi: MultiAgentManager,

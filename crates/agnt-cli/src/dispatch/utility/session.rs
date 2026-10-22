@@ -3,10 +3,8 @@
 use std::path::PathBuf;
 
 use agnt_core::compaction::CompactionParams;
-use agnt_core::session::prefix::{
-    dir_prefix, dir_prefix_legacy, filter_sessions_by_cwd, match_prefixs,
-};
-use agnt_core::session::{SessionStore, SessionStoreBackend, StoreEntry, create_store};
+use agnt_core::session::RigStoreConfig;
+use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy, match_prefixs};
 use agnt_core::types::{AssistantContent, Message, UserContent};
 
 use crate::AgentArgs;
@@ -31,44 +29,48 @@ pub async fn run_session_command(args: &AgentArgs, command: &SessionCommand) -> 
 /// List all sessions for the current working directory.
 async fn run_session_list(args: &AgentArgs) -> Result<()> {
     let cwd = current_dir()?;
-    let store = open_store(args).await?;
-
-    let all_sessions = store
-        .list()
-        .await
-        .map_err(|e| Error::Custom(format!("Failed to list sessions: {e}")))?;
-    let sessions = filter_sessions_by_cwd(all_sessions, &cwd);
-
-    if sessions.is_empty() {
-        println!("No sessions found for {}.", cwd.display());
-        return Ok(());
-    }
+    let rig = open_rig(args)?;
 
     let new_prefix = dir_prefix(&cwd);
     let legacy_prefix = dir_prefix_legacy(&cwd);
 
-    let rows: Vec<Vec<String>> = sessions
-        .iter()
-        .map(|info| {
-            let display_id = match_prefixs(&info.id, &new_prefix, &legacy_prefix)
-                .unwrap_or(&info.id)
-                .to_string();
-            vec![
-                display_id,
-                info.message_count.to_string(),
-                info.last_active.to_rfc3339(),
-            ]
-        })
-        .collect();
+    let ids = rig
+        .session_ids()
+        .map_err(|e| Error::Custom(format!("Failed to list sessions: {e}")))?;
 
-    print_table(&["ID", "MESSAGES", "LAST ACTIVE"], &rows);
+    // A session whose store cannot be opened is skipped: one unreadable log
+    // must not hide the others.
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for id in ids {
+        let Some(display_id) = match_prefixs(&id, &new_prefix, &legacy_prefix) else {
+            continue;
+        };
+        let Ok(meta) = rig.listing(&id) else {
+            log::warn!("failed to read the session listing of '{id}'");
+            continue;
+        };
+        rows.push(vec![
+            display_id.to_string(),
+            meta.title,
+            meta.model,
+            meta.messages.to_string(),
+            meta.updated.to_string(),
+        ]);
+    }
+
+    if rows.is_empty() {
+        println!("No sessions found for {}.", cwd.display());
+        return Ok(());
+    }
+
+    print_table(&["ID", "TITLE", "MODEL", "MESSAGES", "UPDATED"], &rows);
     Ok(())
 }
 
 /// Delete a session by ID.
 async fn run_session_clear(args: &AgentArgs, id: &SessionIdArgs) -> Result<()> {
     let cwd = current_dir()?;
-    let store = open_store(args).await?;
+    let rig = open_rig(args)?;
 
     let new_prefix = dir_prefix(&cwd);
     let legacy_prefix = dir_prefix_legacy(&cwd);
@@ -78,29 +80,13 @@ async fn run_session_clear(args: &AgentArgs, id: &SessionIdArgs) -> Result<()> {
     // Determine which prefixed ID exists, trying the new prefix first and
     // falling back to the legacy prefix for sessions created before the
     // prefix length increase.
-    let new_exists = store
-        .load(&new_id)
-        .await
-        .map_err(|e| Error::Custom(format!("Failed to load session: {e}")))?
-        .is_some();
-    let target_id = if new_exists {
-        new_id
-    } else {
-        let legacy_exists = store
-            .load(&legacy_id)
-            .await
-            .map_err(|e| Error::Custom(format!("Failed to load session: {e}")))?
-            .is_some();
-        if legacy_exists {
-            legacy_id
-        } else {
-            return Err(Error::Custom(format!("Session not found: {}", id.id)));
-        }
-    };
+    let target_id = [new_id, legacy_id]
+        .into_iter()
+        .find(|id| rig.holds(id).unwrap_or(false))
+        .ok_or_else(|| Error::Custom(format!("Session not found: {}", id.id)))?;
 
-    store
-        .delete(&target_id)
-        .await
+    // Delete the session's rig-memory store: its logs and its files.
+    rig.destroy(&target_id)
         .map_err(|e| Error::Custom(format!("Failed to delete session: {e}")))?;
 
     println!("Deleted session '{}'", id.id);
@@ -110,46 +96,44 @@ async fn run_session_clear(args: &AgentArgs, id: &SessionIdArgs) -> Result<()> {
 /// Display full details of a specific session.
 async fn run_session_inspect(args: &AgentArgs, id: &SessionIdArgs) -> Result<()> {
     let cwd = current_dir()?;
-    let store = open_store(args).await?;
+    let rig = open_rig(args)?;
 
     let new_prefix = dir_prefix(&cwd);
     let legacy_prefix = dir_prefix_legacy(&cwd);
     let new_id = format!("{new_prefix}-{}", id.id);
     let legacy_id = format!("{legacy_prefix}-{}", id.id);
 
-    let loaded = store
-        .load(&new_id)
-        .await
-        .map_err(|e| Error::Custom(format!("Failed to load session: {e}")))?;
-    let (metadata, entries) = match loaded {
-        Some(loaded) => loaded,
-        None => store
-            .load(&legacy_id)
-            .await
-            .map_err(|e| Error::Custom(format!("Failed to load session: {e}")))?
-            .ok_or_else(|| Error::Custom(format!("Session not found: {}", id.id)))?,
-    };
-
-    let messages: Vec<&Message> = entries
-        .iter()
-        .filter_map(|entry| match entry {
-            StoreEntry::Message(msg) => Some(msg),
-            StoreEntry::Marker(_) => None,
+    let (session_id, view) = [new_id, legacy_id]
+        .into_iter()
+        .find(|id| rig.holds(id).unwrap_or(false))
+        .map(|id| {
+            let view = rig.view(&id);
+            (id, view)
         })
-        .collect();
+        .ok_or_else(|| Error::Custom(format!("Session not found: {}", id.id)))?;
+    let view = view.map_err(|e| Error::Custom(format!("Failed to read session: {e}")))?;
 
     // Compaction params are not persisted in the store format; display defaults.
     let config = CompactionParams::default();
 
-    println!("Session: {}", metadata.session_id);
-    println!("Created: {}", metadata.created_at.to_rfc3339());
-    println!("Messages: {}", messages.len());
+    println!("Session: {session_id}");
+    if let Some(ms) = view.started_ms
+        && let Some(created) = chrono::DateTime::from_timestamp_millis(ms as i64)
+    {
+        println!("Created: {}", created.to_rfc3339());
+    }
+    println!("Title: {}", view.title.as_deref().unwrap_or(""));
+    println!("Model: {}", view.model.as_deref().unwrap_or(""));
+    println!("Messages: {}", view.messages.len());
     println!(
         "Compaction strategy: {}",
         config.compaction_strategy.as_str()
     );
+    for repair in &view.repairs {
+        println!("Repair: {repair}");
+    }
 
-    for msg in &messages {
+    for msg in &view.messages {
         let (role, content) = extract_message_info(msg);
         println!();
         println!("[{role}]");
@@ -168,11 +152,9 @@ fn current_dir() -> Result<PathBuf> {
         .map_err(|e| Error::Custom(format!("Failed to resolve working directory: {e}")))
 }
 
-async fn open_store(args: &AgentArgs) -> Result<SessionStoreBackend> {
+fn open_rig(args: &AgentArgs) -> Result<RigStoreConfig> {
     let store_type = resolve_store_type_from_clap(args)?;
-    create_store(store_type)
-        .await
-        .map_err(|e| Error::Custom(format!("Failed to create session store: {e}")))
+    Ok(RigStoreConfig::new(store_type))
 }
 
 /// Extract the role and text content from a stored message.

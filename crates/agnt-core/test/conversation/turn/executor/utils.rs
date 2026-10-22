@@ -12,7 +12,6 @@ use crate::compaction::CompactionParams;
 use crate::config::Config;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use crate::protocol::event::UiEvent;
-use crate::session::SessionStore;
 use rig::DynModel;
 use rig::operation::Completion;
 use rig::test_utils::MockCompletionModel;
@@ -127,12 +126,9 @@ impl rig::tool::Tool for CancellingTool {
 // Compaction test defaults
 // ---------------------------------------------------------------------------
 
-/// A `NuCompactor<S>` (no marker store) with a deterministic
-/// streaming mock model so compaction never invokes a real LLM. Generic over
-/// the session store so tests with custom store backends can reuse it.
-pub(super) fn test_compactor<S: SessionStore + Clone + Send + Sync>(
-    bus: Bus,
-) -> crate::conversation::compaction::compactor::NuCompactor<S> {
+/// A `NuCompactor` (no marker store) with a deterministic streaming mock model
+/// so compaction never invokes a real LLM.
+pub(super) fn test_compactor(bus: Bus) -> crate::conversation::compaction::compactor::NuCompactor {
     use crate::conversation::compaction::compactor::NuCompactor;
     let turns: Vec<Vec<rig::test_utils::MockStreamEvent>> = (0..8)
         .map(|_| {
@@ -143,15 +139,29 @@ pub(super) fn test_compactor<S: SessionStore + Clone + Send + Sync>(
         })
         .collect();
     let model = MockCompletionModel::from_stream_turns(turns);
-    NuCompactor::from_shared_model(Arc::new(std::sync::Mutex::new(model.erase())), bus, None)
+    NuCompactor::from_shared_model(
+        Arc::new(std::sync::Mutex::new(model.erase())),
+        bus,
+        rig_memory::CompactionPolicy::default(),
+        test_model_spec(),
+    )
 }
 
-/// A `CompactionConfig<S>` with deterministic defaults (no LLM
-/// invoked) used by tests that are not exercising compaction. Generic over
-/// the session store to match the executor's store type parameter.
-pub(super) fn test_compaction_config<S: SessionStore + Clone + Send + Sync>(
+/// The model spec the test compactors plan against.
+pub(super) fn test_model_spec() -> Option<rig::catalog::ModelSpec> {
+    crate::conversation::compaction::compactor::resolve_model_spec(
+        "openai",
+        "gpt-4o",
+        Some(200_000),
+        Some(1_024),
+    )
+}
+
+/// A `CompactionConfig` with deterministic defaults (no LLM invoked) used by
+/// tests that are not exercising compaction.
+pub(super) fn test_compaction_config(
     bus: Bus,
-) -> crate::conversation::compaction::CompactionConfig<S> {
+) -> crate::conversation::compaction::CompactionConfig {
     crate::conversation::compaction::CompactionConfig {
         compactor: test_compactor(bus.clone()),
         params: CompactionParams::default(),
@@ -213,6 +223,7 @@ pub(super) fn test_config() -> Config {
         a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "gpt-4o".to_string(),
         api_key: None,
         base_url: None,
@@ -238,6 +249,7 @@ pub(super) fn test_config() -> Config {
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     }
 }
 

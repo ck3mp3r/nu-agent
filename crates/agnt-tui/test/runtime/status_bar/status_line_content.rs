@@ -116,7 +116,9 @@ fn status_lines_tokens_and_llm_end() -> Result<()> {
         tool_calls: 0,
         input_tokens: 11,
         output_tokens: 9,
-        total_tokens: 20,
+        total_tokens: Some(20),
+        cost: None,
+        cost_complete: false,
     });
     coordinator.drain_transport();
     coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
@@ -124,7 +126,9 @@ fn status_lines_tokens_and_llm_end() -> Result<()> {
         tool_calls: 0,
         input_tokens: 3,
         output_tokens: 4,
-        total_tokens: 7,
+        total_tokens: Some(7),
+        cost: None,
+        cost_complete: false,
     });
     coordinator.drain_transport();
 
@@ -141,5 +145,209 @@ fn status_lines_tokens_and_llm_end() -> Result<()> {
             .iter()
             .any(|line| line == "LLM-visible MCP tools: 0")
     );
+    Ok(())
+}
+
+/// A priced completion shows the cumulative session cost next to the token
+/// count and percentage.
+#[test]
+fn status_line_shows_cumulative_session_cost() -> Result<()> {
+    // -- Setup & Fixtures: a known context window and two priced calls.
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator
+        .state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(128_000));
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
+        response_chars: 40,
+        tool_calls: 0,
+        input_tokens: 2_500,
+        output_tokens: 500,
+        total_tokens: Some(3_000),
+        cost: Some(0.001),
+        cost_complete: true,
+    });
+    coordinator.drain_transport();
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
+        response_chars: 40,
+        tool_calls: 0,
+        input_tokens: 2_500,
+        output_tokens: 500,
+        total_tokens: Some(3_000),
+        cost: Some(0.002),
+        cost_complete: true,
+    });
+    coordinator.drain_transport();
+
+    // -- Exec
+    let line = crate::runtime::status_left_content_for_test(
+        "openai/gpt-4.1",
+        None,
+        &mut coordinator.state,
+        120,
+    );
+
+    // -- Check: the latest token count and percentage, then the summed cost.
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.contains("3k (2%) · $0.003"), "text={text}");
+    Ok(())
+}
+
+/// An unpriced completion shows the token count and percentage alone, with no
+/// `$0.000` placeholder.
+#[test]
+fn status_line_shows_tokens_only_when_unpriced() -> Result<()> {
+    // -- Setup & Fixtures: a known context window and an unpriced call.
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator
+        .state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(128_000));
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
+        response_chars: 40,
+        tool_calls: 0,
+        input_tokens: 2_500,
+        output_tokens: 500,
+        total_tokens: Some(3_000),
+        cost: None,
+        cost_complete: false,
+    });
+    coordinator.drain_transport();
+
+    // -- Exec
+    let line = crate::runtime::status_left_content_for_test(
+        "github-copilot/gpt-4.1",
+        None,
+        &mut coordinator.state,
+        120,
+    );
+
+    // -- Check
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(!text.contains('$'), "text={text}");
+    assert!(text.contains("3k (2%)"), "text={text}");
+    Ok(())
+}
+
+/// A session that mixes priced and unpriced calls keeps the priced total and
+/// marks it a lower bound with the `+` suffix.
+#[test]
+fn status_line_marks_mixed_pricing_with_plus() -> Result<()> {
+    // -- Setup & Fixtures: one priced call and one unpriced call.
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator
+        .state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(128_000));
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
+        response_chars: 40,
+        tool_calls: 0,
+        input_tokens: 2_500,
+        output_tokens: 500,
+        total_tokens: Some(3_000),
+        cost: Some(0.001),
+        cost_complete: true,
+    });
+    coordinator.drain_transport();
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
+        response_chars: 40,
+        tool_calls: 0,
+        input_tokens: 2_500,
+        output_tokens: 500,
+        total_tokens: Some(3_000),
+        cost: None,
+        cost_complete: false,
+    });
+    coordinator.drain_transport();
+
+    // -- Exec
+    let line = crate::runtime::status_left_content_for_test(
+        "openai/gpt-4.1",
+        None,
+        &mut coordinator.state,
+        120,
+    );
+
+    // -- Check
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.contains("3k (2%) · $0.001+"), "text={text}");
+    Ok(())
+}
+
+/// With no known context window the status shows the cost and the token count
+/// without a percentage.
+#[test]
+fn status_line_shows_cost_without_percentage_when_max_unknown() -> Result<()> {
+    // -- Setup & Fixtures: a priced call and no context window.
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
+        response_chars: 40,
+        tool_calls: 0,
+        input_tokens: 2_500,
+        output_tokens: 500,
+        total_tokens: Some(3_000),
+        cost: Some(0.001),
+        cost_complete: true,
+    });
+    coordinator.drain_transport();
+
+    // -- Exec
+    let line = crate::runtime::status_left_content_for_test(
+        "openai/gpt-4.1",
+        None,
+        &mut coordinator.state,
+        120,
+    );
+
+    // -- Check
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.contains("3k · $0.001"), "text={text}");
+    assert!(!text.contains('%'), "text={text}");
+    Ok(())
+}
+
+/// A completion that reports no total leaves the hydrated token count alone.
+/// An absent total is not a zero, so a resumed session's count must not
+/// collapse to `0 (0%)` when a total-less wire answers.
+#[test]
+fn test_token_usage_total_less_completion_preserves_hydrated_count() -> Result<()> {
+    // -- Setup & Fixtures: a resumed session's hydrated count and window.
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator
+        .state
+        .status
+        .tokens
+        .hydrate_latest_total_tokens(42_300);
+    coordinator
+        .state
+        .status
+        .tokens
+        .set_context_window_max_tokens(Some(128_000));
+
+    // -- Exec: a completion whose wire omitted the total.
+    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
+        response_chars: 20,
+        tool_calls: 0,
+        input_tokens: 11,
+        output_tokens: 9,
+        total_tokens: None,
+        cost: None,
+        cost_complete: false,
+    });
+    coordinator.drain_transport();
+
+    // -- Check: the hydrated count and percentage survive.
+    let line = crate::runtime::status_left_content_for_test(
+        "ollama-cloud/deepseek-v4.1-flash",
+        None,
+        &mut coordinator.state,
+        120,
+    );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.contains("42.3k (33%)"), "text={text}");
+    assert!(!text.contains("0 (0%)"), "text={text}");
     Ok(())
 }

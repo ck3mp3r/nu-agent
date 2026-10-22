@@ -7,7 +7,7 @@ use crate::compaction::CompactionStrategy;
 use crate::session::StoreType;
 
 use super::defaults;
-use super::models_cache::ModelsCache;
+use super::models_cache::{ModelCost, ModelsCache};
 use super::vault::Vault;
 
 /// Model limits (context and output token limits)
@@ -34,6 +34,12 @@ pub struct ModelConfig {
 
     /// Whether this model supports tool calling
     pub tool_call: Option<bool>,
+
+    /// Prices for a model, in USD per million tokens. `input` and `output`
+    /// are required; the cache rates are optional. This is the pricing
+    /// ladder's config outcome: it wins over the model's own cache row, which
+    /// is the fallback.
+    pub pricing: Option<ModelCost>,
 }
 
 /// Provider-specific configuration
@@ -53,6 +59,15 @@ pub struct ProviderConfig {
 
     /// Optional preamble text for this provider
     pub preamble: Option<String>,
+
+    /// The models.dev cache section this block's endpoint serves.
+    ///
+    /// The cache files a provider's models under its models.dev key, which
+    /// often differs from the block name (`ollama-cloud` for a local `ollama`
+    /// block, `github-copilot` for `copilot`). Declaring it here is the only
+    /// way to reach that section; without it the block name is its own
+    /// section key.
+    pub catalog: Option<String>,
 
     /// Models available for this provider
     #[serde(default)]
@@ -274,6 +289,11 @@ pub struct Config {
     /// If None, uses the provider name itself
     pub provider_impl: Option<String>,
 
+    /// The models-cache section this config's provider serves, resolved from
+    /// the block's declared `catalog`. `None` means the provider name is its
+    /// own section key. Read it through [`Self::cache_section`].
+    pub catalog: Option<String>,
+
     /// Model identifier (e.g., "gpt-4", "claude-3-opus")
     pub model: String,
 
@@ -369,9 +389,23 @@ pub struct Config {
     /// Enable/disable repetition guard (tool-call + output repetition detection).
     /// None = use default (true).
     pub repetition_guard: Option<bool>,
+
+    /// Prices for a model, in USD per million tokens, from
+    /// `providers.<name>.models.<model>.pricing`. This is the pricing ladder's
+    /// config outcome: it wins over the model's own cache row, which is the
+    /// fallback.
+    pub pricing: Option<ModelCost>,
 }
 
 impl Config {
+    /// The models-cache section this config's provider serves.
+    ///
+    /// The block's declared `catalog`, else the provider name. Resolved once
+    /// in `resolve_model`, so every consumer reads the same key.
+    pub fn cache_section(&self) -> &str {
+        self.catalog.as_deref().unwrap_or(&self.provider)
+    }
+
     /// Returns max_context_tokens, falling back to defaults::MAX_CONTEXT_TOKENS.
     pub fn resolved_max_context_tokens(&self) -> u32 {
         self.max_context_tokens

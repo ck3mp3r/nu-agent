@@ -1,11 +1,8 @@
 use std::path::PathBuf;
 
 use crate::plugin::AgentPlugin;
-use agnt_core::session::SessionStore;
-use agnt_core::session::SessionStoreBackend;
-use agnt_core::session::prefix::{
-    dir_prefix, dir_prefix_legacy, filter_sessions_by_cwd, match_prefixs,
-};
+use agnt_core::session::RigStoreConfig;
+use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy, match_prefixs};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Record, Signature, Value};
 
@@ -35,39 +32,55 @@ impl AgentSessionList {
         &self,
         engine: &C,
         call: &EvaluatedCall,
-        store: &SessionStoreBackend,
+        rig: &RigStoreConfig,
     ) -> Result<Value, LabeledError> {
         let cwd = PathBuf::from(engine.get_current_dir()?);
         let new_prefix = dir_prefix(&cwd);
         let legacy_prefix = dir_prefix_legacy(&cwd);
 
-        // Call SessionStore::list() and post-filter by prefix
-        let all_sessions = store
-            .list()
-            .await
+        let ids = rig
+            .session_ids()
             .map_err(|e| LabeledError::new(format!("Failed to list sessions: {e}")))?;
-        let sessions = filter_sessions_by_cwd(all_sessions, &cwd);
 
-        // Convert SessionInfo list to Nushell Value (list of records)
-        let session_values: Vec<Value> = sessions
-            .iter()
-            .map(|info| {
-                let mut record = Record::new();
-                let display_id = match_prefixs(&info.id, &new_prefix, &legacy_prefix)
-                    .unwrap_or(&info.id)
-                    .to_string();
-                record.push("id", Value::string(display_id, call.head));
-                record.push(
-                    "message_count",
-                    Value::int(info.message_count as i64, call.head),
-                );
-                record.push(
-                    "last_active",
-                    Value::string(info.last_active.to_rfc3339(), call.head),
-                );
-                Value::record(record, call.head)
-            })
-            .collect();
+        // Convert each session's `meta.json` listing to a Nushell record. A
+        // session whose store cannot be opened is skipped: one unreadable log
+        // must not hide the others.
+        let mut session_values: Vec<Value> = Vec::new();
+        for id in ids {
+            let Some(display_id) = match_prefixs(&id, &new_prefix, &legacy_prefix) else {
+                continue;
+            };
+            let Ok(meta) = rig.listing(&id) else {
+                log::warn!("failed to read the session listing of '{id}'");
+                continue;
+            };
+            let mut record = Record::new();
+            record.push("id", Value::string(display_id, call.head));
+            record.push("title", Value::string(meta.title, call.head));
+            record.push("model", Value::string(meta.model, call.head));
+            record.push("messages", Value::int(meta.messages as i64, call.head));
+            record.push("updated", Value::int(meta.updated as i64, call.head));
+            record.push(
+                "labels",
+                Value::record(
+                    meta.labels
+                        .into_iter()
+                        .map(|(tag, label)| (tag, Value::string(label, call.head)))
+                        .collect(),
+                    call.head,
+                ),
+            );
+            // Plugins' listed values are arbitrary JSON; the listing shows them
+            // as JSON text rather than inventing a value mapping.
+            record.push(
+                "listed",
+                Value::string(
+                    serde_json::to_string(&meta.listed).unwrap_or_else(|_| "{}".to_string()),
+                    call.head,
+                ),
+            );
+            session_values.push(Value::record(record, call.head));
+        }
 
         Ok(Value::list(session_values, call.head))
     }
@@ -119,9 +132,7 @@ impl SimplePluginCommand for AgentSessionList {
         _input: &Value,
     ) -> Result<Value, LabeledError> {
         let store_type = plugin.resolve_store_type(call)?;
-        let store = plugin
-            .create_store_with(store_type)
-            .map_err(|e| LabeledError::new(format!("Failed to create session store: {e}")))?;
-        crate::block_on!(plugin, self.run_inner(engine, call, &store))
+        let rig = RigStoreConfig::new(store_type);
+        crate::block_on!(plugin, self.run_inner(engine, call, &rig))
     }
 }

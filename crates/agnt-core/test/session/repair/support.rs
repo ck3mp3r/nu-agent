@@ -46,23 +46,35 @@ pub(super) fn make_invalid_args_tool_call(id: &str, name: &str) -> AssistantCont
     ))
 }
 
-/// The compaction summary artifact is spliced as a leading `Message::User`
-/// whose `Text` block carries the compaction summary header.
+/// The compaction summary is spliced as a leading `Message::User` whose `Text`
+/// block carries the compaction summary prefix.
 pub(super) fn summary_artifact(summary: &str) -> Message {
     Message::User {
         content: vec![UserContent::Text(crate::types::Text::new(format!(
-            "{}{summary}",
-            crate::conversation::compaction::compactor::SUMMARY_HEADER
+            "{prefix}\n\n<summary>\n{summary}\n</summary>",
+            prefix = crate::conversation::compaction::compactor::SUMMARY_PREFIX
         )))],
     }
 }
 
 /// True if any `UserContent` block in `content` carries the compaction
-/// summary header.
+/// summary prefix.
 pub(super) fn is_summary_content(content: &[UserContent]) -> bool {
-    let header = crate::conversation::compaction::compactor::SUMMARY_HEADER;
+    let prefix = crate::conversation::compaction::compactor::SUMMARY_PREFIX;
     content.iter().any(|c| match c {
-        UserContent::Text(t) => t.text.starts_with(header),
+        UserContent::Text(t) => t.text.starts_with(prefix),
         _ => false,
     })
+}
+
+/// Assert that two message lists are structurally equal.
+pub(super) fn assert_msgs_eq(left: &[Message], right: &[Message]) {
+    assert_eq!(left.len(), right.len(), "message count mismatch");
+    for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
+        assert_eq!(
+            serde_json::to_value(l).expect("message should serialize"),
+            serde_json::to_value(r).expect("message should serialize"),
+            "message {i} mismatch",
+        );
+    }
 }

@@ -3,6 +3,21 @@ use crate::utils::env_map::{EnvMap, process_env};
 use super::{Config, ModelRoleConfig, PluginConfig};
 
 impl PluginConfig {
+    /// The models-cache section this provider block's endpoint serves.
+    ///
+    /// The block's declared `catalog` wins; otherwise the block name is its
+    /// own section key. There is no cross-name mapping: a block named `ollama`
+    /// reaches no cache section unless it declares `catalog = "ollama-cloud"`.
+    ///
+    /// Every cache lookup resolves through here, so the picker, the pricing
+    /// ladder, and the limits fill cannot drift apart.
+    pub fn cache_section<'a>(&'a self, provider: &'a str) -> &'a str {
+        self.providers
+            .get(provider)
+            .and_then(|provider_config| provider_config.catalog.as_deref())
+            .unwrap_or(provider)
+    }
+
     /// Resolve a model role configuration to runtime Config.
     ///
     /// The `role_config.model` field must be in `"provider/model"` format:
@@ -68,6 +83,10 @@ impl PluginConfig {
         // Step 1: Start with env-based config for this provider/model (lowest priority)
         let mut config = Config::from_env(env, provider_name, model_name);
 
+        // The cache section this block serves: its declared `catalog`, else its
+        // name. Resolved once here so every consumer reads the same key.
+        config.catalog = Some(self.cache_section(provider_name).to_string());
+
         // Step 2: Merge provider-level settings (if provider block exists)
         if let Some(pc) = provider_config
             && let Some(impl_name) = &pc.provider
@@ -112,6 +131,11 @@ impl PluginConfig {
                 if let Some(output) = limits.output {
                     config.max_output_tokens = Some(output);
                 }
+            }
+            // The pricing ladder's config outcome: the user's price for the
+            // model. It wins over the catalog row.
+            if let Some(pricing) = &model_cfg.pricing {
+                config.pricing = Some(pricing.clone());
             }
         }
 
@@ -205,7 +229,7 @@ impl PluginConfig {
 
         // Apply models.json cache specs (fill missing values only)
         if let Some(cache) = &self.models_cache
-            && let Some(spec) = cache.get_spec(provider_name, model_name)
+            && let Some(spec) = cache.get_spec(self.cache_section(provider_name), model_name)
         {
             if config.max_context_tokens.is_none() {
                 config.max_context_tokens = Some(spec.limit.context);
@@ -242,5 +266,9 @@ impl PluginConfig {
 #[cfg(test)]
 #[path = "../../test/config/resolver.rs"]
 mod resolver_test;
+
+#[cfg(test)]
+#[path = "../../test/config/cache_section.rs"]
+mod cache_section_test;
 
 // endregion: --- Tests

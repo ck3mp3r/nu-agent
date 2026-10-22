@@ -1,31 +1,39 @@
 use super::journal::CachedMemory;
-use super::store::{CompactionMarker, FsSessionStore, SessionStore as _, StoreEntry};
-use super::store_test::{assert_msg_eq, assert_msgs_eq};
 use crate::types::Message;
-use chrono::Utc;
-use rig::id::ConversationId;
-use rig::memory::ConversationMemory;
-use std::sync::Arc;
-use tempfile::TempDir;
 
-type TestMemory = CachedMemory<FsSessionStore>;
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// A `CachedMemory` whose rig-memory store is in memory.
+fn test_memory() -> CachedMemory {
+    CachedMemory::new(crate::session::RigStoreConfig::in_memory())
+}
+
+/// Assert that two messages are structurally equal.
+fn assert_msg_eq(left: &Message, right: &Message) {
+    assert_eq!(
+        serde_json::to_value(left).expect("message should serialize"),
+        serde_json::to_value(right).expect("message should serialize"),
+    );
+}
+
+/// Assert that two message lists are structurally equal.
+fn assert_msgs_eq(left: &[Message], right: &[Message]) {
+    assert_eq!(left.len(), right.len(), "message count mismatch");
+    for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
+        assert_eq!(
+            serde_json::to_value(l).expect("message should serialize"),
+            serde_json::to_value(r).expect("message should serialize"),
+            "message {i} mismatch",
+        );
+    }
+}
 
 // region:    --- Modules
 
-#[path = "journal/append_clear.rs"]
-mod append_clear;
-
-#[path = "journal/dedup.rs"]
-mod dedup;
+#[path = "journal/bound.rs"]
+mod bound;
 
 #[path = "journal/load.rs"]
 mod load;
-
-#[path = "journal/support.rs"]
-mod support;
-
-#[path = "journal/verdict.rs"]
-mod verdict;
 
 // endregion: --- Modules

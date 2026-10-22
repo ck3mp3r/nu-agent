@@ -409,6 +409,8 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
             input_tokens,
             output_tokens,
             total_tokens,
+            cost,
+            cost_complete,
         } => crate::state::dispatch_llm_event(
             state,
             LlmEvent::Completed {
@@ -417,6 +419,8 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
                 input_tokens,
                 output_tokens,
                 total_tokens,
+                cost,
+                cost_complete,
             },
         ),
         UiEvent::AssistantMessage { text, .. } => {

@@ -58,6 +58,7 @@ fn tool_state_baseline_is_reset_source() -> Result<()> {
 
     let _tool_definitions: Vec<ToolDefinition> = vec![];
     let baseline_tool_definitions: Vec<ToolDefinition> = vec![ToolDefinition {
+        annotations: crate::types::ToolAnnotations::default(),
         name: ToolName::new("test_tool")?,
         description: "".to_string(),
         parameters: serde_json::json!({}),

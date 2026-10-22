@@ -1,84 +1,57 @@
 //! Post-loop error dispatch for `TurnExecutor::execute`.
 //!
-//! Handles the terminal result of the retry/steering loop: UnknownTool history
-//! recovery, Path A/C/B cancelled persistence + doom/repetition stop surfacing,
-//! hard-error persistence with placeholder synthesis, and the completed-turn
-//! tail (last_total_tokens, doom reset, bus events, response_data capture).
+//! Handles the terminal result of the retry/steering loop: the user-facing
+//! error for an unknown tool or a hard failure, the doom/repetition stop
+//! surfacing on cancellation, and the completed-turn tail (last_total_tokens,
+//! doom reset, bus events, response_data capture).
+//!
+//! Nothing is persisted here: rig saves the conversation when a run succeeds
+//! and saves nothing when it fails or is cancelled.
 
 use nu_protocol::{LabeledError, Span};
 
 use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
 use crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
 use crate::protocol::event::UiEvent;
-use crate::session::repair::inject_missing_tool_results;
-use crate::types::Message;
 
 use super::core::{NO_OUTPUT_STATEMENT, TurnExecutor, TurnOutcome, TurnResponseData};
 use super::error_kind::kind_to_user_msg;
-use super::response::close_open_tool_result_block;
 use crate::conversation::turn::TurnError;
 use crate::conversation::turn::TurnResult;
 
-impl<'a, ST, S> TurnExecutor<'a, S, ST>
+impl<'a, S> TurnExecutor<'a, S>
 where
-    ST: crate::session::SessionStore + Clone + Send + Sync + 'static,
     S: crate::conversation::managers::SessionManager<
-            Memory = crate::conversation::state::memory::MemoryOf<ST>,
-            InnerMemory = crate::session::CachedMemory<ST>,
+            Memory = crate::conversation::state::memory::MemoryOf,
+            InnerMemory = crate::session::CachedMemory,
         >,
 {
-    /// Dispatch the terminal result of the retry/steering loop: persist
-    /// recovered history, surface stop reasons, and produce the final
-    /// `TurnOutcome` / `LabeledError`.
+    /// Dispatch the terminal result of the retry/steering loop: surface stop
+    /// reasons and produce the final `TurnOutcome` / `LabeledError`.
     pub(super) async fn dispatch_result(
         &mut self,
         visitor_result: Result<
             TurnResult,
             (TurnError, crate::conversation::turn::error::TurnContext),
         >,
-        prompt: String,
         span: Span,
         final_session_id: Option<&str>,
     ) -> Result<TurnOutcome, LabeledError> {
         let turn_result = match visitor_result {
             Ok(result) => result,
-            Err((crate::conversation::turn::TurnError::UnknownTool { msg, messages, .. }, ctx)) => {
-                if let Some(session_id) = final_session_id {
-                    let delta: Vec<Message> = messages
-                        .iter()
-                        .skip(ctx.pre_turn_message_count)
-                        .cloned()
-                        .collect();
-                    log::debug!(
-                        "Path A non-cancelled (unknown tool): delta_count={} pre_turn={}",
-                        delta.len(),
-                        ctx.pre_turn_message_count
-                    );
-                    if !delta.is_empty() {
-                        let patched = inject_missing_tool_results(delta);
-                        self.append_to_memory_or_warn(
-                            session_id,
-                            patched,
-                            "recovered history for unknown tool turn",
-                        )
-                        .await;
-                    }
-                }
+            Err((crate::conversation::turn::TurnError::UnknownTool { msg, .. }, _)) => {
                 log::warn!("Unknown tool call (retries exhausted): {msg}");
                 let user_msg =
-                    "Turn failed: The model attempted to call an unknown tool and could not recover. \
-                         The session has been saved — try rephrasing your request."
+                    "Turn failed: The model attempted to call an unknown tool and could not \
+                     recover. Try rephrasing your request."
                         .to_string();
                 return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
             }
-            Err((e, ctx)) => {
-                // Hard error: CompletionFailed or ToolExecutionFailed.
-                // If on_completion_call fired at least once, we have a partial history snapshot
-                // from the hook Arc. Persist it so completed sub-turns are not lost.
-                // If no on_completion_call fired (failure before first HTTP request), fall back
-                // to a synthetic user+assistant placeholder pair to maintain alternating structure.
+            Err((e, _)) => {
+                // Hard error: CompletionFailed or ToolExecutionFailed. Nothing is
+                // persisted: rig saves a conversation only when a run succeeds.
 
-                // Extract fields needed for history persistence and error message.
+                // Extract the fields the user-facing message needs.
                 let (msg, kind_opt) = match &e {
                     crate::conversation::turn::TurnError::CompletionFailed { msg, kind } => {
                         (msg, Some(kind))
@@ -116,126 +89,13 @@ where
                     final_session_id,
                     &msg[..msg.floor_char_boundary(200)]
                 );
-                if let Some(session_id) = final_session_id {
-                    let delta: Vec<Message> = ctx
-                        .last_known_history
-                        .iter()
-                        .skip(ctx.pre_turn_message_count)
-                        .cloned()
-                        .collect();
-                    log::debug!(
-                        "Hard error: delta_count={} pre_turn={}",
-                        delta.len(),
-                        ctx.pre_turn_message_count
-                    );
-                    if !delta.is_empty() {
-                        let patched = inject_missing_tool_results(delta);
-                        let patched = close_open_tool_result_block(patched, msg);
-                        self.append_to_memory_or_warn(
-                            session_id,
-                            patched,
-                            "recovered history on hard error",
-                        )
-                        .await;
-                    } else {
-                        // delta is empty: hook never fired OR error before any new messages
-                        // were added. Synthesise a placeholder to maintain the alternating
-                        // user/assistant structure.
-                        log::debug!("Hard error: delta empty, synthesizing fallback placeholder");
-                        let fallback = vec![
-                            Message::user(prompt.clone()),
-                            Message::assistant(format!("[Turn failed: {msg}]")),
-                        ];
-                        self.append_to_memory_or_warn(
-                            session_id,
-                            fallback,
-                            "error placeholder on hard error",
-                        )
-                        .await;
-                    }
-                }
                 return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
             }
         };
 
-        // Path C: Cancelled was caught inside build_agent_and_stream and returned
-        // as Ok(cancelled=true). Treat identically to Path A.
-        //
-        // Path B (defensive fallback) is folded into Path C: Ok(cancelled=true, messages=None).
-        // Under rig v0.39+ semantics this branch is not expected to trigger — Cancelled
-        // always carries chat_history. Kept as a safety net for future rig version changes.
+        // Cancelled: rig saved nothing, so nothing is persisted here. Surface the
+        // stop reason and return the early-exit response.
         if turn_result.cancelled {
-            if let Some(session_id) = final_session_id {
-                if let Some(messages) = turn_result.messages {
-                    // Normal path: rig provided chat_history via Cancelled.
-                    // Cancelled.chat_history is rig's full_history() — it DOES include
-                    // the current-turn user prompt and any tool exchanges. skip(pre_turn_message_count)
-                    // yields only the new messages from this turn, preventing double-appending the
-                    // prior session history when a cancelled turn follows prior session messages.
-                    // JournalConversationMemory.append() writes both JSONL and in-memory
-                    // cache in one call — no separate conversation_store.append() needed.
-                    let delta: Vec<Message> = messages
-                        .iter()
-                        .skip(turn_result.pre_turn_message_count)
-                        .cloned()
-                        .collect();
-                    log::debug!(
-                        "Path C cancelled: delta_count={} pre_turn={}",
-                        delta.len(),
-                        turn_result.pre_turn_message_count
-                    );
-                    if !delta.is_empty() {
-                        let patched = inject_missing_tool_results(delta);
-                        let patched = close_open_tool_result_block(patched, "[cancelled]");
-                        self.append_to_memory_or_warn(
-                            session_id,
-                            patched,
-                            "recovered history for cancelled turn (path C)",
-                        )
-                        .await;
-                    }
-                } else {
-                    // Path B: tokio::select cancelled before rig yielded Cancelled.
-                    // Use last_known_history from the hook's snapshot of completed work
-                    // (including tool calls and their results) instead of synthesizing a
-                    // minimal placeholder that would lose all completed work from this turn.
-                    let lkh = &turn_result.last_known_history;
-                    if !lkh.is_empty() {
-                        let delta: Vec<Message> = lkh
-                            .iter()
-                            .skip(turn_result.pre_turn_message_count)
-                            .cloned()
-                            .collect();
-                        log::debug!(
-                            "Path B fallback: last_known_history delta_count={}",
-                            delta.len()
-                        );
-                        if !delta.is_empty() {
-                            let patched = inject_missing_tool_results(delta);
-                            let patched = close_open_tool_result_block(patched, "[cancelled]");
-                            self.append_to_memory_or_warn(
-                                session_id,
-                                patched,
-                                "recovered history for cancel path B (last known history)",
-                            )
-                            .await;
-                        }
-                    } else {
-                        // True fallback: hook never fired, synthesize minimal placeholder
-                        log::debug!("Path B true fallback: synthesizing minimal placeholder");
-                        let mut cancelled_messages = vec![Message::user(prompt.clone())];
-                        if !turn_result.text.is_empty() {
-                            cancelled_messages.push(Message::assistant(turn_result.text.clone()));
-                        }
-                        self.append_to_memory_or_warn(
-                            session_id,
-                            cancelled_messages,
-                            "cancel path B fallback",
-                        )
-                        .await;
-                    }
-                }
-            }
             // Surface the doom-loop stop reason if this cancellation was a doom
             // stop. Fix 1: the warning is sent BEFORE `TurnEvent::Completed` so
             // the TUI reduces the warning ahead of turn finalize (the race with
@@ -297,7 +157,8 @@ where
         }
 
         // Completed turn: update last_total_tokens for compaction tracking.
-        // The actual JSONL write was already done by rig calling memory.append() at turn end.
+        // rig saved the conversation when the run succeeded, so nothing is
+        // persisted here.
         if final_session_id.is_some() {
             *self.memory_state.last_total_tokens_mut() = Some(turn_result.last_total_tokens);
             log::debug!(

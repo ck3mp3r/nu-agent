@@ -125,6 +125,7 @@ fn plugin_config_with_provider(
             base_url: base_url.map(str::to_string),
             provider: None,
             preamble: None,
+            catalog: None,
             models: HashMap::new(),
         },
     );

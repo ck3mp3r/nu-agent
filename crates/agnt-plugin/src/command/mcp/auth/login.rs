@@ -173,13 +173,13 @@ async fn run_inner(
     auth_manager.set_credential_store(vault_credential_store);
     auth_manager.set_state_store(vault_state_store);
 
-    // 8. Discover OAuth metadata from the server (required before configure_client_id or register_client)
-    let metadata = auth_manager.discover_metadata().await.map_err(|e| {
+    // 8. Resolve OAuth metadata from the server (required before configure_client_id or register_client)
+    let resolution = auth_manager.resolve_metadata().await.map_err(|e| {
         LabeledError::new(format!(
             "Failed to discover OAuth metadata for '{server_name}': {e}"
         ))
     })?;
-    auth_manager.set_metadata(metadata);
+    auth_manager.set_metadata(resolution.metadata);
 
     // 9. Configure the OAuth client with the provided client_id and optional client_secret
     if let Some(cid) = client_id {

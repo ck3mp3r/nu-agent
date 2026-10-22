@@ -66,7 +66,7 @@ pub struct PermissionDecisionSubmission {
     pub matched_rule_identity: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum UiEvent {
     LlmStarted,
     Tick,
@@ -75,7 +75,15 @@ pub enum UiEvent {
         tool_calls: usize,
         input_tokens: u64,
         output_tokens: u64,
-        total_tokens: u64,
+        /// The total the wire reported, or `None` when it reported none. A
+        /// wire may omit it (ollama-cloud's OpenAI-compatible endpoint does),
+        /// and an absent total is not a zero.
+        total_tokens: Option<u64>,
+        /// What the call cost in USD, when the provider reported it or the
+        /// catalog priced it. `None` for a call nothing priced.
+        cost: Option<f64>,
+        /// Whether `cost` is the whole charge rather than a lower bound.
+        cost_complete: bool,
     },
     ToolStarted {
         name: String,

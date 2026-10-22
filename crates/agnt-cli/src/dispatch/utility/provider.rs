@@ -4,7 +4,7 @@ use agnt_core::config::copilot_tokens::{
     read_copilot_token_record, verify_copilot_login_persistence,
 };
 use agnt_core::config::vault::{CredentialType, Vault};
-use agnt_core::types::default_token_dir;
+use agnt_core::types::copilot_token_dir;
 
 use crate::ProviderAuthCommand;
 use crate::ProviderCommand;
@@ -61,7 +61,8 @@ async fn run_provider_login(args: &ProviderLoginArgs) -> Result<()> {
 
 /// Run the GitHub Copilot OAuth device-code flow.
 async fn run_copilot_login() -> Result<()> {
-    use agnt_core::types::{AuthSource, Authenticator, CopilotConfig, DeviceCodeHandler};
+    use agnt_core::conversation::providers::copilot_device_login;
+    use agnt_core::types::DeviceCodeHandler;
 
     let handler = DeviceCodeHandler::new(|prompt| {
         eprintln!(
@@ -69,35 +70,15 @@ async fn run_copilot_login() -> Result<()> {
             prompt.verification_uri, prompt.user_code
         );
     });
-    let token_dir = default_token_dir();
-    let authenticator = Authenticator::new(
-        AuthSource::OAuth,
-        token_dir.as_ref().map(|dir| dir.join("access-token")),
-        token_dir.as_ref().map(|dir| dir.join("api-key.json")),
-        handler,
-        true,
-    );
 
-    CopilotConfig::new("")
-        .client()
-        .authenticate(&authenticator)
+    let token_dir = copilot_device_login(handler)
         .await
-        .map_err(|e| Error::Custom(format!("Authentication failed: {e}")))?;
-
-    let token_dir = token_dir.ok_or_else(|| {
-        Error::Custom(
-            "GitHub Copilot credential directory unavailable: set XDG_CONFIG_HOME or HOME."
-                .to_string(),
-        )
-    })?;
+        .map_err(|e| Error::Custom(e.to_string()))?;
     verify_copilot_login_persistence(&token_dir).map_err(Error::Custom)?;
 
-    let api_key_path = token_dir.join("api-key.json");
-    let access_token_path = token_dir.join("access-token");
     println!(
-        "Successfully authenticated with GitHub Copilot\n  api-key.json: {}\n  access-token: {}",
-        api_key_path.display(),
-        access_token_path.display()
+        "Successfully authenticated with GitHub Copilot\n  credentials: {}",
+        token_dir.display()
     );
     Ok(())
 }
@@ -108,7 +89,7 @@ fn run_provider_logout(args: &ProviderLogoutArgs) -> Result<()> {
 
     // github-copilot stores its tokens in files, not the vault.
     if (name == "github-copilot" || name == "copilot")
-        && let Some(dir) = default_token_dir()
+        && let Some(dir) = copilot_token_dir()
         && read_copilot_token_record(&dir)
             .map_err(Error::Custom)?
             .is_some()
@@ -150,7 +131,7 @@ fn run_provider_status() -> Result<()> {
         .collect();
 
     // github-copilot stores its tokens in files, not the vault.
-    if let Some(dir) = default_token_dir()
+    if let Some(dir) = copilot_token_dir()
         && let Some(record) = read_copilot_token_record(&dir).map_err(Error::Custom)?
     {
         rows.push(vec![
@@ -200,9 +181,12 @@ fn format_expiry(expires_at: Option<u64>) -> String {
         .unwrap_or_else(|| seconds.to_string())
 }
 
-/// Delete the two Copilot token files, leaving the directory in place.
+/// Delete the Copilot credential files, leaving the directory in place.
+///
+/// `copilot.json` is rig 0.45's record; `access-token` and `api-key.json` are
+/// the pre-0.45 layout, removed so a logout also clears an upgraded install.
 fn remove_copilot_token_files(dir: &std::path::Path) -> core::result::Result<(), String> {
-    for file in ["access-token", "api-key.json"] {
+    for file in ["copilot.json", "access-token", "api-key.json"] {
         let path = dir.join(file);
         match std::fs::remove_file(&path) {
             Ok(()) => {}

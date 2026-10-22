@@ -15,7 +15,6 @@ use super::executor_test_support::*;
 use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
 use crate::protocol::event::UiEvent;
-use crate::session::StoreEntry;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;

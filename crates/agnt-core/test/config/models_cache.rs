@@ -4,6 +4,21 @@ use super::{ModelCost, ModelLimit, ModelSpec, ModelsCache, ModelsCacheError, Pro
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+/// A cache row with no cost, for the listing tests.
+fn model_spec(model_id: &str) -> ModelSpec {
+    ModelSpec {
+        id: model_id.to_string(),
+        name: model_id.to_string(),
+        tool_call: true,
+        limit: ModelLimit {
+            context: 128_000,
+            output: 4_096,
+        },
+        cost: None,
+        modalities: None,
+    }
+}
+
 fn make_test_cache() -> ModelsCache {
     ModelsCache {
         providers: HashMap::from([(
@@ -88,6 +103,98 @@ fn list_models_filters_by_provider() {
 
     let empty = cache.list_models(Some("anthropic"));
     assert!(empty.is_empty());
+}
+
+#[test]
+fn list_models_filters_by_an_exact_cache_key() -> Result<()> {
+    // -- Setup & Fixtures: the cache files copilot's models under
+    // `github-copilot`, as models.dev does.
+    let cache = ModelsCache {
+        providers: HashMap::from([(
+            "github-copilot".to_string(),
+            ProviderSpec {
+                id: "github-copilot".to_string(),
+                name: "GitHub Copilot".to_string(),
+                env: Vec::new(),
+                api: None,
+                models: HashMap::from([
+                    (
+                        "claude-sonnet-4.6".to_string(),
+                        model_spec("claude-sonnet-4.6"),
+                    ),
+                    ("gpt-4o".to_string(), model_spec("gpt-4o")),
+                ]),
+            },
+        )]),
+    };
+
+    // -- Exec
+    let result = cache.list_models(Some("github-copilot"));
+
+    // -- Check
+    let mut models: Vec<&str> = result.iter().map(|(_, model, _)| *model).collect();
+    models.sort_unstable();
+    assert_eq!(
+        models,
+        vec!["claude-sonnet-4.6", "gpt-4o"],
+        "the exact cache key must list its section"
+    );
+    assert!(
+        result
+            .iter()
+            .all(|(provider, _, _)| *provider == "github-copilot"),
+        "the listed rows must carry the key the caller asked for"
+    );
+    Ok(())
+}
+
+#[test]
+fn list_models_filters_by_an_undeclared_name_is_empty() -> Result<()> {
+    // -- Setup & Fixtures: the cache files copilot's models under
+    // `github-copilot`; no name mapping exists.
+    let cache = ModelsCache {
+        providers: HashMap::from([(
+            "github-copilot".to_string(),
+            ProviderSpec {
+                id: "github-copilot".to_string(),
+                name: "GitHub Copilot".to_string(),
+                env: Vec::new(),
+                api: None,
+                models: HashMap::from([("gpt-4o".to_string(), model_spec("gpt-4o"))]),
+            },
+        )]),
+    };
+
+    // -- Exec & Check
+    assert!(
+        cache.list_models(Some("copilot")).is_empty(),
+        "an undeclared name must list nothing: the cache has no such key"
+    );
+    Ok(())
+}
+
+#[test]
+fn list_models_filters_by_a_pass_through_provider() -> Result<()> {
+    // -- Setup & Fixtures: a name that is already its own cache key.
+    let cache = make_test_cache();
+
+    // -- Exec
+    let result = cache.list_models(Some("openai"));
+
+    // -- Check
+    assert_eq!(result.len(), 1, "a pass-through name must be unchanged");
+    assert_eq!(result[0].0, "openai");
+    assert_eq!(result[0].1, "gpt-4");
+    Ok(())
+}
+
+#[test]
+fn list_models_filters_by_an_unknown_provider_is_empty() {
+    // -- Setup & Fixtures
+    let cache = make_test_cache();
+
+    // -- Exec & Check
+    assert!(cache.list_models(Some("no-such-provider")).is_empty());
 }
 
 #[test]

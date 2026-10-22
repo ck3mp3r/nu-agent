@@ -125,21 +125,6 @@ fn prompt_wrapped_http_429_is_rate_limit() -> Result<()> {
     Ok(())
 }
 
-/// A `PromptError::Memory` must continue to classify as `Unknown`.
-#[test]
-fn prompt_wrapped_memory_error_is_unknown() -> Result<()> {
-    let memory_err = rig::memory::MemoryError::Internal("boom".to_string());
-    let prompt_err = rig::completion::PromptError::Memory(memory_err);
-    let turn_err = crate::conversation::turn::TurnError::from(prompt_err);
-    match turn_err {
-        crate::conversation::turn::TurnError::CompletionFailed { kind, .. } => {
-            assert_eq!(kind, CompletionErrorKind::Unknown);
-        }
-        other => panic!("expected CompletionFailed, got: {other:?}"),
-    }
-    Ok(())
-}
-
 /// `From<PromptError>` must route `PromptError::Provider` through the
 /// same helper, producing the same kind and msg as the PromptError path.
 #[test]

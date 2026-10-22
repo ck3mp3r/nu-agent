@@ -11,6 +11,7 @@ async fn dynamic_tool_edit_noop_surfaces_as_failed_result() -> TestResult<()> {
     std::fs::write(&path, "hello world\n")?;
     let version = crate::tools::fs::core::version_token("hello world\n");
     let tool_def = ToolDefinition {
+        annotations: crate::types::ToolAnnotations::default(),
         name: ToolName::new("edit")?,
         description: "Edit a file".to_string(),
         parameters: serde_json::json!({"type": "object", "properties": {}}),

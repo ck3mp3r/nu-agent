@@ -124,7 +124,9 @@ fn lane_2_rehydrate_replaced_by_live_turn_usage() -> Result<()> {
         tool_calls: 0,
         input_tokens: 8,
         output_tokens: 32,
-        total_tokens: 40,
+        total_tokens: Some(40),
+        cost: None,
+        cost_complete: false,
     });
     coordinator.drain_transport();
 

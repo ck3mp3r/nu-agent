@@ -3,6 +3,7 @@ use super::*;
 #[tokio::test]
 async fn dynamic_tool_calls_grep_tool() -> TestResult<()> {
     let tool_def = ToolDefinition {
+        annotations: crate::types::ToolAnnotations::default(),
         name: ToolName::new("grep")?,
         description: "Search file contents".to_string(),
         parameters: serde_json::json!({
@@ -69,6 +70,7 @@ async fn dynamic_tool_truncates_large_output() -> TestResult<()> {
     std::fs::write(&target_file, &big_content).unwrap();
 
     let tool_def = ToolDefinition {
+        annotations: crate::types::ToolAnnotations::default(),
         name: ToolName::new("grep")?,
         description: "Search file contents".to_string(),
         parameters: serde_json::json!({

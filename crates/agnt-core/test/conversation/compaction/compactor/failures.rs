@@ -1,96 +1,21 @@
 use super::*;
 
 #[tokio::test]
-async fn summarizer_error_maps_to_memory_error_backend() -> Result<()> {
-    let bus = Bus::default();
-    let model = MockCompletionModel::from_stream_turns([[
-        MockStreamEvent::Text("partial".to_string()),
-        MockStreamEvent::error("provider exploded"),
-    ]]);
-    let compactor = make_compactor(model, bus, None);
-
-    let evicted = vec![Message::user("old message")];
-    let result = compactor
-        .compact("conv-1", &evicted, None, "test_source")
-        .await;
-
-    assert!(
-        matches!(result, Err(MemoryError::Backend(_))),
-        "expected Err(MemoryError::Backend), got {result:?}"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn empty_summary_is_rejected_and_no_marker_written() -> Result<()> {
-    // -- Setup & Fixtures
-    // A stream that emits only reasoning (no text) leaves `aggregated` empty.
-    // Compaction must reject it: emit Failed with "empty summary", return Err,
-    // and NOT persist a marker.
-    let (store, store_arc, _summary, _temp_dir) =
-        seeded_marker_store("conv-1", "cached summary text").await?;
-    let bus = Bus::default();
-    let mut rx = bus.compaction().subscribe();
-    let model = MockCompletionModel::from_stream_turns([[
-        MockStreamEvent::reasoning("thinking hard"),
-        MockStreamEvent::final_response_with_default_usage(),
-    ]]);
-    let compactor = make_compactor_with_store(model, bus, None, store_arc);
-
-    // -- Exec
-    let evicted = vec![
-        Message::user("m1"),
-        Message::user("m2"),
-        Message::user("m3"),
-    ];
-    let result = compactor
-        .compact("conv-1", &evicted, None, "test_source")
-        .await;
-
-    // -- Check
-    let Err(MemoryError::Backend(err)) = result else {
-        panic!("compact must reject an empty summary, got {result:?}");
-    };
-    let message = err.to_string();
-    assert!(
-        message.contains("empty summary"),
-        "error must mention the empty summary, got: {message}"
-    );
-    let failed = recv_until_failed(&mut rx).await?;
-    assert!(
-        failed.contains("empty summary"),
-        "expected Failed with empty summary, got {failed:?}"
-    );
-    // No Completed event and no new marker persisted.
-    let (_, entries) = store.load("conv-1").await?.ok_or("should find session")?;
-    let markers: Vec<_> = entries
-        .iter()
-        .filter(|e| matches!(e, StoreEntry::Marker(_)))
-        .collect();
-    assert_eq!(
-        markers.len(),
-        1,
-        "empty summary must NOT write a new marker, found {}",
-        markers.len()
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn stream_error_surfaces_actual_error_message() -> Result<()> {
     // -- Setup & Fixtures
+    let store = memory_store()?;
+    seed(&*store)?;
     let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("partial".to_string()),
         MockStreamEvent::error("provider exploded"),
     ]]);
-    let compactor = make_compactor(model, bus, None);
+    let compactor = NuCompactor::new(model.erase(), bus, test_policy(), Some(test_spec()?));
 
     // -- Exec
-    let evicted = vec![Message::user("old message")];
     let result = compactor
-        .compact("conv-1", &evicted, None, "test_source")
+        .compact(&*store, CONV, &CompactReason::Threshold, "test_source")
         .await;
 
     // -- Check
@@ -111,32 +36,75 @@ async fn stream_error_surfaces_actual_error_message() -> Result<()> {
 }
 
 #[tokio::test]
+async fn empty_summary_is_rejected_and_nothing_is_spliced() -> Result<()> {
+    // -- Setup & Fixtures
+    // A stream that emits only reasoning (no text) leaves the folded response
+    // empty. Compaction must reject it: emit Failed, return Err, and leave the
+    // stored conversation untouched.
+    let store = memory_store()?;
+    seed(&*store)?;
+    let bus = Bus::default();
+    let mut rx = bus.compaction().subscribe();
+    let model = MockCompletionModel::from_stream_turns([[
+        MockStreamEvent::reasoning("thinking hard"),
+        MockStreamEvent::final_response_with_default_usage(),
+    ]]);
+    let compactor = NuCompactor::new(model.erase(), bus, test_policy(), Some(test_spec()?));
+
+    // -- Exec
+    let result = compactor
+        .compact(&*store, CONV, &CompactReason::Threshold, "test_source")
+        .await;
+
+    // -- Check
+    let Err(MemoryError::Backend(err)) = result else {
+        panic!("compact must reject an empty summary, got {result:?}");
+    };
+    assert!(
+        err.to_string().contains("no summary"),
+        "error must name the empty summary, got: {err}"
+    );
+    let failed = recv_until_failed(&mut rx).await?;
+    assert!(
+        failed.contains("no summary"),
+        "expected Failed naming the empty summary, got {failed:?}"
+    );
+    let conversation = rig_memory::load(&*store, CONV)?;
+    assert_eq!(
+        conversation.messages().len(),
+        4,
+        "a rejected summary must not splice the conversation"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn tool_call_chunk_during_compaction_emits_failed() -> Result<()> {
     // -- Setup & Fixtures
     // No tools are registered during compaction, so a ToolCall chunk is
     // unexpected and must emit Failed rather than being swallowed.
+    let store = memory_store()?;
+    seed(&*store)?;
     let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::tool_call("tc1", "some_tool", serde_json::json!({})),
         MockStreamEvent::final_response_with_default_usage(),
     ]]);
-    let compactor = make_compactor(model, bus, None);
+    let compactor = NuCompactor::new(model.erase(), bus, test_policy(), Some(test_spec()?));
 
     // -- Exec
-    let evicted = vec![Message::user("old message")];
     let result = compactor
-        .compact("conv-1", &evicted, None, "test_source")
+        .compact(&*store, CONV, &CompactReason::Threshold, "test_source")
         .await;
 
     // -- Check
     let Err(MemoryError::Backend(err)) = result else {
         panic!("compact must fail on a tool call chunk, got {result:?}");
     };
-    let message = err.to_string();
     assert!(
-        message.contains("tool call"),
-        "error must mention the unexpected tool call, got: {message}"
+        err.to_string().contains("tool call"),
+        "error must mention the unexpected tool call, got: {err}"
     );
     let failed = recv_until_failed(&mut rx).await?;
     assert!(
@@ -149,22 +117,19 @@ async fn tool_call_chunk_during_compaction_emits_failed() -> Result<()> {
 #[tokio::test]
 async fn unknown_stream_chunk_emits_failed() -> Result<()> {
     // -- Setup & Fixtures
+    let store = memory_store()?;
+    seed(&*store)?;
     let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::unknown(serde_json::json!({"type": "mystery"})),
         MockStreamEvent::final_response_with_default_usage(),
     ]]);
-    let compactor = make_compactor(model, bus, None);
+    let compactor = NuCompactor::new(model.erase(), bus, test_policy(), Some(test_spec()?));
 
     // -- Exec
     let result = compactor
-        .compact(
-            "conv-1",
-            &[Message::user("old message")],
-            None,
-            "test_source",
-        )
+        .compact(&*store, CONV, &CompactReason::Threshold, "test_source")
         .await;
 
     // -- Check
@@ -183,81 +148,20 @@ async fn unknown_stream_chunk_emits_failed() -> Result<()> {
     Ok(())
 }
 
-// region:    --- Test Support
-
-/// A store whose `load` and `append` fail, for the compactor's error paths.
-#[derive(Debug, Clone)]
-struct FailingStore {
-    fail_load: bool,
-}
-
-impl SessionStore for FailingStore {
-    type Error = std::io::Error;
-
-    async fn create(
-        &self,
-        _id: &str,
-        _first_messages: &[Message],
-    ) -> core::result::Result<(), Self::Error> {
-        Ok(())
-    }
-
-    async fn load(
-        &self,
-        _id: &str,
-    ) -> core::result::Result<Option<(crate::session::SessionMetadata, Vec<StoreEntry>)>, Self::Error>
-    {
-        if self.fail_load {
-            Err(std::io::Error::other("load failed"))
-        } else {
-            Ok(None)
-        }
-    }
-
-    async fn append(
-        &self,
-        _id: &str,
-        _entries: &[StoreEntry],
-    ) -> core::result::Result<(), Self::Error> {
-        Err(std::io::Error::other("append failed"))
-    }
-
-    async fn replace_entries(
-        &self,
-        _id: &str,
-        _entries: &[StoreEntry],
-    ) -> core::result::Result<(), Self::Error> {
-        Ok(())
-    }
-
-    async fn list(&self) -> core::result::Result<Vec<crate::session::SessionInfo>, Self::Error> {
-        Ok(Vec::new())
-    }
-
-    async fn delete(&self, _id: &str) -> core::result::Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
-// endregion: --- Test Support
-
 #[tokio::test]
 async fn store_load_failure_emits_failed_and_returns_error() -> Result<()> {
     // -- Setup & Fixtures
+    let store = FailingStore {
+        inner: memory_store()?,
+        fail_read: true,
+    };
     let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
-    let model = stream_model(&["summary"]);
-    let store = Arc::new(FailingStore { fail_load: true });
-    let compactor = make_compactor_with_store(model, bus, None, store);
+    let compactor = make_compactor(&["summary"], bus)?;
 
     // -- Exec
     let result = compactor
-        .compact(
-            "conv-1",
-            &[Message::user("old message")],
-            None,
-            "test_source",
-        )
+        .compact(&store, CONV, &CompactReason::Threshold, "test_source")
         .await;
 
     // -- Check
@@ -265,48 +169,116 @@ async fn store_load_failure_emits_failed_and_returns_error() -> Result<()> {
         panic!("a store load failure must fail compaction, got {result:?}");
     };
     assert!(
-        err.to_string().contains("load failed"),
+        err.to_string().contains("log read failed"),
         "the error must carry the store failure, got: {err}"
     );
     let failed = recv_until_failed(&mut rx).await?;
     assert!(
-        failed.contains("load failed"),
+        failed.contains("log read failed"),
         "expected Failed carrying the store failure, got {failed:?}"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn marker_append_failure_emits_failed_and_returns_error() -> Result<()> {
+async fn store_save_failure_emits_failed_and_returns_error() -> Result<()> {
     // -- Setup & Fixtures
+    let inner = memory_store()?;
+    seed(&*inner)?;
+    let store = FailingStore {
+        inner,
+        fail_read: false,
+    };
     let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
-    let model = stream_model(&["summary"]);
-    let store = Arc::new(FailingStore { fail_load: false });
-    let compactor = make_compactor_with_store(model, bus, None, store);
+    let compactor = make_compactor(&["summary"], bus)?;
 
     // -- Exec
     let result = compactor
-        .compact(
-            "conv-1",
-            &[Message::user("old message")],
-            None,
-            "test_source",
-        )
+        .compact(&store, CONV, &CompactReason::Threshold, "test_source")
         .await;
 
     // -- Check
     let Err(MemoryError::Backend(err)) = result else {
-        panic!("a marker append failure must fail compaction, got {result:?}");
+        panic!("a store save failure must fail compaction, got {result:?}");
     };
     assert!(
-        err.to_string().contains("append failed"),
+        err.to_string().contains("log append failed"),
         "the error must carry the store failure, got: {err}"
     );
     let failed = recv_until_failed(&mut rx).await?;
     assert!(
-        failed.contains("append failed"),
+        failed.contains("log append failed"),
         "expected Failed carrying the store failure, got {failed:?}"
     );
     Ok(())
 }
+
+// region:    --- Test Support
+
+/// A rig store that reads through to `inner` and refuses every log write, for
+/// the compactor's load and save failure paths.
+struct FailingStore {
+    inner: Arc<dyn Store>,
+    fail_read: bool,
+}
+
+impl rig_memory::Files for FailingStore {
+    fn write_file(&self, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+        self.inner.write_file(name, bytes)
+    }
+
+    fn append_file(&self, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+        self.inner.append_file(name, bytes)
+    }
+
+    fn read_file(&self, name: &str) -> std::io::Result<Vec<u8>> {
+        self.inner.read_file(name)
+    }
+
+    fn remove_file(&self, name: &str) -> std::io::Result<()> {
+        self.inner.remove_file(name)
+    }
+
+    fn files(&self) -> std::io::Result<Vec<String>> {
+        self.inner.files()
+    }
+}
+
+impl Store for FailingStore {
+    fn logs(&self) -> std::io::Result<Vec<String>> {
+        self.inner.logs()
+    }
+
+    fn read_log(&self, name: &str) -> std::io::Result<Vec<u8>> {
+        if self.fail_read {
+            Err(std::io::Error::other("log read failed"))
+        } else {
+            self.inner.read_log(name)
+        }
+    }
+
+    fn append_log(
+        &self,
+        _name: &str,
+        _len: u64,
+        _bytes: &[u8],
+    ) -> core::result::Result<(), rig_memory::LogWriteError> {
+        Err(std::io::Error::other("log append failed").into())
+    }
+
+    fn replace_log(
+        &self,
+        _name: &str,
+        _len: u64,
+        _bytes: &[u8],
+    ) -> core::result::Result<(), rig_memory::LogWriteError> {
+        Err(std::io::Error::other("log replace failed").into())
+    }
+
+    fn destroy(&self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+// endregion: --- Test Support

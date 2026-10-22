@@ -19,7 +19,7 @@ async fn test_runtime_build_acp_runtime_valid_config_returns_ok() -> Result<()> 
     let cwd = temp.path().join("session-cwd");
     std::fs::create_dir_all(&cwd)?;
     let config_path = write_config(temp.path(), BASE_CONFIG)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let runtime = build_acp_runtime(make_params(cwd.clone(), config_path, Vec::new(), store))
@@ -41,7 +41,7 @@ async fn test_runtime_build_acp_runtime_installs_interactive_pending() -> Result
     force_env_only_vault();
     let temp = tempfile::tempdir()?;
     let config_path = write_config(temp.path(), BASE_CONFIG)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let runtime = build_acp_runtime(make_params(
@@ -68,7 +68,7 @@ async fn test_runtime_build_acp_runtime_missing_config_returns_config_error() ->
     force_env_only_vault();
     let temp = tempfile::tempdir()?;
     let missing = temp.path().join("does-not-exist.toml");
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let result = build_acp_runtime(make_params(
@@ -109,7 +109,7 @@ max_context_tokens = 4096
 base_url = "http://localhost:11434"
 "#;
     let config_path = write_config(temp.path(), config)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let result = build_acp_runtime(make_params(
@@ -143,7 +143,7 @@ async fn test_runtime_build_acp_runtime_registers_builtin_tools() -> Result<()> 
     force_env_only_vault();
     let temp = tempfile::tempdir()?;
     let config_path = write_config(temp.path(), BASE_CONFIG)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let runtime = build_acp_runtime(make_params(
@@ -172,7 +172,7 @@ async fn test_runtime_build_acp_runtime_has_no_closure_tools() -> Result<()> {
     force_env_only_vault();
     let temp = tempfile::tempdir()?;
     let config_path = write_config(temp.path(), BASE_CONFIG)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let runtime = build_acp_runtime(make_params(

@@ -1,10 +1,9 @@
 use super::inspect::{AgentSessionInspect, CwdInterface};
 use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy};
-use agnt_core::session::{FsSessionStore, SessionStore, SessionStoreBackend};
+use agnt_core::session::{RigStoreConfig, StoreType};
 use agnt_core::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{LabeledError, Span, Value};
-use std::sync::Arc;
 use tempfile::TempDir;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -32,34 +31,28 @@ fn make_call(session_id: &str) -> EvaluatedCall {
 
 #[tokio::test]
 async fn test_agent_session_inspect_displays_full_session_details() -> Result<()> {
+    // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    )));
-
-    // Create a session with prefixed ID and 10 messages
+    let rig = rig_at(&temp_dir);
     let prefix = dir_prefix(temp_dir.path());
     let full_id = format!("{prefix}-test-session");
     let messages: Vec<Message> = (0..10)
         .map(|i| Message::user(format!("Message {}", i)))
         .collect();
-    store
-        .create(&full_id, &messages)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    seed(&rig, &full_id, messages)?;
 
-    // Run inspect via run_inner
+    // -- Exec
     let command = AgentSessionInspect;
     let engine = MockCwd {
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call("test-session");
     let result = command
-        .run_inner(&engine, &call, &store)
+        .run_inner(&engine, &call, &rig)
         .await
         .map_err(|e| format!("{e:?}"))?;
 
-    // Extract message_count from the returned record
+    // -- Check
     let Value::Record { val, .. } = &result else {
         panic!("Expected record result");
     };
@@ -79,17 +72,23 @@ async fn test_agent_session_inspect_displays_full_session_details() -> Result<()
 
 #[tokio::test]
 async fn test_agent_session_inspect_returns_error_for_nonexistent_session() -> Result<()> {
+    // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    )));
+    let rig = rig_at(&temp_dir);
 
-    let prefix = dir_prefix(temp_dir.path());
-    let full_id = format!("{prefix}-nonexistent");
-    let result = store.load(&full_id).await.map_err(|e| format!("{e:?}"))?;
+    // -- Exec
+    let command = AgentSessionInspect;
+    let engine = MockCwd {
+        dir: temp_dir.path().to_string_lossy().to_string(),
+    };
+    let call = make_call("nonexistent");
+    let result = command.run_inner(&engine, &call, &rig).await;
 
-    // Should be Ok(None) — session not found
-    assert!(result.is_none(), "should be None for nonexistent session");
+    // -- Check
+    assert!(
+        result.is_err(),
+        "inspecting a session that does not exist must report it"
+    );
     Ok(())
 }
 
@@ -112,34 +111,27 @@ fn test_agent_session_inspect_command_signature() {
 #[tokio::test]
 async fn run_prepends_cwd_prefix_to_session_id() -> Result<()> {
     // Verify that run_inner() prepends the cwd-derived prefix to the user-supplied session ID,
-    // so store.load receives "<prefix>-my-session" rather than the raw "my-session".
+    // so the store is opened as "<prefix>-my-session" rather than the raw "my-session".
 
+    // -- Setup & Fixtures
     let temp_dir = TempDir::new().expect("tempdir");
-    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    )));
-
-    // Compute the prefix the same way dir_prefix() does
+    let rig = rig_at(&temp_dir);
     let prefix = dir_prefix(temp_dir.path());
-
-    // Create the session with the full prefixed ID so run_inner finds it
     let full_id = format!("{prefix}-my-session");
-    store
-        .create(&full_id, &[Message::user("hello")])
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    seed(&rig, &full_id, vec![Message::user("hello")])?;
 
+    // -- Exec
     let command = AgentSessionInspect;
     let engine = MockCwd {
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call("my-session");
-
     let result = command
-        .run_inner(&engine, &call, &store)
+        .run_inner(&engine, &call, &rig)
         .await
         .map_err(|e| format!("{e:?}"))?;
 
+    // -- Check
     let id = match &result {
         Value::Record { val, .. } => val
             .get("id")
@@ -157,31 +149,28 @@ async fn run_prepends_cwd_prefix_to_session_id() -> Result<()> {
 
 #[tokio::test]
 async fn inspect_finds_legacy_prefixed_session_via_fallback() -> Result<()> {
+    // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
-    let store = Arc::new(SessionStoreBackend::Fs(FsSessionStore::new(
-        temp_dir.path().to_path_buf(),
-    )));
+    let rig = rig_at(&temp_dir);
 
     // Create a session with the legacy 7-char prefix (as if created before the
     // prefix length increase).
     let legacy_prefix = dir_prefix_legacy(temp_dir.path());
     let legacy_id = format!("{legacy_prefix}-old-session");
-    store
-        .create(&legacy_id, &[Message::user("hello")])
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    seed(&rig, &legacy_id, vec![Message::user("hello")])?;
 
+    // -- Exec
     let command = AgentSessionInspect;
     let engine = MockCwd {
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call("old-session");
-
     let result = command
-        .run_inner(&engine, &call, &store)
+        .run_inner(&engine, &call, &rig)
         .await
         .map_err(|e| format!("{e:?}"))?;
 
+    // -- Check
     let id = match &result {
         Value::Record { val, .. } => val
             .get("id")
@@ -194,5 +183,23 @@ async fn inspect_finds_legacy_prefixed_session_via_fallback() -> Result<()> {
         Some(legacy_id.as_str()),
         "returned id should equal the legacy-prefixed session id"
     );
+    Ok(())
+}
+
+// -- Test Support
+
+/// A `DirStore` rig store rooted at `temp_dir`.
+fn rig_at(temp_dir: &TempDir) -> RigStoreConfig {
+    RigStoreConfig::new(StoreType::Jsonl).with_cache_dir(temp_dir.path())
+}
+
+/// Seed the rig-memory store of `session_id` with `messages`.
+fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
+    let store = rig.open(session_id).map_err(|e| format!("{e:?}"))?;
+    let mut conversation =
+        agnt_core::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
+    conversation.extend(messages);
+    agnt_core::rig_memory::save(&*store, session_id, &mut conversation)
+        .map_err(|e| format!("{e:?}"))?;
     Ok(())
 }

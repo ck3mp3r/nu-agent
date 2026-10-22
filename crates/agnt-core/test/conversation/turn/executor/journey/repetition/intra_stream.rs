@@ -4,7 +4,7 @@ use super::*;
 /// aggregated text trips intra-stream detection at the 100-byte growth gate
 /// (the suffix check sees 5 aligned 20-byte-period repetitions) — every
 /// detection stops the stream. The executor's stop-to-steering retry
-/// converts the FIRST stop: steering appended to memory + ladder reset +
+/// converts the FIRST stop: steering rides the retry prompt + ladder reset +
 /// re-run. The retry consumes a scripted distinct turn and COMPLETES.
 #[tokio::test]
 async fn journey_output_repetition_intra_stream_trips() -> Result<()> {
@@ -32,6 +32,7 @@ async fn journey_output_repetition_intra_stream_trips() -> Result<()> {
             MockStreamEvent::final_response_with_default_usage(),
         ],
     ]);
+    let spy = model.clone();
 
     // -- Exec
     let (r, events) = h.turn("do the thing", model, tool_infra).await;
@@ -42,12 +43,34 @@ async fn journey_output_repetition_intra_stream_trips() -> Result<()> {
         matches!(outcome, TurnOutcome::Completed),
         "the stop-to-steering retry must complete the run, got {outcome:?}"
     );
-    // The steering message was appended to memory (the conversion).
-    let msgs = h.raw_messages().await?;
+    // The conversion delivers the steering through the retry prompt: the
+    // second request's prompt carries the backoff message above the original
+    // prompt.
+    let requests = spy.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "the conversion must re-run the turn exactly once"
+    );
+    let retry_prompt = requests[1]
+        .chat_history
+        .last()
+        .and_then(|message| message_text(message))
+        .unwrap_or_default();
     assert!(
-        msgs.iter()
-            .any(|m| message_text(m).as_deref() == Some(OUTPUT_REPETITION_BACKOFF_MESSAGE)),
-        "the conversion must append the repetition steering message; got: {msgs:?}"
+        retry_prompt.starts_with(OUTPUT_REPETITION_BACKOFF_MESSAGE),
+        "the retry prompt must carry the repetition steering message; got: {retry_prompt}"
+    );
+    assert!(
+        retry_prompt.ends_with("do the thing"),
+        "the retry prompt must keep the original prompt; got: {retry_prompt}"
+    );
+    // The completed run saves its own exchange only.
+    let msgs = h.raw_messages().await?;
+    assert_eq!(
+        msgs.len(),
+        2,
+        "the completed turn saves its exchange; got: {msgs:?}"
     );
     // The executor publishes a warning for the conversion so the user sees
     // that steering is happening instead of only a silent retry.
@@ -64,7 +87,7 @@ async fn journey_output_repetition_intra_stream_trips() -> Result<()> {
 /// Intra-stream: the 5th identical sentence opens the 100-byte growth gate —
 /// the detection returns Stop (every detection stops); the executor converts
 /// it to a steering retry which consumes a scripted distinct turn and
-/// completes the run with the steering message in memory.
+/// completes the run with the steering message on the retry prompt.
 #[tokio::test]
 async fn journey_output_repetition_intra_stream_fifth_is_first_continue() -> Result<()> {
     // -- Setup & Fixtures
@@ -88,6 +111,7 @@ async fn journey_output_repetition_intra_stream_fifth_is_first_continue() -> Res
             MockStreamEvent::final_response_with_default_usage(),
         ],
     ]);
+    let spy = model.clone();
 
     // -- Exec
     let (r, events) = h.turn("do the thing", model, tool_infra).await;
@@ -98,12 +122,34 @@ async fn journey_output_repetition_intra_stream_fifth_is_first_continue() -> Res
         matches!(outcome, TurnOutcome::Completed),
         "the stop-to-steering retry must complete the run, got {outcome:?}"
     );
-    // The steering message was appended to memory (the conversion).
-    let msgs = h.raw_messages().await?;
+    // The conversion delivers the steering through the retry prompt: the
+    // second request's prompt carries the backoff message above the original
+    // prompt.
+    let requests = spy.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "the conversion must re-run the turn exactly once"
+    );
+    let retry_prompt = requests[1]
+        .chat_history
+        .last()
+        .and_then(|message| message_text(message))
+        .unwrap_or_default();
     assert!(
-        msgs.iter()
-            .any(|m| message_text(m).as_deref() == Some(OUTPUT_REPETITION_BACKOFF_MESSAGE)),
-        "the conversion must append the repetition steering message; got: {msgs:?}"
+        retry_prompt.starts_with(OUTPUT_REPETITION_BACKOFF_MESSAGE),
+        "the retry prompt must carry the repetition steering message; got: {retry_prompt}"
+    );
+    assert!(
+        retry_prompt.ends_with("do the thing"),
+        "the retry prompt must keep the original prompt; got: {retry_prompt}"
+    );
+    // The completed run saves its own exchange only.
+    let msgs = h.raw_messages().await?;
+    assert_eq!(
+        msgs.len(),
+        2,
+        "the completed turn saves its exchange; got: {msgs:?}"
     );
     // The executor publishes a warning for the conversion so the user sees
     // that steering is happening instead of only a silent retry.

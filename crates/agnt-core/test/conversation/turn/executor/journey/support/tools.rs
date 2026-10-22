@@ -43,6 +43,7 @@ pub(crate) fn nu_shell_tool(response: &'static str) -> Result<ToolInfra> {
     Ok(default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
+            annotations: crate::types::ToolAnnotations::default(),
             name: crate::types::ToolName::new("nu__shell")?,
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
@@ -87,6 +88,7 @@ pub(crate) async fn nu_shell_tool_truncating(
     Ok(default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
+            annotations: crate::types::ToolAnnotations::default(),
             name: crate::types::ToolName::new("nu__shell")?,
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),
@@ -133,6 +135,7 @@ pub(crate) fn echo_tool(response: &'static str) -> Result<ToolInfra> {
     Ok(default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
+            annotations: crate::types::ToolAnnotations::default(),
             name: crate::types::ToolName::new("test_echo")?,
             description: "Test echo tool".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
@@ -210,6 +213,7 @@ pub(crate) fn nu_shell_cancelling_tool(
     let mut infra = default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
+            annotations: crate::types::ToolAnnotations::default(),
             name: crate::types::ToolName::new("nu__shell")?,
             description: "Execute a Nushell command".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}),

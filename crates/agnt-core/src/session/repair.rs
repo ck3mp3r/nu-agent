@@ -1,87 +1,4 @@
-use crate::types::{
-    AssistantContent, AssistantMessage, CallId, Message, ToolName, ToolResult, ToolResultContent,
-    UserContent,
-};
-
-/// For each `Assistant(ToolCall)` in `messages` that has no matching `User(ToolResult)`
-/// anywhere in `messages`, inserts a synthetic `User` message containing `ToolResult`
-/// entries with content `"[interrupted]"` immediately after that `Assistant` message.
-/// All unpaired ToolCalls from a single Assistant message are grouped into one synthetic
-/// User message. Returns the patched message list.
-pub fn inject_missing_tool_results(messages: Vec<Message>) -> Vec<Message> {
-    use std::collections::HashSet;
-
-    // Collect all ToolResult IDs that already exist in the history.
-    let existing_result_ids: HashSet<CallId> = messages
-        .iter()
-        .flat_map(|msg| match msg {
-            Message::User { content } => content
-                .iter()
-                .filter_map(|item| match item {
-                    UserContent::ToolResult(tr) => Some(tr.call.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>(),
-            _ => vec![],
-        })
-        .collect();
-
-    let mut result: Vec<Message> = Vec::with_capacity(messages.len());
-    let mut patch_count: usize = 0;
-
-    for msg in messages {
-        match &msg {
-            Message::Assistant(assistant) => {
-                // Collect unpaired ToolCall (id, name) pairs from this Assistant message.
-                let content = &assistant.content;
-                let unpaired_calls: Vec<(CallId, ToolName)> = content
-                    .iter()
-                    .filter_map(|item| match item {
-                        AssistantContent::ToolCall(tc) => {
-                            if !existing_result_ids.contains(&tc.id) {
-                                Some((tc.id.clone(), tc.function.name.clone()))
-                            } else {
-                                None
-                            }
-                        }
-                        _ => None,
-                    })
-                    .collect();
-
-                result.push(msg);
-
-                if !unpaired_calls.is_empty() {
-                    // Build a single User message with one ToolResult per unpaired call.
-                    let tool_results: Vec<UserContent> = unpaired_calls
-                        .into_iter()
-                        .map(|(call, name)| {
-                            patch_count += 1;
-                            UserContent::ToolResult(ToolResult {
-                                call,
-                                name,
-                                content: vec![ToolResultContent::text("[interrupted]")],
-                                is_error: false,
-                            })
-                        })
-                        .collect();
-
-                    if !tool_results.is_empty() {
-                        result.push(Message::User {
-                            content: tool_results,
-                        });
-                    }
-                }
-            }
-            _ => result.push(msg),
-        }
-    }
-
-    if patch_count > 0 {
-        log::debug!("inject_missing_tool_results: inserted {patch_count} synthetic results");
-    }
-
-    result
-}
+use crate::types::{AssistantContent, AssistantMessage, CallId, Message, UserContent};
 
 /// Detects any `User` message whose content consists entirely of `ToolResult`
 /// items that is immediately followed by another `User` message (of any content).
@@ -492,12 +409,12 @@ pub(crate) fn merge_consecutive_same_role(
     result
 }
 
-/// Returns true if `content` is a compaction summary artifact: a
-/// `UserContent::Text` carrying the compaction summary header.
+/// Returns true if `content` is a compaction summary message: a
+/// `UserContent::Text` carrying the compaction summary prefix.
 fn is_compaction_summary(content: &[UserContent]) -> bool {
-    let header = crate::conversation::compaction::compactor::SUMMARY_HEADER;
+    let prefix = crate::conversation::compaction::compactor::SUMMARY_PREFIX;
     content.iter().any(|item| match item {
-        UserContent::Text(t) => t.text.starts_with(header),
+        UserContent::Text(t) => t.text.starts_with(prefix),
         _ => false,
     })
 }

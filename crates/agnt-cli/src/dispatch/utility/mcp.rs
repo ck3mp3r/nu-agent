@@ -94,12 +94,12 @@ async fn run_mcp_login(args: &McpLoginArgs) -> Result<()> {
     auth_manager.set_credential_store(vault_credential_store);
     auth_manager.set_state_store(vault_state_store);
 
-    let metadata = auth_manager.discover_metadata().await.map_err(|e| {
+    let resolution = auth_manager.resolve_metadata().await.map_err(|e| {
         Error::Custom(format!(
             "Failed to discover OAuth metadata for '{server_name}': {e}"
         ))
     })?;
-    auth_manager.set_metadata(metadata);
+    auth_manager.set_metadata(resolution.metadata);
 
     let redirect_uri = redirect_uri
         .as_deref()

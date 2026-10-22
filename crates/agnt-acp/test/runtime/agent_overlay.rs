@@ -28,7 +28,7 @@ async fn test_runtime_build_acp_runtime_applies_agent_permissions_overlay() -> R
         "dev",
         "---\nname: dev\npermissions:\n  http: allow\n---\n\nDev agent.\n",
     )?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let runtime = build_acp_runtime(make_params(cwd.clone(), config_path, Vec::new(), store))
@@ -61,7 +61,7 @@ async fn test_runtime_build_acp_runtime_agent_without_permissions_keeps_base() -
     let config_path = write_config(temp.path(), &config)?;
     // No `permissions` front matter: the base config must survive unchanged.
     write_persona(&cwd, "dev", "---\nname: dev\n---\n\nDev agent.\n")?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let runtime = build_acp_runtime(make_params(cwd.clone(), config_path, Vec::new(), store))
@@ -96,7 +96,7 @@ async fn test_runtime_build_acp_runtime_invalid_agent_permissions_returns_error(
         "dev",
         "---\nname: dev\npermissions:\n  http: yolo\n---\n\nDev agent.\n",
     )?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let result = build_acp_runtime(make_params(cwd.clone(), config_path, Vec::new(), store)).await;
@@ -125,7 +125,7 @@ async fn test_runtime_build_acp_runtime_missing_agent_persona_returns_error() ->
     // No persona file exists for the resolved default agent name.
     let config = format!("{BASE_CONFIG}\n[agents]\ndefault = \"ghost\"\n");
     let config_path = write_config(temp.path(), &config)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let result = build_acp_runtime(make_params(cwd.clone(), config_path, Vec::new(), store)).await;
@@ -158,7 +158,7 @@ async fn test_runtime_build_acp_runtime_overlay_active_in_startup_summary() -> R
         "dev",
         "---\nname: dev\npermissions:\n  http: allow\n---\n\nDev agent.\n",
     )?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
     let _ = log::set_boxed_logger(Box::new(CaptureLogger));
     log::set_max_level(log::LevelFilter::Info);
     CAPTURED_LOGS.lock().map_err(|e| format!("{e:?}"))?.clear();
@@ -192,7 +192,7 @@ async fn test_runtime_build_acp_runtime_populates_effective_agent_identity() -> 
     let config = format!("{BASE_CONFIG}\n[agents]\ndefault = \"dev\"\n");
     let config_path = write_config(temp.path(), &config)?;
     write_persona(&cwd, "dev", "---\nname: dev\n---\n\nDev agent.\n")?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
 
     // -- Exec
     let runtime = build_acp_runtime(make_params(cwd.clone(), config_path, Vec::new(), store))

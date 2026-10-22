@@ -252,6 +252,7 @@ fn failing_tool() -> Result<ToolInfra> {
     Ok(default_tool_infra(
         handle,
         vec![rig::completion::ToolDefinition {
+            annotations: crate::types::ToolAnnotations::default(),
             name: crate::types::ToolName::new("test_fail")?,
             description: "Test tool that always fails".to_string(),
             parameters: serde_json::json!({"type": "object", "properties": {}, "required": []}),

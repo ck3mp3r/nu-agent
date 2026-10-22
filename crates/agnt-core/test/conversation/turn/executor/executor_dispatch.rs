@@ -34,7 +34,6 @@ fn completed_result(text: &str) -> TurnResult {
         cancelled: false,
         cancel_reason: None,
         last_total_tokens: 12,
-        pre_turn_message_count: 0,
         last_known_history: Vec::new(),
     }
 }
@@ -55,7 +54,6 @@ fn cancelled_result(
         cancelled: true,
         cancel_reason,
         last_total_tokens: 0,
-        pre_turn_message_count: 0,
         last_known_history,
     }
 }
@@ -63,7 +61,6 @@ fn cancelled_result(
 fn empty_context() -> TurnContext {
     TurnContext {
         last_known_history: Vec::new(),
-        pre_turn_message_count: 0,
     }
 }
 
@@ -93,7 +90,6 @@ async fn dispatch_unknown_tool_persists_history_and_reports_failure() -> Result<
                 },
                 empty_context(),
             )),
-            "use a tool".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
         )
@@ -107,10 +103,9 @@ async fn dispatch_unknown_tool_persists_history_and_reports_failure() -> Result<
         "the error must name the unknown tool; got: {error}"
     );
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert_eq!(
-        persisted.len(),
-        1,
-        "the recovered history must be persisted before the error is returned"
+    assert!(
+        persisted.is_empty(),
+        "a failed turn must save nothing to the rig store; got {persisted:?}"
     );
     Ok(())
 }
@@ -139,7 +134,6 @@ async fn dispatch_unknown_tool_without_a_session_skips_persistence() -> Result<(
                 },
                 empty_context(),
             )),
-            "use a tool".to_string(),
             nu_protocol::Span::test_data(),
             None,
         )
@@ -175,7 +169,6 @@ async fn dispatch_tool_execution_failure_reports_the_raw_message() -> Result<()>
                 },
                 empty_context(),
             )),
-            "go".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
         )
@@ -190,10 +183,9 @@ async fn dispatch_tool_execution_failure_reports_the_raw_message() -> Result<()>
         "a tool failure has no error kind, so the raw message is surfaced"
     );
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert_eq!(
-        persisted.len(),
-        2,
-        "a tool failure with no partial history must persist a placeholder pair"
+    assert!(
+        persisted.is_empty(),
+        "a tool failure must save nothing to the rig store; got {persisted:?}"
     );
     Ok(())
 }
@@ -216,7 +208,6 @@ async fn dispatch_path_c_cancelled_with_an_empty_delta_persists_nothing() -> Res
     let outcome = executor
         .dispatch_result(
             Ok(cancelled_result(Some(Vec::new()), Vec::new(), None, "")),
-            "go".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
         )
@@ -256,7 +247,6 @@ async fn dispatch_path_b_uses_the_last_known_history() -> Result<()> {
                 None,
                 "",
             )),
-            "go".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
         )
@@ -266,10 +256,9 @@ async fn dispatch_path_b_uses_the_last_known_history() -> Result<()> {
     // -- Check
     assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert_eq!(
-        persisted.len(),
-        1,
-        "path B must persist the hook's last known history"
+    assert!(
+        persisted.is_empty(),
+        "a cancelled turn must save nothing to the rig store; got {persisted:?}"
     );
     Ok(())
 }
@@ -292,7 +281,6 @@ async fn dispatch_path_b_true_fallback_synthesizes_a_placeholder() -> Result<()>
     let outcome = executor
         .dispatch_result(
             Ok(cancelled_result(None, Vec::new(), None, "partial text")),
-            "go".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
         )
@@ -302,10 +290,9 @@ async fn dispatch_path_b_true_fallback_synthesizes_a_placeholder() -> Result<()>
     // -- Check
     assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert_eq!(
-        persisted.len(),
-        2,
-        "the true fallback must persist the prompt plus the partial text"
+    assert!(
+        persisted.is_empty(),
+        "a cancelled turn must save nothing to the rig store; got {persisted:?}"
     );
     Ok(())
 }
@@ -335,7 +322,6 @@ async fn dispatch_path_c_stop_reason_surfaces_warning_and_completed() -> Result<
                 Some(reason.clone()),
                 "",
             )),
-            "go".to_string(),
             nu_protocol::Span::test_data(),
             None,
         )

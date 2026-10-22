@@ -29,7 +29,8 @@ pub use conversion::{json_to_nu_value, nu_value_to_json};
 pub use dispatch::llm_visible_tool_definitions;
 pub use pre_authorize::{PreAuthorizeOutput, pre_authorize_fs_tool};
 pub use result::tool_display_from_result;
-pub use types::{McpToolRegistry, ToolErrorKind, ToolFailureOutcome, ToolHandlerError, ToolSource};
+pub(crate) use types::execution_error_for_kind;
+pub use types::{McpToolRegistry, ToolErrorKind, ToolHandlerError, ToolSource};
 
 // Export authz_gate types for permission resolvers
 pub use authz_gate::{AuthorizationFlowContext, enforce_authorization_for_tool_call};

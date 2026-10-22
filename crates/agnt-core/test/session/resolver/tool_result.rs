@@ -3,8 +3,8 @@ use super::*;
 #[test]
 fn test_tool_result_edit_creates_display_snapshot() {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
-            AssistantContent::ToolCall(ToolCall::new(
+        Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+            ToolCall::new(
                 CallId::from_wire("call_1"),
                 ToolFunction::new(
                     ToolName::new("edit").expect("should be non-empty"),
@@ -14,9 +14,9 @@ fn test_tool_result_edit_creates_display_snapshot() {
                         "newString": "new code"
                     }),
                 ),
-            )),
-        ]))),
-        StoreEntry::Message(Message::User {
+            ),
+        )])),
+        Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_1"),
                 name: ToolName::new("edit").expect("non-empty tool name"),
@@ -30,11 +30,10 @@ fn test_tool_result_edit_creates_display_snapshot() {
                 ))],
                 is_error: false,
             })],
-        }),
+        },
     ];
 
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+    let snapshots = hydrate(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 2);
     assert_eq!(snapshots[0].role(), "tool");
@@ -60,16 +59,16 @@ fn test_tool_result_edit_creates_display_snapshot() {
 #[test]
 fn test_tool_result_nu_creates_display_snapshot_from_arguments() -> Result<()> {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
-            AssistantContent::ToolCall(ToolCall::new(
+        Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+            ToolCall::new(
                 CallId::from_wire("call_nu_1"),
                 ToolFunction::new(
                     ToolName::new("nu").expect("should be non-empty"),
                     json!({"command": "ls | sort"}),
                 ),
-            )),
-        ]))),
-        StoreEntry::Message(Message::User {
+            ),
+        )])),
+        Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_nu_1"),
                 name: ToolName::new("nu").expect("non-empty tool name"),
@@ -82,11 +81,10 @@ fn test_tool_result_nu_creates_display_snapshot_from_arguments() -> Result<()> {
                 )?))],
                 is_error: false,
             })],
-        }),
+        },
     ];
 
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+    let snapshots = hydrate(&entries, std::path::Path::new("."));
 
     assert_eq!(
         snapshots.len(),
@@ -120,16 +118,16 @@ fn test_tool_result_nu_creates_display_snapshot_from_arguments() -> Result<()> {
 #[test]
 fn test_tool_result_nu_explicit_display_wins_over_fallback() -> Result<()> {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
-            AssistantContent::ToolCall(ToolCall::new(
+        Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+            ToolCall::new(
                 CallId::from_wire("call_nu_explicit_1"),
                 ToolFunction::new(
                     ToolName::new("nu").expect("should be non-empty"),
                     json!({"command": "ls | sort"}),
                 ),
-            )),
-        ]))),
-        StoreEntry::Message(Message::User {
+            ),
+        )])),
+        Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_nu_explicit_1"),
                 name: ToolName::new("nu").expect("non-empty tool name"),
@@ -150,11 +148,10 @@ fn test_tool_result_nu_explicit_display_wins_over_fallback() -> Result<()> {
                 )?))],
                 is_error: false,
             })],
-        }),
+        },
     ];
 
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+    let snapshots = hydrate(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 2);
     assert_eq!(snapshots[1].role(), "tool_display");
@@ -208,26 +205,23 @@ fn test_tool_result_no_display_cases() -> Result<()> {
     // -- Exec & Check
     for (name, tool, arguments, result_text) in cases {
         let entries = vec![
-            StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
-                AssistantContent::ToolCall(ToolCall::new(
+            Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+                ToolCall::new(
                     CallId::from_wire("call_x"),
                     ToolFunction::new(ToolName::new(tool).expect("should be non-empty"), arguments),
-                )),
-            ]))),
-            StoreEntry::Message(Message::User {
+                ),
+            )])),
+            Message::User {
                 content: vec![UserContent::ToolResult(ToolResult {
                     call: CallId::from_wire("call_x"),
                     name: ToolName::new(tool).expect("non-empty tool name"),
                     content: vec![ToolResultContent::Text(Text::new(result_text))],
                     is_error: false,
                 })],
-            }),
+            },
         ];
 
-        let snapshots = super::resolver::hydrate_transcript_from_store_entries(
-            &entries,
-            std::path::Path::new("."),
-        );
+        let snapshots = hydrate(&entries, std::path::Path::new("."));
         assert_eq!(
             snapshots.len(),
             1,
@@ -241,16 +235,16 @@ fn test_tool_result_no_display_cases() -> Result<()> {
 #[test]
 fn test_tool_result_with_explicit_display_key() {
     let entries = vec![
-        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
-            AssistantContent::ToolCall(ToolCall::new(
+        Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+            ToolCall::new(
                 CallId::from_wire("call_3"),
                 ToolFunction::new(
                     ToolName::new("custom_tool").expect("should be non-empty"),
                     json!({}),
                 ),
-            )),
-        ]))),
-        StoreEntry::Message(Message::User {
+            ),
+        )])),
+        Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire("call_3"),
                 name: ToolName::new("custom_tool").expect("non-empty tool name"),
@@ -269,11 +263,10 @@ fn test_tool_result_with_explicit_display_key() {
                 ))],
                 is_error: false,
             })],
-        }),
+        },
     ];
 
-    let snapshots =
-        super::resolver::hydrate_transcript_from_store_entries(&entries, std::path::Path::new("."));
+    let snapshots = hydrate(&entries, std::path::Path::new("."));
 
     assert_eq!(snapshots.len(), 2);
 

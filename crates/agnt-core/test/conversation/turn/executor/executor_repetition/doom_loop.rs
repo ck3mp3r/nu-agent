@@ -45,6 +45,7 @@ async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
             visible_tool_definitions: vec![crate::types::ToolDefinition {
+                annotations: crate::types::ToolAnnotations::default(),
                 name: crate::types::ToolName::new("echo_tool")?,
                 description: "echoes a fixed result".to_string(),
                 parameters: serde_json::json!({"type": "object", "properties": {}}),

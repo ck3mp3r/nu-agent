@@ -20,7 +20,7 @@ use agnt_core::hook::DoomLoopState;
 use agnt_core::hook::output_repetition::RepetitionState;
 use agnt_core::protocol::model_switching::ModelSwitching;
 use agnt_core::protocol::persona::{FsPersonaResolver, PersonaLister};
-use agnt_core::session::{SessionStoreBackend, StoreType, create_store};
+use agnt_core::session::StoreType;
 use agnt_core::tools::authz::{PermissionsConfig, SessionGrantCache};
 use agnt_core::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use agnt_core::tools::handler::McpToolRegistry;
@@ -31,7 +31,9 @@ use agnt_core::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use agnt_core::tools::mcp::client::McpToolDefinition;
 use agnt_core::tools::mcp::config::{McpConfig, McpServerConfig};
 use agnt_core::tools::mcp::runtime::connect_servers;
-use agnt_core::types::{Completion, DynModel, EmptyToolName, ToolDefinition, ToolName};
+use agnt_core::types::{
+    Completion, DynModel, EmptyToolName, ToolAnnotations, ToolDefinition, ToolName,
+};
 
 use crate::engine_stub::AcpEngineStub;
 use crate::error::{AcpError, Result};
@@ -57,8 +59,8 @@ pub struct AcpRuntimeParams {
     pub config_path: PathBuf,
     /// Handle to the process tokio runtime.
     pub runtime_handle: tokio::runtime::Handle,
-    /// Session store shared by all sessions of this process.
-    pub store: Arc<SessionStoreBackend>,
+    /// The session store backend the session's rig-memory store is made from.
+    pub store_type: StoreType,
     /// Persisted session id, when the session is resumed from the store.
     pub session_id: Option<String>,
     /// The ACP client's filesystem capabilities and connection, when the client
@@ -75,14 +77,6 @@ pub struct AcpRuntimeParams {
 // endregion: --- Types
 
 // region:    --- Public Functions
-
-/// Create the default ACP session store (SQLite).
-pub async fn create_acp_store() -> Result<Arc<SessionStoreBackend>> {
-    let store = create_store(StoreType::Sqlite)
-        .await
-        .map_err(|e| AcpError::Runtime(format!("failed to create session store: {e}")))?;
-    Ok(Arc::new(store))
-}
 
 /// The id of the model selector config option.
 pub const MODEL_CONFIG_ID: &str = "model";
@@ -104,10 +98,16 @@ pub fn build_model_config_options(
     let mut options: Vec<SessionConfigSelectOption> = cache
         .map(|cache| {
             cache
-                .list_models(Some(config.provider.as_str()))
+                .list_models(Some(config.cache_section()))
                 .into_iter()
-                .map(|(provider, model, spec)| {
-                    SessionConfigSelectOption::new(format!("{provider}/{model}"), spec.name.clone())
+                // The value is the config's identity, not the cache section
+                // key: a block named `ollama` serving the `ollama-cloud`
+                // section advertises `ollama/<model>`.
+                .map(|(_, model, spec)| {
+                    SessionConfigSelectOption::new(
+                        format!("{}/{model}", config.provider),
+                        spec.name.clone(),
+                    )
                 })
                 .collect()
         })
@@ -176,7 +176,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
         mcp_servers,
         config_path,
         runtime_handle,
-        store,
+        store_type,
         session_id,
         client_fs,
         agent_name,
@@ -199,6 +199,14 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     let repetition_guard = config
         .repetition_guard
         .unwrap_or(defaults::REPETITION_GUARD_ENABLED);
+    // The compaction model spec is built once, from the provider name and the
+    // limits our config carries.
+    let compaction_spec = agnt_core::conversation::compaction::compactor::resolve_model_spec(
+        &config.provider,
+        &config.model,
+        u32::try_from(max_context_tokens).ok(),
+        config.max_output_tokens,
+    );
 
     // -- MCP servers: config.toml merged with the ACP client's list
     let config_mcp = McpConfig::from_toml_config(&plugin_config)
@@ -349,7 +357,6 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     let threshold_tokens = Some((max_context_tokens as f64 * threshold_pct) as usize);
 
     // -- Model and compactor share one erased model per consumer
-    let store_for_session = Arc::clone(&store);
     let mut provider = ProviderState::new(config, Some(plugin_config.clone()));
     let dyn_model = provider
         .build_dyn_model()
@@ -361,8 +368,12 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
         .await
         .map_err(|e| AcpError::Runtime(format!("failed to build compactor model: {e}")))?;
     let compactor_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(compactor_model));
-    let compactor = NuCompactor::from_shared_model(Arc::clone(&compactor_model), bus.clone(), None)
-        .with_store(Arc::clone(&store_for_session));
+    let compactor = NuCompactor::from_shared_model(
+        Arc::clone(&compactor_model),
+        bus.clone(),
+        rig_memory::CompactionPolicy::default(),
+        compaction_spec,
+    );
 
     let engine: Arc<dyn EngineInterfaceLike> =
         Arc::new(AcpEngineStub::new(cwd.to_string_lossy().to_string()));
@@ -390,7 +401,6 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             plugin_config.vault.clone(),
         ),
         engine,
-        store,
         final_session_id: session_id,
         permission_state: PermissionState::new(
             base_permissions,
@@ -399,7 +409,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             SessionGrantCache::default(),
             permissions_startup_summary,
         ),
-        session: MemoryState::new(store_for_session),
+        session: MemoryState::new(agnt_core::session::RigStoreConfig::new(store_type)),
         persona: PersonaState::new(
             None,
             None,
@@ -482,6 +492,7 @@ fn mcp_tool_definition(
     tool: &McpToolDefinition,
 ) -> core::result::Result<ToolDefinition, EmptyToolName> {
     Ok(ToolDefinition {
+        annotations: ToolAnnotations::default(),
         name: ToolName::new(tool.name.clone())?,
         description: tool
             .description
@@ -550,10 +561,6 @@ mod runtime_client_fs;
 #[cfg(all(test, feature = "integration"))]
 #[path = "../test/runtime/config_errors.rs"]
 mod runtime_config_errors;
-
-#[cfg(all(test, feature = "integration"))]
-#[path = "../test/runtime/store.rs"]
-mod runtime_store;
 
 #[cfg(all(test, feature = "integration"))]
 #[path = "../test/runtime/agent_overlay.rs"]

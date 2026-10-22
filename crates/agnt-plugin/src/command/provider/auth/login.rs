@@ -83,9 +83,8 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
         if name == "github-copilot" || name == "copilot" {
             crate::block_on!(plugin, async {
                 use agnt_core::config::copilot_tokens::verify_copilot_login_persistence;
-                use agnt_core::types::{
-                    AuthSource, Authenticator, CopilotConfig, DeviceCodeHandler, default_token_dir,
-                };
+                use agnt_core::conversation::providers::copilot_device_login;
+                use agnt_core::types::DeviceCodeHandler;
 
                 let handler = DeviceCodeHandler::new(|prompt| {
                     eprintln!(
@@ -93,35 +92,14 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
                         prompt.verification_uri, prompt.user_code
                     );
                 });
-                let token_dir = default_token_dir();
-                let authenticator = Authenticator::new(
-                    AuthSource::OAuth,
-                    token_dir.as_ref().map(|dir| dir.join("access-token")),
-                    token_dir.as_ref().map(|dir| dir.join("api-key.json")),
-                    handler,
-                    true,
-                );
 
-                CopilotConfig::new("")
-                    .client()
-                    .authenticate(&authenticator)
-                    .await
-                    .map_err(|e| LabeledError::new(format!("Authentication failed: {e}")))?;
-
-                let token_dir = token_dir.ok_or_else(|| {
-                    LabeledError::new(
-                        "GitHub Copilot credential directory unavailable: set XDG_CONFIG_HOME or HOME.",
-                    )
-                })?;
+                let token_dir = copilot_device_login(handler).await?;
                 verify_copilot_login_persistence(&token_dir).map_err(LabeledError::new)?;
 
-                let api_key_path = token_dir.join("api-key.json");
-                let access_token_path = token_dir.join("access-token");
                 Ok(Value::string(
                     format!(
-                        "Successfully authenticated with GitHub Copilot\n  api-key.json: {}\n  access-token: {}",
-                        api_key_path.display(),
-                        access_token_path.display()
+                        "Successfully authenticated with GitHub Copilot\n  credentials: {}",
+                        token_dir.display()
                     ),
                     call.head,
                 ))

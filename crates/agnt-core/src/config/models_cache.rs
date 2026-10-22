@@ -44,7 +44,10 @@ pub struct ModelLimit {
     pub output: u32,
 }
 
-/// Per-token cost for a model.
+/// Cost for a model, in USD per million tokens.
+///
+/// The models cache parses models.dev's `cost` object into this, and a
+/// per-model `pricing` block in config.toml parses into it too.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ModelCost {
     pub input: f64,
@@ -135,18 +138,34 @@ impl ModelsCache {
         Ok(cache)
     }
 
+    /// The cache section for `provider`.
+    ///
+    /// `provider` is a cache key as models.dev spells it. A config block
+    /// reaches a section through its declared `catalog` (see
+    /// `PluginConfig::cache_section`); this lookup does no name mapping.
+    pub fn provider_spec(&self, provider: &str) -> Option<&ProviderSpec> {
+        self.providers.get(provider)
+    }
+
     /// Get the spec for a specific provider/model combination.
     pub fn get_spec(&self, provider: &str, model: &str) -> Option<&ModelSpec> {
-        self.providers.get(provider)?.models.get(model)
+        self.provider_spec(provider)?.models.get(model)
     }
 
     /// List all models, optionally filtered by provider.
-    pub fn list_models(&self, provider: Option<&str>) -> Vec<(&str, &str, &ModelSpec)> {
+    ///
+    /// The filter matches cache keys exactly: `Some("ollama")` lists nothing,
+    /// because models.dev files no local-ollama section. Each row is labelled
+    /// with the key the caller asked for.
+    pub fn list_models<'a>(
+        &'a self,
+        provider: Option<&'a str>,
+    ) -> Vec<(&'a str, &'a str, &'a ModelSpec)> {
         let mut result = Vec::new();
         if let Some(p) = provider {
-            if let Some(spec) = self.providers.get(p) {
+            if let Some(spec) = self.provider_spec(p) {
                 for (model_id, model_spec) in &spec.models {
-                    result.push((spec.id.as_str(), model_id.as_str(), model_spec));
+                    result.push((p, model_id.as_str(), model_spec));
                 }
             }
         } else {

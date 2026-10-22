@@ -13,6 +13,8 @@
 #   api_key = "env:VAR_NAME"    read from an environment variable
 #   api_key omitted             default: vault lookup by provider element name
 #
+# catalog selects the models-cache section for prices/limits (default: the block name)
+#
 # A raw key (a literal secret) is REJECTED at startup — never put a
 # plaintext secret in config.toml.
 
@@ -30,12 +32,14 @@
 # provider = "openai"
 # base_url = "https://ollama.com/v1"
 # api_key = "store:ollama-cloud"  # run: agent provider auth login ollama-cloud
+# catalog = "ollama-cloud"  # optional — the block name is already the cache section
 
 # Custom env var (non-standard name)
 # [providers.my-gateway]
 # provider = "openai"
 # base_url = "https://gateway.example.com/v1"
 # api_key = "env:MY_GATEWAY_KEY"  # reads MY_GATEWAY_KEY from the environment
+# catalog = "openai"  # cache section for prices/limits — the block name differs
 
 # GitHub Copilot (OAuth — no api_key needed)
 # [providers.github-copilot]
@@ -45,6 +49,8 @@
 # [providers.ollama]
 # provider = "ollama"
 # base_url = "http://localhost:11434"
+# # no catalog: local models stay tokens-only (no prices/limits from the cache)
+# catalog = "ollama-cloud"  # opt in to the cloud list prices
 
 
 # ─── Permissions ──────────────────────────────────────────

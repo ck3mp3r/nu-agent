@@ -28,5 +28,4 @@ use super::executor_test_support::*;
 use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
 use crate::config::Config;
-use crate::session::StoreEntry;
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;

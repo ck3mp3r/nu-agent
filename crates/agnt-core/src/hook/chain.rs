@@ -18,18 +18,18 @@ use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
     HookContext, InvalidToolCallAction, InvalidToolCallContext, ModelSelection,
     ModelSelectionAction, ModelTurnAction, ModelTurnFinished, ObservationAction, OutcomeAction,
-    OutcomeEvent, RequestPatch, TextDelta,
+    OutcomeEvent, TextDelta,
 };
-use rig::core::wasm_compat::WasmCompatSend;
 use rig::message::Message;
+use rig::wasm_compat::WasmCompatSend;
+use rig_memory::CompactReason;
 
 use crate::bus::{Bus, CancelEvent, CancelRx, CompactionEvent, TryRecvError};
 use crate::config::defaults;
 use crate::conversation::compaction::CompactionConfig;
-use crate::conversation::compaction::compactor::{NuCompactor, SummaryArtifact};
 use crate::conversation::turn::token_estimate::estimate_token_count;
+use crate::llm::{PricedOutcome, PricingSkip, computed_cost};
 use crate::protocol::event::UiEvent;
-use crate::session::SessionStore;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;
@@ -45,15 +45,13 @@ use super::permission_resolver::{
     AsyncPermissionResolver, PermissionDecision, resolve_tool_source,
 };
 use super::subturn_cap::SubTurnCap;
+use super::unpriced_warnings::UnpricedWarnings;
 
 /// Composable hook that delegates to named concern structs in explicit order.
 ///
 /// See module-level docs for the extension pattern.
 #[derive(Clone)]
-pub struct HookChain<
-    P: AsyncPermissionResolver,
-    S: SessionStore + Clone + Send + Sync = crate::session::SessionStoreBackend,
-> {
+pub struct HookChain<P: AsyncPermissionResolver> {
     cancel_rx: Arc<Mutex<CancelRx>>,
     subturn: SubTurnCap,
     doom: DoomLoopDetector,
@@ -73,19 +71,22 @@ pub struct HookChain<
     render_registry: ToolRenderRegistry,
     /// Memory backing the conversation, used to read markers and (optionally) reset
     /// the cache after compaction. Shared with the turn executor via `Arc`.
-    memory: crate::conversation::state::memory::MemoryOf<S>,
+    memory: crate::conversation::state::memory::MemoryOf,
     /// The session/conversation id this hook compacts.
     conversation_id: String,
     /// Hook-driven compaction machinery: compactor, policy, threshold.
-    compaction: CompactionConfig<S>,
+    compaction: CompactionConfig,
     /// Real token count from the last LLM completion, shared across turns. Used by
     /// `decide_compaction` to check the threshold against the real context size
     /// (plus the current prompt) instead of the chars/4 heuristic. `None` before
     /// the first completion and after a compaction reset.
     last_total_tokens: Arc<Mutex<Option<u64>>>,
+    /// Model ids already reported as unpriced, so the warn fires once per
+    /// model rather than once per call.
+    unpriced_warnings: UnpricedWarnings,
 }
 
-impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChain<P, S> {
+impl<P: AsyncPermissionResolver> HookChain<P> {
     pub fn new(
         bus: Bus,
         permission_resolver: P,
@@ -93,7 +94,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChai
         mcp_registry: Arc<McpToolRegistry>,
         render_registry: ToolRenderRegistry,
         max_tool_calls_per_subturn: Option<usize>,
-        hook_state: HookState<S>,
+        hook_state: HookState,
     ) -> Self {
         Self {
             cancel_rx: Arc::new(Mutex::new(bus.cancel().subscribe())),
@@ -118,6 +119,7 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChai
             conversation_id: hook_state.conversation_id,
             compaction: hook_state.compaction,
             last_total_tokens: hook_state.last_total_tokens,
+            unpriced_warnings: UnpricedWarnings::default(),
         }
     }
 
@@ -141,11 +143,27 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> HookChai
             Ok(CancelEvent::Requested) | Err(TryRecvError::Lagged(_))
         )
     }
+
+    /// Report an unpriced completion once per model id.
+    ///
+    /// A tokens-only session used to be unexplainable: nothing said why no
+    /// cost appeared. The reason is logged at warn level the first time a
+    /// model goes unpriced, so the log names the cause without repeating it
+    /// on every call.
+    fn warn_unpriced_once(&self, reason: PricingSkip) {
+        let model = self.compaction.model();
+        let model_id = model.id().unwrap_or("<no model>").to_string();
+        let vendor = model.name().to_string();
+        if !self.unpriced_warnings.first_time(&model_id) {
+            return;
+        }
+        log::warn!(
+            "no cost for {vendor}/{model_id}: {reason} — the session cost line stays tokens-only for this model"
+        );
+    }
 }
 
-impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHook
-    for HookChain<P, S>
-{
+impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
     fn on_model_select(
         &self,
         _ctx: &HookContext,
@@ -163,7 +181,8 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         event: CompletionCallEvent<'_>,
     ) -> impl std::future::Future<Output = CompletionCallAction> + WasmCompatSend {
         // 1. History snapshot — store history + prompt before the LLM call
-        self.history.update(event.history, event.prompt);
+        let history: Vec<Message> = event.history.iter().map(|m| (**m).clone()).collect();
+        self.history.update(&history, event.prompt);
 
         // 2. Reset sub-turn cap — new LLM request, fresh counter
         self.subturn.reset();
@@ -192,8 +211,6 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
         let conversation_id = self.conversation_id.clone();
         let compaction = self.compaction.clone();
         let last_total_tokens = Arc::clone(&self.last_total_tokens);
-        // Cloned history for the compaction decision; rig owns `event.history`.
-        let history: Vec<Message> = event.history.to_vec();
         let prompt = event.prompt.clone();
 
         async move {
@@ -202,10 +219,10 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             }
             let _ = bus.ui_event().send(UiEvent::LlmStarted).await;
 
-            // Compaction decision: patch the per-turn history when a marker
-            // already summarizes the prefix, or when a new compaction is needed.
-            let action = decide_compaction(
-                &history,
+            // Compaction decision: schedule a compaction when the session's
+            // current conversation is over the threshold. The hook never patches
+            // the per-turn history — the splice is what the next run loads.
+            decide_compaction(
                 &prompt,
                 conversation_id.as_str(),
                 memory.as_ref(),
@@ -214,10 +231,6 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                 &bus,
             )
             .await;
-
-            if let Some(action) = action {
-                return action;
-            }
 
             CompletionCallAction::continue_run()
         }
@@ -397,13 +410,6 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                 // sniffing.
                 let success = result.is_success();
 
-                // Record the verdict for persistence: `CachedMemory::append` stamps it
-                // onto the ToolResult with the matching call id when the turn is
-                // written to the session store.
-                if let Some(id) = event.call_id {
-                    self.memory.record_tool_verdict(&id.to_string(), success);
-                }
-
                 log::trace!(
                     "on_outcome: tool={tool_name} success={success} result_len={}",
                     result_text.len(),
@@ -471,7 +477,14 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
             // the compaction threshold check.
             if let Some(response) = event.completion() {
                 let usage = response.usage;
-                if usage.total_tokens.unwrap_or(0) > 0 {
+                // Any counter is enough to report the call: a wire may omit
+                // `total_tokens` (ollama-cloud's OpenAI-compatible endpoint
+                // does), and pricing needs only the input and output counts.
+                // A usage that reports no counter at all reports nothing.
+                let reports_usage = usage.input_tokens.is_some()
+                    || usage.output_tokens.is_some()
+                    || usage.total_tokens.is_some();
+                if reports_usage {
                     let mut response_chars = 0usize;
                     let mut tool_calls = 0usize;
                     for item in response.choice.iter() {
@@ -483,8 +496,23 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                             _ => {}
                         }
                     }
+                    // Store the real count only when the wire reports one: a
+                    // missing total is not a zero, and the threshold check
+                    // falls back to its own estimate without it.
                     // Mutex poison is a fatal internal inconsistency — panicking is correct.
-                    *self.last_total_tokens.lock().unwrap() = Some(usage.total_tokens.unwrap_or(0));
+                    if let Some(total_tokens) = usage.total_tokens {
+                        *self.last_total_tokens.lock().unwrap() = Some(total_tokens);
+                    }
+                    let (cost, cost_complete) = match usage.cost {
+                        Some(cost) => (Some(cost.total), cost.is_complete()),
+                        None => match computed_cost(&self.compaction.model(), &usage) {
+                            PricedOutcome::Priced { total, complete } => (Some(total), complete),
+                            PricedOutcome::Skipped(reason) => {
+                                self.warn_unpriced_once(reason);
+                                (None, false)
+                            }
+                        },
+                    };
                     let _ = bus
                         .ui_event()
                         .send(UiEvent::LlmCompleted {
@@ -492,7 +520,9 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
                             tool_calls,
                             input_tokens: usage.input_tokens.unwrap_or(0),
                             output_tokens: usage.output_tokens.unwrap_or(0),
-                            total_tokens: usage.total_tokens.unwrap_or(0),
+                            total_tokens: usage.total_tokens,
+                            cost,
+                            cost_complete,
                         })
                         .await;
                 }
@@ -568,238 +598,189 @@ impl<P: AsyncPermissionResolver, S: SessionStore + Clone + Send + Sync> AgentHoo
 
 // region: --- Compaction
 
-/// Decide whether and how to patch the per-turn history for compaction.
+/// Decide whether this turn should schedule a compaction.
 ///
-/// Returns `Some(action)` when the history should be patched (or a stop is
-/// needed); `None` when the model should see the full history unchanged
-/// (`continue_run`).
+/// The threshold is evaluated against the CURRENT conversation of the session's
+/// rig-memory store — the store a run loads at its start — so a turn saved after
+/// the cache was populated is counted. `rig_memory::load` re-reads and folds the
+/// log on every call, so it is always current; the first-read cache is not a
+/// compaction input.
 ///
-/// This is the single place where compaction logic lives. The store and cache
-/// always keep the full history; the patched history affects only what is sent
-/// to the model this turn.
-async fn decide_compaction<S>(
-    history: &[Message],
+/// The hook never patches the per-turn history: after a compaction the splice is
+/// saved and rig loads it at the next run.
+async fn decide_compaction(
     prompt: &Message,
     conversation_id: &str,
-    memory: &crate::session::CachedMemory<S>,
-    compaction: &CompactionConfig<S>,
+    memory: &crate::session::CachedMemory,
+    compaction: &CompactionConfig,
     last_total_tokens: &Arc<Mutex<Option<u64>>>,
     bus: &Bus,
-) -> Option<CompletionCallAction>
-where
-    S: SessionStore + Clone + Send + Sync,
-{
-    let threshold_tokens = compaction.threshold_tokens;
-
-    // Empty history — nothing to compact or patch.
-    if history.is_empty() {
-        return None;
+) {
+    let Some(threshold_tokens) = compaction.threshold_tokens else {
+        return;
+    };
+    // A session whose provider name resolved to no rig provider id has no model
+    // spec, so its compactor cannot run: scheduling one would only emit a
+    // misleading `Requested`.
+    if compaction.spec().is_none() {
+        return;
     }
 
-    // Load the last marker for the session, if any, plus the messages that follow
-    // it in the store (so we can patch from the marker without re-seeing the
-    // summarized prefix). Build the per-turn CONTEXT from the marker summary (if
-    // any) and the messages after it; when no marker exists, the context is the
-    // full history.
-    //
-    // The threshold is checked against this context, NOT the full history. The
-    // full history never shrinks (the store/cache keep everything for posterity),
-    // so checking it would re-compact every turn after the first.
-    let (last_marker, messages_after_marker) =
-        load_marker_context(&compaction.compactor, memory, conversation_id, bus).await;
-
-    let context: Vec<Message> = match &last_marker {
-        Some(marker) => {
-            let mut ctx = Vec::with_capacity(1 + messages_after_marker.len());
-            ctx.push(Message::from(SummaryArtifact::from_marker_summary(
-                marker.summary.clone(),
-            )));
-            ctx.extend(messages_after_marker.iter().cloned());
-            ctx
-        }
-        None => history.to_vec(),
+    let Some(conversation) = current_conversation(memory, conversation_id, bus).await else {
+        return;
     };
+    if conversation.is_empty() {
+        return;
+    }
 
     // Threshold check: use the real token count from the last completion when
     // available (it reflects the actual context the model processed last turn,
     // which already includes the prior prompt), plus a chars/4 estimate for the
     // current prompt. When no real count exists (first turn, or after a
-    // compaction reset) fall back to the chars/4 estimate for the context too.
+    // compaction reset) fall back to the chars/4 estimate for the conversation.
     // Mutex poison is a fatal internal inconsistency — panicking is correct.
     let base_tokens = last_total_tokens
         .lock()
         .unwrap()
         .and_then(|n| u64::try_into(n).ok())
-        .unwrap_or_else(|| estimate_token_count(&context));
+        .unwrap_or_else(|| estimate_token_count(&conversation));
     let prompt_estimate = estimate_token_count(std::slice::from_ref(prompt));
-    let total = base_tokens + prompt_estimate;
-    let over_threshold = threshold_tokens.is_some_and(|limit| total >= limit);
-    if !over_threshold {
-        if last_marker.is_some() {
-            return patch_from_marker(&messages_after_marker, &last_marker, bus).await;
-        }
-        return None;
+    if base_tokens + prompt_estimate < threshold_tokens {
+        return;
     }
 
-    // Compaction is needed (context is over the threshold). Fire a
-    // `CompactionEvent::Requested` on the bus so the orchestrator schedules the
-    // compaction on the worker. The current turn proceeds with the existing
-    // marker patch (or the full history); the new marker is applied on the next
-    // turn via `patch_from_marker`.
+    // Compaction is needed. Fire a `CompactionEvent::Requested` on the bus so the
+    // orchestrator schedules the compaction on the worker; the splice it makes is
+    // what the next run loads.
     let _ = bus
         .compaction()
         .send(CompactionEvent::Requested {
             source: "auto".to_string(),
         })
         .await;
-    patch_from_marker(&messages_after_marker, &last_marker, bus).await
 }
 
-/// Run a compaction for `conversation_id`, returning the patched history
-/// `[summary]` when compaction ran, or `None` when there was nothing to compact.
+/// The conversation the session's rig-memory store holds right now.
 ///
-/// Called by the router when the orchestrator dispatches a `RunCompaction`
-/// worker command. `source` is `"auto"` or `"slash"`. `compact()` emits all
-/// `Started`/`SummaryChunk`/`Completed`/`Failed` events; this function only
-/// returns `None` when there are no messages to summarize.
-///
-/// The context is `[previous_summary?, ...messages_since_last_marker]`. The
-/// previous summary is passed to `compact()` as `carry_over`; the messages
-/// since the last marker (WITHOUT the previous summary) are the messages to
-/// summarize. The result is a single summary message — the summary IS the
-/// context, no kept messages.
-pub(crate) async fn run_compaction<S>(
-    history: &[Message],
-    conversation_id: &str,
-    memory: &crate::session::CachedMemory<S>,
-    compaction: &CompactionConfig<S>,
-    source: &str,
-    last_total_tokens: &Arc<Mutex<Option<u64>>>,
-    bus: &Bus,
-) -> Option<Vec<Message>>
-where
-    S: SessionStore + Clone + Send + Sync,
-{
-    // Load the last marker for the session, if any, plus the messages that follow
-    // it in the store. When no marker exists, the messages to summarize are the
-    // full history.
-    let (last_marker, messages_after_marker) =
-        load_marker_context(&compaction.compactor, memory, conversation_id, bus).await;
-
-    let messages_to_summarize: Vec<Message> = match &last_marker {
-        Some(_) => messages_after_marker,
-        None => history.to_vec(),
-    };
-
-    // Nothing to compact — no messages since the last marker and no history.
-    // Emit a `Completed` with an empty summary so the TUI gets feedback that
-    // the `/compact` command ran even when there was nothing to compact.
-    if messages_to_summarize.is_empty() {
-        let _ = bus
-            .compaction()
-            .send(CompactionEvent::Completed {
-                source: source.to_string(),
-                summary_preview: String::new(),
-                summary_body: String::new(),
-            })
-            .await;
-        return None;
-    }
-
-    // Run a fresh compaction with the marker summary as carry-over (so the new
-    // summary preserves prior context). `compact()` emits all lifecycle events.
-    let carry_over = last_marker
-        .as_ref()
-        .map(|m| SummaryArtifact::from_marker_summary(m.summary.clone()));
-    let artifact = match compaction
-        .compactor
-        .compact(
-            conversation_id,
-            &messages_to_summarize,
-            carry_over.as_ref(),
-            source,
-        )
-        .await
-    {
-        Ok(artifact) => artifact,
-        Err(_) => {
-            // `compact()` already emitted `Failed`; fall back to the full history
-            // so the turn is not lost.
-            return None;
-        }
-    };
-
-    let summary_message = Message::from(artifact);
-    // Compaction succeeded: the real token count from the previous turn no longer
-    // reflects the (now summarized) context. Reset it so the next turn falls back
-    // to the estimate (small — just the summary), then picks up the real count
-    // after its first completion. Mutex poison is fatal — panicking is correct.
-    *last_total_tokens.lock().unwrap() = None;
-    Some(vec![summary_message])
-}
-
-/// Load the last `CompactionMarker` for `conversation_id` and the messages that
-/// follow it in the store.
-///
-/// Store errors are surfaced as a `CompactionEvent::Failed` on `bus` and fall
-/// back to `(None, Vec::new())` so the caller degrades gracefully but the
-/// failure is never silently swallowed.
-async fn load_marker_context<S>(
-    compactor: &NuCompactor<S>,
-    memory: &crate::session::CachedMemory<S>,
+/// Store errors are surfaced as a `CompactionEvent::Failed` on `bus` and yield
+/// `None` so the turn proceeds without a compaction decision.
+async fn current_conversation(
+    memory: &crate::session::CachedMemory,
     conversation_id: &str,
     bus: &Bus,
-) -> (Option<crate::session::CompactionMarker>, Vec<Message>)
-where
-    S: SessionStore + Clone + Send + Sync,
-{
-    let marker = match compactor.last_marker(conversation_id, "auto").await {
-        Ok(marker) => marker,
+) -> Option<Vec<Message>> {
+    let store = match memory.rig_store(conversation_id) {
+        Ok(store) => store,
         Err(e) => {
             let _ = bus
                 .compaction()
                 .send(CompactionEvent::Failed {
                     source: "auto".to_string(),
-                    message: format!("Failed to load marker: {e}"),
+                    message: format!("Failed to open the session store: {e}"),
                 })
                 .await;
-            return (None, Vec::new());
+            return None;
         }
     };
-    let messages_after_marker = match &marker {
-        Some(_) => {
-            let entries = match memory.load_all(conversation_id).await {
-                Ok(entries) => entries,
-                Err(e) => {
-                    let _ = bus
-                        .compaction()
-                        .send(CompactionEvent::Failed {
-                            source: "auto".to_string(),
-                            message: format!("Failed to load session entries: {e}"),
-                        })
-                        .await;
-                    return (None, Vec::new());
-                }
-            };
-            // Find the marker by the last `StoreEntry::Marker` index, not by
-            // summary-text equality (which could match an empty marker).
-            let marker_idx = entries
+    match rig_memory::load(&*store, conversation_id) {
+        Ok(conversation) => Some(
+            conversation
+                .messages()
                 .iter()
-                .rposition(|e| matches!(e, crate::session::StoreEntry::Marker(_)));
-            match marker_idx {
-                Some(idx) => entries[idx + 1..]
-                    .iter()
-                    .filter_map(|e| match e {
-                        crate::session::StoreEntry::Message(m) => Some(m.clone()),
-                        _ => None,
-                    })
-                    .collect(),
-                None => Vec::new(),
-            }
+                .map(|message| (**message).clone())
+                .collect(),
+        ),
+        Err(e) => {
+            let _ = bus
+                .compaction()
+                .send(CompactionEvent::Failed {
+                    source: "auto".to_string(),
+                    message: format!("Failed to load the session: {e}"),
+                })
+                .await;
+            None
         }
-        None => Vec::new(),
+    }
+}
+
+/// Run a compaction for `conversation_id`, returning the post-splice history
+/// when compaction ran, or `None` when there was nothing to compact.
+///
+/// Called by the router when the orchestrator dispatches a `RunCompaction`
+/// worker command. `source` is `"auto"` or `"slash"`. `compact()` emits all
+/// `Started`/`SummaryChunk`/`Completed`/`Failed` events; this function emits a
+/// `Completed` with an empty summary when there was nothing to summarize, so the
+/// TUI still gets feedback that the `/compact` command ran.
+///
+/// The conversation is read from the rig-memory store of the session, which is
+/// what a run loads at its start: the splice `compact()` makes IS the context
+/// from then on.
+pub(crate) async fn run_compaction(
+    conversation_id: &str,
+    memory: &crate::session::CachedMemory,
+    compaction: &CompactionConfig,
+    source: &str,
+    last_total_tokens: &Arc<Mutex<Option<u64>>>,
+    bus: &Bus,
+) -> Option<Vec<Message>> {
+    let store = match memory.rig_store(conversation_id) {
+        Ok(store) => store,
+        Err(e) => {
+            let _ = bus
+                .compaction()
+                .send(CompactionEvent::Failed {
+                    source: source.to_string(),
+                    message: format!("Failed to open the session store: {e}"),
+                })
+                .await;
+            return None;
+        }
     };
-    (marker, messages_after_marker)
+
+    let reason = compact_reason(source);
+    match compaction
+        .compactor
+        .compact(&*store, conversation_id, &reason, source)
+        .await
+    {
+        Ok(Some(outcome)) => {
+            // Compaction succeeded: the real token count from the previous turn no
+            // longer reflects the (now summarized) context. Reset it so the next
+            // turn falls back to the estimate (small — just the summary), then
+            // picks up the real count after its first completion. Mutex poison is
+            // fatal — panicking is correct.
+            *last_total_tokens.lock().unwrap() = None;
+            Some(outcome.messages)
+        }
+        Ok(None) => {
+            let _ = bus
+                .compaction()
+                .send(CompactionEvent::Completed {
+                    source: source.to_string(),
+                    summary_preview: String::new(),
+                    summary_body: String::new(),
+                })
+                .await;
+            None
+        }
+        // `compact()` already emitted `Failed`; fall back to the full history so
+        // the turn is not lost.
+        Err(_) => None,
+    }
+}
+
+/// Why a compaction is running, from the command that asked for it.
+///
+/// `"slash"` is the user asking through `/compact`; anything else is the
+/// automatic path.
+fn compact_reason(source: &str) -> CompactReason {
+    if source == "slash" {
+        CompactReason::Asked {
+            focus: String::new(),
+        }
+    } else {
+        CompactReason::Threshold
+    }
 }
 
 /// Decide whether a tool-completion `display` should still be attached, or
@@ -820,39 +801,6 @@ fn suppress_previewed_display<P: crate::hook::permission_resolver::AsyncPermissi
     } else {
         display
     }
-}
-
-/// If a marker exists, return a patch built from `[summary, ...messages_after_marker]`.
-///
-/// Returns `None` when no marker is present. An empty-summary marker is
-/// surfaced as a `CompactionEvent::Failed` on `bus` instead of silently
-/// degrading to the full history.
-async fn patch_from_marker(
-    messages_after_marker: &[Message],
-    last_marker: &Option<crate::session::CompactionMarker>,
-    bus: &Bus,
-) -> Option<CompletionCallAction> {
-    let Some(marker) = last_marker else {
-        return None;
-    };
-    if marker.summary.is_empty() {
-        let _ = bus
-            .compaction()
-            .send(CompactionEvent::Failed {
-                source: "hook".to_string(),
-                message: "Marker has empty summary, cannot patch".to_string(),
-            })
-            .await;
-        return None;
-    }
-    let summary_message =
-        Message::from(SummaryArtifact::from_marker_summary(marker.summary.clone()));
-    let mut patched = Vec::with_capacity(1 + messages_after_marker.len());
-    patched.push(summary_message);
-    patched.extend_from_slice(messages_after_marker);
-    Some(CompletionCallAction::patch(
-        RequestPatch::new().history(patched),
-    ))
 }
 
 // endregion: --- Compaction

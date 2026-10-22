@@ -203,6 +203,7 @@ async fn namespaced_tool_call_propagates_inner_error() -> Result<()> {
 /// A `ToolDefinition` with a minimal schema.
 fn tool_def(name: &str) -> core::result::Result<ToolDefinition, EmptyToolName> {
     Ok(ToolDefinition {
+        annotations: crate::types::ToolAnnotations::default(),
         name: ToolName::new(name)?,
         description: format!("tool {name}"),
         parameters: serde_json::json!({"type": "object"}),

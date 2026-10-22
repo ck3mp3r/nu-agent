@@ -60,7 +60,7 @@ async fn test_runtime_build_acp_runtime_registers_client_fs_tools() -> Result<()
     log::set_max_level(log::LevelFilter::Info);
     let temp = tempfile::tempdir()?;
     let config_path = write_config(temp.path(), BASE_CONFIG)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
     let connection = client_connection().await?;
     let capabilities = FileSystemCapabilities::new()
         .read_text_file(true)
@@ -90,7 +90,7 @@ async fn test_runtime_build_acp_runtime_client_fs_read_only_keeps_local_tools() 
     force_env_only_vault();
     let temp = tempfile::tempdir()?;
     let config_path = write_config(temp.path(), BASE_CONFIG)?;
-    let store = memory_store(temp.path()).await?;
+    let store = memory_store_type();
     let connection = client_connection().await?;
     // Only the read capability: the client cannot write, so the local
     // filesystem tools must stay in place.

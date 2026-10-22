@@ -16,6 +16,7 @@ fn test_resolve_model_merges_provider_and_model_fields() -> Result<()> {
                     base_url: Some("https://api.githubcopilot.com".to_string()),
                     provider: Some("openai".to_string()),
                     preamble: None,
+                    catalog: None,
                     models: HashMap::new(),
                 },
             );
@@ -45,6 +46,7 @@ fn test_resolve_model_merges_provider_and_model_fields() -> Result<()> {
                     base_url: None,
                     provider: None,
                     preamble: None,
+                    catalog: None,
                     models: {
                         let mut models = HashMap::new();
                         models.insert(
@@ -58,6 +60,7 @@ fn test_resolve_model_merges_provider_and_model_fields() -> Result<()> {
                                     context: Some(128000),
                                     output: Some(8192),
                                 }),
+                                pricing: None,
                             },
                         );
                         models

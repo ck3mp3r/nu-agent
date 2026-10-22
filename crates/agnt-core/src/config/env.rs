@@ -79,6 +79,7 @@ impl Config {
         Self {
             provider: provider.to_string(),
             provider_impl: None, // from_env doesn't use provider_impl
+            catalog: None,       // resolved by `resolve_model` from the block
             model: model.to_string(),
             api_key,
             base_url,
@@ -105,6 +106,9 @@ impl Config {
             a2a_enabled,
             a2a_port,
             session_store_type,
+            // The pricing ladder's config outcome is config-file only: no
+            // env var sets a price.
+            pricing: None,
         }
     }
 }

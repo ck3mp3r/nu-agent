@@ -12,7 +12,9 @@ pub(super) use agent_client_protocol::schema::v1::{
 pub(super) use agent_client_protocol::{Agent, Channel, Client, ConnectionTo, on_receive_request};
 pub(super) use agnt_core::conversation::builder::builtin_tool_definitions;
 pub(super) use agnt_core::tools::fs::core::version_token;
-pub(super) use agnt_core::types::{DynamicTool, ToolDefinition};
+pub(super) use agnt_core::types::{
+    DynamicTool, ToolContext, ToolDefinition, ToolExecutionError, ToolOutput, ToolSet,
+};
 
 pub(super) use crate::fs_tools::{make_acp_edit_tool, make_acp_read_tool};
 
@@ -127,6 +129,39 @@ pub(super) async fn run_read(
         .as_text()
         .ok_or("read tool output must be one plain text block")?;
     Ok(serde_json::from_str(text)?)
+}
+
+/// `DynamicTool::execute` for rig 0.45, which removed it from the type.
+///
+/// A dynamic tool runs through the `ToolSet` that holds it, so this adapter
+/// keeps the tests' `tool.execute(args)` call shape.
+pub(super) trait DynamicToolExec {
+    fn execute(
+        &self,
+        args: serde_json::Value,
+    ) -> impl std::future::Future<Output = core::result::Result<ToolOutput, ToolExecutionError>>;
+}
+
+impl DynamicToolExec for DynamicTool {
+    fn execute(
+        &self,
+        args: serde_json::Value,
+    ) -> impl std::future::Future<Output = core::result::Result<ToolOutput, ToolExecutionError>>
+    {
+        let tool = self.clone();
+        async move {
+            let mut toolset = ToolSet::default();
+            toolset.add_dynamic_tool(tool.clone());
+            let mut context = ToolContext::new();
+            let result = toolset
+                .execute(tool.name().as_str(), args.to_string(), &mut context)
+                .await;
+            match result.error() {
+                Some(error) => Err(error.clone()),
+                None => Ok(result.output().clone()),
+            }
+        }
+    }
 }
 
 /// Remove the temp file `truncate_tool_output` wrote, so the test leaves no trace.

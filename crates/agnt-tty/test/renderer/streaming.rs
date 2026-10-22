@@ -372,7 +372,9 @@ fn llm_end_prints_token_usage() {
         tool_calls: 0,
         input_tokens: 80,
         output_tokens: 20,
-        total_tokens: 100,
+        total_tokens: Some(100),
+        cost: None,
+        cost_complete: false,
     });
     renderer.flush();
     let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");

@@ -7,6 +7,7 @@ pub(super) fn add_failing_tool<T: super::super::BuiltinTool>(
     tool_name: &str,
 ) -> Result<(), EmptyToolName> {
     let tool_def = ToolDefinition {
+        annotations: crate::types::ToolAnnotations::default(),
         name: ToolName::new(tool_name)?,
         description: "Always fails".to_string(),
         parameters: serde_json::json!({"type": "object", "properties": {}}),

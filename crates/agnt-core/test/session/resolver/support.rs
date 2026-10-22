@@ -4,14 +4,11 @@
 //! Sub-files pull them in with `use super::*;`.
 
 pub(super) use crate::protocol::contracts::UiMessageSnapshot;
-pub(super) use crate::session::{CompactionMarker, SessionStore, StoreEntry};
 pub(super) use crate::types::{
     AssistantContent, AssistantMessage, CallId, Message, Text, ToolCall, ToolFunction, ToolName,
     ToolResult, ToolResultContent, UserContent,
 };
-pub(super) use chrono::Utc;
 pub(super) use serde_json::json;
-pub(super) use std::sync::Arc;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -28,26 +25,31 @@ pub(super) fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiM
 
 // -- Test Support
 
-/// Build [assistant ToolCall, user ToolResult] store entries for one call
-/// whose result text is `text` and whose persisted `is_error` flag is `is_error`.
-pub(super) fn tool_call_entries(call_id: &str, text: &str, is_error: bool) -> Vec<StoreEntry> {
+/// Hydrate `messages` into transcript snapshots, as the resolver does.
+pub(super) fn hydrate(messages: &[Message], cwd: &std::path::Path) -> Vec<UiMessageSnapshot> {
+    super::resolver::hydrate_transcript_messages(messages, cwd)
+}
+
+/// Build [assistant ToolCall, user ToolResult] messages for one call whose
+/// result text is `text` and whose persisted `is_error` flag is `is_error`.
+pub(super) fn tool_call_entries(call_id: &str, text: &str, is_error: bool) -> Vec<Message> {
     vec![
-        StoreEntry::Message(Message::Assistant(AssistantMessage::new(vec![
-            AssistantContent::ToolCall(ToolCall::new(
+        Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+            ToolCall::new(
                 CallId::from_wire(call_id),
                 ToolFunction::new(
                     ToolName::new("read_file").expect("should be non-empty"),
                     json!({"path": "/tmp/test.txt"}),
                 ),
-            )),
-        ]))),
-        StoreEntry::Message(Message::User {
+            ),
+        )])),
+        Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: CallId::from_wire(call_id),
                 name: ToolName::new("read_file").expect("non-empty tool name"),
                 content: vec![ToolResultContent::Text(Text::new(text))],
                 is_error,
             })],
-        }),
+        },
     ]
 }

@@ -24,6 +24,14 @@ fn config(provider: &str, model: &str) -> Config {
     }
 }
 
+/// A config whose provider block declares the cache section it serves.
+fn config_with_catalog(provider: &str, model: &str, catalog: &str) -> Config {
+    Config {
+        catalog: Some(catalog.to_string()),
+        ..config(provider, model)
+    }
+}
+
 /// A models cache holding `models` under `provider`.
 fn models_cache(provider: &str, models: &[(&str, &str)]) -> Result<ModelsCache> {
     let models: serde_json::Map<String, serde_json::Value> = models
@@ -87,8 +95,12 @@ fn current_value(options: &[SessionConfigOption]) -> Option<String> {
 #[test]
 fn test_build_model_config_options_with_cache_lists_provider_models() -> Result<()> {
     // -- Setup & Fixtures
-    let config = config("ollama", "llama3");
-    let cache = models_cache("ollama", &[("llama3", "Llama 3"), ("llama4", "Llama 4")])?;
+    let config = config_with_catalog("ollama", "llama3", "ollama-cloud");
+    // The cache files ollama's models under `ollama-cloud`, as models.dev does.
+    let cache = models_cache(
+        "ollama-cloud",
+        &[("llama3", "Llama 3"), ("llama4", "Llama 4")],
+    )?;
 
     // -- Exec
     let options = build_model_config_options(&config, Some(&cache));
@@ -171,7 +183,7 @@ fn test_build_model_config_options_cache_without_provider_lists_only_current() -
 fn test_build_model_config_options_cache_missing_current_keeps_current_selectable() -> Result<()> {
     // -- Setup & Fixtures
     let config = config("ollama", "custom-model");
-    let cache = models_cache("ollama", &[("llama3", "Llama 3")])?;
+    let cache = models_cache("ollama-cloud", &[("llama3", "Llama 3")])?;
 
     // -- Exec
     let options = build_model_config_options(&config, Some(&cache));

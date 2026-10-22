@@ -11,6 +11,7 @@ fn accessor_provider_returns_provider_string() {
         a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "test-model".to_string(),
         api_key: Some("test-key".to_string()),
         base_url: None,
@@ -36,6 +37,7 @@ fn accessor_provider_returns_provider_string() {
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     };
 
     // Verify the accessor delegation chain: provider() -> provider_state.config().provider
@@ -52,6 +54,7 @@ fn accessor_model_returns_model_string() {
         a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "claude-sonnet-4".to_string(),
         api_key: Some("test-key".to_string()),
         base_url: None,
@@ -77,6 +80,7 @@ fn accessor_model_returns_model_string() {
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     };
 
     let provider_state = crate::conversation::state::provider::ProviderState::new(config, None);
@@ -91,6 +95,7 @@ fn accessor_max_context_tokens_returns_none_when_unset() {
         a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "test-model".to_string(),
         api_key: None,
         base_url: None,
@@ -116,6 +121,7 @@ fn accessor_max_context_tokens_returns_none_when_unset() {
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     };
 
     let provider_state = crate::conversation::state::provider::ProviderState::new(config, None);
@@ -133,6 +139,7 @@ fn accessor_max_context_tokens_returns_value_when_set() {
         a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "test-model".to_string(),
         api_key: None,
         base_url: None,
@@ -158,6 +165,7 @@ fn accessor_max_context_tokens_returns_value_when_set() {
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     };
 
     let provider_state = crate::conversation::state::provider::ProviderState::new(config, None);
@@ -175,6 +183,7 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
         a2a_port: None,
         provider: "copilot".to_string(),
         provider_impl: None,
+        catalog: None,
         model: "test-model".to_string(),
         api_key: None,
         base_url: None,
@@ -200,6 +209,7 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
         additional_params: None,
         a2a_enabled: None,
         session_store_type: None,
+        pricing: None,
     };
 
     let provider_state = crate::conversation::state::provider::ProviderState::new(config, None);

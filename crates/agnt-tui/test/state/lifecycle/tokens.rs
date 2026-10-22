@@ -46,12 +46,12 @@ fn enqueue_and_activate_prompt_transcript_bookkeeping() -> Result<()> {
     let mut state = AppState::default();
 
     // -- Exec & Check: latest values and accumulated session total.
-    state.status.tokens.record_token_usage(7, 5, 12);
+    state.status.tokens.record_token_usage(7, 5, Some(12));
     assert_eq!(state.status.tokens.latest_input_tokens, Some(7));
     assert_eq!(state.status.tokens.latest_output_tokens, Some(5));
     assert_eq!(state.status.tokens.latest_total_tokens, Some(12));
     assert_eq!(state.status.tokens.session_total_tokens, 12);
-    state.status.tokens.record_token_usage(2, 3, 5);
+    state.status.tokens.record_token_usage(2, 3, Some(5));
     assert_eq!(state.status.tokens.latest_input_tokens, Some(2));
     assert_eq!(state.status.tokens.latest_output_tokens, Some(3));
     assert_eq!(state.status.tokens.latest_total_tokens, Some(5));

@@ -39,14 +39,17 @@ pub(crate) fn build_status_lines(state: &AppState) -> Vec<String> {
 
 fn token_string_for_state(state: &AppState) -> Option<String> {
     let current = state.status.tokens.latest_total_tokens.unwrap_or(0);
-    let s = match state.status.tokens.context_window_max_tokens() {
+    let tokens = match state.status.tokens.context_window_max_tokens() {
         Some(max) if max > 0 => {
             let pct = ((current as u128).saturating_mul(100) / (max as u128)).min(100) as u64;
             format!("{} ({pct}%)", compact_token_count(current))
         }
         _ => compact_token_count(current),
     };
-    Some(s)
+    Some(match state.status.tokens.session_cost.label() {
+        Some(cost) => format!("{tokens} · {cost}"),
+        None => tokens,
+    })
 }
 
 pub(crate) fn status_left_content(

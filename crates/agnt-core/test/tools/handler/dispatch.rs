@@ -7,6 +7,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// Helper: creates a `ToolDefinition` with a given name and minimal schema.
 fn tool_def(name: &str) -> core::result::Result<ToolDefinition, EmptyToolName> {
     Ok(ToolDefinition {
+        annotations: crate::types::ToolAnnotations::default(),
         name: ToolName::new(name)?,
         description: format!("tool {name}"),
         parameters: serde_json::json!({"type": "object"}),
