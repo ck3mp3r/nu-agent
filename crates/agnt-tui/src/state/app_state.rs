@@ -1,6 +1,7 @@
 //! Application state types and the `AppState` reducer root.
 
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use agnt_core::orchestrator::{OrchestratorEvent, UiRequest, UiStateEvent};
 use agnt_core::protocol::contracts::SharedUiAction;
@@ -25,6 +26,10 @@ use crate::interaction::reducer::{ReducerInput, reduce_with_cancel_controller};
 use crate::rendering::theme::{ThemeName, TuiTheme};
 
 const STARTUP_LOGOS: &[&str] = &[include_str!("../logos/00.txt")];
+
+/// How long an armed Ctrl-C quit confirmation stays valid. Production keeps
+/// the 5 s default; tests set [`AppState::quit_confirm_window`] directly.
+pub(crate) const QUIT_CONFIRM_WINDOW: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiPhase {
@@ -223,6 +228,10 @@ pub struct AppState {
     pub input: InputState,
     pub scroll: ScrollState,
     pub quit_requested: bool,
+    /// When the Ctrl-C quit confirmation was armed, if it is armed.
+    pub quit_confirm_since: Option<Instant>,
+    /// How long an armed quit confirmation stays valid.
+    pub quit_confirm_window: Duration,
     pub picker: PickerContainer,
     pub(crate) pending_switch_requests: VecDeque<SwitchRequest>,
     pub(crate) pending_launch: VecDeque<SharedUiAction>,
@@ -258,6 +267,8 @@ impl Default for AppState {
             input: InputState::default(),
             scroll: ScrollState::default(),
             quit_requested: false,
+            quit_confirm_since: None,
+            quit_confirm_window: QUIT_CONFIRM_WINDOW,
             picker: PickerContainer::default(),
             pending_switch_requests: VecDeque::new(),
             pending_launch: VecDeque::new(),

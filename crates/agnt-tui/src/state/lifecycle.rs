@@ -2,9 +2,13 @@ use agnt_core::protocol::slash::filter_inline_slash_suggestions;
 
 use super::*;
 
+use std::time::Instant;
+
 use agnt_core::transcript::ir::{Block, MessageRole};
 use agnt_core::transcript::items::Message;
 use agnt_core::transcript::renderer::Renderable;
+
+pub(crate) const CTRL_C_QUIT_CONFIRM_STATUS: &str = "Ctrl-C again to quit";
 
 impl AppState {
     pub fn new_with_sender(
@@ -215,6 +219,33 @@ impl AppState {
     pub fn request_quit_if_idle(&mut self) {
         if self.phase == UiPhase::Idle {
             self.quit_requested = true;
+        }
+    }
+
+    /// Arm the Ctrl-C quit confirmation: record the arm instant and show the
+    /// confirmation status message. A second Ctrl-C within
+    /// [`AppState::quit_confirm_window`] quits.
+    pub fn arm_quit_confirmation(&mut self) {
+        self.quit_confirm_since = Some(Instant::now());
+        self.status.message.set_message(CTRL_C_QUIT_CONFIRM_STATUS);
+    }
+
+    /// True only if armed AND within the confirmation window.
+    pub fn quit_confirmation_armed(&self) -> bool {
+        match self.quit_confirm_since {
+            Some(since) => since.elapsed() < self.quit_confirm_window,
+            None => false,
+        }
+    }
+
+    /// Disarm the quit confirmation. The status message is cleared only while
+    /// the confirmation is still within its window; an expired confirmation
+    /// leaves the message to expire through its own TTL.
+    pub fn disarm_quit_confirmation(&mut self) {
+        let was_armed = self.quit_confirmation_armed();
+        self.quit_confirm_since = None;
+        if was_armed && self.status.message.status_line() == CTRL_C_QUIT_CONFIRM_STATUS {
+            self.status.message.clear();
         }
     }
 

@@ -4,10 +4,12 @@ use super::*;
 #[test]
 fn runtime_renderer_reuses_eventing_and_preserves_emit_passthrough() {
     let inner = FakeRenderer::default();
-    let scripted = ScriptedTerminalEvents::from_script("char:h,ctrlc,resize:140x35");
+    let scripted = ScriptedTerminalEvents::from_script("char:h,ctrlc,ctrlc,ctrlc,resize:140x35");
     let mut runtime_renderer = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
 
     runtime_renderer.emit(&UiEvent::LlmStarted);
+    runtime_renderer.emit(&UiEvent::Tick);
+    runtime_renderer.emit(&UiEvent::Tick);
     runtime_renderer.emit(&UiEvent::Tick);
     runtime_renderer.emit(&UiEvent::Tick);
     runtime_renderer.flush();
@@ -59,11 +61,13 @@ async fn render_loop_submit_and_abort_handoff() -> Result<()> {
         }
     ) && b.source.plain_text() == "hi"));
 
-    // -- Setup & Fixtures: Ctrl+C.
+    // -- Setup & Fixtures: Ctrl+C twice (arm, then confirm).
     let mut quitting = RenderLoopDriver::new(120, 30);
 
     // -- Exec
-    quitting.advance(&[key(TerminalKey::CtrlC)]).await?;
+    quitting
+        .advance(&[key(TerminalKey::CtrlC), key(TerminalKey::CtrlC)])
+        .await?;
 
     // -- Check: Quit is forwarded.
     assert!(

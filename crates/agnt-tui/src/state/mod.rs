@@ -22,6 +22,8 @@ mod turn;
 pub use app_state::*;
 pub use compaction::*;
 pub use input::*;
+#[cfg(test)]
+pub(crate) use lifecycle::CTRL_C_QUIT_CONFIRM_STATUS;
 pub use llm::*;
 pub use mcp::*;
 pub use permission::*;

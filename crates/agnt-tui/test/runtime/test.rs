@@ -9,6 +9,7 @@
 mod branch_resolver;
 mod command_palette;
 mod compaction;
+mod ctrl_c_guard;
 mod help_panel;
 mod input_cursor;
 mod input_events;

@@ -2,7 +2,7 @@
 
 - Type your request in the input box.
 - Press `Enter` to send.
-- Press `Ctrl-C` to quit and restore your terminal.
+- Press `Ctrl-C` twice to quit and restore your terminal.
 
 # Modes (insert vs normal)
 
@@ -103,5 +103,6 @@ Use `/compact` to trigger manual compaction immediately (bypasses threshold gati
 
 - If keys feel wrong, press `Esc` once to return to normal mode.
 - If the assistant is stuck, press `Esc` twice to request abort.
+- `Ctrl-C` closes the topmost popup, then clears the draft, then asks for a second press to quit.
 - If MCP tools are missing, open `Ctrl-P` -> MCPs and check `failed` servers.
 - If text looks stale after resize, resize once more or switch focus (`h`/`l`).

@@ -378,6 +378,10 @@ impl RuntimeCoordinator {
         // processing the next event.
         self.pickup_restored_input_text();
 
+        if self.handle_ctrl_c_guard(&event) {
+            return;
+        }
+
         if let TerminalEvent::Resize(resize) = event {
             self.state.transcript.invalidate_height_index();
             let side_margin = if resize.columns >= 8 {
@@ -438,6 +442,77 @@ impl RuntimeCoordinator {
         self.quit_requested |= self.state.quit_requested;
 
         self.sync_transcript_viewport_lines_with_layout();
+        self.mark_render_needed();
+    }
+
+    /// Global Ctrl-C quit guard. Returns `true` when the event was consumed by
+    /// the guard and must not be routed further.
+    ///
+    /// Priority chain — each Ctrl-C press does exactly one thing:
+    /// 1. permission prompt open → arm (the prompt keeps its own keys; Esc denies)
+    /// 2. any other popup open → close it, no arm
+    /// 3. no popup and non-empty draft → clear the draft, no arm
+    /// 4. otherwise → arm
+    ///
+    /// The confirming press quits regardless of popups or draft state. Any
+    /// other key or paste disarms; a resize leaves the armed state untouched.
+    fn handle_ctrl_c_guard(&mut self, event: &TerminalEvent) -> bool {
+        match event {
+            TerminalEvent::Resize(_) => false,
+            TerminalEvent::Paste(_) => {
+                self.state.disarm_quit_confirmation();
+                false
+            }
+            TerminalEvent::Key(TerminalKey::CtrlC) => {
+                self.handle_ctrl_c();
+                true
+            }
+            TerminalEvent::Key(_) => {
+                self.state.disarm_quit_confirmation();
+                false
+            }
+        }
+    }
+
+    fn handle_ctrl_c(&mut self) {
+        if self.state.quit_confirmation_armed() {
+            self.state.disarm_quit_confirmation();
+            self.state.quit_requested = true;
+            self.quit_requested = true;
+            if self.state.phase != crate::state::UiPhase::Idle {
+                self.cancel_controller.request_cancel();
+            }
+            self.mark_render_needed();
+            return;
+        }
+
+        if self.state.permission.has_prompt() {
+            self.state.arm_quit_confirmation();
+            self.mark_render_needed();
+            return;
+        }
+
+        if self.state.picker.active().is_some() {
+            self.state.picker.close();
+            self.mark_render_needed();
+            return;
+        }
+
+        if self.state.info_panel.is_some() {
+            self.state.close_info_panel();
+            self.mark_render_needed();
+            return;
+        }
+
+        if !self.textarea.lines().join("\n").is_empty() {
+            self.replace_textarea(Vec::new());
+            self.state.check_inline_slash("");
+            self.recompute_layout_for_current_input();
+            self.mark_render_needed();
+            return;
+        }
+
+        self.state.arm_quit_confirmation();
         self.mark_render_needed();
     }
 
@@ -618,7 +693,8 @@ impl RuntimeCoordinator {
                 self.mark_render_needed();
                 true
             }
-            // All other keys — let dispatch handle them
+            // All other keys — let dispatch handle them. CtrlC never reaches
+            // here: the global quit guard intercepts it before routing.
             TerminalKey::PageUp
             | TerminalKey::PageDown
             | TerminalKey::CtrlU
@@ -626,18 +702,8 @@ impl RuntimeCoordinator {
             | TerminalKey::CtrlP
             | TerminalKey::CtrlN
             | TerminalKey::Tab
-            | TerminalKey::BackTab => false,
-            TerminalKey::CtrlC => {
-                let text = self.textarea.lines().join("\n");
-                if !text.is_empty() && self.state.phase == crate::state::UiPhase::Idle {
-                    self.replace_textarea(Vec::new());
-                    self.state.check_inline_slash("");
-                    self.mark_render_needed();
-                    true
-                } else {
-                    false
-                }
-            }
+            | TerminalKey::BackTab
+            | TerminalKey::CtrlC => false,
             // Char keys — map to UserAction, run through rewrite_action, then route
             TerminalKey::Char(ch) => {
                 let mapped_action = UserAction::InsertChar(ch);

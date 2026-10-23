@@ -727,6 +727,17 @@ CLI flags override config.toml, which overrides built-in defaults.
 - Pressing Enter on empty input while a turn is busy and at least one prompt is queued cancels the active turn. The queued prompts then run through the normal drain path.
 - Pressing Enter on empty input while idle, or while busy with no queued prompts, does nothing.
 
+### Ctrl-C quit guard
+
+- `Ctrl-C` is intercepted globally, before any popup or mode routing. Each press does exactly one thing.
+- A permission prompt open: `Ctrl-C` arms the quit confirmation and leaves the prompt untouched. `Esc` keeps sole ownership of `deny`.
+- Any other popup open (picker, info panel, inline slash): `Ctrl-C` closes it without arming and without changing the draft.
+- No popup and a non-empty draft: `Ctrl-C` clears the draft without arming. The turn state is unchanged, so a busy turn keeps running.
+- No popup and an empty draft: `Ctrl-C` arms the quit confirmation and shows `Ctrl-C again to quit`.
+- A second `Ctrl-C` within 5 seconds quits. While a turn is busy, quitting also requests cancel.
+- Any other key or a paste disarms the confirmation. A resize leaves it armed.
+- The confirmation expires after 5 seconds; the status message expires through its own 5 second TTL.
+
 ### Model picker and switch semantics
 
 - `/models` opens an inline model picker in TUI.
