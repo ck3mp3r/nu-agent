@@ -241,7 +241,11 @@ fn handle_wheel(state: &mut AppState, column: u16, row: u16, up: bool, select: b
     if !state.scroll.contains_transcript_point(column, row) {
         return false;
     }
-    if state.input.mode == InputMode::Insert {
+    // The insert→normal transition mutates the rendered mode indicator and
+    // pane focus, so it is a visible change even when the wheel scroll is a
+    // no-op.
+    let mode_changed = state.input.mode == InputMode::Insert;
+    if mode_changed {
         state.enter_normal_mode();
     }
     let action = if up {
@@ -249,7 +253,7 @@ fn handle_wheel(state: &mut AppState, column: u16, row: u16, up: bool, select: b
     } else {
         ScrollAction::WheelDown { select }
     };
-    state.scroll.reduce_scroll_action(action)
+    state.scroll.reduce_scroll_action(action) || mode_changed
 }
 
 fn handle_yank_selection(state: &mut AppState) -> bool {

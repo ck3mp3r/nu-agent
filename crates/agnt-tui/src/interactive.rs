@@ -330,7 +330,6 @@ pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
                         .await;
                     return;
                 }
-                coordinator.mark_render_needed();
                 let _ = coordinator.render_if_needed(live_terminal);
             }
             ok = ui_event_rx.recv() => {

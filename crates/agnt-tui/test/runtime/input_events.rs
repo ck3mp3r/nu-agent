@@ -1,5 +1,8 @@
 use super::*;
 
+use crate::interaction::input::{TerminalMouse, TerminalResize};
+use ratatui::layout::Rect;
+
 // Sync-path coverage: the input-error handling lives in `poll_terminal_event`,
 // which the async render loop's healthy mpsc channel cannot produce. These
 // tests call the production poll + drain primitives directly (the same calls
@@ -243,3 +246,200 @@ fn crossterm_event_source_and_enter_modifier_mapping() -> Result<()> {
     assert_eq!(shift, Some(TerminalEvent::Key(TerminalKey::ShiftEnter)));
     Ok(())
 }
+
+// region:    --- Render gating
+
+/// A wheel-up that cannot move the scroll state leaves the frame clean.
+#[test]
+fn coordinator_handle_terminal_event_noop_wheel_normal_mode_leaves_render_clean() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coordinator = wheel_noop_coordinator(InputMode::Normal);
+
+    // -- Exec
+    coordinator.handle_terminal_event(wheel_up());
+
+    // -- Check
+    assert!(!coordinator.render_needed());
+    assert_eq!(coordinator.state.scroll.cursor_visual_row, 0);
+    assert_eq!(coordinator.state.scroll.scroll_offset, 0);
+    assert!(!coordinator.state.scroll.following_tail);
+    Ok(())
+}
+
+/// A wheel that moves the scroll state marks the frame dirty.
+#[test]
+fn coordinator_handle_terminal_event_effective_wheel_marks_render() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coordinator = wheel_noop_coordinator(InputMode::Normal);
+    push_entry(&mut coordinator, None);
+
+    // -- Exec
+    coordinator.handle_terminal_event(wheel_down());
+
+    // -- Check: the wheel resumed tail following, so the frame is dirty.
+    assert!(coordinator.state.scroll.following_tail);
+    assert!(coordinator.render_needed());
+    Ok(())
+}
+
+/// A resize mutates the layout, so it always marks the frame dirty.
+#[test]
+fn coordinator_handle_terminal_event_resize_marks_render() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.set_render_needed(false);
+
+    // -- Exec
+    coordinator.handle_terminal_event(TerminalEvent::Resize(TerminalResize {
+        columns: 100,
+        rows: 40,
+    }));
+
+    // -- Check
+    assert!(coordinator.render_needed());
+    Ok(())
+}
+
+/// A paste in insert mode mutates the textarea, so it marks the frame dirty.
+#[test]
+fn coordinator_handle_terminal_event_paste_insert_mode_marks_render() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    assert_eq!(coordinator.state.input.mode, InputMode::Insert);
+    coordinator.set_render_needed(false);
+
+    // -- Exec
+    coordinator.handle_terminal_event(TerminalEvent::Paste("hi".to_string()));
+
+    // -- Check
+    assert_eq!(coordinator.textarea.lines().join("\n"), "hi");
+    assert!(coordinator.render_needed());
+    Ok(())
+}
+
+/// An Esc with nothing to close or abort leaves the frame clean.
+#[test]
+fn coordinator_handle_terminal_event_esc_normal_mode_leaves_render_clean() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coordinator = wheel_noop_coordinator(InputMode::Normal);
+    assert_eq!(coordinator.state.phase, UiPhase::Idle);
+    assert!(coordinator.state.picker.active().is_none());
+    assert!(coordinator.state.info_panel.is_none());
+    assert!(!coordinator.state.permission.has_prompt());
+
+    // -- Exec
+    coordinator.handle_terminal_event(TerminalEvent::Key(TerminalKey::Esc));
+
+    // -- Check
+    assert!(!coordinator.render_needed());
+    Ok(())
+}
+
+/// A no-op wheel in insert mode still marks the frame dirty: the insert→normal
+/// transition changes the mode indicator and pane focus.
+#[test]
+fn coordinator_handle_terminal_event_noop_wheel_insert_mode_marks_render() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coordinator = wheel_noop_coordinator(InputMode::Insert);
+
+    // -- Exec
+    coordinator.handle_terminal_event(wheel_up());
+
+    // -- Check: the scroll did not move, the mode did.
+    assert_eq!(coordinator.state.input.mode, InputMode::Normal);
+    assert_eq!(coordinator.state.scroll.cursor_visual_row, 0);
+    assert!(coordinator.render_needed());
+    Ok(())
+}
+
+/// An empty transport drain leaves the render flag untouched.
+#[test]
+fn coordinator_drain_transport_empty_leaves_render_unchanged() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.set_render_needed(false);
+
+    // -- Exec
+    coordinator.drain_transport();
+
+    // -- Check: a clean flag stays clean.
+    assert!(!coordinator.render_needed());
+
+    // -- Setup & Fixtures: a dirty flag.
+    coordinator.set_render_needed(true);
+
+    // -- Exec
+    coordinator.drain_transport();
+
+    // -- Check: a dirty flag stays dirty.
+    assert!(coordinator.render_needed());
+    Ok(())
+}
+
+/// A transport item whose reduce reports changed marks the frame dirty; one
+/// that reports no change does not.
+#[test]
+fn coordinator_drain_transport_changed_item_marks_render() -> Result<()> {
+    // -- Setup & Fixtures: a UiEvent that reduces to true.
+    let mut changed = RuntimeCoordinator::new(120, 30, Some(true));
+    changed.enqueue_ui_event(UiEvent::Tick);
+    changed.set_render_needed(false);
+
+    // -- Exec
+    changed.drain_transport();
+
+    // -- Check
+    assert!(changed.render_needed());
+
+    // -- Setup & Fixtures: a UiEvent that reduces to false.
+    let mut unchanged = RuntimeCoordinator::new(120, 30, Some(true));
+    unchanged.enqueue_ui_event(UiEvent::PermissionDecisionSubmitted {
+        request_id: "ask-0000000000000001".to_string(),
+        decision: PermissionDecision::AllowOnce,
+        matched_rule_identity: "nested:nu.command:*".to_string(),
+    });
+    unchanged.set_render_needed(false);
+
+    // -- Exec
+    unchanged.drain_transport();
+
+    // -- Check
+    assert!(!unchanged.render_needed());
+    Ok(())
+}
+
+// endregion: --- Render gating
+
+// region:    --- Test Support
+
+/// Coordinator with a rendered transcript area and a scroll position a
+/// wheel-up cannot move.
+fn wheel_noop_coordinator(mode: InputMode) -> RuntimeCoordinator {
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.state.input.mode = mode;
+    coordinator.state.scroll.transcript_area = Rect::new(0, 0, 80, 20);
+    coordinator.state.scroll.cursor_visual_row = 0;
+    coordinator.state.scroll.scroll_offset = 0;
+    coordinator.state.scroll.max_scroll = 0;
+    coordinator.state.scroll.following_tail = false;
+    coordinator.set_render_needed(false);
+    coordinator
+}
+
+fn wheel_up() -> TerminalEvent {
+    TerminalEvent::Mouse(TerminalMouse {
+        up: true,
+        column: 5,
+        row: 5,
+    })
+}
+
+fn wheel_down() -> TerminalEvent {
+    TerminalEvent::Mouse(TerminalMouse {
+        up: false,
+        column: 5,
+        row: 5,
+    })
+}
+
+// endregion: --- Test Support

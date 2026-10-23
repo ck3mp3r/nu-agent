@@ -392,6 +392,9 @@ impl RuntimeCoordinator {
             self.last_input_content_width =
                 resize.columns.saturating_sub(2 * side_margin + 4) as usize;
             self.recompute_layout_for_current_input();
+            // The Resize reducer arm reports no change (it performs no
+            // mutation), so the branch marks the layout change itself.
+            self.mark_render_needed();
         }
 
         if let TerminalEvent::Paste(text) = &event
@@ -442,7 +445,6 @@ impl RuntimeCoordinator {
         self.quit_requested |= self.state.quit_requested;
 
         self.sync_transcript_viewport_lines_with_layout();
-        self.mark_render_needed();
     }
 
     /// Global Ctrl-C quit guard. Returns `true` when the event was consumed by
@@ -457,15 +459,19 @@ impl RuntimeCoordinator {
     /// The confirming press quits regardless of popups or draft state. Any
     /// other key, paste, or mouse event disarms; a resize leaves the armed
     /// state untouched.
-    fn handle_ctrl_c_guard(&mut self, event: &TerminalEvent) -> bool {
+    pub(crate) fn handle_ctrl_c_guard(&mut self, event: &TerminalEvent) -> bool {
         match event {
             TerminalEvent::Resize(_) => false,
             TerminalEvent::Paste(_) => {
-                self.state.disarm_quit_confirmation();
+                if self.state.disarm_quit_confirmation() {
+                    self.mark_render_needed();
+                }
                 false
             }
             TerminalEvent::Mouse(_) => {
-                self.state.disarm_quit_confirmation();
+                if self.state.disarm_quit_confirmation() {
+                    self.mark_render_needed();
+                }
                 false
             }
             TerminalEvent::Key(TerminalKey::CtrlC) => {
@@ -473,7 +479,9 @@ impl RuntimeCoordinator {
                 true
             }
             TerminalEvent::Key(_) => {
-                self.state.disarm_quit_confirmation();
+                if self.state.disarm_quit_confirmation() {
+                    self.mark_render_needed();
+                }
                 false
             }
         }
@@ -962,6 +970,7 @@ impl RuntimeCoordinator {
     pub fn drain_transport(&mut self) {
         let mut pending_assistant: Option<UiEvent> = None;
         let mut pending_compaction: Option<UiEvent> = None;
+        let mut changed = false;
 
         while let Some(item) = self.transport.poll_next() {
             if matches!(
@@ -991,36 +1000,38 @@ impl RuntimeCoordinator {
             // Flush any pending coalesced events before processing a different event type
             // (preserves ordering: assistant text before tool events, etc.)
             if let Some(event) = pending_assistant.take() {
-                self.reduce_ui_event(event);
+                changed |= self.reduce_ui_event(event);
             }
             if let Some(event) = pending_compaction.take() {
-                self.reduce_ui_event(event);
+                changed |= self.reduce_ui_event(event);
             }
 
             // Process the current non-coalesceable event
             match item {
                 TransportItem::User(action) => {
-                    reduce_with_cancel_controller(
+                    changed |= reduce_with_cancel_controller(
                         &mut self.state,
                         ReducerInput::User(action),
                         Some(&self.cancel_controller),
                     );
                 }
                 TransportItem::Event(event) => {
-                    self.reduce_ui_event(*event);
+                    changed |= self.reduce_ui_event(*event);
                 }
             }
         }
 
         // Flush remaining pending events
         if let Some(event) = pending_assistant.take() {
-            self.reduce_ui_event(event);
+            changed |= self.reduce_ui_event(event);
         }
         if let Some(event) = pending_compaction.take() {
-            self.reduce_ui_event(event);
+            changed |= self.reduce_ui_event(event);
         }
 
-        self.mark_render_needed();
+        if changed {
+            self.mark_render_needed();
+        }
     }
 
     pub(crate) fn mark_render_needed(&mut self) {

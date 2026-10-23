@@ -60,3 +60,65 @@ fn push_block_and_external_prompt_delivery() -> Result<()> {
     assert_eq!(queued.take_next_prompt_for_execution(), None);
     Ok(())
 }
+
+/// Disarming an armed confirmation clears the confirm message and reports the
+/// visible change.
+#[test]
+fn test_lifecycle_disarm_quit_confirmation_armed_reports_change() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.arm_quit_confirmation();
+    assert_eq!(
+        state.status.message.status_line(),
+        CTRL_C_QUIT_CONFIRM_STATUS
+    );
+
+    // -- Exec
+    let changed = state.disarm_quit_confirmation();
+
+    // -- Check: the confirm message was cleared.
+    assert!(changed);
+    assert!(state.quit_confirm_since.is_none());
+    assert!(state.status.message.status_line().is_empty());
+    Ok(())
+}
+
+/// Disarming while not armed reports no change and leaves the status message
+/// untouched.
+#[test]
+fn test_lifecycle_disarm_quit_confirmation_not_armed_reports_no_change() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.status.message.set_message("keep me");
+
+    // -- Exec
+    let changed = state.disarm_quit_confirmation();
+
+    // -- Check
+    assert!(!changed);
+    assert_eq!(state.status.message.status_line(), "keep me");
+    Ok(())
+}
+
+/// An expired confirmation is not armed, so disarming reports no change and
+/// leaves the message to its own TTL.
+#[test]
+fn test_lifecycle_disarm_quit_confirmation_expired_reports_no_change() -> Result<()> {
+    // -- Setup & Fixtures: a zero-length confirmation window.
+    let mut state = AppState {
+        quit_confirm_window: std::time::Duration::from_millis(0),
+        ..Default::default()
+    };
+    state.arm_quit_confirmation();
+
+    // -- Exec
+    let changed = state.disarm_quit_confirmation();
+
+    // -- Check
+    assert!(!changed);
+    assert_eq!(
+        state.status.message.status_line(),
+        CTRL_C_QUIT_CONFIRM_STATUS
+    );
+    Ok(())
+}

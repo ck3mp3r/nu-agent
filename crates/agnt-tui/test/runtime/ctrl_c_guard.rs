@@ -358,4 +358,84 @@ async fn test_ctrl_c_guard_mouse_disarms() -> Result<()> {
     Ok(())
 }
 
+/// A mouse event that disarms an armed confirmation marks the frame dirty.
+#[test]
+fn test_ctrl_c_guard_mouse_disarm_marks_render() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(120, 30, None);
+    coord.state.arm_quit_confirmation();
+    coord.set_render_needed(false);
+
+    // -- Exec
+    let consumed = coord.handle_ctrl_c_guard(&TerminalEvent::Mouse(TerminalMouse {
+        up: true,
+        column: 10,
+        row: 5,
+    }));
+
+    // -- Check: not consumed, the confirm message cleared, the frame dirty.
+    assert!(!consumed);
+    assert!(coord.state.status.message.status_line().is_empty());
+    assert!(coord.render_needed());
+    Ok(())
+}
+
+/// A mouse event that disarms nothing leaves the frame clean.
+#[test]
+fn test_ctrl_c_guard_mouse_without_arm_leaves_render_clean() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(120, 30, None);
+    coord.set_render_needed(false);
+
+    // -- Exec
+    let consumed = coord.handle_ctrl_c_guard(&TerminalEvent::Mouse(TerminalMouse {
+        up: true,
+        column: 10,
+        row: 5,
+    }));
+
+    // -- Check
+    assert!(!consumed);
+    assert!(!coord.render_needed());
+    Ok(())
+}
+
+/// Only the Ctrl-C key event is consumed by the guard; mouse, paste, other
+/// keys, and resize are routed onward.
+#[test]
+fn test_ctrl_c_guard_consumes_only_ctrl_c() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut coord = RuntimeCoordinator::new(120, 30, None);
+
+    // -- Exec & Check
+    assert!(
+        coord.handle_ctrl_c_guard(&TerminalEvent::Key(TerminalKey::CtrlC)),
+        "Ctrl-C must be consumed by the guard"
+    );
+    assert!(
+        !coord.handle_ctrl_c_guard(&TerminalEvent::Mouse(TerminalMouse {
+            up: true,
+            column: 10,
+            row: 5,
+        })),
+        "a mouse event must be routed onward"
+    );
+    assert!(
+        !coord.handle_ctrl_c_guard(&TerminalEvent::Paste("hi".to_string())),
+        "a paste must be routed onward"
+    );
+    assert!(
+        !coord.handle_ctrl_c_guard(&TerminalEvent::Key(TerminalKey::Char('a'))),
+        "a non-Ctrl-C key must be routed onward"
+    );
+    assert!(
+        !coord.handle_ctrl_c_guard(&TerminalEvent::Resize(TerminalResize {
+            columns: 100,
+            rows: 40,
+        })),
+        "a resize must be routed onward"
+    );
+    Ok(())
+}
+
 // endregion: --- Tests

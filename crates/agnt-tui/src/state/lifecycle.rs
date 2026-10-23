@@ -241,12 +241,17 @@ impl AppState {
     /// Disarm the quit confirmation. The status message is cleared only while
     /// the confirmation is still within its window; an expired confirmation
     /// leaves the message to expire through its own TTL.
-    pub fn disarm_quit_confirmation(&mut self) {
+    ///
+    /// Returns whether the status message was cleared — the only visible change
+    /// this call can produce.
+    pub fn disarm_quit_confirmation(&mut self) -> bool {
         let was_armed = self.quit_confirmation_armed();
         self.quit_confirm_since = None;
         if was_armed && self.status.message.status_line() == CTRL_C_QUIT_CONFIRM_STATUS {
             self.status.message.clear();
+            return true;
         }
+        false
     }
 
     /// Check inline slash suggestions based on the current textarea content.

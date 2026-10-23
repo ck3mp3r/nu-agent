@@ -397,3 +397,68 @@ fn test_wheel_scroll_extends_visual_selection() -> Result<()> {
     assert_eq!(sel.cursor(), 10);
     Ok(())
 }
+
+#[test]
+fn test_wheel_scroll_insert_mode_noop_reports_mode_change() -> Result<()> {
+    // -- Setup & Fixtures: insert mode, cursor at the top, nothing to scroll.
+    let mut state = wheel_noop_state(InputMode::Insert);
+
+    // -- Exec
+    let changed = reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::WheelUp { column: 5, row: 5 }),
+        None,
+    );
+
+    // -- Check: the scroll is a no-op, but the mode transition is visible.
+    assert!(changed);
+    assert_eq!(state.input.mode, InputMode::Normal);
+    assert_eq!(state.scroll.pane_focus, PaneFocus::Transcript);
+    assert_eq!(state.scroll.cursor_visual_row, 0);
+    assert_eq!(state.scroll.scroll_offset, 0);
+    assert!(!state.scroll.following_tail);
+    Ok(())
+}
+
+#[test]
+fn test_wheel_scroll_normal_mode_noop_reports_no_change() -> Result<()> {
+    // -- Setup & Fixtures: normal mode, cursor at the top, nothing to scroll.
+    let mut state = wheel_noop_state(InputMode::Normal);
+
+    // -- Exec
+    let changed = reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::WheelUp { column: 5, row: 5 }),
+        None,
+    );
+
+    // -- Check: no mode transition and no scroll change.
+    assert!(!changed);
+    assert_eq!(state.input.mode, InputMode::Normal);
+    assert_eq!(state.scroll.cursor_visual_row, 0);
+    assert_eq!(state.scroll.scroll_offset, 0);
+    Ok(())
+}
+
+#[test]
+fn test_wheel_scroll_insert_mode_scroll_change_reports_change() -> Result<()> {
+    // -- Setup & Fixtures: insert mode with room to scroll up.
+    let mut state = wheel_noop_state(InputMode::Insert);
+    state.scroll.cursor_visual_row = 10;
+    state.scroll.scroll_offset = 5;
+    state.scroll.max_scroll = 20;
+
+    // -- Exec
+    let changed = reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::WheelUp { column: 5, row: 5 }),
+        None,
+    );
+
+    // -- Check: the scroll moved and the mode transitioned.
+    assert!(changed);
+    assert_eq!(state.input.mode, InputMode::Normal);
+    assert_eq!(state.scroll.cursor_visual_row, 7);
+    assert_eq!(state.scroll.scroll_offset, 4);
+    Ok(())
+}
