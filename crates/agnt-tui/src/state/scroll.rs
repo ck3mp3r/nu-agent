@@ -196,20 +196,22 @@ impl ScrollState {
     }
 
     fn reduce_scroll_wheel_up(&mut self, select: bool) -> bool {
+        let before = self.scroll_snapshot();
         for _ in 0..WHEEL_LINES {
             self.reduce_scroll_line_up(select);
         }
-        true
+        before != self.scroll_snapshot()
     }
 
     fn reduce_scroll_wheel_down(&mut self, select: bool) -> bool {
+        let before = self.scroll_snapshot();
         for _ in 0..WHEEL_LINES {
             self.reduce_scroll_line_down(select);
         }
         if self.cursor_visual_row == self.total_visual_rows.saturating_sub(1) {
             self.following_tail = true;
         }
-        true
+        before != self.scroll_snapshot()
     }
 
     fn reduce_focus_pane_left(&mut self) -> bool {
@@ -345,4 +347,19 @@ impl ScrollState {
     }
 
     // endregion: --- Scroll helpers
+
+    // region:    --- Support
+
+    /// Snapshot of the scroll state the renderer observes, with the offset
+    /// clamped the same way the renderer clamps it. Two equal snapshots mean an
+    /// action produced no visible change.
+    fn scroll_snapshot(&self) -> (usize, bool, usize) {
+        (
+            self.cursor_visual_row,
+            self.following_tail,
+            self.scroll_offset.min(self.max_scroll),
+        )
+    }
+
+    // endregion: --- Support
 }

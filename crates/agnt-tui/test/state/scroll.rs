@@ -212,6 +212,78 @@ fn test_scroll_state_reduce_scroll_action_jumps_and_paging() -> Result<()> {
 }
 
 #[test]
+fn test_scroll_state_reduce_scroll_action_wheel_no_op() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut at_top = ScrollState {
+        pane_focus: PaneFocus::Transcript,
+        viewport_height: 10,
+        max_scroll: 10,
+        total_visual_rows: 20,
+        following_tail: false,
+        ..Default::default()
+    };
+
+    // -- Exec & Check: wheel up at the top changes nothing and reports no change.
+    let changed = at_top.reduce_scroll_action(ScrollAction::WheelUp { select: false });
+    assert!(!changed, "wheel up at the top is a no-op");
+    assert_eq!(at_top.cursor_visual_row, 0);
+    assert_eq!(at_top.scroll_offset, 0);
+    assert!(!at_top.following_tail);
+
+    // -- Exec & Check: wheel up mid-transcript moves the cursor by a wheel step.
+    let mut mid_up = ScrollState {
+        pane_focus: PaneFocus::Transcript,
+        viewport_height: 10,
+        max_scroll: 20,
+        total_visual_rows: 30,
+        cursor_visual_row: 10,
+        scroll_offset: 5,
+        following_tail: false,
+        ..Default::default()
+    };
+    let changed = mid_up.reduce_scroll_action(ScrollAction::WheelUp { select: false });
+    assert!(changed, "wheel up mid-transcript moves the cursor");
+    assert_eq!(mid_up.cursor_visual_row, 7, "cursor moved by WHEEL_LINES");
+    assert_eq!(mid_up.scroll_offset, 4);
+
+    // -- Exec & Check: wheel down at the bottom with tail follow is a no-op.
+    let mut at_bottom = ScrollState {
+        pane_focus: PaneFocus::Transcript,
+        viewport_height: 10,
+        max_scroll: 10,
+        total_visual_rows: 20,
+        cursor_visual_row: 19,
+        scroll_offset: 10,
+        following_tail: true,
+        ..Default::default()
+    };
+    let changed = at_bottom.reduce_scroll_action(ScrollAction::WheelDown { select: false });
+    assert!(!changed, "wheel down at the bottom is a no-op");
+    assert_eq!(at_bottom.cursor_visual_row, 19);
+    assert_eq!(
+        at_bottom.scroll_offset, 13,
+        "raw offset overshoots max_scroll"
+    );
+    assert!(at_bottom.following_tail, "tail follow re-engaged");
+
+    // -- Exec & Check: wheel down mid-transcript moves the cursor by a wheel step.
+    let mut mid_down = ScrollState {
+        pane_focus: PaneFocus::Transcript,
+        viewport_height: 10,
+        max_scroll: 20,
+        total_visual_rows: 30,
+        cursor_visual_row: 5,
+        following_tail: false,
+        ..Default::default()
+    };
+    let changed = mid_down.reduce_scroll_action(ScrollAction::WheelDown { select: false });
+    assert!(changed, "wheel down mid-transcript moves the cursor");
+    assert_eq!(mid_down.cursor_visual_row, 8, "cursor moved by WHEEL_LINES");
+    assert_eq!(mid_down.scroll_offset, 2);
+    Ok(())
+}
+
+#[test]
 fn test_scroll_state_enter_visual_mode() -> Result<()> {
     // -- Setup & Fixtures
     let mut input_focus = ScrollState::default();

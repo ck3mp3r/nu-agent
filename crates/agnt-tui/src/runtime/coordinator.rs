@@ -455,7 +455,8 @@ impl RuntimeCoordinator {
     /// 4. otherwise → arm
     ///
     /// The confirming press quits regardless of popups or draft state. Any
-    /// other key or paste disarms; a resize leaves the armed state untouched.
+    /// other key, paste, or mouse event disarms; a resize leaves the armed
+    /// state untouched.
     fn handle_ctrl_c_guard(&mut self, event: &TerminalEvent) -> bool {
         match event {
             TerminalEvent::Resize(_) => false,
