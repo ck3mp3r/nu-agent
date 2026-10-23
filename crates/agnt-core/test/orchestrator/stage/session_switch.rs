@@ -136,6 +136,12 @@ async fn session_switch_success_clears_and_hydrates_transcript() {
         "transcript must be cleared"
     );
     assert!(
+        ui_events
+            .iter()
+            .any(|e| matches!(e, UiStateEvent::PushStartupLogo)),
+        "startup logo must be pushed before the hydration"
+    );
+    assert!(
         ui_events.iter().any(|e| {
             matches!(e, UiStateEvent::HydrateTranscript { messages, .. } if messages.len() == 1)
         }),

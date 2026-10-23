@@ -164,14 +164,24 @@ async fn attach_a2a_context_clears_transcript_when_snapshots_empty()
     }
     let event = ui_state_rx
         .try_recv()
+        .map_err(|e| format!("transcript hydrate event should be published: {e:?}"))?;
+    match event {
+        crate::orchestrator::UiStateEvent::HydrateTranscript { messages, .. } => {
+            assert!(
+                messages.is_empty(),
+                "an empty snapshot list must hydrate an empty transcript"
+            );
+        }
+        _ => panic!("expected UiStateEvent::HydrateTranscript after the startup logo"),
+    }
+    let event = ui_state_rx
+        .try_recv()
         .map_err(|e| format!("incoming message event should be published: {e:?}"))?;
     match event {
         crate::orchestrator::UiStateEvent::EnqueueExternalPrompt { text: message } => {
             assert_eq!(message, "[A2A] fresh task");
         }
-        _ => panic!(
-            "expected UiStateEvent::EnqueueExternalPrompt after the startup logo; an empty snapshot list must not hydrate a transcript"
-        ),
+        _ => panic!("expected UiStateEvent::EnqueueExternalPrompt after the transcript hydrate"),
     }
     assert!(
         ui_state_rx.try_recv().is_err(),
@@ -217,6 +227,15 @@ async fn attach_a2a_context_hydrates_transcript_when_snapshots_present()
     match event {
         crate::orchestrator::UiStateEvent::ClearTranscript => {}
         _ => panic!("expected UiStateEvent::ClearTranscript before the transcript hydrate"),
+    }
+    let event = ui_state_rx
+        .try_recv()
+        .map_err(|e| format!("startup logo event should be published: {e:?}"))?;
+    match event {
+        crate::orchestrator::UiStateEvent::PushStartupLogo => {}
+        _ => panic!(
+            "expected UiStateEvent::PushStartupLogo after the clear; the logo must precede the hydration"
+        ),
     }
     let event = ui_state_rx
         .try_recv()

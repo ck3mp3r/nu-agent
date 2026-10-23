@@ -160,6 +160,12 @@ impl RuntimeCoordinator {
             // Bottom-align when content is shorter than viewport.
             // On fresh sessions with just a logo, this pushes the logo to the bottom
             // so the first prompt appears just above the input box.
+            //
+            // Padding rows keep block index 0 so cursor/selection mapping still
+            // covers them, but they pin the base background: without a pinned
+            // background they would resolve a full-width fill from block 0,
+            // which is a user message (`Fill::Full`) in a rehydrated transcript
+            // with no leading logo.
             if total_visual_rows < viewport_height {
                 let padding = viewport_height - total_visual_rows;
                 let top_padding = padding / 2;
@@ -170,7 +176,7 @@ impl RuntimeCoordinator {
                 for _ in 0..top_padding {
                     padded_lines.push(Line::from(""));
                     padded_indices.push(0);
-                    padded_bgs.push(None);
+                    padded_bgs.push(Some(self.theme.base));
                 }
                 padded_lines.append(&mut all_lines);
                 padded_indices.append(&mut block_indices);
@@ -178,7 +184,7 @@ impl RuntimeCoordinator {
                 for _ in 0..bottom_padding {
                     padded_lines.push(Line::from(""));
                     padded_indices.push(0);
-                    padded_bgs.push(None);
+                    padded_bgs.push(Some(self.theme.base));
                 }
                 all_lines = padded_lines;
                 block_indices = padded_indices;

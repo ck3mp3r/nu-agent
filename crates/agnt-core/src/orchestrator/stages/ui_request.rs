@@ -216,6 +216,7 @@ impl UiRequestHandler for UiRequestStage {
                 result: Ok(snapshots),
             } => {
                 let _ = ctx.bus.ui_state().send(UiStateEvent::ClearTranscript).await;
+                let _ = ctx.bus.ui_state().send(UiStateEvent::PushStartupLogo).await;
                 let _ = ctx
                     .bus
                     .ui_state()

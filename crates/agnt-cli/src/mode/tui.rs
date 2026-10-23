@@ -146,9 +146,7 @@ pub async fn run_tui_mode(
     tui_ui.set_llm_visible_mcp_tool_count(runtime_impl.llm_visible_mcp_tool_count());
     tui_ui.set_context_window_max_tokens(runtime_impl.max_context_tokens());
 
-    if !hydration.should_hydrate {
-        tui_ui.push_startup_logo();
-    }
+    tui_ui.push_startup_logo();
 
     // The incoming A2A task, completion-event, and cancel channels are all
     // `tokio::sync` receivers. They are passed directly into `InteractiveLoopConfig`,

@@ -11,6 +11,9 @@ mod bg_tint;
 #[path = "transcript/layout.rs"]
 mod layout;
 
+#[path = "transcript/padding.rs"]
+mod padding;
+
 #[path = "transcript/preview.rs"]
 mod preview;
 

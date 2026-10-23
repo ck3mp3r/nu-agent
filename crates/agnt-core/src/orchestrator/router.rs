@@ -96,28 +96,25 @@ impl CommandRouter {
                                 to_session_id: key,
                             })
                             .await;
-                        // Clear first, then either show the startup logo (fresh
-                        // session — mirrors the `/new` visual) or hydrate the
-                        // stored transcript (resume). hydrate_from_messages does
-                        // not clear, so the clear must precede it.
+                        // Clear first, then push the startup logo, then hydrate
+                        // the stored transcript. hydrate_from_messages does not
+                        // clear, so the clear must precede it, and the logo must
+                        // precede the hydration so it is the first block.
                         let _ = bus
                             .ui_state()
                             .send(crate::orchestrator::UiStateEvent::ClearTranscript)
                             .await;
-                        if snapshots.is_empty() {
-                            let _ = bus
-                                .ui_state()
-                                .send(crate::orchestrator::UiStateEvent::PushStartupLogo)
-                                .await;
-                        } else {
-                            let _ = bus
-                                .ui_state()
-                                .send(crate::orchestrator::UiStateEvent::HydrateTranscript {
-                                    messages: snapshots,
-                                    last_total_tokens: None,
-                                })
-                                .await;
-                        }
+                        let _ = bus
+                            .ui_state()
+                            .send(crate::orchestrator::UiStateEvent::PushStartupLogo)
+                            .await;
+                        let _ = bus
+                            .ui_state()
+                            .send(crate::orchestrator::UiStateEvent::HydrateTranscript {
+                                messages: snapshots,
+                                last_total_tokens: None,
+                            })
+                            .await;
                     }
                     Err(e) => {
                         log::warn!("Failed to attach A2A context session '{key}': {e}");
