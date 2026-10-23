@@ -12,7 +12,7 @@ use crate::SessionCommand;
 use crate::SessionIdArgs;
 use crate::error::{Error, Result};
 
-use super::super::config::resolve_store_type_from_clap;
+use super::super::config::{resolve_session_store_type_from_config, resolve_store_type_from_clap};
 use super::table::print_table;
 
 // region:    --- Functions
@@ -153,7 +153,7 @@ fn current_dir() -> Result<PathBuf> {
 }
 
 fn open_rig(args: &AgentArgs) -> Result<RigStoreConfig> {
-    let store_type = resolve_store_type_from_clap(args)?;
+    let store_type = resolve_store_type_from_clap(args, resolve_session_store_type_from_config())?;
     Ok(RigStoreConfig::new(store_type))
 }
 

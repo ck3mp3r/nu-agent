@@ -5,6 +5,7 @@ use std::time::Duration;
 use agnt_core::compaction::CompactionStrategy;
 use agnt_core::config::{self, CompactionConfig, Config, PluginConfig};
 use agnt_core::session::StoreType;
+use agnt_core::utils::process_env;
 use agnt_tty::policy::{UiPolicy, Verbosity};
 use agnt_tui::rendering::theme::ThemeName;
 
@@ -174,13 +175,47 @@ fn parse_strategy_from_str(s: &str) -> std::result::Result<CompactionStrategy, S
 
 // region:    --- Session store
 
-/// Resolve the session store type from the clap `--store` flag.
-pub fn resolve_store_type_from_clap(args: &AgentArgs) -> Result<StoreType> {
+/// Resolve the session store type from the clap `--store` flag, then the
+/// resolved config value, then the `StoreType` default.
+pub fn resolve_store_type_from_clap(
+    args: &AgentArgs,
+    config_value: Option<StoreType>,
+) -> Result<StoreType> {
     match args.store.as_deref() {
         Some(s) => s
             .parse()
             .map_err(|e: String| Error::Custom(format!("Invalid --store value: {e}"))),
-        None => Ok(StoreType::Sqlite),
+        None => Ok(config_value.unwrap_or_default()),
+    }
+}
+
+/// Resolve the session store type from `AGENT_SESSION_STORE_TYPE`, then the
+/// `[session_store]` config block.
+///
+/// Unlike [`resolve_config_from_clap`], this needs no model role, so commands
+/// that only touch the session store work without a full config.
+pub fn resolve_session_store_type_from_config() -> Option<StoreType> {
+    if let Some(store_type) = config::env::session_store_type_from_env(&process_env()) {
+        return Some(store_type);
+    }
+    session_store_type_from_config_load(config::toml_config::load())
+}
+
+/// Resolve the session store type from a config load result.
+///
+/// A load failure warns and falls back to the default store. A missing
+/// config.toml loads as `PluginConfig::default()`, so absence stays silent.
+fn session_store_type_from_config_load(
+    loaded: std::result::Result<PluginConfig, config::toml_config::TomlConfigError>,
+) -> Option<StoreType> {
+    match loaded {
+        Ok(plugin_config) => plugin_config.session_store.map(|s| s.store_type),
+        Err(err) => {
+            log::warn!(
+                "Failed to load config.toml for the session store type, using the default: {err}"
+            );
+            None
+        }
     }
 }
 

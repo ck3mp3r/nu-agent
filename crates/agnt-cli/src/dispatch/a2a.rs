@@ -76,7 +76,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
 
     let (mut config, plugin_config) = resolve_config_from_clap(args)?;
 
-    let store_type = resolve_store_type_from_clap(args)?;
+    let store_type = resolve_store_type_from_clap(args, config.session_store_type)?;
 
     // Apply mode-specific defaults for max_tool_turns if not explicitly configured.
     // User-specified value (via --max-turns or config file) always wins.

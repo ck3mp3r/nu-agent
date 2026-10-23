@@ -69,7 +69,7 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
 
     let (mut config, plugin_config) = resolve_config_from_clap(args)?;
 
-    let store_type = resolve_store_type_from_clap(args)?;
+    let store_type = resolve_store_type_from_clap(args, config.session_store_type)?;
 
     // Apply mode-specific defaults for max_tool_turns if not explicitly configured.
     // User-specified value (via --max-turns or config file) always wins.

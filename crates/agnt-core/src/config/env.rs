@@ -67,9 +67,7 @@ impl Config {
 
         let a2a_port: Option<u16> = parse_env_var(env, "AGENT_A2A_PORT");
 
-        let session_store_type: Option<StoreType> = env
-            .get("AGENT_SESSION_STORE_TYPE")
-            .and_then(|s| s.parse().ok());
+        let session_store_type = session_store_type_from_env(env);
 
         log::debug!(
             "Config.from_env: provider={provider} model={model} api_key={} base_url={base_url:?}",
@@ -111,4 +109,12 @@ impl Config {
             pricing: None,
         }
     }
+}
+
+/// Read the session store type from `AGENT_SESSION_STORE_TYPE`.
+///
+/// Returns `None` when the variable is unset or holds an unknown value.
+pub fn session_store_type_from_env(env: &EnvMap) -> Option<StoreType> {
+    env.get("AGENT_SESSION_STORE_TYPE")
+        .and_then(|s| s.parse().ok())
 }

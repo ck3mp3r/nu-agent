@@ -55,7 +55,7 @@ impl TestEnv {
         }
         std::fs::create_dir_all(config_home.join("nu-agent"))?;
 
-        let restore = EnvRestore::apply(&[
+        let mut restore = EnvRestore::apply(&[
             ("XDG_CONFIG_HOME", config_home.clone()),
             ("XDG_CACHE_HOME", cache_home.clone()),
             ("XDG_DATA_HOME", data_home.clone()),
@@ -66,6 +66,10 @@ impl TestEnv {
             // while still supporting the credential write paths.
             ("AGENT_VAULT_BACKEND", PathBuf::from("file")),
         ]);
+        // Session commands read the store type from the process environment.
+        // An ambient value would point them at a store the fixtures never
+        // seeded. A test that wants the variable sets it after this call.
+        restore.remove(&["AGENT_SESSION_STORE_TYPE"]);
 
         let llm = agnt_testkit::start_server().await;
 
@@ -142,6 +146,17 @@ impl EnvRestore {
         }
         Self { saved }
     }
+
+    /// Save the current value of every key, then remove each from the
+    /// environment. Drop restores the saved values.
+    fn remove(&mut self, keys: &[&'static str]) {
+        for key in keys {
+            self.saved.push((*key, std::env::var_os(key)));
+            // SAFETY: every test that mutates the environment is `#[serial]`,
+            // so no other test reads it while these are removed.
+            unsafe { std::env::remove_var(key) };
+        }
+    }
 }
 
 impl Drop for EnvRestore {
@@ -164,6 +179,15 @@ pub fn set_env(vars: &[(&'static str, &str)]) -> EnvRestore {
         .map(|(key, value)| (*key, PathBuf::from(value)))
         .collect();
     EnvRestore::apply(&owned)
+}
+
+/// Remove `keys` for the lifetime of the returned guard.
+pub fn unset_env(keys: &[&'static str]) -> EnvRestore {
+    let mut restore = EnvRestore {
+        saved: Vec::with_capacity(keys.len()),
+    };
+    restore.remove(keys);
+    restore
 }
 
 // endregion: --- EnvRestore

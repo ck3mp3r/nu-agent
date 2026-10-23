@@ -192,4 +192,42 @@ async fn test_integration_session_list_uses_jsonl_store() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[serial_test::serial]
+async fn test_integration_session_env_clears_ambient_store_type() -> Result<()> {
+    // -- Setup & Fixtures
+    let _set = support::set_env(&[("AGENT_SESSION_STORE_TYPE", "jsonl")]);
+
+    // -- Exec & Check
+    // A set variable is cleared while the guard lives and restored after.
+    let env = support::TestEnv::new().await?;
+    assert_eq!(
+        std::env::var_os("AGENT_SESSION_STORE_TYPE"),
+        None,
+        "TestEnv must clear the ambient store type"
+    );
+    drop(env);
+    assert_eq!(
+        std::env::var_os("AGENT_SESSION_STORE_TYPE"),
+        Some("jsonl".into()),
+        "the guard must restore the prior value"
+    );
+
+    // An unset variable stays unset after the guard drops.
+    let _unset = support::unset_env(&["AGENT_SESSION_STORE_TYPE"]);
+    let env = support::TestEnv::new().await?;
+    assert_eq!(
+        std::env::var_os("AGENT_SESSION_STORE_TYPE"),
+        None,
+        "TestEnv must leave an unset store type unset"
+    );
+    drop(env);
+    assert_eq!(
+        std::env::var_os("AGENT_SESSION_STORE_TYPE"),
+        None,
+        "the guard must not introduce the store type"
+    );
+    Ok(())
+}
+
 // endregion: --- Tests

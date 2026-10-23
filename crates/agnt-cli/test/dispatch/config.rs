@@ -3,6 +3,7 @@ use super::*;
 use clap::Parser;
 
 use agnt_core::config::ConfigLoadError;
+use agnt_core::config::StoreTypeConfig;
 use agnt_core::config::toml_config::TomlConfigError;
 use agnt_core::config::vault::VaultError;
 use agnt_tty::policy::Verbosity;
@@ -246,16 +247,71 @@ fn test_dispatch_config_store_type_from_flags() -> Result<()> {
             None => parse_args(&[])?,
         };
         assert_eq!(
-            resolve_store_type_from_clap(&args)?,
+            resolve_store_type_from_clap(&args, None)?,
             expected,
             "value={value:?}"
         );
     }
 
     let args = parse_args(&["--store", "bogus"])?;
-    let err = resolve_store_type_from_clap(&args)
+    let err = resolve_store_type_from_clap(&args, None)
         .err()
         .ok_or("should reject unknown store")?;
+    assert!(err.to_string().contains("Invalid --store value"));
+    Ok(())
+}
+
+#[test]
+fn test_dispatch_config_store_type_flag_wins_over_config() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = parse_args(&["--store", "jsonl"])?;
+
+    // -- Exec
+    let store_type = resolve_store_type_from_clap(&args, Some(StoreType::Memory))?;
+
+    // -- Check
+    assert_eq!(store_type, StoreType::Jsonl);
+    Ok(())
+}
+
+#[test]
+fn test_dispatch_config_store_type_config_value_when_flag_absent() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = parse_args(&[])?;
+
+    // -- Exec
+    let store_type = resolve_store_type_from_clap(&args, Some(StoreType::Jsonl))?;
+
+    // -- Check
+    assert_eq!(store_type, StoreType::Jsonl);
+    Ok(())
+}
+
+#[test]
+fn test_dispatch_config_store_type_default_when_both_absent() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = parse_args(&[])?;
+
+    // -- Exec
+    let store_type = resolve_store_type_from_clap(&args, None)?;
+
+    // -- Check
+    assert_eq!(store_type, StoreType::default());
+    assert_eq!(store_type, StoreType::Sqlite);
+    Ok(())
+}
+
+#[test]
+fn test_dispatch_config_store_type_invalid_flag_errors_with_config_value() -> Result<()> {
+    // -- Setup & Fixtures
+    let args = parse_args(&["--store", "bogus"])?;
+
+    // -- Exec
+    let err = resolve_store_type_from_clap(&args, Some(StoreType::Jsonl))
+        .err()
+        .ok_or("should reject unknown store")?;
+
+    // -- Check
     assert!(err.to_string().contains("Invalid --store value"));
     Ok(())
 }
@@ -351,5 +407,63 @@ fn test_dispatch_config_map_config_load_error_messages() -> Result<()> {
         let mapped = map_config_load_error(err);
         assert!(mapped.to_string().contains(needle), "needle={needle}");
     }
+    Ok(())
+}
+
+#[test]
+fn test_dispatch_config_session_store_type_from_config_load_invalid_api_key() -> Result<()> {
+    // -- Setup & Fixtures
+    let loaded = Err(TomlConfigError::InvalidApiKey("bad key".to_string()));
+
+    // -- Exec
+    let store_type = session_store_type_from_config_load(loaded);
+
+    // -- Check
+    assert_eq!(store_type, None);
+    Ok(())
+}
+
+#[test]
+fn test_dispatch_config_session_store_type_from_config_load_io_error() -> Result<()> {
+    // -- Setup & Fixtures
+    let loaded = Err(TomlConfigError::Io(std::io::Error::other("disk on fire")));
+
+    // -- Exec
+    let store_type = session_store_type_from_config_load(loaded);
+
+    // -- Check
+    assert_eq!(store_type, None);
+    Ok(())
+}
+
+#[test]
+fn test_dispatch_config_session_store_type_from_config_load_with_store() -> Result<()> {
+    // -- Setup & Fixtures
+    let loaded = Ok(PluginConfig {
+        session_store: Some(StoreTypeConfig {
+            store_type: StoreType::Jsonl,
+            path: None,
+        }),
+        ..Default::default()
+    });
+
+    // -- Exec
+    let store_type = session_store_type_from_config_load(loaded);
+
+    // -- Check
+    assert_eq!(store_type, Some(StoreType::Jsonl));
+    Ok(())
+}
+
+#[test]
+fn test_dispatch_config_session_store_type_from_config_load_default() -> Result<()> {
+    // -- Setup & Fixtures
+    let loaded = Ok(PluginConfig::default());
+
+    // -- Exec
+    let store_type = session_store_type_from_config_load(loaded);
+
+    // -- Check
+    assert_eq!(store_type, None);
     Ok(())
 }
