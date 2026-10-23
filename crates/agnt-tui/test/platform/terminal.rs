@@ -12,6 +12,7 @@ struct MockTerminalState {
     alt_screen_enabled: bool,
     cursor_visible: bool,
     bracketed_paste_enabled: bool,
+    mouse_capture_enabled: bool,
 }
 
 impl Default for MockTerminalState {
@@ -21,6 +22,7 @@ impl Default for MockTerminalState {
             alt_screen_enabled: false,
             cursor_visible: true,
             bracketed_paste_enabled: false,
+            mouse_capture_enabled: false,
         }
     }
 }
@@ -107,6 +109,18 @@ impl TerminalBackend for MockTerminalBackend {
         self.state.borrow_mut().bracketed_paste_enabled = false;
         Ok(())
     }
+
+    fn enable_mouse_capture(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
+        self.run(TerminalAction::EnableMouseCapture)?;
+        self.state.borrow_mut().mouse_capture_enabled = true;
+        Ok(())
+    }
+
+    fn disable_mouse_capture(&mut self) -> core::result::Result<(), TerminalLifecycleError> {
+        self.run(TerminalAction::DisableMouseCapture)?;
+        self.state.borrow_mut().mouse_capture_enabled = false;
+        Ok(())
+    }
 }
 
 fn assert_terminal_restored(state: &Rc<RefCell<MockTerminalState>>) {
@@ -117,6 +131,7 @@ fn assert_terminal_restored(state: &Rc<RefCell<MockTerminalState>>) {
             alt_screen_enabled: false,
             cursor_visible: true,
             bracketed_paste_enabled: false,
+            mouse_capture_enabled: false,
         }
     );
 }
@@ -138,6 +153,8 @@ fn enter_then_restore_uses_required_operation_order() -> Result<()> {
             TerminalAction::EnterAltScreen,
             TerminalAction::HideCursor,
             TerminalAction::EnableBracketedPaste,
+            TerminalAction::EnableMouseCapture,
+            TerminalAction::DisableMouseCapture,
             TerminalAction::ShowCursor,
             TerminalAction::LeaveAltScreen,
             TerminalAction::DisableBracketedPaste,
@@ -170,6 +187,8 @@ fn restore_is_idempotent_and_safe_to_call_multiple_times() -> Result<()> {
             TerminalAction::EnterAltScreen,
             TerminalAction::HideCursor,
             TerminalAction::EnableBracketedPaste,
+            TerminalAction::EnableMouseCapture,
+            TerminalAction::DisableMouseCapture,
             TerminalAction::ShowCursor,
             TerminalAction::LeaveAltScreen,
             TerminalAction::DisableBracketedPaste,

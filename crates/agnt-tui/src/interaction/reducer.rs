@@ -33,6 +33,8 @@ pub enum UserAction {
     HistoryDown,
     ScrollPageUp,
     ScrollPageDown,
+    WheelUp { column: u16, row: u16 },
+    WheelDown { column: u16, row: u16 },
     CompleteForward,
     CompleteBackward,
     QueryNext,
@@ -152,6 +154,8 @@ fn reduce_user_action(
         UserAction::ScrollPageDown => state
             .scroll
             .reduce_scroll_action(ScrollAction::PageDown { select }),
+        UserAction::WheelUp { column, row } => handle_wheel(state, column, row, true, select),
+        UserAction::WheelDown { column, row } => handle_wheel(state, column, row, false, select),
         UserAction::Quit => handle_quit(state, cancel_controller),
         UserAction::Esc => handle_escape(state),
         UserAction::EscConfirm => handle_escape_confirm(state, cancel_controller),
@@ -231,6 +235,21 @@ fn handle_enter_normal_mode_from_chord(state: &mut AppState) -> bool {
         return true;
     }
     false
+}
+
+fn handle_wheel(state: &mut AppState, column: u16, row: u16, up: bool, select: bool) -> bool {
+    if !state.scroll.contains_transcript_point(column, row) {
+        return false;
+    }
+    if state.input.mode == InputMode::Insert {
+        state.enter_normal_mode();
+    }
+    let action = if up {
+        ScrollAction::WheelUp { select }
+    } else {
+        ScrollAction::WheelDown { select }
+    };
+    state.scroll.reduce_scroll_action(action)
 }
 
 fn handle_yank_selection(state: &mut AppState) -> bool {

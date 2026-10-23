@@ -1,4 +1,4 @@
-use crate::interaction::input::{TerminalEvent, TerminalKey, TerminalResize};
+use crate::interaction::input::{TerminalEvent, TerminalKey, TerminalMouse, TerminalResize};
 
 use super::TerminalEventSource;
 use super::{InputSourceDiagnostics, map_crossterm_event, poll_hybrid_event};
@@ -196,4 +196,69 @@ fn scripted_event_parser_supports_ctrln_for_query_picker_navigation() {
         source.poll_event(),
         Ok(Some(TerminalEvent::Key(TerminalKey::CtrlN)))
     );
+}
+
+#[test]
+fn test_map_crossterm_event_mouse_wheel_maps_direction_and_position() {
+    // -- Setup & Fixtures
+    let scroll_up = crossterm::event::Event::Mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::ScrollUp,
+        column: 12,
+        row: 7,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    });
+    let scroll_down = crossterm::event::Event::Mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::ScrollDown,
+        column: 3,
+        row: 21,
+        modifiers: crossterm::event::KeyModifiers::empty(),
+    });
+
+    // -- Exec
+    let up = map_crossterm_event_for_test(scroll_up);
+    let down = map_crossterm_event_for_test(scroll_down);
+
+    // -- Check
+    assert_eq!(
+        up,
+        Some(TerminalEvent::Mouse(TerminalMouse {
+            up: true,
+            column: 12,
+            row: 7,
+        }))
+    );
+    assert_eq!(
+        down,
+        Some(TerminalEvent::Mouse(TerminalMouse {
+            up: false,
+            column: 3,
+            row: 21,
+        }))
+    );
+}
+
+#[test]
+fn test_map_crossterm_event_mouse_non_wheel_kinds_are_dropped() {
+    // -- Setup & Fixtures
+    let kinds = [
+        crossterm::event::MouseEventKind::Moved,
+        crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+        crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+        crossterm::event::MouseEventKind::ScrollLeft,
+        crossterm::event::MouseEventKind::ScrollRight,
+    ];
+
+    // -- Exec & Check
+    for kind in kinds {
+        let mapped = map_crossterm_event_for_test(crossterm::event::Event::Mouse(
+            crossterm::event::MouseEvent {
+                kind,
+                column: 5,
+                row: 5,
+                modifiers: crossterm::event::KeyModifiers::empty(),
+            },
+        ));
+        assert_eq!(mapped, None, "kind {kind:?} must be dropped");
+    }
 }

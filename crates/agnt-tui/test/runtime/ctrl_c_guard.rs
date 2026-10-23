@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::interaction::input::TerminalResize;
+use crate::interaction::input::{TerminalMouse, TerminalResize};
 use crate::rendering::layout::INPUT_MIN_HEIGHT;
 use crate::state::{CTRL_C_QUIT_CONFIRM_STATUS, InfoPanel, PermissionPrompt};
 
@@ -332,6 +332,29 @@ async fn test_ctrl_c_guard_expiry_and_resize() -> Result<()> {
     // -- Check: the armed state survives a resize.
     assert!(armed(&resized));
     assert_eq!(status_message(&resized), CTRL_C_QUIT_CONFIRM_STATUS);
+    Ok(())
+}
+
+/// A mouse wheel event disarms the confirmation and is routed to dispatch.
+#[tokio::test]
+async fn test_ctrl_c_guard_mouse_disarms() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
+    driver.advance(&[ctrl_c()]).await?;
+    assert!(armed(&driver));
+
+    // -- Exec
+    driver
+        .advance(&[DriveEvent::Key(TerminalEvent::Mouse(TerminalMouse {
+            up: true,
+            column: 10,
+            row: 5,
+        }))])
+        .await?;
+
+    // -- Check
+    assert!(!armed(&driver));
+    assert!(!driver.coordinator().quit_requested());
     Ok(())
 }
 

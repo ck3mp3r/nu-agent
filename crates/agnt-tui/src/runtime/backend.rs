@@ -132,6 +132,24 @@ where
             )
         })
     }
+
+    fn enable_mouse_capture(&mut self) -> Result<(), TerminalLifecycleError> {
+        crossterm::execute!(self.writer, crossterm::event::EnableMouseCapture).map_err(|err| {
+            TerminalLifecycleError::new(
+                crate::platform::terminal::TerminalAction::EnableMouseCapture,
+                err.to_string(),
+            )
+        })
+    }
+
+    fn disable_mouse_capture(&mut self) -> Result<(), TerminalLifecycleError> {
+        crossterm::execute!(self.writer, crossterm::event::DisableMouseCapture).map_err(|err| {
+            TerminalLifecycleError::new(
+                crate::platform::terminal::TerminalAction::DisableMouseCapture,
+                err.to_string(),
+            )
+        })
+    }
 }
 
 pub(crate) struct LiveTerminalUi {

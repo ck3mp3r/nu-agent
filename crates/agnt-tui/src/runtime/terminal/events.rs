@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::interaction::input::{TerminalEvent, TerminalKey};
+use crate::interaction::input::{TerminalEvent, TerminalKey, TerminalMouse};
 
 use super::io::TtyTerminalEvents;
 
@@ -198,13 +198,31 @@ impl TerminalEventSource for HybridTerminalEvents {
 }
 
 pub(crate) fn map_crossterm_event(event: crossterm::event::Event) -> Option<TerminalEvent> {
-    use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+    use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 
     match event {
         Event::Resize(columns, rows) => Some(TerminalEvent::Resize(
             crate::interaction::input::TerminalResize { columns, rows },
         )),
         Event::Paste(text) => Some(TerminalEvent::Paste(text)),
+        Event::Mouse(mouse_event) => match mouse_event.kind {
+            MouseEventKind::ScrollUp => Some(TerminalEvent::Mouse(TerminalMouse {
+                up: true,
+                column: mouse_event.column,
+                row: mouse_event.row,
+            })),
+            MouseEventKind::ScrollDown => Some(TerminalEvent::Mouse(TerminalMouse {
+                up: false,
+                column: mouse_event.column,
+                row: mouse_event.row,
+            })),
+            MouseEventKind::Down(_)
+            | MouseEventKind::Up(_)
+            | MouseEventKind::Drag(_)
+            | MouseEventKind::Moved
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight => None,
+        },
         Event::Key(key_event) => {
             if key_event.kind != KeyEventKind::Press && key_event.kind != KeyEventKind::Repeat {
                 return None;

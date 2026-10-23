@@ -1,5 +1,6 @@
 use super::*;
 use crate::state::selection::TranscriptSelection;
+use ratatui::layout::Rect;
 
 #[test]
 fn scroll_line_cursor_and_viewport_table() {
@@ -222,4 +223,177 @@ fn scroll_page_and_selection_table() {
     let sel = state.scroll.selection.expect("selection should exist");
     assert_eq!(state.scroll.cursor_visual_row, 8);
     assert_eq!(sel.cursor(), 8);
+}
+
+#[test]
+fn test_wheel_scroll_three_lines_per_notch_and_tail_resume() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState {
+        input: InputState::default().with_mode(InputMode::Normal),
+        scroll: ScrollState {
+            pane_focus: PaneFocus::Transcript,
+            viewport_height: 10,
+            cursor_visual_row: 0,
+            total_visual_rows: 30,
+            scroll_offset: 0,
+            following_tail: false,
+            entry_indices: (0..30).collect(),
+            transcript_area: Rect::new(0, 0, 80, 20),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    for i in 0..30 {
+        push_user_line(&mut state, format!("line {i}"));
+    }
+
+    // -- Exec
+    let changed = reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::WheelDown { column: 5, row: 5 }),
+        None,
+    );
+
+    // -- Check: three visual lines down, the tail is not resumed yet.
+    assert!(changed);
+    assert_eq!(state.scroll.cursor_visual_row, 3);
+    assert_eq!(state.scroll.scroll_offset, 0);
+    assert!(!state.scroll.following_tail);
+
+    // -- Exec
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::WheelUp { column: 5, row: 5 }),
+        None,
+    );
+
+    // -- Check: three visual lines up.
+    assert_eq!(state.scroll.cursor_visual_row, 0);
+    assert_eq!(state.scroll.scroll_offset, 0);
+    assert!(!state.scroll.following_tail);
+
+    // -- Setup & Fixtures: the cursor three rows above the last visual row.
+    state.scroll.cursor_visual_row = 27;
+    state.scroll.scroll_offset = 20;
+    state.scroll.max_scroll = 20;
+    state.scroll.following_tail = false;
+
+    // -- Exec
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::WheelDown { column: 5, row: 5 }),
+        None,
+    );
+
+    // -- Check: the cursor lands on the last visual row and the tail resumes.
+    assert_eq!(state.scroll.cursor_visual_row, 29);
+    assert!(state.scroll.following_tail);
+    Ok(())
+}
+
+#[test]
+fn test_wheel_scroll_hit_test_rejects_outside_transcript_area() -> Result<()> {
+    // -- Setup & Fixtures: no render yet, so the stored area is empty.
+    let mut state = AppState {
+        input: InputState::default().with_mode(InputMode::Normal),
+        scroll: ScrollState {
+            pane_focus: PaneFocus::Transcript,
+            viewport_height: 10,
+            cursor_visual_row: 5,
+            total_visual_rows: 30,
+            entry_indices: (0..30).collect(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    for i in 0..30 {
+        push_user_line(&mut state, format!("line {i}"));
+    }
+
+    // -- Exec
+    let changed = reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::WheelDown { column: 5, row: 5 }),
+        None,
+    );
+
+    // -- Check: nothing moves before the first render.
+    assert!(!changed);
+    assert_eq!(state.scroll.cursor_visual_row, 5);
+    assert_eq!(state.scroll.scroll_offset, 0);
+
+    // -- Setup & Fixtures: a rendered transcript area.
+    state.scroll.transcript_area = Rect::new(10, 2, 40, 10);
+
+    // -- Exec: a point left of the area.
+    let changed = reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::WheelDown { column: 9, row: 5 }),
+        None,
+    );
+
+    // -- Check
+    assert!(!changed);
+    assert_eq!(state.scroll.cursor_visual_row, 5);
+
+    // -- Exec: the area's top-left cell.
+    let changed = reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::WheelDown { column: 10, row: 2 }),
+        None,
+    );
+
+    // -- Check
+    assert!(changed);
+    assert_eq!(state.scroll.cursor_visual_row, 8);
+    Ok(())
+}
+
+#[test]
+fn test_wheel_scroll_extends_visual_selection() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState {
+        input: InputState::default().with_mode(InputMode::Visual),
+        scroll: ScrollState {
+            pane_focus: PaneFocus::Transcript,
+            viewport_height: 10,
+            cursor_visual_row: 10,
+            total_visual_rows: 30,
+            scroll_offset: 5,
+            following_tail: false,
+            selection: Some(TranscriptSelection::new(10)),
+            entry_indices: (0..30).collect(),
+            transcript_area: Rect::new(0, 0, 80, 20),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    for i in 0..30 {
+        push_user_line(&mut state, format!("line {i}"));
+    }
+
+    // -- Exec
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::WheelDown { column: 5, row: 5 }),
+        None,
+    );
+
+    // -- Check: the selection cursor follows the wheel.
+    let sel = state.scroll.selection.ok_or("selection should exist")?;
+    assert_eq!(state.scroll.cursor_visual_row, 13);
+    assert_eq!(sel.cursor(), 13);
+
+    // -- Exec
+    reduce_with_cancel_controller(
+        &mut state,
+        ReducerInput::User(UserAction::WheelUp { column: 5, row: 5 }),
+        None,
+    );
+
+    // -- Check
+    let sel = state.scroll.selection.ok_or("selection should exist")?;
+    assert_eq!(state.scroll.cursor_visual_row, 10);
+    assert_eq!(sel.cursor(), 10);
+    Ok(())
 }

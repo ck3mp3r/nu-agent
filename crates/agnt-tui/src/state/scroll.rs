@@ -5,8 +5,10 @@
 use super::StatusState;
 use super::selection::TranscriptSelection;
 use crate::interaction::reducer::VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS;
+use ratatui::layout::{Position, Rect};
 
 const TRANSCRIPT_PAGE_LINES: usize = 8;
+const WHEEL_LINES: usize = 3;
 
 /// The vim-style pane focus of the TUI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +35,7 @@ pub struct ScrollState {
     pub rendered_line_start_row: usize,
     pub selection: Option<TranscriptSelection>,
     pub pane_focus: PaneFocus,
+    pub transcript_area: Rect,
 }
 
 impl Default for ScrollState {
@@ -49,6 +52,7 @@ impl Default for ScrollState {
             rendered_line_start_row: 0,
             selection: None,
             pane_focus: PaneFocus::Input,
+            transcript_area: Rect::default(),
         }
     }
 }
@@ -63,6 +67,8 @@ pub enum ScrollAction {
     PageDown { select: bool },
     ToTop { select: bool },
     ToBottom { select: bool },
+    WheelUp { select: bool },
+    WheelDown { select: bool },
     FocusPaneLeft,
     FocusPaneRight,
 }
@@ -81,6 +87,8 @@ impl ScrollState {
             ScrollAction::PageDown { select } => self.reduce_scroll_page_down(select),
             ScrollAction::ToTop { select } => self.reduce_scroll_to_top(select),
             ScrollAction::ToBottom { select } => self.reduce_scroll_to_bottom(select),
+            ScrollAction::WheelUp { select } => self.reduce_scroll_wheel_up(select),
+            ScrollAction::WheelDown { select } => self.reduce_scroll_wheel_down(select),
             ScrollAction::FocusPaneLeft => self.reduce_focus_pane_left(),
             ScrollAction::FocusPaneRight => self.reduce_focus_pane_right(),
         }
@@ -187,6 +195,23 @@ impl ScrollState {
         true
     }
 
+    fn reduce_scroll_wheel_up(&mut self, select: bool) -> bool {
+        for _ in 0..WHEEL_LINES {
+            self.reduce_scroll_line_up(select);
+        }
+        true
+    }
+
+    fn reduce_scroll_wheel_down(&mut self, select: bool) -> bool {
+        for _ in 0..WHEEL_LINES {
+            self.reduce_scroll_line_down(select);
+        }
+        if self.cursor_visual_row == self.total_visual_rows.saturating_sub(1) {
+            self.following_tail = true;
+        }
+        true
+    }
+
     fn reduce_focus_pane_left(&mut self) -> bool {
         self.focus_prev_pane();
         true
@@ -266,6 +291,13 @@ impl ScrollState {
     // endregion: --- Render sync
 
     // region:    --- Scroll helpers
+
+    /// Whether a terminal cell coordinate falls inside the transcript pane as
+    /// laid out by the last render. Before the first render the stored area is
+    /// empty, so every point is outside.
+    pub fn contains_transcript_point(&self, column: u16, row: u16) -> bool {
+        self.transcript_area.contains(Position::new(column, row))
+    }
 
     pub fn scroll_transcript_line_up(&mut self) {
         self.following_tail = false;

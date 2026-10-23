@@ -10,6 +10,8 @@ pub enum TerminalAction {
     ShowCursor,
     EnableBracketedPaste,
     DisableBracketedPaste,
+    EnableMouseCapture,
+    DisableMouseCapture,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +50,8 @@ pub trait TerminalBackend {
     fn show_cursor(&mut self) -> Result<(), TerminalLifecycleError>;
     fn enable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError>;
     fn disable_bracketed_paste(&mut self) -> Result<(), TerminalLifecycleError>;
+    fn enable_mouse_capture(&mut self) -> Result<(), TerminalLifecycleError>;
+    fn disable_mouse_capture(&mut self) -> Result<(), TerminalLifecycleError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -56,6 +60,7 @@ struct TerminalState {
     alt_screen_enabled: bool,
     cursor_hidden: bool,
     bracketed_paste_enabled: bool,
+    mouse_capture_enabled: bool,
 }
 
 pub struct TerminalLifecycle<B>
@@ -107,11 +112,27 @@ where
             self.state.bracketed_paste_enabled = true;
         }
 
+        if !self.state.mouse_capture_enabled {
+            if let Err(error) = self.backend.enable_mouse_capture() {
+                let _ = self.restore();
+                return Err(error);
+            }
+            self.state.mouse_capture_enabled = true;
+        }
+
         Ok(())
     }
 
     pub fn restore(&mut self) -> Result<(), TerminalLifecycleError> {
         let mut first_error: Option<TerminalLifecycleError> = None;
+
+        if self.state.mouse_capture_enabled {
+            if let Err(error) = self.backend.disable_mouse_capture() {
+                first_error.get_or_insert(error);
+            } else {
+                self.state.mouse_capture_enabled = false;
+            }
+        }
 
         if self.state.cursor_hidden {
             if let Err(error) = self.backend.show_cursor() {

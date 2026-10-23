@@ -1,5 +1,5 @@
 use crate::interaction::{
-    input::{TerminalEvent, TerminalKey, TerminalResize, map_terminal_event},
+    input::{TerminalEvent, TerminalKey, TerminalMouse, TerminalResize, map_terminal_event},
     reducer::UserAction,
 };
 
@@ -276,4 +276,31 @@ fn resize_event_maps_to_user_action_with_dimensions() {
             rows: 42
         })
     );
+}
+
+#[test]
+fn test_map_terminal_event_mouse_wheel_maps_to_wheel_actions() {
+    // -- Setup & Fixtures
+    let wheel_up = TerminalEvent::Mouse(TerminalMouse {
+        up: true,
+        column: 9,
+        row: 4,
+    });
+    let wheel_down = TerminalEvent::Mouse(TerminalMouse {
+        up: false,
+        column: 2,
+        row: 18,
+    });
+
+    // -- Exec & Check
+    for locked in [false, true] {
+        assert_eq!(
+            map_terminal_event(&wheel_up, locked),
+            Some(UserAction::WheelUp { column: 9, row: 4 })
+        );
+        assert_eq!(
+            map_terminal_event(&wheel_down, locked),
+            Some(UserAction::WheelDown { column: 2, row: 18 })
+        );
+    }
 }

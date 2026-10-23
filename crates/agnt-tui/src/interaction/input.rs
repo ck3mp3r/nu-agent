@@ -32,11 +32,19 @@ pub struct TerminalResize {
     pub rows: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalMouse {
+    pub up: bool,
+    pub column: u16,
+    pub row: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalEvent {
     Key(TerminalKey),
     Resize(TerminalResize),
     Paste(String),
+    Mouse(TerminalMouse),
 }
 
 pub fn map_terminal_event(event: &TerminalEvent, locked: bool) -> Option<UserAction> {
@@ -47,6 +55,14 @@ pub fn map_terminal_event(event: &TerminalEvent, locked: bool) -> Option<UserAct
         }),
         TerminalEvent::Key(key) => map_key(*key, locked),
         TerminalEvent::Paste(_) => None,
+        TerminalEvent::Mouse(mouse) if mouse.up => Some(UserAction::WheelUp {
+            column: mouse.column,
+            row: mouse.row,
+        }),
+        TerminalEvent::Mouse(mouse) => Some(UserAction::WheelDown {
+            column: mouse.column,
+            row: mouse.row,
+        }),
     }
 }
 

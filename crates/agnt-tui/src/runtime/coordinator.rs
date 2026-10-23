@@ -463,6 +463,10 @@ impl RuntimeCoordinator {
                 self.state.disarm_quit_confirmation();
                 false
             }
+            TerminalEvent::Mouse(_) => {
+                self.state.disarm_quit_confirmation();
+                false
+            }
             TerminalEvent::Key(TerminalKey::CtrlC) => {
                 self.handle_ctrl_c();
                 true
@@ -1176,6 +1180,7 @@ impl RuntimeCoordinator {
             // vertical[0]=unused [1]=transcript [2]=entire bottom box
 
             let transcript_content_area = vertical[1];
+            self.state.scroll.transcript_area = transcript_content_area;
             let transcript_list_area = Rect {
                 width: transcript_content_area.width.saturating_sub(2),
                 ..transcript_content_area
