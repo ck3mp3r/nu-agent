@@ -67,6 +67,96 @@ fn test_scroll_state_defaults_and_sync_after_render() -> Result<()> {
 }
 
 #[test]
+fn test_scroll_state_sync_after_render_selection_sync() -> Result<()> {
+    // -- Setup & Fixtures: a tail-following selection behind the pinned row.
+    let mut tailing = ScrollState {
+        viewport_height: 10,
+        following_tail: true,
+        selection: Some(TranscriptSelection::new(5)),
+        ..Default::default()
+    };
+
+    // -- Exec
+    let max_scroll = tailing.sync_after_render(25);
+
+    // -- Check: the selection cursor rides the pinned row, the anchor stays.
+    assert_eq!(max_scroll, 15);
+    assert_eq!(tailing.cursor_visual_row, 24);
+    let sel = tailing
+        .selection
+        .as_ref()
+        .ok_or("should still have selection")?;
+    assert_eq!(sel.cursor(), 24, "selection cursor follows the pin");
+    assert_eq!(sel.anchor(), 5, "anchor stays at the selection start");
+
+    // -- Setup & Fixtures: no selection.
+    let mut none = ScrollState {
+        viewport_height: 10,
+        following_tail: true,
+        ..Default::default()
+    };
+
+    // -- Exec
+    let max_scroll = none.sync_after_render(25);
+
+    // -- Check: the cursor still pins and the max scroll is clamped.
+    assert_eq!(max_scroll, 15);
+    assert_eq!(none.cursor_visual_row, 24);
+    assert!(none.selection.is_none());
+
+    // -- Setup & Fixtures: a detached viewport with a selection.
+    let mut detached = ScrollState {
+        viewport_height: 10,
+        following_tail: false,
+        cursor_visual_row: 4,
+        selection: Some(TranscriptSelection::new(4)),
+        ..Default::default()
+    };
+
+    // -- Exec
+    let max_scroll = detached.sync_after_render(25);
+
+    // -- Check: the selection is untouched.
+    assert_eq!(max_scroll, 15);
+    assert_eq!(detached.cursor_visual_row, 4);
+    let sel = detached
+        .selection
+        .as_ref()
+        .ok_or("should still have selection")?;
+    assert_eq!(sel.cursor(), 4, "detached selection cursor kept");
+    assert_eq!(sel.anchor(), 4);
+    Ok(())
+}
+
+#[test]
+fn test_scroll_state_sync_after_render_wheel_no_op_keeps_selection() -> Result<()> {
+    // -- Setup & Fixtures: a tail-following selection synced to the pinned row.
+    let mut scroll = ScrollState {
+        pane_focus: PaneFocus::Transcript,
+        viewport_height: 10,
+        following_tail: true,
+        scroll_offset: 15,
+        selection: Some(TranscriptSelection::new(5)),
+        ..Default::default()
+    };
+    scroll.sync_after_render(25);
+
+    // -- Exec: a wheel-down at the bottom with selection extension.
+    let changed = scroll.reduce_scroll_action(ScrollAction::WheelDown { select: true });
+
+    // -- Check: no visible change, and the selection stays on the cursor row.
+    assert!(!changed, "wheel down at the bottom is a no-op");
+    assert_eq!(scroll.cursor_visual_row, 24);
+    let sel = scroll
+        .selection
+        .as_ref()
+        .ok_or("should still have selection")?;
+    assert_eq!(sel.cursor(), scroll.cursor_visual_row);
+    assert_eq!(sel.anchor(), 5);
+    Ok(())
+}
+
+#[test]
 fn test_scroll_state_reduce_scroll_action_line_moves() -> Result<()> {
     // -- Setup & Fixtures
     let mut scroll = ScrollState {

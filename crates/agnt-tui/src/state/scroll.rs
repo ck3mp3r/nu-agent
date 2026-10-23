@@ -285,7 +285,11 @@ impl ScrollState {
         let max_scroll = total_visual_rows.saturating_sub(self.viewport_height);
         self.max_scroll = max_scroll;
         if self.following_tail {
-            self.cursor_visual_row = total_visual_rows.saturating_sub(1);
+            let pinned_row = total_visual_rows.saturating_sub(1);
+            self.cursor_visual_row = pinned_row;
+            if let Some(sel) = &mut self.selection {
+                sel.set_cursor(pinned_row);
+            }
         }
         max_scroll
     }

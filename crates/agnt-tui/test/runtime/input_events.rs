@@ -80,6 +80,10 @@ fn coordinator_input_error_and_watchdog_fail_fast() -> Result<()> {
         coordinator.fatal_error(),
         Some("Terminal input error: simulated source failure")
     );
+    assert!(
+        coordinator.state.status.message.status_line().is_empty(),
+        "the poll-error message never renders in the status lane"
+    );
 
     // -- Setup & Fixtures: the runtime renderer with a failing source.
     let inner = FakeRenderer::default();
@@ -125,6 +129,10 @@ fn coordinator_input_error_and_watchdog_fail_fast() -> Result<()> {
     assert!(fatal.contains("Last error: crossterm poll failed"));
     assert!(fatal.contains("interactive terminal"));
     assert!(watchdog.quit_requested());
+    assert!(
+        watchdog.state.status.message.status_line().is_empty(),
+        "the fail-fast message never renders in the status lane"
+    );
 
     // -- Setup & Fixtures: a diagnostics-only source.
     let mut diagnostics = RuntimeCoordinator::new(120, 30, Some(true));
@@ -179,6 +187,10 @@ fn coordinator_input_error_and_watchdog_fail_fast() -> Result<()> {
     assert!(fatal.contains("Last error: crossterm poll failed: not a terminal"));
     assert!(fatal.contains("Run `agent` in an interactive terminal"));
     assert!(!fatal.contains("Terminal input error:"));
+    assert!(
+        immediate.state.status.message.status_line().is_empty(),
+        "the fail-fast message never renders in the status lane"
+    );
     Ok(())
 }
 

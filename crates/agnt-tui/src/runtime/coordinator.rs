@@ -354,11 +354,7 @@ impl RuntimeCoordinator {
                     self.trigger_no_interactive_backend_fail_fast(Some(error));
                     return;
                 }
-                self.state
-                    .status
-                    .message
-                    .set_message(format!("Terminal input error: {error}"));
-                self.fatal_error = Some(self.state.status.message.status_line().to_string());
+                self.fatal_error = Some(format!("Terminal input error: {error}"));
                 self.quit_requested = true;
                 self.cancel_controller.request_cancel();
                 return;
@@ -961,7 +957,6 @@ impl RuntimeCoordinator {
         }
         message.push_str(" Run `agent` in an interactive terminal and verify TTY access.");
 
-        self.state.status.message.set_message(message.clone());
         self.fatal_error = Some(message);
         self.quit_requested = true;
         self.cancel_controller.request_cancel();
