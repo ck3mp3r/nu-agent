@@ -310,3 +310,28 @@ fn latte_body_text_uses_dark_text_fg() {
     assert_eq!(theme.row_tool.fg, Some(text));
     assert_eq!(theme.row_system.fg, Some(text));
 }
+
+#[test]
+fn picker_section_header_uses_subtext0_on_surface1_for_all_flavors() {
+    let cases = [
+        (TuiTheme::catppuccin_mocha(), CatppuccinPalette::mocha()),
+        (TuiTheme::catppuccin_latte(), CatppuccinPalette::latte()),
+        (TuiTheme::catppuccin_frappe(), CatppuccinPalette::frappe()),
+        (
+            TuiTheme::catppuccin_macchiato(),
+            CatppuccinPalette::macchiato(),
+        ),
+    ];
+
+    for (theme, palette) in cases {
+        assert_eq!(theme.picker_section_header.fg, Some(palette.subtext0));
+        assert_eq!(theme.picker_section_header.bg, Some(palette.surface1));
+        assert!(
+            theme
+                .picker_section_header
+                .add_modifier
+                .contains(Modifier::BOLD),
+            "picker section header must be bold"
+        );
+    }
+}

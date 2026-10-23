@@ -147,6 +147,11 @@ impl RenderLoopDriver {
         text
     }
 
+    /// The resolved style of the cell at `(x, y)` in the last rendered frame.
+    pub(crate) fn cell_style_at(&self, x: u16, y: u16) -> ratatui::style::Style {
+        self.terminal.backend().buffer()[(x, y)].style()
+    }
+
     // endregion: --- Accessors
 
     // region: Commands

@@ -245,8 +245,8 @@ impl RuntimeCoordinator {
                     };
                 if current_provider.as_deref() != Some(provider.as_str()) {
                     table_rows.push(
-                        Row::new(vec![Cell::from(format!("  {provider_display_name}"))])
-                            .style(self.theme.subtle_meta),
+                        Row::new(vec![Cell::from(format!(" {provider_display_name}"))])
+                            .style(self.theme.picker_section_header),
                     );
                     current_provider = Some(provider.clone());
                 }

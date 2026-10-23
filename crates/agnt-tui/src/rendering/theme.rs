@@ -211,6 +211,9 @@ impl ThemeName {
 pub struct TuiTheme {
     pub focus: Style,
     pub subtle_meta: Style,
+    /// Full-width background bar behind picker section titles (provider
+    /// headers in the model picker).
+    pub picker_section_header: Style,
     pub input_prompt: Style,
     pub input_text: Style,
     pub selection_bg: Style,
@@ -317,6 +320,10 @@ impl TuiTheme {
         Self {
             focus: fg(palette.sapphire),
             subtle_meta: fg(palette.overlay1),
+            picker_section_header: Style::default()
+                .fg(palette.subtext0)
+                .bg(palette.surface1)
+                .add_modifier(Modifier::BOLD),
             input_prompt: fg(palette.blue),
             input_text: fg(palette.text),
             selection_bg: Style::default().bg(palette.surface1),
