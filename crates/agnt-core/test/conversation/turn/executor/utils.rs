@@ -166,6 +166,7 @@ pub(super) fn test_compaction_config(
         compactor: test_compactor(bus.clone()),
         params: CompactionParams::default(),
         threshold_tokens: None,
+        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
     }
 }
 

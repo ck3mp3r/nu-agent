@@ -61,6 +61,7 @@ pub(super) fn decide_fixture() -> Result<DecideFixture> {
         compactor,
         params: CompactionParams::default(),
         threshold_tokens: Some(80_000),
+        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
     };
     let last_total_tokens = Arc::new(Mutex::new(None));
     Ok(DecideFixture {
@@ -106,11 +107,12 @@ impl RepetitionTurnFixture {
         let memory = Arc::new(CachedMemory::new(
             crate::session::RigStoreConfig::in_memory(),
         ));
+        let dyn_model = Arc::new(std::sync::Mutex::new(
+            MockCompletionModel::default().erase(),
+        ));
         Ok(Self {
             bus: Bus::default(),
-            dyn_model: Arc::new(std::sync::Mutex::new(
-                MockCompletionModel::default().erase(),
-            )),
+            dyn_model: dyn_model.clone(),
             hook_state: HookState {
                 circuit_breaker: Arc::new(std::sync::Mutex::new(
                     crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
@@ -129,7 +131,9 @@ impl RepetitionTurnFixture {
                     ),
                     params: CompactionParams::default(),
                     threshold_tokens: None,
+                    threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
                 },
+                model: dyn_model.lock().expect("model mutex poisoned").clone(),
                 last_total_tokens: Arc::new(std::sync::Mutex::new(None)),
             },
             _temp_dir: temp_dir,
@@ -155,6 +159,7 @@ impl RepetitionTurnFixture {
         Vec<core::result::Result<rig::agent::MultiTurnStreamItem, rig::completion::PromptError>>,
         Box<dyn std::error::Error>,
     > {
+        let model = self.dyn_model.lock().expect("model mutex poisoned").clone();
         let hook = HookChain::new(
             self.bus.clone(),
             PolicyPermissionResolver {
@@ -177,10 +182,10 @@ impl RepetitionTurnFixture {
                 memory: self.hook_state.memory.clone(),
                 conversation_id: self.hook_state.conversation_id.clone(),
                 compaction: self.hook_state.compaction.clone(),
+                model: model.clone(),
                 last_total_tokens: self.hook_state.last_total_tokens.clone(),
             },
         );
-        let model = self.dyn_model.lock().expect("model mutex poisoned").clone();
         let builder = rig::agent::AgentBuilder::new(model).add_hook(hook);
         let agent = if with_tool {
             builder.tool(rig::test_utils::MockAddTool).build()

@@ -76,6 +76,10 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     conversation_id: String,
     /// Hook-driven compaction machinery: compactor, policy, threshold.
     compaction: CompactionConfig,
+    /// The wire serving this turn's completions. The pricing fallback uses its
+    /// spec, so a completion is priced at the rates of the model that served
+    /// it — not at the compaction model's.
+    model: rig::DynModel<rig::operation::Completion>,
     /// Real token count from the last LLM completion, shared across turns. Used by
     /// `decide_compaction` to check the threshold against the real context size
     /// (plus the current prompt) instead of the chars/4 heuristic. `None` before
@@ -118,6 +122,7 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
             memory: hook_state.memory,
             conversation_id: hook_state.conversation_id,
             compaction: hook_state.compaction,
+            model: hook_state.model,
             last_total_tokens: hook_state.last_total_tokens,
             unpriced_warnings: UnpricedWarnings::default(),
         }
@@ -144,6 +149,23 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         )
     }
 
+    /// The warning for a model nothing priced, or `None` when this model was
+    /// already reported.
+    ///
+    /// The model named is the wire serving this turn's completions, so the log
+    /// names the model that actually went unpriced.
+    fn unpriced_warning(&self, reason: PricingSkip) -> Option<String> {
+        let model = &self.model;
+        let model_id = model.id().unwrap_or("<no model>").to_string();
+        let vendor = model.name().to_string();
+        if !self.unpriced_warnings.first_time(&model_id) {
+            return None;
+        }
+        Some(format!(
+            "no cost for {vendor}/{model_id}: {reason} — the session cost line stays tokens-only for this model"
+        ))
+    }
+
     /// Report an unpriced completion once per model id.
     ///
     /// A tokens-only session used to be unexplainable: nothing said why no
@@ -151,15 +173,9 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
     /// model goes unpriced, so the log names the cause without repeating it
     /// on every call.
     fn warn_unpriced_once(&self, reason: PricingSkip) {
-        let model = self.compaction.model();
-        let model_id = model.id().unwrap_or("<no model>").to_string();
-        let vendor = model.name().to_string();
-        if !self.unpriced_warnings.first_time(&model_id) {
-            return;
+        if let Some(message) = self.unpriced_warning(reason) {
+            log::warn!("{message}");
         }
-        log::warn!(
-            "no cost for {vendor}/{model_id}: {reason} — the session cost line stays tokens-only for this model"
-        );
     }
 }
 
@@ -496,16 +512,24 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                             _ => {}
                         }
                     }
-                    // Store the real count only when the wire reports one: a
-                    // missing total is not a zero, and the threshold check
-                    // falls back to its own estimate without it.
+                    // Store the real count: the wire's total when it reports
+                    // one, else input + output — the same quantity. A wire may
+                    // omit `total_tokens` (ollama-cloud's OpenAI-compatible
+                    // endpoint does), and the switch gate and the threshold
+                    // check both need a real count.
                     // Mutex poison is a fatal internal inconsistency — panicking is correct.
-                    if let Some(total_tokens) = usage.total_tokens {
+                    let total_tokens =
+                        match (usage.total_tokens, usage.input_tokens, usage.output_tokens) {
+                            (Some(total), _, _) => Some(total),
+                            (None, Some(input), Some(output)) => Some(input + output),
+                            _ => None,
+                        };
+                    if let Some(total_tokens) = total_tokens {
                         *self.last_total_tokens.lock().unwrap() = Some(total_tokens);
                     }
                     let (cost, cost_complete) = match usage.cost {
                         Some(cost) => (Some(cost.total), cost.is_complete()),
-                        None => match computed_cost(&self.compaction.model(), &usage) {
+                        None => match computed_cost(&self.model, &usage) {
                             PricedOutcome::Priced { total, complete } => (Some(total), complete),
                             PricedOutcome::Skipped(reason) => {
                                 self.warn_unpriced_once(reason);

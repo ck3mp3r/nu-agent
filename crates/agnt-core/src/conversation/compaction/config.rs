@@ -16,6 +16,10 @@ pub struct CompactionConfig {
     pub compactor: NuCompactor,
     pub params: CompactionParams,
     pub threshold_tokens: Option<usize>,
+    /// The fraction of the active model's context the compaction threshold
+    /// uses. A model switch re-derives `threshold_tokens` from it, so the
+    /// build-time threshold and any refresh can never diverge.
+    pub threshold_pct: f64,
 }
 
 impl CompactionConfig {
@@ -30,8 +34,8 @@ impl CompactionConfig {
         self.compactor.spec()
     }
 
-    /// The model the compactor summarizes with — the same wire the agent
-    /// calls, so its catalog-bound spec prices a completion.
+    /// The model the compactor summarizes with. It prices nothing: the hook
+    /// prices a completion with the wire that served it.
     pub fn model(&self) -> DynModel<Completion> {
         self.compactor.model()
     }

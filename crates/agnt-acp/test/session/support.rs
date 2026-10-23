@@ -148,6 +148,7 @@ impl RuntimeBuilder for MockRuntimeBuilder {
                 compactor,
                 params: CompactionParams::default(),
                 threshold_tokens: None,
+                threshold_pct: defaults::PROACTIVE_THRESHOLD_PCT,
             },
         })
     }

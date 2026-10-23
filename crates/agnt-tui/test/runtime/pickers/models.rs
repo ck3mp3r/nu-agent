@@ -11,8 +11,14 @@ mod cells;
 #[path = "models/columns.rs"]
 mod columns;
 
-#[path = "models/structure.rs"]
-mod structure;
+#[path = "models/structure/dim.rs"]
+mod dim;
+
+#[path = "models/structure/headers.rs"]
+mod headers;
+
+#[path = "models/structure/support.rs"]
+mod support;
 
 // The monolith resolved `super::render::frame::*` and the picker cell
 // helpers against the pickers hub. Sub-files now resolve `super::` against

@@ -190,6 +190,7 @@ async fn compact_is_disabled_without_a_model_spec() -> Result<()> {
     let store = memory_store()?;
     seed(&*store)?;
     let bus = Bus::default();
+    let mut rx = bus.compaction().subscribe();
     let compactor = NuCompactor::new(
         stream_model(&["unused summary"]).erase(),
         bus,
@@ -198,14 +199,22 @@ async fn compact_is_disabled_without_a_model_spec() -> Result<()> {
     );
 
     // -- Exec
-    let outcome = compactor
+    let result = compactor
         .compact(&*store, CONV, &CompactReason::Threshold, "auto")
-        .await?;
+        .await;
 
     // -- Check
+    let Err(MemoryError::Backend(err)) = result else {
+        panic!("a disabled compactor must fail compaction, got {result:?}");
+    };
     assert!(
-        outcome.is_none(),
-        "compaction must be disabled when the provider name resolves to no id"
+        err.to_string().starts_with("Compaction is disabled:"),
+        "the error must name the disabled compaction, got: {err}"
+    );
+    let failed = recv_until_failed(&mut rx).await?;
+    assert!(
+        failed.starts_with("Compaction is disabled:"),
+        "expected Failed naming the disabled compaction, got {failed:?}"
     );
     assert!(
         compactor.spec().is_none(),

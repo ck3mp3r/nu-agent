@@ -14,6 +14,9 @@
 #[path = "compactor/clearing.rs"]
 mod clearing;
 
+#[path = "compactor/disabled.rs"]
+mod disabled;
+
 #[path = "compactor/failures.rs"]
 mod failures;
 

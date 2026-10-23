@@ -119,7 +119,9 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
                 ),
                 params: CompactionParams::default(),
                 threshold_tokens: None,
+                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
             },
+            model: shared_model.lock().expect("model mutex poisoned").clone(),
             last_total_tokens: Arc::new(Mutex::new(None)),
         },
     );
@@ -233,7 +235,9 @@ async fn on_dispatch_publishes_registry_rendered_call_line() -> Result<()> {
                 ),
                 params: CompactionParams::default(),
                 threshold_tokens: None,
+                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
             },
+            model: shared_model.lock().expect("model mutex poisoned").clone(),
             last_total_tokens: Arc::new(Mutex::new(None)),
         },
     );

@@ -76,6 +76,7 @@ impl JourneyHarness {
             ),
             params: crate::compaction::CompactionParams::default(),
             threshold_tokens: None,
+            threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
         };
         let memory_state = MemoryState::new(crate::session::RigStoreConfig::in_memory());
         Self {

@@ -281,6 +281,8 @@ proactive_threshold_pct = 0.80  # 0.0-1.0 fraction of max_context_tokens before 
 
 `max_context_tokens` lives on the active model role, not in the `[compaction]` block, but it directly controls when compaction fires. Set it to match your model's actual context window.
 
+The summarizer model is the [`[models.light]`](#model-roles) role when that role is configured, else the active model. It is chosen once at startup and does not follow model switches: a mid-session switch changes the agent's model and the compaction threshold, not the summarizer. The compaction call is priced at the summarizer model's own rates. ACP sessions (`agent acp`) always summarize with the active model; the `[models.light]` selection applies to the plugin entry.
+
 ### Agents
 
 ```toml

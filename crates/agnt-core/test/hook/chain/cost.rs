@@ -39,20 +39,35 @@ fn catalog_call(reference: &str, usage: Usage) -> Result<MockCompletionModel> {
     )
 }
 
-/// Run one turn against `model` and return the `LlmCompleted` event the hook
-/// emitted, if any.
-///
-/// The compactor plans against the pricing-less spec `test_model_spec()`
-/// builds, so a fallback that read that spec instead of the wire's own would
+/// A pricing-less summarizer wire: the compactor's own model, which nothing
+/// prices. A fallback that priced with it instead of the turn's wire would
 /// emit no cost.
-async fn emitted_completion(model: MockCompletionModel) -> Result<Option<UiEvent>> {
+fn pricing_less_summarizer() -> MockCompletionModel {
+    MockCompletionModel::text("summary")
+}
+
+/// A turn's hook chain, the bus its events arrive on, and the token-count
+/// slot the hook stores the completion's real count in.
+struct TurnHook {
+    hook: HookChain<PolicyPermissionResolver>,
+    bus: Bus,
+    last_total_tokens: Arc<Mutex<Option<u64>>>,
+}
+
+/// Build the hook chain a turn runs with. `model` is the wire serving the
+/// turn's completions; `compactor_model` is the summarizer's, which the hook
+/// must not price the turn's completions with.
+fn turn_hook(
+    model: &MockCompletionModel,
+    compactor_model: MockCompletionModel,
+) -> Result<TurnHook> {
     let bus = Bus::default();
-    let mut rx = bus.ui_event().subscribe();
     let memory = Arc::new(CachedMemory::new(
         crate::session::RigStoreConfig::in_memory(),
     ));
+    let last_total_tokens = Arc::new(Mutex::new(None));
     let compactor = NuCompactor::new(
-        model.clone().erase(),
+        compactor_model.erase(),
         Bus::default(),
         rig_memory::CompactionPolicy::default(),
         test_model_spec(),
@@ -82,10 +97,27 @@ async fn emitted_completion(model: MockCompletionModel) -> Result<Option<UiEvent
                 compactor,
                 params: CompactionParams::default(),
                 threshold_tokens: None,
+                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
             },
-            last_total_tokens: Arc::new(Mutex::new(None)),
+            model: model.clone().erase(),
+            last_total_tokens: last_total_tokens.clone(),
         },
     );
+    Ok(TurnHook {
+        hook,
+        bus,
+        last_total_tokens,
+    })
+}
+
+/// Drive one turn on `hook` against `model` and return the `LlmCompleted`
+/// event the hook emitted, if any.
+async fn drive_turn(
+    hook: HookChain<PolicyPermissionResolver>,
+    bus: &Bus,
+    model: MockCompletionModel,
+) -> Result<Option<UiEvent>> {
+    let mut rx = bus.ui_event().subscribe();
     let agent = rig::agent::AgentBuilder::new(model.erase())
         .add_hook(hook)
         .build();
@@ -101,9 +133,36 @@ async fn emitted_completion(model: MockCompletionModel) -> Result<Option<UiEvent
 }
 
 /// Run one turn against `model` and return the `LlmCompleted` event the hook
+/// emitted, if any.
+async fn emitted_completion(model: MockCompletionModel) -> Result<Option<UiEvent>> {
+    emitted_completion_with(model.clone(), model).await
+}
+
+/// Run one turn against `model`, with `compactor_model` as the summarizer's
+/// wire, and return the `LlmCompleted` event the hook emitted, if any.
+async fn emitted_completion_with(
+    model: MockCompletionModel,
+    compactor_model: MockCompletionModel,
+) -> Result<Option<UiEvent>> {
+    let TurnHook { hook, bus, .. } = turn_hook(&model, compactor_model)?;
+    drive_turn(hook, &bus, model).await
+}
+
+/// Run one turn against `model` and return the `LlmCompleted` event the hook
 /// emitted.
 async fn completed_event(model: MockCompletionModel) -> Result<UiEvent> {
     emitted_completion(model)
+        .await?
+        .ok_or_else(|| "the turn must emit LlmCompleted".into())
+}
+
+/// Run one turn against `model` with `compactor_model` as the summarizer's
+/// wire, and return the `LlmCompleted` event the hook emitted.
+async fn completed_event_with(
+    model: MockCompletionModel,
+    compactor_model: MockCompletionModel,
+) -> Result<UiEvent> {
+    emitted_completion_with(model, compactor_model)
         .await?
         .ok_or_else(|| "the turn must emit LlmCompleted".into())
 }
@@ -281,6 +340,35 @@ async fn total_less_usage_emits_no_total_tokens() -> Result<()> {
     Ok(())
 }
 
+/// A usage that reports input and output but no total still stores the real
+/// count: the switch gate and the threshold read `input + output`.
+#[tokio::test]
+async fn total_tokens_stored_from_the_counters_when_the_usage_reports_no_total() -> Result<()> {
+    // -- Setup & Fixtures: the ollama-cloud shape — counters present, total
+    // absent.
+    let model = catalog_turn(
+        "copilot/claude-sonnet-4.6",
+        Usage::new().input_tokens(1_000).output_tokens(500),
+    )?;
+    let TurnHook {
+        hook,
+        bus,
+        last_total_tokens,
+    } = turn_hook(&model, pricing_less_summarizer())?;
+
+    // -- Exec
+    drive_turn(hook, &bus, model).await?;
+
+    // -- Check
+    let stored = *last_total_tokens.lock().expect("model mutex poisoned");
+    assert_eq!(
+        stored,
+        Some(1_500),
+        "a total-less usage must store input + output"
+    );
+    Ok(())
+}
+
 /// A usage that reports no counter at all emits nothing: the turn had no
 /// measurable reply, so there is nothing to price or count.
 #[tokio::test]
@@ -295,6 +383,67 @@ async fn no_event_when_the_usage_reports_no_counter() -> Result<()> {
     assert!(
         event.is_none(),
         "a usage that reports no counter must emit nothing"
+    );
+    Ok(())
+}
+
+/// The compactor's wire is not the turn's: a turn on a priced model is priced
+/// at that model's rates, not at the summarizer's, which nothing prices.
+#[tokio::test]
+async fn cost_priced_with_the_turns_own_model() -> Result<()> {
+    // -- Setup & Fixtures: the turn's wire is priced, the summarizer's is not.
+    let model = catalog_turn("copilot/claude-sonnet-4.6", usage())?;
+
+    // -- Exec
+    let (cost, cost_complete) =
+        emitted_cost(completed_event_with(model, pricing_less_summarizer()).await?)?;
+
+    // -- Check
+    let total = cost.ok_or("the turn's own priced model must yield a computed cost")?;
+    let expected = (1_000.0 * 3.0 + 500.0 * 15.0) / 1_000_000.0;
+    assert!(
+        (total - expected).abs() < 1e-12,
+        "the emitted cost must be the turn's model's rates times the tokens, got {total}"
+    );
+    assert!(
+        cost_complete,
+        "a row that lists every rate prices the whole usage"
+    );
+    Ok(())
+}
+
+/// A turn on a model nothing prices records no cost, even when the
+/// summarizer's wire is priced — the hook must not invent a cost from it —
+/// and the warning names the turn's model, not the summarizer's.
+#[tokio::test]
+async fn cost_stays_none_for_a_pricing_less_turn_model() -> Result<()> {
+    // -- Setup & Fixtures: the turn's row lists no price, the summarizer's
+    // does.
+    let model = catalog_turn("copilot/gpt-4o", usage())?;
+    let summarizer = catalog_turn("copilot/claude-sonnet-4.6", usage())?;
+    let TurnHook { hook, bus, .. } = turn_hook(&model, summarizer)?;
+
+    // -- Exec
+    // The once-per-model gate is consumed by the read, so read the warning
+    // before the turn runs.
+    let warning = hook
+        .unpriced_warning(PricingSkip::NoPricing)
+        .ok_or("the first unpriced call must warn")?;
+    let (cost, cost_complete) = emitted_cost(
+        drive_turn(hook, &bus, model)
+            .await?
+            .ok_or("the turn must emit LlmCompleted")?,
+    )?;
+
+    // -- Check
+    assert_eq!(
+        cost, None,
+        "a turn on a model nothing prices must stay tokens-only"
+    );
+    assert!(!cost_complete, "an unpriced call is not a complete cost");
+    assert!(
+        warning.contains("copilot/gpt-4o"),
+        "the warning must name the turn's model, got {warning}"
     );
     Ok(())
 }

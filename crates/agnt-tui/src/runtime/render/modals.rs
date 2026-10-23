@@ -255,18 +255,33 @@ impl RuntimeCoordinator {
                 } else {
                     ""
                 };
+                // A row is unavailable when the session's consumed tokens do not
+                // fit its context window. The active model is not a switch
+                // target, so it never dims.
+                let unavailable = active.is_empty()
+                    && self
+                        .state
+                        .status
+                        .tokens
+                        .latest_total_tokens
+                        .zip(context_window.map(u64::from))
+                        .is_some_and(|(consumed, window)| consumed >= window);
                 let configured_glyph = if configured { "◆" } else { "" };
                 let context_cell = context_window
                     .map(|n| format!("{}k", n / 1000))
                     .unwrap_or_default();
                 let cost_cell = cost.clone().unwrap_or_default();
-                table_rows.push(Row::new(vec![
+                let mut row = Row::new(vec![
                     Cell::from(format!("  {identity}")),
                     Cell::from(Line::from(context_cell).right_aligned()),
                     Cell::from(Line::from(cost_cell).right_aligned()),
                     Cell::from(active),
                     Cell::from(configured_glyph),
-                ]));
+                ]);
+                if unavailable {
+                    row = row.style(self.theme.picker_row_unavailable);
+                }
+                table_rows.push(row);
                 if model_idx == picker_state.selection {
                     selected_row = table_rows.len() - 1;
                 }

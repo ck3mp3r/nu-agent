@@ -128,6 +128,7 @@ fn build_fixture(
         ),
         params: crate::compaction::CompactionParams::default(),
         threshold_tokens: None,
+        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
     };
 
     let runtime = AgentConversationRuntime {

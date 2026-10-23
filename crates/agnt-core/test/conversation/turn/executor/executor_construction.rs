@@ -293,6 +293,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
         // A tiny threshold so the pre-populated conversation (20 messages) is
         // over the threshold and auto-compaction fires on the first turn.
         threshold_tokens: Some(1),
+        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
     };
 
     let mut executor = TurnExecutor::new(

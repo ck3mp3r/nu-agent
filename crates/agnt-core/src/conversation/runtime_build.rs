@@ -85,21 +85,33 @@ pub async fn build_runtime(
         .config
         .repetition_guard
         .unwrap_or(defaults::REPETITION_GUARD_ENABLED);
-    // Resolve the compaction model spec inputs before params.config is moved: the
-    // spec is built once, here, from the provider name and the limits our config
-    // carries.
-    let compaction_spec = crate::conversation::compaction::compactor::resolve_model_spec(
-        &params.config.provider,
-        &params.config.model,
-        u32::try_from(max_context_tokens).ok(),
-        params.config.max_output_tokens,
+    // The compaction (summarizer) model: the `[models.light]` role when it
+    // resolves, else the startup active model. It is chosen once, here, and
+    // never follows a model switch.
+    let light_config = resolve_light_config(params.plugin_config.as_ref());
+    // The planning spec describes the COMPACTION model: rig-memory sizes each
+    // summarized portion to its context window.
+    let compaction_config = light_config.as_ref().unwrap_or(&params.config);
+    let compaction_source = if light_config.is_some() {
+        "[models.light]"
+    } else {
+        "the startup active model"
+    };
+    log::info!(
+        "compaction model: {}/{} ({compaction_source})",
+        compaction_config.provider,
+        compaction_config.model
     );
+    let compaction_spec =
+        crate::conversation::compaction::compactor::resolve_model_spec_for(compaction_config);
+    // The compactor's provider needs the plugin config after the agent provider
+    // takes ownership of it.
+    let compactor_plugin_config = params.plugin_config.clone();
 
     // The shared model is the single point of model identity: the agent is
-    // built from it on every turn and the compactor summarizes with it. It is
-    // constructed eagerly at startup so it is ready for any operation
-    // (including `/compact` before the first turn), and rewritten by every
-    // `switch_model()`.
+    // built from it on every turn. It is constructed eagerly at startup so it
+    // is ready for any operation (including `/compact` before the first turn),
+    // and rewritten by every `switch_model()`.
     let mut provider = ProviderState::new(params.config, params.plugin_config);
     let dyn_model = provider
         .build_dyn_model()
@@ -107,14 +119,23 @@ pub async fn build_runtime(
         .map_err(|e| LabeledError::new(format!("Failed to build model: {e}")))?;
     let dyn_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(dyn_model));
 
-    // Compactor summarizes evicted messages with its own erased model, shared
-    // through an `Arc` so a `switch_model()` swap is visible to the next
-    // `compact()` call. It is a standalone service invoked directly by the
-    // hook's compaction logic.
-    let compactor_model = provider
-        .build_dyn_model()
-        .await
-        .map_err(|e| LabeledError::new(format!("Failed to build compactor model: {e}")))?;
+    // Compactor summarizes evicted messages with its own erased model: the
+    // light role's when configured, else the startup active model. It is
+    // startup-fixed — no model switch touches it — and it is a standalone
+    // service invoked directly by the hook's compaction logic.
+    let compactor_model = match light_config {
+        Some(light_config) => {
+            let mut light_provider = ProviderState::new(light_config, compactor_plugin_config);
+            light_provider
+                .build_dyn_model()
+                .await
+                .map_err(|e| LabeledError::new(format!("Failed to build compactor model: {e}")))?
+        }
+        None => provider
+            .build_dyn_model()
+            .await
+            .map_err(|e| LabeledError::new(format!("Failed to build compactor model: {e}")))?,
+    };
     let compactor_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(compactor_model));
     let compactor = NuCompactor::from_shared_model(
         Arc::clone(&compactor_model),
@@ -145,6 +166,7 @@ pub async fn build_runtime(
         compactor,
         params: params.compaction_params,
         threshold_tokens,
+        threshold_pct,
     };
 
     Ok(AgentConversationRuntime {
@@ -200,6 +222,32 @@ pub async fn build_runtime(
         dyn_model,
         compaction,
     })
+}
+
+/// The config the compaction (summarizer) model is built from: the
+/// `[models.light]` role when it resolves, else `None` so the caller falls
+/// back to the startup active model.
+///
+/// Every fallback names itself in the debug log, so a session that summarizes
+/// with the active model is explainable.
+fn resolve_light_config(plugin_config: Option<&PluginConfig>) -> Option<Config> {
+    let Some(plugin_config) = plugin_config else {
+        log::debug!("compaction model: no plugin config; using the startup active model");
+        return None;
+    };
+    let Some(role) = plugin_config.models.get("light") else {
+        log::debug!("compaction model: no [models.light] role; using the startup active model");
+        return None;
+    };
+    match plugin_config.resolve_model(role) {
+        Ok(config) => Some(config),
+        Err(error) => {
+            log::debug!(
+                "compaction model: [models.light] did not resolve ({error}); using the startup active model"
+            );
+            None
+        }
+    }
 }
 
 /// Apply persona model override if CLI --model was not provided.

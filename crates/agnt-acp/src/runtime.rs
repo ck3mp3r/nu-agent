@@ -199,14 +199,11 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     let repetition_guard = config
         .repetition_guard
         .unwrap_or(defaults::REPETITION_GUARD_ENABLED);
-    // The compaction model spec is built once, from the provider name and the
-    // limits our config carries.
-    let compaction_spec = agnt_core::conversation::compaction::compactor::resolve_model_spec(
-        &config.provider,
-        &config.model,
-        u32::try_from(max_context_tokens).ok(),
-        config.max_output_tokens,
-    );
+    // The compaction model spec is built once, from the resolved config: the
+    // helper maps the provider key through its rig impl and sizes the window
+    // from the config's limits.
+    let compaction_spec =
+        agnt_core::conversation::compaction::compactor::resolve_model_spec_for(&config);
 
     // -- MCP servers: config.toml merged with the ACP client's list
     let config_mcp = McpConfig::from_toml_config(&plugin_config)
@@ -437,6 +434,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             compactor,
             params: compaction_params,
             threshold_tokens,
+            threshold_pct,
         },
     };
 
@@ -557,6 +555,10 @@ mod runtime_mcp;
 #[cfg(all(test, feature = "integration"))]
 #[path = "../test/runtime/client_fs.rs"]
 mod runtime_client_fs;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/runtime/compaction_spec.rs"]
+mod runtime_compaction_spec;
 
 #[cfg(all(test, feature = "integration"))]
 #[path = "../test/runtime/config_errors.rs"]

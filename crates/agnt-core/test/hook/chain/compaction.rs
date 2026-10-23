@@ -35,6 +35,7 @@ async fn decide_compaction_surfaces_store_error_as_failed() -> Result<()> {
         ),
         params: CompactionParams::default(),
         threshold_tokens: Some(100),
+        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
     };
     let last_total_tokens = Arc::new(Mutex::new(None));
 

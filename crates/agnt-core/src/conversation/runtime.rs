@@ -129,8 +129,9 @@ where
     /// detection). Resolved from config; when `false`, the hook skips all
     /// detector calls.
     pub repetition_guard: bool,
-    /// Real token count from the last LLM completion, shared across turns. Used by
-    /// the hook's compaction threshold check.
+    /// Real token count from the last LLM completion, shared across turns: the
+    /// wire's total when it reports one, else input + output. Used by the
+    /// hook's compaction threshold check and the model-switch gate.
     pub last_total_tokens: Arc<Mutex<Option<u64>>>,
     /// Shared cancellation bus threaded through the turn pipeline.
     pub bus: crate::bus::Bus,
@@ -144,9 +145,9 @@ where
     pub persona: Persona,
     pub multi_agent: Multi,
     /// Shared runtime model. The single point of model identity: the agent is
-    /// built from this model on every turn and the compactor summarizes with
-    /// it. It is constructed eagerly at startup and swapped on every
-    /// `switch_model()` call.
+    /// built from this model on every turn. It is constructed eagerly at
+    /// startup and swapped on every `switch_model()` call. The compactor has
+    /// its own startup-fixed model and never reads this one.
     pub dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
     /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
     pub compaction: crate::conversation::compaction::CompactionConfig,
@@ -356,6 +357,33 @@ where
     }
 }
 
+impl<Prov, Tools, Sess, Persona, Multi> AgentRuntime<Prov, Tools, Sess, Persona, Multi>
+where
+    Prov: ProviderManager + Send,
+    Tools: ToolManager + Send,
+    Sess: SessionManager + Send,
+    Persona: PersonaManager + Send,
+    Multi: MultiAgentManager + Send,
+{
+    /// Recompute the compaction threshold against the active model's context
+    /// window, using the build's precedence: `model_context_tokens`, then
+    /// `max_context_tokens`, then the built-in default.
+    ///
+    /// The planning spec is deliberately left alone: it describes the
+    /// startup-fixed compaction model, not the active one.
+    fn refresh_compaction_threshold(&mut self) {
+        let max_context_tokens = {
+            let config = self.provider.provider_config();
+            config
+                .model_context_tokens
+                .or_else(|| config.max_context_tokens.map(|t| t as usize))
+                .unwrap_or(crate::config::defaults::MAX_CONTEXT_TOKENS as usize)
+        };
+        self.compaction.threshold_tokens =
+            Some((max_context_tokens as f64 * self.compaction.threshold_pct) as usize);
+    }
+}
+
 impl<Prov, Tools, Sess, Persona, Multi> ModelSwitching
     for AgentRuntime<Prov, Tools, Sess, Persona, Multi>
 where
@@ -366,8 +394,24 @@ where
     Multi: MultiAgentManager + Send,
 {
     async fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
+        // Keep the previous config so a switch the session does not fit can be
+        // rolled back: the resolver has already committed the new one.
+        let previous_config = self.provider.provider_config().clone();
         let identity = self.provider.switch_model(model_spec)?;
         let max_tokens = self.max_context_tokens();
+        // A session that already consumed the target's whole window cannot fit
+        // the next turn, so the switch is refused rather than breaking it. An
+        // unknown consumed count or window means nothing to protect.
+        let consumed = *self.last_total_tokens.lock().expect("model mutex poisoned");
+        if let Some(consumed) = consumed
+            && let Some(window) = self.max_context_tokens()
+            && consumed >= window
+        {
+            *self.provider.provider_config_mut() = previous_config;
+            return Err(format!(
+                "cannot switch to '{identity}': the session has consumed about {consumed} tokens and the model's context window is {window} tokens; compact the session first (/compact)"
+            ));
+        }
         // Erase the newly-cached concrete model into a `DynModel<Completion>`
         // and swap it into the shared slot. The next turn builds its agent from
         // the new model; an in-flight turn keeps the model it already cloned.
@@ -379,6 +423,9 @@ where
             .await
             .map_err(|e| e.to_string())?;
         *self.dyn_model.lock().expect("model mutex poisoned") = new_model;
+        // The threshold is an absolute token count, so it must follow the new
+        // model's context window.
+        self.refresh_compaction_threshold();
         // Record the new model on the session so a listing shows it. The write
         // is best effort: the switch already took effect, and a store that
         // cannot be written must not undo it.
@@ -414,11 +461,29 @@ where
 
         // If persona specifies a model, attempt to switch (ignore errors)
         if let Some(model) = result.model {
-            let _ = self.provider.switch_model(&model);
-            // Rebuild the shared model from the bare model name so the
-            // persona's model serves the next turn (mirrors switch_model).
-            if let Ok(new_model) = self.provider.build_dyn_model().await {
+            // Keep the previous config so a persona model the session does not
+            // fit can be rolled back: the persona's other settings still apply.
+            let previous_config = self.provider.provider_config().clone();
+            let switched = self.provider.switch_model(&model).is_ok();
+            let consumed = *self.last_total_tokens.lock().expect("model mutex poisoned");
+            let blocked = match (switched, consumed, self.max_context_tokens()) {
+                (true, Some(consumed), Some(window)) if consumed >= window => {
+                    Some((consumed, window))
+                }
+                _ => None,
+            };
+            if let Some((consumed, window)) = blocked {
+                *self.provider.provider_config_mut() = previous_config;
+                log::warn!(
+                    "skipping the persona model '{model}': the session has consumed about \
+                     {consumed} tokens and the model's context window is {window} tokens; \
+                     compact the session first (/compact)"
+                );
+            } else if let Ok(new_model) = self.provider.build_dyn_model().await {
+                // Rebuild the shared model from the bare model name so the
+                // persona's model serves the next turn (mirrors switch_model).
                 *self.dyn_model.lock().expect("model mutex poisoned") = new_model;
+                self.refresh_compaction_threshold();
             }
         }
 

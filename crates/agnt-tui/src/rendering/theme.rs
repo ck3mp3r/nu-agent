@@ -214,6 +214,9 @@ pub struct TuiTheme {
     /// Full-width background bar behind picker section titles (provider
     /// headers in the model picker).
     pub picker_section_header: Style,
+    /// Dimmed style for model picker rows whose context window cannot hold the
+    /// session's consumed tokens.
+    pub picker_row_unavailable: Style,
     pub input_prompt: Style,
     pub input_text: Style,
     pub selection_bg: Style,
@@ -324,6 +327,7 @@ impl TuiTheme {
                 .fg(palette.subtext0)
                 .bg(palette.surface1)
                 .add_modifier(Modifier::BOLD),
+            picker_row_unavailable: fg_dim(palette.overlay1),
             input_prompt: fg(palette.blue),
             input_text: fg(palette.text),
             selection_bg: Style::default().bg(palette.surface1),

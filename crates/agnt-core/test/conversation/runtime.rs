@@ -37,6 +37,12 @@ mod persona;
 mod preamble;
 #[path = "runtime/provider.rs"]
 mod provider;
+#[cfg(all(test, feature = "integration"))]
+#[path = "runtime/switch_compaction_threshold.rs"]
+mod switch_compaction_threshold;
+#[cfg(all(test, feature = "integration"))]
+#[path = "runtime/switch_context_gate.rs"]
+mod switch_context_gate;
 #[path = "runtime/switching.rs"]
 mod switching;
 #[path = "runtime/tools.rs"]

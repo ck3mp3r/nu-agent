@@ -1,3 +1,7 @@
+//! Model picker structure tests: column headers, glyph columns, and the
+//! section-header bar and title placement.
+
+use super::support::*;
 use super::*;
 
 #[tokio::test]
@@ -210,7 +214,8 @@ async fn model_picker_paints_section_header_bar() -> Result<()> {
         let name_at = lines[row]
             .find(name)
             .ok_or(format!("{name} header row should contain the display name"))?;
-        let name_x = popup.x + u16::try_from(name_at)?;
+        let name_col = lines[row][..name_at].chars().count();
+        let name_x = popup.x + u16::try_from(name_col)?;
         assert_eq!(
             driver.cell_style_at(name_x, y).fg,
             Some(palette.subtext0),
@@ -338,23 +343,4 @@ async fn model_picker_renders_bold_section_titles_left_of_model_rows() -> Result
         "section title must sit one character left of the model identity\n{popup_text}"
     );
     Ok(())
-}
-
-fn model_option(
-    provider: &str,
-    model: &str,
-    provider_display_name: &str,
-) -> agnt_core::protocol::picker::ModelPickerOption {
-    agnt_core::protocol::picker::ModelPickerOption {
-        provider: provider.to_string(),
-        model: model.to_string(),
-        identity: format!("{provider}/{model}"),
-        display: format!("{provider}/{model}"),
-        active: false,
-        context_window: None,
-        max_output: None,
-        configured: true,
-        provider_display_name: provider_display_name.to_string(),
-        cost: None,
-    }
 }

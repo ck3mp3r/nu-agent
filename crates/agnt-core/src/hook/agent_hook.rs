@@ -36,10 +36,14 @@ pub struct HookState {
     pub conversation_id: String,
     /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
     pub compaction: CompactionConfig,
-    /// Real token count from the last LLM completion (from `Usage.total_tokens`),
-    /// shared across turns via the hook. `None` before the first completion and
-    /// after a compaction reset; the compaction threshold falls back to the
-    /// chars/4 estimate when `None`.
+    /// The wire serving this turn's completions. The pricing fallback uses its
+    /// spec, so a completion is priced at the rates of the model that served
+    /// it — not at the compaction model's.
+    pub model: rig::DynModel<rig::operation::Completion>,
+    /// Real token count from the last LLM completion: the wire's total when it
+    /// reports one, else input + output. Shared across turns via the hook.
+    /// `None` before the first completion and after a compaction reset; the
+    /// compaction threshold falls back to the chars/4 estimate when `None`.
     pub last_total_tokens: Arc<Mutex<Option<u64>>>,
 }
 

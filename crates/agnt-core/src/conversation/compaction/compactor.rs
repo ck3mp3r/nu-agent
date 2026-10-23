@@ -8,6 +8,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::bus::{Bus, CompactionEvent};
+use crate::config::{Config, defaults};
 use crate::session::MemoryError;
 use crate::types::Message;
 
@@ -36,10 +37,13 @@ pub struct CompactionOutcome {
 /// The `ModelSpec` the compaction policy plans against, resolved from our
 /// config.
 ///
-/// The provider name is mapped to a rig `ProviderId` once, here: a name this
-/// build registers, else a catalog-only id. A name that resolves to neither
-/// disables compaction for the session — the spec is never mislabelled with an
-/// arbitrary registered provider.
+/// `provider` is the provider's rig impl name — the vendor the wire reports
+/// (`ollama`, `openai`), not the config block's display name. The caller maps a
+/// custom config key through the block's declared impl first. The name is
+/// mapped to a rig `ProviderId` once, here: a name this build registers, else a
+/// catalog-only id. A name that resolves to neither disables compaction for the
+/// session — the spec is never mislabelled with an arbitrary registered
+/// provider.
 pub fn resolve_model_spec(
     provider: &str,
     model: &str,
@@ -65,6 +69,29 @@ pub fn resolve_model_spec(
     Some(spec)
 }
 
+/// The `ModelSpec` a resolved config's compaction policy plans against.
+///
+/// The one-call form of [`resolve_model_spec`]: it maps the config's provider
+/// key through its declared rig impl — the vendor the wire reports — and sizes
+/// the window from the config's own limits, so a call site cannot forget the
+/// mapping.
+pub fn resolve_model_spec_for(config: &Config) -> Option<ModelSpec> {
+    let vendor = crate::conversation::providers::resolve_provider_type(
+        &config.provider,
+        config.provider_impl.as_deref(),
+    );
+    let context_window = config
+        .model_context_tokens
+        .or_else(|| config.max_context_tokens.map(|t| t as usize))
+        .unwrap_or(defaults::MAX_CONTEXT_TOKENS as usize);
+    resolve_model_spec(
+        vendor,
+        &config.model,
+        u32::try_from(context_window).ok(),
+        config.max_output_tokens,
+    )
+}
+
 /// A compactor that summarizes a conversation's older messages with the LLM and
 /// splices the summary in through rig-memory.
 ///
@@ -74,7 +101,9 @@ pub fn resolve_model_spec(
 /// constructed eagerly at startup and never empty.
 ///
 /// A `None` spec means the configured provider resolved to no rig provider id:
-/// compaction is disabled for the session and `compact()` does nothing.
+/// compaction is disabled for the session, and `compact()` emits
+/// `CompactionEvent::Failed` and returns `Err` rather than reporting a silent
+/// success.
 pub struct NuCompactor {
     model: Arc<Mutex<DynModel<Completion>>>,
     bus: Bus,
@@ -162,13 +191,13 @@ impl NuCompactor {
     ///
     /// Loads the conversation, clears old tool outputs per the policy, plans the
     /// summary, streams it, splices it in through `apply_summary`, and saves.
-    /// Returns `None` when nothing would be summarized (or compaction is
-    /// disabled for the session).
+    /// Returns `None` when nothing would be summarized.
     ///
     /// # Errors
     ///
-    /// When the store cannot be read or written, or the summary cannot be
-    /// produced. Every failure is also emitted as `CompactionEvent::Failed`.
+    /// When compaction is disabled for the session, the store cannot be read or
+    /// written, or the summary cannot be produced. Every failure is also emitted
+    /// as `CompactionEvent::Failed`.
     pub async fn compact(
         &self,
         store: &dyn rig_memory::Store,
@@ -177,8 +206,11 @@ impl NuCompactor {
         source: &str,
     ) -> Result<Option<CompactionOutcome>, MemoryError> {
         let Some(spec) = self.spec.as_ref() else {
-            log::debug!("Compaction skipped: no model spec, compaction is disabled");
-            return Ok(None);
+            let message =
+                "Compaction is disabled: the session's provider resolved to no rig provider id"
+                    .to_string();
+            self.emit_failed(source, &message).await;
+            return Err(MemoryError::backend(message));
         };
 
         let mut conversation = match rig_memory::load(store, conversation_id) {

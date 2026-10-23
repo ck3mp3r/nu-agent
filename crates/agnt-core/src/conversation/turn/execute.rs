@@ -116,6 +116,15 @@ where
     // Build the hook using HookChain<P> — no HookDriver needed.
     // Cancellation is driven through the shared bus's cancel channel.
     let bus = ctx.tool_infra.bus.clone();
+    // Read the turn's model once: the hook prices with it and the agent is
+    // built from it, so a switch landing mid-turn cannot split the two.
+    let dyn_model = ctx
+        .conversation
+        .dyn_model
+        .lock()
+        .expect("model mutex poisoned")
+        .clone();
+
     let hook = HookChain::new(
         bus.clone(),
         permission_resolver,
@@ -131,6 +140,7 @@ where
             memory: Arc::clone(&ctx.conversation.memory),
             conversation_id: ctx.conversation.conversation_id.clone(),
             compaction: ctx.conversation.compaction.clone(),
+            model: dyn_model.clone(),
             last_total_tokens: ctx.tool_infra.last_total_tokens.clone(),
         },
     );
@@ -150,12 +160,7 @@ where
     // Build and execute agent with hook
     let config = AgentPromptConfig {
         hook,
-        dyn_model: ctx
-            .conversation
-            .dyn_model
-            .lock()
-            .expect("model mutex poisoned")
-            .clone(),
+        dyn_model,
         preamble: preamble_owned,
         prompt: user_message,
         rig_memory,

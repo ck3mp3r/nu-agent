@@ -335,3 +335,27 @@ fn picker_section_header_uses_subtext0_on_surface1_for_all_flavors() {
         );
     }
 }
+
+#[test]
+fn picker_row_unavailable_uses_overlay1_dim_for_all_flavors() {
+    let cases = [
+        (TuiTheme::catppuccin_mocha(), CatppuccinPalette::mocha()),
+        (TuiTheme::catppuccin_latte(), CatppuccinPalette::latte()),
+        (TuiTheme::catppuccin_frappe(), CatppuccinPalette::frappe()),
+        (
+            TuiTheme::catppuccin_macchiato(),
+            CatppuccinPalette::macchiato(),
+        ),
+    ];
+
+    for (theme, palette) in cases {
+        assert_eq!(theme.picker_row_unavailable.fg, Some(palette.overlay1));
+        assert!(
+            theme
+                .picker_row_unavailable
+                .add_modifier
+                .contains(Modifier::DIM),
+            "an unavailable picker row must be dimmed"
+        );
+    }
+}
