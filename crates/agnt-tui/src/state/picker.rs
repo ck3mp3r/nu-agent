@@ -615,6 +615,12 @@ impl AppState {
     pub fn take_next_launch_request(&mut self) -> Option<SharedUiAction> {
         self.pending_launch.pop_front()
     }
+
+    /// Take the pending session-picker refresh request, if one is queued.
+    /// Repeated opens before a drain collapse into one request.
+    pub fn take_next_session_picker_refresh_request(&mut self) -> bool {
+        std::mem::take(&mut self.pending_session_picker_refresh)
+    }
 }
 
 fn sort_picker_options(options: &mut [PickerOption]) {

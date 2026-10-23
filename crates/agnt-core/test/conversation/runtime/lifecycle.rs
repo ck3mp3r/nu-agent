@@ -6,7 +6,8 @@ use super::*;
 use crate::protocol::session_management::{SessionPersistence, SessionState};
 use crate::session::prefix::dir_prefix;
 
-/// Seed the rig-memory store of `id` with `messages`.
+/// Seed the rig-memory store of `id` with `messages`, then write the state
+/// records so the session's `meta.json` listing carries the message count.
 async fn seed_session(
     fixture: &RuntimeFixture,
     id: &str,
@@ -21,6 +22,7 @@ async fn seed_session(
     let mut conversation = rig_memory::load(&*store, id)?;
     conversation.extend(messages.iter().cloned());
     rig_memory::save(&*store, id, &mut conversation)?;
+    crate::session::rig_state::write_state_records(&*store, "test/model", None)?;
     Ok(())
 }
 
@@ -286,6 +288,73 @@ async fn list_sessions_filters_to_the_runtime_cwd() -> Result<()> {
         "only sessions carrying the cwd prefix may be listed"
     );
     assert_eq!(sessions[0].id, format!("{prefix}-mine"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_sessions_omits_sessions_without_messages() -> Result<()> {
+    // -- Setup & Fixtures
+    let fixture = make_runtime(text_model("unused"))?;
+    let prefix = dir_prefix(&fixture.runtime.cwd);
+    seed_session(&fixture, &format!("{prefix}-empty"), &[]).await?;
+    seed_session(
+        &fixture,
+        &format!("{prefix}-filled"),
+        &[crate::types::Message::user("filled")],
+    )
+    .await?;
+
+    // -- Exec
+    let sessions = fixture
+        .runtime
+        .list_sessions(&fixture.runtime.cwd)
+        .await
+        .map_err(|e| format!("list_sessions should succeed: {e}"))?;
+
+    // -- Check
+    assert_eq!(
+        sessions.len(),
+        1,
+        "a session without messages must not be listed; got: {sessions:?}"
+    );
+    assert_eq!(sessions[0].id, format!("{prefix}-filled"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_sessions_omits_the_current_session() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut fixture = make_runtime(text_model("unused"))?;
+    let prefix = dir_prefix(&fixture.runtime.cwd);
+    let current_id = format!("{prefix}-current");
+    fixture.runtime.final_session_id = Some(current_id.clone());
+    seed_session(
+        &fixture,
+        &current_id,
+        &[crate::types::Message::user("current")],
+    )
+    .await?;
+    seed_session(
+        &fixture,
+        &format!("{prefix}-other"),
+        &[crate::types::Message::user("other")],
+    )
+    .await?;
+
+    // -- Exec
+    let sessions = fixture
+        .runtime
+        .list_sessions(&fixture.runtime.cwd)
+        .await
+        .map_err(|e| format!("list_sessions should succeed: {e}"))?;
+
+    // -- Check
+    assert_eq!(
+        sessions.len(),
+        1,
+        "the current session must not be listed; got: {sessions:?}"
+    );
+    assert_eq!(sessions[0].id, format!("{prefix}-other"));
     Ok(())
 }
 

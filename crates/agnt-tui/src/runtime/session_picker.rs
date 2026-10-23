@@ -1,3 +1,4 @@
+use chrono::Datelike;
 use ratatui::text::Line;
 
 use crate::state::{AppState, PickerPayload};
@@ -26,44 +27,81 @@ pub(super) fn session_picker_table_model(
     };
     let options = picker_state.filtered();
     let total = options.len();
-    let overflow_cue = if total > available_rows {
-        Some(format!("{available_rows} of {total}"))
+
+    let now = chrono::Utc::now();
+    let today = chrono::Local::now().date_naive();
+    let mut rows: Vec<SessionPickerRow> = Vec::new();
+    let mut current_day: Option<chrono::NaiveDate> = None;
+    let mut selected = None;
+    for (option_idx, opt) in options.iter().enumerate() {
+        let (created_at, title, message_count) = match &opt.payload {
+            PickerPayload::Session {
+                created_at,
+                title,
+                message_count,
+                ..
+            } => (created_at, title, *message_count),
+            _ => unreachable!(),
+        };
+        let day = created_at.with_timezone(&chrono::Local).date_naive();
+        if current_day != Some(day) {
+            rows.push(SessionPickerRow::DayHeader(day_header_label(day, today)));
+            current_day = Some(day);
+        }
+        rows.push(SessionPickerRow::Session {
+            relative: relative_timestamp(*created_at, now),
+            title: title.as_deref().unwrap_or("(untitled)").to_string(),
+            message_count,
+        });
+        if option_idx == picker_state.selection {
+            selected = Some(rows.len() - 1);
+        }
+    }
+
+    let query_line = Line::from(format!("Query: {}", picker_state.query));
+
+    // Header rows consume table rows, so the number of session rows that fit
+    // is the available height minus one row per day group.
+    let header_rows = rows.len().saturating_sub(total);
+    let visible_session_rows = available_rows.saturating_sub(header_rows);
+    let overflow_cue = if total > visible_session_rows {
+        Some(format!("{visible_session_rows} of {total}"))
     } else {
         None
     };
 
-    let now = chrono::Utc::now();
-    let rows: Vec<Vec<String>> = options
-        .iter()
-        .map(|opt| {
-            let (created_at, title, message_count) = match &opt.payload {
-                PickerPayload::Session {
-                    created_at,
-                    title,
-                    message_count,
-                    ..
-                } => (created_at, title, *message_count),
-                _ => unreachable!(),
-            };
-            let relative = relative_timestamp(*created_at, now);
-            let title = title.as_deref().unwrap_or("(untitled)").to_string();
-            vec![relative, title, format!("{message_count}")]
-        })
-        .collect();
-
-    let query_line = Line::from(format!("Query: {}", picker_state.query));
-
     SessionPickerTableModel {
         query_line,
         rows,
-        selected: Some(picker_state.selection),
+        selected,
         overflow_cue,
+    }
+}
+
+pub(super) enum SessionPickerRow {
+    DayHeader(String),
+    Session {
+        relative: String,
+        title: String,
+        message_count: usize,
+    },
+}
+
+fn day_header_label(day: chrono::NaiveDate, today: chrono::NaiveDate) -> String {
+    if day == today {
+        "Today".to_string()
+    } else if today.pred_opt() == Some(day) {
+        "Yesterday".to_string()
+    } else if day.year() == today.year() {
+        day.format("%b %d").to_string()
+    } else {
+        day.format("%b %d, %Y").to_string()
     }
 }
 
 pub(super) struct SessionPickerTableModel {
     pub query_line: Line<'static>,
-    pub rows: Vec<Vec<String>>,
+    pub rows: Vec<SessionPickerRow>,
     pub selected: Option<usize>,
     pub overflow_cue: Option<String>,
 }

@@ -3,10 +3,12 @@
 //! Holds the imports and the helper functions every topical picker test file
 //! needs. Sub-files pull them in with `use super::*;`.
 
+pub(super) use crate::interaction::cancel::CancelController;
 pub(super) use crate::interaction::dispatch::dispatch_terminal_event;
 pub(super) use crate::interaction::input::{TerminalEvent, TerminalKey};
 pub(super) use crate::state::*;
 pub(super) use crate::test_support::open_command_palette_for_test;
+pub(super) use agnt_core::orchestrator::{OrchestratorEvent, UiRequest, UiStateEvent};
 pub(super) use agnt_core::protocol::contracts::SharedUiAction;
 pub(super) use agnt_core::protocol::picker::{AgentPickerOption, ModelPickerOption};
 

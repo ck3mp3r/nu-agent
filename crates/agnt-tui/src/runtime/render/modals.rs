@@ -11,7 +11,8 @@ use crate::runtime::panels::{
 use crate::runtime::{
     command_palette_table_model, command_palette_title, help_panel_lines, help_panel_max_scroll,
     help_panel_overflow_cue, mcp_details_height_for_inner_height, mcp_panel_controls_line,
-    mcp_selected_details_lines, mcp_table_model, skills_panel_lines, status_panel_lines,
+    mcp_selected_details_lines, mcp_table_model, session_picker::SessionPickerRow,
+    skills_panel_lines, status_panel_lines,
 };
 use crate::{
     runtime::{
@@ -412,17 +413,26 @@ impl RuntimeCoordinator {
             );
         } else {
             let header = Row::new(vec!["When", "Title", "Msgs"]).style(self.theme.subtle_meta);
-            let table_rows = model.rows.iter().map(|row| {
-                Row::new(vec![
-                    Cell::from(row[0].clone()),
-                    Cell::from(row[1].clone()),
-                    Cell::from(row[2].clone()),
-                ])
+            let table_rows = model.rows.iter().map(|row| match row {
+                SessionPickerRow::DayHeader(label) => {
+                    Row::new(vec![Cell::from(format!(" {label}"))])
+                        .style(self.theme.picker_section_header)
+                }
+                SessionPickerRow::Session {
+                    relative,
+                    title,
+                    message_count,
+                } => Row::new(vec![
+                    Cell::from(relative.clone()),
+                    Cell::from(title.clone()),
+                    Cell::from(message_count.to_string()),
+                ]),
             });
             let table = Table::new(
                 table_rows,
                 [
-                    Constraint::Length(10),
+                    // Wide enough for the longest day header (" Sep 30, 2025").
+                    Constraint::Length(13),
                     Constraint::Min(20),
                     Constraint::Length(6),
                 ],

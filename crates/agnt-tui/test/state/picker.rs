@@ -35,6 +35,9 @@ mod picker_state;
 #[path = "picker/selection_position.rs"]
 mod selection_position;
 
+#[path = "picker/session_refresh.rs"]
+mod session_refresh;
+
 #[path = "picker/submit.rs"]
 mod submit;
 

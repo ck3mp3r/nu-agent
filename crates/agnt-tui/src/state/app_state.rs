@@ -236,6 +236,7 @@ pub struct AppState {
     pub(crate) pending_switch_requests: VecDeque<SwitchRequest>,
     pub(crate) pending_launch: VecDeque<SharedUiAction>,
     pub(crate) pending_theme_persist: VecDeque<String>,
+    pub(crate) pending_session_picker_refresh: bool,
     pub info_panel: Option<InfoPanel>,
     pub info_panel_scroll: usize,
     pub permission: PermissionState,
@@ -273,6 +274,7 @@ impl Default for AppState {
             pending_switch_requests: VecDeque::new(),
             pending_launch: VecDeque::new(),
             pending_theme_persist: VecDeque::new(),
+            pending_session_picker_refresh: false,
             info_panel: None,
             info_panel_scroll: 0,
             permission: PermissionState::default(),
@@ -338,6 +340,11 @@ impl AppState {
                 server: req.server_name,
                 enable: req.enable,
             }));
+        }
+        if self.take_next_session_picker_refresh_request() {
+            events.push(OrchestratorEvent::UiRequest(
+                UiRequest::RefreshSessionPicker,
+            ));
         }
         if cancel_controller.take_cancel_requested() {
             events.push(OrchestratorEvent::CancelRequested);
@@ -448,6 +455,7 @@ impl AppState {
             SharedUiAction::Sessions => {
                 self.close_info_panel();
                 self.picker.open(ActivePicker::Session);
+                self.pending_session_picker_refresh = true;
                 self.ensure_invariants();
                 true
             }

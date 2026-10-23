@@ -674,14 +674,25 @@ where
         let ids = memory
             .session_ids()
             .map_err(|e| format!("Failed to list sessions: {e}"))?;
+        let current = self.current_session_id();
         let mut sessions = Vec::new();
         for id in ids {
+            // A session with no messages is not usable: a model switch writes
+            // its state records before the first turn, so it would otherwise
+            // list as an empty, untitled session. The current session is where
+            // the user already is, so it is not offered as a target.
+            if current == Some(id.as_str()) {
+                continue;
+            }
             let Ok(store) = memory.rig_store(&id) else {
                 // One unreadable session must not hide the others.
                 log::warn!("failed to open the session store of '{id}'");
                 continue;
             };
             let meta = rig_memory::SessionMeta::read(&*store).unwrap_or_default();
+            if meta.messages == 0 {
+                continue;
+            }
             let last_active = match meta.updated {
                 0 => chrono::Utc::now(),
                 ms => chrono::DateTime::from_timestamp_millis(ms as i64)
