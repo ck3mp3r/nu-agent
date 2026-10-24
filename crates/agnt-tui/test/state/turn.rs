@@ -6,6 +6,7 @@
 use crate::interaction::reducer::{ReducerInput, UserAction, reduce_with_cancel_controller};
 use crate::state::{AppState, InputState, StatusMessageKind, UiPhase};
 use agnt_core::bus::TurnEvent;
+use agnt_core::conversation::turn::executor::TURN_STOPPED_NOTICE;
 use agnt_core::transcript::ir::{Block, BlockSource, MessageRole};
 use agnt_core::transcript::items::Message;
 use agnt_core::transcript::renderer::Renderable;
@@ -124,5 +125,31 @@ fn finalize_preserves_warning_and_clears_neutral_status() -> Result<()> {
         "finalize must clear a Neutral-kind status message"
     );
 
+    Ok(())
+}
+
+/// A `Notice`-kind status message survives turn finalize. The stop marker is
+/// set by `LlmEvent::Stopped` and `TurnEvent::Completed` arrives right after,
+/// so finalize must not wipe the marker before it renders.
+#[test]
+fn finalize_preserves_notice_status() -> Result<()> {
+    // -- Setup & Fixtures: a Notice-kind status message.
+    let mut state = AppState::default();
+    state.status.message.set_notice(TURN_STOPPED_NOTICE);
+
+    // -- Exec
+    finalize_turn(&mut state);
+
+    // -- Check: the marker survives with its kind intact.
+    assert_eq!(
+        state.status.message.status_line(),
+        TURN_STOPPED_NOTICE,
+        "finalize must preserve a Notice-kind status message"
+    );
+    assert_eq!(
+        state.status.message.kind(),
+        StatusMessageKind::Notice,
+        "the surviving message must still be Notice-kind"
+    );
     Ok(())
 }

@@ -12,10 +12,13 @@
 #[path = "executor_dispatch/completed.rs"]
 mod completed;
 
+#[path = "executor_dispatch/user_cancel.rs"]
+mod user_cancel;
+
 // endregion: --- Modules
 
 use super::executor_test_support::*;
-use super::test_utils::{BusEventCollector, test_config};
+use super::test_utils::{BusEventCollector, message_text, test_config};
 use super::*;
 use crate::conversation::turn::error::TurnContext;
 use crate::conversation::turn::{TurnError, TurnResult};
@@ -35,6 +38,9 @@ fn completed_result(text: &str) -> TurnResult {
         cancel_reason: None,
         last_total_tokens: 12,
         last_known_history: Vec::new(),
+        pre_turn_message_count: 0,
+        tool_records: Vec::new(),
+        streamed_tool_calls: Vec::new(),
     }
 }
 
@@ -55,13 +61,18 @@ fn cancelled_result(
         cancel_reason,
         last_total_tokens: 0,
         last_known_history,
+        pre_turn_message_count: 0,
+        tool_records: Vec::new(),
+        streamed_tool_calls: Vec::new(),
     }
 }
 
-fn empty_context() -> TurnContext {
-    TurnContext {
+fn empty_context() -> Box<TurnContext> {
+    Box::new(TurnContext {
         last_known_history: Vec::new(),
-    }
+        pre_turn_message_count: 0,
+        tool_records: Vec::new(),
+    })
 }
 
 #[tokio::test]
@@ -90,6 +101,7 @@ async fn dispatch_unknown_tool_persists_history_and_reports_failure() -> Result<
                 },
                 empty_context(),
             )),
+            "use a tool".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
         )
@@ -102,10 +114,20 @@ async fn dispatch_unknown_tool_persists_history_and_reports_failure() -> Result<
         error.to_string().contains("unknown tool"),
         "the error must name the unknown tool; got: {error}"
     );
-    let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert!(
-        persisted.is_empty(),
-        "a failed turn must save nothing to the rig store; got {persisted:?}"
+        error.to_string().contains("The session has been saved"),
+        "the error must tell the user the session was saved; got: {error}"
+    );
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        persisted.len(),
+        1,
+        "the unknown-tool turn's delta is persisted; got {persisted:?}"
+    );
+    assert_eq!(
+        message_text(&persisted[0]).as_deref(),
+        Some("use a tool"),
+        "the persisted delta is the turn's prompt; got {persisted:?}"
     );
     Ok(())
 }
@@ -134,6 +156,7 @@ async fn dispatch_unknown_tool_without_a_session_skips_persistence() -> Result<(
                 },
                 empty_context(),
             )),
+            "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             None,
         )
@@ -169,6 +192,7 @@ async fn dispatch_tool_execution_failure_reports_the_raw_message() -> Result<()>
                 },
                 empty_context(),
             )),
+            "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
         )
@@ -183,15 +207,22 @@ async fn dispatch_tool_execution_failure_reports_the_raw_message() -> Result<()>
         "a tool failure has no error kind, so the raw message is surfaced"
     );
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert!(
-        persisted.is_empty(),
-        "a tool failure must save nothing to the rig store; got {persisted:?}"
+    assert_eq!(
+        persisted.len(),
+        2,
+        "an empty hard-error delta persists the prompt and a failure placeholder; got {persisted:?}"
+    );
+    assert_eq!(message_text(&persisted[0]).as_deref(), Some("the prompt"));
+    assert_eq!(
+        message_text(&persisted[1]).as_deref(),
+        Some("[Turn failed: tool server exploded]")
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn dispatch_path_c_cancelled_with_an_empty_delta_persists_nothing() -> Result<()> {
+async fn dispatch_path_c_cancelled_with_an_empty_delta_persists_the_prompt_and_placeholder()
+-> Result<()> {
     // -- Setup & Fixtures
     let config = test_config();
     let temp_dir = tempfile::tempdir()?;
@@ -208,6 +239,7 @@ async fn dispatch_path_c_cancelled_with_an_empty_delta_persists_nothing() -> Res
     let outcome = executor
         .dispatch_result(
             Ok(cancelled_result(Some(Vec::new()), Vec::new(), None, "")),
+            "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
         )
@@ -217,9 +249,15 @@ async fn dispatch_path_c_cancelled_with_an_empty_delta_persists_nothing() -> Res
     // -- Check
     assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert!(
-        persisted.is_empty(),
-        "an empty cancelled delta must not write to the session"
+    assert_eq!(
+        persisted.len(),
+        2,
+        "an empty cancelled delta persists the prompt and a placeholder; got {persisted:?}"
+    );
+    assert_eq!(message_text(&persisted[0]).as_deref(), Some("the prompt"));
+    assert_eq!(
+        message_text(&persisted[1]).as_deref(),
+        Some("[interrupted — turn stopped before responding]")
     );
     Ok(())
 }
@@ -247,6 +285,7 @@ async fn dispatch_path_b_uses_the_last_known_history() -> Result<()> {
                 None,
                 "",
             )),
+            "completed work".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
         )
@@ -256,9 +295,14 @@ async fn dispatch_path_b_uses_the_last_known_history() -> Result<()> {
     // -- Check
     assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert!(
-        persisted.is_empty(),
-        "a cancelled turn must save nothing to the rig store; got {persisted:?}"
+    assert_eq!(
+        persisted.len(),
+        1,
+        "the bus-cancel delta comes from the hook's last known history; got {persisted:?}"
+    );
+    assert_eq!(
+        message_text(&persisted[0]).as_deref(),
+        Some("completed work")
     );
     Ok(())
 }
@@ -281,6 +325,7 @@ async fn dispatch_path_b_true_fallback_synthesizes_a_placeholder() -> Result<()>
     let outcome = executor
         .dispatch_result(
             Ok(cancelled_result(None, Vec::new(), None, "partial text")),
+            "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
         )
@@ -290,9 +335,15 @@ async fn dispatch_path_b_true_fallback_synthesizes_a_placeholder() -> Result<()>
     // -- Check
     assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert!(
-        persisted.is_empty(),
-        "a cancelled turn must save nothing to the rig store; got {persisted:?}"
+    assert_eq!(
+        persisted.len(),
+        2,
+        "an empty bus-cancel delta persists the prompt and a placeholder; got {persisted:?}"
+    );
+    assert_eq!(message_text(&persisted[0]).as_deref(), Some("the prompt"));
+    assert_eq!(
+        message_text(&persisted[1]).as_deref(),
+        Some("[interrupted — turn stopped before responding]")
     );
     Ok(())
 }
@@ -322,6 +373,7 @@ async fn dispatch_path_c_stop_reason_surfaces_warning_and_completed() -> Result<
                 Some(reason.clone()),
                 "",
             )),
+            "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             None,
         )
@@ -340,6 +392,18 @@ async fn dispatch_path_c_stop_reason_surfaces_warning_and_completed() -> Result<
     assert!(
         events.iter().any(|e| matches!(e, UiEvent::Warning { .. })),
         "path C must surface the stop as a warning; got: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Stopped { reason: stopped } if stopped == &reason)),
+        "path C must surface the stop reason as Stopped; got: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Stopped { reason } if reason == TURN_STOPPED_NOTICE)),
+        "a doom/repetition stop must not carry the generic user-cancel notice; got: {events:?}"
     );
     assert!(
         events

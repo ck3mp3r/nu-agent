@@ -152,22 +152,6 @@ impl AppState {
         self.ensure_invariants();
     }
 
-    pub fn cancel_active_and_pending_prompts(&mut self) {
-        prompt_queue::PromptQueueLifecycle::new(
-            &mut self.prompt_items,
-            &mut self.pending_prompt_ids,
-            &mut self.active_prompt_id,
-            &mut self.next_prompt_id,
-        )
-        .cancel_active_and_pending_prompts();
-
-        self.phase = UiPhase::Idle;
-        self.input_locked = false;
-        self.active_cycle = false;
-        self.abort.pending = false;
-        self.ensure_invariants();
-    }
-
     pub fn request_abort_confirmation(&mut self) -> bool {
         if !(self.active_prompt_id.is_some()
             || !self.pending_prompt_ids.is_empty()

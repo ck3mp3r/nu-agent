@@ -120,6 +120,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
         last_total_tokens: default_last_total_tokens(),
         bus: bus.clone(),
         render_registry: ToolRenderRegistry::default(),
+        cwd: std::path::PathBuf::from("/tmp"),
     };
 
     let shared_model = super::test_utils::shared_model_handle(model);
@@ -156,13 +157,25 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
         "cancelled turn must return EarlyReturn"
     );
 
-    // 2. rig saves nothing on a cancelled run, so the rig store gains nothing.
-    //    The tool call and its real result live only in the run's transcript,
-    //    which `execute()` does not return (it yields `TurnOutcome`).
+    // 2. The cancelled turn's delta is persisted: the prompt, the completed
+    //    tool call and its real result.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        persisted.len(),
+        3,
+        "a cancelled turn persists the completed tool work; got {persisted:?}"
+    );
+    assert_eq!(
+        message_text(&persisted[0]).as_deref(),
+        Some("call the tool")
+    );
     assert!(
-        persisted.is_empty(),
-        "a cancelled turn must save nothing to the rig store; got {persisted:?}"
+        matches!(&persisted[1], crate::types::Message::Assistant(_)),
+        "the completed tool call is persisted; got {persisted:?}"
+    );
+    assert!(
+        matches!(&persisted[2], crate::types::Message::User { .. }),
+        "the real tool result is persisted; got {persisted:?}"
     );
 
     Ok(())
@@ -215,6 +228,7 @@ async fn user_cancel_stays_silent_with_empty_response() -> Result<()> {
             last_total_tokens: default_last_total_tokens(),
             bus,
             render_registry: ToolRenderRegistry::default(),
+            cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),

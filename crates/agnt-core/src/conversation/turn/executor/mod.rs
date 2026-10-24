@@ -9,11 +9,13 @@
 mod core;
 mod dispatch;
 mod error_kind;
+mod recover;
 mod response;
 mod retry;
 
 pub use core::*;
 pub use error_kind::*;
+pub(crate) use recover::TurnRecovery;
 pub use response::*;
 
 #[cfg(all(test, feature = "integration"))]

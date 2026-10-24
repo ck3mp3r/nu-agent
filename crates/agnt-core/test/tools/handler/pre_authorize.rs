@@ -291,3 +291,48 @@ fn test_pre_authorize_fs_tool_edit_preview_table() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn test_tool_display_from_arguments_nu_command() -> Result<()> {
+    // -- Setup & Fixtures
+    let cwd = PathBuf::from("/tmp");
+
+    // -- Exec
+    let display = tool_display_from_arguments("nu", r#"{"command":"ls"}"#, &cwd)
+        .ok_or("nu with a command must produce a display")?;
+
+    // -- Check
+    assert_eq!(display.title, None, "title");
+    assert_eq!(display.sections.len(), 1, "must have exactly one section");
+    let section = display.sections.first().ok_or("should have one section")?;
+    assert_eq!(
+        section.kind,
+        ContentKind::Code {
+            language: "nu".to_string()
+        },
+        "section kind"
+    );
+    assert_eq!(section.content, "ls", "section content");
+    Ok(())
+}
+
+#[test]
+fn test_tool_display_from_arguments_none_table() -> Result<()> {
+    // -- Setup & Fixtures
+    let cwd = PathBuf::from("/tmp");
+    let cases = [
+        ("non-builtin name", "not_a_builtin", r#"{"command":"ls"}"#),
+        ("unparseable json", "nu", "not json"),
+        ("non-object json", "nu", "[1, 2]"),
+    ];
+
+    // -- Exec & Check
+    for (name, tool_name, arguments_json) in cases {
+        let display = tool_display_from_arguments(tool_name, arguments_json, &cwd);
+        assert!(
+            display.is_none(),
+            "case '{name}': display must be None, got {display:?}"
+        );
+    }
+    Ok(())
+}

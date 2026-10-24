@@ -5,16 +5,24 @@
 //! surfacing on cancellation, and the completed-turn tail (last_total_tokens,
 //! doom reset, bus events, response_data capture).
 //!
-//! Nothing is persisted here: rig saves the conversation when a run succeeds
-//! and saves nothing when it fails or is cancelled.
+//! rig saves the conversation when a run succeeds and saves nothing when it
+//! fails or is cancelled. Every non-success terminal arm therefore persists the
+//! turn's delta through `persist_turn_delta`; the completed tail writes nothing.
 
 use nu_protocol::{LabeledError, Span};
 
+use crate::hook::chain::{NotRunCall, NotRunOutcome, NotRunStart, emit_not_run_dispatch};
 use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
 use crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
+use crate::hook::permission_resolver::resolve_tool_source;
+use crate::hook::turn_tools::undispatched_streamed_calls;
 use crate::protocol::event::UiEvent;
+use crate::types::Message;
 
-use super::core::{NO_OUTPUT_STATEMENT, TurnExecutor, TurnOutcome, TurnResponseData};
+use super::TurnRecovery;
+use super::core::{
+    NO_OUTPUT_STATEMENT, TURN_STOPPED_NOTICE, TurnExecutor, TurnOutcome, TurnResponseData,
+};
 use super::error_kind::kind_to_user_msg;
 use crate::conversation::turn::TurnError;
 use crate::conversation::turn::TurnResult;
@@ -32,24 +40,40 @@ where
         &mut self,
         visitor_result: Result<
             TurnResult,
-            (TurnError, crate::conversation::turn::error::TurnContext),
+            (
+                TurnError,
+                Box<crate::conversation::turn::error::TurnContext>,
+            ),
         >,
+        prompt: String,
         span: Span,
         final_session_id: Option<&str>,
     ) -> Result<TurnOutcome, LabeledError> {
         let turn_result = match visitor_result {
             Ok(result) => result,
-            Err((crate::conversation::turn::TurnError::UnknownTool { msg, .. }, _)) => {
+            Err((crate::conversation::turn::TurnError::UnknownTool { msg, messages, .. }, ctx)) => {
+                self.persist_turn_delta(
+                    final_session_id,
+                    &prompt,
+                    &messages,
+                    ctx.pre_turn_message_count,
+                    "[interrupted — turn stopped before responding]",
+                    TurnRecovery {
+                        tool_records: &ctx.tool_records,
+                        streamed_text: None,
+                    },
+                )
+                .await;
                 log::warn!("Unknown tool call (retries exhausted): {msg}");
                 let user_msg =
                     "Turn failed: The model attempted to call an unknown tool and could not \
-                     recover. Try rephrasing your request."
+                     recover. The session has been saved — try rephrasing your request."
                         .to_string();
                 return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
             }
-            Err((e, _)) => {
-                // Hard error: CompletionFailed or ToolExecutionFailed. Nothing is
-                // persisted: rig saves a conversation only when a run succeeds.
+            Err((e, ctx)) => {
+                // Hard error: CompletionFailed or ToolExecutionFailed. rig saved
+                // nothing, so the turn's delta is persisted here.
 
                 // Extract the fields the user-facing message needs.
                 let (msg, kind_opt) = match &e {
@@ -58,6 +82,28 @@ where
                     }
                     crate::conversation::turn::TurnError::ToolExecutionFailed { msg } => {
                         (msg, None)
+                    }
+                    // Terminal MaxTurnsExceeded carries rig's full chat_history.
+                    crate::conversation::turn::TurnError::MaxTurnsExceeded {
+                        msg,
+                        messages,
+                        ..
+                    } => {
+                        self.persist_turn_delta(
+                            final_session_id,
+                            &prompt,
+                            messages,
+                            ctx.pre_turn_message_count,
+                            &format!("[Turn failed: {msg}]"),
+                            TurnRecovery {
+                                tool_records: &ctx.tool_records,
+                                streamed_text: None,
+                            },
+                        )
+                        .await;
+                        return Err(
+                            LabeledError::new(e.to_string()).with_label(e.to_string(), span)
+                        );
                     }
                     _ => {
                         return Err(
@@ -89,21 +135,87 @@ where
                     final_session_id,
                     &msg[..msg.floor_char_boundary(200)]
                 );
+                self.persist_turn_delta(
+                    final_session_id,
+                    &prompt,
+                    &ctx.last_known_history,
+                    ctx.pre_turn_message_count,
+                    &format!("[Turn failed: {msg}]"),
+                    TurnRecovery {
+                        tool_records: &ctx.tool_records,
+                        streamed_text: None,
+                    },
+                )
+                .await;
                 return Err(LabeledError::new(user_msg.clone()).with_label(user_msg, span));
             }
         };
 
-        // Cancelled: rig saved nothing, so nothing is persisted here. Surface the
-        // stop reason and return the early-exit response.
+        // Cancelled: rig saved nothing, so the turn's delta is persisted here.
+        // Surface the stop reason and return the early-exit response.
         if turn_result.cancelled {
-            // Surface the doom-loop stop reason if this cancellation was a doom
-            // stop. Fix 1: the warning is sent BEFORE `TurnEvent::Completed` so
-            // the TUI reduces the warning ahead of turn finalize (the race with
-            // the separate bus channels is bounded; the TUI-side finalize fix
-            // preserves warnings deterministically). Fix 2: the reason rides
-            // `LlmEvent::Stopped`, never `AssistantMessage` — routing it
-            // through the assistant-stream dedup path would truncate the
-            // streamed repeated block.
+            // The hook-Terminate flavor carries rig's chat_history; the
+            // bus-cancel flavor drops the stream and leaves only the hook's
+            // snapshot of the last LLM call.
+            let history: &[Message] = turn_result
+                .messages
+                .as_deref()
+                .unwrap_or(turn_result.last_known_history.as_slice());
+            self.persist_turn_delta(
+                final_session_id,
+                &prompt,
+                history,
+                turn_result.pre_turn_message_count,
+                "[interrupted — turn stopped before responding]",
+                TurnRecovery {
+                    tool_records: &turn_result.tool_records,
+                    streamed_text: Some(&turn_result.text),
+                },
+            )
+            .await;
+            // A stop drops the stream before the batch's later calls dispatch,
+            // so nothing emitted their pair. Flush each one as a denied pair,
+            // in commit order, so the live transcript renders it. The flush
+            // records nothing: the persist reads records only, and rig's
+            // closure rows already cover these calls in the log.
+            for call in undispatched_streamed_calls(
+                &turn_result.streamed_tool_calls,
+                &turn_result.tool_records,
+            ) {
+                let name = call.function.name.as_str();
+                let arguments = call.function.arguments_json();
+                let source = resolve_tool_source(
+                    name,
+                    &self.tool_infra.closure_registry,
+                    &self.tool_infra.mcp_registry,
+                )
+                .as_str();
+                let call_line = self.tool_infra.render_registry.render(name, &arguments);
+                emit_not_run_dispatch(
+                    &self.tool_infra.bus,
+                    &self.tool_infra.cwd,
+                    NotRunCall {
+                        tool_name: name,
+                        source,
+                        arguments: &arguments,
+                        start: NotRunStart::Publish(call_line),
+                    },
+                    NotRunOutcome::Cancelled,
+                    true,
+                )
+                .await;
+            }
+            // Surface the stop reason if this cancellation was a doom or
+            // repetition stop. Fix 1: the warning is sent BEFORE
+            // `TurnEvent::Completed` so the TUI reduces the warning ahead of
+            // turn finalize (the race with the separate bus channels is
+            // bounded; the TUI-side finalize fix preserves warnings
+            // deterministically). Fix 2: the reason rides `LlmEvent::Stopped`,
+            // never `AssistantMessage` — routing it through the
+            // assistant-stream dedup path would truncate the streamed repeated
+            // block. A user cancel carries no stop reason, so it gets the
+            // generic notice instead: the turn's completed work is kept, and
+            // without the notice the user sees no sign the turn stopped.
             let response_text = match &turn_result.cancel_reason {
                 Some(reason)
                     if reason.starts_with(DOOM_LOOP_STOP_PREFIX)
@@ -127,7 +239,17 @@ where
                         .await;
                     reason.clone()
                 }
-                _ => String::new(),
+                _ => {
+                    let _ = self
+                        .tool_infra
+                        .bus
+                        .ui_event()
+                        .send(UiEvent::Stopped {
+                            reason: TURN_STOPPED_NOTICE.to_string(),
+                        })
+                        .await;
+                    String::new()
+                }
             };
             let _ = self
                 .tool_infra

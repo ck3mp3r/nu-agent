@@ -12,7 +12,12 @@ use crate::protocol::slash::{SlashCommand, SlashParseResult, parse_slash_command
 pub(crate) struct SlashStage;
 
 impl SlashHandler for SlashStage {
-    async fn handle(&mut self, prompt: String, ctx: &mut OrchestrationContext<'_>) {
+    async fn handle(
+        &mut self,
+        prompt: String,
+        task_id: Option<String>,
+        ctx: &mut OrchestrationContext<'_>,
+    ) {
         if prompt.trim().is_empty() {
             return;
         }
@@ -103,10 +108,9 @@ impl SlashHandler for SlashStage {
                     .await;
             }
             SlashParseResult::NotSlash => {
-                // Regular prompt: dispatch to worker. An A2A task or completion
-                // event that queued this prompt sets `pending_a2a_task_id`, so
-                // the turn is attributed to that task instead of a user submit.
-                let task_id = ctx.pending_a2a_task_id.take();
+                // Regular prompt: dispatch to worker. The caller supplies the
+                // task id of the A2A task that queued this prompt, so the turn
+                // is attributed to that task instead of a user submit.
                 if let Some(task_id) = task_id.as_deref() {
                     *ctx.active_external_prompt = Some(prompt.clone());
                     *ctx.active_external_task_id = Some(task_id.to_string());

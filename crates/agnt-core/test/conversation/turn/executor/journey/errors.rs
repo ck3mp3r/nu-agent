@@ -4,11 +4,11 @@ use super::*;
 // Scenario 7: Repeated errors leave the store unchanged
 // ---------------------------------------------------------------------------
 
-/// rig saves a conversation only when a run succeeds, so a failed turn writes
-/// nothing. One successful turn saves two messages; three failed turns after it
-/// leave the store at two.
+/// rig saves a conversation only when a run succeeds, so a failed turn's delta
+/// is persisted by the host. One successful turn saves two messages; each
+/// failed turn after it appends only its own prompt.
 #[tokio::test]
-async fn journey_repeated_errors_leave_the_store_unchanged() -> Result<()> {
+async fn journey_repeated_errors_append_only_their_prompts() -> Result<()> {
     let mut h = JourneyHarness::new("journey-linear-errors");
 
     // Turn 1: success → 2 messages
@@ -29,7 +29,7 @@ async fn journey_repeated_errors_leave_the_store_unchanged() -> Result<()> {
         "after turn 1: expected 2 messages"
     );
 
-    // Turns 2, 3, 4: error → each saves nothing
+    // Turns 2, 3, 4: error → each appends only its own prompt
     for (i, prompt) in ["t2", "t3", "t4"].iter().enumerate() {
         let (r, _) = h
             .turn(
@@ -43,8 +43,8 @@ async fn journey_repeated_errors_leave_the_store_unchanged() -> Result<()> {
         assert!(r.is_err(), "turn {} must error", i + 2);
         assert_eq!(
             h.raw_messages().await?.len(),
-            2,
-            "after error turn {}: a failed turn saves nothing",
+            3 + i,
+            "after error turn {}: a failed turn appends its prompt",
             i + 2
         );
     }
@@ -56,8 +56,9 @@ async fn journey_repeated_errors_leave_the_store_unchanged() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Two-turn journey. Turn 1 runs two tool sub-turns and then fails on
-/// sub-turn 3, so rig saves nothing. Turn 2 succeeds and starts from an empty
-/// conversation: its request carries only the new prompt.
+/// sub-turn 3, so the host persists the delta rig never saved. Turn 2 succeeds
+/// and starts from that delta: its request carries the failed turn's history
+/// plus the new prompt.
 #[tokio::test]
 async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
     let mut h = JourneyHarness::new("journey-error-recovery");
@@ -77,14 +78,16 @@ async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
     let (r1, _) = h.turn("do things", model1, echo_tool("real_result")?).await;
     assert!(r1.is_err(), "CompletionError must propagate");
 
-    // A failed run saves nothing — the real tool results are not persisted.
+    // The failed turn's delta is persisted: the prompt, both tool calls and
+    // their real results.
     let after_failure = h.raw_messages().await?;
-    assert!(
-        after_failure.is_empty(),
-        "a failed turn must save nothing; got: {after_failure:?}"
+    assert_eq!(
+        after_failure.len(),
+        5,
+        "a failed turn persists its delta; got: {after_failure:?}"
     );
 
-    // Turn 2: recovery — plain text, starts from an empty conversation
+    // Turn 2: recovery — plain text, starts from the failed turn's delta
     let model2 = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("recovered".into()),
         MockStreamEvent::final_response_with_default_usage(),
@@ -96,14 +99,14 @@ async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
     let msgs = h.raw_messages().await?;
     assert_eq!(
         msgs.len(),
-        2,
-        "the recovery turn saves its own exchange; got: {msgs:?}"
+        7,
+        "the failed turn's delta plus the recovery exchange; got: {msgs:?}"
     );
-    assert_user_text(&msgs[0], "continue");
-    assert_assistant_text_contains(&msgs[1], "recovered");
+    assert_user_text(&msgs[5], "continue");
+    assert_assistant_text_contains(&msgs[6], "recovered");
 
-    // The recovery request carries only the new prompt: the failed turn left
-    // no history behind.
+    // The request carries the failed turn's history with the new prompt merged
+    // into its trailing user message.
     assert_eq!(
         model2_spy.request_count(),
         1,
@@ -112,8 +115,8 @@ async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
     let req = &model2_spy.requests()[0];
     assert_eq!(
         req.chat_history.len(),
-        1,
-        "turn 2 chat_history must hold only the current prompt, got: {:?}",
+        5,
+        "turn 2 chat_history must hold the failed delta with the prompt merged, got: {:?}",
         req.chat_history
     );
     Ok(())
@@ -124,7 +127,7 @@ async fn journey_error_mid_tool_loop_then_recovery() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Turn 1 executes a real tool call that cancels the turn from within `call()`.
-/// A cancelled run saves nothing, so turn 2 starts from an empty conversation.
+/// The cancelled turn's delta is persisted, so turn 2 starts from it.
 #[tokio::test]
 async fn journey_cancelled_turn_then_continuation() -> Result<()> {
     let mut h = JourneyHarness::new("journey-cancel-tool");
@@ -156,13 +159,17 @@ async fn journey_cancelled_turn_then_continuation() -> Result<()> {
     let r1 = r1.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(matches!(r1, TurnOutcome::EarlyReturn(_)));
 
+    // The cancelled turn's delta is persisted: the prompt, the tool call and
+    // its real result.
     let msgs = h.raw_messages().await?;
-    assert!(
-        msgs.is_empty(),
-        "a cancelled turn must save nothing; got: {msgs:?}"
+    assert_eq!(
+        msgs.len(),
+        3,
+        "a cancelled turn persists its delta; got: {msgs:?}"
     );
+    assert_user_text(&msgs[0], "run a git command");
 
-    // Turn 2: continuation starts from an empty conversation
+    // Turn 2: continuation starts from the cancelled turn's delta
     let model2 = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("I can see the git pull completed. How can I help next?".into()),
         MockStreamEvent::final_response_with_default_usage(),
@@ -170,14 +177,14 @@ async fn journey_cancelled_turn_then_continuation() -> Result<()> {
     let model2_spy = model2.clone();
     let (r2, _) = h.turn("what happened?", model2, no_tools()).await;
     assert!(r2.is_ok());
-    assert_eq!(h.raw_messages().await?.len(), 2);
+    assert_eq!(h.raw_messages().await?.len(), 5);
     let requests = model2_spy.requests();
-    // The cancelled turn left no history, so the request carries only the
-    // current prompt.
+    // The request carries the cancelled turn's delta with the new prompt merged
+    // into its trailing user message.
     assert_eq!(
         requests[0].chat_history.len(),
-        1,
-        "turn 2 chat_history must hold only the current prompt, got: {:?}",
+        3,
+        "turn 2 chat_history must hold the cancelled delta with the prompt merged, got: {:?}",
         requests[0].chat_history
     );
     Ok(())

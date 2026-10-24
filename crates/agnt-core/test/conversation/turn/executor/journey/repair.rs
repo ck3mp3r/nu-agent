@@ -127,25 +127,17 @@ async fn journey_corrupt_session_is_tolerated_on_load() -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Gap 6: Pre-flight repair — empty ToolResult replaced with placeholder
+// Gap 6: empty ToolResult tolerated
 // ---------------------------------------------------------------------------
 
 /// Integration test: a session containing a ToolResult with empty content is
-/// repaired ephemerally before the turn starts, and the turn succeeds.
+/// tolerated: it is seeded into the rig store unchanged, rig accepts it when it
+/// builds the request, and the next turn succeeds.
 ///
-/// The raw JSONL is NOT modified — the repair is applied only to the in-memory
-/// cache so rig receives structurally valid history.
-///
-/// Setup:
-/// 1. Write a valid session (tool call + empty tool result + closing assistant)
-///    directly into the memory cache to simulate a prior turn that produced
-///    an empty tool result.
-/// 2. Execute a follow-up turn — the pre-flight repair should replace the
-///    empty ToolResult content with "(empty result)" before rig sees the history.
-/// 3. Assert the turn succeeds (Ok).
-/// 4. Assert the in-memory history (post-turn raw messages) contains "(empty result)".
+/// The store is append-only: the seeded prefix stays as written and the new
+/// exchange follows it.
 #[tokio::test]
-async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
+async fn journey_empty_tool_result_is_tolerated() -> Result<()> {
     use crate::types::{
         AssistantContent, AssistantMessage, CallId, ToolCall, ToolFunction, ToolName, ToolResult,
         ToolResultContent, UserContent,
@@ -153,8 +145,8 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
 
     let mut h = JourneyHarness::new("journey-gap6-empty-tool-result");
 
-    // Pre-populate the in-memory cache with a valid-structured but empty-content
-    // ToolResult message. This simulates a prior turn that stored an empty result.
+    // A valid-structured but empty-content ToolResult message, as a prior turn
+    // that stored an empty result would leave it.
     let tc_id = "tc_gap6";
     let prior_messages: Vec<crate::types::Message> = vec![
         crate::types::Message::user("run something"),
@@ -176,11 +168,9 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
         crate::types::Message::assistant("[ok]"),
     ];
 
-    h.memory_state
-        .memory_mut()
-        .reset_context(h.session_id, prior_messages);
+    h.seed_history(prior_messages.clone())?;
 
-    // Now run a follow-up turn — pre-flight repair must fix the empty ToolResult.
+    // Now run a follow-up turn — rig must accept the empty ToolResult.
     let model = MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("follow-up answer".into()),
         MockStreamEvent::final_response_with_default_usage(),
@@ -188,33 +178,20 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
     let (r, _) = h.turn("what was the result?", model, no_tools()).await;
     assert!(
         r.is_ok(),
-        "turn must succeed after empty ToolResult is repaired; got: {r:?}"
+        "turn must succeed with an empty ToolResult in the history; got: {r:?}"
     );
 
-    // Verify the in-memory cache contains "(empty result)" for the repaired entry.
-    let all_msgs = h
-        .memory_state
-        .memory_mut()
-        .load(h.session_id)
-        .await
-        .map_err(|e| format!("load messages: {e:?}"))?;
-
-    let has_placeholder = all_msgs.iter().any(|msg| {
-        let crate::types::Message::User { content } = msg else {
-            return false;
-        };
-        content.iter().any(|c| {
-            match c {
-            rig::message::UserContent::ToolResult(tr) => tr.content.iter().any(|tc| {
-                matches!(tc, crate::types::ToolResultContent::Text(t) if t.text == "(empty result)")
-            }),
-            _ => false,
-        }
-        })
-    });
-    assert!(
-        has_placeholder,
-        "in-memory history must contain '(empty result)' placeholder after repair; msgs: {all_msgs:?}"
+    // The store keeps the seeded prefix and gains the new exchange.
+    let saved = h.raw_messages().await?;
+    assert_eq!(
+        saved.len(),
+        prior_messages.len() + 2,
+        "the store holds the seeded history and the new exchange; got: {saved:?}"
+    );
+    assert_eq!(
+        &saved[..prior_messages.len()],
+        prior_messages.as_slice(),
+        "the seeded prefix is unchanged"
     );
     Ok(())
 }
@@ -225,12 +202,12 @@ async fn journey_empty_tool_result_replaced_with_placeholder() -> Result<()> {
 
 /// Verifies that a session containing a ToolCall whose arguments the model sent
 /// as something other than a JSON object (the poison pattern from
-/// `on_invalid_tool_call` → Skip → rollback_messages) is transparently healed on
-/// load and the next turn succeeds.
+/// `on_invalid_tool_call` → Skip → rollback_messages) is tolerated: it is seeded
+/// into the rig store unchanged, rig keeps the malformed arguments as text with
+/// a `{}` fallback, and the next turn succeeds.
 ///
-/// The repair happens inside `JournalConversationMemory::load()` via `repair_messages()`.
-/// The `fix_invalid_tool_arguments` pass clears `invalid_arguments` and resets the
-/// arguments to `{}` before rig sees the history.
+/// The store is append-only: the seeded prefix stays as written and the new
+/// exchange follows it.
 #[tokio::test]
 async fn journey_invalid_args_tool_call_repaired_on_load() -> Result<()> {
     let temp_dir = tempfile::tempdir().expect("tempdir");
@@ -272,7 +249,8 @@ async fn journey_invalid_args_tool_call_repaired_on_load() -> Result<()> {
         Message::assistant("I see the tool is unavailable."),
     ];
 
-    // Seed the poison into the session's rig store. Repair fires inside load().
+    // Seed the poison into the session's rig store, as an earlier run would
+    // leave it.
     let mut ms = memory_state_at(path.clone());
     {
         let store = ms
@@ -281,7 +259,7 @@ async fn journey_invalid_args_tool_call_repaired_on_load() -> Result<()> {
             .map_err(|e| format!("rig store open: {e:?}"))?;
         let mut conversation =
             rig_memory::load(&*store, session_id).map_err(|e| format!("rig store load: {e:?}"))?;
-        conversation.extend(corrupt_messages);
+        conversation.extend(corrupt_messages.clone());
         rig_memory::save(&*store, session_id, &mut conversation)
             .map_err(|e| format!("rig store save: {e:?}"))?;
     }
@@ -311,10 +289,34 @@ async fn journey_invalid_args_tool_call_repaired_on_load() -> Result<()> {
         )
         .await;
 
-    // The turn must succeed — repair healed the invalid-args poison on load.
+    // The turn must succeed — rig keeps the malformed arguments as text with a
+    // `{}` fallback, so the poison never fails a reply.
     assert!(
         outcome.is_ok(),
-        "turn must succeed after invalid-args ToolCall is repaired on load; got: {outcome:?}"
+        "turn must succeed with an invalid-args ToolCall in the history; got: {outcome:?}"
+    );
+
+    // The store keeps the seeded prefix and gains the new exchange.
+    let store = ms
+        .inner_memory()
+        .rig_store(session_id)
+        .map_err(|e| format!("rig store open: {e:?}"))?;
+    let conversation =
+        rig_memory::load(&*store, session_id).map_err(|e| format!("rig store load: {e:?}"))?;
+    let saved: Vec<Message> = conversation
+        .messages()
+        .iter()
+        .map(|message| (**message).clone())
+        .collect();
+    assert_eq!(
+        saved.len(),
+        corrupt_messages.len() + 2,
+        "the store holds the seeded history and the new exchange; got: {saved:?}"
+    );
+    assert_eq!(
+        &saved[..corrupt_messages.len()],
+        corrupt_messages.as_slice(),
+        "the seeded prefix is unchanged"
     );
     Ok(())
 }

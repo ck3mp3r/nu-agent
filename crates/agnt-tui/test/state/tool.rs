@@ -17,6 +17,9 @@ mod hydration;
 #[path = "tool/lifecycle.rs"]
 mod lifecycle;
 
+#[path = "tool/parity.rs"]
+mod parity;
+
 #[path = "tool/permission.rs"]
 mod permission;
 

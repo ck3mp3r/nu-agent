@@ -76,7 +76,13 @@ pub trait ToolManager {
 // ── SessionManager ───────────────────────────────────────────────────────────
 
 /// Manages conversation memory and session IDs.
-pub trait SessionManager {
+///
+/// `Sync` is required because `persist_turn_delta` is an async method taking
+/// `&self`: its future holds `&TurnExecutor` across the bus `send().await`, and
+/// `&TurnExecutor: Send` requires `TurnExecutor: Sync`. The executor holds
+/// `&mut Self`, so that reduces to `Self: Sync`. `Send` alone is not enough:
+/// `&mut T: Send` needs only `T: Send`, but `&mut T: Sync` needs `T: Sync`.
+pub trait SessionManager: Sync {
     /// The concrete memory type backed by this manager.
     type Memory;
 

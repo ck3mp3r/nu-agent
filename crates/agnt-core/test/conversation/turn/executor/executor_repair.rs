@@ -1,4 +1,4 @@
-//! History-repair tests: a cancelled or failed turn saves nothing.
+//! History-repair tests: a cancelled or failed turn persists a closed delta.
 
 use std::sync::Arc;
 
@@ -9,24 +9,23 @@ use super::super::test::{
     default_output_repetition, default_repetition_guard,
 };
 use super::executor_test_support::*;
-use super::test_utils::{MockResolver, test_compaction_config, test_config};
+use super::test_utils::{MockResolver, message_text, test_compaction_config, test_config};
 use super::*;
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 
 // ---------------------------------------------------------------------------
-// Cancelled and failed turns save nothing
+// Cancelled and failed turns persist a closed delta
 // ---------------------------------------------------------------------------
 
-/// On Cancelled (Ok path, cancelled=true) with an unpaired ToolCall in the
-/// chat_history, rig saves nothing: the synthetic result the old persist path
-/// injected has no store to reach.
+/// On Cancelled (Ok path, cancelled=true) the turn's delta is persisted: the
+/// prompt, the committed tool call and its result.
 ///
 /// We force a Cancelled scenario by triggering immediate cancellation.
 /// The mock model emits a tool_call on its first (and only) turn; the UI
 /// cancels immediately so rig returns Cancelled with a chat_history that
-/// contains the Assistant(ToolCall) but no User(ToolResult).
+/// contains the Assistant(ToolCall) and its User(ToolResult).
 #[tokio::test]
-async fn cancelled_turn_with_unpaired_tool_call_saves_nothing() -> Result<()> {
+async fn cancelled_turn_with_a_tool_call_persists_the_closed_delta() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-cancel-inject";
@@ -78,6 +77,7 @@ async fn cancelled_turn_with_unpaired_tool_call_saves_nothing() -> Result<()> {
             last_total_tokens: default_last_total_tokens(),
             bus,
             render_registry: ToolRenderRegistry::default(),
+            cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),
@@ -99,21 +99,31 @@ async fn cancelled_turn_with_unpaired_tool_call_saves_nothing() -> Result<()> {
     let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
 
-    // rig saves nothing for a cancelled run, so the unpaired ToolCall never
-    // reaches a store.
+    // The cancelled turn's delta is persisted: the prompt, the committed tool
+    // call and its result.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        persisted.len(),
+        3,
+        "a cancelled turn persists its delta; got: {persisted:?}"
+    );
+    assert_eq!(message_text(&persisted[0]).as_deref(), Some("call a tool"));
     assert!(
-        persisted.is_empty(),
-        "a cancelled turn must save nothing; got: {persisted:?}"
+        matches!(&persisted[1], crate::types::Message::Assistant(_)),
+        "the committed tool call is persisted; got: {persisted:?}"
+    );
+    assert!(
+        matches!(&persisted[2], crate::types::Message::User { .. }),
+        "the committed tool result is persisted; got: {persisted:?}"
     );
 
     Ok(())
 }
 
-/// On UnknownToolCall (Err path) with an unpaired ToolCall in chat_history,
-/// rig saves nothing: the failed run writes no history.
+/// On UnknownToolCall (Err path) the turn's delta is persisted: the prompt, the
+/// rejected tool call and the hook's error result.
 #[tokio::test]
-async fn unknown_tool_error_with_unpaired_tool_call_saves_nothing() -> Result<()> {
+async fn unknown_tool_error_with_a_tool_call_persists_the_closed_delta() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-unknown-inject";
@@ -155,12 +165,22 @@ async fn unknown_tool_error_with_unpaired_tool_call_saves_nothing() -> Result<()
     // UnknownToolCall returns Err
     assert!(result.is_err(), "UnknownToolCall must propagate as Err");
 
-    // rig saves nothing for a failed run, so the unpaired ToolCall never
-    // reaches a store.
+    // The failed turn's delta is persisted: the prompt, the rejected tool call
+    // and the hook's error result.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        persisted.len(),
+        3,
+        "a failed turn persists its delta; got: {persisted:?}"
+    );
+    assert_eq!(message_text(&persisted[0]).as_deref(), Some("use a tool"));
     assert!(
-        persisted.is_empty(),
-        "a failed turn must save nothing; got: {persisted:?}"
+        matches!(&persisted[1], crate::types::Message::Assistant(_)),
+        "the rejected tool call is persisted; got: {persisted:?}"
+    );
+    assert!(
+        matches!(&persisted[2], crate::types::Message::User { .. }),
+        "the hook's error result is persisted; got: {persisted:?}"
     );
 
     Ok(())

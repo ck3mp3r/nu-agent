@@ -12,7 +12,7 @@ use super::super::test::{
     default_output_repetition, default_repetition_guard,
 };
 use super::executor_test_support::*;
-use super::test_utils::{MockResolver, test_compaction_config, test_config};
+use super::test_utils::{MockResolver, message_text, test_compaction_config, test_config};
 use super::*;
 use crate::protocol::event::UiEvent;
 use crate::tools::closure::ClosureRegistry;
@@ -27,5 +27,8 @@ mod edge_paths;
 
 #[path = "executor_cancel/persistence.rs"]
 mod persistence;
+
+#[path = "executor_cancel/sibling_flush.rs"]
+mod sibling_flush;
 
 // endregion: --- Modules

@@ -1,40 +1,83 @@
-//! Unit tests for the message repair passes.
+//! Unit tests for the turn-delta repair.
 //!
-//! The suite is split into topical sub-files. Shared imports and the helper
-//! re-exports live here; each sub-file pulls them in with `use super::*;`.
+//! `close_unanswered_tool_calls_with` closes the tool calls a cancelled or
+//! failed turn never answered, preferring the result the turn observed.
 
-// region:    --- Modules
-
-#[path = "repair/empty_results.rs"]
-mod empty_results;
-
-#[path = "repair/integrity_extras.rs"]
-mod integrity_extras;
-
-#[path = "repair/invalid_args.rs"]
-mod invalid_args;
-
-#[path = "repair/jsonl_heal.rs"]
-mod jsonl_heal;
-
-#[path = "repair/passes.rs"]
-mod passes;
-
-#[path = "repair/summary_extras.rs"]
-mod summary_extras;
-
-#[path = "repair/support.rs"]
-mod support;
-
-// The monolith resolved `super::<item>` against `crate::session`.
-// Sub-files now resolve `super::` against this module root, so the shared
-// fixtures are re-exported here.
-use support::*;
-
-// endregion: --- Modules
-
-use super::repair::{
-    fix_empty_tool_results, fix_invalid_tool_arguments, fix_tool_call_integrity,
-    inject_assistant_after_dangling_tool_results, merge_consecutive_same_role,
-    remove_empty_messages, repair_messages, trim_trailing_user,
+use crate::session::repair::close_unanswered_tool_calls_with;
+use crate::types::{
+    AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolName,
+    ToolResultContent, UserContent,
 };
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// An assistant message calling each id in `call_ids`, with no result anywhere.
+fn assistant_tool_calls(call_ids: &[&str]) -> Result<Message> {
+    let name = ToolName::new("read_file")?;
+    let content = call_ids
+        .iter()
+        .map(|call_id| {
+            AssistantContent::ToolCall(ToolCall::new(
+                CallId::from_wire(*call_id),
+                ToolFunction::new(name.clone(), serde_json::json!({})),
+            ))
+        })
+        .collect();
+    Ok(Message::Assistant(AssistantMessage::new(content)))
+}
+
+/// A call the turn settled closes with the real result text and error flag.
+#[test]
+fn close_unanswered_tool_calls_with_prefers_the_settled_result() -> Result<()> {
+    // -- Setup & Fixtures
+    let messages = vec![assistant_tool_calls(&["tc1"])?];
+    let results = vec![(CallId::from_wire("tc1"), "boom".to_string(), true)];
+
+    // -- Exec
+    let closed = close_unanswered_tool_calls_with(messages, &results);
+
+    // -- Check
+    let Message::User { content } = &closed[1] else {
+        return Err("the close must be a user message".into());
+    };
+    let UserContent::ToolResult(result) = &content[0] else {
+        return Err("the close must be a tool result".into());
+    };
+    assert!(
+        matches!(&result.content[0], ToolResultContent::Text(text) if text.text == "boom"),
+        "the settled result text is kept; got {result:?}"
+    );
+    assert!(
+        result.is_error,
+        "the settled error flag is kept; got {result:?}"
+    );
+    Ok(())
+}
+
+/// A call the turn never settled closes with the interrupted marker.
+#[test]
+fn close_unanswered_tool_calls_with_marks_an_unsettled_call_interrupted() -> Result<()> {
+    // -- Setup & Fixtures
+    let messages = vec![assistant_tool_calls(&["tc1"])?];
+    let results = vec![(CallId::from_wire("tc2"), "other".to_string(), false)];
+
+    // -- Exec
+    let closed = close_unanswered_tool_calls_with(messages, &results);
+
+    // -- Check
+    let Message::User { content } = &closed[1] else {
+        return Err("the close must be a user message".into());
+    };
+    let UserContent::ToolResult(result) = &content[0] else {
+        return Err("the close must be a tool result".into());
+    };
+    assert!(
+        matches!(&result.content[0], ToolResultContent::Text(text) if text.text == "[interrupted]"),
+        "an unsettled call carries the interrupted marker; got {result:?}"
+    );
+    assert!(
+        !result.is_error,
+        "an interrupted close is not an error; got {result:?}"
+    );
+    Ok(())
+}

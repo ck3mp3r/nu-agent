@@ -19,14 +19,6 @@ use rig::operation::Completion;
 use rig::providers::registry::{Format, ProviderId};
 use rig_memory::{CompactReason, CompactionPolicy, Summarizer, SummaryPlan, summary_author};
 
-/// The leading text of every compaction summary message.
-///
-/// `merge_consecutive_same_role` in `session/repair.rs` checks this prefix so a
-/// summary is never folded into the next `User` turn. It matches the text
-/// `rig_memory::SummaryState::message()` writes.
-pub(crate) const SUMMARY_PREFIX: &str =
-    "The conversation before this point was compacted into this summary:";
-
 /// What a compaction that ran left behind.
 #[derive(Debug, Clone)]
 pub struct CompactionOutcome {

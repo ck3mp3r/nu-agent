@@ -10,6 +10,15 @@ fn cancel_and_restore_pending_to_input() -> Result<()> {
     let _ = state.activate_next_prompt();
     state.enqueue_prompt("beta".to_string());
     state.enqueue_prompt("gamma".to_string());
+    let interrupted_id = active_prompt_id(&state).ok_or("should have an active prompt")?;
+    let pending_ids = pending_prompt_ids(&state);
+    let status_of = |state: &AppState, id: u64| {
+        state
+            .prompt_items()
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.status)
+    };
 
     // -- Exec
     let result = state.cancel_and_restore_pending_to_input();
@@ -19,6 +28,12 @@ fn cancel_and_restore_pending_to_input() -> Result<()> {
     assert!(pending_prompt_ids(&state).is_empty());
     assert_eq!(active_prompt_id(&state), None);
     assert_eq!(state.phase, UiPhase::Idle);
+
+    // -- Check: the interrupted prompt is Done, the pendings are Cancelled.
+    assert_eq!(status_of(&state, interrupted_id), Some(PromptStatus::Done));
+    for pending_id in pending_ids {
+        assert_eq!(status_of(&state, pending_id), Some(PromptStatus::Cancelled));
+    }
 
     // -- Setup & Fixtures: no pending prompts.
     let mut none = AppState::default();

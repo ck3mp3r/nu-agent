@@ -133,6 +133,37 @@ fn status_message_kind_and_warning_events() -> Result<()> {
 }
 
 #[test]
+fn status_message_set_notice_sets_notice_kind_and_never_expires() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+
+    // -- Exec
+    state.status.message.set_notice("Turn stopped");
+
+    // -- Check: the kind is Notice and the message is pending.
+    assert_eq!(state.status.message.kind(), StatusMessageKind::Notice);
+    assert_eq!(state.status.message.status_line(), "Turn stopped");
+    assert!(state.status.message.is_pending());
+
+    // -- Check: a Notice never expires on the clock — not at the neutral TTL,
+    // not far in the future. The next turn start clears it instead.
+    assert!(!state.status.message.expired(Instant::now()));
+    assert!(
+        !state
+            .status
+            .message
+            .expired(Instant::now() + Duration::from_secs(5))
+    );
+    assert!(
+        !state
+            .status
+            .message
+            .expired(Instant::now() + Duration::from_secs(3600))
+    );
+    Ok(())
+}
+
+#[test]
 fn status_message_expiry_matrix() -> Result<()> {
     // -- Setup & Fixtures
     let far_future = Instant::now() + Duration::from_secs(3600);

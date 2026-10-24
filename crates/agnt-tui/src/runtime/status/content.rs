@@ -167,7 +167,9 @@ pub(crate) fn status_message_line(
     }
     let style = match state.status.message.kind() {
         crate::state::StatusMessageKind::Warning => theme.status_failed,
-        crate::state::StatusMessageKind::Neutral => theme.subtle_meta,
+        crate::state::StatusMessageKind::Neutral | crate::state::StatusMessageKind::Notice => {
+            theme.subtle_meta
+        }
     };
     Some(Line::from(Span::styled(
         ellipsize(status_line, available_width),

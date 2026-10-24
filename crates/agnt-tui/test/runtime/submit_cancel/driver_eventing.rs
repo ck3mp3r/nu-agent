@@ -93,7 +93,7 @@ async fn render_loop_submit_and_abort_handoff() -> Result<()> {
         ])
         .await?;
 
-    // -- Check: the queue is drained and both prompts are cancelled.
+    // -- Check: the queue is drained; the interrupted prompt is Done, the pending one cancelled.
     assert_eq!(
         aborting
             .coordinator_mut()
@@ -113,10 +113,7 @@ async fn render_loop_submit_and_abort_handoff() -> Result<()> {
         .iter()
         .map(|item| item.status)
         .collect::<Vec<_>>();
-    assert_eq!(
-        statuses,
-        vec![PromptStatus::Cancelled, PromptStatus::Cancelled]
-    );
+    assert_eq!(statuses, vec![PromptStatus::Done, PromptStatus::Cancelled]);
 
     // -- Exec: type 'c' to continue from the restored text.
     aborting.advance(&[key(TerminalKey::Char('c'))]).await?;

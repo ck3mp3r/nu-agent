@@ -8,7 +8,7 @@ use super::*;
 /// 2 backoff + 1 stop). The turn ends with an EarlyReturn whose response text
 /// starts with DOOM_LOOP_STOP_PREFIX and names the looping tool; the bus
 /// carries a Warning and a Stopped notice with the same prefix; the stopped
-/// run saves nothing.
+/// turn's delta is persisted.
 #[tokio::test]
 async fn journey_doom_loop_stop_surfaces_reason() -> Result<()> {
     // -- Setup & Fixtures
@@ -64,13 +64,18 @@ async fn journey_doom_loop_stop_surfaces_reason() -> Result<()> {
         "the stop reason must NOT ride AssistantMessage; got: {events:?}"
     );
 
-    // The stop is an EarlyReturn, so rig saves nothing: the skip-result
-    // ToolResults live only in the run transcript, which the executor does not
-    // return.
+    // The stopped turn's delta is persisted: the prompt, every committed tool
+    // call and its result, with the unanswered final call closed.
     let msgs = h.raw_messages().await?;
+    assert_eq!(
+        msgs.len(),
+        17,
+        "a stopped turn persists its delta; got: {msgs:?}"
+    );
+    assert_user_text(&msgs[0], "do the same thing repeatedly");
     assert!(
-        msgs.is_empty(),
-        "a stopped turn must save nothing; got: {msgs:?}"
+        matches!(&msgs[16], Message::User { .. }),
+        "the delta ends with the closed tool result; got: {msgs:?}"
     );
 
     Ok(())

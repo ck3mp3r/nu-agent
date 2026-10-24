@@ -3,12 +3,13 @@
 //! diff-regurgitation dedup.
 
 use agnt_core::bus::LlmEvent;
+use agnt_core::conversation::turn::executor::TURN_STOPPED_NOTICE;
 use agnt_core::transcript::ir::{Block, ContentLine, MessageRole};
 use agnt_core::transcript::items::Message;
 use agnt_core::transcript::renderer::Renderable;
 
 use super::transcript_store::TranscriptStore;
-use super::{AppState, ScrollState, StatusState, UiPhase};
+use super::{AppState, ScrollState, StatusMessageKind, StatusState, UiPhase};
 
 /// LLM-domain decisions extracted from the former `reduce_ui_event_impl` LLM
 /// arms. The streaming cursor lives in [`TranscriptStore`]
@@ -32,7 +33,7 @@ impl LlmState {
     ) -> (bool, usize) {
         let mut evicted = 0usize;
         let changed = match event {
-            LlmEvent::Started => self.handle_start(store, phase, input_locked),
+            LlmEvent::Started => self.handle_start(store, status, phase, input_locked),
             LlmEvent::Completed {
                 input_tokens,
                 output_tokens,
@@ -52,13 +53,16 @@ impl LlmState {
                 log::trace!("reducer: AssistantMessage text_len={}", text.len());
                 self.assistant_message(store, scroll, &text, &mut evicted)
             }
-            LlmEvent::Stopped { reason } => self.stopped(store, scroll, &reason, &mut evicted),
+            LlmEvent::Stopped { reason } => {
+                self.stopped(store, status, scroll, &reason, &mut evicted)
+            }
         };
         (changed, evicted)
     }
 
-    /// Render a hook-stop reason as a closing notice. The reason is APPENDED
-    /// as a new transcript entry — never routed through the
+    /// Render a hook-stop reason. The generic user-cancel marker
+    /// (`TURN_STOPPED_NOTICE`) becomes a brief status-bar marker; any other
+    /// reason is APPENDED as a new transcript entry — never routed through the
     /// `assistant_message` dedup path, which would truncate the streamed
     /// block (Fix 2 of the repetition stop UX). The streaming cursor is
     /// cleared so the streamed block stays intact and any later assistant
@@ -66,6 +70,7 @@ impl LlmState {
     fn stopped(
         &mut self,
         store: &mut TranscriptStore,
+        status: &mut StatusState,
         scroll: &mut ScrollState,
         reason: &str,
         evicted: &mut usize,
@@ -81,6 +86,14 @@ impl LlmState {
             }
             store.assistant_stream_start = None;
             return false;
+        }
+        if trimmed == TURN_STOPPED_NOTICE {
+            // The user-cancel marker belongs in the status bar, not the
+            // transcript: keep the streamed blocks, push nothing, and leave
+            // the scroll position alone.
+            store.assistant_stream_start = None;
+            status.message.set_notice(TURN_STOPPED_NOTICE);
+            return true;
         }
         // Close the in-progress streamed block: push_block's unified spacer
         // rule separates it from the notice, and the cursor resets so nothing
@@ -103,12 +116,19 @@ impl LlmState {
     fn handle_start(
         &mut self,
         store: &mut TranscriptStore,
+        status: &mut StatusState,
         phase: &mut UiPhase,
         input_locked: &mut bool,
     ) -> bool {
         if *phase == UiPhase::Idle {
             *phase = UiPhase::Busy;
             *input_locked = true;
+        }
+        // A Notice marker (the user-cancel stop marker) has no TTL, so the
+        // next turn start is what retires it. Only Notice is cleared here: a
+        // Warning keeps its own TTL and a Neutral message its own expiry.
+        if status.message.kind() == StatusMessageKind::Notice {
+            status.message.clear();
         }
         // Reset streaming state at the start of a new LLM response
         store.assistant_stream_start = None;

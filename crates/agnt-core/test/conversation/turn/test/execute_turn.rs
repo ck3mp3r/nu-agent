@@ -103,6 +103,7 @@ async fn execute_turn_cancel_returns_cancelled_true() -> Result<()> {
         last_total_tokens: default_last_total_tokens(),
         bus: bus.clone(),
         render_registry: ToolRenderRegistry::default(),
+        cwd: std::path::PathBuf::from("/tmp"),
     };
     let ctx = make_turn_context(shared_handle(model), &config, bus);
     // Override the tool infra with the cancelling tool. `make_turn_context`

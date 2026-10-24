@@ -135,6 +135,7 @@ pub(super) fn make_turn_context<'a>(
         last_total_tokens: default_last_total_tokens(),
         bus,
         render_registry: ToolRenderRegistry::default(),
+        cwd: std::path::PathBuf::from("/tmp"),
     };
     TurnContext::new(conversation, input, tool_infra, config)
 }

@@ -237,6 +237,7 @@ where
                     last_total_tokens: Arc::clone(&self.last_total_tokens),
                     bus: self.bus.clone(),
                     render_registry: self.render_registry.clone(),
+                    cwd: self.cwd.clone(),
                 },
                 Arc::clone(&self.dyn_model),
                 self.compaction.clone(),
@@ -610,12 +611,10 @@ where
         };
 
         // Run compaction against the rig-memory store of the session: the splice
-        // `compact()` makes IS what the next run loads, so the cache is refreshed
-        // from the post-splice messages. `source` is `"auto"` or `"slash"`.
-        // `run_compaction` emits `Started`/`SummaryChunk`/`Completed`/`Failed`
-        // (via `compact()`) and returns the post-splice history when compaction
-        // actually ran, or `None` when there was nothing to summarize.
-        if let Some(patched) = crate::hook::chain::run_compaction(
+        // `compact()` makes IS what the next run loads. `source` is `"auto"` or
+        // `"slash"`. `run_compaction` emits `Started`/`SummaryChunk`/`Completed`/
+        // `Failed` (via `compact()`).
+        let _ = crate::hook::chain::run_compaction(
             &session_id,
             self.session.inner_memory(),
             &self.compaction,
@@ -623,14 +622,7 @@ where
             &self.last_total_tokens,
             &self.bus,
         )
-        .await
-        {
-            // Update the in-memory cache so the next `CachedMemory::load()`
-            // returns the spliced conversation as it continues.
-            self.session
-                .inner_memory()
-                .reset_context(&session_id, patched);
-        }
+        .await;
         Ok(())
     }
 

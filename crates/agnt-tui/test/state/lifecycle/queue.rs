@@ -84,24 +84,34 @@ fn queueing_abort_and_finalize_lifecycle() -> Result<()> {
     aborting.enqueue_prompt("p2".to_string());
     aborting.enqueue_prompt("p3".to_string());
     let _ = aborting.activate_next_prompt();
-
-    // -- Exec
-    aborting.cancel_active_and_pending_prompts();
-
-    // -- Check
-    assert_eq!(active_prompt_id(&aborting), None);
-    assert!(pending_prompt_ids(&aborting).is_empty());
-    assert_eq!(
-        aborting
+    let interrupted_id = active_prompt_id(&aborting).ok_or("should have an active prompt")?;
+    let pending_ids = pending_prompt_ids(&aborting);
+    let status_of = |state: &AppState, id: u64| {
+        state
             .prompt_items()
             .iter()
-            .map(|item| item.status)
-            .collect::<Vec<_>>(),
-        vec![
-            PromptStatus::Cancelled,
-            PromptStatus::Cancelled,
-            PromptStatus::Cancelled
-        ]
+            .find(|p| p.id == id)
+            .map(|p| p.status)
+    };
+
+    // -- Exec
+    let restored = aborting.cancel_and_restore_pending_to_input();
+
+    // -- Check: pending texts drain back to the input and the queue empties.
+    assert_eq!(restored, Some("p2\n\np3".to_string()));
+    assert_eq!(active_prompt_id(&aborting), None);
+    assert!(pending_prompt_ids(&aborting).is_empty());
+
+    // -- Check: the interrupted prompt is Done, the pendings are Cancelled.
+    assert_eq!(
+        status_of(&aborting, interrupted_id),
+        Some(PromptStatus::Done)
     );
+    for pending_id in pending_ids {
+        assert_eq!(
+            status_of(&aborting, pending_id),
+            Some(PromptStatus::Cancelled)
+        );
+    }
     Ok(())
 }

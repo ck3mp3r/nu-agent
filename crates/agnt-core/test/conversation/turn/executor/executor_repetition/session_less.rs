@@ -54,6 +54,7 @@ async fn repetition_stop_session_less_steers_via_prompt_and_terminal_on_cap() ->
                 last_total_tokens: default_last_total_tokens(),
                 bus: bus.clone(),
                 render_registry: ToolRenderRegistry::default(),
+                cwd: std::path::PathBuf::from("/tmp"),
             },
             shared_model.clone(),
             test_compaction_config(crate::bus::create_bus()),

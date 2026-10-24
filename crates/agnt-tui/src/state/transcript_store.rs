@@ -360,10 +360,16 @@ impl TranscriptStore {
                 let Some((name, arguments, success)) = resolved else {
                     continue;
                 };
-                let status = match success {
-                    Some(true) => ItemStatus::Done,
-                    Some(false) => ItemStatus::Failed,
-                    None => ItemStatus::Unknown,
+                let status = if message.tool_not_run() {
+                    // A call the turn never ran renders the ⊘ class, whatever
+                    // the persisted verdict flag says.
+                    ItemStatus::Cancelled
+                } else {
+                    match success {
+                        Some(true) => ItemStatus::Done,
+                        Some(false) => ItemStatus::Failed,
+                        None => ItemStatus::Unknown,
+                    }
                 };
                 let item = Tool {
                     name: ToolName(name.clone()),

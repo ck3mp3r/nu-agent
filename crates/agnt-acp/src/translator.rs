@@ -182,9 +182,15 @@ impl EventTranslator {
             UiEvent::CompactionFailed { source, message } => {
                 Some(compaction_update("failed", &source, Some(message)))
             }
+            // Mid-turn notices (context-window pressure, repetition steering)
+            // reach the client as assistant text. The texts are self-describing,
+            // so no prefix is added.
+            UiEvent::Warning { message } => Some(SessionUpdate::AgentMessageChunk(
+                ContentChunk::new(ContentBlock::Text(TextContent::new(message))),
+            )),
             // No ACP equivalent: streaming compaction deltas, turn lifecycle
-            // markers, warnings, and permission events (the permission bridge
-            // owns `PermissionRequested`).
+            // markers, and permission events (the permission bridge owns
+            // `PermissionRequested`).
             _ => None,
         }
     }

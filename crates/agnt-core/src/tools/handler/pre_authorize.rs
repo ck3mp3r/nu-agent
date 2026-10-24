@@ -44,6 +44,21 @@ pub fn pre_authorize_fs_tool(
     })
 }
 
+/// Reconstruct the argument-sourced preview for a tool call whose result
+/// carries no display. Mirrors the live permission-gate path: parse the tool
+/// name into a `BuiltinKind`, then ask `pre_authorize_fs_tool` for the
+/// preview. Returns `None` for unparseable arguments, unknown tool names,
+/// and non-Previewable tools — the caller then emits no display snapshot.
+pub fn tool_display_from_arguments(
+    tool_name: &str,
+    arguments_json: &str,
+    cwd: &std::path::Path,
+) -> Option<ToolDisplay> {
+    let arguments: serde_json::Value = serde_json::from_str(arguments_json).ok()?;
+    let kind = tool_name.parse::<BuiltinKind>().ok();
+    pre_authorize_fs_tool(kind, arguments.as_object()?, cwd).and_then(|output| output.display)
+}
+
 pub fn pre_authorize_tool_call<E: EngineInterfaceLike>(
     tool_call: &ToolCall,
     source: ToolSource,

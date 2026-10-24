@@ -52,11 +52,7 @@ async fn journey_output_repetition_intra_stream_trips() -> Result<()> {
         2,
         "the conversion must re-run the turn exactly once"
     );
-    let retry_prompt = requests[1]
-        .chat_history
-        .last()
-        .and_then(|message| message_text(message))
-        .unwrap_or_default();
+    let retry_prompt = request_prompt(&requests[1]);
     assert!(
         retry_prompt.starts_with(OUTPUT_REPETITION_BACKOFF_MESSAGE),
         "the retry prompt must carry the repetition steering message; got: {retry_prompt}"
@@ -65,12 +61,13 @@ async fn journey_output_repetition_intra_stream_trips() -> Result<()> {
         retry_prompt.ends_with("do the thing"),
         "the retry prompt must keep the original prompt; got: {retry_prompt}"
     );
-    // The completed run saves its own exchange only.
+    // The conversion persisted the stopped attempt's delta, then the completed
+    // run saved its own exchange.
     let msgs = h.raw_messages().await?;
     assert_eq!(
         msgs.len(),
-        2,
-        "the completed turn saves its exchange; got: {msgs:?}"
+        3,
+        "the stopped attempt's delta, then the completed turn's exchange; got: {msgs:?}"
     );
     // The executor publishes a warning for the conversion so the user sees
     // that steering is happening instead of only a silent retry.
@@ -131,11 +128,7 @@ async fn journey_output_repetition_intra_stream_fifth_is_first_continue() -> Res
         2,
         "the conversion must re-run the turn exactly once"
     );
-    let retry_prompt = requests[1]
-        .chat_history
-        .last()
-        .and_then(|message| message_text(message))
-        .unwrap_or_default();
+    let retry_prompt = request_prompt(&requests[1]);
     assert!(
         retry_prompt.starts_with(OUTPUT_REPETITION_BACKOFF_MESSAGE),
         "the retry prompt must carry the repetition steering message; got: {retry_prompt}"
@@ -144,12 +137,13 @@ async fn journey_output_repetition_intra_stream_fifth_is_first_continue() -> Res
         retry_prompt.ends_with("do the thing"),
         "the retry prompt must keep the original prompt; got: {retry_prompt}"
     );
-    // The completed run saves its own exchange only.
+    // The conversion persisted the stopped attempt's delta, then the completed
+    // run saved its own exchange.
     let msgs = h.raw_messages().await?;
     assert_eq!(
         msgs.len(),
-        2,
-        "the completed turn saves its exchange; got: {msgs:?}"
+        3,
+        "the stopped attempt's delta, then the completed turn's exchange; got: {msgs:?}"
     );
     // The executor publishes a warning for the conversion so the user sees
     // that steering is happening instead of only a silent retry.

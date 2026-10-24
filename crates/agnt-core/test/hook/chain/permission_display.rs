@@ -95,7 +95,10 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
         .erase(),
     ));
     let hook = HookChain::new(
-        bus.clone(),
+        HookEnv {
+            bus: bus.clone(),
+            cwd: std::path::PathBuf::from("/tmp"),
+        },
         resolver,
         Arc::new(crate::tools::closure::ClosureRegistry::default()),
         Arc::new(crate::tools::handler::McpToolRegistry::empty()),
@@ -206,7 +209,10 @@ async fn on_dispatch_publishes_registry_rendered_call_line() -> Result<()> {
         .erase(),
     ));
     let hook = HookChain::new(
-        bus.clone(),
+        HookEnv {
+            bus: bus.clone(),
+            cwd: std::path::PathBuf::from("/tmp"),
+        },
         PolicyPermissionResolver {
             permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
             session_grants: Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),

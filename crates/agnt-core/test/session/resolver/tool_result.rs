@@ -1,5 +1,8 @@
 use super::*;
 
+use crate::session::repair::INTERRUPTED_RESULT;
+use rig::conversation::pairing::NO_RESULT_PROVIDED;
+
 #[test]
 fn test_tool_result_edit_creates_display_snapshot() {
     let entries = vec![
@@ -277,4 +280,119 @@ fn test_tool_result_with_explicit_display_key() {
     );
     let display = display.unwrap();
     assert_eq!(display.title, Some("custom output".to_string()));
+}
+
+/// A persisted not-run row rehydrates as the ⊘ class with the args preview
+/// under it — the same two-block shape the live view pushes. No reason text
+/// renders.
+#[test]
+fn test_tool_result_not_run_rows_rehydrate_as_cancelled() -> Result<()> {
+    // -- Setup & Fixtures
+    let denied = "Permission denied by rule 'global:*' (scope: global)";
+    // (name, result text, persisted is_error)
+    let cases: Vec<(&str, &str, bool)> = vec![
+        ("rig placeholder", NO_RESULT_PROVIDED, true),
+        ("interrupted close", INTERRUPTED_RESULT, false),
+        ("permission denial", denied, true),
+    ];
+
+    // -- Exec & Check
+    for (name, text, is_error) in cases {
+        let entries = vec![
+            Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+                ToolCall::new(
+                    CallId::from_wire("call_not_run"),
+                    ToolFunction::new(
+                        ToolName::new("nu").expect("should be non-empty"),
+                        json!({"command": "ls | sort"}),
+                    ),
+                ),
+            )])),
+            Message::User {
+                content: vec![UserContent::ToolResult(ToolResult {
+                    call: CallId::from_wire("call_not_run"),
+                    name: ToolName::new("nu").expect("non-empty tool name"),
+                    content: vec![ToolResultContent::Text(Text::new(text))],
+                    is_error,
+                })],
+            },
+        ];
+        let snapshots = hydrate(&entries, std::path::Path::new("."));
+
+        assert_eq!(
+            snapshots.len(),
+            2,
+            "{name}: the tool snapshot and its args preview are expected"
+        );
+        assert_eq!(snapshots[0].role(), "tool", "{name}");
+        assert!(
+            snapshots[0].tool_not_run(),
+            "{name}: the row must carry the not-run mark"
+        );
+        assert_eq!(snapshots[1].role(), "tool_display", "{name}");
+        let display = snapshots[1]
+            .tool_display()
+            .ok_or("should be tool_display on second snapshot")?;
+        assert_eq!(display.sections.len(), 1, "{name}");
+        assert!(
+            matches!(
+                display.sections[0].kind,
+                crate::transcript::ir::ContentKind::Code { ref language } if language == "nu"
+            ),
+            "{name}: the preview block is a nu code section, got {:?}",
+            display.sections[0].kind
+        );
+        assert_eq!(display.sections[0].content, "ls | sort", "{name}");
+    }
+
+    // A non-Previewable tool emits no display snapshot.
+    let entries = tool_call_entries("call_not_run_read", NO_RESULT_PROVIDED, true);
+    let snapshots = hydrate(&entries, std::path::Path::new("."));
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "read_file: only the tool snapshot is expected"
+    );
+    assert_eq!(snapshots[0].role(), "tool");
+    assert!(
+        snapshots[0].tool_not_run(),
+        "read_file: the row must carry the not-run mark"
+    );
+    Ok(())
+}
+
+/// Rows outside the not-run shapes keep the persisted-verdict mapping and
+/// emit no reason block.
+#[test]
+fn test_tool_result_other_rows_keep_the_verdict_mapping() -> Result<()> {
+    // -- Setup & Fixtures
+    // (name, result text, persisted is_error, expected tool_success)
+    let cases: Vec<(&str, &str, bool, Option<bool>)> = vec![
+        (
+            "real failure",
+            "read failed: No such file or directory (os error 2)",
+            true,
+            Some(false),
+        ),
+        ("real success", "file contents here", false, Some(true)),
+    ];
+
+    // -- Exec & Check
+    for (name, text, is_error, expected_success) in cases {
+        let entries = tool_call_entries("call_other", text, is_error);
+        let snapshots = hydrate(&entries, std::path::Path::new("."));
+
+        assert_eq!(
+            snapshots.len(),
+            1,
+            "{name}: only the tool snapshot is expected"
+        );
+        assert_eq!(snapshots[0].role(), "tool", "{name}");
+        assert!(
+            !snapshots[0].tool_not_run(),
+            "{name}: a settled row must not carry the not-run mark"
+        );
+        assert_eq!(snapshots[0].tool_success(), expected_success, "{name}");
+    }
+    Ok(())
 }

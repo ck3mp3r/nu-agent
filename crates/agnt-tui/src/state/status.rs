@@ -20,6 +20,12 @@ pub enum StatusMessageKind {
     #[default]
     Neutral,
     Warning,
+    /// A marker that survives turn finalize and does not expire on a timer.
+    /// `TurnState::finalize` clears only `Neutral` messages, so a marker set
+    /// just before `TurnEvent::Completed` is not wiped before it renders. It
+    /// stays until the next turn start clears it (`LlmState::handle_start`):
+    /// a stop marker that self-expires is invisible.
+    Notice,
 }
 
 const NEUTRAL_MESSAGE_TTL: Duration = Duration::from_secs(5);
@@ -52,6 +58,9 @@ impl StatusMessage {
         let ttl = match self.kind {
             StatusMessageKind::Neutral => NEUTRAL_MESSAGE_TTL,
             StatusMessageKind::Warning => WARNING_MESSAGE_TTL,
+            // A Notice has no TTL: it is cleared by the next turn start, not
+            // by the clock.
+            StatusMessageKind::Notice => return false,
         };
         now.duration_since(written_at) >= ttl
     }
@@ -65,6 +74,14 @@ impl StatusMessage {
     pub(crate) fn set_warning(&mut self, message: impl Into<String>) {
         self.status_line = message.into();
         self.kind = StatusMessageKind::Warning;
+        self.written_at = Some(Instant::now());
+    }
+
+    /// Set a Notice marker. It has no TTL: it stays until the next turn start
+    /// clears it.
+    pub(crate) fn set_notice(&mut self, message: impl Into<String>) {
+        self.status_line = message.into();
+        self.kind = StatusMessageKind::Notice;
         self.written_at = Some(Instant::now());
     }
 

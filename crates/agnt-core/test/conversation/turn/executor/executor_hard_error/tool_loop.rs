@@ -1,11 +1,11 @@
 use super::*;
 
-/// A CompletionError on the first LLM call of a fresh session saves nothing:
-/// rig saves only a successful run.
+/// A CompletionError on the first LLM call of a fresh session persists the
+/// prompt it never answered: rig saves only a successful run.
 #[tokio::test]
-async fn hard_error_on_first_llm_call_no_prior_history_saves_nothing() -> Result<()> {
+async fn hard_error_on_first_llm_call_no_prior_history_persists_the_prompt() -> Result<()> {
     let config = test_config();
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = tempfile::tempdir()?;
     let session_id = "test-hard-error-fresh-session-2";
     let prompt_text = "fresh turn on empty session";
     let mut memory_state = make_memory_state(&temp_dir);
@@ -43,12 +43,14 @@ async fn hard_error_on_first_llm_call_no_prior_history_saves_nothing() -> Result
         "hard error must propagate as Err to caller"
     );
 
-    // rig saves nothing on a failed run
+    // The failed turn persists the prompt it never answered.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert!(
-        persisted.is_empty(),
-        "a hard error on the first LLM call must save nothing to the rig store; got {persisted:?}"
+    assert_eq!(
+        persisted.len(),
+        1,
+        "a hard error on the first LLM call persists the prompt; got {persisted:?}"
     );
+    assert_eq!(message_text(&persisted[0]).as_deref(), Some(prompt_text));
 
     Ok(())
 }
@@ -57,16 +59,15 @@ async fn hard_error_on_first_llm_call_no_prior_history_saves_nothing() -> Result
 // New test: hard error mid-tool-loop preserves real tool results
 // ---------------------------------------------------------------------------
 
-/// A CompletionError on the second LLM sub-call of a multi-tool-call turn saves
-/// nothing: rig saves only a successful run, so the real tool result from
-/// sub-turn 1 is not written either.
+/// A CompletionError on the second LLM sub-call of a multi-tool-call turn
+/// persists the delta: the prompt, the completed tool call and its real result.
 ///
 /// Test flow (two `from_stream_turns` turns):
 ///   Sub-turn 1: LLM → tool_call("tc1", "some_tool", …) + FinalResponse
 ///               Rig dispatches the tool and records its real result.
 ///   Sub-turn 2: LLM → error("network failure") → CompletionError.
 ///
-/// The run fails, so the rig store gains nothing.
+/// The run fails, so the host persists the delta rig never saved.
 struct SimpleEchoTool;
 
 impl rig::tool::Tool for SimpleEchoTool {
@@ -95,7 +96,7 @@ impl rig::tool::Tool for SimpleEchoTool {
 #[tokio::test]
 async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
     let config = test_config();
-    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = tempfile::tempdir()?;
     let session_id = "test-mid-tool-loop-error";
     let mut memory_state = make_memory_state(&temp_dir);
 
@@ -137,6 +138,7 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
             last_total_tokens: default_last_total_tokens(),
             bus: crate::bus::create_bus(),
             render_registry: ToolRenderRegistry::default(),
+            cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),
@@ -160,11 +162,22 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
         "error on sub-call must propagate as Err; got ok"
     );
 
-    // rig saves nothing on a failed run
+    // The failed turn persists its delta: the prompt, the completed tool call
+    // and its real result.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        persisted.len(),
+        3,
+        "a mid-tool-loop failure persists the completed tool work; got {persisted:?}"
+    );
+    assert_eq!(message_text(&persisted[0]).as_deref(), Some("do the thing"));
     assert!(
-        persisted.is_empty(),
-        "a mid-tool-loop failure must save nothing to the rig store; got {persisted:?}"
+        matches!(&persisted[1], crate::types::Message::Assistant(_)),
+        "the completed tool call is persisted; got {persisted:?}"
+    );
+    assert!(
+        matches!(&persisted[2], crate::types::Message::User { .. }),
+        "the real tool result is persisted; got {persisted:?}"
     );
 
     Ok(())

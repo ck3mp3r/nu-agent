@@ -64,33 +64,14 @@ impl<'a> PromptQueueLifecycle<'a> {
         }
     }
 
-    pub(super) fn cancel_active_and_pending_prompts(&mut self) {
-        if let Some(active_id) = self.active_prompt_id.take()
-            && let Some(prompt) = self
-                .prompt_items
-                .iter_mut()
-                .find(|prompt| prompt.id == active_id)
-        {
-            prompt.status = PromptStatus::Cancelled;
-        }
-
-        let pending_ids = self.pending_prompt_ids.drain(..).collect::<Vec<_>>();
-        for pending_id in pending_ids {
-            if let Some(prompt) = self
-                .prompt_items
-                .iter_mut()
-                .find(|prompt| prompt.id == pending_id)
-            {
-                prompt.status = PromptStatus::Cancelled;
-            }
-        }
-    }
-
     pub(super) fn cancel_and_drain_to_texts(&mut self) -> Vec<String> {
+        // The active prompt was submitted and its turn ran, so it stays in input
+        // history (`submitted_prompt_texts` filters on `Done`). Only the pending
+        // prompts never ran — they are cancelled and their text returns to the textarea.
         if let Some(active_id) = self.active_prompt_id.take()
             && let Some(prompt) = self.prompt_items.iter_mut().find(|p| p.id == active_id)
         {
-            prompt.status = PromptStatus::Cancelled;
+            prompt.status = PromptStatus::Done;
         }
 
         self.pending_prompt_ids

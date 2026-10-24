@@ -617,9 +617,24 @@ nu-agent before rig-memory makes the store report *"this session was made by
 another version of nu-agent; start a new session"*. The old files are left as
 they are. Start a new session.
 
-**A cancelled turn persists nothing.** rig saves a turn only when it succeeds,
-so a cancel mid-turn leaves the session log byte-identical and writes no state
-record.
+**A stopped or failed turn keeps its completed work.** rig saves a turn only
+when it succeeds, so the host appends the interrupted turn's delta to the
+session log itself: the prompt, the tool exchanges that finished (with their
+real results), and the assistant text the turn streamed. A call killed
+mid-execution is closed as `[interrupted]`, so the log stays valid. The next
+turn continues from that log. A call the stop denied before it ran renders as a
+not-run (⊘) tool block with the args preview of what would have run under it,
+live and after a reload. No reason text renders. The batch's later calls the
+stop skipped without dispatching render the same ⊘ shape.
+
+**A warning appears when the turn's work could not be saved.** If another
+writer moved the session log while the turn ran, the host leaves the log alone
+and shows *"Turn stopped: the session log moved mid-turn; this turn's work was
+not saved"* instead of writing a delta it cannot attribute.
+
+**Stopping may take up to ~2 s.** After a cancel, the turn keeps draining the
+model stream for a bounded grace so in-flight tools finish and their results
+reach the session log.
 
 **Re-login after upgrading from a pre-0.45 build.** The rig 0.45 upgrade
 changed how provider credentials are read. A Copilot login made by an older
@@ -726,6 +741,7 @@ CLI flags override config.toml, which overrides built-in defaults.
 - Submitting a prompt while a turn is busy queues it; the queued prompts run after the active turn completes.
 - Pressing Enter on empty input while a turn is busy and at least one prompt is queued cancels the active turn. The queued prompts then run through the normal drain path.
 - Pressing Enter on empty input while idle, or while busy with no queued prompts, does nothing.
+- Stopping a turn shows `Turn stopped` in the status bar until the next turn starts, and keeps the turn's completed work in the session.
 
 ### Ctrl-C quit guard
 

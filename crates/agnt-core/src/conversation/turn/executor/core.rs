@@ -17,6 +17,13 @@ pub const NO_OUTPUT_STATEMENT: &str = "No output was produced.";
 pub const REPETITION_STEERING_NOTICE: &str =
     "Repetition guard steering the model to try a different approach...";
 
+/// User-facing marker published when the user cancels a turn. The TUI renders
+/// it as a brief status-bar marker rather than a transcript block. The turn's
+/// completed work is kept in the session log, so the stop was deliberate and
+/// nothing already done was lost.
+pub const TURN_STOPPED_NOTICE: &str = "Turn stopped";
+
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use nu_protocol::{LabeledError, Span, Value};
@@ -88,6 +95,9 @@ pub struct ToolInfra {
     /// Per-tool call-line render functions, populated at builtin registration
     /// time and consulted by the hook chain to build the transcript call line.
     pub render_registry: ToolRenderRegistry,
+    /// The session working directory. The hook chain reads it to build the
+    /// argument-sourced preview for a call the turn stopped before it ran.
+    pub cwd: PathBuf,
 }
 
 pub struct TurnExecutor<'a, S: SessionManager> {
@@ -174,7 +184,7 @@ where
             )
             .await;
 
-        self.dispatch_result(visitor_result, span, final_session_id)
+        self.dispatch_result(visitor_result, prompt, span, final_session_id)
             .await
     }
 }

@@ -37,6 +37,7 @@ pub(crate) fn default_tool_infra(
         last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
         render_registry: ToolRenderRegistry::default(),
+        cwd: std::path::PathBuf::from("/tmp"),
     }
 }
 

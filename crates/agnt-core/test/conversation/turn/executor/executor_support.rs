@@ -47,6 +47,7 @@ pub(super) fn default_tool_infra(bus: Bus) -> ToolInfra {
         last_total_tokens: default_last_total_tokens(),
         bus,
         render_registry: ToolRenderRegistry::default(),
+        cwd: std::path::PathBuf::from("/tmp"),
     }
 }
 
@@ -132,15 +133,26 @@ pub(super) fn rig_log(memory_state: &MemoryState, session_id: &str) -> Result<Ve
         .map_err(|e| format!("rig log should read: {e:?}").into())
 }
 
-/// The prompt text of a captured request: the last message's text.
+/// The prompt text of a captured request: the last text part of the last
+/// message.
 ///
-/// `CompletionRequest::chat_history`'s very last message is the prompt, so a
-/// steering message prepended to the prompt shows up here.
+/// `CompletionRequest::chat_history`'s very last message carries the prompt as
+/// its last text part, so a steering message prepended to the prompt shows up
+/// here. rig merges a prompt into a trailing user message, so the prompt is the
+/// last part of that message, not the first.
 pub(super) fn request_prompt(request: &rig::completion::request::CompletionRequest) -> String {
     request
         .chat_history
         .last()
-        .and_then(|message| message_text(message))
+        .and_then(|message| match &**message {
+            crate::types::Message::User { content } => {
+                content.iter().rev().find_map(|item| match item {
+                    crate::types::UserContent::Text(text) => Some(text.text.clone()),
+                    _ => None,
+                })
+            }
+            other => message_text(other),
+        })
         .unwrap_or_default()
 }
 

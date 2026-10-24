@@ -199,12 +199,12 @@ async fn decide_compaction_no_real_tokens_falls_back_to_conversation_estimate() 
 }
 
 #[tokio::test]
-async fn decide_compaction_counts_a_turn_saved_after_the_cache_was_populated() -> Result<()> {
+async fn decide_compaction_counts_a_turn_saved_after_the_first_read() -> Result<()> {
     // -- Setup & Fixtures
-    // The discriminating test for threshold currency: turn 1 populates the
-    // first-read cache, turn 2 grows the rig conversation past the threshold.
-    // The decision must read the CURRENT rig conversation; on the stale turn-1
-    // cache it would under-read and not fire.
+    // The discriminating test for threshold currency: turn 1 reads the small
+    // conversation, turn 2 grows the rig conversation past the threshold. The
+    // decision must read the CURRENT rig conversation; on a stale first read it
+    // would under-read and not fire.
     let fx = decide_fixture()?;
     let compaction = CompactionConfig {
         threshold_tokens: Some(50_000),
@@ -219,13 +219,17 @@ async fn decide_compaction_counts_a_turn_saved_after_the_cache_was_populated() -
     )
     .await?;
 
-    // Turn 1: populate the cache with the small conversation.
-    let cached = fx
+    // Turn 1: read the small conversation.
+    let store = fx
         .memory
-        .load("conv-1")
-        .await
-        .map_err(|e| format!("cache load should succeed: {e:?}"))?;
-    assert_eq!(cached.len(), 2, "turn 1 caches the small conversation");
+        .rig_store("conv-1")
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let first_read = rig_memory::load(&*store, "conv-1")?;
+    assert_eq!(
+        first_read.messages().len(),
+        2,
+        "turn 1 reads the small conversation"
+    );
 
     // Turn 2: the turn's save grows the rig conversation far past the threshold.
     seed_rig(&fx, &[Message::user("y".repeat(400_000))]).await?;
@@ -248,7 +252,7 @@ async fn decide_compaction_counts_a_turn_saved_after_the_cache_was_populated() -
     assert!(
         matches!(&requested, CompactionEvent::Requested { source } if source == "auto"),
         "the post-turn-2 conversation is over the threshold, so it must fire; \
-         the stale turn-1 cache would not, got {requested:?}"
+         a stale first read would not, got {requested:?}"
     );
     Ok(())
 }

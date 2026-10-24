@@ -76,6 +76,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
             last_total_tokens: default_last_total_tokens(),
             bus,
             render_registry: ToolRenderRegistry::default(),
+            cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),
@@ -105,11 +106,22 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
         "cancelled Ok path must return TurnOutcome::EarlyReturn, not TurnOutcome::Completed"
     );
 
-    // 2. rig saves nothing on a cancelled run, so the rig store gains nothing.
+    // 2. The cancelled turn's delta is persisted: the prompt, the committed
+    //    tool call and its result.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        persisted.len(),
+        3,
+        "a cancelled turn persists its delta; got {persisted:?}"
+    );
+    assert_eq!(message_text(&persisted[0]).as_deref(), Some("hello"));
     assert!(
-        persisted.is_empty(),
-        "a cancelled turn must save nothing to the rig store; got {persisted:?}"
+        matches!(&persisted[1], crate::types::Message::Assistant(_)),
+        "the committed tool call is persisted; got {persisted:?}"
+    );
+    assert!(
+        matches!(&persisted[2], crate::types::Message::User { .. }),
+        "the committed tool result is persisted; got {persisted:?}"
     );
 
     // 3. UiEvent::Completed must have been published on the bus ui_event channel
@@ -190,6 +202,7 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
             last_total_tokens: default_last_total_tokens(),
             bus,
             render_registry: ToolRenderRegistry::default(),
+            cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),
@@ -211,20 +224,13 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
     let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
 
-    // rig saves nothing on a cancelled run, so the rig store gains nothing.
+    // The cancelled turn's delta is persisted through the same rig store.
     let from_store = load_persisted_messages(&memory_state, session_id).await?;
-    assert!(
-        from_store.is_empty(),
-        "a cancelled turn must save nothing to the rig store; got {from_store:?}"
+    assert_eq!(
+        from_store.len(),
+        3,
+        "a cancelled turn persists its delta; got {from_store:?}"
     );
-
-    // memory.load() still succeeds (it reads the rig store, then the frozen old
-    // store as a fallback) — content is repair-determined.
-    let _ = memory_state
-        .inner_memory()
-        .load(session_id)
-        .await
-        .map_err(|e| format!("memory load should succeed without error: {e:?}"))?;
 
     Ok(())
 }
@@ -296,6 +302,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
             last_total_tokens: default_last_total_tokens(),
             bus,
             render_registry: ToolRenderRegistry::default(),
+            cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
         test_compaction_config(crate::bus::create_bus()),
@@ -317,14 +324,17 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
     let outcome = result.map_err(|e| format!("cancelled turn must be Ok: {e:?}"))?;
     assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
 
-    // rig saves nothing on a cancelled run: the store keeps exactly the prior
-    // conversation, with no delta re-appended.
+    // The cancelled turn appends only its own delta: the prompt, the committed
+    // tool call and its result. The prior conversation is untouched.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        2,
-        "a cancelled turn must leave the rig store at the 2 prior messages; got {persisted:?}"
+        5,
+        "a cancelled turn appends its delta to the prior conversation; got {persisted:?}"
     );
+    assert_eq!(message_text(&persisted[0]).as_deref(), Some("prior work"));
+    assert_eq!(message_text(&persisted[1]).as_deref(), Some("done"));
+    assert_eq!(message_text(&persisted[2]).as_deref(), Some("new question"));
 
     Ok(())
 }

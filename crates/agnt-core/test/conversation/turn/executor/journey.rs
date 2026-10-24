@@ -34,7 +34,8 @@ use support::*;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::REPETITION_STEERING_NOTICE;
-use super::test_utils::{MockResolver, message_text, test_config};
+use super::executor_test_support::request_prompt;
+use super::test_utils::{MockResolver, test_config};
 use super::*;
 use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
 use crate::hook::output_repetition::{

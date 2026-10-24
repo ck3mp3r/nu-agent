@@ -124,7 +124,7 @@ fn eviction_then_finish_tool_call_updates_block_at_shifted_index() -> Result<()>
     // -- Exec
     state
         .tool
-        .finish_tool_call(&mut state.transcript, "read", "{}", Some(true));
+        .finish_tool_call(&mut state.transcript, "read", "{}", Some(true), None);
 
     // -- Check
     // The bookkeeping entry must have been shifted to the tool block's new

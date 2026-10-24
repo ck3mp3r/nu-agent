@@ -31,6 +31,15 @@ pub struct ToolState {
     next_call_id: u64,
 }
 
+/// The payload a `Completed` event carries into the reducer.
+struct ToolCompletion {
+    name: String,
+    arguments: String,
+    success: bool,
+    display: Option<ToolDisplay>,
+    error_kind: Option<String>,
+}
+
 impl Default for ToolState {
     fn default() -> Self {
         Self {
@@ -63,8 +72,19 @@ impl ToolState {
                 arguments,
                 success,
                 display,
+                error_kind,
                 ..
-            } => self.tool_completed(store, &name, &arguments, success, display, evicted),
+            } => self.tool_completed(
+                store,
+                ToolCompletion {
+                    name,
+                    arguments,
+                    success,
+                    display,
+                    error_kind,
+                },
+                evicted,
+            ),
         }
     }
 
@@ -83,13 +103,24 @@ impl ToolState {
     fn tool_completed(
         &mut self,
         store: &mut TranscriptStore,
-        name: &str,
-        arguments: &str,
-        success: bool,
-        display: Option<ToolDisplay>,
+        completion: ToolCompletion,
         evicted: &mut usize,
     ) -> bool {
-        self.finish_tool_call(store, name, arguments, Some(success));
+        let ToolCompletion {
+            name,
+            arguments,
+            success,
+            display,
+            error_kind,
+        } = completion;
+
+        self.finish_tool_call(
+            store,
+            &name,
+            &arguments,
+            Some(success),
+            error_kind.as_deref(),
+        );
 
         if let Some(display) = display {
             *evicted += append_direct_tool_display(store, display);
@@ -206,11 +237,16 @@ impl ToolState {
         name: &str,
         arguments: &str,
         success: Option<bool>,
+        error_kind: Option<&str>,
     ) {
-        let item_status = match success {
-            Some(true) => ItemStatus::Done,
-            Some(false) => ItemStatus::Failed,
-            None => ItemStatus::Unknown,
+        let item_status = if is_not_run_kind(error_kind) {
+            ItemStatus::Cancelled
+        } else {
+            match success {
+                Some(true) => ItemStatus::Done,
+                Some(false) => ItemStatus::Failed,
+                None => ItemStatus::Unknown,
+            }
         };
         super::tool_calls::ToolCallBookkeeping::new(
             &mut self.calls,
@@ -306,6 +342,14 @@ pub(crate) fn dispatch_tool_event(state: &mut AppState, event: ToolEvent) -> boo
         .reduce_tool_event(&mut state.transcript, event, &mut evicted);
     state.shift_bookkeeping_after_eviction(evicted);
     changed
+}
+
+/// The error kinds that mark a call the turn never ran. A cancel and a
+/// permission denial are one class.
+const NOT_RUN_ERROR_KINDS: [&str; 2] = ["cancelled", "denied"];
+
+fn is_not_run_kind(error_kind: Option<&str>) -> bool {
+    error_kind.is_some_and(|kind| NOT_RUN_ERROR_KINDS.contains(&kind))
 }
 
 pub(crate) fn append_direct_tool_display(

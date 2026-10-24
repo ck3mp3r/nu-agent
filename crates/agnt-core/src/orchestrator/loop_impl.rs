@@ -19,9 +19,9 @@ use crate::orchestrator::stages::{
 };
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{
-    InteractiveLoopConfig, OrchestratorEvent, UiRequestResponse, UiStateEvent, WorkerCommand,
-    dispatch_compaction, handle_external_cancel, handle_worker_result, recv_or_pending,
-    reject_busy_task,
+    DeferredPrompt, InteractiveLoopConfig, OrchestratorEvent, UiRequestResponse, UiStateEvent,
+    WorkerCommand, dispatch_compaction, handle_external_cancel, handle_worker_result,
+    recv_or_pending, reject_busy_task, reject_superseded_task, submit_deferred_prompt,
 };
 use crate::protocol::{
     contracts::CoreRuntime,
@@ -326,6 +326,11 @@ where
     // Completion events that arrived while the worker was busy. Each is drained
     // one per idle cycle so every completion gets its own turn.
     let mut pending_completion_events: VecDeque<A2aCompletionEvent> = VecDeque::new();
+    // A prompt that arrived while a blocking UI request was pending, paired
+    // with the A2A task id that queued it. It is submitted once the blocking
+    // request completes and the worker is idle, so a prompt is never silently
+    // discarded and its task attribution travels with it.
+    let mut deferred_prompt: Option<DeferredPrompt> = None;
 
     // The task-cancel source is optional. When absent, select on a dummy
     // receiver that is never closed, so the `select!` arm always exists and the
@@ -349,9 +354,10 @@ where
             recv = sources.external_rx.recv() => {
                 match recv {
                     Ok(ExternalEvent::PromptReceived { prompt, task_id, context_id }) => {
-                        // The prompt enters the TUI prompt queue; the slash stage
-                        // picks up `pending_a2a_task_id` when the matching
-                        // `PromptSubmitted` fires.
+                        // The prompt enters the TUI prompt queue. The id is held
+                        // in `pending_a2a_task_id` until the matching
+                        // `PromptSubmitted` fires, which pairs it with the prompt
+                        // it belongs to.
                         *ctx.pending_a2a_task_id = Some(task_id);
                         match context_id {
                             Some(context_id) => {
@@ -382,8 +388,25 @@ where
                 let Some(ev) = ev else { break };
                 match ev {
                     OrchestratorEvent::PromptSubmitted { text } => {
-                        if !ui_request.has_blocking_pending() {
-                            slash.handle(text, ctx).await;
+                        if ui_request.has_blocking_pending() {
+                            log::warn!("prompt deferred while a blocking request is pending");
+                            let entry = DeferredPrompt {
+                                text,
+                                task_id: ctx.pending_a2a_task_id.take(),
+                            };
+                            if let Some(victim) = deferred_prompt.replace(entry) {
+                                log::warn!(
+                                    "a second prompt arrived while one was deferred; replacing it"
+                                );
+                                // The victim's A2A task is already `Working`; reject
+                                // it so its caller reaches a terminal state.
+                                if let Some(task_id) = victim.task_id {
+                                    reject_superseded_task(&task_id, ctx);
+                                }
+                            }
+                        } else {
+                            let task_id = ctx.pending_a2a_task_id.take();
+                            slash.handle(text, task_id, ctx).await;
                         }
                     }
                     OrchestratorEvent::PermissionDecision { decision } => {
@@ -426,6 +449,9 @@ where
                 if handle_worker_result(outcome, ctx, ui_request, session, &mut pending_compaction, &mut quit_pending).await {
                     break;
                 }
+                // The worker is now idle: submit a prompt that was deferred
+                // while a blocking request was pending.
+                submit_deferred_prompt(&mut deferred_prompt, quit_pending, slash, ui_request, ctx).await;
                 // The worker is now idle. Drain one buffered completion event so
                 // it gets its own turn; the next event waits for the next idle
                 // cycle. `continue` returns to `select!`, so new events can
@@ -448,6 +474,9 @@ where
             resp = sources.blocking_response_rx.recv() => {
                 let Some(resp) = resp else { break };
                 ui_request.handle_blocking_response(resp, ctx).await;
+                // The blocking request is done: submit a prompt that was
+                // deferred while it was pending.
+                submit_deferred_prompt(&mut deferred_prompt, quit_pending, slash, ui_request, ctx).await;
                 if quit_pending && !ui_request.has_pending() {
                     break;
                 }
@@ -506,8 +535,8 @@ where
                 incoming.context_id = Some(context_id.clone());
                 let prompt = incoming.to_prompt();
                 // The router attaches the session and enqueues the prompt on the
-                // UI bus; the slash stage attributes the resulting turn to this
-                // task via `pending_a2a_task_id`.
+                // UI bus; the loop pairs this task id with the resulting
+                // `PromptSubmitted` so the turn is attributed to this task.
                 *ctx.pending_a2a_task_id = Some(incoming.task_id);
                 let _ = ctx
                     .worker_tx

@@ -22,7 +22,12 @@ async fn dispatch_completed_turn_emits_the_assistant_message_when_no_deltas() ->
 
     // -- Exec
     let outcome = executor
-        .dispatch_result(Ok(result), nu_protocol::Span::test_data(), Some(session_id))
+        .dispatch_result(
+            Ok(result),
+            "the prompt".to_string(),
+            nu_protocol::Span::test_data(),
+            Some(session_id),
+        )
         .await
         .map_err(|e| format!("a completed turn must not be an error: {e}"))?;
 
@@ -32,6 +37,11 @@ async fn dispatch_completed_turn_emits_the_assistant_message_when_no_deltas() ->
         memory_state.last_total_tokens(),
         Some(12),
         "a completed turn must record the last total token count"
+    );
+    let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert!(
+        persisted.is_empty(),
+        "a completed turn leaves persistence to rig; got {persisted:?}"
     );
     let events = collector.drain();
     assert!(
@@ -65,6 +75,7 @@ async fn dispatch_completed_turn_skips_the_assistant_message_when_deltas_were_em
     let outcome = executor
         .dispatch_result(
             Ok(completed_result("streamed answer")),
+            "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
         )
@@ -106,6 +117,7 @@ async fn dispatch_completed_turn_without_a_session_skips_token_tracking() -> Res
     let outcome = executor
         .dispatch_result(
             Ok(completed_result("sessionless answer")),
+            "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             None,
         )

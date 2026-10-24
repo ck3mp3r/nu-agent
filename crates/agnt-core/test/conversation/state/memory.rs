@@ -1,10 +1,7 @@
 //! Tests for `MemoryState` holding a `CachedMemory` directly.
 //!
-//! These tests pin the observable behavior through the public
-//! `CachedMemory::load` API and through `inner_memory()` access to the
-//! wrapped `CachedMemory`.
-
-use std::sync::Arc;
+//! These tests pin the observable behavior through `inner_memory()` access to
+//! the wrapped `CachedMemory` and through the token tracking on `MemoryState`.
 
 use crate::conversation::state::memory::MemoryState;
 use crate::types::Message;
@@ -32,53 +29,35 @@ async fn memory_state_inner_is_cached_memory_with_rig_store() -> Result<()> {
     Ok(())
 }
 
-/// `load()` on a session returns all persisted messages unchanged.
+/// `clear()` resets the token counter and leaves the rig store untouched: the
+/// store is append-only, so the next turn reads the same conversation.
 #[tokio::test]
-async fn load_returns_all_appended_messages() -> Result<()> {
-    let state = make_state();
-    let memory = Arc::clone(state.memory());
-    let conv = "conv-load";
-
-    let mut seeded: Vec<Message> = Vec::new();
-    for i in 0..5 {
-        seeded.push(Message::user(format!("user-{i}")));
-        seeded.push(Message::assistant(format!("assistant-{i}")));
-    }
-    memory.reset_context(conv, seeded);
-
-    let loaded = memory.load(conv).await.map_err(|_| "load should succeed")?;
-
-    assert_eq!(loaded.len(), 10, "all messages returned unchanged");
-    Ok(())
-}
-
-/// `clear()` clears the in-memory cache; a subsequent `load` re-reads the
-/// conversation from the rig store.
-#[tokio::test]
-async fn clear_delegates_to_inner_cached_memory() -> Result<()> {
+async fn clear_resets_the_token_counter_and_keeps_the_store() -> Result<()> {
+    // -- Setup & Fixtures
     let mut state = make_state();
-    let memory = Arc::clone(state.memory());
     let conv = "conv-clear";
-
-    let store = memory.rig_store(conv).map_err(|_| "should open")?;
-    let mut conversation = rig_memory::load(&*store, conv).map_err(|_| "should load")?;
+    let store = state
+        .inner_memory()
+        .rig_store(conv)
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let mut conversation = rig_memory::load(&*store, conv)?;
     conversation.extend([Message::user("user-0"), Message::assistant("assistant-0")]);
-    rig_memory::save(&*store, conv, &mut conversation).map_err(|_| "should save")?;
+    rig_memory::save(&*store, conv, &mut conversation)?;
+    *state.last_total_tokens_mut() = Some(1234);
 
-    let loaded = memory.load(conv).await.map_err(|_| "load should succeed")?;
-    assert_eq!(loaded.len(), 2, "the rig store holds the seeded exchange");
-
+    // -- Exec
     state.clear();
-    assert!(state.last_total_tokens().is_none());
 
-    let loaded = memory
-        .load(conv)
-        .await
-        .map_err(|_| "load after clear should succeed")?;
+    // -- Check
+    assert!(
+        state.last_total_tokens().is_none(),
+        "clear must reset the token counter"
+    );
+    let stored = rig_memory::load(&*store, conv)?;
     assert_eq!(
-        loaded.len(),
+        stored.messages().len(),
         2,
-        "load after clear must re-read the conversation from the rig store"
+        "clear must not touch the append-only store"
     );
     Ok(())
 }

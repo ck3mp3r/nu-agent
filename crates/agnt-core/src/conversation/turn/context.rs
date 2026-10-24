@@ -1,9 +1,12 @@
 //! Conversation turn context types: `TurnConversation`, `TurnInput`, `TurnContext`.
 
+use std::time::Duration;
+
 use crate::config::Config;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::state::memory::MemoryOf;
 
+use super::execute::CANCEL_GRACE;
 use super::executor::ToolInfra;
 
 /// Context for executing a conversation turn.
@@ -35,6 +38,9 @@ pub struct TurnContext<'a> {
     pub(crate) input: TurnInput<'a>,
     pub(crate) tool_infra: ToolInfra,
     pub(crate) config: &'a Config,
+    /// How long the turn keeps draining the stream after a bus cancel signal.
+    /// Defaults to [`CANCEL_GRACE`]; tests set a short bound.
+    pub(crate) cancel_grace: Duration,
 }
 
 impl<'a> TurnContext<'a> {
@@ -49,6 +55,14 @@ impl<'a> TurnContext<'a> {
             input,
             tool_infra,
             config,
+            cancel_grace: CANCEL_GRACE,
         }
+    }
+
+    /// Set how long the turn keeps draining the stream after a bus cancel
+    /// signal. Tests pass a short bound so a stalled stream returns quickly.
+    pub fn with_cancel_grace(mut self, cancel_grace: Duration) -> Self {
+        self.cancel_grace = cancel_grace;
+        self
     }
 }

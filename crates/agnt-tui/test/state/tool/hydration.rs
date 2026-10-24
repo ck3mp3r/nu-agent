@@ -76,3 +76,65 @@ fn hydrated_call_does_not_steal_finish_from_later_live_call_with_same_key() -> R
     );
     Ok(())
 }
+
+/// A rehydrated not-run row renders the ⊘ status and the args preview under
+/// the tool block — the same two-block shape the live view pushes.
+#[test]
+fn hydrated_not_run_row_renders_cancelled_with_preview_block() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    let mut status = crate::state::StatusState::default();
+    let mut compaction = crate::state::CompactionState::default();
+
+    // -- Exec
+    state.transcript.hydrate_from_messages(
+        vec![
+            UiMessageSnapshot::new("tool", "→ ⏱ 120s")
+                .with_tool_name("nu".to_string())
+                .with_tool_details(
+                    Some(r#"{"command":"ls | sort"}"#.to_string()),
+                    None,
+                    Some(false),
+                )
+                .with_tool_not_run(),
+            UiMessageSnapshot::new("tool_display", String::new()).with_tool_display(ToolDisplay {
+                title: None,
+                sections: vec![ToolDisplaySection {
+                    label: None,
+                    kind: ContentKind::Code {
+                        language: "nu".to_string(),
+                    },
+                    content: "ls | sort".to_string(),
+                    stats: None,
+                }],
+            }),
+        ],
+        None,
+        &mut status,
+        &mut state.tool,
+        &mut compaction,
+    );
+
+    // -- Check
+    assert_eq!(
+        state.transcript.blocks()[0].status,
+        Some(ItemStatus::Cancelled),
+        "a rehydrated not-run row renders the ⊘ status"
+    );
+    assert_eq!(
+        state.transcript.blocks().len(),
+        2,
+        "the args preview block follows the tool block"
+    );
+    assert_eq!(
+        tool_display_lines(&state.transcript.blocks()[1]),
+        "ls | sort",
+        "the preview block carries the command"
+    );
+    assert_eq!(
+        state.transcript.blocks()[1].fill,
+        Fill::Code,
+        "a code preview carries the code background"
+    );
+    Ok(())
+}

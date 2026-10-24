@@ -26,7 +26,7 @@ async fn journey_wiremock_basic_text_smoke() -> Result<()> {
 
 /// Turn 1: LLM calls nu__shell, tool executes (sub-turn 1 succeeds), sub-turn 2
 /// returns HTTP 500 (server error). rig saves nothing for a failed run, so the
-/// session holds no partial history.
+/// host persists the delta: the prompt, the tool call and its result.
 ///
 /// Turn 2: Normal text response. Must succeed and save its own exchange.
 #[tokio::test]
@@ -69,13 +69,15 @@ async fn journey_hard_error_after_tool_results_session_remains_valid() -> Result
         .await?;
     assert!(r1.is_err(), "turn 1 must fail with server error");
 
-    // A failed run saves nothing: the tool results and the synthetic close
-    // block live only in the run transcript.
+    // The failed turn's delta is persisted: the prompt, the tool call and its
+    // result.
     let msgs = h.raw_messages().await?;
-    assert!(
-        msgs.is_empty(),
-        "a failed turn must save nothing; got: {msgs:?}"
+    assert_eq!(
+        msgs.len(),
+        3,
+        "a failed turn persists its delta; got: {msgs:?}"
     );
+    assert_user_text(&msgs[0], "run something");
 
     // Turn 2: must succeed and save its own exchange
     agnt_testkit::mount_sse_response(
@@ -88,7 +90,7 @@ async fn journey_hard_error_after_tool_results_session_remains_valid() -> Result
 
     let (r2, _) = h.turn_with_client("continue", &client, no_tools()).await?;
     assert!(r2.is_ok(), "turn 2 must succeed after repair — was: {r2:?}");
-    assert_eq!(h.raw_messages().await?.len(), 2);
+    assert_eq!(h.raw_messages().await?.len(), 5);
     Ok(())
 }
 

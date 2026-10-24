@@ -31,7 +31,7 @@ fn start_and_finish_tool_call_mutate_one_block_in_place() -> Result<()> {
     // -- Exec
     state
         .tool
-        .finish_tool_call(&mut state.transcript, "read", "{}", Some(true));
+        .finish_tool_call(&mut state.transcript, "read", "{}", Some(true), None);
 
     // -- Check: finish must not push a new block.
     assert_eq!(state.transcript.len(), 1);

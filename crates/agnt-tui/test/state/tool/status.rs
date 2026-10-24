@@ -102,12 +102,15 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
     assert_eq!(block.status, Some(ItemStatus::InProgress));
     assert!(state.status.message.status_line().is_empty());
 
-    // -- Exec & Check: a Completed event transitions the row to Done or Failed.
-    let cases: [(&str, bool, ItemStatus); 2] = [
-        ("done", true, ItemStatus::Done),
-        ("failed", false, ItemStatus::Failed),
+    // -- Exec & Check: a Completed event maps the row by error kind, then by
+    // the success flag.
+    let cases: [(&str, bool, Option<&str>, ItemStatus); 4] = [
+        ("done", true, None, ItemStatus::Done),
+        ("failed", false, Some("tool_error"), ItemStatus::Failed),
+        ("cancelled", false, Some("cancelled"), ItemStatus::Cancelled),
+        ("denied", false, Some("denied"), ItemStatus::Cancelled),
     ];
-    for (label, success, expected) in cases {
+    for (label, success, error_kind, expected) in cases {
         let mut completed = AppState::default();
         reduce_tool(&mut completed, started("gh__get_pr", r#"{"number":1}"#));
         reduce_tool(
@@ -119,16 +122,8 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
                 success,
                 result: "ok".to_string(),
                 display: None,
-                error_kind: if success {
-                    None
-                } else {
-                    Some("tool_error".to_string())
-                },
-                message: if success {
-                    None
-                } else {
-                    Some("boom".to_string())
-                },
+                error_kind: error_kind.map(str::to_string),
+                message: None,
             },
         );
         assert_eq!(completed.transcript.len(), 1, "{label}");
@@ -159,6 +154,7 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
             "k8s__list_pods",
             r#"{"namespace":"prod"}"#,
             success,
+            None,
         );
         assert_eq!(state.transcript.len(), 1, "{label}");
         assert_eq!(
@@ -275,17 +271,90 @@ fn concurrent_same_name_tool_calls_get_correct_statuses() -> Result<()> {
         "k8s__get_pod",
         r#"{"name":"api-1"}"#,
         Some(true),
+        None,
     );
     state.tool.finish_tool_call(
         &mut state.transcript,
         "k8s__get_pod",
         r#"{"name":"api-0"}"#,
         Some(false),
+        None,
     );
     assert_eq!(
         state.transcript.blocks()[0].status,
         Some(ItemStatus::Failed)
     );
     assert_eq!(state.transcript.blocks()[1].status, Some(ItemStatus::Done));
+    Ok(())
+}
+
+/// A not-run completion (cancelled or denied) renders the glyph only: the tool
+/// block carries the Cancelled status and no content block is added; a run
+/// completion's message stays unrendered.
+#[test]
+fn not_run_completed_renders_glyph_only() -> Result<()> {
+    // -- Setup & Fixtures
+    let cases: [(&str, &str); 2] = [
+        (
+            "cancelled",
+            "Interrupted: the turn stopped before this call ran",
+        ),
+        ("denied", "Permission denied: test rule"),
+    ];
+
+    // -- Exec & Check: each not-run kind leaves the tool block alone.
+    for (kind, reason) in cases {
+        let mut state = AppState::default();
+        reduce_tool(&mut state, started("read", r#"{"path":"/tmp/f"}"#));
+        reduce_tool(
+            &mut state,
+            ToolEvent::Completed {
+                name: "read".to_string(),
+                source: "builtin".to_string(),
+                arguments: r#"{"path":"/tmp/f"}"#.to_string(),
+                success: false,
+                result: String::new(),
+                display: None,
+                error_kind: Some(kind.to_string()),
+                message: Some(reason.to_string()),
+            },
+        );
+
+        assert_eq!(state.transcript.len(), 1, "{kind}");
+        assert_eq!(
+            state.transcript.blocks()[0].status,
+            Some(ItemStatus::Cancelled),
+            "{kind}"
+        );
+        assert!(
+            matches!(
+                state.transcript.blocks()[0].source,
+                BlockSource::Tool { .. }
+            ),
+            "{kind}"
+        );
+    }
+
+    // -- Exec & Check: a run completion's message is not rendered.
+    let mut state = AppState::default();
+    reduce_tool(&mut state, started("read", r#"{"path":"/tmp/f"}"#));
+    reduce_tool(
+        &mut state,
+        ToolEvent::Completed {
+            name: "read".to_string(),
+            source: "builtin".to_string(),
+            arguments: r#"{"path":"/tmp/f"}"#.to_string(),
+            success: false,
+            result: String::new(),
+            display: None,
+            error_kind: Some("tool_error".to_string()),
+            message: Some("boom".to_string()),
+        },
+    );
+    assert_eq!(state.transcript.len(), 1);
+    assert_eq!(
+        state.transcript.blocks()[0].status,
+        Some(ItemStatus::Failed)
+    );
     Ok(())
 }

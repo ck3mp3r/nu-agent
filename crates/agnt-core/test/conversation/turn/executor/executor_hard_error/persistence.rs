@@ -4,13 +4,13 @@ use super::*;
 // Error path persistence tests
 // ---------------------------------------------------------------------------
 
-/// MaxTurns carries full chat_history, but rig saves only a successful run, so
-/// a MaxTurns failure saves nothing.
+/// MaxTurns carries full chat_history, and rig saves only a successful run, so
+/// the terminal MaxTurns failure persists the delta it carries.
 ///
 /// Setup: mock returns a tool_call on turn 1. Config limits tool turns to 0, so rig
 /// raises MaxTurns after the first tool call attempt.
 #[tokio::test]
-async fn max_turns_error_saves_nothing() -> Result<()> {
+async fn max_turns_error_persists_the_steered_prompt() -> Result<()> {
     // max_tool_turns=0: rig raises MaxTurns as soon as a tool-call turn would
     // be scheduled (current_turn > 0 + 1 after the first tool response).
     let config = Config {
@@ -55,23 +55,35 @@ async fn max_turns_error_saves_nothing() -> Result<()> {
         "MaxTurns must propagate as LabeledError to caller"
     );
 
-    // rig saves nothing on a failed run
+    // The steering retry persisted the first attempt's delta before re-running,
+    // and the terminal failure persists the delta it carries: the steered prompt
+    // of the final attempt.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        persisted.len(),
+        2,
+        "the first attempt's delta plus the terminal attempt's delta; got {persisted:?}"
+    );
+    assert_eq!(
+        message_text(&persisted[0]).as_deref(),
+        Some("please call a tool"),
+        "the steering retry persists the first attempt's prompt; got {persisted:?}"
+    );
     assert!(
-        persisted.is_empty(),
-        "a MaxTurns failure must save nothing to the rig store; got {persisted:?}"
+        message_text(&persisted[1]).is_some_and(|text| text.ends_with("please call a tool")),
+        "the terminal delta keeps the original prompt; got {persisted:?}"
     );
 
     Ok(())
 }
 
-/// UnknownToolCall carries full chat_history, but rig saves only a successful
-/// run, so an unknown-tool failure saves nothing.
+/// UnknownToolCall carries full chat_history, and rig saves only a successful
+/// run, so the terminal unknown-tool failure persists the delta it carries.
 ///
 /// Setup: mock returns a tool_call for "nonexistent_tool" which is not registered
 /// in the agent's tool list. Rig raises UnknownToolCall.
 #[tokio::test]
-async fn unknown_tool_error_saves_nothing() -> Result<()> {
+async fn unknown_tool_error_persists_the_closed_delta() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-unknown-tool";
@@ -115,20 +127,34 @@ async fn unknown_tool_error_saves_nothing() -> Result<()> {
         "UnknownToolCall must propagate as LabeledError to caller"
     );
 
-    // rig saves nothing on a failed run
+    // The terminal unknown-tool failure persists its delta: the prompt, the
+    // rejected tool call and the hook's error result.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
+    assert_eq!(
+        persisted.len(),
+        3,
+        "an unknown-tool failure persists its delta; got {persisted:?}"
+    );
+    assert_eq!(
+        message_text(&persisted[0]).as_deref(),
+        Some("use a tool please")
+    );
     assert!(
-        persisted.is_empty(),
-        "an unknown-tool failure must save nothing to the rig store; got {persisted:?}"
+        matches!(&persisted[1], crate::types::Message::Assistant(_)),
+        "the rejected tool call is persisted; got {persisted:?}"
+    );
+    assert!(
+        matches!(&persisted[2], crate::types::Message::User { .. }),
+        "the hook's error result is persisted; got {persisted:?}"
     );
 
     Ok(())
 }
 
-/// A network/CompletionError on a fresh session saves nothing: rig saves only a
-/// successful run.
+/// A network/CompletionError on a fresh session persists the prompt it never
+/// answered: rig saves only a successful run.
 #[tokio::test]
-async fn network_error_on_fresh_session_saves_nothing() -> Result<()> {
+async fn network_error_on_fresh_session_persists_the_prompt() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-network-error";
@@ -166,20 +192,22 @@ async fn network_error_on_fresh_session_saves_nothing() -> Result<()> {
         "network error must propagate as LabeledError to caller"
     );
 
-    // rig saves nothing on a failed run
+    // The failed turn persists the prompt it never answered.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert!(
-        persisted.is_empty(),
-        "a network failure must save nothing to the rig store; got {persisted:?}"
+    assert_eq!(
+        persisted.len(),
+        1,
+        "a network failure persists the prompt; got {persisted:?}"
     );
+    assert_eq!(message_text(&persisted[0]).as_deref(), Some(prompt_text));
 
     Ok(())
 }
 
-/// A CompletionError on the first LLM call saves nothing: rig saves only a
-/// successful run.
+/// A CompletionError on the first LLM call persists the prompt it never
+/// answered: rig saves only a successful run.
 #[tokio::test]
-async fn hard_error_on_first_llm_call_saves_nothing() -> Result<()> {
+async fn hard_error_on_first_llm_call_persists_the_prompt() -> Result<()> {
     let config = test_config();
     let temp_dir = tempfile::tempdir().unwrap();
     let session_id = "test-hard-error-no-hook-history";
@@ -219,12 +247,14 @@ async fn hard_error_on_first_llm_call_saves_nothing() -> Result<()> {
         "hard error must propagate as Err to caller"
     );
 
-    // rig saves nothing on a failed run
+    // The failed turn persists the prompt it never answered.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
-    assert!(
-        persisted.is_empty(),
-        "a hard error on the first LLM call must save nothing to the rig store; got {persisted:?}"
+    assert_eq!(
+        persisted.len(),
+        1,
+        "a hard error on the first LLM call persists the prompt; got {persisted:?}"
     );
+    assert_eq!(message_text(&persisted[0]).as_deref(), Some(prompt_text));
 
     Ok(())
 }

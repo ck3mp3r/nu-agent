@@ -56,6 +56,7 @@ fn tool_infra(
         last_total_tokens: default_last_total_tokens(),
         bus,
         render_registry: ToolRenderRegistry::default(),
+        cwd: std::path::PathBuf::from("/tmp"),
     }
 }
 
@@ -228,10 +229,10 @@ async fn turn_round_trips_on_each_backend() -> Result<()> {
     Ok(())
 }
 
-/// A cancelled turn leaves the rig log byte-identical: rig saves only on
-/// success, so a cancel mid-turn writes nothing.
+/// A cancelled turn appends its delta to the rig log: the prompt, the committed
+/// tool call and its result.
 #[tokio::test]
-async fn cancelled_turn_leaves_the_rig_log_byte_identical() -> Result<()> {
+async fn cancelled_turn_appends_its_delta_to_the_rig_log() -> Result<()> {
     // -- Setup & Fixtures: a history with a dangling ToolCall
     let mut memory_state = crate::conversation::state::memory::MemoryState::new(
         crate::session::RigStoreConfig::in_memory(),
@@ -308,14 +309,45 @@ async fn cancelled_turn_leaves_the_rig_log_byte_identical() -> Result<()> {
         "a cancelled turn returns EarlyReturn"
     );
 
-    // -- Check: the log is byte-identical before and after the cancel
+    // -- Check: the log grew and the store holds the seeded history plus the
+    // turn's delta
     let log_after = memory_state
         .inner_memory()
         .rig_store(session_id)?
         .read_log(session_id)?;
-    assert_eq!(
+    assert_ne!(
         log_before, log_after,
-        "a cancelled turn must leave the rig log byte-identical"
+        "a cancelled turn appends its delta to the rig log"
+    );
+    let store = memory_state.inner_memory().rig_store(session_id)?;
+    let conversation = rig_memory::load(&*store, session_id)?;
+    let messages: Vec<crate::types::Message> = conversation
+        .messages()
+        .iter()
+        .map(|message| (**message).clone())
+        .collect();
+    assert_eq!(
+        messages.len(),
+        7,
+        "the seeded history plus the cancelled turn's delta; got {messages:?}"
+    );
+    let crate::types::Message::User { content } = &messages[4] else {
+        return Err("the delta must start with a user message".into());
+    };
+    assert!(
+        content.iter().any(|item| matches!(
+            item,
+            crate::types::UserContent::Text(text) if text.text == "Hello"
+        )),
+        "the turn's prompt is persisted; got {messages:?}"
+    );
+    assert!(
+        matches!(&messages[5], crate::types::Message::Assistant(_)),
+        "the committed tool call is persisted; got {messages:?}"
+    );
+    assert!(
+        matches!(&messages[6], crate::types::Message::User { .. }),
+        "the committed tool result is persisted; got {messages:?}"
     );
     Ok(())
 }

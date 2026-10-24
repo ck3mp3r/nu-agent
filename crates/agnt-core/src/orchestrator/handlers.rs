@@ -5,11 +5,18 @@ use tokio::sync::mpsc;
 
 use crate::bus::{CancelEvent, CompactionEvent};
 use crate::orchestrator::WorkerCommand;
-use crate::orchestrator::stages::{OrchestrationContext, SessionHandler, UiRequestHandler};
+use crate::orchestrator::stages::{
+    OrchestrationContext, SessionHandler, SlashHandler, UiRequestHandler,
+};
 use crate::orchestrator::turn_outcome::TurnOutcome;
 
 /// Reason recorded on a task rejected or failed because the worker was busy.
 pub(crate) const WORKER_BUSY_REASON: &str = "Worker busy: another turn is already running";
+
+/// Reason recorded on a task rejected because a newer prompt replaced the
+/// deferred prompt that queued it.
+pub(crate) const DEFERRED_PROMPT_SUPERSEDED_REASON: &str =
+    "Superseded: a newer prompt replaced the deferred prompt";
 
 /// Dispatch a compaction command to the worker, or queue it if a compaction is
 /// already in flight or the worker is busy running a turn.
@@ -91,6 +98,38 @@ where
     *quit_pending && !*ctx.worker_active
 }
 
+/// A prompt that arrived while a blocking UI request was pending, paired with
+/// the A2A task id that queued it (if any).
+pub(crate) struct DeferredPrompt {
+    pub(crate) text: String,
+    pub(crate) task_id: Option<String>,
+}
+
+/// Submit a prompt that was deferred while a blocking UI request was pending.
+///
+/// The prompt is submitted only when the worker is idle, no blocking request
+/// remains pending, and no quit is in flight; otherwise it stays deferred. A
+/// prompt is never discarded, and a quit never starts a new turn.
+pub(crate) async fn submit_deferred_prompt<S, U>(
+    deferred_prompt: &mut Option<DeferredPrompt>,
+    quit_pending: bool,
+    slash: &mut S,
+    ui_request: &U,
+    ctx: &mut OrchestrationContext<'_>,
+) where
+    S: SlashHandler,
+    U: UiRequestHandler,
+{
+    if quit_pending || *ctx.worker_active || ui_request.has_blocking_pending() {
+        return;
+    }
+    let Some(entry) = deferred_prompt.take() else {
+        return;
+    };
+    log::info!("submitting the prompt deferred while a blocking request was pending");
+    slash.handle(entry.text, entry.task_id, ctx).await;
+}
+
 /// Handle an external (A2A) task cancellation.
 pub(crate) async fn handle_external_cancel(task_id: String, ctx: &mut OrchestrationContext<'_>) {
     if ctx.active_external_task_id.as_deref() == Some(task_id.as_str()) {
@@ -114,6 +153,21 @@ pub(crate) fn reject_busy_task(task_id: &str, ctx: &OrchestrationContext<'_>) {
     };
     if let Err(e) = store.reject_task(task_id, WORKER_BUSY_REASON) {
         log::warn!("failed to reject busy A2A task {task_id}: {e}");
+    }
+}
+
+/// Reject the A2A task of a deferred prompt that a newer prompt replaced.
+///
+/// The server handler already transitioned the task `Submitted`→`Working`, so
+/// leaving it untouched would strand the A2A caller until the send timeout. When
+/// no task store is present the task is logged and dropped.
+pub(crate) fn reject_superseded_task(task_id: &str, ctx: &OrchestrationContext<'_>) {
+    let Some(store) = ctx.task_store else {
+        log::warn!("A2A task {task_id} was superseded while deferred; no task store to reject it");
+        return;
+    };
+    if let Err(e) = store.reject_task(task_id, DEFERRED_PROMPT_SUPERSEDED_REASON) {
+        log::warn!("failed to reject superseded A2A task {task_id}: {e}");
     }
 }
 

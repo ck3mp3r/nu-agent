@@ -5,9 +5,7 @@
 //! with `use super::*;`.
 
 pub(super) use crate::bus::{Bus, CompactionEvent, CompactionRx};
-pub(super) use crate::conversation::compaction::compactor::{
-    NuCompactor, SUMMARY_PREFIX, resolve_model_spec,
-};
+pub(super) use crate::conversation::compaction::compactor::{NuCompactor, resolve_model_spec};
 pub(super) use crate::session::{MemoryError, RigStoreConfig, StoreType};
 pub(super) use crate::types::{Message, UserContent};
 
@@ -25,6 +23,11 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// The conversation every test compacts.
 pub(super) const CONV: &str = "conv-1";
+
+/// The leading text of every compaction summary message, as rig-memory writes
+/// it.
+pub(super) const SUMMARY_PREFIX: &str =
+    "The conversation before this point was compacted into this summary:";
 
 // region:    --- Test Support
 

@@ -3,9 +3,10 @@ use super::*;
 // --- tool_success rehydration tests ---
 
 /// A row without a persisted verdict flag rehydrates as tool_success ==
-/// Some(true) — output text is never consulted, whatever it looks like.
+/// Some(true) — the verdict flag decides the success mapping, whatever the
+/// output text looks like.
 #[test]
-fn hydrate_unflagged_tool_results_rehydrate_as_success() {
+fn hydrate_unflagged_tool_results_rehydrate_as_success() -> Result<()> {
     // -- Setup & Fixtures
     // (name, call id, result text)
     let cases: Vec<(&str, &str, &str)> = vec![
@@ -42,14 +43,17 @@ fn hydrate_unflagged_tool_results_rehydrate_as_success() {
     for (name, call_id, text) in cases {
         let entries = tool_call_entries(call_id, text, false);
         let snapshots = hydrate(&entries, std::path::Path::new("."));
-        assert_eq!(snapshots.len(), 1, "{name}: one tool snapshot expected");
-        assert_eq!(snapshots[0].role(), "tool", "{name}");
+        let tool = snapshots
+            .iter()
+            .find(|snapshot| snapshot.role() == "tool")
+            .ok_or("should be a tool snapshot")?;
         assert_eq!(
-            snapshots[0].tool_success(),
+            tool.tool_success(),
             Some(true),
-            "{name}: unflagged rows must rehydrate as success — no text sniffing"
+            "{name}: unflagged rows must rehydrate as success — the verdict flag decides"
         );
     }
+    Ok(())
 }
 
 // --- multi-call display pairing tests ---

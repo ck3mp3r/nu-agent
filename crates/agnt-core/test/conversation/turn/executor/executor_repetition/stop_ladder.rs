@@ -67,6 +67,7 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
                 last_total_tokens: default_last_total_tokens(),
                 bus: bus.clone(),
                 render_registry: ToolRenderRegistry::default(),
+                cwd: std::path::PathBuf::from("/tmp"),
             },
             shared_model.clone(),
             test_compaction_config(crate::bus::create_bus()),
@@ -214,6 +215,7 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
                 last_total_tokens: default_last_total_tokens(),
                 bus: bus.clone(),
                 render_registry: ToolRenderRegistry::default(),
+                cwd: std::path::PathBuf::from("/tmp"),
             },
             shared_model.clone(),
             test_compaction_config(crate::bus::create_bus()),
@@ -283,13 +285,35 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
         request_prompt(&requests[first_steered]).ends_with("hello"),
         "the steered prompt keeps the original prompt"
     );
-    // The four below-threshold turns saved their exchanges; the stopped
-    // attempts saved nothing.
+    // The four below-threshold turns saved their exchanges; each of the three
+    // conversions persisted its stopped attempt's delta before re-running, and
+    // the terminal stopped attempt appended its delta on top. The delta is
+    // anchored on the prompt, so a stopped attempt whose reported history merged
+    // the store's trailing user message with the steered prompt persists that
+    // merged message: the count slice starts past the merged prompt message and
+    // drops it (an empty slice would fall back to the two-message placeholder
+    // pair), while the anchor restores the merged message itself.
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        8,
-        "only the four completed turns are saved; got {persisted:?}"
+        36,
+        "the four completed turns plus one delta per stopped attempt; got {persisted:?}"
+    );
+    for (i, message) in persisted.iter().take(8).enumerate() {
+        let expected = if i % 2 == 0 {
+            "hello"
+        } else {
+            "I will do the thing."
+        };
+        assert_eq!(
+            message_text(message).as_deref(),
+            Some(expected),
+            "persisted[{i}] must be the completed turn's exchange; got {persisted:?}"
+        );
+    }
+    assert!(
+        message_text(&persisted[8]).is_some_and(|text| text.ends_with("hello")),
+        "the first stopped attempt's delta starts from the original prompt; got {persisted:?}"
     );
 
     Ok(())
@@ -371,6 +395,7 @@ async fn repetition_stop_reset_ladder_lets_retry_sequence_restart_at_first() -> 
                 last_total_tokens: default_last_total_tokens(),
                 bus: crate::bus::create_bus(),
                 render_registry: ToolRenderRegistry::default(),
+                cwd: std::path::PathBuf::from("/tmp"),
             },
             shared_model.clone(),
             test_compaction_config(crate::bus::create_bus()),

@@ -3,7 +3,7 @@ use crate::session::{CachedMemory, RigStoreConfig};
 use std::sync::Arc;
 
 /// The full memory type held by `MemoryState` and shared with the turn
-/// executor. `CachedMemory` is cheaply cloneable (its caches are `Arc`-backed),
+/// executor. `CachedMemory` is cheaply cloneable (its store map is `Arc`-backed),
 /// so the `Arc` is what gets handed to each turn's agent.
 pub type MemoryOf = Arc<CachedMemory>;
 
@@ -37,7 +37,7 @@ impl MemoryState {
     /// Return a reference to the wrapped `CachedMemory` backend.
     ///
     /// Used by code that needs the concrete `CachedMemory` API (store
-    /// rewrites, marker writes, raw entry loads).
+    /// rewrites, marker writes).
     pub fn inner_memory(&self) -> &CachedMemory {
         &self.memory
     }
@@ -51,7 +51,6 @@ impl MemoryState {
     }
 
     pub fn clear(&mut self) {
-        self.memory.clear_all();
         self.last_total_tokens = None;
     }
 }
@@ -80,7 +79,6 @@ impl SessionManager for MemoryState {
     }
 
     fn clear(&mut self) {
-        self.memory.clear_all();
         self.last_total_tokens = None;
     }
 

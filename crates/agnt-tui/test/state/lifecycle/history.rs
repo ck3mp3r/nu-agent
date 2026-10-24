@@ -58,6 +58,24 @@ fn history_navigation_cycles_and_resets() -> Result<()> {
         Some("prev".to_string())
     );
 
+    // -- Setup & Fixtures: an Esc-Esc stop with one active and one pending prompt.
+    let mut interrupted = AppState::default();
+    interrupted.enqueue_prompt("interrupted".to_string());
+    let _ = interrupted.activate_next_prompt();
+    interrupted.enqueue_prompt("pending".to_string());
+
+    // -- Exec
+    let restored = interrupted.cancel_and_restore_pending_to_input();
+    let submitted = interrupted.submitted_prompt_texts();
+
+    // -- Check: the interrupted prompt is recallable, the pending one is not.
+    assert_eq!(restored, Some("pending".to_string()));
+    assert_eq!(
+        interrupted.input.history_up(&submitted, ""),
+        Some("interrupted".to_string())
+    );
+    assert!(!submitted.contains(&"pending".to_string()));
+
     // -- Exec & Check: history down with no history returns none.
     let mut none = AppState::default();
     let submitted = none.submitted_prompt_texts();

@@ -14,6 +14,7 @@
 //! provider SDK.
 
 use crate::conversation::turn::executor::CompletionErrorKind;
+use crate::hook::turn_tools::TurnToolRecord;
 use crate::types::Message;
 
 // ---------------------------------------------------------------------------
@@ -25,6 +26,16 @@ use crate::types::Message;
 #[derive(Debug)]
 pub(crate) struct TurnContext {
     pub last_known_history: Vec<Message>,
+    /// Number of messages the session's rig log held when the turn started.
+    /// Recovery anchors the turn's delta on content: it starts at the last
+    /// user message whose text is the turn prompt or ends with the
+    /// `"\n\n{prompt}"` steering suffix. The count's only role is the skip
+    /// guard: a log whose length moved since the turn started is left alone.
+    pub pre_turn_message_count: usize,
+    /// Every tool call the turn dispatched and the result each call settled
+    /// with. A stop drops the in-flight batch from `last_known_history`, so
+    /// this is the only record of those calls.
+    pub tool_records: Vec<TurnToolRecord>,
 }
 
 // ---------------------------------------------------------------------------

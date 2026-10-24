@@ -1,6 +1,5 @@
 use super::factory::RigStoreConfig;
 use super::memory_error::MemoryError;
-use crate::types::Message;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -13,18 +12,17 @@ use std::sync::{Arc, Mutex};
 /// access reopens it.
 const OPEN_STORES: usize = 32;
 
-/// A read-through cache over the rig-memory store.
+/// The rig-memory stores the agent writes the conversation through.
 ///
-/// The agent writes the conversation through rig; this type only reads. The
-/// cache is populated on first `load` and invalidated by `clear`.
+/// The agent writes the conversation through rig; this type only reads. A
+/// session's store is opened on first use and kept, so repeated reads do not
+/// reopen it.
 ///
 /// ## Token tracking
 ///
 /// Token counts are NOT tracked inside `CachedMemory`. Token counts are managed
 /// by `MemoryState` in the executor layer.
 pub struct CachedMemory {
-    /// In-memory message cache keyed by conversation_id.
-    cache: Arc<Mutex<HashMap<String, Vec<Message>>>>,
     /// How the rig-memory store of a session is made.
     rig: RigStoreConfig,
     /// The rig-memory store of each session, made on first use.
@@ -41,7 +39,6 @@ struct OpenStores {
 impl Clone for CachedMemory {
     fn clone(&self) -> Self {
         Self {
-            cache: Arc::clone(&self.cache),
             rig: self.rig.clone(),
             rig_stores: Arc::clone(&self.rig_stores),
         }
@@ -58,7 +55,6 @@ impl CachedMemory {
     /// Create a new `CachedMemory` backed by the given rig-memory store config.
     pub fn new(rig: RigStoreConfig) -> Self {
         Self {
-            cache: Arc::new(Mutex::new(HashMap::new())),
             rig,
             rig_stores: Arc::new(Mutex::new(OpenStores::default())),
         }
@@ -164,108 +160,5 @@ impl CachedMemory {
                 Vec::new()
             }
         }
-    }
-
-    /// The messages the rig-memory store holds for `conversation_id`, as rig
-    /// reads them: unrepaired, so the count matches the history a run reports.
-    fn rig_messages(&self, conversation_id: &str) -> Result<Vec<Message>, MemoryError> {
-        let store = self.rig_store(conversation_id)?;
-        let conversation =
-            rig_memory::load(&*store, conversation_id).map_err(MemoryError::backend)?;
-        Ok(conversation
-            .messages()
-            .iter()
-            .map(|message| (**message).clone())
-            .collect())
-    }
-
-    /// Replace the in-memory cache for `conversation_id` without touching the store.
-    ///
-    /// Called by the compaction process to update the active context after compaction.
-    pub fn reset_context(&self, conversation_id: &str, messages: Vec<Message>) {
-        let mut cache = self.cache.lock().expect("cache lock poisoned");
-        cache.insert(conversation_id.to_string(), messages);
-    }
-
-    /// Clone the in-memory cache entry for `conversation_id`, if present.
-    ///
-    /// Read-only peek used by the trimming wrapper to distinguish a summary
-    /// that came from the cache (seeded via `seed_from_store`) from one that
-    /// the `CompactingMemory` just spliced from its in-process state after a
-    /// real compaction. `None` when the conversation is not yet cached.
-    pub fn cached_messages(&self, conversation_id: &str) -> Option<Vec<Message>> {
-        self.cache
-            .lock()
-            .map(|c| c.get(conversation_id).cloned())
-            .ok()
-            .flatten()
-    }
-
-    /// Clear all cached conversations from the in-memory cache.
-    ///
-    /// Used when no conversation_id is available (e.g., `clear_session` in the runtime).
-    /// Does not touch the store — it is append-only.
-    pub fn clear_all(&self) {
-        self.cache.lock().expect("cache lock poisoned").clear();
-    }
-
-    fn lock_cache(
-        &self,
-    ) -> Result<std::sync::MutexGuard<'_, HashMap<String, Vec<Message>>>, MemoryError> {
-        self.cache
-            .lock()
-            .map_err(|e| MemoryError::Internal(e.to_string()))
-    }
-}
-
-impl CachedMemory {
-    /// Load the full conversation history for `conversation_id`.
-    ///
-    /// Returns an empty `Vec` if the conversation has no stored messages. The
-    /// messages are read from the rig-memory store, which the agent writes, and
-    /// pass through the repair pipeline.
-    pub async fn load(&self, conversation_id: &str) -> Result<Vec<Message>, MemoryError> {
-        // Check cache first
-        {
-            let cache = self.lock_cache()?;
-            if let Some(messages) = cache.get(conversation_id) {
-                log::trace!("CachedMemory.load: session={conversation_id} cache_hit=true");
-                let (repaired, issues) = crate::session::repair::repair_messages(messages.clone());
-                for issue in &issues {
-                    log::warn!("conversation repair (cache hit): {}", issue);
-                }
-                return Ok(repaired);
-            }
-        }
-
-        // Cache miss — read the conversation from the rig-memory store, the
-        // source of truth for what the agent saved.
-        log::debug!("CachedMemory.load: session={conversation_id} cache_hit=false");
-        let stored = self.rig_messages(conversation_id)?;
-        let (messages, issues) = crate::session::repair::repair_messages(stored);
-        for issue in &issues {
-            log::warn!("conversation repair: {}", issue);
-        }
-        log::debug!(
-            "CachedMemory.load: session={conversation_id} messages={}",
-            messages.len()
-        );
-
-        // Populate the cache so later reads are cache hits.
-        {
-            let mut cache = self.lock_cache()?;
-            cache.insert(conversation_id.to_string(), messages.clone());
-        }
-
-        Ok(messages)
-    }
-
-    /// Remove all cached messages for `conversation_id`.
-    ///
-    /// Does not touch the store — it is append-only.
-    pub async fn clear(&self, conversation_id: &str) -> Result<(), MemoryError> {
-        let mut cache = self.lock_cache()?;
-        cache.remove(conversation_id);
-        Ok(())
     }
 }

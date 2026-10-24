@@ -48,6 +48,7 @@ async fn transient_turn_does_not_write_jsonl() -> Result<()> {
         last_total_tokens: default_last_total_tokens(),
         bus: crate::bus::create_bus(),
         render_registry: ToolRenderRegistry::default(),
+        cwd: std::path::PathBuf::from("/tmp"),
     };
     let config = Config::default();
     let ctx = TurnContext::new(conversation, input, tool_infra, &config);

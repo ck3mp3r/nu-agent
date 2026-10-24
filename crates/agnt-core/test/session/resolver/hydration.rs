@@ -38,7 +38,7 @@ fn hydrate_store_entries_treats_a_summary_as_a_user_message() {
     // -- Setup & Fixtures
     let summary = format!(
         "{}\n\n<summary>\nrolled up\n</summary>",
-        crate::conversation::compaction::compactor::SUMMARY_PREFIX
+        "The conversation before this point was compacted into this summary:"
     );
     let entries = vec![
         Message::User {

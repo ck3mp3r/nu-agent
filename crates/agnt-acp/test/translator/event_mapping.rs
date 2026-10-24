@@ -205,6 +205,56 @@ fn test_translator_compaction_failed_produces_session_info_update() -> Result<()
 }
 
 // ---------------------------------------------------------------------------
+// Warning
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_translator_warning_produces_agent_message_chunk() -> Result<()> {
+    // -- Setup & Fixtures
+    let event = UiEvent::Warning {
+        message: "Conversation is using ~120000 estimated tokens".to_string(),
+    };
+
+    // -- Exec
+    let update = translator()
+        .translate(event)
+        .ok_or("warning must translate")?;
+
+    // -- Check
+    let SessionUpdate::AgentMessageChunk(chunk) = update else {
+        return Err(format!("expected agent_message_chunk, got: {update:?}").into());
+    };
+    let ContentBlock::Text(text) = chunk.content else {
+        return Err(format!("expected text content, got: {:?}", chunk.content).into());
+    };
+    assert_eq!(text.text, "Conversation is using ~120000 estimated tokens");
+    Ok(())
+}
+
+#[test]
+fn test_translator_warning_empty_message_produces_agent_message_chunk() -> Result<()> {
+    // -- Setup & Fixtures
+    let event = UiEvent::Warning {
+        message: String::new(),
+    };
+
+    // -- Exec
+    let update = translator()
+        .translate(event)
+        .ok_or("empty warning must still translate")?;
+
+    // -- Check
+    let SessionUpdate::AgentMessageChunk(chunk) = update else {
+        return Err(format!("expected agent_message_chunk, got: {update:?}").into());
+    };
+    let ContentBlock::Text(text) = chunk.content else {
+        return Err(format!("expected text content, got: {:?}", chunk.content).into());
+    };
+    assert_eq!(text.text, "");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Events without an ACP equivalent
 // ---------------------------------------------------------------------------
 
@@ -231,18 +281,6 @@ fn test_translator_tool_preview_produces_none() -> Result<()> {
             title: Some("edit src/file.txt".to_string()),
             sections: vec![diff_section("src/file.txt", "--- a\n+++ b\n")],
         },
-    };
-
-    // -- Exec & Check
-    assert!(translator().translate(event).is_none());
-    Ok(())
-}
-
-#[test]
-fn test_translator_warning_produces_none() -> Result<()> {
-    // -- Setup & Fixtures
-    let event = UiEvent::Warning {
-        message: "careful".to_string(),
     };
 
     // -- Exec & Check

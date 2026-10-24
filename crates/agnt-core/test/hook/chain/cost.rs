@@ -73,7 +73,10 @@ fn turn_hook(
         test_model_spec(),
     );
     let hook = HookChain::new(
-        bus.clone(),
+        HookEnv {
+            bus: bus.clone(),
+            cwd: std::path::PathBuf::from("/tmp"),
+        },
         PolicyPermissionResolver {
             permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
             session_grants: Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),

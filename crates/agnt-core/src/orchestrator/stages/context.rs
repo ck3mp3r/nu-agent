@@ -36,9 +36,9 @@ pub(crate) struct OrchestrationContext<'a> {
     /// processed. Checked when an `ExternalPrompt` sets `active_external_task_id`.
     pub pending_external_cancel: &'a mut Option<String>,
     /// Task ID of an A2A task whose prompt is queued in the TUI prompt queue.
-    /// Set by the `select!` arms when an A2A task or completion arrives; consumed
-    /// by the slash stage when the matching `PromptSubmitted` fires, so the turn
-    /// is attributed to the A2A task instead of a user submission.
+    /// Set by the `select!` arms when an external A2A prompt arrives; the loop
+    /// consumes it when the matching `PromptSubmitted` fires and passes it to
+    /// the slash stage, so the turn is attributed to the A2A task, not a user submit.
     pub pending_a2a_task_id: &'a mut Option<String>,
     /// Shared signal bus. The session stage publishes turn-completion events.
     pub bus: &'a Bus,
@@ -49,7 +49,12 @@ pub(crate) struct OrchestrationContext<'a> {
 
 /// Stage trait for slash command and prompt handling.
 pub(crate) trait SlashHandler {
-    async fn handle(&mut self, prompt: String, ctx: &mut OrchestrationContext);
+    async fn handle(
+        &mut self,
+        prompt: String,
+        task_id: Option<String>,
+        ctx: &mut OrchestrationContext,
+    );
 }
 
 /// Stage trait for permission decision handling.

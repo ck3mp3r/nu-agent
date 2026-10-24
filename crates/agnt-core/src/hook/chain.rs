@@ -12,6 +12,7 @@
 //! 3. Call the concern's method inside whichever event method needs it.
 //! 4. Nothing else changes.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rig::agent::{
@@ -30,9 +31,12 @@ use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::turn::token_estimate::estimate_token_count;
 use crate::llm::{PricedOutcome, PricingSkip, computed_cost};
 use crate::protocol::event::UiEvent;
+use crate::protocol::tool_args::CallLine;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;
+use crate::tools::handler::tool_display_from_arguments;
+use crate::types::ToolName;
 
 use super::agent_hook::HookState;
 use super::circuit_breaker_guard::CircuitBreakerGuard;
@@ -45,7 +49,140 @@ use super::permission_resolver::{
     AsyncPermissionResolver, PermissionDecision, resolve_tool_source,
 };
 use super::subturn_cap::SubTurnCap;
+use super::turn_tools::TurnToolLog;
 use super::unpriced_warnings::UnpricedWarnings;
+
+/// The completion message for a call the cancel arm denied before it ran.
+///
+/// The call never executes, so there is no result to report — the message says
+/// why the block is empty.
+pub const CANCELLED_DISPATCH_MESSAGE: &str = "Interrupted: the turn stopped before this call ran";
+
+/// The error kind the cancel arm's emissions carry.
+///
+/// The kind is the event-level discriminator: a renderer classifies the pair as
+/// "did not run" without text-matching the message.
+const CANCELLED_ERROR_KIND: &str = "cancelled";
+
+/// The error kind the permission-deny branch's emission carries.
+///
+/// A denial is the same "did not run" class as a cancel: the kind is the
+/// discriminator, the message carries the reason.
+const DENIED_ERROR_KIND: &str = "denied";
+
+/// Why a call never ran.
+///
+/// The kind is the event-level discriminator: a renderer classifies the
+/// sequence as "did not run" without text-matching the message.
+pub(crate) enum NotRunOutcome<'a> {
+    /// The turn stopped before the call ran.
+    Cancelled,
+    /// The permission policy denied the call; the reason is the message.
+    Denied { reason: &'a str },
+}
+
+/// How the not-run emitter publishes `ToolStarted`.
+pub(crate) enum NotRunStart {
+    /// Publish `ToolStarted` with this call line.
+    Publish(CallLine),
+    /// The caller already published `ToolStarted` — the deny arm sends it
+    /// before permission resolution so the permission card anchors to the
+    /// call.
+    AlreadyPublished,
+}
+
+/// The call a not-run emission publishes.
+pub(crate) struct NotRunCall<'a> {
+    /// The tool's name.
+    pub tool_name: &'a str,
+    /// The tool's source (`builtin`, `closure`, `mcp`).
+    pub source: &'a str,
+    /// The raw JSON arguments.
+    pub arguments: &'a str,
+    /// How `ToolStarted` reaches the bus.
+    pub start: NotRunStart,
+}
+
+/// Publish the live sequence for a call that never ran: `ToolStarted` (unless
+/// the caller already published it), then the call's argument-sourced preview
+/// when `preview` is set and the tool has one, then
+/// `ToolCompleted(success=false)` carrying the outcome's kind and message.
+///
+/// The cancel arm returns `stop` before the `ToolStarted` send, and rig fails
+/// the dispatch before `on_outcome` fires — so without this sequence the live
+/// transcript renders nothing for the denied call. The permission-deny branch
+/// publishes the same sequence; only the outcome differs.
+///
+/// The executor's cancel arm shares this shape for the batch's siblings the
+/// stop left undispatched, so both paths emit one identical sequence.
+///
+/// The TUI anchors a preview to a call in `InProgress`, so the preview must
+/// land after `ToolStarted` and before `ToolCompleted` — the same order the
+/// deny path and rehydration produce.
+pub(crate) async fn emit_not_run_dispatch(
+    bus: &Bus,
+    cwd: &Path,
+    call: NotRunCall<'_>,
+    outcome: NotRunOutcome<'_>,
+    preview: bool,
+) {
+    let NotRunCall {
+        tool_name,
+        source,
+        arguments,
+        start,
+    } = call;
+    if let NotRunStart::Publish(call_line) = start {
+        let _ = bus
+            .ui_event()
+            .send(UiEvent::ToolStarted {
+                name: tool_name.to_string(),
+                source: source.to_string(),
+                arguments: arguments.to_string(),
+                call_line,
+            })
+            .await;
+    }
+    if preview && let Some(display) = tool_display_from_arguments(tool_name, arguments, cwd) {
+        let _ = bus
+            .ui_event()
+            .send(UiEvent::ToolPreview {
+                tool_key: format!("{tool_name}\n{arguments}"),
+                display,
+            })
+            .await;
+    }
+    let (error_kind, message) = match outcome {
+        NotRunOutcome::Cancelled => (CANCELLED_ERROR_KIND, CANCELLED_DISPATCH_MESSAGE),
+        NotRunOutcome::Denied { reason } => (DENIED_ERROR_KIND, reason),
+    };
+    let _ = bus
+        .ui_event()
+        .send(UiEvent::ToolCompleted {
+            name: tool_name.to_string(),
+            source: source.to_string(),
+            arguments: arguments.to_string(),
+            success: false,
+            result: String::new(),
+            display: None,
+            error_kind: Some(error_kind.to_string()),
+            message: Some(message.to_string()),
+        })
+        .await;
+}
+
+/// The environment a hook chain publishes into and resolves against.
+///
+/// Groups the bus and the session working directory so `HookChain::new` stays
+/// under clippy's `too_many_arguments` threshold.
+#[derive(Clone)]
+pub struct HookEnv {
+    /// Shared signal bus — tool/LLM/warning events are published here.
+    pub bus: Bus,
+    /// The session working directory, read to build the argument-sourced
+    /// preview for a call the turn stopped before it ran.
+    pub cwd: PathBuf,
+}
 
 /// Composable hook that delegates to named concern structs in explicit order.
 ///
@@ -61,9 +198,16 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     repetition_guard: bool,
     circuit: CircuitBreakerGuard,
     history: HistorySnapshot,
+    /// Every tool call this turn dispatched and the result each call settled
+    /// with. Read after the turn so a stop keeps the in-flight batch that
+    /// rig's history drops.
+    turn_tools: Arc<TurnToolLog>,
     permission: P,
     /// Shared signal bus — tool/LLM/warning events are published here.
     bus: Bus,
+    /// The session working directory, read to build the argument-sourced
+    /// preview for a call the turn stopped before it ran.
+    cwd: PathBuf,
     closure_registry: Arc<ClosureRegistry>,
     mcp_registry: Arc<McpToolRegistry>,
     /// Per-tool call-line render functions, populated at builtin registration
@@ -92,7 +236,7 @@ pub struct HookChain<P: AsyncPermissionResolver> {
 
 impl<P: AsyncPermissionResolver> HookChain<P> {
     pub fn new(
-        bus: Bus,
+        env: HookEnv,
         permission_resolver: P,
         closure_registry: Arc<ClosureRegistry>,
         mcp_registry: Arc<McpToolRegistry>,
@@ -100,8 +244,9 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         max_tool_calls_per_subturn: Option<usize>,
         hook_state: HookState,
     ) -> Self {
+        let cancel_rx = Arc::new(Mutex::new(env.bus.cancel().subscribe()));
         Self {
-            cancel_rx: Arc::new(Mutex::new(bus.cancel().subscribe())),
+            cancel_rx,
             subturn: SubTurnCap::new(
                 max_tool_calls_per_subturn.unwrap_or(defaults::MAX_TOOL_CALLS_PER_SUBTURN),
             ),
@@ -114,8 +259,10 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                 breaker: hook_state.circuit_breaker,
             },
             history: HistorySnapshot::default(),
+            turn_tools: Arc::new(TurnToolLog::default()),
             permission: permission_resolver,
-            bus,
+            bus: env.bus,
+            cwd: env.cwd,
             closure_registry,
             mcp_registry,
             render_registry,
@@ -136,6 +283,16 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         self.history.arc()
     }
 
+    /// Return a clone of the `Arc` that holds this turn's tool records.
+    ///
+    /// Callers clone this Arc **before** passing the hook into the agent
+    /// builder (which consumes `self`), then read it back after the turn —
+    /// including after a stop, whose dropped stream leaves the in-flight batch
+    /// out of rig's history.
+    pub fn turn_tools(&self) -> Arc<TurnToolLog> {
+        Arc::clone(&self.turn_tools)
+    }
+
     /// Returns `true` if a cancellation has been requested via the bus cancel channel.
     ///
     /// Consumes any pending cancel event. A `Lagged` error also counts as cancelled
@@ -147,6 +304,29 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
             rx.try_recv(),
             Ok(CancelEvent::Requested) | Err(TryRecvError::Lagged(_))
         )
+    }
+
+    /// Publish the not-run sequence for a call the cancel arm denied before it
+    /// ran.
+    ///
+    /// The cancel arm returns `stop` before the `ToolStarted` send, and rig
+    /// fails the dispatch before `on_outcome` fires — so without this sequence
+    /// the live transcript renders nothing for the denied call.
+    async fn emit_cancelled_dispatch(&self, tool_name: &str, source: &str, arguments: &str) {
+        let call_line = self.render_registry.render(tool_name, arguments);
+        emit_not_run_dispatch(
+            &self.bus,
+            &self.cwd,
+            NotRunCall {
+                tool_name,
+                source,
+                arguments,
+                start: NotRunStart::Publish(call_line),
+            },
+            NotRunOutcome::Cancelled,
+            true,
+        )
+        .await;
     }
 
     /// The warning for a model nothing priced, or `None` when this model was
@@ -313,6 +493,17 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         let args = event.tool_args().map(str::to_string);
         let tool_call_id = event.call_id.map(|id| id.to_string());
 
+        // Record the call before any gate runs. A stop that lands mid-batch
+        // drops the stream, and this record is what keeps the call once rig's
+        // history loses it. The cancel check below keeps its order.
+        if let Some(name) = tool_name.as_deref()
+            && let Some(call_id) = event.call_id
+            && let Ok(name) = ToolName::new(name)
+        {
+            self.turn_tools
+                .record_call(call_id.clone(), name, args.clone().unwrap_or_default());
+        }
+
         // Pre-compute all synchronous checks and capture values for the async
         // block. Each is guarded on `tool_name` so a completion dispatch
         // neither consumes the cancel event nor advances the sub-turn cap.
@@ -344,6 +535,11 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             log::trace!("on_dispatch: tool={tool_name}");
 
             if cancelled {
+                // The stop lands before the `ToolStarted` send below and rig
+                // fails the dispatch before `on_outcome`, so this pair is the
+                // only host event the denied call produces.
+                self.emit_cancelled_dispatch(&tool_name, &source, &args)
+                    .await;
                 return DispatchAction::stop("Cancelled by user");
             }
             if let Some(action) = subturn_action {
@@ -378,23 +574,33 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             match decision {
                 PermissionDecision::Allow => DispatchAction::proceed(),
                 PermissionDecision::Deny { reason } => {
-                    // The tool never runs, so on_outcome never fires to
-                    // consume a previously-recorded preview flag — discard it
-                    // here so it doesn't linger.
-                    permission.take_previewed(&tool_name, &args);
-                    let _ = bus
-                        .ui_event()
-                        .send(UiEvent::ToolCompleted {
-                            name: tool_name,
-                            source,
-                            arguments: args,
-                            success: false,
-                            result: String::new(),
-                            display: None,
-                            error_kind: None,
-                            message: Some(reason.clone()),
-                        })
-                        .await;
+                    // The tool never runs, but rig still reports the skipped
+                    // result through on_outcome, whose tool-result arm would
+                    // consume the flag via suppress_previewed_display. The
+                    // early take keeps the discard independent of rig's
+                    // skipped-result outcome behavior.
+                    //
+                    // A `false` answer means no preview reached the user: the
+                    // policy path denies without a card, so the pair publishes
+                    // the argument-sourced preview itself — the same event the
+                    // flush path emits, and the same display rehydration
+                    // builds for the not-run row. An Ask-path denial already
+                    // anchored its preview in the permission card, so `true`
+                    // suppresses the emission and no duplicate appears.
+                    let preview = !permission.take_previewed(&tool_name, &args);
+                    emit_not_run_dispatch(
+                        &bus,
+                        &self.cwd,
+                        NotRunCall {
+                            tool_name: tool_name.as_str(),
+                            source: source.as_str(),
+                            arguments: args.as_str(),
+                            start: NotRunStart::AlreadyPublished,
+                        },
+                        NotRunOutcome::Denied { reason: &reason },
+                        preview,
+                    )
+                    .await;
                     DispatchAction::skip(reason)
                 }
             }
@@ -468,7 +674,22 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 // 3. Classify error kind from raw result
                 let error_kind = result.error().map(|e| e.kind().as_str().to_string());
 
-                // 4. Emit ToolCompleted (success was computed structurally above)
+                // 4. Record the settled result on the call's record, so a stop
+                // that drops the stream still keeps the result.
+                if let Some(call_id) = event.call_id
+                    && let Ok(name) = ToolName::new(tool_name)
+                {
+                    self.turn_tools.record_result(
+                        call_id.clone(),
+                        name,
+                        args,
+                        result_text.clone(),
+                        success,
+                        error_kind.clone(),
+                    );
+                }
+
+                // 5. Emit ToolCompleted (success was computed structurally above)
                 let _ = bus
                     .ui_event()
                     .send(UiEvent::ToolCompleted {
@@ -483,7 +704,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                     })
                     .await;
 
-                // 5. Circuit breaker — track transport failures per server
+                // 6. Circuit breaker — track transport failures per server
                 self.circuit
                     .record_result(tool_name, result, success, &self.mcp_registry, &bus)
                     .await;

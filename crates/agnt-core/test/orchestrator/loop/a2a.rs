@@ -7,6 +7,8 @@
 
 #[path = "a2a/busy.rs"]
 mod busy;
+#[path = "a2a/deferred_reject.rs"]
+mod deferred_reject;
 #[path = "a2a/intake.rs"]
 mod intake;
 

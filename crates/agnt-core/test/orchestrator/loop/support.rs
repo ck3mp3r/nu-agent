@@ -22,24 +22,43 @@ use crate::protocol::event::PermissionDecisionSubmission;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
+/// An ordered trace of the stage calls a test observes. The mocks append to it
+/// so a test can assert the order in which the loop reached them.
+pub(super) type Trace = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
 // ---------------------------------------------------------------------------
 // Mock stage implementations
 // ---------------------------------------------------------------------------
 
 pub(super) struct MockSlash {
     pub(super) handle_calls: Vec<String>,
+    pub(super) trace: Trace,
 }
 
 impl MockSlash {
     pub(super) fn new() -> Self {
         Self {
             handle_calls: Vec::new(),
+            trace: Trace::default(),
+        }
+    }
+
+    pub(super) fn with_trace(trace: Trace) -> Self {
+        Self {
+            handle_calls: Vec::new(),
+            trace,
         }
     }
 }
 
 impl SlashHandler for MockSlash {
-    async fn handle(&mut self, prompt: String, _ctx: &mut OrchestrationContext<'_>) {
+    async fn handle(
+        &mut self,
+        prompt: String,
+        _task_id: Option<String>,
+        _ctx: &mut OrchestrationContext<'_>,
+    ) {
+        self.trace.lock().unwrap().push(format!("slash:{prompt}"));
         self.handle_calls.push(prompt);
     }
 }
@@ -65,6 +84,7 @@ pub(super) struct MockUiRequest {
     pub(super) drain_queued_calls: usize,
     pub(super) blocking_pending: bool,
     pub(super) pending: bool,
+    pub(super) trace: Trace,
 }
 
 impl MockUiRequest {
@@ -74,6 +94,17 @@ impl MockUiRequest {
             drain_queued_calls: 0,
             blocking_pending: false,
             pending: false,
+            trace: Trace::default(),
+        }
+    }
+
+    pub(super) fn with_trace(trace: Trace) -> Self {
+        Self {
+            handle_incoming_calls: Vec::new(),
+            drain_queued_calls: 0,
+            blocking_pending: false,
+            pending: false,
+            trace,
         }
     }
 }
@@ -88,6 +119,12 @@ impl UiRequestHandler for MockUiRequest {
         _response: UiRequestResponse,
         _ctx: &mut OrchestrationContext<'_>,
     ) {
+        self.trace
+            .lock()
+            .unwrap()
+            .push("blocking_response".to_string());
+        self.blocking_pending = false;
+        self.pending = false;
     }
 
     async fn handle_concurrent_response(

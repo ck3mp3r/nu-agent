@@ -134,7 +134,7 @@ async fn model_switching_trait_accessors_read_the_provider_and_persona() {
 }
 
 #[tokio::test]
-async fn run_compaction_splices_the_rig_store_and_refreshes_the_cache() -> Result<()> {
+async fn run_compaction_splices_the_rig_store() -> Result<()> {
     // -- Setup & Fixtures
     // The conversation lives in the rig-memory store, which is what a run loads.
     let mut fixture = make_runtime(text_model("unused"))?;
@@ -161,29 +161,22 @@ async fn run_compaction_splices_the_rig_store_and_refreshes_the_cache() -> Resul
         .map_err(|e| format!("compaction should succeed: {e}"))?;
 
     // -- Check
-    // The cache is refreshed with the post-splice conversation, which is what the
-    // next run loads from the store.
-    let cached = fixture
-        .runtime
-        .session
-        .inner_memory()
-        .cached_messages("test-session")
-        .ok_or("a successful compaction must rewrite the cached context")?;
+    // The splice is persisted to the store, which is what the next run loads.
+    let stored = rig_memory::load(&*store, "test-session")?;
+    let stored: Vec<Message> = stored
+        .messages()
+        .iter()
+        .map(|message| (**message).clone())
+        .collect();
     assert_eq!(
-        cached.len(),
+        stored.len(),
         2,
-        "the compacted context must hold the summary and the newest message; got: {cached:?}"
+        "the compacted context must hold the summary and the newest message; got: {stored:?}"
     );
-    let summary = cached.first().ok_or("the compacted context is non-empty")?;
+    let summary = stored.first().ok_or("the compacted context is non-empty")?;
     assert!(
         matches!(summary, Message::User { .. }),
         "the splice must lead with the summary user message, got: {summary:?}"
-    );
-    let stored = rig_memory::load(&*store, "test-session")?;
-    assert_eq!(
-        stored.messages().len(),
-        2,
-        "the splice must be persisted to the rig store"
     );
     Ok(())
 }

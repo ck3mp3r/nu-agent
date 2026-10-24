@@ -48,7 +48,7 @@ fn item_status_table() {
     // -- Check: terminal statuses render fixed glyphs.
     assert_eq!(ItemStatus::Done.indicator_char(0), "✓");
     assert_eq!(ItemStatus::Failed.indicator_char(0), "✕");
-    assert_eq!(ItemStatus::Cancelled.indicator_char(0), "✕");
+    assert_eq!(ItemStatus::Cancelled.indicator_char(0), "⊘");
     assert_eq!(ItemStatus::Queued.indicator_char(0), "•");
     assert_eq!(ItemStatus::Unknown.indicator_char(0), "?");
 

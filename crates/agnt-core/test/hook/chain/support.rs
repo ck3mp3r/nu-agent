@@ -10,6 +10,7 @@ pub(super) use crate::bus::Bus;
 pub(super) use crate::compaction::CompactionParams;
 pub(super) use crate::conversation::compaction::CompactionConfig;
 pub(super) use crate::conversation::compaction::compactor::NuCompactor;
+pub(super) use crate::hook::chain::HookEnv;
 pub(super) use crate::hook::doom_loop::DoomLoopState;
 pub(super) use crate::hook::output_repetition::RepetitionState;
 pub(super) use crate::hook::permission_resolver::PolicyPermissionResolver;
@@ -80,6 +81,56 @@ pub(super) fn test_model_spec() -> Option<rig::catalog::ModelSpec> {
         "gpt-4o",
         Some(200_000),
         Some(1_024),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Hook chain construction
+// ---------------------------------------------------------------------------
+
+/// Build a hook chain over `bus` with `permission` as its resolver, no tools
+/// registered, and no scripted model. The chain subscribes to the cancel
+/// channel in `new`, so build it before publishing any cancel.
+pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
+    bus: Bus,
+    permission: P,
+) -> HookChain<P> {
+    let memory = Arc::new(CachedMemory::new(
+        crate::session::RigStoreConfig::in_memory(),
+    ));
+    HookChain::new(
+        HookEnv {
+            bus,
+            cwd: std::path::PathBuf::from("/tmp"),
+        },
+        permission,
+        Arc::new(crate::tools::closure::ClosureRegistry::default()),
+        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        crate::tools::handler::builtin_tool::ToolRenderRegistry::default(),
+        None,
+        HookState {
+            circuit_breaker: Arc::new(Mutex::new(
+                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
+            )),
+            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
+            output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
+            repetition_guard: true,
+            memory,
+            conversation_id: "chain-test-conv".to_string(),
+            compaction: CompactionConfig {
+                compactor: NuCompactor::new(
+                    MockCompletionModel::text("summary").erase(),
+                    Bus::default(),
+                    rig_memory::CompactionPolicy::default(),
+                    test_model_spec(),
+                ),
+                params: CompactionParams::default(),
+                threshold_tokens: None,
+                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+            },
+            model: MockCompletionModel::default().erase(),
+            last_total_tokens: Arc::new(Mutex::new(None)),
+        },
     )
 }
 
@@ -161,7 +212,10 @@ impl RepetitionTurnFixture {
     > {
         let model = self.dyn_model.lock().expect("model mutex poisoned").clone();
         let hook = HookChain::new(
-            self.bus.clone(),
+            HookEnv {
+                bus: self.bus.clone(),
+                cwd: std::path::PathBuf::from("/tmp"),
+            },
             PolicyPermissionResolver {
                 permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
                 session_grants: Arc::new(std::sync::Mutex::new(

@@ -7,14 +7,16 @@
 
 use futures::StreamExt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::bus::Bus;
 use crate::config::defaults;
 use crate::hook::agent_hook::HookState;
-use crate::hook::chain::HookChain;
+use crate::hook::chain::{HookChain, HookEnv};
 use crate::hook::permission_resolver::AsyncPermissionResolver;
+use crate::hook::turn_tools::TurnToolRecord;
 use crate::protocol::event::UiEvent;
-use crate::types::{Message, Text, ToolDefinition, UserContent};
+use crate::types::{Message, Text, ToolCall, ToolDefinition, UserContent};
 use rig::tool::DynamicTool;
 
 use super::context::TurnContext;
@@ -27,6 +29,13 @@ use super::token_estimate;
 /// Default max tool turns when config doesn't specify a limit.
 /// Matches v1 "unlimited" semantics with a practical upper bound.
 const DEFAULT_MAX_TURNS: u32 = 256;
+
+/// How long the stream loop keeps draining after a bus cancel signal.
+///
+/// rig's stop path answers the in-flight tool batch into the run before it
+/// cancels, so the drain is what keeps that work: the settled tool results
+/// reach the `Cancelled` history instead of being dropped with the stream.
+pub(super) const CANCEL_GRACE: Duration = Duration::from_secs(2);
 
 /// Result of a successful conversation turn
 #[derive(Debug)]
@@ -54,6 +63,22 @@ pub struct TurnResult {
     /// Populated from `HookChain::last_known_history()` Arc after the turn completes.
     /// The retry loop reads it to decide whether a retry has partial history.
     pub last_known_history: Vec<Message>,
+    /// Number of messages the session's rig log held when the turn started.
+    /// Recovery anchors the turn's delta on content: it starts at the last
+    /// user message whose text is the turn prompt or ends with the
+    /// `"\n\n{prompt}"` steering suffix. The count's only role is the skip
+    /// guard: a log whose length moved since the turn started is left alone.
+    pub pre_turn_message_count: usize,
+    /// Every tool call the turn dispatched and the result each call settled
+    /// with, in dispatch order. Populated from `HookChain::turn_tools()` after
+    /// the turn completes. A stop drops the in-flight batch from rig's history,
+    /// so this is the only record of those calls.
+    pub tool_records: Vec<TurnToolRecord>,
+    /// The calls the model committed this turn, in commit order, as the
+    /// stream's `ToolCall` projection carried them. A stop can leave a
+    /// batch's siblings undispatched, so this is the only trace of the calls
+    /// the turn never ran.
+    pub streamed_tool_calls: Vec<ToolCall>,
 }
 
 /// Execute a conversation turn using the agent loop with hooks.
@@ -77,23 +102,11 @@ pub struct TurnResult {
 pub(crate) async fn execute_turn<P>(
     ctx: TurnContext<'_>,
     permission_resolver: P,
-) -> Result<TurnResult, (TurnError, error::TurnContext)>
+) -> Result<TurnResult, (TurnError, Box<error::TurnContext>)>
 where
     P: AsyncPermissionResolver,
 {
     log::info!("execute_turn: starting turn");
-
-    // The conversation the run starts from, for the context-window estimate.
-    // Cache-first load: no store I/O if the cache is already warm.
-    let pre_turn_messages: Vec<Message> = if ctx.conversation.has_session {
-        ctx.conversation
-            .memory
-            .load(&ctx.conversation.conversation_id)
-            .await
-            .unwrap_or_default()
-    } else {
-        vec![]
-    };
 
     // The rig-memory store and log this turn keeps its conversation in. A
     // session-less turn persists nothing, so it gets no memory.
@@ -113,6 +126,26 @@ where
         None
     };
 
+    // The conversation the run starts from: the same store the run loads, so
+    // the count is exact. Recovery anchors the turn's delta on the prompt, so
+    // the count's only role is the skip guard: a log whose length moved since
+    // the turn started is left alone.
+    let pre_turn_messages: Vec<Message> = match &rig_memory {
+        Some((store, log)) => match rig_memory::load(&**store, log) {
+            Ok(conversation) => conversation
+                .messages()
+                .iter()
+                .map(|message| (**message).clone())
+                .collect(),
+            Err(error) => {
+                log::warn!("Failed to load the session's pre-turn messages: {error}");
+                vec![]
+            }
+        },
+        None => vec![],
+    };
+    let pre_turn_message_count = pre_turn_messages.len();
+
     // Build the hook using HookChain<P> — no HookDriver needed.
     // Cancellation is driven through the shared bus's cancel channel.
     let bus = ctx.tool_infra.bus.clone();
@@ -126,7 +159,10 @@ where
         .clone();
 
     let hook = HookChain::new(
-        bus.clone(),
+        HookEnv {
+            bus: bus.clone(),
+            cwd: ctx.tool_infra.cwd.clone(),
+        },
         permission_resolver,
         ctx.tool_infra.closure_registry.clone(),
         ctx.tool_infra.mcp_registry.clone(),
@@ -148,6 +184,10 @@ where
     // Clone the Arc BEFORE hook moves into config so we can read history after a
     // ProviderError (when rig does not provide chat_history in TurnError::messages).
     let last_known_history_arc = hook.last_known_history();
+    // Clone the tool-log Arc for the same reason: the hook moves into the agent
+    // builder, and a stop drops the in-flight batch from rig's history, so the
+    // records are the only trace of those calls after the turn.
+    let turn_tools_arc = hook.turn_tools();
 
     // Build the prompt message
     let user_message = Message::User {
@@ -176,6 +216,8 @@ where
             .or(ctx.config.max_output_tokens)
             .map(|t| t as u64),
         model: format!("{}/{}", ctx.config.provider, ctx.config.model),
+        pre_turn_message_count,
+        cancel_grace: ctx.cancel_grace,
     };
 
     let prompt_future = Box::pin(build_agent_and_stream(config));
@@ -227,23 +269,27 @@ where
             msg: format!("Agent task panicked: {e}"),
             kind: executor::CompletionErrorKind::Unknown,
         };
-        let ctx = error::TurnContext {
+        let ctx = Box::new(error::TurnContext {
             last_known_history: last_known_history_arc
                 .lock()
                 .expect("mutex poisoned")
                 .clone(),
-        };
+            pre_turn_message_count,
+            tool_records: turn_tools_arc.records(),
+        });
         (err, ctx)
     })?;
 
     let response = join_result.map_err(|e| {
         let err = TurnError::from(*e);
-        let ctx = error::TurnContext {
+        let ctx = Box::new(error::TurnContext {
             last_known_history: last_known_history_arc
                 .lock()
                 .expect("mutex poisoned")
                 .clone(),
-        };
+            pre_turn_message_count,
+            tool_records: turn_tools_arc.records(),
+        });
         (err, ctx)
     })?;
 
@@ -263,6 +309,9 @@ where
         cancel_reason: response.cancel_reason,
         last_total_tokens: response.last_total_tokens,
         last_known_history: last_known_history_arc.lock().unwrap().clone(),
+        pre_turn_message_count: response.pre_turn_message_count,
+        tool_records: turn_tools_arc.records(),
+        streamed_tool_calls: response.streamed_tool_calls,
     })
 }
 
@@ -289,6 +338,11 @@ struct AgentPromptConfig<P: AsyncPermissionResolver> {
     /// The model this turn runs, `vendor/model`, saved as the session's
     /// `rig::model` state record once the run persists.
     model: String,
+    /// Number of messages the session's rig log held when the turn started.
+    pre_turn_message_count: usize,
+    /// How long the stream loop keeps draining after a bus cancel signal.
+    /// Production passes [`CANCEL_GRACE`]; tests pass a short bound.
+    cancel_grace: Duration,
 }
 
 /// Result from streaming agent execution
@@ -303,10 +357,15 @@ struct StreamingTurnResult {
     cancel_reason: Option<String>,
     /// Number of complete tool calls seen in the stream
     tool_call_count: usize,
+    /// The calls the model committed this turn, in commit order, as the
+    /// stream's `ToolCall` projection carried them.
+    streamed_tool_calls: Vec<ToolCall>,
     /// Whether any text deltas were emitted (i.e. streaming was active)
     deltas_emitted: bool,
     /// Total tokens from the most recent CompletionCall event
     last_total_tokens: u64,
+    /// Number of messages the session's rig log held when the turn started.
+    pre_turn_message_count: usize,
 }
 
 /// Build an agent with a hook and execute a multi-turn streaming prompt loop.
@@ -333,6 +392,8 @@ where
         temperature,
         max_tokens,
         model,
+        pre_turn_message_count,
+        cancel_grace,
     } = config;
     // Create proxy tools that expose only the filtered definitions to the LLM
     // while delegating execution to the original shared tool server handle.
@@ -387,26 +448,87 @@ where
         .max_invalid_tool_call_retries(3)
         .stream();
 
+    let result = drive_stream(stream, bus, cancel_grace, pre_turn_message_count).await?;
+
+    // rig saved the conversation at run end. Write the host-owned state records
+    // and refresh the listing, so `SavedAgent::model()`/`title()` and the session
+    // list see this turn. A cancelled turn saves nothing, so it writes nothing.
+    if !result.cancelled
+        && let Some(store) = &state_store
+    {
+        let title = result
+            .messages
+            .as_deref()
+            .and_then(crate::session::rig_state::title_of_messages);
+        if let Err(error) =
+            crate::session::rig_state::write_state_records(&**store, &model, title.as_deref())
+        {
+            log::warn!("Failed to write session state records: {error}");
+        }
+    }
+
+    Ok(result)
+}
+
+/// Drive the agent's stream to its terminal state.
+///
+/// `cancel_grace` bounds how long the loop keeps draining after the bus cancel
+/// signal: rig answers the in-flight tool batch into the run before it cancels,
+/// so the drain is what keeps the settled tool results in the `Cancelled`
+/// history. A stream that ends on its own inside the window ran to completion,
+/// so the turn reports `cancelled = false`.
+async fn drive_stream<S>(
+    stream: S,
+    bus: Bus,
+    cancel_grace: Duration,
+    pre_turn_message_count: usize,
+) -> Result<StreamingTurnResult, Box<rig::completion::PromptError>>
+where
+    S: futures::Stream<
+            Item = Result<rig::agent::MultiTurnStreamItem, rig::completion::PromptError>,
+        >,
+{
     tokio::pin!(stream);
 
     let mut text = String::new();
     let mut usage = rig::completion::request::Usage::default();
     let mut messages: Option<Vec<Message>> = None;
     let mut tool_call_count: usize = 0;
+    let mut streamed_tool_calls: Vec<ToolCall> = Vec::new();
     let mut last_total_tokens: u64 = 0;
     let mut cancelled = false;
     let mut cancel_reason: Option<String> = None;
     let mut deltas_emitted = false;
     let mut cancel_rx = bus.cancel().subscribe();
+    // Set when the bus cancel signal fires. From then on the loop drains the
+    // stream until rig yields its canonical `Cancelled` history or this
+    // deadline passes: rig answers the in-flight tool batch into the run
+    // before it cancels, so the drain is what keeps the settled results.
+    let mut grace_deadline: Option<tokio::time::Instant> = None;
 
     loop {
-        let item = tokio::select! {
-            biased;
-            item = stream.next() => item,
-            Ok(_) = cancel_rx.recv() => {
-                log::trace!("Stream cancelled via bus cancel channel");
-                cancelled = true;
-                break;
+        let item = match grace_deadline {
+            Some(deadline) => {
+                tokio::select! {
+                    biased;
+                    item = stream.next() => item,
+                    _ = tokio::time::sleep_until(deadline) => {
+                        log::trace!("Cancel grace expired; dropping the stream");
+                        break;
+                    }
+                }
+            }
+            None => {
+                tokio::select! {
+                    biased;
+                    item = stream.next() => item,
+                    Ok(_) = cancel_rx.recv() => {
+                        log::trace!("Stream cancelled via bus cancel channel");
+                        cancelled = true;
+                        grace_deadline = Some(tokio::time::Instant::now() + cancel_grace);
+                        continue;
+                    }
+                }
             }
         };
         match item {
@@ -479,6 +601,15 @@ where
                         .await;
                 }
 
+                // --- COMMITTED TOOL CALL ---
+                // The committed-call projection: history holds this call, so
+                // the model emitted it this turn. Tracked for the cancel
+                // path's reconciliation — a stop can leave a batch's
+                // siblings undispatched, and only the stream names them.
+                rig::agent::MultiTurnStreamItem::ToolCall { tool_call } => {
+                    streamed_tool_calls.push(tool_call);
+                }
+
                 // MultiTurnStreamItem is #[non_exhaustive] — required wildcard arm.
                 // Future rig versions may add new variants; we ignore them here.
                 _ => {}
@@ -501,22 +632,14 @@ where
             }
             None => {
                 log::trace!("Stream completed normally");
+                // A stream that ends on its own during the grace window ran to
+                // completion: rig saved the turn, so the cancel arrived too
+                // late to matter and the turn completes normally.
+                if grace_deadline.is_some() && messages.is_some() {
+                    cancelled = false;
+                }
                 break;
             }
-        }
-    }
-
-    // rig saved the conversation at run end. Write the host-owned state records
-    // and refresh the listing, so `SavedAgent::model()`/`title()` and the session
-    // list see this turn. A cancelled turn saves nothing, so it writes nothing.
-    if !cancelled && let Some(store) = &state_store {
-        let title = messages
-            .as_deref()
-            .and_then(crate::session::rig_state::title_of_messages);
-        if let Err(error) =
-            crate::session::rig_state::write_state_records(&**store, &model, title.as_deref())
-        {
-            log::warn!("Failed to write session state records: {error}");
         }
     }
 
@@ -527,7 +650,17 @@ where
         cancelled,
         cancel_reason,
         tool_call_count,
+        streamed_tool_calls,
         deltas_emitted,
         last_total_tokens,
+        pre_turn_message_count,
     })
 }
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/conversation/turn/execute.rs"]
+mod execute_test;
+
+// endregion: --- Tests

@@ -36,8 +36,9 @@ async fn journey_retry_on_server_error_recovers() -> Result<()> {
     let msgs = h.raw_messages().await?;
     assert_eq!(
         msgs.len(),
-        2,
-        "expect [user, assistant] after successful retry; got {msgs:?}"
+        3,
+        "expect the failed attempt's delta, then [user, assistant] after the successful retry; \
+         got {msgs:?}"
     );
     Ok(())
 }

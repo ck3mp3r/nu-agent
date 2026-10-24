@@ -65,8 +65,9 @@ async fn retry_succeeds_on_second_attempt() -> Result<()> {
     let persisted = load_persisted_messages(&memory_state, session_id).await?;
     assert_eq!(
         persisted.len(),
-        2,
-        "successful retry must save 2 messages (user + assistant); got {}",
+        3,
+        "the failed attempt's delta, then the successful retry's prompt and reply; \
+         got {}",
         persisted.len()
     );
 
@@ -253,6 +254,8 @@ fn retry_not_attempted_when_no_partial_history() {
     // Empty history: has_partial_history guard must be false.
     let ctx_empty = TurnContext {
         last_known_history: vec![],
+        pre_turn_message_count: 0,
+        tool_records: Vec::new(),
     };
     let has_partial_history = !ctx_empty.last_known_history.is_empty();
 
@@ -266,6 +269,8 @@ fn retry_not_attempted_when_no_partial_history() {
     // Confirm the mirror case: non-empty history enables the guard.
     let ctx_non_empty = TurnContext {
         last_known_history: vec![crate::types::Message::user("prompt")],
+        pre_turn_message_count: 0,
+        tool_records: Vec::new(),
     };
     let has_partial_history_non_empty = !ctx_non_empty.last_known_history.is_empty();
     assert!(

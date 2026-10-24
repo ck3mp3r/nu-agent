@@ -28,7 +28,7 @@ impl ItemStatus {
             ItemStatus::Done => "✓",
             ItemStatus::Failed => "✕",
             ItemStatus::Queued => "•",
-            ItemStatus::Cancelled => "✕",
+            ItemStatus::Cancelled => "⊘",
             ItemStatus::Unknown => "?",
         }
     }

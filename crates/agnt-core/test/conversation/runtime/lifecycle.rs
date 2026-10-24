@@ -27,7 +27,7 @@ async fn seed_session(
 }
 
 #[tokio::test]
-async fn clear_session_empties_memory_and_token_tracking() -> Result<()> {
+async fn clear_session_resets_token_tracking_and_keeps_the_store() -> Result<()> {
     // -- Setup & Fixtures
     let mut fixture = make_runtime(text_model("unused"))?;
     let session_id = fixture
@@ -35,10 +35,12 @@ async fn clear_session_empties_memory_and_token_tracking() -> Result<()> {
         .final_session_id
         .clone()
         .ok_or("fixture must carry a session id")?;
-    fixture.runtime.session.memory_mut().reset_context(
-        session_id.as_str(),
-        vec![crate::types::Message::user("hello")],
-    );
+    seed_session(
+        &fixture,
+        &session_id,
+        &[crate::types::Message::user("hello")],
+    )
+    .await?;
     fixture.runtime.session.last_total_tokens_mut().replace(99);
 
     // -- Exec
@@ -50,14 +52,17 @@ async fn clear_session_empties_memory_and_token_tracking() -> Result<()> {
         None,
         "clearing a session must reset the token counter"
     );
-    assert!(
-        fixture
-            .runtime
-            .session
-            .inner_memory()
-            .cached_messages(&session_id)
-            .is_none(),
-        "clearing a session must drop the in-memory cache entry"
+    let store = fixture
+        .runtime
+        .session
+        .inner_memory()
+        .rig_store(&session_id)
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let stored = rig_memory::load(&*store, &session_id)?;
+    assert_eq!(
+        stored.messages().len(),
+        1,
+        "clearing a session must not touch the append-only store"
     );
     Ok(())
 }

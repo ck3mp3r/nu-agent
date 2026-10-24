@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::protocol::event::ToolDisplay;
+use crate::session::repair::is_did_not_run_result;
 use crate::session::{RigStoreConfig, Session};
 use crate::types::{AssistantContent, CallId, Message, ToolResultContent, UserContent};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::tools::handler::builtin_kinds::BuiltinKind;
-use crate::tools::handler::pre_authorize_fs_tool;
+use crate::tools::handler::tool_display_from_arguments;
 use crate::tools::handler::tool_display_from_result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,10 +186,7 @@ pub fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> Ses
 ///
 /// # Returns
 /// Iterator of UiMessageSnapshot ready for transcript hydration
-pub(crate) fn hydrate_transcript_messages(
-    messages: &[Message],
-    cwd: &Path,
-) -> Vec<UiMessageSnapshot> {
+pub fn hydrate_transcript_messages(messages: &[Message], cwd: &Path) -> Vec<UiMessageSnapshot> {
     // Pass 1: collect call_id → tool_name and call_id → arguments from all
     //         ToolCalls, and call_id → success from all ToolResults. Success
     //         is the inverse of the persisted `ToolResult::is_error` flag.
@@ -223,8 +220,11 @@ pub(crate) fn hydrate_transcript_messages(
     }
     // Pass 1b: derive each result's display. A result whose call id has no
     //          matching ToolCall yields no display — the same guard the
-    //          ToolResult branch used to apply.
+    //          ToolResult branch used to apply. A not-run row is classified
+    //          here: it carries the ⊘ mark and the args preview of what would
+    //          have run, the same preview the live permission gate shows.
     let mut tool_displays: HashMap<CallId, ToolDisplay> = HashMap::new();
+    let mut tool_not_run: HashSet<CallId> = HashSet::new();
     for message in messages {
         let Message::User { content } = message else {
             continue;
@@ -245,6 +245,16 @@ pub(crate) fn hydrate_transcript_messages(
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+            if is_did_not_run_result(&result_text) {
+                tool_not_run.insert(tr.call.clone());
+                if let Some(display) = tool_arguments
+                    .get(&tr.call)
+                    .and_then(|args_json| tool_display_from_arguments(tool_name, args_json, cwd))
+                {
+                    tool_displays.insert(tr.call.clone(), display);
+                }
+                continue;
+            }
             let Ok(json) = serde_json::from_str::<serde_json::Value>(&result_text) else {
                 continue;
             };
@@ -266,7 +276,9 @@ pub(crate) fn hydrate_transcript_messages(
     // Pass 2: generate snapshots with tool display reconstruction
     messages
         .iter()
-        .flat_map(|message| hydrate_single_message(message, &tool_success_map, &tool_displays))
+        .flat_map(|message| {
+            hydrate_single_message(message, &tool_success_map, &tool_displays, &tool_not_run)
+        })
         .collect()
 }
 
@@ -283,6 +295,7 @@ pub(crate) fn hydrate_single_message(
     msg: &Message,
     tool_success_map: &HashMap<CallId, bool>,
     tool_displays: &HashMap<CallId, ToolDisplay>,
+    tool_not_run: &HashSet<CallId>,
 ) -> Vec<UiMessageSnapshot> {
     let mut snapshots = Vec::new();
 
@@ -311,15 +324,17 @@ pub(crate) fn hydrate_single_message(
 
                         let display_content = format!("→ {args_summary}");
 
-                        snapshots.push(
-                            UiMessageSnapshot::new("tool", display_content)
-                                .with_tool_name(tool_call.function.name.to_string())
-                                .with_tool_details(
-                                    Some(args_json),
-                                    None,
-                                    tool_success_map.get(&tool_call.id).copied(),
-                                ),
-                        );
+                        let mut snapshot = UiMessageSnapshot::new("tool", display_content)
+                            .with_tool_name(tool_call.function.name.to_string())
+                            .with_tool_details(
+                                Some(args_json),
+                                None,
+                                tool_success_map.get(&tool_call.id).copied(),
+                            );
+                        if tool_not_run.contains(&tool_call.id) {
+                            snapshot = snapshot.with_tool_not_run();
+                        }
+                        snapshots.push(snapshot);
                         // The display snapshot follows its own call's snapshot,
                         // so the TUI docks it under this header rather than
                         // under the last Tool block of the turn.
@@ -340,19 +355,4 @@ pub(crate) fn hydrate_single_message(
     }
 
     snapshots
-}
-
-/// Reconstruct the argument-sourced preview for a tool call whose result
-/// carries no display. Mirrors the live permission-gate path: parse the tool
-/// name into a `BuiltinKind`, then ask `pre_authorize_fs_tool` for the
-/// preview. Returns `None` for unparseable arguments, unknown tool names,
-/// and non-Previewable tools — the caller then emits no display snapshot.
-fn tool_display_from_arguments(
-    tool_name: &str,
-    arguments_json: &str,
-    cwd: &Path,
-) -> Option<ToolDisplay> {
-    let arguments: serde_json::Value = serde_json::from_str(arguments_json).ok()?;
-    let kind = tool_name.parse::<BuiltinKind>().ok();
-    pre_authorize_fs_tool(kind, arguments.as_object()?, cwd).and_then(|output| output.display)
 }

@@ -17,9 +17,17 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 pub(super) fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnapshot> {
     let tool_success_map = std::collections::HashMap::new();
     let tool_displays = std::collections::HashMap::new();
+    let tool_not_run = std::collections::HashSet::new();
     messages
         .iter()
-        .flat_map(|m| super::resolver::hydrate_single_message(m, &tool_success_map, &tool_displays))
+        .flat_map(|m| {
+            super::resolver::hydrate_single_message(
+                m,
+                &tool_success_map,
+                &tool_displays,
+                &tool_not_run,
+            )
+        })
         .collect()
 }
 

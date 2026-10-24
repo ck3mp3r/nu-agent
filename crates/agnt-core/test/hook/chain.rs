@@ -5,11 +5,17 @@
 
 // region:    --- Modules
 
+#[path = "chain/cancel_dispatch.rs"]
+mod cancel_dispatch;
+
 #[path = "chain/compaction.rs"]
 mod compaction;
 
 #[path = "chain/cost.rs"]
 mod cost;
+
+#[path = "chain/deny_dispatch.rs"]
+mod deny_dispatch;
 
 #[path = "chain/output_repetition.rs"]
 mod output_repetition;
@@ -19,6 +25,9 @@ mod permission_display;
 
 #[path = "chain/support.rs"]
 mod support;
+
+#[path = "chain/turn_tools.rs"]
+mod turn_tools;
 
 // endregion: --- Modules
 

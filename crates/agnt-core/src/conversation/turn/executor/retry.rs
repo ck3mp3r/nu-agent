@@ -7,8 +7,10 @@
 //! post-loop dispatch.
 //!
 //! Steering rides the retry prompt: a steering message is prepended to the next
-//! attempt's prompt and nothing is persisted, so a session and a session-less
-//! turn steer alike.
+//! attempt's prompt. Every retry builds a fresh agent that loads the session
+//! store, so each retry arm persists the failed attempt's delta first — the
+//! next attempt then sees the work the previous attempt committed. A
+//! session-less turn persists nothing and steers the same way.
 
 use std::sync::Arc;
 
@@ -22,6 +24,7 @@ use crate::hook::output_repetition::{
 };
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 
+use super::TurnRecovery;
 use super::core::TurnExecutor;
 use super::error_kind::CompletionErrorKind;
 use super::response::extract_retry_after_ms;
@@ -46,7 +49,7 @@ where
         saved_tool_definitions: Vec<crate::types::ToolDefinition>,
         final_session_id: Option<&str>,
         permission_resolver: P,
-    ) -> Result<TurnResult, (TurnError, error::TurnContext)> {
+    ) -> Result<TurnResult, (TurnError, Box<error::TurnContext>)> {
         let mut attempt = 0u8;
         // Per-turn feedback budget for model-correctable provider failures,
         // independent of the backoff `attempt` counter: feedback retries never
@@ -64,8 +67,10 @@ where
         // Independent of the other retry counters.
         let mut rep_stop_retries = 0u8;
         // Steering carrier: the steering message for the next attempt, prepended
-        // to the retry prompt. Steering is transient prompt content — nothing is
-        // persisted, so a session and a session-less turn steer alike.
+        // to the retry prompt. The host never appends the steering as its own
+        // persist act — the steering rides the prompt; a steered attempt's
+        // delta/save carries it only when rig commits it into the reported
+        // history.
         let mut steering: Option<String> = None;
         // Per-attempt Config override for the OutputBudget max_tokens auto-raise.
         // When set, this clone (with a raised max_tokens) is used for the next
@@ -121,6 +126,7 @@ where
                     last_total_tokens: self.tool_infra.last_total_tokens.clone(),
                     bus: self.tool_infra.bus.clone(),
                     render_registry: self.tool_infra.render_registry.clone(),
+                    cwd: self.tool_infra.cwd.clone(),
                 },
                 attempt_cfg.unwrap_or(self.config),
             );
@@ -213,6 +219,21 @@ where
                             // config, not the inherited raised max_tokens.
                             attempt_config = None;
                         }
+                        // The retry builds a fresh agent that loads the session
+                        // store, so the failed attempt's delta is persisted first:
+                        // the next attempt sees the work this one committed.
+                        self.persist_turn_delta(
+                            final_session_id,
+                            &prompt,
+                            &ctx.last_known_history,
+                            ctx.pre_turn_message_count,
+                            "[interrupted — turn stopped before responding]",
+                            TurnRecovery {
+                                tool_records: &ctx.tool_records,
+                                streamed_text: None,
+                            },
+                        )
+                        .await;
                         steering = Some(feedback);
                         continue;
                     }
@@ -240,6 +261,20 @@ where
                             self.config.max_retries.unwrap_or(defaults::MAX_RETRIES)
                         );
                         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        // Persist the failed attempt's delta before the retry: the
+                        // next attempt loads the session store and must see it.
+                        self.persist_turn_delta(
+                            final_session_id,
+                            &prompt,
+                            &ctx.last_known_history,
+                            ctx.pre_turn_message_count,
+                            "[interrupted — turn stopped before responding]",
+                            TurnRecovery {
+                                tool_records: &ctx.tool_records,
+                                streamed_text: None,
+                            },
+                        )
+                        .await;
                         continue;
                     }
                     // Exhausted retries — wrap the error with attempt count
@@ -251,9 +286,11 @@ where
                                 msg: retry_msg,
                                 kind: kind.clone(),
                             },
-                            error::TurnContext {
+                            Box::new(error::TurnContext {
                                 last_known_history: ctx.last_known_history.clone(),
-                            },
+                                pre_turn_message_count: ctx.pre_turn_message_count,
+                                tool_records: ctx.tool_records.clone(),
+                            }),
                         ));
                     }
                     // Steering exhausted: the model-correctable error failed
@@ -272,9 +309,11 @@ where
                                 msg: exhausted_msg,
                                 kind: kind.clone(),
                             },
-                            error::TurnContext {
+                            Box::new(error::TurnContext {
                                 last_known_history: ctx.last_known_history.clone(),
-                            },
+                                pre_turn_message_count: ctx.pre_turn_message_count,
+                                tool_records: ctx.tool_records.clone(),
+                            }),
                         ));
                     }
                     break result;
@@ -290,15 +329,27 @@ where
                     // Steering retry: exhaustion is a steering opportunity, not a
                     // hard stop. Prepend the model-facing steering message and
                     // re-run the turn with a fresh tool-call budget, capped per
-                    // turn by MAX_TURNS_FEEDBACK_RETRIES. Nothing is persisted:
-                    // rig saves only a successful run, and a session-less turn
-                    // steers the same way.
+                    // turn by MAX_TURNS_FEEDBACK_RETRIES. The exhausted attempt's
+                    // delta is persisted first, so the retry's fresh agent loads
+                    // the tool exchanges this attempt committed.
                     if max_turns_feedback_retries < defaults::MAX_TURNS_FEEDBACK_RETRIES {
                         max_turns_feedback_retries += 1;
                         log::warn!(
                             "Max turns exceeded, steering retry {max_turns_feedback_retries}/{}.",
                             defaults::MAX_TURNS_FEEDBACK_RETRIES
                         );
+                        self.persist_turn_delta(
+                            final_session_id,
+                            &prompt,
+                            messages,
+                            ctx.pre_turn_message_count,
+                            "[interrupted — turn stopped before responding]",
+                            TurnRecovery {
+                                tool_records: &ctx.tool_records,
+                                streamed_text: None,
+                            },
+                        )
+                        .await;
                         steering = Some(build_max_turns_feedback_message(*max_turns));
                         continue;
                     }
@@ -311,9 +362,11 @@ where
                             max_turns: *max_turns,
                             messages: messages.clone(),
                         },
-                        error::TurnContext {
+                        Box::new(error::TurnContext {
                             last_known_history: ctx.last_known_history.clone(),
-                        },
+                            pre_turn_message_count: ctx.pre_turn_message_count,
+                            tool_records: ctx.tool_records.clone(),
+                        }),
                     ));
                 }
                 Ok(turn_result)
@@ -349,6 +402,25 @@ where
                             .lock()
                             .expect("output repetition mutex poisoned")
                             .reset_ladder();
+                        // The stopped attempt's delta is persisted before the retry:
+                        // the retry's fresh agent loads the session store and must
+                        // see the work this attempt committed.
+                        let history = turn_result
+                            .messages
+                            .as_deref()
+                            .unwrap_or(turn_result.last_known_history.as_slice());
+                        self.persist_turn_delta(
+                            final_session_id,
+                            &prompt,
+                            history,
+                            turn_result.pre_turn_message_count,
+                            "[interrupted — turn stopped before responding]",
+                            TurnRecovery {
+                                tool_records: &turn_result.tool_records,
+                                streamed_text: None,
+                            },
+                        )
+                        .await;
                         continue;
                     }
                     break result;

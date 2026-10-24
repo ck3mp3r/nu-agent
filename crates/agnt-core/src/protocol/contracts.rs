@@ -37,6 +37,7 @@ pub struct UiMessageSnapshot {
     tool_arguments: Option<String>,
     tool_result: Option<String>,
     tool_success: Option<bool>,
+    tool_not_run: bool,
     tool_display: Option<ToolDisplay>,
     pub usage: Option<UiMessageUsageSnapshot>,
 }
@@ -57,6 +58,7 @@ impl UiMessageSnapshot {
             tool_arguments: None,
             tool_result: None,
             tool_success: None,
+            tool_not_run: false,
             tool_display: None,
             usage: None,
         }
@@ -76,6 +78,13 @@ impl UiMessageSnapshot {
 
     pub fn with_tool_name(mut self, name: String) -> Self {
         self.tool_name = Some(name);
+        self
+    }
+
+    /// Mark the snapshot as a call the turn never ran: the transcript renders
+    /// the ⊘ status and the reason block under the tool block.
+    pub fn with_tool_not_run(mut self) -> Self {
+        self.tool_not_run = true;
         self
     }
 
@@ -102,6 +111,12 @@ impl UiMessageSnapshot {
 
     pub fn tool_success(&self) -> Option<bool> {
         self.tool_success
+    }
+
+    /// Whether the row is a call the turn never ran (⊘), rather than a settled
+    /// success or failure.
+    pub fn tool_not_run(&self) -> bool {
+        self.tool_not_run
     }
 
     pub fn take_tool_display(&mut self) -> Option<ToolDisplay> {

@@ -145,9 +145,10 @@ async fn execute_turn_surfaces_a_provider_failure() -> Result<()> {
         "the error must be user-facing; got: {error}"
     );
     let messages = persisted_messages(&fixture, &session_id).await?;
-    assert!(
-        messages.is_empty(),
-        "a failed turn saves nothing; got: {messages:?}"
+    assert_eq!(
+        messages.len(),
+        1,
+        "a failed turn persists the prompt it never answered; got: {messages:?}"
     );
     Ok(())
 }
