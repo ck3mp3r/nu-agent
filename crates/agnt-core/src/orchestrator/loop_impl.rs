@@ -552,17 +552,34 @@ where
                 let context_id = agnt_a2a::resolve_context_id(incoming.context_id.take());
                 incoming.context_id = Some(context_id.clone());
                 let prompt = incoming.to_prompt();
-                // The router attaches the session and enqueues the prompt on the
-                // UI bus; the loop pairs this task id with the resulting
-                // `PromptSubmitted` so the turn is attributed to this task.
-                *ctx.pending_a2a_task_id = Some(incoming.task_id);
-                let _ = ctx
-                    .worker_tx
-                    .send(WorkerCommand::AttachA2aContext {
-                        context_id,
-                        prompt,
-                    })
-                    .await;
+                // The worker command channel is bounded. Awaiting capacity here
+                // would park the loop — and with it the TUI event channel —
+                // whenever the worker is saturated. Compaction leaves
+                // `worker_active` false while the worker is busy, so this arm is
+                // reached with a full channel and the awaited send froze input
+                // until compaction ended. Reject the task instead so its caller
+                // reaches a terminal state.
+                match ctx.worker_tx.try_send(WorkerCommand::AttachA2aContext {
+                    context_id,
+                    prompt,
+                }) {
+                    Ok(()) => {
+                        // The router attaches the session and enqueues the prompt
+                        // on the UI bus; the loop pairs this task id with the
+                        // resulting `PromptSubmitted` so the turn is attributed
+                        // to this task.
+                        *ctx.pending_a2a_task_id = Some(incoming.task_id);
+                    }
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        reject_busy_task(&incoming.task_id, ctx);
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        log::warn!(
+                            "worker channel closed; dropping A2A task {}",
+                            incoming.task_id
+                        );
+                    }
+                }
             }
 
             event = recv_or_pending(&mut a2a_completion_rx_opt) => {

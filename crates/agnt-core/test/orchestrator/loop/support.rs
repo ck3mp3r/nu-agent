@@ -65,17 +65,31 @@ impl SlashHandler for MockSlash {
 
 pub(super) struct MockPermission {
     pub(super) handle_calls: usize,
+    pub(super) trace: Trace,
 }
 
 impl MockPermission {
     pub(super) fn new() -> Self {
-        Self { handle_calls: 0 }
+        Self {
+            handle_calls: 0,
+            trace: Trace::default(),
+        }
+    }
+
+    pub(super) fn with_trace(trace: Trace) -> Self {
+        Self {
+            handle_calls: 0,
+            trace,
+        }
     }
 }
 
 impl PermissionHandler for MockPermission {
     fn handle(&mut self, _decision: PermissionDecisionSubmission, _ctx: &mut OrchestrationContext) {
         self.handle_calls += 1;
+        if let Ok(mut trace) = self.trace.lock() {
+            trace.push("permission".to_string());
+        }
     }
 }
 
@@ -183,6 +197,10 @@ pub(crate) struct CtxState {
     pub(crate) task_store: Option<std::sync::Arc<InMemoryTaskStore>>,
 }
 
+/// Capacity of the worker command channel the harness builds. A test that
+/// saturates the channel fills it to exactly this many commands.
+pub(crate) const WORKER_CMD_CAPACITY: usize = 256;
+
 pub(crate) struct HarnessParts<'a> {
     pub(crate) event_tx: &'a mpsc::Sender<OrchestratorEvent>,
     pub(crate) event_rx: &'a mut mpsc::Receiver<OrchestratorEvent>,
@@ -222,7 +240,7 @@ pub(crate) struct Harness {
 impl Harness {
     pub(crate) fn new() -> Self {
         let (event_tx, event_rx) = mpsc::channel::<OrchestratorEvent>(256);
-        let (worker_tx, worker_rx) = mpsc::channel::<WorkerCommand>(256);
+        let (worker_tx, worker_rx) = mpsc::channel::<WorkerCommand>(WORKER_CMD_CAPACITY);
         let (worker_result_tx, worker_result_rx) = mpsc::channel::<TurnOutcome>(256);
         let (blocking_tx, blocking_response_rx) = mpsc::channel::<UiRequestResponse>(256);
         let (concurrent_tx, concurrent_response_rx) = mpsc::channel::<UiRequestResponse>(256);

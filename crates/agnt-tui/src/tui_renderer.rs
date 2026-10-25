@@ -7,8 +7,8 @@ use crate::rendering::theme::{TuiTheme, diff_tint_to_bg, hint_to_style};
 use agnt_core::transcript::ir::{Block, ContentLine, Lane};
 use agnt_core::transcript::renderer::{FrameContext, ItemStatus};
 
-pub struct TuiRenderer {
-    pub theme: TuiTheme,
+pub struct TuiRenderer<'a> {
+    pub theme: &'a TuiTheme,
 }
 
 pub fn lane_prefix_width() -> usize {
@@ -34,9 +34,7 @@ pub(crate) fn wrap_prose(text: &str, width: usize) -> Vec<std::borrow::Cow<'_, s
 /// indicator, and the fill (Full → user bg on content rows, Code → margin
 /// rows + surface0 bg, None → nothing). Pure: same inputs, same outputs.
 pub fn layout(block: &Block, ctx: &FrameContext, theme: &TuiTheme) -> Vec<Line<'static>> {
-    let renderer = TuiRenderer {
-        theme: theme.clone(),
-    };
+    let renderer = TuiRenderer { theme };
     renderer.render_block(block, ctx)
 }
 
@@ -47,13 +45,11 @@ pub fn layout(block: &Block, ctx: &FrameContext, theme: &TuiTheme) -> Vec<Line<'
 /// for scroll math; must stay in lockstep with [`TuiRenderer::render_block`]
 /// by construction.
 pub fn measure(block: &Block, width: usize, theme: &TuiTheme) -> usize {
-    let renderer = TuiRenderer {
-        theme: theme.clone(),
-    };
+    let renderer = TuiRenderer { theme };
     renderer.measure_block(block, width)
 }
 
-impl TuiRenderer {
+impl TuiRenderer<'_> {
     /// Row-count mirror of [`TuiRenderer::render_block`]: projects the same
     /// source, wraps each ContentLine at the same wrap budget (status-indicator
     /// shrink included — the indicator sits on row 0 only, so only row 0's
@@ -68,7 +64,7 @@ impl TuiRenderer {
         let has_status = block.status.is_some();
         let wrap_width = crate::state::code_block::content_wrap_width(width, has_status);
 
-        let lane = LaneContext::from(block, &self.theme);
+        let lane = LaneContext::from(block, self.theme);
         let mut content_rows = 0usize;
         for content_line in &content_lines {
             let is_row_zero = content_rows == 0;
@@ -117,7 +113,7 @@ impl TuiRenderer {
         let has_status = block.status.is_some();
         let wrap_width = crate::state::code_block::content_wrap_width(ctx.width, has_status);
 
-        let lane = LaneContext::from(block, &self.theme);
+        let lane = LaneContext::from(block, self.theme);
         let mut result = Vec::new();
 
         for content_line in &content_lines {
@@ -166,7 +162,7 @@ impl TuiRenderer {
                 let row_style = match content_line
                     .diff_tint
                     .as_ref()
-                    .and_then(|tint| diff_tint_to_bg(tint, &self.theme))
+                    .and_then(|tint| diff_tint_to_bg(tint, self.theme))
                 {
                     Some(bg) => row_style.bg(bg),
                     None => row_style,
@@ -240,7 +236,7 @@ impl TuiRenderer {
         let text_width = wrap_width - hang_indent;
 
         if spans.len() == 1 {
-            let style = hint_to_style(&spans[0].hint, lane.role_style, &self.theme);
+            let style = hint_to_style(&spans[0].hint, lane.role_style, self.theme);
             return wrap_prose(&spans[0].text, text_width)
                 .iter()
                 .enumerate()
@@ -313,7 +309,7 @@ impl TuiRenderer {
             let text = &span.text[from - span_start..to - span_start];
             result.push(RatatuiSpan::styled(
                 text.to_string(),
-                hint_to_style(&span.hint, lane.role_style, &self.theme),
+                hint_to_style(&span.hint, lane.role_style, self.theme),
             ));
         }
         result

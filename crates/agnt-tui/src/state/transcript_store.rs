@@ -29,8 +29,10 @@ struct HeightEntry {
 }
 
 /// Cumulative row offsets over the block list, for O(log n) viewport-window
-/// queries. Rebuilt wholesale from `measure(block, width)` — no incremental
-/// bookkeeping to keep in lockstep with pushes.
+/// queries. Maintained incrementally: `content_rows` caches each block's
+/// measured row count at the indexed width, and [`HeightIndex::derive`] walks
+/// the block list through the separator state machine to refresh the offsets.
+/// A mutation measures only the block it touches — never the whole list.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct HeightIndex {
     /// Cumulative start row for block i is `starts[i]`; block i spans
@@ -38,10 +40,32 @@ pub(crate) struct HeightIndex {
     starts: Vec<usize>,
     entries: Vec<HeightEntry>,
     total_rows: usize,
+    /// Per-block content rows at the indexed width, parallel to the block
+    /// list. Holds `measure(block, width)` only — separator rows depend on the
+    /// neighbour pair, so [`HeightIndex::derive`] re-applies them on every
+    /// walk.
+    content_rows: Vec<usize>,
 }
 
 impl HeightIndex {
-    /// Rebuild the index by measuring every block at `width`.
+    /// Wholesale rebuild: measure every block at `width`, then derive the
+    /// offsets from the fresh cache. One theme serves the whole walk.
+    fn rebuild(blocks: &[Block], width: usize) -> Self {
+        let theme = TuiTheme::default();
+        let mut index = Self {
+            content_rows: blocks
+                .iter()
+                .map(|block| crate::tui_renderer::measure(block, width, &theme))
+                .collect(),
+            ..Self::default()
+        };
+        index.derive(blocks);
+        index
+    }
+
+    /// Refresh `starts`, `entries`, and `total_rows` from the cached content
+    /// rows by walking the block list through the separator state machine.
+    /// O(n) enum-match walk — no markdown projection, no measurement.
     ///
     /// Separator rows are a rendering concern (see
     /// [`crate::state::spacer::SpacerStateMachine`]); the store holds content
@@ -52,26 +76,19 @@ impl HeightIndex {
     /// loop's emission order. After the last block, the trailing separator rows
     /// (a user turn closes with one) are added to `total_rows` so the total
     /// still matches the rendered output (task 670e0292).
-    fn rebuild(blocks: &[Block], width: usize) -> Self {
-        let mut starts = Vec::with_capacity(blocks.len());
-        let mut entries = Vec::with_capacity(blocks.len());
-        let mut total = 0usize;
+    fn derive(&mut self, blocks: &[Block]) {
+        self.starts.clear();
+        self.entries.clear();
+        self.total_rows = 0;
         let mut sm = crate::state::spacer::SpacerStateMachine::default();
-        for block in blocks {
-            starts.push(total);
+        for (block, &content_rows) in blocks.iter().zip(&self.content_rows) {
+            self.starts.push(self.total_rows);
             let separators = sm.separators_for(block.source.family(), block.has_filled_content());
-            let rows =
-                separators + crate::tui_renderer::measure(block, width, &TuiTheme::default());
-            entries.push(HeightEntry { rows });
-            total += rows;
+            let rows = separators + content_rows;
+            self.entries.push(HeightEntry { rows });
+            self.total_rows += rows;
         }
-        // Trailing separator rows after the final block (task 670e0292).
-        total += sm.trailing_separators();
-        Self {
-            starts,
-            entries,
-            total_rows: total,
-        }
+        self.total_rows += sm.trailing_separators();
     }
 
     /// Binary-search the block index range covering visual rows
@@ -95,8 +112,9 @@ impl HeightIndex {
     }
 }
 
-/// Transcript block storage shared by every domain reducer. Every push marks
-/// the height index dirty; eviction shifts the streaming cursors.
+/// Transcript block storage shared by every domain reducer. Every mutation
+/// keeps the height index in lockstep (measuring only the block it touches);
+/// eviction shifts the streaming cursors.
 #[derive(Debug, Clone, Default)]
 pub struct TranscriptStore {
     pub(crate) blocks: Vec<Block>,
@@ -115,7 +133,7 @@ impl TranscriptStore {
     /// `block_index` bookkeeping by that amount.
     pub fn push_block(&mut self, block: Block) -> usize {
         self.blocks.push(block);
-        self.height_index_width = None;
+        self.cache_pushed_block();
         self.enforce_transcript_cap()
     }
 
@@ -128,8 +146,39 @@ impl TranscriptStore {
     pub fn insert_block_at(&mut self, index: usize, block: Block) -> usize {
         let index = index.min(self.blocks.len());
         self.blocks.insert(index, block);
-        self.height_index_width = None;
+        self.cache_inserted_block(index);
         self.enforce_transcript_cap()
+    }
+
+    /// Measure the block just pushed and append its content rows to the cache,
+    /// then re-derive the offsets. No-op when the index is stale — the next
+    /// `rebuild_height_index` re-measures everything.
+    fn cache_pushed_block(&mut self) {
+        let Some(width) = self.height_index_width else {
+            return;
+        };
+        let Some(block) = self.blocks.last() else {
+            return;
+        };
+        let rows = crate::tui_renderer::measure(block, width, &TuiTheme::default());
+        self.height_index.content_rows.push(rows);
+        self.height_index.derive(&self.blocks);
+    }
+
+    /// Measure the block just inserted at `index` and splice its content rows
+    /// into the cache, then re-derive the offsets. No-op when the index is
+    /// stale.
+    fn cache_inserted_block(&mut self, index: usize) {
+        let Some(width) = self.height_index_width else {
+            return;
+        };
+        let Some(block) = self.blocks.get(index) else {
+            return;
+        };
+        let rows = crate::tui_renderer::measure(block, width, &TuiTheme::default());
+        let index = index.min(self.height_index.content_rows.len());
+        self.height_index.content_rows.insert(index, rows);
+        self.height_index.derive(&self.blocks);
     }
 
     /// Rebuild the height index from `measure(block, width)` for every block.
@@ -174,7 +223,11 @@ impl TranscriptStore {
         if overflow > 0 {
             self.blocks.drain(..overflow);
             self.shift_indices_after_eviction(overflow);
-            self.height_index_width = None;
+            if self.height_index_width.is_some() {
+                let drained = overflow.min(self.height_index.content_rows.len());
+                self.height_index.content_rows.drain(..drained);
+                self.height_index.derive(&self.blocks);
+            }
         }
         overflow
     }
@@ -223,7 +276,10 @@ impl TranscriptStore {
 
     pub(crate) fn truncate(&mut self, len: usize) {
         self.blocks.truncate(len);
-        self.height_index_width = None;
+        if self.height_index_width.is_some() {
+            self.height_index.content_rows.truncate(len);
+            self.height_index.derive(&self.blocks);
+        }
     }
 
     // endregion: --- Accessors

@@ -15,6 +15,7 @@ mod input_cursor;
 mod input_events;
 mod lane_2;
 mod mcp_panel;
+mod permission_lock;
 mod pickers;
 mod render_animation;
 mod render_misc;
@@ -66,8 +67,8 @@ use crate::{
         status_panel_lines,
     },
     state::{
-        ActivePicker, AppState, InputMode, InputState, McpServerUsabilityState, PickerOption,
-        PickerPayload, PickerRenderKind, PromptStatus, TranscriptRole, UiPhase,
+        ActivePicker, AppState, InputMode, InputState, McpServerUsabilityState, PermissionPrompt,
+        PickerOption, PickerPayload, PickerRenderKind, PromptStatus, TranscriptRole, UiPhase,
     },
 };
 use agnt_core::orchestrator::{OrchestratorEvent, UiStateEvent};

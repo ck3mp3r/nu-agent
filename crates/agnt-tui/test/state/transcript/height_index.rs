@@ -69,3 +69,118 @@ fn height_index_totals_windows_and_matches_layout() -> Result<()> {
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Height index — incremental maintenance (task 7c4704ca)
+// ---------------------------------------------------------------------------
+
+/// Every mutation of the block list keeps the index valid at the indexed width
+/// and its total equal to a wholesale rebuild of the same blocks. The store
+/// maintains a per-block content-row cache instead of invalidating the index on
+/// every push, so a streamed delta no longer forces a full re-measure.
+#[test]
+fn height_index_incremental_matches_wholesale_rebuild() -> Result<()> {
+    // -- Setup & Fixtures
+    let width = 60;
+    let mut state = AppState::default();
+    push_user(&mut state, "first user turn");
+    push_assistant(&mut state, "assistant reply");
+    state.transcript.rebuild_height_index(width);
+
+    // -- Exec & Check: a markdown push.
+    push_assistant(&mut state, "streamed delta one");
+    assert_incremental_matches(&state, width, "after a markdown push")?;
+
+    // -- Exec & Check: a pre-projected ToolDisplay push (code fill, so the
+    // block carries margin rows).
+    state.transcript.push_block(tool_display_block());
+    assert_incremental_matches(&state, width, "after a ToolDisplay push")?;
+
+    // -- Exec & Check: an insert in the middle of the list.
+    state.transcript.insert_block_at(1, tool_display_block());
+    assert_incremental_matches(&state, width, "after a mid-list insert")?;
+
+    // -- Exec & Check: a truncate drops the tail.
+    state.transcript.truncate(2);
+    assert_incremental_matches(&state, width, "after a truncate")?;
+
+    // -- Exec & Check: a truncate to empty.
+    state.transcript.truncate(0);
+    assert_incremental_matches(&state, width, "after a truncate to empty")?;
+    Ok(())
+}
+
+/// Cap eviction drains the oldest blocks; the index must stay valid and match a
+/// wholesale rebuild of the surviving blocks.
+#[test]
+fn height_index_incremental_survives_cap_eviction() -> Result<()> {
+    // -- Setup & Fixtures
+    let width = 60;
+    let mut state = AppState::default();
+    push_user(&mut state, "seed");
+    state.transcript.rebuild_height_index(width);
+
+    // -- Exec: push past the cap so the oldest blocks are evicted.
+    for i in 0..MAX_TRANSCRIPT_BLOCKS {
+        push_assistant(&mut state, &format!("line {i}"));
+    }
+
+    // -- Check: the store holds exactly the cap, and the index still matches a
+    // wholesale rebuild of the survivors.
+    assert_eq!(state.transcript.blocks().len(), MAX_TRANSCRIPT_BLOCKS);
+    assert_incremental_matches(&state, width, "after cap eviction")?;
+    Ok(())
+}
+
+// -- Test Support
+
+/// Assert the store's index is valid at `width`, its total equals a wholesale
+/// rebuild of the same blocks, and every block's start row matches that
+/// rebuild. The per-block comparison pins the splice POSITION: a wrong-position
+/// splice keeps the index "valid" and the total equal while relocating rows.
+fn assert_incremental_matches(state: &AppState, width: usize, context: &str) -> Result<()> {
+    assert!(
+        state.transcript.height_index_valid_for(width),
+        "index must stay valid {context}"
+    );
+    let mut wholesale = state.transcript.clone();
+    wholesale.rebuild_height_index(width);
+    assert_eq!(
+        state.transcript.total_visual_rows(),
+        wholesale.total_visual_rows(),
+        "incremental total must equal a wholesale rebuild {context}"
+    );
+    for index in 0..state.transcript.blocks().len() {
+        assert_eq!(
+            state.transcript.start_row_of(index),
+            wholesale.start_row_of(index),
+            "incremental start row of block {index} must equal a wholesale rebuild {context}"
+        );
+    }
+    Ok(())
+}
+
+/// A pre-projected ToolDisplay block carrying a diff section, so the block
+/// takes the code fill and its margin rows.
+fn tool_display_block() -> Block {
+    let display = Display {
+        title: Some("edit".to_string()),
+        sections: vec![DisplaySection {
+            label: Some("src/main.rs".to_string()),
+            kind: ContentKind::Diff {
+                language: "rust".to_string(),
+                path: "src/main.rs".to_string(),
+            },
+            content: "@@ -1,2 +1,2 @@\n-old line\n+new line\n".to_string(),
+            stats: None,
+        }],
+    };
+    Block {
+        source: BlockSource::ToolDisplay {
+            lines: display.project_lines(),
+        },
+        lane: Lane::Blank,
+        fill: Fill::from_preview(&Some(display)),
+        status: None,
+    }
+}

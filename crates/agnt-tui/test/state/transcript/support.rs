@@ -8,7 +8,8 @@ pub(super) use agnt_core::protocol::contracts::UiMessageSnapshot;
 pub(super) use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
 pub(super) use agnt_core::protocol::tool_args::CallLine;
 pub(super) use agnt_core::transcript::ir::{
-    Block, BlockSource, ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
+    Block, BlockSource, ContentKind, Display, DisplaySection, Fill, Lane, MessageRole, NoticeKind,
+    ToolName,
 };
 pub(super) use agnt_core::transcript::items::{Message, Tool};
 pub(super) use agnt_core::transcript::renderer::{FrameContext, ItemStatus, Renderable};
@@ -57,8 +58,6 @@ pub(super) fn push_assistant(state: &mut AppState, text: &str) {
 
 /// Row count layout() produces for a user prose block at `width`.
 pub(super) fn rendered_row_count(markdown: &str, width: usize) -> usize {
-    use agnt_core::transcript::ir::Fill;
-
     let msg = Message {
         role: MessageRole::User,
         markdown: markdown.to_string(),

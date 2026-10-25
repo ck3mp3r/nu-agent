@@ -8,7 +8,6 @@ use crate::{
     rendering::theme::TuiTheme,
     state::{AppState, PickerPayload},
 };
-use agnt_core::transcript::ir::Block;
 
 pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect, theme: &TuiTheme) {
     let controls = Line::from(vec![
@@ -21,10 +20,6 @@ pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect,
     ]);
     let widget = Paragraph::new(Text::from(vec![controls]));
     frame.render_widget(widget, area);
-}
-
-pub(super) fn transcript_entries_for_render(state: &AppState) -> &[Block] {
-    state.transcript.blocks()
 }
 
 pub(super) fn wrapped_visual_rows_for_rendered_line(

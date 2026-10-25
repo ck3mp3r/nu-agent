@@ -7,7 +7,6 @@ use ratatui::{
 };
 
 use crate::runtime::render::expand_to_visual_rows;
-use crate::runtime::transcript_entries_for_render;
 use crate::tui_renderer::layout;
 use crate::{
     runtime::render::frame::current_time_millis,
@@ -43,7 +42,7 @@ impl RuntimeCoordinator {
                 self.state.transcript.rebuild_height_index(width);
             }
 
-            let blocks = transcript_entries_for_render(&self.state).to_vec();
+            let blocks = self.state.transcript.blocks();
 
             // Total visual rows from the measure()-based height index.
             let total_visual_rows = self.state.transcript.total_visual_rows();
@@ -223,7 +222,7 @@ impl RuntimeCoordinator {
                     .copied()
                     .flatten()
                     .or_else(|| {
-                        full_width_background(&blocks, block_idx, full_width_bg, code_surface_bg)
+                        full_width_background(blocks, block_idx, full_width_bg, code_surface_bg)
                     });
                 let Some(bg) = bg else {
                     continue;

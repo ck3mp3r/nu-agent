@@ -376,7 +376,12 @@ impl AppState {
         event: &TerminalEvent,
         cancel_controller: Option<&CancelController>,
     ) -> bool {
-        let Some(mapped_action) = map_terminal_event(event, self.input_locked) else {
+        // The permission card owns its keys while it is up: suspend the input
+        // lock so 'a'/'A'/'d' reach the card arm of `rewrite_action`. Every
+        // other Char key rewrites to Noop there, so nothing leaks into the
+        // textarea and no decision fires.
+        let locked = self.input_locked && !self.permission.has_prompt();
+        let Some(mapped_action) = map_terminal_event(event, locked) else {
             return false;
         };
         let (action, force_changed) = rewrite_action(self, mapped_action);

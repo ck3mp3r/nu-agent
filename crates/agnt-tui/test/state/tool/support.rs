@@ -12,7 +12,9 @@ pub(super) use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection, UiE
 pub(super) use agnt_core::protocol::tool_args::CallLine;
 pub(super) use agnt_core::transcript::ir::Fill;
 pub(super) use agnt_core::transcript::ir::StyleHint;
-pub(super) use agnt_core::transcript::ir::{BlockSource, ContentKind, DiffTint};
+pub(super) use agnt_core::transcript::ir::{
+    Block, BlockSource, ContentKind, DiffTint, Lane, MessageRole,
+};
 pub(super) use agnt_core::transcript::ir::{Display, DisplaySection};
 pub(super) use agnt_core::transcript::renderer::ItemStatus;
 

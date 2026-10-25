@@ -393,11 +393,17 @@ impl RuntimeCoordinator {
             self.mark_render_needed();
         }
 
+        // A paste writes the textarea, so it obeys the same gates as typed
+        // keys: the input lock drops it, and an open permission card owns the
+        // input. A gated-off paste falls through to dispatch, which maps it to
+        // no action and mutates nothing.
         if let TerminalEvent::Paste(text) = &event
             && self.state.input.mode == InputMode::Insert
             && (self.state.picker.active().is_none()
                 || self.state.picker.render_kind() == Some(PickerRenderKind::InlineSlash))
             && self.state.info_panel.is_none()
+            && !self.state.input_locked
+            && !self.state.permission.has_prompt()
         {
             self.textarea.insert_str(text.as_str());
             let buffer = self.textarea.lines().join("\n");

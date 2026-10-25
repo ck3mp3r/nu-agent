@@ -206,10 +206,6 @@ impl ToolState {
                 status: None,
             },
         );
-
-        // The preview block added rendered rows. Mark the height index stale so
-        // the render loop re-measures and actually renders them (task 5c0edbe9).
-        store.invalidate_height_index();
     }
 
     /// Record a hydrated (already-finished) tool call in the bookkeeping so
