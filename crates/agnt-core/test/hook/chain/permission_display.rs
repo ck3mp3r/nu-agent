@@ -75,7 +75,6 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
         Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),
         Arc::new(crate::tools::closure::ClosureRegistry::default()),
         Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-        bus.clone(),
         temp_dir.path().to_path_buf(),
     );
     let resolver_clone = resolver.clone();

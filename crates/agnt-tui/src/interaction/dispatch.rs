@@ -75,13 +75,15 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
         return state.picker.handle_action(action);
     }
 
-    if state.permission.has_prompt() {
+    // The card owns its decision keys, but not Esc: Esc falls through to the
+    // busy-mode escalation and the input-mode rewriting below, so it exits
+    // insert mode or arms the turn-cancel confirmation instead of denying.
+    if state.permission.has_prompt() && !matches!(action, UserAction::Esc) {
         return (
             match action {
                 UserAction::InsertChar('a') => UserAction::PermissionAllowOnce,
                 UserAction::InsertChar('A') => UserAction::PermissionAllowAlways,
                 UserAction::InsertChar('d') => UserAction::PermissionDeny,
-                UserAction::Esc => UserAction::PermissionDeny,
                 UserAction::HistoryUp => UserAction::ScrollLineUp,
                 UserAction::HistoryDown => UserAction::ScrollLineDown,
                 UserAction::ScrollLineUp

@@ -1,5 +1,7 @@
 use super::*;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
 fn parser_accepts_canonical_permissions_shape_and_normalizes_whitespace() {
     let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
@@ -31,6 +33,84 @@ fn precedence_is_global_then_tool_then_nested_command() {
     let nested = parsed.evaluate("shell", &args_map!({"command": "kubectl delete ns prod"}));
     assert_eq!(nested.action, PermissionAction::Deny);
     assert_eq!(nested.matched_rule.scope, "nested");
+}
+
+#[test]
+fn decision_timeout_secs_table() -> Result<()> {
+    // -- Setup & Fixtures
+    type Case = (&'static str, &'static str, Option<Duration>);
+
+    let cases: Vec<Case> = vec![
+        (
+            "absent key keeps the 15s default",
+            r#"
+"*" = "ask"
+"#,
+            Some(Duration::from_secs(15)),
+        ),
+        (
+            "explicit seconds",
+            r#"
+"*" = "ask"
+decision_timeout_secs = 45
+"#,
+            Some(Duration::from_secs(45)),
+        ),
+        (
+            "zero disables the timeout",
+            r#"
+"*" = "ask"
+decision_timeout_secs = 0
+"#,
+            None,
+        ),
+    ];
+
+    // -- Exec & Check
+    for (name, toml_src, expected) in cases {
+        let value: toml::Value = toml::from_str(toml_src)?;
+        let parsed = PermissionsConfig::from_toml(&value, true);
+        assert_eq!(parsed.decision_timeout(), expected, "case '{name}'");
+    }
+
+    // -- Check: the key is not mistaken for a tool rule.
+    let value: toml::Value = toml::from_str(
+        r#"
+"*" = "ask"
+decision_timeout_secs = 45
+"#,
+    )?;
+    let parsed = PermissionsConfig::from_toml(&value, true);
+    assert!(
+        parsed
+            .evaluate("decision_timeout_secs", &args_map!({}))
+            .matched_rule
+            .scope
+            == "global",
+        "the timeout key must not become a tool rule"
+    );
+    assert!(
+        parsed
+            .evaluate("unknown_tool", &args_map!({}))
+            .diagnostics
+            .iter()
+            .all(|diag| diag.code != "permissions.invalid.tool_action"),
+        "the timeout key must not emit a tool-action diagnostic"
+    );
+    Ok(())
+}
+
+#[test]
+fn safe_defaults_carry_the_decision_timeout() {
+    // -- Exec & Check
+    for interactive in [true, false] {
+        let config = PermissionsConfig::safe_defaults(interactive);
+        assert_eq!(
+            config.decision_timeout(),
+            Some(Duration::from_secs(15)),
+            "safe defaults must carry the 15s decision timeout (interactive={interactive})"
+        );
+    }
 }
 
 #[test]

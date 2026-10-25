@@ -108,6 +108,107 @@ fn abort_flow_table() {
 }
 
 #[test]
+fn test_interaction_reducer_turn_end_closes_permission_card() -> Result<()> {
+    // -- Setup & Fixtures: a busy turn with a permission card up.
+    let mut state = busy_state_with_clean_transcript();
+    open_permission_card(&mut state);
+    assert!(state.permission.has_prompt());
+
+    // -- Exec: the turn completes.
+    reduce_with_cancel_controller(
+        &mut state,
+        event_input(UiEvent::Completed { tool_calls: 0 }),
+        None,
+    );
+
+    // -- Check
+    assert!(
+        !state.permission.has_prompt(),
+        "turn completion must close a surviving permission card"
+    );
+    assert!(
+        state.permission.take_next_submission().is_none(),
+        "closing the card must not submit a decision"
+    );
+
+    // -- Setup & Fixtures: the same, ended by a turn error.
+    let mut state = busy_state_with_clean_transcript();
+    open_permission_card(&mut state);
+
+    // -- Exec
+    reduce_with_cancel_controller(
+        &mut state,
+        event_input(UiEvent::TurnError {
+            message: "boom".to_string(),
+        }),
+        None,
+    );
+
+    // -- Check
+    assert!(
+        !state.permission.has_prompt(),
+        "a turn error must close a surviving permission card"
+    );
+    assert!(
+        state.permission.take_next_submission().is_none(),
+        "closing the card must not submit a decision"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_interaction_reducer_permission_timed_out_closes_matching_card() -> Result<()> {
+    // -- Setup & Fixtures: a busy turn with a permission card up.
+    let mut state = busy_state_with_clean_transcript();
+    open_permission_card(&mut state);
+    let open_request_id = "ask-0000000000000001".to_string();
+
+    // -- Exec: a timeout for a different request.
+    reduce_with_cancel_controller(
+        &mut state,
+        event_input(UiEvent::PermissionDecisionTimedOut {
+            request_id: "ask-0000000000000002".to_string(),
+        }),
+        None,
+    );
+
+    // -- Check: the card stays up and no status message is set.
+    assert!(
+        state.permission.has_prompt(),
+        "a timeout for another request must leave the card up"
+    );
+    assert!(
+        state.status.message.status_line().is_empty(),
+        "a timeout for another request must not set a status message"
+    );
+
+    // -- Exec: the timeout for the open card.
+    reduce_with_cancel_controller(
+        &mut state,
+        event_input(UiEvent::PermissionDecisionTimedOut {
+            request_id: open_request_id,
+        }),
+        None,
+    );
+
+    // -- Check
+    assert!(
+        !state.permission.has_prompt(),
+        "the matching timeout must close the card"
+    );
+    assert!(
+        state.permission.take_next_submission().is_none(),
+        "closing the card on timeout must not submit a decision"
+    );
+    assert!(
+        state.status.message.status_line().contains("timed out"),
+        "the timeout must be announced in the status line, got '{}'",
+        state.status.message.status_line()
+    );
+    Ok(())
+}
+
+#[test]
 fn completion_finalize_table() {
     // Intermediate events keep the cycle busy; Completed is the finalize boundary.
     let mut state = AppState {

@@ -1,4 +1,36 @@
-use ratatui::text::Line;
+use ratatui::{Terminal, backend::TestBackend, layout::Rect, text::Line};
+
+use crate::{rendering::theme::TuiTheme, runtime::panels::render_permission_controls};
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+#[test]
+fn test_runtime_panels_permission_controls_deny_key_only() -> Result<()> {
+    // -- Setup & Fixtures
+    const WIDTH: u16 = 60;
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, 1))?;
+    let theme = TuiTheme::default();
+
+    // -- Exec
+    terminal.draw(|frame| {
+        render_permission_controls(frame, Rect::new(0, 0, WIDTH, 1), &theme);
+    })?;
+
+    // -- Check
+    let buffer = terminal.backend().buffer();
+    let rendered = (0..WIDTH)
+        .map(|x| buffer[(x, 0)].symbol())
+        .collect::<String>();
+    assert!(
+        rendered.contains("[d] deny"),
+        "footer must show [d] deny, got: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Esc"),
+        "footer must not mention Esc, got: {rendered}"
+    );
+    Ok(())
+}
 
 pub(crate) fn help_panel_visible_window(
     lines: &[Line<'_>],

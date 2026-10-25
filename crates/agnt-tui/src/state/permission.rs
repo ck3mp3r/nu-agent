@@ -31,6 +31,30 @@ impl PermissionState {
         self.prompt.is_some()
     }
 
+    /// Close the open prompt without submitting a decision.
+    ///
+    /// Used when the request can no longer be answered: the turn was cancelled
+    /// or has ended, so the resolver already dropped the request. Queued
+    /// submissions are left untouched.
+    pub fn close_prompt(&mut self) {
+        self.prompt = None;
+    }
+
+    /// Close the open prompt only when it belongs to `request_id`.
+    ///
+    /// Returns whether the prompt was closed. A decision timeout for another
+    /// request must leave the open card alone.
+    pub fn close_prompt_if(&mut self, request_id: &str) -> bool {
+        let matches_open = self
+            .prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.request_id == request_id);
+        if matches_open {
+            self.prompt = None;
+        }
+        matches_open
+    }
+
     pub fn submit_decision(&mut self, decision: PermissionDecision) -> bool {
         let Some(prompt) = self.prompt.as_ref() else {
             return false;
@@ -68,9 +92,10 @@ impl PermissionState {
                 });
                 true
             }
-            PermissionEvent::DecisionSubmitted { .. }
-            | PermissionEvent::DecisionTimedOut { .. }
-            | PermissionEvent::DecisionIgnored { .. } => false,
+            PermissionEvent::DecisionTimedOut { request_id } => self.close_prompt_if(&request_id),
+            PermissionEvent::DecisionSubmitted { .. } | PermissionEvent::DecisionIgnored { .. } => {
+                false
+            }
         }
     }
 }

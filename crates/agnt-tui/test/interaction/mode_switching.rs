@@ -52,6 +52,31 @@ fn insert_mode_chord_table() {
 }
 
 #[test]
+fn test_interaction_mode_switching_esc_with_card_exits_insert() -> Result<()> {
+    // -- Setup & Fixtures: a busy turn in insert mode with a permission card up.
+    let mut state = busy_state();
+    open_permission_prompt(&mut state);
+    assert_eq!(state.phase, UiPhase::Busy);
+    assert_eq!(state.input.mode, InputMode::Insert);
+
+    // -- Exec
+    let changed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
+
+    // -- Check: the mode exits, the card stays up, no decision is submitted.
+    assert!(changed);
+    assert_eq!(state.input.mode, InputMode::Normal);
+    assert!(
+        state.permission.has_prompt(),
+        "Esc must leave the card open"
+    );
+    assert!(
+        state.permission.take_next_submission().is_none(),
+        "Esc must not submit a permission decision"
+    );
+    Ok(())
+}
+
+#[test]
 fn normal_mode_focus_cycle_table() {
     // h/l cycle focus between panes.
     let mut state = AppState::default();

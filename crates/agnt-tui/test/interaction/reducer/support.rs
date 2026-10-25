@@ -51,6 +51,23 @@ pub(super) fn pending_prompt_ids(state: &AppState) -> Vec<u64> {
         .collect()
 }
 
+/// Open a permission card on the state, as a `PermissionRequested` event would.
+pub(super) fn open_permission_card(state: &mut AppState) {
+    state
+        .permission
+        .open_prompt(crate::state::PermissionPrompt {
+            request_id: "ask-0000000000000001".to_string(),
+            matched_rule_identity: "nested:nu.command:*".to_string(),
+            tool: "nu".to_string(),
+            source: "closure".to_string(),
+            mode: Some("apply".to_string()),
+            scope: "nested".to_string(),
+            pattern: "*".to_string(),
+            target_field: Some("command".to_string()),
+            summary: "→ {\"command\":\"echo hi\"}".to_string(),
+        });
+}
+
 pub(super) fn busy_state_with_clean_transcript() -> AppState {
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("run".to_string()),

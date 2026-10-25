@@ -58,7 +58,6 @@ pub(super) fn make_interactive_with_cwd_and_previews(
         session_grants: Arc::new(StdMutex::new(SessionGrantCache::default())),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
-        bus: bus.clone(),
         cwd,
         previewed: Arc::new(StdMutex::new(std::collections::HashSet::new())),
         renders_tool_previews,

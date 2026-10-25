@@ -15,7 +15,7 @@ pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect,
         Span::raw(" allow once  "),
         Span::styled("[A]", theme.status_running),
         Span::raw(" allow always  "),
-        Span::styled("[d/Esc]", theme.status_running),
+        Span::styled("[d]", theme.status_running),
         Span::raw(" deny"),
     ]);
     let widget = Paragraph::new(Text::from(vec![controls]));

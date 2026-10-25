@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use std::future::Future;
+use std::time::Duration;
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
@@ -175,6 +176,9 @@ pub struct PermissionsConfig {
     tool_rules: Vec<(String, PermissionAction)>,
     nested_field_rules: HashMap<String, HashMap<String, Vec<(String, PermissionAction)>>>,
     diagnostics: Vec<PermissionDiagnostic>,
+    /// How long an interactive permission card waits for a decision before it
+    /// auto-denies. `None` waits forever.
+    decision_timeout: Option<Duration>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -190,6 +194,12 @@ pub struct PermissionsSummary {
     pub tool_rule_count: usize,
     pub nested_field_rule_count: usize,
 }
+
+/// Default auto-deny timeout for an unanswered permission card.
+pub const DEFAULT_DECISION_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// TOML key for the decision timeout, in whole seconds. `0` disables it.
+const DECISION_TIMEOUT_KEY: &str = "decision_timeout_secs";
 
 impl PermissionsConfig {
     pub fn safe_defaults(interactive: bool) -> Self {
@@ -244,6 +254,7 @@ impl PermissionsConfig {
                 code: "permissions.defaults.applied",
                 message: "permissions block missing; using conservative defaults".to_string(),
             }],
+            decision_timeout: Some(DEFAULT_DECISION_TIMEOUT),
         }
     }
 
@@ -269,7 +280,21 @@ impl PermissionsConfig {
             String,
             HashMap<String, Vec<(String, PermissionAction)>>,
         > = HashMap::new();
+        let mut decision_timeout = Some(DEFAULT_DECISION_TIMEOUT);
         for (tool_key, tool_value) in table.iter() {
+            if tool_key == DECISION_TIMEOUT_KEY {
+                match tool_value.as_integer() {
+                    Some(0) => decision_timeout = None,
+                    Some(secs) if secs > 0 => decision_timeout = Some(Duration::from_secs(secs as u64)),
+                    _ => diagnostics.push(PermissionDiagnostic {
+                        code: "permissions.invalid.decision_timeout",
+                        message: format!(
+                            "permissions.{DECISION_TIMEOUT_KEY} must be a non-negative integer number of seconds"
+                        ),
+                    }),
+                }
+                continue;
+            }
             if tool_key == "*" {
                 match toml_value_to_action(tool_value) {
                     Ok(action) => global = action,
@@ -321,6 +346,7 @@ impl PermissionsConfig {
             tool_rules: tool_rules_map.into_iter().collect(),
             nested_field_rules: nested_field_rules_map,
             diagnostics,
+            decision_timeout,
         }
     }
 
@@ -417,7 +443,20 @@ impl PermissionsConfig {
             tool_rules: merged_tool_rules.into_iter().collect(),
             nested_field_rules: merged_nested,
             diagnostics: self.diagnostics.clone(),
+            decision_timeout: self.decision_timeout,
         }
+    }
+
+    /// How long an interactive permission card waits for a decision before it
+    /// auto-denies. `None` waits forever.
+    pub fn decision_timeout(&self) -> Option<Duration> {
+        self.decision_timeout
+    }
+
+    /// Override the decision timeout. `None` waits forever.
+    pub fn with_decision_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.decision_timeout = timeout;
+        self
     }
 
     pub fn summary(&self) -> PermissionsSummary {

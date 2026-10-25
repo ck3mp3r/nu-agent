@@ -13,7 +13,7 @@ See also:
 - Decision controls are rendered in a **sticky footer row** (outside transcript rows):
   - `a allow_once`
   - `A allow_always (session)`
-  - `d/Esc deny`
+  - `d deny`
 
 Code + tests:
 

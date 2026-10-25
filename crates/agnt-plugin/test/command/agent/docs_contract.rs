@@ -175,7 +175,7 @@ fn usage_docs_describe_permission_modal_keybindings_and_lifecycle_events() {
     assert!(docs.contains("`a` => `allow_once`"));
     assert!(docs.contains("`A` => `allow_always`"));
     assert!(docs.contains("`d` => `deny`"));
-    assert!(docs.contains("`Esc` => `deny`"));
+    assert!(docs.contains("`Esc` is not a card key"));
     assert!(docs.contains("PermissionRequested"));
     assert!(docs.contains("PermissionDecisionSubmitted"));
     assert!(docs.contains("PermissionDecisionTimedOut"));

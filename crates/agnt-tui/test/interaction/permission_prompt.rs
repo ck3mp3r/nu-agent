@@ -6,7 +6,6 @@ fn permission_prompt_decision_table() -> Result<()> {
         (TerminalKey::Char('a'), PermissionDecision::AllowOnce),
         (TerminalKey::Char('A'), PermissionDecision::AllowAlways),
         (TerminalKey::Char('d'), PermissionDecision::Deny),
-        (TerminalKey::Esc, PermissionDecision::Deny),
     ];
 
     for (key, expected) in cases {
@@ -23,6 +22,32 @@ fn permission_prompt_decision_table() -> Result<()> {
             .ok_or("should have permission submission")?;
         assert_eq!(submission.decision, expected);
     }
+    Ok(())
+}
+
+/// Esc is not a card key: with a card up in normal mode it submits no decision
+/// and the card stays open.
+#[test]
+fn test_interaction_permission_prompt_esc_submits_no_decision() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState {
+        input: InputState::default().with_mode(InputMode::Normal),
+        ..Default::default()
+    };
+    open_permission_prompt(&mut state);
+
+    // -- Exec
+    dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
+
+    // -- Check
+    assert!(
+        state.permission.has_prompt(),
+        "Esc must leave the card open"
+    );
+    assert!(
+        state.permission.take_next_submission().is_none(),
+        "Esc must not submit a permission decision"
+    );
     Ok(())
 }
 

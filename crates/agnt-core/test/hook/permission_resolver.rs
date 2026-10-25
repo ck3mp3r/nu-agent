@@ -5,6 +5,9 @@
 
 // region:    --- Modules
 
+#[path = "permission_resolver/cancel.rs"]
+mod cancel;
+
 #[path = "permission_resolver/deny_reason.rs"]
 mod deny_reason;
 
@@ -25,6 +28,9 @@ mod session_grants;
 
 #[path = "permission_resolver/support.rs"]
 mod support;
+
+#[path = "permission_resolver/timeout.rs"]
+mod timeout;
 
 // endregion: --- Modules
 

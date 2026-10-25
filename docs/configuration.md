@@ -369,6 +369,7 @@ grep = "allow"
 edit = "ask"
 http = "ask"
 skill = "ask"
+decision_timeout_secs = 15   # auto-deny an unanswered card after 15s; 0 waits forever
 ```
 
 ### Actions
@@ -380,6 +381,12 @@ skill = "ask"
 ### Global policy
 
 `"*"` sets the default action for any tool not explicitly listed. Defaults to `"ask"` (TUI) or `"deny"` (pipeline) if omitted.
+
+### Decision timeout
+
+`decision_timeout_secs` sets how long an interactive permission card waits for a decision before it auto-denies. The default is `15`. `0` waits forever.
+
+A timeout is a denial, not a turn failure: the tool is skipped, the turn continues, and an A2A caller receives a completed task whose answer explains the denial. The timeout applies to every card, including cards from user-submitted turns. Raise the value to read longer, or set `0` to restore wait-forever behavior.
 
 ### Nested field rules
 

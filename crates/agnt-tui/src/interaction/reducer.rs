@@ -15,6 +15,8 @@ use agnt_core::transcript::renderer::Renderable;
 
 pub(crate) const ESC_ABORT_CONFIRM_STATUS: &str = "Esc again to cancel";
 
+pub(crate) const PERMISSION_TIMEOUT_STATUS: &str = "permission request timed out — denied";
+
 pub(crate) const VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS: &str =
     "Visual mode requires transcript focus (Tab/h/l).";
 
@@ -371,13 +373,6 @@ fn handle_quit(state: &mut AppState, cancel_controller: Option<&CancelController
 }
 
 fn handle_escape(state: &mut AppState) -> bool {
-    if state.permission.has_prompt() {
-        if state.permission.submit_decision(PermissionDecision::Deny) {
-            state.ensure_invariants();
-        }
-        return true;
-    }
-
     if state.info_panel.is_some() {
         state.close_info_panel();
         return true;
@@ -408,6 +403,7 @@ fn handle_escape_confirm(
             controller.request_cancel();
         }
         state.cancel_and_restore_pending_to_input();
+        state.permission.close_prompt();
         state.enter_insert_mode();
         state.status.message.clear();
         return true;
@@ -563,9 +559,18 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
         UiEvent::Warning { message } => state
             .status
             .reduce_warning_event(WarningEvent::Message { message }),
-        UiEvent::PermissionDecisionSubmitted { .. }
-        | UiEvent::PermissionDecisionTimedOut { .. }
-        | UiEvent::PermissionDecisionIgnored { .. } => false,
+        UiEvent::PermissionDecisionTimedOut { request_id } => {
+            let changed = state
+                .permission
+                .reduce_permission_event(PermissionEvent::DecisionTimedOut { request_id });
+            if changed {
+                state.status.message.set_message(PERMISSION_TIMEOUT_STATUS);
+            }
+            changed
+        }
+        UiEvent::PermissionDecisionSubmitted { .. } | UiEvent::PermissionDecisionIgnored { .. } => {
+            false
+        }
     }
 }
 

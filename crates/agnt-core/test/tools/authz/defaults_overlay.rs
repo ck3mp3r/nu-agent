@@ -16,6 +16,35 @@ fn defaults_apply_when_permissions_block_is_missing() {
 }
 
 #[test]
+fn overlay_preserves_the_decision_timeout() {
+    // -- Setup & Fixtures: a base with a non-default timeout.
+    let base = PermissionsConfig::from_toml(
+        &toml::from_str::<toml::Value>(
+            r#"
+"*" = "ask"
+decision_timeout_secs = 45
+"#,
+        )
+        .expect("valid toml"),
+        true,
+    );
+    let overlay = PermissionsOverlay::parse_from_cli_value(&Value::test_record(record! {
+        "read" => Value::test_string("deny")
+    }))
+    .expect("overlay parse");
+
+    // -- Exec
+    let effective = base.with_overlay(&overlay);
+
+    // -- Check: overlays carry rules only, so the base timeout survives.
+    assert_eq!(
+        effective.decision_timeout(),
+        Some(Duration::from_secs(45)),
+        "an overlay must not reset the decision timeout"
+    );
+}
+
+#[test]
 fn allow_always_grant_is_session_only_and_resets_with_new_cache() {
     let parsed = PermissionsConfig::from_toml(&permissions_toml(), true);
 

@@ -60,6 +60,10 @@ pub(crate) fn dispatch_turn_event(state: &mut AppState, event: TurnEvent) -> boo
     match event {
         TurnEvent::Completed { .. } => {
             state.finalize_cycle();
+            // A cancel can end the turn while a card is still up (A2A task
+            // cancel, Ctrl-C quit+cancel). The request is gone by then, so the
+            // card must not outlive the turn.
+            state.permission.close_prompt();
             state.turn.reduce_turn_event(
                 &mut state.transcript,
                 &mut state.status,

@@ -255,7 +255,6 @@ where
                     Arc::clone(&session_grants),
                     Arc::clone(&closure_registry),
                     Arc::clone(&mcp_registry),
-                    self.bus.clone(),
                     self.cwd.clone(),
                 )
                 .with_renders_tool_previews(self.renders_tool_previews);

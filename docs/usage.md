@@ -332,11 +332,15 @@ Exact keybindings:
 - `a` => `allow_once`
 - `A` => `allow_always` (session-only)
 - `d` => `deny`
-- `Esc` => `deny`
+
+`Esc` is not a card key. With a card up, `Esc` behaves as usual: in insert
+mode it exits to normal mode, and in normal mode it arms the turn-cancel
+confirmation. The card stays up while the confirmation is armed; a confirmed
+cancel auto-denies the pending request and closes the card.
 
 Safety semantics:
 
-- Timeout while waiting => deterministic deny
+- Decision timeout: an unanswered card auto-denies after `decision_timeout_secs` (default 15s, `0` waits forever); the tool is skipped and the turn continues
 - Stale/unknown decision submissions => ignored
 - Rule-identity mismatch submissions => ignored
 - Prompt handling remains deterministic and non-blocking for overall UI loop
@@ -746,7 +750,7 @@ CLI flags override config.toml, which overrides built-in defaults.
 ### Ctrl-C quit guard
 
 - `Ctrl-C` is intercepted globally, before any popup or mode routing. Each press does exactly one thing.
-- A permission prompt open: `Ctrl-C` arms the quit confirmation and leaves the prompt untouched. `Esc` keeps sole ownership of `deny`.
+- A permission prompt open: `Ctrl-C` arms the quit confirmation and leaves the prompt untouched. `d` owns `deny`; with a card up, `Esc` behaves as usual (mode exit, or arms the turn-cancel confirmation). A confirmed cancel auto-denies the pending request and closes the card.
 - Any other popup open (picker, info panel, inline slash): `Ctrl-C` closes it without arming and without changing the draft.
 - No popup and a non-empty draft: `Ctrl-C` clears the draft without arming. The turn state is unchanged, so a busy turn keeps running.
 - No popup and an empty draft: `Ctrl-C` arms the quit confirmation and shows `Ctrl-C again to quit`.

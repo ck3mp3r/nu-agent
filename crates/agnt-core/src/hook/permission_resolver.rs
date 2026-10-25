@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use serde_json::Value as JsonValue;
 
-use crate::bus::OneshotTx;
+use crate::bus::{CancelEvent, OneshotTx};
 
 use crate::protocol::event::{
     PermissionDecision as ProtocolPermissionDecision, PermissionRequestContext, UiEvent,
@@ -56,6 +56,14 @@ pub enum PermissionDecision {
         reason: String,
     },
 }
+
+/// Denial reason used when a turn cancel arrives while a permission request is
+/// still pending. Keeps the documented `"Permission denied"` prefix contract.
+const TURN_CANCELLED_DENY_REASON: &str = "Permission denied: turn cancelled by user";
+
+/// Denial reason used when no decision arrives within the configured decision
+/// timeout. Keeps the documented `"Permission denied"` prefix contract.
+const DECISION_TIMED_OUT_DENY_REASON: &str = "Permission denied: decision timed out";
 
 // ---------------------------------------------------------------------------
 // Request ID generation (no uuid dep — use atomic counter)
@@ -106,6 +114,15 @@ fn summarize_ask_payload(args: &JsonValue) -> String {
         compact
     };
     format!("→ {trimmed}")
+}
+
+/// Resolve once the decision deadline passes. A `None` deadline never resolves,
+/// so a disabled timeout leaves the request waiting indefinitely.
+async fn wait_for_decision_timeout(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -272,10 +289,11 @@ impl AskApprovalHook for AskContextCapture {
 /// to unblock the waiting `resolve()` future.
 ///
 /// **Design note (deadlock prevention):** This struct does NOT own a
-/// `mpsc::UnboundedSender<UiEvent>`. It owns a `Bus` clone and publishes
-/// permission events on `bus.ui_event()` directly, so the executor's stack
-/// frame (which holds the resolver across the retry loop) never keeps a sender
-/// alive that would prevent the drain loop's channel from closing.
+/// `mpsc::UnboundedSender<UiEvent>`. It publishes permission events on the
+/// `Bus` handed to [`AsyncPermissionResolver::resolve`] directly, so the
+/// executor's stack frame (which holds the resolver across the retry loop)
+/// never keeps a sender alive that would prevent the drain loop's channel from
+/// closing.
 #[derive(Clone)]
 pub struct InteractivePermissionResolver {
     pub pending: Arc<StdMutex<HashMap<String, OneshotTx<ProtocolPermissionDecision>>>>,
@@ -283,7 +301,6 @@ pub struct InteractivePermissionResolver {
     pub session_grants: Arc<StdMutex<SessionGrantCache>>,
     pub closure_registry: Arc<ClosureRegistry>,
     pub mcp_registry: Arc<McpToolRegistry>,
-    bus: crate::bus::Bus,
     /// Working directory used to resolve relative paths when building the
     /// pre-authorize preview. Must match the cwd the tool handlers use —
     /// `std::env::current_dir()` is the plugin process cwd, which is frozen at
@@ -316,8 +333,6 @@ impl InteractivePermissionResolver {
     /// - `session_grants`: shared session grant cache for AllowAlways persistence.
     /// - `closure_registry`: registry of closure-based tools.
     /// - `mcp_registry`: registry of MCP tools.
-    /// - `bus`: the shared signal bus; permission events are published on
-    ///   `bus.ui_event()`.
     /// - `cwd`: the working directory used to resolve relative paths when
     ///   building the pre-authorize preview. Pass the same cwd the tool
     ///   handlers use (the runtime's engine cwd).
@@ -327,7 +342,6 @@ impl InteractivePermissionResolver {
         session_grants: Arc<StdMutex<SessionGrantCache>>,
         closure_registry: Arc<ClosureRegistry>,
         mcp_registry: Arc<McpToolRegistry>,
-        bus: crate::bus::Bus,
         cwd: std::path::PathBuf,
     ) -> Self {
         Self {
@@ -336,7 +350,6 @@ impl InteractivePermissionResolver {
             session_grants,
             closure_registry,
             mcp_registry,
-            bus,
             cwd,
             previewed: Arc::new(StdMutex::new(std::collections::HashSet::new())),
             renders_tool_previews: true,
@@ -367,7 +380,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
         tool_name: &str,
         arguments: &str,
         tool_call_id: Option<String>,
-        _bus: &crate::bus::Bus,
+        bus: &crate::bus::Bus,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let tool_name = tool_name.to_string();
         let arguments = arguments.to_string();
@@ -376,7 +389,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
         let closure_registry = Arc::clone(&self.closure_registry);
         let mcp_registry = Arc::clone(&self.mcp_registry);
         let pending = Arc::clone(&self.pending);
-        let bus = self.bus.clone();
+        let bus = bus.clone();
         let previewed = Arc::clone(&self.previewed);
         let cwd = self.cwd.clone();
         let renders_tool_previews = self.renders_tool_previews;
@@ -490,7 +503,11 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                         .insert(format!("{tool_name}\n{arguments}"));
                 }
 
-                let (tx, rx) = OneshotTx::<ProtocolPermissionDecision>::channel("permission");
+                let (tx, mut rx) = OneshotTx::<ProtocolPermissionDecision>::channel("permission");
+                // Subscribe before publishing the request: a cancel sent in
+                // response to the card must be observed, and a broadcast
+                // subscriber only sees events sent after it subscribes.
+                let mut cancel_rx = bus.cancel().subscribe();
                 let request_id = bus
                     .ui_event()
                     .request_permission(context)
@@ -498,8 +515,39 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                     .unwrap_or_else(|_| next_request_id());
                 pending.lock().unwrap().insert(request_id.clone(), tx);
 
-                // Await the TUI's decision. Deny if the channel is dropped.
-                let protocol_decision = rx.await.unwrap_or(ProtocolPermissionDecision::Deny);
+                // Await the TUI's decision, but stop waiting the moment the
+                // turn is cancelled or the decision timeout elapses: neither a
+                // confirmed cancel nor an unanswered card may block the turn.
+                let timeout_deadline = permissions
+                    .decision_timeout()
+                    .map(|timeout| tokio::time::Instant::now() + timeout);
+                let protocol_decision = loop {
+                    tokio::select! {
+                        decision = &mut rx => {
+                            break decision.unwrap_or(ProtocolPermissionDecision::Deny);
+                        }
+                        event = cancel_rx.recv() => {
+                            if matches!(event, Ok(CancelEvent::Requested)) {
+                                pending.lock().unwrap().remove(&request_id);
+                                return PermissionDecision::Deny {
+                                    reason: TURN_CANCELLED_DENY_REASON.to_string(),
+                                };
+                            }
+                        }
+                        () = wait_for_decision_timeout(timeout_deadline) => {
+                            pending.lock().unwrap().remove(&request_id);
+                            let _ = bus
+                                .ui_event()
+                                .send(UiEvent::PermissionDecisionTimedOut {
+                                    request_id: request_id.clone(),
+                                })
+                                .await;
+                            return PermissionDecision::Deny {
+                                reason: DECISION_TIMED_OUT_DENY_REASON.to_string(),
+                            };
+                        }
+                    }
+                };
 
                 let ask_choice = match protocol_decision {
                     ProtocolPermissionDecision::AllowOnce => AskChoice::AllowOnce,
