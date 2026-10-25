@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 
 use crate::bus::{Bus, CompactionRx, ExternalRx, UiStateRx, create_bus};
 use crate::conversation::runtime::PendingPermissions;
+pub(crate) use crate::orchestrator::loop_impl::WORKER_CMD_CAPACITY;
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
 };
@@ -196,10 +197,6 @@ pub(crate) struct CtxState {
     pub(crate) pending_a2a_task_id: Option<String>,
     pub(crate) task_store: Option<std::sync::Arc<InMemoryTaskStore>>,
 }
-
-/// Capacity of the worker command channel the harness builds. A test that
-/// saturates the channel fills it to exactly this many commands.
-pub(crate) const WORKER_CMD_CAPACITY: usize = 256;
 
 pub(crate) struct HarnessParts<'a> {
     pub(crate) event_tx: &'a mpsc::Sender<OrchestratorEvent>,

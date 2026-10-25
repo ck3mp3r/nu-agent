@@ -38,7 +38,12 @@ fn precedence_is_global_then_tool_then_nested_command() {
 #[test]
 fn decision_timeout_secs_table() -> Result<()> {
     // -- Setup & Fixtures
-    type Case = (&'static str, &'static str, Option<Duration>);
+    type Case = (
+        &'static str,
+        &'static str,
+        Option<Duration>,
+        Option<&'static str>,
+    );
 
     let cases: Vec<Case> = vec![
         (
@@ -47,6 +52,7 @@ fn decision_timeout_secs_table() -> Result<()> {
 "*" = "ask"
 "#,
             Some(Duration::from_secs(15)),
+            None,
         ),
         (
             "explicit seconds",
@@ -55,6 +61,7 @@ fn decision_timeout_secs_table() -> Result<()> {
 decision_timeout_secs = 45
 "#,
             Some(Duration::from_secs(45)),
+            None,
         ),
         (
             "zero disables the timeout",
@@ -63,14 +70,49 @@ decision_timeout_secs = 45
 decision_timeout_secs = 0
 "#,
             None,
+            None,
+        ),
+        (
+            "negative seconds fall back to the 15s default",
+            r#"
+"*" = "ask"
+decision_timeout_secs = -5
+"#,
+            Some(Duration::from_secs(15)),
+            Some("permissions.invalid.decision_timeout"),
+        ),
+        (
+            "non-integer seconds fall back to the 15s default",
+            r#"
+"*" = "ask"
+decision_timeout_secs = "soon"
+"#,
+            Some(Duration::from_secs(15)),
+            Some("permissions.invalid.decision_timeout"),
         ),
     ];
 
     // -- Exec & Check
-    for (name, toml_src, expected) in cases {
+    for (name, toml_src, expected, expected_diagnostic) in cases {
         let value: toml::Value = toml::from_str(toml_src)?;
         let parsed = PermissionsConfig::from_toml(&value, true);
         assert_eq!(parsed.decision_timeout(), expected, "case '{name}'");
+        let decision = parsed.evaluate("unknown_tool", &args_map!({}));
+        match expected_diagnostic {
+            Some(code) => assert!(
+                decision.diagnostics.iter().any(|diag| diag.code == code),
+                "case '{name}' must emit diagnostic '{code}', got: {:?}",
+                decision.diagnostics
+            ),
+            None => assert!(
+                decision
+                    .diagnostics
+                    .iter()
+                    .all(|diag| diag.code != "permissions.invalid.decision_timeout"),
+                "case '{name}' must not emit a decision-timeout diagnostic, got: {:?}",
+                decision.diagnostics
+            ),
+        }
     }
 
     // -- Check: the key is not mistaken for a tool rule.

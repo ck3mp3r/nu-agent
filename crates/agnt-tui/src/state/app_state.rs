@@ -335,7 +335,6 @@ impl AppState {
                     if let Some(theme_name) = ThemeName::from_name(&name) {
                         self.theme = theme_name.resolve();
                         self.theme_name = theme_name;
-                        self.transcript.invalidate_height_index();
                         self.pending_theme_persist.push_back(name);
                     }
                 }

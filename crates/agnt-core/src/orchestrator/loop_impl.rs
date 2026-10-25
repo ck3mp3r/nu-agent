@@ -30,6 +30,11 @@ use crate::protocol::{
     session_management::{SessionPersistence, SessionState},
 };
 
+/// Capacity of the worker command channel. The test harness builds its worker
+/// channel from this constant, so a saturation test fills the real production
+/// width.
+pub(crate) const WORKER_CMD_CAPACITY: usize = 256;
+
 pub(crate) async fn run_interactive_loop_impl<R, F>(
     mut runtime: R,
     config: InteractiveLoopConfig<F>,
@@ -113,7 +118,7 @@ where
             .await;
     }
 
-    let (worker_cmd_tx, mut worker_cmd_rx) = mpsc::channel::<WorkerCommand>(256);
+    let (worker_cmd_tx, mut worker_cmd_rx) = mpsc::channel::<WorkerCommand>(WORKER_CMD_CAPACITY);
     let (worker_result_tx, worker_result_rx) = mpsc::channel::<TurnOutcome>(256);
 
     let mut worker_active = false;

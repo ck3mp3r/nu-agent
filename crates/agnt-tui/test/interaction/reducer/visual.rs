@@ -2,7 +2,7 @@ use super::*;
 use crate::state::selection::TranscriptSelection;
 
 #[test]
-fn visual_mode_entry_table() {
+fn visual_mode_entry_table() -> Result<()> {
     // Selects the first visible entry, not the scroll offset.
     let mut state = AppState {
         scroll: ScrollState {
@@ -22,7 +22,7 @@ fn visual_mode_entry_table() {
         ReducerInput::User(UserAction::EnterVisualMode),
         None,
     );
-    let sel = state.scroll.selection.expect("selection should be set");
+    let sel = state.scroll.selection.ok_or("selection should be set")?;
     assert_eq!(sel.anchor(), 3);
     assert_eq!(sel.cursor(), 3);
     assert_eq!(state.input.mode, InputMode::Visual);
@@ -43,7 +43,7 @@ fn visual_mode_entry_table() {
         ReducerInput::User(UserAction::EnterVisualMode),
         None,
     );
-    let sel = state.scroll.selection.expect("selection should be set");
+    let sel = state.scroll.selection.ok_or("selection should be set")?;
     assert_eq!(sel.anchor(), 5);
     assert_eq!(sel.cursor(), 5);
     assert_eq!(state.input.mode, InputMode::Visual);
@@ -79,10 +79,11 @@ fn visual_mode_entry_table() {
         None,
     );
     assert!(state.scroll.selection.is_none());
+    Ok(())
 }
 
 #[test]
-fn visual_mode_extension_table() {
+fn visual_mode_extension_table() -> Result<()> {
     // Visual j extends the selection down.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
@@ -102,7 +103,7 @@ fn visual_mode_extension_table() {
         ReducerInput::User(UserAction::ScrollLineDown),
         None,
     );
-    let sel = state.scroll.selection.expect("selection should exist");
+    let sel = state.scroll.selection.ok_or("selection should exist")?;
     assert_eq!(sel.cursor(), 1);
     assert_eq!(state.scroll.cursor_visual_row, 1);
     assert_eq!(state.scroll.scroll_offset, 1);
@@ -125,11 +126,12 @@ fn visual_mode_extension_table() {
         ReducerInput::User(UserAction::ScrollLineUp),
         None,
     );
-    let sel = state.scroll.selection.expect("selection should exist");
+    let sel = state.scroll.selection.ok_or("selection should exist")?;
     assert_eq!(sel.cursor(), 1);
     assert_eq!(state.scroll.cursor_visual_row, 1);
     assert_eq!(state.scroll.scroll_offset, 0);
     assert!(!state.scroll.following_tail);
+    Ok(())
 }
 
 #[test]
@@ -245,7 +247,7 @@ fn visual_yank_table() {
 }
 
 #[test]
-fn visual_mode_exit_and_jump_table() {
+fn visual_mode_exit_and_jump_table() -> Result<()> {
     // Esc clears the selection and exits.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
@@ -273,7 +275,7 @@ fn visual_mode_exit_and_jump_table() {
         ReducerInput::User(UserAction::ScrollToTop),
         None,
     );
-    let sel = state.scroll.selection.expect("selection should exist");
+    let sel = state.scroll.selection.ok_or("selection should exist")?;
     assert_eq!(sel.cursor(), 0);
     assert_eq!(state.scroll.scroll_offset, 0);
     assert!(!state.scroll.following_tail);
@@ -296,7 +298,8 @@ fn visual_mode_exit_and_jump_table() {
         ReducerInput::User(UserAction::ScrollToBottom),
         None,
     );
-    let sel = state.scroll.selection.expect("selection should exist");
+    let sel = state.scroll.selection.ok_or("selection should exist")?;
     assert_eq!(sel.cursor(), 4);
     assert!(state.scroll.following_tail);
+    Ok(())
 }

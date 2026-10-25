@@ -208,7 +208,7 @@ impl TranscriptStore {
 
     /// Mark the height index stale — the next `rebuild_height_index` must
     /// re-measure. Called when the width changes or content mutates outside
-    /// `push_block`/`truncate` (theme switch, resize).
+    /// `push_block`/`truncate` (resize).
     pub(crate) fn invalidate_height_index(&mut self) {
         self.height_index_width = None;
     }
