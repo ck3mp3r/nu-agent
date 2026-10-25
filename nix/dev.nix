@@ -12,6 +12,9 @@
   # LLVM tools for cargo-llvm-cov; must match the LLVM version used by rustc
   llvmPkgs = pkgs.llvmPackages_22;
 
+  # cargo-llvm-cov tests break on nixpkgs rust bumps; binary still works (nixpkgs#197478)
+  cargo-llvm-cov = pkgs.cargo-llvm-cov.overrideAttrs (_: {doCheck = false;});
+
   # Development helper scripts
   check = pkgs.writeShellScriptBin "check" ''cargo check'';
   fmt = pkgs.writeShellScriptBin "fmt" ''cargo fmt'';
@@ -32,7 +35,7 @@ in
     buildInputs = [
       toolchain
       pkgs.prek
-      pkgs.cargo-llvm-cov
+      cargo-llvm-cov
       pkgs.cargo-nextest
 
       # Development scripts
