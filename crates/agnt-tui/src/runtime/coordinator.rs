@@ -148,7 +148,15 @@ impl RuntimeCoordinator {
 
     /// Set the active theme by name, mirroring the `SwitchRequest::Theme` arm
     /// in `AppState::take_pending_events`: update the name, resolve the theme,
-    /// sync `state.theme`, and clear the assistant projection cache.
+    /// sync `state.theme`, and invalidate the transcript height index.
+    ///
+    /// The [`crate::state::TranscriptStore::invalidate_height_index`] call is a
+    /// safety net, not a correctness requirement today: measurement is
+    /// theme-blind ([`crate::tui_renderer::measure`]), so the index is already
+    /// valid for every theme, and omitting the call holds only while that stays
+    /// true. If measurement ever becomes theme-aware, this call becomes
+    /// mandatory — without it the index keeps the previous theme's row counts
+    /// and scroll math drifts silently after a live switch.
     pub fn set_theme(&mut self, name: ThemeName) {
         self.theme_name = name;
         self.theme = name.resolve();

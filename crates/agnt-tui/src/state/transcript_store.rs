@@ -50,6 +50,12 @@ pub(crate) struct HeightIndex {
 impl HeightIndex {
     /// Wholesale rebuild: measure every block at `width`, then derive the
     /// offsets from the fresh cache. One theme serves the whole walk.
+    ///
+    /// The `TuiTheme::default()` argument is inert under the theme-blind
+    /// measure contract ([`crate::tui_renderer::measure`]): measurement reads
+    /// zero theme data, so any theme yields the same row counts. It must stay
+    /// inert — a theme-dependent measure would make this index wrong for every
+    /// theme but the default.
     fn rebuild(blocks: &[Block], width: usize) -> Self {
         let theme = TuiTheme::default();
         let mut index = Self {
@@ -115,6 +121,11 @@ impl HeightIndex {
 /// Transcript block storage shared by every domain reducer. Every mutation
 /// keeps the height index in lockstep (measuring only the block it touches);
 /// eviction shifts the streaming cursors.
+///
+/// The height index agrees with the rendered output by construction because
+/// measurement reads zero theme data ([`crate::tui_renderer::measure`]): the
+/// index is built with `TuiTheme::default()` and still matches what any theme
+/// renders, so a live theme switch cannot desynchronise scroll math.
 #[derive(Debug, Clone, Default)]
 pub struct TranscriptStore {
     pub(crate) blocks: Vec<Block>,
@@ -153,6 +164,10 @@ impl TranscriptStore {
     /// Measure the block just pushed and append its content rows to the cache,
     /// then re-derive the offsets. No-op when the index is stale — the next
     /// `rebuild_height_index` re-measures everything.
+    ///
+    /// The `TuiTheme::default()` argument is inert under the theme-blind
+    /// measure contract ([`crate::tui_renderer::measure`]) and must remain so:
+    /// the cached rows are shared by every theme.
     fn cache_pushed_block(&mut self) {
         let Some(width) = self.height_index_width else {
             return;
@@ -168,6 +183,10 @@ impl TranscriptStore {
     /// Measure the block just inserted at `index` and splice its content rows
     /// into the cache, then re-derive the offsets. No-op when the index is
     /// stale.
+    ///
+    /// The `TuiTheme::default()` argument is inert under the theme-blind
+    /// measure contract ([`crate::tui_renderer::measure`]) and must remain so:
+    /// the cached rows are shared by every theme.
     fn cache_inserted_block(&mut self, index: usize) {
         let Some(width) = self.height_index_width else {
             return;

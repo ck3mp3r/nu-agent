@@ -44,6 +44,17 @@ pub fn layout(block: &Block, ctx: &FrameContext, theme: &TuiTheme) -> Vec<Line<'
 /// included), and the 2 margin rows for Fill::Code. Used by the render loop
 /// for scroll math; must stay in lockstep with [`TuiRenderer::render_block`]
 /// by construction.
+///
+/// Theme-blind by contract: the row count reads zero theme data. Projection is
+/// theme-free (the agnt-core IR carries no theme), the wrap budget is the
+/// compile-time [`crate::state::code_block::content_wrap_width`], the
+/// theme-derived [`LaneContext`] is discarded by
+/// [`TuiRenderer::wrapped_row_count`], and the code margins are
+/// theme-independent. Row counts are therefore theme-independent by
+/// construction, and `theme` only satisfies the renderer's signature. Any
+/// future theme-dependent measurement breaks the height index's agreement with
+/// rendered output on a live theme switch, so it must invalidate the index via
+/// [`crate::state::TranscriptStore::invalidate_height_index`].
 pub fn measure(block: &Block, width: usize, theme: &TuiTheme) -> usize {
     let renderer = TuiRenderer { theme };
     renderer.measure_block(block, width)
