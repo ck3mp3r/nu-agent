@@ -73,3 +73,6 @@ pub const OUTPUT_BUDGET_RAISE_CAP: u32 = 32768;
 /// Default flag for the repetition guard (tool-call + output repetition
 /// detection). True = enabled.
 pub const REPETITION_GUARD_ENABLED: bool = true;
+
+/// Default timeout for a user hook subprocess, in milliseconds.
+pub const HOOK_TIMEOUT_MS: u64 = 10_000;

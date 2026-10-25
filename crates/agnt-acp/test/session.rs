@@ -17,6 +17,9 @@ mod cancel;
 #[path = "session/config_options.rs"]
 mod config_options;
 
+#[path = "session/events.rs"]
+mod events;
+
 #[path = "session/lifecycle.rs"]
 mod lifecycle;
 

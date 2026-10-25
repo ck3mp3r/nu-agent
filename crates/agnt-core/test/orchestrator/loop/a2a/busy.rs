@@ -27,7 +27,6 @@ async fn a2a_task_rx_rejects_second_task_while_worker_busy() -> Result<()> {
     } = h;
 
     let (a2a_task_tx, a2a_task_rx) = mpsc::channel::<IncomingTask>(16);
-    let mut turn_rx = bus.turn().subscribe();
 
     // The server handler transitions an incoming task Submitted→Working before
     // the orchestrator sees it. Model that here so the busy-reject has a
@@ -102,24 +101,20 @@ async fn a2a_task_rx_rejects_second_task_while_worker_busy() -> Result<()> {
         .map_err(|_| "task-1 submit failed")?;
     let cmd = recv_worker_command(&mut worker_rx, "ExecuteTurn (task-1)").await?;
     match cmd {
-        WorkerCommand::ExecuteTurn { prompt, .. } => {
+        WorkerCommand::ExecuteTurn {
+            prompt, task_id, ..
+        } => {
             assert_eq!(
                 prompt, task1_prompt,
                 "task-1 turn prompt must be the submitted text"
             );
+            assert_eq!(
+                task_id.as_deref(),
+                Some("task-1"),
+                "the A2A turn must carry its task attribution"
+            );
         }
         _ => panic!("expected ExecuteTurn for task-1"),
-    }
-    // Drain task-1's turn-start event so the next one is task-2's.
-    let started = tokio::time::timeout(std::time::Duration::from_secs(5), turn_rx.recv())
-        .await
-        .map_err(|_| "TurnEvent::Started (task-1) should be published")?
-        .map_err(|e| format!("turn channel should not close: {e:?}"))?;
-    match started {
-        TurnEvent::Started { task_id, .. } => {
-            assert_eq!(task_id.as_deref(), Some("task-1"));
-        }
-        _ => panic!("expected TurnEvent::Started for task-1"),
     }
 
     // Second task arrives while the worker is busy. The orchestrator must reject

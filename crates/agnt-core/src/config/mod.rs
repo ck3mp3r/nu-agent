@@ -17,7 +17,9 @@ pub use loader::{
     ConfigLoadError, load_and_resolve_config, resolve_preamble_for_model, resolve_role_config,
 };
 pub use models_cache::{ModelSpec, ModelsCache, ProviderSpec};
-pub use toml_config::{TomlConfigError, config_path, load};
+pub use toml_config::{
+    TomlConfigError, config_path, load, resolve_configured_hooks, resolve_hooks,
+};
 pub use types::*;
 pub use vault::{CredentialType, ProviderEntry, Vault, VaultBackendKind, VaultError};
 

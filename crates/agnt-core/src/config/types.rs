@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -172,6 +174,10 @@ pub struct PluginConfig {
     /// Default TUI theme (kebab-case name, e.g. "catppuccin-frappe").
     /// Unknown values are kept as `Some(raw)` and ignored at resolve time.
     pub theme: Option<String>,
+
+    /// User hook handlers (`[[hooks]]` entries).
+    #[serde(default)]
+    pub hooks: Vec<HookConfig>,
 }
 
 /// All fields are `Option` — `None` means "use default".
@@ -191,6 +197,120 @@ pub struct StoreTypeConfig {
     pub store_type: StoreType,
     /// Optional custom path for the session store
     pub path: Option<String>,
+}
+
+/// A lifecycle event a user hook can subscribe to.
+///
+/// The v1 surface is eight events in two classes. The session class covers the
+/// per-session lifecycle (turns, tools, and the session itself); the agent class
+/// covers the per-process lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookEvent {
+    TurnStarted,
+    TurnCompleted,
+    ToolStarted,
+    ToolCompleted,
+    SessionStarted,
+    SessionEnded,
+    AgentStarted,
+    AgentShutdown,
+}
+
+/// The class a [`HookEvent`] belongs to.
+///
+/// The session runner subscribes to the session class on a session's bus; the
+/// agent runner subscribes to the agent class on the process-wide channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HookEventClass {
+    /// Per-session events: turns, tools, and the session's own lifecycle.
+    Session,
+    /// Per-process events: the agent's start and shutdown.
+    Agent,
+}
+
+impl HookEvent {
+    /// Every v1 event name, in declaration order.
+    pub const NAMES: [&'static str; 8] = [
+        "turn_started",
+        "turn_completed",
+        "tool_started",
+        "tool_completed",
+        "session_started",
+        "session_ended",
+        "agent_started",
+        "agent_shutdown",
+    ];
+
+    /// The event's wire name (the string a hook declares in `events`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::TurnStarted => "turn_started",
+            Self::TurnCompleted => "turn_completed",
+            Self::ToolStarted => "tool_started",
+            Self::ToolCompleted => "tool_completed",
+            Self::SessionStarted => "session_started",
+            Self::SessionEnded => "session_ended",
+            Self::AgentStarted => "agent_started",
+            Self::AgentShutdown => "agent_shutdown",
+        }
+    }
+
+    /// The event named `name`, or `None` when it is not a v1 event.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "turn_started" => Some(Self::TurnStarted),
+            "turn_completed" => Some(Self::TurnCompleted),
+            "tool_started" => Some(Self::ToolStarted),
+            "tool_completed" => Some(Self::ToolCompleted),
+            "session_started" => Some(Self::SessionStarted),
+            "session_ended" => Some(Self::SessionEnded),
+            "agent_started" => Some(Self::AgentStarted),
+            "agent_shutdown" => Some(Self::AgentShutdown),
+            _ => None,
+        }
+    }
+
+    /// The class this event belongs to.
+    pub fn class(self) -> HookEventClass {
+        match self {
+            Self::TurnStarted
+            | Self::TurnCompleted
+            | Self::ToolStarted
+            | Self::ToolCompleted
+            | Self::SessionStarted
+            | Self::SessionEnded => HookEventClass::Session,
+            Self::AgentStarted | Self::AgentShutdown => HookEventClass::Agent,
+        }
+    }
+}
+
+/// One `[[hooks]]` entry as written in config.toml.
+///
+/// `script` is the path as written; [`ResolvedHook`] carries the path resolved
+/// against the config directory.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct HookConfig {
+    /// The hook's name, used in error messages and logs.
+    #[serde(default)]
+    pub name: String,
+    /// The events this hook subscribes to.
+    #[serde(default)]
+    pub events: Vec<HookEvent>,
+    /// The Nushell script to run, relative to the config directory or absolute.
+    #[serde(default)]
+    pub script: String,
+    /// Subprocess timeout in milliseconds. `None` = the 10s default.
+    pub timeout_ms: Option<u64>,
+}
+
+/// A [`HookConfig`] with its script path resolved and its timeout defaulted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedHook {
+    pub name: String,
+    pub events: Vec<HookEvent>,
+    pub script: PathBuf,
+    pub timeout: Duration,
 }
 
 /// Configuration for agent personas (planner/maker).

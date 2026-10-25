@@ -12,6 +12,9 @@
 #[path = "executor_dispatch/completed.rs"]
 mod completed;
 
+#[path = "executor_dispatch/turn_completed.rs"]
+mod turn_completed;
+
 #[path = "executor_dispatch/user_cancel.rs"]
 mod user_cancel;
 

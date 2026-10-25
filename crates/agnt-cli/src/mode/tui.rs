@@ -31,7 +31,10 @@ use nu_protocol::{Span, Value};
 
 use crate::error::{Error, Result};
 
-use super::{TuiHydrationInput, TuiModeOptions, apply_turn_event_to_store};
+use super::{
+    AgentLifecycle, TuiHydrationInput, TuiModeOptions, apply_turn_event_to_store,
+    run_with_agent_lifecycle, spawn_configured_hooks_with_nu,
+};
 
 /// Run the interactive TUI, or a single turn when `prompt` is `Some`.
 ///
@@ -39,6 +42,32 @@ use super::{TuiHydrationInput, TuiModeOptions, apply_turn_event_to_store};
 /// interactive loop then reads prompts from the TUI input pane. When `prompt`
 /// is `Some`, the function runs exactly one turn with the optional `context`.
 pub async fn run_tui_mode(
+    runtime_impl: AgentConversationRuntime,
+    prompt: Option<String>,
+    context: Option<String>,
+    ui_policy: UiPolicy,
+    hydration: TuiHydrationInput,
+    options: TuiModeOptions,
+) -> Result<Value> {
+    // Agent events are process-scoped: publish Started before the first turn
+    // runs and spawn the agent-class hook runner once for this process.
+    let agent_lifecycle = AgentLifecycle::start_configured(
+        "tui",
+        runtime_impl.startup_plugin_config(),
+        runtime_impl
+            .mcp_caller_cwd()
+            .unwrap_or(std::path::Path::new(".")),
+    )
+    .await;
+
+    run_with_agent_lifecycle(agent_lifecycle, "completed", || {
+        run_tui_mode_inner(runtime_impl, prompt, context, ui_policy, hydration, options)
+    })
+    .await
+}
+
+/// The TUI body, without the process-wide agent lifecycle.
+async fn run_tui_mode_inner(
     mut runtime_impl: AgentConversationRuntime,
     prompt: Option<String>,
     context: Option<String>,
@@ -222,6 +251,16 @@ pub async fn run_tui_mode(
             }
         },
     ) as OnAgentSwitch);
+
+    // Start the user hook runner before the loop so the first prompt's events
+    // are observed. Zero hooks spawns nothing.
+    let _hook_handles = spawn_configured_hooks_with_nu(
+        runtime_impl.startup_plugin_config(),
+        &runtime_impl.bus,
+        runtime_impl
+            .mcp_caller_cwd()
+            .unwrap_or(std::path::Path::new(".")),
+    );
 
     terminal_lifecycle
         .enter()

@@ -106,6 +106,12 @@ pub enum WorkerCommand {
     ExecuteTurn {
         prompt: String,
         span: nu_protocol::Span,
+        /// The A2A task that queued this prompt, or `None` for a user submit.
+        ///
+        /// The router publishes it as the turn's `TurnEvent::Started`
+        /// attribution, so the attribution travels with the command instead of
+        /// being published by the stage that dispatched it.
+        task_id: Option<String>,
     },
     HandleUiRequest {
         request: UiRequest,

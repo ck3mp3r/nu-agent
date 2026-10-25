@@ -15,7 +15,9 @@ pub(super) use agent_client_protocol::schema::v1::{
     ToolCallUpdate,
 };
 pub(super) use agent_client_protocol::{Agent, Channel, Client, ConnectionTo};
-pub(super) use agnt_core::bus::{CancelEvent, OneshotTx, create_bus};
+pub(super) use agnt_core::bus::{
+    Bus, CancelEvent, OneshotTx, SessionEvent, TurnEvent, TurnRx, create_bus,
+};
 pub(super) use agnt_core::compaction::CompactionParams;
 pub(super) use agnt_core::config::{AgentsConfig, Config, ModelsCache, defaults};
 pub(super) use agnt_core::conversation::compaction::CompactionConfig;
@@ -35,6 +37,7 @@ pub(super) use agnt_core::tools::handler::McpToolRegistry;
 pub(super) use agnt_core::tools::handler::builtin_tool::ToolRenderRegistry;
 pub(super) use agnt_core::tools::mcp::circuit_breaker::McpCircuitBreaker;
 pub(super) use agnt_core::types::{Message, MockCompletionModel};
+pub(super) use rig::test_utils::MockStreamEvent;
 
 use super::super::*;
 
@@ -55,6 +58,7 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 pub(super) struct MockRuntimeBuilder {
     captured_client_fs: Option<Arc<Mutex<Vec<Option<ClientFsState>>>>>,
     captured_agent_name: Option<Arc<Mutex<Vec<Option<String>>>>>,
+    bus: Option<Bus>,
 }
 
 impl RuntimeBuilder for MockRuntimeBuilder {
@@ -79,8 +83,13 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             captured.lock().unwrap().push(agent_name);
         }
 
-        let bus = create_bus();
-        let model = MockCompletionModel::text("mock response");
+        let bus = self.bus.clone().unwrap_or_else(create_bus);
+        // The turn path always streams, so the model must script a streaming
+        // turn: a unary-only script fails every prompt turn at the provider.
+        let model = MockCompletionModel::from_stream_turns([[
+            MockStreamEvent::Text("mock response".to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ]]);
         let compactor_model = model.clone();
         let config = Config {
             provider: "ollama".to_string(),
@@ -188,6 +197,44 @@ pub(super) fn session_cwd(dir: &Path, name: &str) -> Result<PathBuf> {
     let cwd = dir.join(name);
     std::fs::create_dir_all(&cwd)?;
     Ok(cwd)
+}
+
+/// A manager whose runtime builder uses `bus` for every session it builds.
+///
+/// Lets a test subscribe to the session channel before a session is opened, so
+/// the `SessionEvent` the manager publishes is not missed.
+pub(super) async fn manager_with_bus(
+    dir: &Path,
+    bus: Bus,
+) -> Result<AcpSessionManager<MockRuntimeBuilder>> {
+    Ok(AcpSessionManager::with_runtime_builder(
+        rig_config(dir),
+        dir.join("config.toml"),
+        tokio::runtime::Handle::current(),
+        MockRuntimeBuilder {
+            bus: Some(bus),
+            ..MockRuntimeBuilder::default()
+        },
+    ))
+}
+
+/// A manager whose runtime builder uses `bus`, plus the rig-memory store config
+/// it reads conversations from.
+pub(super) async fn manager_with_bus_and_rig_store(
+    dir: &Path,
+    bus: Bus,
+) -> Result<(AcpSessionManager<MockRuntimeBuilder>, RigStoreConfig)> {
+    let rig = rig_config(dir);
+    let manager = AcpSessionManager::with_runtime_builder(
+        rig.clone(),
+        dir.join("config.toml"),
+        tokio::runtime::Handle::current(),
+        MockRuntimeBuilder {
+            bus: Some(bus),
+            ..MockRuntimeBuilder::default()
+        },
+    );
+    Ok((manager, rig))
 }
 
 /// A manager plus the rig-memory store config it reads conversations from, so a

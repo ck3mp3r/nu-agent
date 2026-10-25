@@ -1,3 +1,10 @@
+// region:    --- Modules
+
+#[path = "agent.rs"]
+mod agent;
+
+// endregion: --- Modules
+
 use super::*;
 use crate::protocol::event::UiEvent;
 use crate::protocol::tool_args::CallLine;

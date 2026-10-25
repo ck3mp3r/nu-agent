@@ -69,7 +69,7 @@ where
         let _ = bus
             .session()
             .send(SessionEvent::Started {
-                session_id: String::new(),
+                session_id: runtime.current_session_id().unwrap_or_default().to_string(),
                 hydrated: true,
             })
             .await;
@@ -77,7 +77,7 @@ where
         let _ = bus
             .session()
             .send(SessionEvent::Started {
-                session_id: String::new(),
+                session_id: runtime.current_session_id().unwrap_or_default().to_string(),
                 hydrated: false,
             })
             .await;
@@ -210,6 +210,14 @@ where
         .await
         .unwrap_or_else(|_| panic!("worker panicked"));
 
+    // One teardown site covers every loop exit (quit, channel close, error).
+    let _ = bus
+        .session()
+        .send(SessionEvent::Ended {
+            session_id: runtime.current_session_id().unwrap_or_default().to_string(),
+        })
+        .await;
+
     let result = result.map(|()| Value::nothing(span));
     (runtime, result)
 }
@@ -265,6 +273,16 @@ pub async fn run_single_turn<R>(
 where
     R: CoreRuntime,
 {
+    // Control-plane turn-start event: stays on `bus.turn()`, not rendered. The
+    // single-turn path has no A2A attribution at dispatch — the task store is
+    // updated after the turn — so the attribution is always `None`.
+    let _ = bus
+        .turn()
+        .send(crate::bus::TurnEvent::Started {
+            prompt: prompt.clone(),
+            task_id: None,
+        })
+        .await;
     runtime.execute_turn(bus, prompt, context, span).await
 }
 

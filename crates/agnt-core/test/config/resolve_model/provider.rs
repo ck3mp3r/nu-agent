@@ -31,6 +31,7 @@ fn test_resolve_model_merges_provider_and_model_fields() -> Result<()> {
         permissions: None,
         mcp: None,
         theme: None,
+        hooks: Vec::new(),
     };
 
     // Case B: model limits from the provider's models map are merged in.
@@ -78,6 +79,7 @@ fn test_resolve_model_merges_provider_and_model_fields() -> Result<()> {
         permissions: None,
         mcp: None,
         theme: None,
+        hooks: Vec::new(),
     };
 
     // -- Exec & Check

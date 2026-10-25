@@ -15,8 +15,8 @@ async fn a_replaced_deferred_prompt_leaves_a_later_prompt_unattributed() -> Resu
         event_tx,
         event_rx,
         worker_tx,
-        worker_rx: _,
-        worker_result_tx,
+        worker_rx,
+        worker_result_tx: _,
         worker_result_rx,
         blocking_tx,
         blocking_response_rx,
@@ -34,7 +34,6 @@ async fn a_replaced_deferred_prompt_leaves_a_later_prompt_unattributed() -> Resu
     ui_request.blocking_pending = true;
     let mut session = MockSession::new();
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    let mut turn_rx = bus.turn().subscribe();
 
     // -- Exec
     bus.external()
@@ -62,22 +61,6 @@ async fn a_replaced_deferred_prompt_leaves_a_later_prompt_unattributed() -> Resu
         .await
         .map_err(|_| "the blocking response channel should be open")?;
     // Exit cleanly once the replacement prompt has started its turn.
-    let mut gate_turn_rx = bus.turn().subscribe();
-    let result_tx = worker_result_tx.clone();
-    let quit_tx = event_tx.clone();
-    tokio::spawn(async move {
-        loop {
-            match gate_turn_rx.recv().await {
-                Ok(TurnEvent::Started { .. }) => break,
-                Ok(_) => continue,
-                Err(_) => return,
-            }
-        }
-        let _ = result_tx
-            .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
-            .await;
-        let _ = quit_tx.send(OrchestratorEvent::Quit).await;
-    });
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -105,7 +88,11 @@ async fn a_replaced_deferred_prompt_leaves_a_later_prompt_unattributed() -> Resu
 
     // -- Check
     assert!(result.is_ok());
-    assert_unattributed_turn(&mut turn_rx, "the replacement prompt").await?;
+    let task_id = recv_execute_turn_task_id(worker_rx, "the replacement prompt")?;
+    assert_eq!(
+        task_id, None,
+        "the replacement prompt must not be attributed to the replaced task"
+    );
     assert_eq!(
         state.active_external_prompt, None,
         "the replacement prompt must not be recorded as an external prompt"
@@ -131,8 +118,8 @@ async fn a_deferred_external_prompt_keeps_its_task_attribution() -> Result<()> {
         event_tx,
         event_rx,
         worker_tx,
-        worker_rx: _,
-        worker_result_tx,
+        worker_rx,
+        worker_result_tx: _,
         worker_result_rx,
         blocking_tx,
         blocking_response_rx,
@@ -150,7 +137,6 @@ async fn a_deferred_external_prompt_keeps_its_task_attribution() -> Result<()> {
     ui_request.blocking_pending = true;
     let mut session = MockSession::new();
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    let mut turn_rx = bus.turn().subscribe();
 
     // -- Exec
     bus.external()
@@ -175,22 +161,6 @@ async fn a_deferred_external_prompt_keeps_its_task_attribution() -> Result<()> {
         .await
         .map_err(|_| "the blocking response channel should be open")?;
     // Exit cleanly once the deferred prompt has started its turn.
-    let mut gate_turn_rx = bus.turn().subscribe();
-    let result_tx = worker_result_tx.clone();
-    let quit_tx = event_tx.clone();
-    tokio::spawn(async move {
-        loop {
-            match gate_turn_rx.recv().await {
-                Ok(TurnEvent::Started { .. }) => break,
-                Ok(_) => continue,
-                Err(_) => return,
-            }
-        }
-        let _ = result_tx
-            .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
-            .await;
-        let _ = quit_tx.send(OrchestratorEvent::Quit).await;
-    });
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -218,17 +188,12 @@ async fn a_deferred_external_prompt_keeps_its_task_attribution() -> Result<()> {
 
     // -- Check
     assert!(result.is_ok());
-    let started = turn_rx
-        .try_recv()
-        .map_err(|e| format!("TurnEvent::Started should be published: {e:?}"))?;
-    match started {
-        TurnEvent::Started { task_id, .. } => assert_eq!(
-            task_id.as_deref(),
-            Some("task-1"),
-            "the deferred external prompt must keep its task attribution"
-        ),
-        _ => return Err("expected TurnEvent::Started".into()),
-    }
+    let task_id = recv_execute_turn_task_id(worker_rx, "the deferred prompt")?;
+    assert_eq!(
+        task_id.as_deref(),
+        Some("task-1"),
+        "the deferred external prompt must keep its task attribution"
+    );
     assert_eq!(
         state.active_external_task_id.as_deref(),
         Some("task-1"),

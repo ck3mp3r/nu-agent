@@ -1,4 +1,4 @@
-use crate::bus::{CancelEvent, CompactionEvent, TurnEvent};
+use crate::bus::{CancelEvent, CompactionEvent};
 use crate::orchestrator::stages::{OrchestrationContext, SlashHandler};
 use crate::orchestrator::{UiStateEvent, WorkerCommand};
 use crate::protocol::contracts::SharedUiAction;
@@ -119,20 +119,14 @@ impl SlashHandler for SlashStage {
                         let _ = ctx.bus.cancel().send(CancelEvent::Requested).await;
                     }
                 }
-                // Control-plane turn-start event: stays on `bus.turn()`, not rendered.
-                let _ = ctx
-                    .bus
-                    .turn()
-                    .send(TurnEvent::Started {
-                        prompt: prompt.clone(),
-                        task_id,
-                    })
-                    .await;
+                // Control-plane turn-start event is published by the worker
+                // router, which owns the turn dispatch and the attribution.
                 match ctx
                     .worker_tx
                     .send(WorkerCommand::ExecuteTurn {
                         prompt,
                         span: ctx.span,
+                        task_id,
                     })
                     .await
                 {

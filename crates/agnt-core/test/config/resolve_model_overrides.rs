@@ -70,6 +70,7 @@ fn test_plugin_config_resolve_model_role_level_overrides() -> Result<()> {
             permissions: None,
             mcp: None,
             theme: None,
+            hooks: Vec::new(),
         }
     };
 
@@ -249,6 +250,7 @@ fn test_resolve_model_role_max_output_tokens_overrides_model_limit() -> Result<(
         permissions: None,
         mcp: None,
         theme: None,
+        hooks: Vec::new(),
     };
 
     let role_config = ModelRoleConfig {
@@ -284,6 +286,7 @@ fn plugin_config_with_role(role: ModelRoleConfig) -> PluginConfig {
         permissions: None,
         mcp: None,
         theme: None,
+        hooks: Vec::new(),
     }
 }
 

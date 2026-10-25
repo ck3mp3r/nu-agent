@@ -15,7 +15,9 @@ use std::future::Future;
 use crate::orchestrator::UiStateEvent;
 use crate::protocol::event::UiEvent;
 
-use super::events::{CancelEvent, CompactionEvent, ExternalEvent, SessionEvent, TurnEvent};
+use super::events::{
+    AgentEvent, CancelEvent, CompactionEvent, ExternalEvent, SessionEvent, TurnEvent,
+};
 
 // region:    --- Types
 
@@ -382,6 +384,13 @@ impl<M: Send + 'static, T: Metrics + Unpin> Future for OneshotRx<M, T> {
 pub type CancelTx = BroadcastTx<CancelEvent>;
 /// Cancel channel receiver.
 pub type CancelRx = BroadcastRx<CancelEvent>;
+/// Process-wide agent lifecycle channel.
+///
+/// Created at mode entry, outside [`Bus`](crate::bus::Bus): agent events are
+/// per-process, the bus is per-runtime.
+pub type AgentTx = BroadcastTx<AgentEvent>;
+/// Process-wide agent lifecycle channel receiver.
+pub type AgentRx = BroadcastRx<AgentEvent>;
 /// Turn lifecycle channel.
 pub type TurnTx = BroadcastTx<TurnEvent>;
 /// Turn lifecycle channel receiver.

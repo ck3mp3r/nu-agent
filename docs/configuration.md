@@ -58,6 +58,7 @@ Top-level sections:
 - `[session_store]` — session store backend (optional)
 - `a2a_enabled` — enable A2A (agent-to-agent) protocol (default: `false`)
 - `theme` — default TUI theme (optional, see [Theme](#theme))
+- `[[hooks]]` — user hook handlers (optional, see [Hooks](#hooks))
 
 ### Theme
 
@@ -302,6 +303,58 @@ a2a_enabled = true
 ```
 
 Enable A2A (agent-to-agent) JSON-RPC 2.0 over HTTP. Default is `false`.
+
+### Hooks
+
+A `[[hooks]]` entry runs a Nushell script when the agent publishes a lifecycle event. Hooks are observe-only: they never change the turn, the tool result, or the agent output.
+
+```toml
+[[hooks]]
+name = "herdr"
+events = ["turn_started", "turn_completed"]
+script = "hooks/herdr.nu"
+timeout_ms = 5000
+```
+
+Fields:
+
+- `name` — required, non-empty. Identifies the hook in log messages.
+- `events` — required array of event names. An empty array is valid and starts no runner. See [Hook events](#hook-events).
+- `script` — required, non-empty. Path to a Nushell script. A relative path resolves against the directory that holds `config.toml`; an absolute path is used as written.
+- `timeout_ms` — optional. Subprocess timeout in milliseconds. Default `10000`.
+
+#### Hook events
+
+Eight event names are valid, in two classes.
+
+Session class — per-session events:
+
+- `turn_started`
+- `turn_completed`
+- `tool_started`
+- `tool_completed`
+- `session_started`
+- `session_ended`
+
+Agent class — per-process events:
+
+- `agent_started`
+- `agent_shutdown`
+
+A hook that declares only session-class events runs on the session hook runner. A hook that declares only agent-class events runs on the process-wide agent hook runner. A hook that declares both runs on both runners.
+
+#### Validation errors
+
+The agent rejects `config.toml` at load time when:
+
+- `hooks` is not an array of tables
+- an entry has an empty or missing `name`
+- an entry has an empty or missing `script`
+- an entry has no `events` array
+- an event name is not a string
+- an event name is not one of the eight names above
+
+The error names the hook and the offending event, and lists the valid names. A hook that fails to resolve at runtime is logged and skipped. Hooks never block a turn.
 
 ## Permissions
 

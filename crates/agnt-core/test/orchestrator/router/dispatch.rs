@@ -1,6 +1,61 @@
 use super::*;
 
 // ---------------------------------------------------------------------------
+// ExecuteTurn tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn dispatch_execute_turn_publishes_exactly_one_started()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
+    // -- Setup & Fixtures
+    let bus = create_bus();
+    let mut turn_rx = bus.turn().subscribe();
+    let mut runtime = AgentSwitchRuntime::default();
+    let (result_tx, mut result_rx) =
+        mpsc::channel::<crate::orchestrator::turn_outcome::TurnOutcome>(32);
+
+    // -- Exec
+    let keep_going = CommandRouter::dispatch(
+        WorkerCommand::ExecuteTurn {
+            prompt: "hello".to_string(),
+            span: Span::test_data(),
+            task_id: Some("task-1".to_string()),
+        },
+        &mut runtime,
+        &result_tx,
+        None,
+        &bus,
+    )
+    .await;
+
+    // -- Check
+    assert!(keep_going, "ExecuteTurn must keep the worker loop running");
+    let mut started = Vec::new();
+    while let Ok(event) = turn_rx.try_recv() {
+        if let crate::bus::TurnEvent::Started { prompt, task_id } = event {
+            started.push((prompt, task_id));
+        }
+    }
+    assert_eq!(
+        started,
+        vec![("hello".to_string(), Some("task-1".to_string()))],
+        "the router must publish exactly one attributed TurnEvent::Started"
+    );
+    let outcome = result_rx
+        .recv()
+        .await
+        .ok_or("the router must send the turn outcome")?;
+    assert!(
+        matches!(
+            outcome,
+            crate::orchestrator::turn_outcome::TurnOutcome::Success(_)
+        ),
+        "the turn must report success"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // dispatch_ui_request tests
 // ---------------------------------------------------------------------------
 

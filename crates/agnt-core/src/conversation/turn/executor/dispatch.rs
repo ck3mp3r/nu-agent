@@ -11,6 +11,7 @@
 
 use nu_protocol::{LabeledError, Span};
 
+use crate::bus::TurnEvent;
 use crate::hook::chain::{NotRunCall, NotRunOutcome, NotRunStart, emit_not_run_dispatch};
 use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
 use crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
@@ -259,6 +260,14 @@ where
                     tool_calls: turn_result.tool_call_count,
                 })
                 .await;
+            let _ = self
+                .tool_infra
+                .bus
+                .turn()
+                .send(TurnEvent::Completed {
+                    tool_calls: turn_result.tool_call_count,
+                })
+                .await;
             return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
                 &crate::llm::LlmResponse {
                     text: response_text,
@@ -311,6 +320,14 @@ where
             .bus
             .ui_event()
             .send(UiEvent::Completed {
+                tool_calls: turn_result.tool_call_count,
+            })
+            .await;
+        let _ = self
+            .tool_infra
+            .bus
+            .turn()
+            .send(TurnEvent::Completed {
                 tool_calls: turn_result.tool_call_count,
             })
             .await;

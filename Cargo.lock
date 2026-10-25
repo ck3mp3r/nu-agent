@@ -103,6 +103,7 @@ dependencies = [
  "chrono",
  "log",
  "nu-protocol",
+ "rig",
  "rig-memory",
  "serde",
  "serde_json",

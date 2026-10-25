@@ -13,13 +13,55 @@ use nu_protocol::{Span, Value};
 
 use crate::error::{Error, Result};
 
-use super::{A2aContext, apply_a2a_turn_result, attach_a2a_context_session};
+use super::{
+    A2aContext, AgentLifecycle, HOOK_DRAIN_TIMEOUT, apply_a2a_turn_result,
+    attach_a2a_context_session, run_with_agent_lifecycle, spawn_configured_hooks_with_nu,
+};
 
 /// Run a single turn in stderr mode.
 ///
 /// A pending A2A completion event or incoming task takes priority over the
 /// CLI-provided `prompt`. When neither is present, `prompt` must be `Some`.
+///
+/// Publishes the process-wide `AgentEvent::Started`/`Shutdown` pair around the
+/// turn and starts the user hook runners before it. Both drains are
+/// best-effort: the hook tasks are detached and the process exits as soon as
+/// this returns, so an in-flight hook subprocess gets a bounded moment to
+/// finish.
 pub async fn run_stderr_mode(
+    runtime_impl: &mut AgentConversationRuntime,
+    prompt: Option<String>,
+    context: Option<String>,
+    ui_policy: UiPolicy,
+    stderr_is_tty: bool,
+    a2a: A2aContext,
+) -> Result<Value> {
+    let config = runtime_impl.startup_plugin_config();
+    let cwd = runtime_impl
+        .mcp_caller_cwd()
+        .unwrap_or(std::path::Path::new("."));
+
+    // Zero hooks spawns nothing.
+    let hook_handles = spawn_configured_hooks_with_nu(config, &runtime_impl.bus, cwd);
+    let agent_lifecycle = AgentLifecycle::start_configured("stderr", config, cwd).await;
+
+    let result = run_with_agent_lifecycle(agent_lifecycle, "completed", || {
+        run_stderr_mode_inner(runtime_impl, prompt, context, ui_policy, stderr_is_tty, a2a)
+    })
+    .await;
+
+    // Best-effort hook drain: the turn's events are already published, so a
+    // short pause lets a running hook subprocess complete before the process
+    // exits. Gated on the handles so the zero-hook path pays nothing.
+    if !hook_handles.is_empty() {
+        tokio::time::sleep(HOOK_DRAIN_TIMEOUT).await;
+    }
+
+    result
+}
+
+/// The stderr-mode body, without the hook runner setup and drain.
+async fn run_stderr_mode_inner(
     runtime_impl: &mut AgentConversationRuntime,
     prompt: Option<String>,
     context: Option<String>,

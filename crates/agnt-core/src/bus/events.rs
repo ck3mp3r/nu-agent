@@ -58,6 +58,21 @@ pub enum LlmEvent {
     },
 }
 
+/// A process-wide agent lifecycle event.
+///
+/// Agent events are per-process, not per-session: one `Started`/`Shutdown` pair
+/// per process lifetime. They ride a standalone channel created at mode entry,
+/// never the per-runtime [`Bus`](crate::bus::Bus) — in ACP the bus is cloned per
+/// session, so a process-scoped event on it would be a category error.
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    /// The agent process started. `mode` is "tui", "stderr", or "acp".
+    Started { mode: String },
+    /// The agent process is shutting down. `reason` is "completed", "error",
+    /// or "shutdown".
+    Shutdown { reason: String },
+}
+
 /// A conversation turn lifecycle event.
 #[derive(Debug, Clone)]
 pub enum TurnEvent {

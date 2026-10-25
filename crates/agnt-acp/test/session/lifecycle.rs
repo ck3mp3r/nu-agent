@@ -267,7 +267,7 @@ async fn test_session_manager_close_session_frees_session() -> Result<()> {
     let session_id = manager.new_session(cwd, Vec::new()).await?;
 
     // -- Exec
-    manager.close_session(&session_id)?;
+    manager.close_session(&session_id).await?;
 
     // -- Check
     assert!(
@@ -284,7 +284,7 @@ async fn test_session_manager_close_session_unknown_returns_error() -> Result<()
     let manager = manager(temp.path()).await?;
 
     // -- Exec
-    let result = manager.close_session("no-such-session");
+    let result = manager.close_session("no-such-session").await;
 
     // -- Check
     let err = result.err().ok_or("closing an unknown session must fail")?;

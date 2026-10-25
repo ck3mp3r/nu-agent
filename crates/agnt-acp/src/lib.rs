@@ -35,6 +35,7 @@ use agent_client_protocol::schema::v1::{
     SetSessionConfigOptionResponse,
 };
 use agent_client_protocol::{Agent, Error, Stdio, on_receive_notification, on_receive_request};
+use agnt_core::bus::{AgentEvent, AgentTx};
 use agnt_core::config::{ModelsCache, toml_config};
 use agnt_core::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
@@ -67,14 +68,49 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
     // The agent writes each session's conversation to the rig-memory store of
     // the configured backend; `session/load` and `session/resume` read it back.
     let rig = agnt_core::session::RigStoreConfig::new(agnt_core::session::StoreType::Sqlite);
+    // Resolve the user hooks once: every session starts a runner for them on
+    // its own bus. A config that fails to load or resolve leaves hooks empty,
+    // so the server still serves.
+    let hooks = match toml_config::load_from(&config_path) {
+        Ok(config) => {
+            let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
+            match agnt_core::config::resolve_hooks(&config, config_dir) {
+                Ok(hooks) => hooks,
+                Err(err) => {
+                    log::warn!("Failed to resolve hooks: {err}");
+                    Vec::new()
+                }
+            }
+        }
+        Err(err) => {
+            log::warn!("Failed to load config.toml for hooks: {err}");
+            Vec::new()
+        }
+    };
+    // Agent events are process-scoped, so they ride a standalone channel rather
+    // than the per-session bus. The agent-class hook runner is spawned once for
+    // this process; hooks with no agent-class event spawn nothing.
+    let agent_tx = AgentTx::new("agent", 16);
+    let agent_hook_handles = agnt_core::hooks::spawn_agent_hook_runner(
+        &agent_tx,
+        &hooks,
+        &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        agnt_core::hooks::NuProcess,
+    );
     let sessions: SharedSessions = Arc::new(
         AcpSessionManager::new(rig, config_path, tokio::runtime::Handle::current())
             .with_models_cache(models_cache)
             .with_client_fs(Arc::clone(&client_fs))
-            .with_agent_name(agent),
+            .with_agent_name(agent)
+            .with_hooks(hooks),
     );
+    let _ = agent_tx
+        .send(AgentEvent::Started {
+            mode: "acp".to_string(),
+        })
+        .await;
 
-    Agent
+    let result = Agent
         .builder()
         .name("nu-agent")
         .on_receive_request(
@@ -190,7 +226,9 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
             {
                 let sessions = Arc::clone(&sessions);
                 async move |request: CloseSessionRequest, responder, _connection| {
-                    let result = sessions.close_session(&request.session_id.to_string());
+                    let result = sessions
+                        .close_session(&request.session_id.to_string())
+                        .await;
                     match result {
                         Ok(()) => responder.respond(CloseSessionResponse::new()),
                         Err(err) => responder.respond_with_error(to_acp_error(err)),
@@ -245,7 +283,22 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
             on_receive_notification!(),
         )
         .connect_to(Stdio::new())
-        .await?;
+        .await;
+
+    // Best-effort shutdown: the pair is emitted on normal exit only. No
+    // process-wide signal handler exists, so SIGTERM/SIGKILL produce no
+    // emission. The drain is bounded so a slow hook never delays exit.
+    let reason = if result.is_ok() { "shutdown" } else { "error" };
+    let _ = agent_tx
+        .send(AgentEvent::Shutdown {
+            reason: reason.to_string(),
+        })
+        .await;
+    drop(agent_tx);
+    for handle in agent_hook_handles {
+        let _ = tokio::time::timeout(agnt_core::hooks::HOOK_DRAIN_TIMEOUT, handle).await;
+    }
+    result?;
 
     Ok(())
 }

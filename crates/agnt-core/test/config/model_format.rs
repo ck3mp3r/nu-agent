@@ -141,6 +141,7 @@ fn plugin_config_with_provider(
         permissions: None,
         mcp: None,
         theme: None,
+        hooks: Vec::new(),
     }
 }
 

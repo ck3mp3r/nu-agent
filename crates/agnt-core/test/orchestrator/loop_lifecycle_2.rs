@@ -306,3 +306,157 @@ fn emit_batch_delivers_all_events() {
         "emit should not be called when using emit_batch"
     );
 }
+
+// ── SessionEvent::Started session id ────────────────────────────────────
+
+/// Run the interactive loop with `runtime` and return the session events it
+/// published.
+async fn run_loop_session_events(
+    runtime: FakeRuntime,
+    bus: crate::bus::Bus,
+) -> Result<Vec<crate::bus::SessionEvent>, String> {
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
+    let mut session_rx = bus.session().subscribe();
+    let spawner = ui.make_event_spawner();
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
+    )
+    .await;
+    result.map_err(|e| format!("interactive loop: {e}"))?;
+    let mut events = Vec::new();
+    while let Ok(event) = session_rx.try_recv() {
+        events.push(event);
+    }
+    Ok(events)
+}
+
+/// The `SessionEvent::Started` the loop published, if any.
+fn started_event(events: &[crate::bus::SessionEvent]) -> Option<(&str, bool)> {
+    events.iter().find_map(|event| match event {
+        crate::bus::SessionEvent::Started {
+            session_id,
+            hydrated,
+        } => Some((session_id.as_str(), *hydrated)),
+        _ => None,
+    })
+}
+
+#[tokio::test]
+async fn interactive_loop_started_carries_the_runtime_session_id() -> TResult {
+    // -- Setup & Fixtures
+    let bus = create_bus();
+    let runtime = FakeRuntime {
+        bus: bus.clone(),
+        session_id: Some("sess-1".to_string()),
+        ..Default::default()
+    };
+
+    // -- Exec
+    let events = run_loop_session_events(runtime, bus).await?;
+
+    // -- Check
+    let (session_id, hydrated) =
+        started_event(&events).ok_or("the loop must publish SessionEvent::Started")?;
+    assert_eq!(
+        session_id, "sess-1",
+        "Started must carry the runtime's current session id"
+    );
+    assert!(
+        !hydrated,
+        "a loop without hydration publishes hydrated=false"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn hydrated_interactive_loop_started_carries_the_runtime_session_id() -> TResult {
+    // -- Setup & Fixtures
+    let bus = create_bus();
+    let runtime = FakeRuntime {
+        bus: bus.clone(),
+        session_id: Some("sess-2".to_string()),
+        ..Default::default()
+    };
+    let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
+    let mut session_rx = bus.session().subscribe();
+    let spawner = ui.make_event_spawner();
+    let messages = vec![UiMessageSnapshot::new("user", "from history")];
+
+    // -- Exec
+    let (_runtime, result) = run_interactive_loop_impl(
+        runtime,
+        InteractiveLoopConfig::new(Span::test_data())
+            .with_hydration(messages, None)
+            .with_bus(bus)
+            .with_spawn_render_loop(spawner),
+    )
+    .await;
+    result.map_err(|e| format!("interactive loop with hydration: {e}"))?;
+
+    // -- Check
+    let mut events = Vec::new();
+    while let Ok(event) = session_rx.try_recv() {
+        events.push(event);
+    }
+    let (session_id, hydrated) =
+        started_event(&events).ok_or("the loop must publish SessionEvent::Started")?;
+    assert_eq!(
+        session_id, "sess-2",
+        "the hydrated Started must carry the runtime's current session id"
+    );
+    assert!(hydrated, "a hydrated loop publishes hydrated=true");
+    Ok(())
+}
+
+#[tokio::test]
+async fn interactive_loop_started_without_a_session_publishes_an_empty_id() -> TResult {
+    // -- Setup & Fixtures
+    let bus = create_bus();
+    let runtime = FakeRuntime {
+        bus: bus.clone(),
+        ..Default::default()
+    };
+
+    // -- Exec
+    let events = run_loop_session_events(runtime, bus).await?;
+
+    // -- Check
+    let (session_id, _) =
+        started_event(&events).ok_or("the loop must publish SessionEvent::Started")?;
+    assert_eq!(
+        session_id, "",
+        "a runtime without an active session publishes an empty id"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn interactive_loop_publishes_ended_on_exit() -> TResult {
+    // -- Setup & Fixtures
+    let bus = create_bus();
+    let runtime = FakeRuntime {
+        bus: bus.clone(),
+        session_id: Some("sess-3".to_string()),
+        ..Default::default()
+    };
+
+    // -- Exec
+    let events = run_loop_session_events(runtime, bus).await?;
+
+    // -- Check
+    let ended = events
+        .iter()
+        .find_map(|event| match event {
+            crate::bus::SessionEvent::Ended { session_id } => Some(session_id.as_str()),
+            _ => None,
+        })
+        .ok_or("the loop must publish SessionEvent::Ended on exit")?;
+    assert_eq!(
+        ended, "sess-3",
+        "Ended must carry the runtime's current session id"
+    );
+    Ok(())
+}

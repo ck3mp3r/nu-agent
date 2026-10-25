@@ -3,6 +3,7 @@ pub mod compaction;
 pub mod config;
 pub mod conversation;
 pub mod hook;
+pub mod hooks;
 pub mod llm;
 pub mod orchestrator;
 pub mod protocol;

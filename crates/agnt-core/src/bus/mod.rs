@@ -17,12 +17,12 @@ mod events;
 mod hub;
 
 pub use channel::{
-    BroadcastRx, BroadcastTx, CancelRx, CancelTx, ChannelError, ChannelResult, CompactionRx,
-    CompactionTx, ExternalRx, ExternalTx, MpscRx, MpscTx, OneshotRx, OneshotTx, SessionRx,
-    SessionTx, TryRecvError, TurnRx, TurnTx, UiEventRx, UiEventTx, UiStateRx, UiStateTx,
+    AgentRx, AgentTx, BroadcastRx, BroadcastTx, CancelRx, CancelTx, ChannelError, ChannelResult,
+    CompactionRx, CompactionTx, ExternalRx, ExternalTx, MpscRx, MpscTx, OneshotRx, OneshotTx,
+    SessionRx, SessionTx, TryRecvError, TurnRx, TurnTx, UiEventRx, UiEventTx, UiStateRx, UiStateTx,
 };
 pub use events::{
-    CancelEvent, CompactionEvent, ExternalEvent, LlmEvent, PermissionEvent, SessionEvent,
-    ToolEvent, TurnEvent, WarningEvent,
+    AgentEvent, CancelEvent, CompactionEvent, ExternalEvent, LlmEvent, PermissionEvent,
+    SessionEvent, ToolEvent, TurnEvent, WarningEvent,
 };
 pub use hub::{Bus, create_bus};

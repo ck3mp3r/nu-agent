@@ -8,6 +8,7 @@ pub(crate) struct FakeRuntime {
     pub(crate) run_compaction_fail: bool,
     pub(crate) switched_models: Vec<String>,
     pub(crate) switch_model_result: Option<Result<String, String>>,
+    pub(crate) session_id: Option<String>,
     pub(crate) bus: crate::bus::Bus,
 }
 
@@ -83,6 +84,10 @@ impl ModelSwitching for FakeRuntime {
 impl SessionState for FakeRuntime {}
 
 impl SessionPersistence for FakeRuntime {
+    fn current_session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+
     async fn run_compaction(&mut self, source: &str) -> Result<(), String> {
         self.run_compaction_calls = self.run_compaction_calls.saturating_add(1);
         self.run_compaction_sources.push(source.to_string());

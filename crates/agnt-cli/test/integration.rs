@@ -25,6 +25,8 @@ mod a2a;
 mod agent;
 #[path = "integration/config.rs"]
 mod config;
+#[path = "integration/hooks.rs"]
+mod hooks;
 #[path = "integration/main_helpers.rs"]
 mod main_helpers;
 #[path = "integration/mcp.rs"]

@@ -1,6 +1,98 @@
 use super::*;
 
 // ---------------------------------------------------------------------------
+// Turn-start emission
+// ---------------------------------------------------------------------------
+
+/// Drain every event currently buffered on the turn channel.
+fn take_turn_events(rx: &mut TurnRx) -> Vec<TurnEvent> {
+    let mut events = Vec::new();
+    loop {
+        match rx.try_recv() {
+            Ok(event) => events.push(event),
+            Err(agnt_core::bus::TryRecvError::Lagged(_)) => continue,
+            Err(_) => break,
+        }
+    }
+    events
+}
+
+#[tokio::test]
+async fn test_session_manager_prompt_publishes_turn_started() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp = tempfile::tempdir()?;
+    let manager = manager(temp.path()).await?;
+    let cwd = session_cwd(temp.path(), "session-cwd")?;
+    let session_id = manager.new_session(cwd, Vec::new()).await?;
+    let sink = RecordingSink::default();
+    // Subscribe before the turn runs: a broadcast channel does not buffer for
+    // later subscribers.
+    let mut turn_rx = manager
+        .get_session(&session_id)
+        .ok_or("session must exist")?
+        .bus()
+        .turn()
+        .subscribe();
+
+    // -- Exec
+    let _ = manager
+        .prompt(&session_id, "hello".to_string(), &sink)
+        .await?;
+
+    // -- Check
+    let started: Vec<(String, Option<String>)> = take_turn_events(&mut turn_rx)
+        .into_iter()
+        .filter_map(|event| match event {
+            TurnEvent::Started { prompt, task_id } => Some((prompt, task_id)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        started,
+        vec![("hello".to_string(), None)],
+        "one ACP prompt turn must publish exactly one Started with the prompt and no attribution"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_session_manager_prompt_publishes_turn_started_before_completed() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp = tempfile::tempdir()?;
+    let manager = manager(temp.path()).await?;
+    let cwd = session_cwd(temp.path(), "session-cwd")?;
+    let session_id = manager.new_session(cwd, Vec::new()).await?;
+    let sink = RecordingSink::default();
+    let mut turn_rx = manager
+        .get_session(&session_id)
+        .ok_or("session must exist")?
+        .bus()
+        .turn()
+        .subscribe();
+
+    // -- Exec
+    let _ = manager
+        .prompt(&session_id, "hello".to_string(), &sink)
+        .await?;
+
+    // -- Check
+    let events = take_turn_events(&mut turn_rx);
+    let started_at = events
+        .iter()
+        .position(|event| matches!(event, TurnEvent::Started { .. }))
+        .ok_or(format!("the turn must publish Started; got: {events:?}"))?;
+    let completed_at = events
+        .iter()
+        .position(|event| matches!(event, TurnEvent::Completed { .. }))
+        .ok_or(format!("the turn must publish Completed; got: {events:?}"))?;
+    assert!(
+        started_at < completed_at,
+        "Started must precede Completed; got: {events:?}"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Concurrent prompt + cancel
 // ---------------------------------------------------------------------------
 

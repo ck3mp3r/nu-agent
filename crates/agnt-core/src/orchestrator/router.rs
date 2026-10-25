@@ -37,8 +37,23 @@ impl CommandRouter {
         R: CoreRuntime + McpManagement + ModelSwitching + SessionState + SessionPersistence + Send,
     {
         match cmd {
-            WorkerCommand::ExecuteTurn { prompt, span } => {
+            WorkerCommand::ExecuteTurn {
+                prompt,
+                span,
+                task_id,
+            } => {
                 log::debug!("Router: ExecuteTurn prompt_len={}", prompt.len());
+                // Control-plane turn-start event: stays on `bus.turn()`, not
+                // rendered. Published here, at the turn dispatch, so both turn
+                // paths fire it exactly once and the A2A attribution travels
+                // with the command.
+                let _ = bus
+                    .turn()
+                    .send(crate::bus::TurnEvent::Started {
+                        prompt: prompt.clone(),
+                        task_id,
+                    })
+                    .await;
                 let result = runtime.execute_turn(bus, prompt, None, span).await;
                 // Convert Result<Value, LabeledError> to TurnOutcome
                 // Detect cancellation by message content:

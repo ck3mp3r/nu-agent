@@ -29,7 +29,6 @@ async fn external_prompt_dispatches_turn_when_idle() -> Result<()> {
     let mut ui_request = MockUiRequest::new();
     let mut session = MockSession::new();
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
-    let mut turn_rx = bus.turn().subscribe();
 
     // The external prompt is enqueued on the UI bus; the TUI answers with a
     // `PromptSubmitted` once the prompt reaches the front of its queue.
@@ -84,23 +83,17 @@ async fn external_prompt_dispatches_turn_when_idle() -> Result<()> {
     );
     let cmd = recv_command(worker_rx).ok_or("ExecuteTurn should be dispatched")?;
     match cmd {
-        WorkerCommand::ExecuteTurn { prompt, .. } => {
+        WorkerCommand::ExecuteTurn {
+            prompt, task_id, ..
+        } => {
             assert_eq!(prompt, "external task");
-        }
-        _ => panic!("expected ExecuteTurn"),
-    }
-    let started = turn_rx
-        .try_recv()
-        .map_err(|e| format!("TurnEvent::Started should be published: {e:?}"))?;
-    match started {
-        TurnEvent::Started { task_id, .. } => {
             assert_eq!(
                 task_id.as_deref(),
                 Some("task-1"),
-                "the A2A turn-start event must name task-1"
+                "the A2A turn must carry its task attribution"
             );
         }
-        _ => panic!("expected TurnEvent::Started"),
+        _ => panic!("expected ExecuteTurn"),
     }
     let _ = worker_result_tx;
     Ok(())

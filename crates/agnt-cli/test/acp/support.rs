@@ -73,25 +73,67 @@ impl TestEnv {
         &self.cwd
     }
 
+    /// The root of the throwaway tree, for artifacts a test must inspect.
+    pub fn temp_path(&self) -> &Path {
+        self.temp.path()
+    }
+
+    /// Write a hook script into the config directory.
+    ///
+    /// `name` is the `script` value a `[[hooks]]` entry refers to; a relative
+    /// script resolves against the config directory, which is where this writes
+    /// it. The script appends every `agent_started` and `agent_shutdown`
+    /// envelope it receives to `log`.
+    pub fn write_agent_hook_script(&self, name: &str, log: &Path) -> Result<()> {
+        let log = log.to_string_lossy().to_string();
+        let body = format!(
+            "def agent_started [event] {{ $event | to json | save --append '{log}' }}\n\
+             def agent_shutdown [event] {{ $event | to json | save --append '{log}' }}\n"
+        );
+        std::fs::write(self.config_home.join("nu-agent").join(name), body)?;
+        Ok(())
+    }
+
     /// An `AcpAgent` that launches `agent acp` with this environment.
     ///
     /// `AGENT_VAULT_BACKEND=env` keeps the subprocess config load from probing
     /// the OS keychain.
     pub fn agent(&self) -> AcpAgent {
-        AcpAgent::new(
-            AcpAgentConfig::new(&self.binary)
-                .arg("acp")
-                .env("AGENT_VAULT_BACKEND", "env")
-                .env(
-                    "XDG_CONFIG_HOME",
-                    self.config_home.to_string_lossy().into_owned(),
-                )
-                .env(
-                    "XDG_CACHE_HOME",
-                    self.cache_home.to_string_lossy().into_owned(),
-                )
-                .env("HOME", self.temp.path().to_string_lossy().into_owned()),
-        )
+        let mut config = AcpAgentConfig::new(&self.binary).arg("acp");
+        for (key, value) in self.env_vars() {
+            config = config.env(key, value);
+        }
+        AcpAgent::new(config)
+    }
+
+    /// A plain `agent acp` command with this environment.
+    ///
+    /// The SDK client kills the child when its connection drops, so a test that
+    /// must observe the agent's own exit drives the process directly.
+    pub fn command(&self) -> std::process::Command {
+        let mut command = std::process::Command::new(&self.binary);
+        command.arg("acp");
+        for (key, value) in self.env_vars() {
+            command.env(key, value);
+        }
+        command
+    }
+
+    /// The environment every subprocess needs: a throwaway XDG tree and a vault
+    /// backend that never probes the OS keychain.
+    fn env_vars(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("AGENT_VAULT_BACKEND", "env".to_string()),
+            (
+                "XDG_CONFIG_HOME",
+                self.config_home.to_string_lossy().into_owned(),
+            ),
+            (
+                "XDG_CACHE_HOME",
+                self.cache_home.to_string_lossy().into_owned(),
+            ),
+            ("HOME", self.temp.path().to_string_lossy().into_owned()),
+        ]
     }
 }
 

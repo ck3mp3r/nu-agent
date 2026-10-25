@@ -783,6 +783,176 @@ CLI flags override config.toml, which overrides built-in defaults.
 - Keyboard selection behavior is unchanged; moving selection updates the details pane.
 - Top legend line is removed; controls remain compact (`Session-only toggles | Enter/Space toggle | Esc close`).
 
+## Hooks
+
+A hook is a Nushell script that runs when the agent publishes a lifecycle event. Hooks observe the agent. They never change a turn, a tool result, or the agent output.
+
+Configure hooks in `config.toml`. See [Configuration § Hooks](configuration.md#hooks) for the fields.
+
+```toml
+[[hooks]]
+name = "herdr"
+events = ["turn_started", "turn_completed"]
+script = "hooks/herdr.nu"
+```
+
+### Handler convention
+
+The agent runs one handler per event. The handler is a function named after the event. It takes one argument: the envelope as a record.
+
+```nu
+def turn_started [event: record] {
+    print $"turn started in session ($event.session_id)"
+}
+```
+
+The agent invokes the handler with this command:
+
+```nu
+nu --stdin -c "source '<script>'; <event> ($in | from json)"
+```
+
+The agent writes the JSON envelope to the child process stdin. `--stdin` binds that input to `$in`, and `from json` turns it into the record the handler receives. The handler runs in the session working directory and inherits the environment.
+
+### Envelope
+
+Every invocation receives one JSON envelope:
+
+```json
+{
+  "version": 1,
+  "event": "turn_started",
+  "timestamp": "2026-10-25T14:32:07.481920+00:00",
+  "session_id": "9dad1e4e08b0b11c-main",
+  "payload": {
+    "prompt": "list the rust files",
+    "task_id": null
+  }
+}
+```
+
+- `version` — envelope schema version. Current value is `1`.
+- `event` — the event name.
+- `timestamp` — RFC 3339 UTC time of the invocation.
+- `session_id` — the session the event belongs to. See [Session id](#session-id).
+- `payload` — event-specific fields.
+
+Payload fields per event:
+
+| Event | Payload fields |
+|-------|----------------|
+| `turn_started` | `prompt` (string), `task_id` (string or null) |
+| `turn_completed` | `tool_calls` (integer) |
+| `tool_started` | `name`, `source`, `arguments` (raw JSON string) |
+| `tool_completed` | `name`, `source`, `arguments`, `success` (bool), `error_kind` (string or null), `message` (string or null) |
+| `session_started` | `session_id` (string), `hydrated` (bool) |
+| `session_ended` | `session_id` (string) |
+| `agent_started` | `mode` (`"tui"`, `"stderr"`, or `"acp"`) |
+| `agent_shutdown` | `reason` (`"completed"`, `"shutdown"`, or `"error"`) |
+
+`task_id` is set only when an A2A task drives the turn. The TUI single-turn path, the stderr path, and the ACP path publish no A2A attribution, so `task_id` is null there.
+
+### Session id
+
+The runner tracks the session id from `SessionEvent::Started` and `SessionEvent::Switched` on the session bus. The envelope carries the tracked id.
+
+The id is an empty string in two cases:
+
+- The runtime published no session event. Stderr mode and TUI single-turn publish none, so their turn and tool envelopes carry `""`.
+- The event is agent-class. Agent events are process-scoped, so `agent_started` and `agent_shutdown` always carry `""`. This is by design.
+
+### Ordering
+
+The agent guarantees order in two scopes:
+
+- Within one `[[hooks]]` entry on one runner. The entry has one subscriber task per runner. It runs one handler to completion before it takes the next event, so a hook never overlaps itself.
+- Within one event channel. Events on one channel arrive in publish order. `turn_started` and `turn_completed` share the turn channel, so `turn_started` always precedes `turn_completed`.
+
+Order across channels is best-effort. A `tool_started` and a `turn_completed` that are both ready can arrive in either order. A hook that declares both session-class and agent-class events runs on two runners, so its `agent_started` and `turn_started` have no relative order.
+
+### Failure behavior
+
+A hook failure never affects the agent run.
+
+- A handler that exits non-zero, fails to spawn, or exceeds `timeout_ms` produces one warning log line: `hook '<name>' failed on <event>: <error>`.
+- The warning goes to the agent log file at `$XDG_STATE_HOME/nu-agent/logs/agent.log`. The agent never writes log output to the terminal.
+- A timeout kills the subprocess.
+- The agent never retries a failed hook.
+- The agent never publishes a hook result.
+- The turn continues.
+
+At exit the agent gives a running handler limited grace:
+
+- Agent-class runners: up to 250 ms each.
+- Session-class runner in stderr mode: one 250 ms pause in total, after the turn.
+- Session-class runner in TUI and ACP: no exit wait. A handler still running when the process exits is abandoned.
+
+### Mode coverage
+
+| Event | TUI interactive | TUI single-turn | stderr | ACP |
+|-------|-----------------|-----------------|--------|-----|
+| `turn_started`, `turn_completed` | yes | yes | yes | yes |
+| `tool_started`, `tool_completed` | yes | yes | yes | yes |
+| `session_started`, `session_ended` | yes | no | no | yes |
+| `agent_started`, `agent_shutdown` | yes | yes | yes | yes |
+
+`session_started` and `session_ended` are per-session events. They fire where a session lifecycle exists: the TUI interactive loop and ACP sessions. Stderr mode and TUI single-turn run one turn and publish no session lifecycle event.
+
+`agent_started` and `agent_shutdown` are per-process events. They fire exactly once per process in all three modes. The pair is best-effort on signals: no SIGTERM handler exists, so SIGTERM and SIGKILL produce no `agent_shutdown`.
+
+The plugin `agent` command runs turns but starts no hook runner. Hooks never fire there. The `agent` binary does start the runners. See [Example: signal an external app](#example-signal-an-external-app).
+
+### Example: signal an external app
+
+This script posts each turn boundary to a local HTTP endpoint. Save it as `$XDG_CONFIG_HOME/nu-agent/hooks/herdr.nu`.
+
+```nu
+# ~/.config/nu-agent/hooks/herdr.nu
+const HERDR_URL = "http://127.0.0.1:7777/events"
+
+def turn_started [event: record] {
+    let body = {
+        kind: "turn_started"
+        session: $event.session_id
+        prompt: $event.payload.prompt
+    }
+    http post --content-type application/json $HERDR_URL ($body | to json)
+}
+
+def turn_completed [event: record] {
+    let body = {
+        kind: "turn_completed"
+        session: $event.session_id
+        tool_calls: $event.payload.tool_calls
+    }
+    http post --content-type application/json $HERDR_URL ($body | to json)
+}
+```
+
+Register it in `config.toml`:
+
+```toml
+[[hooks]]
+name = "herdr"
+events = ["turn_started", "turn_completed"]
+script = "hooks/herdr.nu"
+timeout_ms = 5000
+```
+
+Run one turn with the `agent` binary:
+
+```nu
+^agent "list the rust files"
+```
+
+The caret forces the external `agent` binary. With the plugin registered, `agent` alone calls the plugin command, which starts no hook runner. The binary runs one turn in stderr mode, where the runners are wired.
+
+The endpoint receives one `turn_started` post and one `turn_completed` post. If the endpoint is down, `http post` fails, the handler exits non-zero, and the agent logs one warning. The turn still completes.
+
+### Deferred
+
+Hooks cannot veto or modify an event. Hooks run without a sandbox. There is no `/hooks` panel. The agent spawns one process per event; a persistent-stdio mode is not implemented.
+
 ## Permission-based tool visibility
 
 Permissions control both **visibility** and **authorization**. Denied tools are

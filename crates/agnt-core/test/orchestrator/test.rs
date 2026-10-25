@@ -10,6 +10,7 @@ mod a2a_cancel;
 mod context_window;
 mod loop_lifecycle;
 mod loop_lifecycle_2;
+mod loop_lifecycle_3;
 mod mcp_toggle;
 mod model_switch;
 mod permission_bridge;

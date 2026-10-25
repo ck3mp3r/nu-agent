@@ -18,7 +18,7 @@ use agent_client_protocol::schema::v1::{
     SessionConfigOption, SessionConfigSelectOptions, SessionUpdate, StopReason, TextContent,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::bus::{Bus, ChannelError};
+use agnt_core::bus::{Bus, ChannelError, SessionEvent, TurnEvent};
 use agnt_core::config::ModelsCache;
 use agnt_core::conversation::managers::ProviderManager;
 use agnt_core::conversation::runtime::AgentConversationRuntime;
@@ -158,6 +158,7 @@ pub struct AcpSessionManager<R: RuntimeBuilder> {
     models_cache: Option<Arc<ModelsCache>>,
     client_fs: Arc<StdMutex<Option<ClientFsState>>>,
     agent_name: Option<String>,
+    hooks: Vec<agnt_core::config::ResolvedHook>,
 }
 
 // endregion: --- Types
@@ -201,7 +202,17 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             models_cache: None,
             client_fs: Arc::new(StdMutex::new(None)),
             agent_name: None,
+            hooks: Vec::new(),
         }
+    }
+
+    /// Attach the user hooks every session starts a runner for.
+    ///
+    /// The hooks are resolved once at serve time; each session spawns its own
+    /// runner on its own bus, so a hook observes that session's events only.
+    pub fn with_hooks(mut self, hooks: Vec<agnt_core::config::ResolvedHook>) -> Self {
+        self.hooks = hooks;
+        self
     }
 
     /// Attach the models cache used to enumerate selectable models.
@@ -414,6 +425,17 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                 .interactive_pending_arc()
                 .unwrap_or_else(|| Arc::new(StdMutex::new(HashMap::new())));
             let mut bridge = AcpPermissionBridge::new(sink, session_id, pending);
+            // Control-plane turn-start event: stays on `bus.turn()`, not
+            // rendered. No A2A task id exists on the ACP path, so the
+            // attribution is always `None`.
+            let _ = session
+                .bus
+                .turn()
+                .send(TurnEvent::Started {
+                    prompt: prompt_text.clone(),
+                    task_id: None,
+                })
+                .await;
             let turn = runtime.execute_turn(&session.bus, prompt_text, None, Span::unknown());
             run_turn_with_notifications(&mut rx, sink, &mut translator, &mut bridge, turn).await
         };
@@ -453,13 +475,24 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     ///
     /// The session stays in the store: closing is not deleting. Returns
     /// [`AcpError::SessionNotFound`] when no live session has that id.
-    pub fn close_session(&self, id: &str) -> Result<()> {
-        self.sessions
+    ///
+    /// Publishes [`SessionEvent::Ended`] on the session's bus before the bus
+    /// drops, so a session-lifecycle hook sees the close.
+    pub async fn close_session(&self, id: &str) -> Result<()> {
+        let session = self
+            .sessions
             .lock()
             .unwrap()
             .remove(id)
-            .map(|_| ())
-            .ok_or_else(|| AcpError::SessionNotFound(id.to_string()))
+            .ok_or_else(|| AcpError::SessionNotFound(id.to_string()))?;
+        let _ = session
+            .bus()
+            .session()
+            .send(SessionEvent::Ended {
+                session_id: id.to_string(),
+            })
+            .await;
+        Ok(())
     }
 
     /// Drop the live session with `id` and delete it from the store.
@@ -467,8 +500,21 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     /// The session's rig-memory store is deleted with it, so no log is left
     /// orphaned. Idempotent: deleting an id that is neither live nor persisted
     /// succeeds.
+    ///
+    /// Publishes [`SessionEvent::Ended`] on the session's bus when a live
+    /// session was removed; a session that was never live has no bus to
+    /// publish on.
     pub async fn delete_session(&self, id: &str) -> Result<()> {
-        self.sessions.lock().unwrap().remove(id);
+        let live = self.sessions.lock().unwrap().remove(id);
+        if let Some(session) = &live {
+            let _ = session
+                .bus()
+                .session()
+                .send(SessionEvent::Ended {
+                    session_id: id.to_string(),
+                })
+                .await;
+        }
         let rig = self
             .rig
             .open(id)
@@ -542,13 +588,34 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             session_id.to_string(),
             Arc::new(AcpSession {
                 id: session_id.to_string(),
-                cwd,
+                cwd: cwd.clone(),
                 created_at: Utc::now(),
                 cancel_requested: Arc::new(AtomicBool::new(false)),
-                bus,
+                bus: bus.clone(),
                 runtime: Arc::new(AsyncMutex::new(runtime)),
             }),
         );
+        // Each session owns its bus, so each session starts its own hook
+        // runner. Zero hooks spawns nothing.
+        if !self.hooks.is_empty() {
+            let _handles = agnt_core::hooks::spawn_hook_runner(
+                &bus,
+                &self.hooks,
+                &cwd,
+                agnt_core::hooks::NuProcess,
+            );
+        }
+        // `hydrated` reports whether the store already holds this session's
+        // log, so a session-lifecycle hook can tell a fresh session from a
+        // resumed one. A store that cannot be read is treated as not hydrated.
+        let hydrated = self.rig.holds(session_id).unwrap_or(false);
+        let _ = bus
+            .session()
+            .send(SessionEvent::Started {
+                session_id: session_id.to_string(),
+                hydrated,
+            })
+            .await;
         Ok(())
     }
 

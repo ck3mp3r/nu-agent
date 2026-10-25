@@ -19,6 +19,8 @@ mod support;
 
 #[path = "acp/config_options.rs"]
 mod config_options;
+#[path = "acp/hooks.rs"]
+mod hooks;
 #[path = "acp/permission.rs"]
 mod permission;
 #[path = "acp/session.rs"]

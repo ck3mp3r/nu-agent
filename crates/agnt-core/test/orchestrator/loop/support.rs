@@ -9,7 +9,7 @@ use agnt_a2a::{
 use nu_protocol::Span;
 use tokio::sync::mpsc;
 
-use crate::bus::{Bus, CompactionRx, ExternalRx, TurnEvent, TurnRx, UiStateRx, create_bus};
+use crate::bus::{Bus, CompactionRx, ExternalRx, UiStateRx, create_bus};
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
@@ -372,22 +372,22 @@ pub(super) async fn recv_external_prompt(rx: &mut UiStateRx) -> Result<String> {
     }
 }
 
-/// Assert the next `TurnEvent::Started` carries no task attribution, i.e. the
-/// turn is a regular prompt and not an A2A task turn.
-pub(super) async fn assert_unattributed_turn(rx: &mut TurnRx, what: &str) -> Result<()> {
-    let event = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
-        .await
-        .map_err(|_| format!("TurnEvent::Started ({what}) should be published"))?
-        .map_err(|e| format!("turn channel should not close: {e:?}"))?;
-    match event {
-        TurnEvent::Started { task_id, .. } => {
-            assert_eq!(
-                task_id, None,
-                "{what} must not attribute the turn to a local task"
-            );
-            Ok(())
+/// Drain the worker channel and return the task attribution of the first
+/// `ExecuteTurn` command, or fail with `what`.
+///
+/// The turn-start event is published by the worker router, not by the loop, so
+/// a loop-level test observes the attribution on the dispatched command.
+pub(super) fn recv_execute_turn_task_id(
+    worker_rx: &mut Option<mpsc::Receiver<WorkerCommand>>,
+    what: &str,
+) -> Result<Option<String>> {
+    let rx = worker_rx.as_mut().ok_or("worker_rx present")?;
+    loop {
+        match rx.try_recv() {
+            Ok(WorkerCommand::ExecuteTurn { task_id, .. }) => return Ok(task_id),
+            Ok(_) => continue,
+            Err(_) => return Err(format!("{what}: ExecuteTurn should be dispatched").into()),
         }
-        _ => Err(format!("expected TurnEvent::Started for {what}").into()),
     }
 }
 

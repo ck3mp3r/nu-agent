@@ -26,7 +26,6 @@ async fn a2a_completion_rx_dispatches_turn() -> Result<()> {
     } = h;
 
     let (a2a_completion_tx, a2a_completion_rx) = mpsc::channel::<A2aCompletionEvent>(16);
-    let mut turn_rx = bus.turn().subscribe();
     let mut ui_state_rx = bus.ui_state().subscribe();
 
     let loop_task = tokio::spawn(async move {
@@ -93,26 +92,18 @@ async fn a2a_completion_rx_dispatches_turn() -> Result<()> {
         .map_err(|_| "ExecuteTurn should be dispatched")?
         .ok_or("worker channel should not close")?;
     match cmd {
-        WorkerCommand::ExecuteTurn { prompt, .. } => {
+        WorkerCommand::ExecuteTurn {
+            prompt, task_id, ..
+        } => {
             assert_eq!(prompt, completion_prompt);
-        }
-        _ => panic!("expected ExecuteTurn"),
-    }
-
-    // A completion event is a notification about a REMOTE task, so the turn must
-    // not be attributed to a local task.
-    let started = tokio::time::timeout(std::time::Duration::from_secs(5), turn_rx.recv())
-        .await
-        .map_err(|_| "TurnEvent::Started should be published")?
-        .map_err(|e| format!("turn channel should not close: {e:?}"))?;
-    match started {
-        TurnEvent::Started { task_id, .. } => {
+            // A completion event is a notification about a REMOTE task, so the
+            // turn must not be attributed to a local task.
             assert_eq!(
                 task_id, None,
                 "a completion event must not attribute the turn to a local task"
             );
         }
-        _ => panic!("expected TurnEvent::Started"),
+        _ => panic!("expected ExecuteTurn"),
     }
 
     // Make the worker idle, then quit so the loop exits cleanly.
@@ -153,7 +144,6 @@ async fn a2a_completion_rx_buffers_while_worker_busy() -> Result<()> {
 
     let (a2a_completion_tx, a2a_completion_rx) = mpsc::channel::<A2aCompletionEvent>(16);
     let mut ui_state_rx = bus.ui_state().subscribe();
-    let mut turn_rx = bus.turn().subscribe();
 
     let loop_task = tokio::spawn(async move {
         let mut slash = SlashStage;
@@ -213,15 +203,20 @@ async fn a2a_completion_rx_buffers_while_worker_busy() -> Result<()> {
         .map_err(|_| "completion-1 submit failed")?;
     let cmd = recv_worker_command(&mut worker_rx, "ExecuteTurn (completion-1)").await?;
     match cmd {
-        WorkerCommand::ExecuteTurn { prompt, .. } => {
+        WorkerCommand::ExecuteTurn {
+            prompt, task_id, ..
+        } => {
             assert_eq!(
                 prompt, completion1_prompt,
                 "completion-1 turn prompt must be the submitted text"
             );
+            assert_eq!(
+                task_id, None,
+                "completion-1 must not attribute the turn to a local task"
+            );
         }
         _ => panic!("expected ExecuteTurn for completion-1"),
     }
-    assert_unattributed_turn(&mut turn_rx, "completion-1").await?;
 
     // Second completion arrives while the worker is busy. The orchestrator must
     // buffer it: no turn is dispatched and no local task is touched.
@@ -264,15 +259,20 @@ async fn a2a_completion_rx_buffers_while_worker_busy() -> Result<()> {
         .map_err(|_| "completion-2 submit failed")?;
     let cmd = recv_worker_command(&mut worker_rx, "ExecuteTurn (completion-2)").await?;
     match cmd {
-        WorkerCommand::ExecuteTurn { prompt, .. } => {
+        WorkerCommand::ExecuteTurn {
+            prompt, task_id, ..
+        } => {
             assert_eq!(
                 prompt, completion2_prompt,
                 "completion-2 turn prompt must be the buffered event's prompt"
             );
+            assert_eq!(
+                task_id, None,
+                "completion-2 must not attribute the turn to a local task"
+            );
         }
         _ => panic!("expected ExecuteTurn for completion-2"),
     }
-    assert_unattributed_turn(&mut turn_rx, "completion-2").await?;
 
     // Make the worker idle, then quit so the loop exits cleanly.
     worker_result_tx
