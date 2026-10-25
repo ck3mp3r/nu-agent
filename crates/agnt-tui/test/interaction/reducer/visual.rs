@@ -134,32 +134,29 @@ fn visual_mode_extension_table() {
 
 #[test]
 fn visual_yank_table() {
-    // Yank copies and exits visual mode.
+    // Yank copies the selected rows and exits visual mode. Three user blocks
+    // render as: row 0 = "line 0", rows 1-2 = separators, row 3 = "line 1",
+    // rows 4-5 = separators, row 6 = "line 2", row 7 = trailing separator.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
-            rendered_line_text: vec![
-                "line 0".to_string(),
-                "line 1".to_string(),
-                "line 2".to_string(),
-                "line 3".to_string(),
-                "line 4".to_string(),
-            ],
-            rendered_line_start_row: 0,
+            transcript_area: ratatui::layout::Rect::new(0, 0, 80, 20),
             ..Default::default()
         },
         ..Default::default()
     };
-    let mut sel = TranscriptSelection::new(1);
-    sel.set_cursor(3);
-    state.scroll.selection = Some(sel);
+    for i in 0..3 {
+        push_user_line(&mut state, format!("line {i}"));
+    }
+    state.transcript.rebuild_height_index(78);
+    state.scroll.selection = Some(TranscriptSelection::new(0));
     reduce_with_cancel_controller(
         &mut state,
         ReducerInput::User(UserAction::YankSelection),
         None,
     );
     let clipboard = state.input.take_clipboard_request();
-    assert_eq!(clipboard, Some("line 1\nline 2\nline 3".to_string()));
+    assert_eq!(clipboard, Some("  ▏ line 0".to_string()));
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
 
@@ -167,43 +164,45 @@ fn visual_yank_table() {
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
-            rendered_line_text: (0..10).map(|i| format!("row {i}")).collect(),
-            rendered_line_start_row: 0,
+            transcript_area: ratatui::layout::Rect::new(0, 0, 80, 20),
             ..Default::default()
         },
         ..Default::default()
     };
-    let mut sel = TranscriptSelection::new(3);
-    sel.set_cursor(5);
-    state.scroll.selection = Some(sel);
+    for i in 0..3 {
+        push_user_line(&mut state, format!("line {i}"));
+    }
+    state.transcript.rebuild_height_index(78);
+    state.scroll.selection = Some(TranscriptSelection::new(3));
     reduce_with_cancel_controller(
         &mut state,
         ReducerInput::User(UserAction::YankSelection),
         None,
     );
     let clipboard = state.input.take_clipboard_request();
-    assert_eq!(clipboard, Some("row 3\nrow 4\nrow 5".to_string()));
+    assert_eq!(clipboard, Some("  ▏ line 1".to_string()));
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
 
-    // Yank with a nonzero scroll offset copies the correct rows.
+    // Yank with a nonzero scroll offset copies the correct rows: the payload
+    // follows the absolute row range, not the viewport position.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
-            rendered_line_start_row: 10,
-            rendered_line_text: vec![
-                "row 10".to_string(),
-                "row 11".to_string(),
-                "row 12".to_string(),
-                "row 13".to_string(),
-                "row 14".to_string(),
-            ],
+            transcript_area: ratatui::layout::Rect::new(0, 0, 80, 20),
+            viewport_height: 2,
+            scroll_offset: 2,
+            following_tail: false,
             ..Default::default()
         },
         ..Default::default()
     };
-    let mut sel = TranscriptSelection::new(11);
-    sel.set_cursor(13);
+    for i in 0..3 {
+        push_user_line(&mut state, format!("line {i}"));
+    }
+    state.transcript.rebuild_height_index(78);
+    let mut sel = TranscriptSelection::new(3);
+    sel.set_cursor(4);
     state.scroll.selection = Some(sel);
     reduce_with_cancel_controller(
         &mut state,
@@ -211,7 +210,7 @@ fn visual_yank_table() {
         None,
     );
     let clipboard = state.input.take_clipboard_request();
-    assert_eq!(clipboard, Some("row 11\nrow 12\nrow 13".to_string()));
+    assert_eq!(clipboard, Some("  ▏ line 1\n".to_string()));
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
 
@@ -219,8 +218,7 @@ fn visual_yank_table() {
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
-            rendered_line_text: Vec::new(),
-            scroll_offset: 0,
+            transcript_area: ratatui::layout::Rect::new(0, 0, 80, 20),
             selection: Some(TranscriptSelection::new(0)),
             ..Default::default()
         },

@@ -20,8 +20,6 @@ fn test_scroll_state_defaults_and_sync_after_render() -> Result<()> {
     assert_eq!(scroll.max_scroll, 0);
     assert!(scroll.entry_indices.is_empty());
     assert_eq!(scroll.total_visual_rows, 0);
-    assert!(scroll.rendered_line_text.is_empty());
-    assert_eq!(scroll.rendered_line_start_row, 0);
     assert!(scroll.selection.is_none());
     // The height index is owned by the transcript domain: a fresh store has
     // no index width yet (the renderer rebuilds it at the first frame).
@@ -410,55 +408,39 @@ fn test_scroll_state_enter_visual_mode() -> Result<()> {
 
 #[test]
 fn test_scroll_state_yank_selection() -> Result<()> {
-    // -- Setup & Fixtures
+    // -- Setup & Fixtures: a selection anchored above its cursor.
     let mut scroll = ScrollState {
-        rendered_line_text: vec![
-            "line 0".to_string(),
-            "line 1".to_string(),
-            "line 2".to_string(),
-            "line 3".to_string(),
-        ],
+        selection: Some(TranscriptSelection::new(3)),
         ..Default::default()
     };
-    let mut sel = TranscriptSelection::new(1);
-    sel.set_cursor(2);
-    scroll.selection = Some(sel);
+    if let Some(sel) = &mut scroll.selection {
+        sel.set_cursor(1);
+    }
 
-    // -- Exec & Check: extracts the selected rendered rows and clears selection.
-    let payload = scroll.yank_selection();
-    assert_eq!(payload, Some("line 1\nline 2".to_string()));
+    // -- Exec
+    let range = scroll.yank_selection();
+
+    // -- Check: the normalized inclusive range comes back and the selection clears.
+    assert_eq!(range, Some((1, 3)));
     assert!(scroll.selection.is_none(), "selection cleared after yank");
-
-    // -- Exec & Check: an empty payload returns none.
-    let mut empty = ScrollState {
-        selection: Some(TranscriptSelection::new(0)),
-        ..Default::default()
-    };
-    let payload = empty.yank_selection();
-    assert_eq!(payload, None);
-    assert!(empty.selection.is_none());
 
     // -- Exec & Check: no selection returns none.
     let mut none = ScrollState::default();
-    let payload = none.yank_selection();
-    assert_eq!(payload, None);
+    assert_eq!(none.yank_selection(), None);
     assert!(none.selection.is_none());
 
-    // -- Exec & Check: yank respects the rendered line start row.
-    let mut sel = TranscriptSelection::new(11);
-    sel.set_cursor(12);
-    let mut offset = ScrollState {
-        rendered_line_start_row: 10,
-        rendered_line_text: vec![
-            "row 10".to_string(),
-            "row 11".to_string(),
-            "row 12".to_string(),
-        ],
-        selection: Some(sel),
+    // -- Setup & Fixtures: a single-row selection.
+    let mut single = ScrollState {
+        selection: Some(TranscriptSelection::new(7)),
         ..Default::default()
     };
-    let payload = offset.yank_selection();
-    assert_eq!(payload, Some("row 11\nrow 12".to_string()));
+
+    // -- Exec
+    let range = single.yank_selection();
+
+    // -- Check
+    assert_eq!(range, Some((7, 7)));
+    assert!(single.selection.is_none());
     Ok(())
 }
 

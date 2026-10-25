@@ -7,7 +7,6 @@ use ratatui::{
 };
 
 use crate::rendering::theme::TuiTheme;
-use crate::state::InputMode;
 
 pub(super) fn render_scroll_text_panel(
     frame: &mut Frame,
@@ -104,7 +103,7 @@ pub(crate) fn single_line_visual_row_count(line: &Line<'_>, width: usize) -> usi
 mod bottom_box;
 pub(super) mod frame;
 mod modals;
-mod transcript;
+pub(crate) mod transcript;
 
 #[cfg(test)]
 #[path = "../../../test/runtime/render/frame.rs"]
@@ -117,9 +116,3 @@ pub(super) mod selection_render_test;
 #[cfg(test)]
 #[path = "../../../test/runtime/render/transcript.rs"]
 mod transcript_test;
-
-/// Returns true when the buffer should be scanned for yank text.
-/// Only needed in Visual mode; avoids per-frame O(width*height) cost otherwise.
-pub(crate) fn should_scan_for_yank(mode: InputMode) -> bool {
-    mode == InputMode::Visual
-}

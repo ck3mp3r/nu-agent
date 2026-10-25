@@ -8,6 +8,10 @@ use agnt_core::protocol::contracts::SharedUiAction;
 use agnt_core::transcript::ir::Block;
 use agnt_core::transcript::items::Banner;
 use agnt_core::transcript::renderer::Renderable;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::text::Text;
+use ratatui::widgets::{Paragraph, Widget, Wrap};
 
 use super::compaction::CompactionState;
 use super::input::InputState;
@@ -24,6 +28,8 @@ use crate::interaction::dispatch::rewrite_action;
 use crate::interaction::input::{TerminalEvent, map_terminal_event};
 use crate::interaction::reducer::{ReducerInput, reduce_with_cancel_controller};
 use crate::rendering::theme::{ThemeName, TuiTheme};
+use crate::runtime::render::single_line_visual_row_count;
+use crate::runtime::render::transcript::build_transcript_lines;
 
 const STARTUP_LOGOS: &[&str] = &[include_str!("../logos/00.txt")];
 
@@ -525,6 +531,76 @@ impl AppState {
         self.status.tokens.latest_output_tokens = None;
         self.status.tokens.latest_total_tokens = None;
         self.scroll.entry_indices.clear();
+    }
+
+    /// Builds the yank payload for the active visual-mode selection and clears
+    /// it. The payload covers the selection's whole absolute visual-row range,
+    /// independent of the viewport: the covering block range is rendered into
+    /// an offscreen buffer at the transcript list width and scanned row by row,
+    /// so the text keeps the displayed-row shape (lane prefixes, separator
+    /// blanks, wrapped rows). Returns None when there is no selection or the
+    /// range holds no text. The clipboard request stays with the reducer.
+    pub fn yank_selection_payload(&mut self) -> Option<String> {
+        let (start_row, end_row) = self.scroll.yank_selection()?;
+        let payload = self.selection_text(start_row, end_row);
+        if payload.is_empty() {
+            None
+        } else {
+            Some(payload)
+        }
+    }
+
+    /// Renders the transcript rows `start_row..=end_row` offscreen and returns
+    /// them as newline-joined text.
+    fn selection_text(&mut self, start_row: usize, end_row: usize) -> String {
+        let width = self.scroll.transcript_area.width.saturating_sub(2) as usize;
+        if width == 0 {
+            return String::new();
+        }
+        if !self.transcript.height_index_valid_for(width) {
+            self.transcript.rebuild_height_index(width);
+        }
+        let (first, last) = self
+            .transcript
+            .visible_window(start_row, end_row - start_row + 1);
+        if first >= last {
+            return String::new();
+        }
+        let built =
+            build_transcript_lines(self.transcript.blocks(), first, last, width, &self.theme);
+        let visual_rows: usize = built
+            .lines
+            .iter()
+            .map(|line| single_line_visual_row_count(line, width))
+            .sum();
+        if visual_rows == 0 {
+            return String::new();
+        }
+        let area = Rect::new(
+            0,
+            0,
+            width.min(u16::MAX as usize) as u16,
+            visual_rows.min(u16::MAX as usize) as u16,
+        );
+        let mut buffer = Buffer::empty(area);
+        Paragraph::new(Text::from(built.lines))
+            .wrap(Wrap::default())
+            .render(area, &mut buffer);
+        // The rendered range starts at the first block's absolute start row.
+        let base = self.transcript.start_row_of(first);
+        let from = start_row.saturating_sub(base);
+        let to = end_row.saturating_sub(base).min(visual_rows - 1);
+        let mut rows: Vec<String> = Vec::new();
+        for y in from..=to {
+            let mut text = String::new();
+            for x in 0..area.width {
+                if let Some(cell) = buffer.cell((x, y as u16)) {
+                    text.push(cell.symbol().chars().next().unwrap_or(' '));
+                }
+            }
+            rows.push(text.trim_end().to_string());
+        }
+        rows.join("\n")
     }
 
     /// Shift tool-call `block_index` bookkeeping after transcript-cap

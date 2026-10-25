@@ -66,16 +66,6 @@ fn single_line_visual_row_count_matrix() -> Result<()> {
     Ok(())
 }
 
-/// `should_scan_for_yank` is true only in visual mode.
-#[test]
-fn should_scan_for_yank_matrix() -> Result<()> {
-    // -- Exec & Check
-    assert!(!super::render::should_scan_for_yank(InputMode::Insert));
-    assert!(!super::render::should_scan_for_yank(InputMode::Normal));
-    assert!(super::render::should_scan_for_yank(InputMode::Visual));
-    Ok(())
-}
-
 /// The height index is computed on a new entry, sums measure per block plus
 /// separators, and is invalidated on clear.
 #[test]

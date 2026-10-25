@@ -26,6 +26,9 @@ mod separators;
 #[path = "transcript/support.rs"]
 mod support;
 
+#[path = "transcript/yank.rs"]
+mod yank;
+
 // The monolith resolved `super::<item>` against `crate::runtime::render`.
 // Sub-files now resolve `super::` against this module root, so the shared
 // fixtures are re-exported here.

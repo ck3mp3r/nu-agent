@@ -262,13 +262,10 @@ fn handle_yank_selection(state: &mut AppState) -> bool {
     if state.input.mode != InputMode::Visual {
         return false;
     }
-    // Scroll domain: payload extraction from the rendered viewport. The
-    // clipboard request stays here (input domain).
-    if state.scroll.selection.is_some() {
-        let payload = state.scroll.yank_selection();
-        if let Some(payload) = payload {
-            state.input.set_clipboard_request(payload);
-        }
+    // Cross-domain: the payload comes from the transcript model (transcript +
+    // scroll + theme domains), the clipboard request stays here (input domain).
+    if let Some(payload) = state.yank_selection_payload() {
+        state.input.set_clipboard_request(payload);
     }
     state.enter_normal_mode();
     true

@@ -1,6 +1,6 @@
 //! Scroll/viewport/pane-focus domain state: transcript scroll offset,
-//! tail-follow, cursor row, viewport metrics, rendered-line capture for yank,
-//! transcript selection, entry index mapping, and pane focus.
+//! tail-follow, cursor row, viewport metrics, transcript selection, entry index
+//! mapping, and pane focus.
 
 use super::StatusState;
 use super::selection::TranscriptSelection;
@@ -31,8 +31,6 @@ pub struct ScrollState {
     pub max_scroll: usize,
     pub entry_indices: Vec<usize>,
     pub total_visual_rows: usize,
-    pub rendered_line_text: Vec<String>,
-    pub rendered_line_start_row: usize,
     pub selection: Option<TranscriptSelection>,
     pub pane_focus: PaneFocus,
     pub transcript_area: Rect,
@@ -48,8 +46,6 @@ impl Default for ScrollState {
             max_scroll: 0,
             entry_indices: Vec::new(),
             total_visual_rows: 0,
-            rendered_line_text: Vec::new(),
-            rendered_line_start_row: 0,
             selection: None,
             pane_focus: PaneFocus::Input,
             transcript_area: Rect::default(),
@@ -243,32 +239,13 @@ impl ScrollState {
         true
     }
 
-    /// Extracts the yank payload from the active selection and clears it.
-    /// Returns None when the payload is empty. The clipboard request and the
-    /// status line stay with the reducer (input/status domains).
-    pub fn yank_selection(&mut self) -> Option<String> {
-        let Some(sel) = &self.selection else {
-            return None;
-        };
-        let (start_row, end_row) = sel.normalized_range();
-        let offset = self.rendered_line_start_row;
-        let payload: String = self
-            .rendered_line_text
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| {
-                let abs_row = offset + i;
-                abs_row >= start_row && abs_row <= end_row
-            })
-            .map(|(_, text)| text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        self.selection = None;
-        if payload.is_empty() {
-            None
-        } else {
-            Some(payload)
-        }
+    /// Takes the active selection and returns its normalized inclusive visual
+    /// row range, clearing the selection. Returns None when no selection is
+    /// active. The payload itself is built by the caller from the transcript
+    /// model (transcript + theme domains), so the range is viewport-independent.
+    pub fn yank_selection(&mut self) -> Option<(usize, usize)> {
+        let sel = self.selection.take()?;
+        Some(sel.normalized_range())
     }
 
     // endregion: --- Visual mode selection

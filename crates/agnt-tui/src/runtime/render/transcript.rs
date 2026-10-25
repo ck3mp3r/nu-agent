@@ -6,13 +6,14 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
 
+use crate::rendering::theme::TuiTheme;
 use crate::runtime::render::expand_to_visual_rows;
 use crate::tui_renderer::layout;
 use crate::{
     runtime::render::frame::current_time_millis,
     state::{InputMode, PaneFocus},
 };
-use agnt_core::transcript::ir::{BlockSource, Fill, MessageRole};
+use agnt_core::transcript::ir::{Block as IrBlock, BlockSource, Fill, MessageRole};
 
 use crate::runtime::RuntimeCoordinator;
 
@@ -26,8 +27,6 @@ impl RuntimeCoordinator {
         transcript_scroll_offset: usize,
         rendered_scroll_offset: &mut Option<usize>,
     ) {
-        let now_millis = current_time_millis();
-
         frame.render_widget(Clear, transcript_content_area);
         frame.render_widget(
             Block::default().style(Style::default().bg(self.theme.base)),
@@ -66,95 +65,12 @@ impl RuntimeCoordinator {
                 .visible_window(effective_offset, viewport_height);
 
             // Only render visible blocks, inserting the separator rows the
-            // state machine decides between adjacent blocks. The machine is
-            // seeded from the block just above the first visible one so a
-            // scrolled view keeps the same separation as a full view.
-            let mut all_lines: Vec<Line<'static>> = Vec::new();
-            let mut block_indices: Vec<usize> = Vec::new();
-            // Per-line full-width background override for separator rows.
-            // `None` means "resolve from the block via full_width_background";
-            // `Some(color)` pins the row (used so a user prompt's background
-            // bleeds across its neighbouring separator rows, preserving the
-            // pre-refactor Fill bleed — Fill behavior is out of scope here).
-            let mut line_bgs: Vec<Option<ratatui::style::Color>> = Vec::new();
-
-            let mut sm = match first_visible.checked_sub(1).and_then(|i| blocks.get(i)) {
-                Some(prev) => crate::state::spacer::SpacerStateMachine::seeded(
-                    prev.source.family(),
-                    prev.has_filled_content(),
-                ),
-                None => crate::state::spacer::SpacerStateMachine::default(),
-            };
-
-            let visible_end = last_visible.min(blocks.len());
-            for (rel_idx, block) in blocks[first_visible..visible_end].iter().enumerate() {
-                let idx = first_visible + rel_idx;
-                let separators =
-                    sm.separators_for(block.source.family(), block.has_filled_content());
-                // Separator rows keep the pre-refactor bleed: the first row of
-                // a run bleeds the user background when the preceding block is
-                // a user turn; the last row bleeds when the incoming block is a
-                // user turn. Other rows stay on the base background.
-                let prev_is_user = idx
-                    .checked_sub(1)
-                    .and_then(|i| blocks.get(i))
-                    .is_some_and(is_user_block);
-                let incoming_is_user = is_user_block(block);
-                for s in 0..separators {
-                    let bleed =
-                        (s == 0 && prev_is_user) || (s == separators - 1 && incoming_is_user);
-                    let bg = if bleed {
-                        self.theme.row_user_bg
-                    } else {
-                        self.theme.base
-                    };
-                    all_lines.push(Line::from(""));
-                    block_indices.push(idx);
-                    line_bgs.push(Some(bg));
-                }
-                let ctx = agnt_core::transcript::renderer::FrameContext {
-                    width,
-                    now_millis,
-                    cursor: false,
-                    selected: false,
-                };
-                let entry_lines = layout(block, &ctx, &self.theme);
-                for entry_line in &entry_lines {
-                    block_indices.push(idx);
-                    // A line whose content spans agree on a background (a
-                    // line-level diff tint) pins that background full-width, so
-                    // the block's fill below cannot clobber it.
-                    line_bgs.push(uniform_content_bg(entry_line));
-                }
-                all_lines.extend(entry_lines);
-            }
-
-            // Trailing separator rows after the final block, but only when the
-            // viewport reaches the end of the transcript. A user turn relies on
-            // separators for its visual margin (`Fill::Full` has no margin
-            // rows), so a user block that is the last block keeps a closing
-            // blank row below it (task 670e0292). When the viewport is scrolled
-            // short of the end, the following block's leading separators
-            // provide the gap instead, so no trailing row is emitted here. The
-            // trailing row maps to the final block and bleeds the user
-            // background, matching the separator-row paint above.
-            if visible_end == blocks.len() && visible_end > 0 {
-                let trailing = sm.trailing_separators();
-                if trailing > 0 {
-                    let last_idx = visible_end - 1;
-                    let last_is_user = blocks.get(last_idx).is_some_and(is_user_block);
-                    let bg = if last_is_user {
-                        self.theme.row_user_bg
-                    } else {
-                        self.theme.base
-                    };
-                    for _ in 0..trailing {
-                        all_lines.push(Line::from(""));
-                        block_indices.push(last_idx);
-                        line_bgs.push(Some(bg));
-                    }
-                }
-            }
+            // state machine decides between adjacent blocks.
+            let TranscriptLines {
+                lines: mut all_lines,
+                mut block_indices,
+                mut line_bgs,
+            } = build_transcript_lines(blocks, first_visible, last_visible, width, &self.theme);
 
             // Bottom-align when content is shorter than viewport.
             // On fresh sessions with just a logo, this pushes the logo to the bottom
@@ -240,27 +156,6 @@ impl RuntimeCoordinator {
                 }
             }
 
-            // Store rendered text per visible viewport row for yank support
-            // Only scan the buffer in Visual mode to avoid per-frame O(width*height) cost.
-            if super::should_scan_for_yank(self.state.input.mode) {
-                let mut rendered_text: Vec<String> = Vec::with_capacity(viewport_height);
-                for row in 0..viewport_height {
-                    let row_screen_y = transcript_list_area.y + row as u16;
-                    let mut row_text = String::new();
-                    for x in
-                        transcript_list_area.x..transcript_list_area.x + transcript_list_area.width
-                    {
-                        if let Some(cell) = frame.buffer_mut().cell((x, row_screen_y)) {
-                            let ch = cell.symbol().chars().next().unwrap_or(' ');
-                            row_text.push(ch);
-                        }
-                    }
-                    rendered_text.push(row_text.trim_end().to_string());
-                }
-                self.state.scroll.rendered_line_text = rendered_text;
-                self.state.scroll.rendered_line_start_row = effective_offset;
-            }
-
             // Post-render buffer manipulation: apply selection highlight to visual rows
             if self.state.input.mode == InputMode::Visual
                 && let Some(sel) = &self.state.scroll.selection
@@ -306,6 +201,114 @@ impl RuntimeCoordinator {
                 );
             }
         }
+    }
+}
+
+/// The rendered lines for a block range, with the block index and the pinned
+/// full-width background of every line.
+pub(crate) struct TranscriptLines {
+    pub lines: Vec<Line<'static>>,
+    pub block_indices: Vec<usize>,
+    pub line_bgs: Vec<Option<ratatui::style::Color>>,
+}
+
+/// Builds the transcript pane's lines for the block range
+/// `first_visible..last_visible` at `width`. Pure: no scroll state, no
+/// terminal — the caller picks the range and owns every viewport mutation.
+///
+/// The separator state machine is seeded from the block just above
+/// `first_visible`, so a partial range keeps the same separation as a full
+/// render. The trailing separator rows are emitted only when the range reaches
+/// the end of the transcript: a user turn relies on separators for its visual
+/// margin (`Fill::Full` has no margin rows), so a user block that is the last
+/// block keeps a closing blank row below it (task 670e0292). When the range
+/// stops short of the end, the following block's leading separators provide
+/// the gap instead.
+pub(crate) fn build_transcript_lines(
+    blocks: &[IrBlock],
+    first_visible: usize,
+    last_visible: usize,
+    width: usize,
+    theme: &TuiTheme,
+) -> TranscriptLines {
+    let now_millis = current_time_millis();
+    let mut all_lines: Vec<Line<'static>> = Vec::new();
+    let mut block_indices: Vec<usize> = Vec::new();
+    // Per-line full-width background override for separator rows.
+    // `None` means "resolve from the block via full_width_background";
+    // `Some(color)` pins the row (used so a user prompt's background
+    // bleeds across its neighbouring separator rows, preserving the
+    // pre-refactor Fill bleed — Fill behavior is out of scope here).
+    let mut line_bgs: Vec<Option<ratatui::style::Color>> = Vec::new();
+
+    let mut sm = match first_visible.checked_sub(1).and_then(|i| blocks.get(i)) {
+        Some(prev) => crate::state::spacer::SpacerStateMachine::seeded(
+            prev.source.family(),
+            prev.has_filled_content(),
+        ),
+        None => crate::state::spacer::SpacerStateMachine::default(),
+    };
+
+    let visible_end = last_visible.min(blocks.len());
+    let visible_start = first_visible.min(visible_end);
+    for (rel_idx, block) in blocks[visible_start..visible_end].iter().enumerate() {
+        let idx = visible_start + rel_idx;
+        let separators = sm.separators_for(block.source.family(), block.has_filled_content());
+        // Separator rows keep the pre-refactor bleed: the first row of
+        // a run bleeds the user background when the preceding block is
+        // a user turn; the last row bleeds when the incoming block is a
+        // user turn. Other rows stay on the base background.
+        let prev_is_user = idx
+            .checked_sub(1)
+            .and_then(|i| blocks.get(i))
+            .is_some_and(is_user_block);
+        let incoming_is_user = is_user_block(block);
+        for s in 0..separators {
+            let bleed = (s == 0 && prev_is_user) || (s == separators - 1 && incoming_is_user);
+            let bg = if bleed { theme.row_user_bg } else { theme.base };
+            all_lines.push(Line::from(""));
+            block_indices.push(idx);
+            line_bgs.push(Some(bg));
+        }
+        let ctx = agnt_core::transcript::renderer::FrameContext {
+            width,
+            now_millis,
+            cursor: false,
+            selected: false,
+        };
+        let entry_lines = layout(block, &ctx, theme);
+        for entry_line in &entry_lines {
+            block_indices.push(idx);
+            // A line whose content spans agree on a background (a
+            // line-level diff tint) pins that background full-width, so
+            // the block's fill below cannot clobber it.
+            line_bgs.push(uniform_content_bg(entry_line));
+        }
+        all_lines.extend(entry_lines);
+    }
+
+    if visible_end == blocks.len() && visible_end > 0 {
+        let trailing = sm.trailing_separators();
+        if trailing > 0 {
+            let last_idx = visible_end - 1;
+            let last_is_user = blocks.get(last_idx).is_some_and(is_user_block);
+            let bg = if last_is_user {
+                theme.row_user_bg
+            } else {
+                theme.base
+            };
+            for _ in 0..trailing {
+                all_lines.push(Line::from(""));
+                block_indices.push(last_idx);
+                line_bgs.push(Some(bg));
+            }
+        }
+    }
+
+    TranscriptLines {
+        lines: all_lines,
+        block_indices,
+        line_bgs,
     }
 }
 
