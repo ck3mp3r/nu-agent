@@ -165,7 +165,7 @@ fn startup_logo_and_bottom_align() -> Result<()> {
 }
 
 /// The status section paints the message above the lanes, and the lanes below
-/// the input divider, for both wrapping and fitting model identities.
+/// the input box bottom border, for both wrapping and fitting model identities.
 #[tokio::test]
 async fn status_section_lane_layout() -> Result<()> {
     // -- Setup & Fixtures: a wrapping identity with a message.
@@ -270,13 +270,13 @@ async fn status_section_lane_layout() -> Result<()> {
     // -- Exec
     wrap_no_msg.advance_with_frame(&[]).await?;
 
-    // -- Check: lanes immediately below the input divider.
+    // -- Check: lanes immediately below the input box bottom border.
     let buffer = wrap_no_msg.buffer_text();
     let lines: Vec<&str> = buffer.lines().collect();
-    let div_row = lines
+    let border_row = lines
         .iter()
-        .position(|l| l.contains("├"))
-        .ok_or("should find input divider row")?;
+        .rposition(|l| l.contains('╰'))
+        .ok_or("should find input box bottom border row")?;
     let left_row = lines
         .iter()
         .position(|l| l.contains("0123456789"))
@@ -285,7 +285,7 @@ async fn status_section_lane_layout() -> Result<()> {
         .iter()
         .position(|l| l.contains("feature/status-lane-wrap"))
         .ok_or("should find right lane row")?;
-    assert_eq!(left_row, div_row + 1);
+    assert_eq!(left_row, border_row + 1);
     assert_eq!(right_row, left_row + 1);
 
     // -- Setup & Fixtures: a fitting identity with no message.
@@ -303,13 +303,13 @@ async fn status_section_lane_layout() -> Result<()> {
     // -- Exec
     fit_no_msg.advance_with_frame(&[]).await?;
 
-    // -- Check: a single lane immediately below the input divider.
+    // -- Check: a single lane immediately below the input box bottom border.
     let buffer = fit_no_msg.buffer_text();
     let lines: Vec<&str> = buffer.lines().collect();
-    let div_row = lines
+    let border_row = lines
         .iter()
-        .position(|l| l.contains("├"))
-        .ok_or("should find input divider row")?;
+        .rposition(|l| l.contains('╰'))
+        .ok_or("should find input box bottom border row")?;
     let lane_row = lines
         .iter()
         .position(|l| l.contains("gpt-5"))
@@ -318,7 +318,7 @@ async fn status_section_lane_layout() -> Result<()> {
         .iter()
         .position(|l| l.contains("feature/status-lane-wrap"))
         .ok_or("should find right lane row")?;
-    assert_eq!(lane_row, div_row + 1);
+    assert_eq!(lane_row, border_row + 1);
     assert_eq!(lane_row, right_row);
     Ok(())
 }

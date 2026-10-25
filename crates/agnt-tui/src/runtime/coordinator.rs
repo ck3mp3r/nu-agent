@@ -1150,8 +1150,7 @@ impl RuntimeCoordinator {
             });
             self.last_input_content_width = content_main.width.saturating_sub(4) as usize;
             let queue_count = self.state.pending_prompt_count() as u16;
-            let queue_h = queue_count + if queue_count > 0 { 1 } else { 0 };
-            let available_inner_w = content_main.width.saturating_sub(4) as usize;
+            let available_inner_w = content_main.width.saturating_sub(2) as usize;
             let pre_right_width = {
                 let rc = status_right_content(
                     self.repo_branch(),
@@ -1183,7 +1182,7 @@ impl RuntimeCoordinator {
                 pre_right_width,
                 has_message,
             );
-            let bottom_box_h = compute_bottom_box_height(queue_h, self.input_height, status_h);
+            let bottom_box_h = compute_bottom_box_height(queue_count, self.input_height, status_h);
             let vertical = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
@@ -1213,7 +1212,13 @@ impl RuntimeCoordinator {
             }
 
             let now_millis = current_time_millis();
-            self.render_bottom_box(frame, vertical[2], queue_h, self.input_height, now_millis);
+            self.render_bottom_box(
+                frame,
+                vertical[2],
+                queue_count,
+                self.input_height,
+                now_millis,
+            );
 
             if has_side {
                 let side = horizontal[1];

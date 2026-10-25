@@ -106,6 +106,10 @@ mod modals;
 pub(crate) mod transcript;
 
 #[cfg(test)]
+#[path = "../../../test/runtime/render/bottom_box.rs"]
+mod bottom_box_test;
+
+#[cfg(test)]
 #[path = "../../../test/runtime/render/frame.rs"]
 pub(super) mod frame_test;
 

@@ -16,13 +16,15 @@ pub fn compute_status_h(
     base + u16::from(has_message)
 }
 
-/// Compute the bottom box height from its queue, input, and status contents.
+/// Compute the bottom box height from its stack, input, and status contents.
+/// The stack contributes one row per queued prompt plus a one-row gap when
+/// non-empty; the input box contributes its own two border rows.
 pub fn compute_bottom_box_height(
     queue_content: u16,
     input_content: u16,
     status_content: u16,
 ) -> u16 {
-    let borders = 2u16;
-    let dividers = 1u16;
-    borders + dividers + queue_content + input_content + status_content
+    let input_borders = 2u16;
+    let stack_gap = u16::from(queue_content > 0);
+    queue_content + stack_gap + input_content + input_borders + status_content
 }

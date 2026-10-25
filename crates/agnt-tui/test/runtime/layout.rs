@@ -1,4 +1,4 @@
-use super::compute_status_h;
+use super::{compute_bottom_box_height, compute_status_h};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -51,5 +51,27 @@ fn test_compute_status_h_message_adds_row_when_wraps() -> Result<()> {
 
     // -- Check
     assert_eq!(with, without + 1);
+    Ok(())
+}
+
+/// THE `compute_bottom_box_height` function SHALL return
+/// `queue + (queue > 0 ? 1 : 0) + input + 2 + status`.
+#[test]
+fn test_compute_bottom_box_height_empty_queue() -> Result<()> {
+    // -- Exec
+    let h = compute_bottom_box_height(0, 1, 2);
+
+    // -- Check: no stack rows, no gap, input borders (2), input (1), status (2).
+    assert_eq!(h, 5);
+    Ok(())
+}
+
+#[test]
+fn test_compute_bottom_box_height_queued_adds_stack_rows_and_gap() -> Result<()> {
+    // -- Exec
+    let h = compute_bottom_box_height(2, 1, 2);
+
+    // -- Check: two stack rows, one gap row, input borders (2), input (1), status (2).
+    assert_eq!(h, 8);
     Ok(())
 }
