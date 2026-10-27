@@ -22,6 +22,7 @@ use crate::rendering::{
     theme::{ThemeName, TuiTheme},
 };
 use crate::runtime::layout::{compute_bottom_box_height, compute_status_h};
+use crate::runtime::render::bottom_box::{queued_prompt_blocks, stacked_messages_height};
 use crate::runtime::render::frame::current_time_millis;
 use crate::runtime::status::{
     RepoBranchTracker, availability_label, status_left_content, status_right_content,
@@ -1149,7 +1150,6 @@ impl RuntimeCoordinator {
                 horizontal: side_margin,
             });
             self.last_input_content_width = content_main.width.saturating_sub(4) as usize;
-            let queue_count = self.state.pending_prompt_count() as u16;
             let available_inner_w = content_main.width.saturating_sub(2) as usize;
             let pre_right_width = {
                 let rc = status_right_content(
@@ -1182,7 +1182,9 @@ impl RuntimeCoordinator {
                 pre_right_width,
                 has_message,
             );
-            let bottom_box_h = compute_bottom_box_height(queue_count, self.input_height, status_h);
+            let stack_blocks = queued_prompt_blocks(&self.state);
+            let stack_h = stacked_messages_height(&stack_blocks, available_inner_w, &self.theme);
+            let bottom_box_h = compute_bottom_box_height(stack_h, self.input_height, status_h);
             let vertical = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
@@ -1215,7 +1217,8 @@ impl RuntimeCoordinator {
             self.render_bottom_box(
                 frame,
                 vertical[2],
-                queue_count,
+                &stack_blocks,
+                stack_h,
                 self.input_height,
                 now_millis,
             );

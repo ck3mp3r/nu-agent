@@ -374,3 +374,46 @@ fn layout_markdown_content_is_project_output() -> Result<()> {
     );
     Ok(())
 }
+
+/// WHEN the queue drain coalesces several prompts into one user block, THE
+/// renderer SHALL produce one row per message with no blank row between them.
+/// A single `\n` is a markdown soft break, which the projector flushes as a row
+/// break; the `\n\n` paragraph form would cost a separator row per message —
+/// the double break this join avoids.
+#[test]
+fn layout_coalesced_user_block_renders_one_row_per_message() -> Result<()> {
+    // -- Setup & Fixtures: three single-line prompts, joined the way the drain
+    // joins them.
+    let theme = TuiTheme::default();
+    let messages = ["first message", "second message", "third message"];
+    let coalesced = markdown_block(MessageRole::User, &messages.join("\n"), Fill::Full);
+    let paragraph_separated = markdown_block(MessageRole::User, &messages.join("\n\n"), Fill::Full);
+
+    // -- Exec
+    let lines = layout(&coalesced, &frame_ctx(80), &theme);
+    let separated_lines = layout(&paragraph_separated, &frame_ctx(80), &theme);
+
+    // -- Check: exactly one row per message, in order, each carrying its text.
+    assert_eq!(
+        lines.len(),
+        messages.len(),
+        "a soft-break join must render one row per message; got {}",
+        lines.len()
+    );
+    for (row, message) in lines.iter().zip(messages) {
+        let text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.ends_with(message),
+            "row must carry `{message}`; got {text:?}"
+        );
+    }
+
+    // -- Check: the paragraph form is the double break this join avoids.
+    assert_eq!(
+        separated_lines.len(),
+        messages.len() * 2 - 1,
+        "a paragraph-break join must insert a separator row between messages; got {}",
+        separated_lines.len()
+    );
+    Ok(())
+}

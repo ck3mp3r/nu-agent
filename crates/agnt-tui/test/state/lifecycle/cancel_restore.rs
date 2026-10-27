@@ -62,7 +62,7 @@ fn cancel_and_restore_pending_to_input() -> Result<()> {
     let result = state.take_next_prompt_for_execution();
 
     // -- Check
-    assert_eq!(result, Some("first\n\nsecond\n\nthird".to_string()));
+    assert_eq!(result, Some("first\nsecond\nthird".to_string()));
     assert!(pending_prompt_ids(&state).is_empty());
     assert_eq!(state.phase, UiPhase::Busy);
 

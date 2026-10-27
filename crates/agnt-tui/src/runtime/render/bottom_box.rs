@@ -1,3 +1,6 @@
+use agnt_core::transcript::ir::{Block as IrBlock, MessageRole};
+use agnt_core::transcript::items::Message;
+use agnt_core::transcript::renderer::{FrameContext, Renderable};
 use ratatui::{
     Frame,
     layout::{Margin, Rect},
@@ -6,10 +9,12 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
+use crate::rendering::theme::TuiTheme;
 use crate::runtime::panels::render_permission_controls;
+use crate::tui_renderer::{layout, measure};
 use crate::{
     runtime::inline_slash_lines_for_render,
-    state::{InputMode, PickerRenderKind, PromptStatus},
+    state::{AppState, InputMode, PickerRenderKind, PromptStatus},
 };
 
 use crate::runtime::RuntimeCoordinator;
@@ -19,13 +24,14 @@ impl RuntimeCoordinator {
         &mut self,
         frame: &mut Frame,
         bottom_box_rect: Rect,
-        queue_count: u16,
+        stack_blocks: &[IrBlock],
+        stack_h: u16,
         input_h: u16,
         now_millis: u128,
     ) {
         // ── Frameless bottom stack ─────────────────────────────────────────
-        // Stack rows (while queued), a one-row gap, the bordered input box,
-        // then the shaded status rows flush below the box.
+        // A one-row gap (while queued), the stacked-message rows flush above
+        // the bordered input box, then the shaded status rows flush below it.
         let box_border_style = if self.state.scroll.pane_focus == crate::state::PaneFocus::Input {
             self.theme.focus
         } else {
@@ -38,52 +44,53 @@ impl RuntimeCoordinator {
         );
 
         // ── Queued-message stack ───────────────────────────────────────────
-        if queue_count > 0 {
+        // The gap row sits above the stack so the stack separates from the
+        // transcript and hugs the input box. The stack renders through the
+        // transcript's user-lane pipeline, so a queued prompt looks like the
+        // user message it becomes. The whole stack is ONE merged block: one
+        // tinted padding row, every queued prompt's rows back to back (the
+        // user rail continues down the block, so the gutter never breaks),
+        // then one tinted padding row.
+        let stack_gap = u16::from(stack_h > 0);
+        let stack_top = bottom_box_rect.y.saturating_add(stack_gap);
+        let stack_width = bottom_box_rect.width.saturating_sub(2);
+        if stack_h > 0 {
             let stack_rect = Rect {
                 x: bottom_box_rect.x,
-                y: bottom_box_rect.y,
+                y: stack_top,
                 width: bottom_box_rect.width,
-                height: queue_count,
+                height: stack_h,
             };
             frame.render_widget(
                 Block::default().style(Style::default().bg(self.theme.row_user_bg)),
                 stack_rect,
             );
-            let max_width = bottom_box_rect.width.saturating_sub(2) as usize;
-            let queued_lines: Vec<Line> = self
-                .state
-                .prompt_items()
-                .iter()
-                .filter(|p| p.status == PromptStatus::Queued)
-                .map(|p| {
-                    let raw = format!("▏ {}", p.prompt_text);
-                    let display = if raw.chars().count() > max_width {
-                        format!(
-                            "{}…",
-                            raw.chars()
-                                .take(max_width.saturating_sub(1))
-                                .collect::<String>()
-                        )
-                    } else {
-                        raw
-                    };
-                    let mut chars = display.chars();
-                    let rail: String = chars.by_ref().take(2).collect();
-                    let text: String = chars.collect();
-                    Line::from(vec![
-                        Span::styled(rail, self.theme.lane_prefix_user),
-                        Span::styled(text, self.theme.role_user),
-                    ])
-                })
-                .collect();
-            frame.render_widget(Paragraph::new(Text::from(queued_lines)), stack_rect);
+            let ctx = FrameContext {
+                width: stack_width as usize,
+                now_millis,
+                cursor: false,
+                selected: false,
+            };
+            let mut lines: Vec<Line<'static>> = Vec::with_capacity(stack_h as usize);
+            lines.push(Line::from(""));
+            for block in stack_blocks {
+                lines.extend(layout(block, &ctx, &self.theme));
+            }
+            lines.push(Line::from(""));
+            frame.render_widget(
+                Paragraph::new(Text::from(lines)),
+                Rect {
+                    width: stack_width,
+                    ..stack_rect
+                },
+            );
         }
 
         // ── Input / Permission section ────────────────────────────────────
         let input_top = bottom_box_rect
             .y
-            .saturating_add(queue_count)
-            .saturating_add(if queue_count > 0 { 1 } else { 0 });
+            .saturating_add(stack_gap)
+            .saturating_add(stack_h);
         let input_box_rect = Rect {
             x: bottom_box_rect.x,
             y: input_top,
@@ -317,3 +324,48 @@ impl RuntimeCoordinator {
         }
     }
 }
+
+// region:    --- Support
+
+/// One user-lane block per queued prompt, in queue order. Each block is the
+/// same IR a completed user turn pushes into the transcript, so the stack
+/// renders through the transcript's user-message pipeline instead of a
+/// private style path.
+pub(crate) fn queued_prompt_blocks(state: &AppState) -> Vec<IrBlock> {
+    state
+        .prompt_items()
+        .iter()
+        .filter(|prompt| prompt.status == PromptStatus::Queued)
+        .map(|prompt| {
+            let message = Message {
+                role: MessageRole::User,
+                markdown: prompt.prompt_text.clone(),
+            };
+            IrBlock {
+                source: message.source(),
+                lane: message.lane(),
+                fill: message.fill(),
+                status: None,
+            }
+        })
+        .collect()
+}
+
+/// Rows the stack occupies at `width`: the two tinted padding rows (one above
+/// the text, one below) plus every queued prompt's wrapped rows. `0` when
+/// nothing is queued, so an empty queue adds no stack row and no gap row.
+/// [`measure`] is the row-count twin of the [`layout`] call that paints the
+/// stack, so the reserved height and the rendered rows agree by construction.
+pub(crate) fn stacked_messages_height(blocks: &[IrBlock], width: usize, theme: &TuiTheme) -> u16 {
+    if blocks.is_empty() {
+        return 0;
+    }
+    let rows = blocks
+        .iter()
+        .map(|block| measure(block, width, theme))
+        .sum::<usize>()
+        + 2;
+    u16::try_from(rows).unwrap_or(u16::MAX)
+}
+
+// endregion: --- Support

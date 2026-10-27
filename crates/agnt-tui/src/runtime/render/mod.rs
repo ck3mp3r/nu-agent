@@ -100,14 +100,26 @@ pub(crate) fn single_line_visual_row_count(line: &Line<'_>, width: usize) -> usi
         .max(1)
 }
 
-mod bottom_box;
+pub(crate) mod bottom_box;
 pub(super) mod frame;
 mod modals;
 pub(crate) mod transcript;
 
 #[cfg(test)]
-#[path = "../../../test/runtime/render/bottom_box.rs"]
-mod bottom_box_test;
+#[path = "../../../test/runtime/render/bottom_box/support.rs"]
+mod bottom_box_support;
+
+#[cfg(test)]
+#[path = "../../../test/runtime/render/bottom_box/stack.rs"]
+mod bottom_box_stack_test;
+
+#[cfg(test)]
+#[path = "../../../test/runtime/render/bottom_box/status.rs"]
+mod bottom_box_status_test;
+
+#[cfg(test)]
+#[path = "../../../test/runtime/render/bottom_box/input_box.rs"]
+mod bottom_box_input_box_test;
 
 #[cfg(test)]
 #[path = "../../../test/runtime/render/frame.rs"]

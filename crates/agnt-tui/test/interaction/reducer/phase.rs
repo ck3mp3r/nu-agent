@@ -31,12 +31,12 @@ fn submit_and_lock_table() {
 
     // Activate both prompts coalesced
     let result = state.take_next_prompt_for_execution();
-    assert_eq!(result, Some("first\n\nsecond".to_string()));
+    assert_eq!(result, Some("first\nsecond".to_string()));
     // [User] — no leading or trailing spacer under the unified spacer rule
     assert_eq!(state.transcript.len(), 1);
     assert_eq!(
         state.transcript.blocks()[0].source.plain_text(),
-        "first\n\nsecond"
+        "first\nsecond"
     );
     // Complete first (active) prompt — other prompt is already Done
     state.complete_active_prompt();

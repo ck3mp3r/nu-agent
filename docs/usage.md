@@ -745,6 +745,8 @@ CLI flags override config.toml, which overrides built-in defaults.
 ### Prompt queue and cancel-on-empty-Enter
 
 - Submitting a prompt while a turn is busy queues it; the queued prompts run after the active turn completes.
+- Queued prompts render as one merged user-message block stacked directly above the input box: a tinted padding line above and below the text, a continuous `▏` gutter down every row with no separators between messages, and one blank row separating the block from the transcript. Text wraps at the transcript user-message width.
+- The queue drains as one submission, and that submitted block renders the same one-row-per-message rhythm as the stack — no blank line between the coalesced prompts.
 - Pressing Enter on empty input while a turn is busy and at least one prompt is queued cancels the active turn. The queued prompts then run through the normal drain path.
 - Pressing Enter on empty input while idle, or while busy with no queued prompts, does nothing.
 - Stopping a turn shows `Turn stopped` in the status bar until the next turn starts, and keeps the turn's completed work in the session.

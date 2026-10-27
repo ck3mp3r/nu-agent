@@ -55,7 +55,7 @@ fn test_compute_status_h_message_adds_row_when_wraps() -> Result<()> {
 }
 
 /// THE `compute_bottom_box_height` function SHALL return
-/// `queue + (queue > 0 ? 1 : 0) + input + 2 + status`.
+/// `stack + (stack > 0 ? 1 : 0) + input + 2 + status`.
 #[test]
 fn test_compute_bottom_box_height_empty_queue() -> Result<()> {
     // -- Exec
@@ -67,11 +67,51 @@ fn test_compute_bottom_box_height_empty_queue() -> Result<()> {
 }
 
 #[test]
-fn test_compute_bottom_box_height_queued_adds_stack_rows_and_gap() -> Result<()> {
+fn test_compute_bottom_box_height_one_stack_row_adds_row_and_gap() -> Result<()> {
     // -- Exec
-    let h = compute_bottom_box_height(2, 1, 2);
+    let h = compute_bottom_box_height(1, 1, 2);
 
-    // -- Check: two stack rows, one gap row, input borders (2), input (1), status (2).
-    assert_eq!(h, 8);
+    // -- Check: one stack row, one gap row above it, input borders (2), input
+    // (1), status (2).
+    assert_eq!(h, 7);
+    Ok(())
+}
+
+/// WHEN the stack's wrapped text rows and its two padding rows are reserved,
+/// THE `compute_bottom_box_height` function SHALL count every stack row plus
+/// the gap row above the stack.
+#[test]
+fn test_compute_bottom_box_height_wrapped_stack_rows_and_padding() -> Result<()> {
+    // -- Exec: four stack rows (two padding rows plus two wrapped text rows).
+    let h = compute_bottom_box_height(4, 1, 2);
+
+    // -- Check: four stack rows, one gap row, input borders (2), input (1),
+    // status (2).
+    assert_eq!(h, 10);
+    Ok(())
+}
+
+/// THE `compute_bottom_box_height` function SHALL add exactly one row per
+/// additional stack row once the stack is non-empty.
+#[test]
+fn test_compute_bottom_box_height_each_extra_stack_row_adds_one() -> Result<()> {
+    // -- Exec
+    let one = compute_bottom_box_height(1, 1, 2);
+    let four = compute_bottom_box_height(4, 1, 2);
+
+    // -- Check
+    assert_eq!(four - one, 3);
+    Ok(())
+}
+
+/// IF the stack content exceeds the terminal height, THEN THE
+/// `compute_bottom_box_height` function SHALL saturate instead of overflowing.
+#[test]
+fn test_compute_bottom_box_height_saturates() -> Result<()> {
+    // -- Exec
+    let h = compute_bottom_box_height(u16::MAX, 1, 2);
+
+    // -- Check
+    assert_eq!(h, u16::MAX);
     Ok(())
 }

@@ -116,7 +116,11 @@ impl AppState {
             return None;
         }
 
-        let combined = texts.join("\n\n");
+        // One newline is a markdown soft break: the projector flushes each
+        // break as a row break, so the submitted block renders one row per
+        // queued message — the stack's rhythm, with no blank row between them
+        // (pinned by `layout_coalesced_user_block_renders_one_row_per_message`).
+        let combined = texts.join("\n");
         let msg = Message {
             role: MessageRole::User,
             markdown: combined.clone(),
