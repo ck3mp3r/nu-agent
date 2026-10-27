@@ -15,6 +15,10 @@ use crate::error::{Error, Result};
 /// Persona and identity resolved from clap flags and config.
 pub struct PersonaResolution {
     pub persona: Option<ParsedPersona>,
+    /// The persona slug: the `--agent` value (or the configured default) when a
+    /// persona loaded, `None` otherwise. This is the value hook envelopes carry
+    /// as `agent`; it is not the front-matter display name.
+    pub agent_slug: Option<String>,
     pub agent_identity: Option<String>,
     pub messaging_identity: Option<String>,
     pub agent_permissions_overlay: Option<PermissionsOverlay>,
@@ -95,6 +99,8 @@ pub fn resolve_persona_from_clap(
         .as_ref()
         .and_then(|p| p.name.clone())
         .or_else(|| effective_agent_name.clone());
+    // Persona slug: the effective agent name, but only when a persona loaded.
+    let agent_slug = persona.as_ref().and(effective_agent_name.clone());
     // Messaging identity: --name > display identity (for multi-agent communication)
     let messaging_identity = cli_name.or_else(|| agent_identity.clone());
 
@@ -111,6 +117,7 @@ pub fn resolve_persona_from_clap(
 
     Ok(PersonaResolution {
         persona,
+        agent_slug,
         agent_identity,
         messaging_identity,
         agent_permissions_overlay,

@@ -57,6 +57,7 @@ pub async fn run_tui_mode(
         runtime_impl
             .mcp_caller_cwd()
             .unwrap_or(std::path::Path::new(".")),
+        &runtime_impl.hook_context,
     )
     .await;
 
@@ -260,6 +261,7 @@ async fn run_tui_mode_inner(
         runtime_impl
             .mcp_caller_cwd()
             .unwrap_or(std::path::Path::new(".")),
+        &runtime_impl.hook_context,
     );
 
     terminal_lifecycle

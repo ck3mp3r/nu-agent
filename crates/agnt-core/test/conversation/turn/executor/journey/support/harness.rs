@@ -35,6 +35,8 @@ pub(crate) fn default_tool_infra(
         output_repetition: default_output_repetition(),
         repetition_guard: default_repetition_guard(),
         last_total_tokens: default_last_total_tokens(),
+        turn_usage: crate::hook::TurnUsage::default(),
+        session_usage: crate::hook::TurnUsage::default(),
         bus: crate::bus::create_bus(),
         render_registry: ToolRenderRegistry::default(),
         cwd: std::path::PathBuf::from("/tmp"),

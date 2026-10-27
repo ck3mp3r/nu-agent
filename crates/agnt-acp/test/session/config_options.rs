@@ -5,7 +5,7 @@ use super::*;
 // ---------------------------------------------------------------------------
 
 /// A models cache holding `models` under `provider`.
-fn models_cache(provider: &str, models: &[(&str, &str)]) -> Result<ModelsCache> {
+pub(super) fn models_cache(provider: &str, models: &[(&str, &str)]) -> Result<ModelsCache> {
     let models: serde_json::Map<String, serde_json::Value> = models
         .iter()
         .map(|(id, name)| {
@@ -31,7 +31,7 @@ fn models_cache(provider: &str, models: &[(&str, &str)]) -> Result<ModelsCache> 
 }
 
 /// A manager that advertises `cache` as its models cache.
-async fn manager_with_cache(
+pub(super) async fn manager_with_cache(
     dir: &Path,
     cache: ModelsCache,
 ) -> Result<AcpSessionManager<MockRuntimeBuilder>> {

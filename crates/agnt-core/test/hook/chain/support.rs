@@ -130,6 +130,8 @@ pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissi
             },
             model: MockCompletionModel::default().erase(),
             last_total_tokens: Arc::new(Mutex::new(None)),
+            turn_usage: crate::hook::TurnUsage::default(),
+            session_usage: crate::hook::TurnUsage::default(),
         },
     )
 }
@@ -186,6 +188,8 @@ impl RepetitionTurnFixture {
                 },
                 model: dyn_model.lock().expect("model mutex poisoned").clone(),
                 last_total_tokens: Arc::new(std::sync::Mutex::new(None)),
+                turn_usage: crate::hook::TurnUsage::default(),
+                session_usage: crate::hook::TurnUsage::default(),
             },
             _temp_dir: temp_dir,
         })
@@ -238,6 +242,8 @@ impl RepetitionTurnFixture {
                 compaction: self.hook_state.compaction.clone(),
                 model: model.clone(),
                 last_total_tokens: self.hook_state.last_total_tokens.clone(),
+                turn_usage: self.hook_state.turn_usage.clone(),
+                session_usage: self.hook_state.session_usage.clone(),
             },
         );
         let builder = rig::agent::AgentBuilder::new(model).add_hook(hook);

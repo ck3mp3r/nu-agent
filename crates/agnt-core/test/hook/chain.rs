@@ -11,7 +11,7 @@ mod cancel_dispatch;
 #[path = "chain/compaction.rs"]
 mod compaction;
 
-#[path = "chain/cost.rs"]
+#[path = "chain/cost/test.rs"]
 mod cost;
 
 #[path = "chain/deny_dispatch.rs"]

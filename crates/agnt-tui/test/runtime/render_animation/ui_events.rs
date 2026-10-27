@@ -177,6 +177,15 @@ fn ui_event_permission_group() -> Result<()> {
             request_id: "ask-0000000000000001".to_string(),
             reason: "user closed".to_string(),
         },
+        UiEvent::PermissionRequestCancelled {
+            request_id: "ask-0000000000000001".to_string(),
+            matched_rule_identity: "nested:nu.command:*".to_string(),
+        },
+        UiEvent::PermissionAutoResolved {
+            matched_rule_identity: "tool:read".to_string(),
+            action: "allow".to_string(),
+            reason: None,
+        },
     ] {
         let mut decision = RuntimeCoordinator::new(120, 40, Some(false));
         decision.set_render_needed(false);

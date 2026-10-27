@@ -114,7 +114,15 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
         },
         Case {
             name: "completed_finalizes_cycle",
-            event: UiEvent::Completed { tool_calls: 1 },
+            event: UiEvent::Completed {
+                tool_calls: 1,
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: None,
+                cost: None,
+                cost_complete: true,
+                duration_ms: 0,
+            },
             pre: busy_with_status,
         },
     ];

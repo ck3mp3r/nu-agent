@@ -50,6 +50,7 @@ use super::permission_resolver::{
 };
 use super::subturn_cap::SubTurnCap;
 use super::turn_tools::TurnToolLog;
+use super::turn_usage::TurnUsage;
 use super::unpriced_warnings::UnpricedWarnings;
 
 /// The completion message for a call the cancel arm denied before it ran.
@@ -229,6 +230,12 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     /// (plus the current prompt) instead of the chars/4 heuristic. `None` before
     /// the first completion and after a compaction reset.
     last_total_tokens: Arc<Mutex<Option<u64>>>,
+    /// The turn's LLM usage, accumulated as each call completes. The turn
+    /// executor reads the sums when it publishes the turn-completed event.
+    turn_usage: TurnUsage,
+    /// The session's cumulative LLM usage. Every call adds into it; it resets
+    /// only when the runtime switches sessions.
+    session_usage: TurnUsage,
     /// Model ids already reported as unpriced, so the warn fires once per
     /// model rather than once per call.
     unpriced_warnings: UnpricedWarnings,
@@ -271,6 +278,8 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
             compaction: hook_state.compaction,
             model: hook_state.model,
             last_total_tokens: hook_state.last_total_tokens,
+            turn_usage: hook_state.turn_usage,
+            session_usage: hook_state.session_usage,
             unpriced_warnings: UnpricedWarnings::default(),
         }
     }
@@ -758,6 +767,24 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                             }
                         },
                     };
+                    // Accumulate the turn's usage here, where the call is
+                    // observed: a runner-side sum would undercount under
+                    // channel lag. The session cells take the same call, so
+                    // the session totals are the sum of every turn's calls.
+                    self.turn_usage.add_call(
+                        usage.input_tokens.unwrap_or(0),
+                        usage.output_tokens.unwrap_or(0),
+                        total_tokens,
+                        cost,
+                        cost_complete,
+                    );
+                    self.session_usage.add_call(
+                        usage.input_tokens.unwrap_or(0),
+                        usage.output_tokens.unwrap_or(0),
+                        total_tokens,
+                        cost,
+                        cost_complete,
+                    );
                     let _ = bus
                         .ui_event()
                         .send(UiEvent::LlmCompleted {

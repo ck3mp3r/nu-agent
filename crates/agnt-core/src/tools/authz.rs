@@ -196,7 +196,7 @@ pub struct PermissionsSummary {
 }
 
 /// Default auto-deny timeout for an unanswered permission card.
-pub const DEFAULT_DECISION_TIMEOUT: Duration = Duration::from_secs(15);
+pub const DEFAULT_DECISION_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// TOML key for the decision timeout, in whole seconds. `0` disables it.
 const DECISION_TIMEOUT_KEY: &str = "decision_timeout_secs";

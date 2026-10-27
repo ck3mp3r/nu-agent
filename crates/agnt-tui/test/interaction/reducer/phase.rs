@@ -94,7 +94,15 @@ fn abort_flow_table() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::Completed { tool_calls: 0 }),
+        event_input(UiEvent::Completed {
+            tool_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        }),
         None,
     );
     assert_eq!(state.phase, UiPhase::Idle);
@@ -117,7 +125,15 @@ fn test_interaction_reducer_turn_end_closes_permission_card() -> Result<()> {
     // -- Exec: the turn completes.
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::Completed { tool_calls: 0 }),
+        event_input(UiEvent::Completed {
+            tool_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        }),
         None,
     );
 
@@ -259,7 +275,15 @@ fn completion_finalize_table() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::Completed { tool_calls: 1 }),
+        event_input(UiEvent::Completed {
+            tool_calls: 1,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        }),
         None,
     );
 
@@ -278,7 +302,15 @@ fn completion_finalize_table() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::Completed { tool_calls: 0 }),
+        event_input(UiEvent::Completed {
+            tool_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        }),
         None,
     );
 
@@ -298,7 +330,15 @@ fn completion_finalize_table() {
 
     reduce_with_cancel_controller(
         &mut state,
-        event_input(UiEvent::Completed { tool_calls: 0 }),
+        event_input(UiEvent::Completed {
+            tool_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        }),
         None,
     );
 

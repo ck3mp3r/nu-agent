@@ -52,6 +52,8 @@ async fn repetition_stop_session_less_steers_via_prompt_and_terminal_on_cap() ->
                 output_repetition: output_repetition.clone(),
                 repetition_guard: default_repetition_guard(),
                 last_total_tokens: default_last_total_tokens(),
+                turn_usage: crate::hook::TurnUsage::default(),
+                session_usage: crate::hook::TurnUsage::default(),
                 bus: bus.clone(),
                 render_registry: ToolRenderRegistry::default(),
                 cwd: std::path::PathBuf::from("/tmp"),

@@ -136,6 +136,8 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
+            turn_usage: crate::hook::TurnUsage::default(),
+            session_usage: crate::hook::TurnUsage::default(),
             bus: crate::bus::create_bus(),
             render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),

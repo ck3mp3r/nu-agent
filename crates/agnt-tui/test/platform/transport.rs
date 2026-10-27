@@ -11,7 +11,15 @@ enum Enqueue {
 }
 
 fn completed(tool_calls: usize) -> UiEvent {
-    UiEvent::Completed { tool_calls }
+    UiEvent::Completed {
+        tool_calls,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: None,
+        cost: None,
+        cost_complete: true,
+        duration_ms: 0,
+    }
 }
 
 fn warning(msg: &str) -> UiEvent {

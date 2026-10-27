@@ -86,7 +86,11 @@ impl MockPermission {
 }
 
 impl PermissionHandler for MockPermission {
-    fn handle(&mut self, _decision: PermissionDecisionSubmission, _ctx: &mut OrchestrationContext) {
+    async fn handle(
+        &mut self,
+        _decision: PermissionDecisionSubmission,
+        _ctx: &mut OrchestrationContext<'_>,
+    ) {
         self.handle_calls += 1;
         if let Ok(mut trace) = self.trace.lock() {
             trace.push("permission".to_string());

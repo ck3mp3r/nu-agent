@@ -160,6 +160,7 @@ fn build_fixture(
         output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
         repetition_guard: true,
         last_total_tokens: Arc::new(Mutex::new(None)),
+        session_usage: crate::hook::TurnUsage::default(),
         bus: bus.clone(),
         render_registry: ToolRenderRegistry::default(),
         provider,
@@ -181,6 +182,7 @@ fn build_fixture(
         multi_agent: MultiAgentState::new(Vec::new(), AgentsConfig::default()),
         dyn_model: Arc::new(Mutex::new(model.erase())),
         compaction,
+        hook_context: crate::hooks::HookAgentContext::default(),
     };
 
     Ok(RuntimeFixture {

@@ -125,6 +125,25 @@ pub enum UiEvent {
         request_id: String,
         reason: String,
     },
+    /// A pending permission request was abandoned because the turn was
+    /// cancelled. No decision exists at that moment, so the payload carries
+    /// the request id and the identity of the rule that produced the prompt.
+    PermissionRequestCancelled {
+        request_id: String,
+        matched_rule_identity: String,
+    },
+    /// The policy resolved a tool call without prompting the user.
+    ///
+    /// `action` is `"allow"` or `"deny"`. `reason` is `Some` only when
+    /// `action` is `"deny"`, and carries the rule-derived denial reason.
+    ///
+    /// The payload carries no tool identity: `ToolStarted` precedes this event
+    /// on the same channel, so a hook correlates by order or subscribes to both.
+    PermissionAutoResolved {
+        matched_rule_identity: String,
+        action: String,
+        reason: Option<String>,
+    },
     Warning {
         message: String,
     },
@@ -157,7 +176,17 @@ pub enum UiEvent {
     Stopped {
         reason: String,
     },
+    /// The turn finished. Carries the turn's tool-call count and its LLM
+    /// usage, so a consumer that reconstructs the typed event from this one
+    /// loses nothing: the usage fields are the turn's sums across its calls
+    /// (see [`crate::bus::TurnEvent::Completed`]).
     Completed {
         tool_calls: usize,
+        input_tokens: u64,
+        output_tokens: u64,
+        total_tokens: Option<u64>,
+        cost: Option<f64>,
+        cost_complete: bool,
+        duration_ms: u64,
     },
 }

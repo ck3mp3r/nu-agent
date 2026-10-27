@@ -54,7 +54,15 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed { tool_calls: 1 })
+            .send(UiEvent::Completed {
+                tool_calls: 1,
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: None,
+                cost: None,
+                cost_complete: true,
+                duration_ms: 0,
+            })
             .await;
         Ok(Value::nothing(span))
     }
@@ -98,7 +106,15 @@ impl CoreRuntime for CancelFirstRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed { tool_calls: 0 })
+            .send(UiEvent::Completed {
+                tool_calls: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: None,
+                cost: None,
+                cost_complete: true,
+                duration_ms: 0,
+            })
             .await;
         if self.prompts.len() == 1 {
             return Err(LabeledError::new("LLM call cancelled"));
@@ -148,7 +164,15 @@ impl CoreRuntime for ErrorFirstRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed { tool_calls: 0 })
+            .send(UiEvent::Completed {
+                tool_calls: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: None,
+                cost: None,
+                cost_complete: true,
+                duration_ms: 0,
+            })
             .await;
         if self.prompts.len() == 1 {
             return Err(LabeledError::new("API rate limit exceeded"));

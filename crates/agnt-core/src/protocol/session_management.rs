@@ -37,6 +37,16 @@ pub trait SessionPersistence {
         None
     }
 
+    /// The session's cumulative LLM usage: the sums across every turn the
+    /// session has run.
+    ///
+    /// The cells reset when the runtime switches sessions, so the totals cover
+    /// the current session only. A runtime that tracks no usage reports the
+    /// empty sum.
+    fn session_usage(&self) -> crate::hook::TurnUsageTotals {
+        crate::hook::TurnUsageTotals::default()
+    }
+
     /// Run a compaction of the current session with the given `source`
     /// (`"auto"` or `"slash"`).
     ///

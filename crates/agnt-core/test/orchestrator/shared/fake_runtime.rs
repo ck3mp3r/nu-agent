@@ -27,7 +27,15 @@ impl CoreRuntime for FakeRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed { tool_calls: 0 })
+            .send(UiEvent::Completed {
+                tool_calls: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: None,
+                cost: None,
+                cost_complete: true,
+                duration_ms: 0,
+            })
             .await;
         Ok(Value::nothing(Span::test_data()))
     }
@@ -130,7 +138,15 @@ impl CoreRuntime for FakeValueRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed { tool_calls: 0 })
+            .send(UiEvent::Completed {
+                tool_calls: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: None,
+                cost: None,
+                cost_complete: true,
+                duration_ms: 0,
+            })
             .await;
         Ok(Value::record(nu_protocol::Record::new(), span))
     }

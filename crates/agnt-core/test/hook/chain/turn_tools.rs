@@ -67,6 +67,8 @@ fn tool_turn(model: &MockCompletionModel) -> Result<ToolTurn> {
             },
             model: model.clone().erase(),
             last_total_tokens: Arc::new(Mutex::new(None)),
+            turn_usage: crate::hook::TurnUsage::default(),
+            session_usage: crate::hook::TurnUsage::default(),
         },
     );
     let turn_tools = hook.turn_tools();

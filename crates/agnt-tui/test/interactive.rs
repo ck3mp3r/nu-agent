@@ -165,7 +165,15 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
     // Complete the turn. The turn-completion branch must drain the stacked
     // prompt into a PromptSubmitted event without any further terminal input.
     bus.ui_event()
-        .send(UiEvent::Completed { tool_calls: 0 })
+        .send(UiEvent::Completed {
+            tool_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        })
         .await
         .expect("publish UiEvent::Completed");
     let second = tokio::time::timeout(Duration::from_secs(1), event_rx.recv())

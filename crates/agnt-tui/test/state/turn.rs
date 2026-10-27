@@ -14,7 +14,18 @@ use agnt_core::transcript::renderer::Renderable;
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 fn finalize_turn(state: &mut AppState) {
-    crate::state::dispatch_turn_event(state, TurnEvent::Completed { tool_calls: 0 });
+    crate::state::dispatch_turn_event(
+        state,
+        TurnEvent::Completed {
+            tool_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        },
+    );
 }
 
 #[test]

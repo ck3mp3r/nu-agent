@@ -90,7 +90,15 @@ fn ui_event_and_permission_contracts() {
             delta: "done".to_string(),
             text: "done".to_string(),
         },
-        UiEvent::Completed { tool_calls: 1 },
+        UiEvent::Completed {
+            tool_calls: 1,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        },
     ];
 
     assert_eq!(events.len(), 17);

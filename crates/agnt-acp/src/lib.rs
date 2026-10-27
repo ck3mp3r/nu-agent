@@ -36,7 +36,9 @@ use agent_client_protocol::schema::v1::{
 };
 use agent_client_protocol::{Agent, Error, Stdio, on_receive_notification, on_receive_request};
 use agnt_core::bus::{AgentEvent, AgentTx};
-use agnt_core::config::{ModelsCache, toml_config};
+use agnt_core::config::{AgentsConfig, ModelsCache, PluginConfig, toml_config};
+use agnt_core::hooks::HookAgentContext;
+use agnt_core::protocol::persona::{FsPersonaResolver, PersonaFileResolver};
 use agnt_core::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
 /// The session registry shared by every protocol handler.
@@ -70,21 +72,26 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
     let rig = agnt_core::session::RigStoreConfig::new(agnt_core::session::StoreType::Sqlite);
     // Resolve the user hooks once: every session starts a runner for them on
     // its own bus. A config that fails to load or resolve leaves hooks empty,
-    // so the server still serves.
-    let hooks = match toml_config::load_from(&config_path) {
+    // so the server still serves. The same load supplies the model identity the
+    // process-level agent hook envelopes carry.
+    let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
+    let (hooks, agent_hook_context) = match toml_config::load_from(&config_path) {
         Ok(config) => {
-            let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
-            match agnt_core::config::resolve_hooks(&config, config_dir) {
+            let hooks = match agnt_core::config::resolve_hooks(&config, config_dir) {
                 Ok(hooks) => hooks,
                 Err(err) => {
                     log::warn!("Failed to resolve hooks: {err}");
                     Vec::new()
                 }
-            }
+            };
+            let context = HookAgentContext::default()
+                .with_persona(persona_slug(agent.as_deref(), config_dir, &config.agents))
+                .with_model(active_model_identity(&config));
+            (hooks, context)
         }
         Err(err) => {
             log::warn!("Failed to load config.toml for hooks: {err}");
-            Vec::new()
+            (Vec::new(), HookAgentContext::default())
         }
     };
     // Agent events are process-scoped, so they ride a standalone channel rather
@@ -95,6 +102,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
         &agent_tx,
         &hooks,
         &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        &agent_hook_context,
         agnt_core::hooks::NuProcess,
     );
     let sessions: SharedSessions = Arc::new(
@@ -309,6 +317,39 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
 
 fn agent_info() -> Implementation {
     Implementation::new("nu-agent", env!("CARGO_PKG_VERSION")).title("nu-agent")
+}
+
+/// The persona slug `agent` names, or `None` when it names no persona.
+///
+/// The process-level agent hook envelopes carry this slug: agent events are
+/// process-scoped, so they cannot read a session's snapshot.
+fn persona_slug(
+    agent: Option<&str>,
+    config_dir: &std::path::Path,
+    agents_config: &AgentsConfig,
+) -> Option<String> {
+    let name = agent?;
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let resolver = FsPersonaResolver::new(cwd, config_dir.to_path_buf(), agents_config.clone());
+    resolver.resolve(name).ok().map(|_| name.to_string())
+}
+
+/// The `provider/model` identity of the config's default role.
+///
+/// Returns an empty string when the role does not resolve: the server cannot
+/// serve a session then either, and a hook envelope must never fail a run.
+fn active_model_identity(plugin_config: &PluginConfig) -> String {
+    let env = agnt_core::utils::env_map::process_env();
+    match agnt_core::config::resolve_role_config(plugin_config, None, &env) {
+        Ok(config) => agnt_core::protocol::picker::format_active_model_identity(
+            &config.provider,
+            &config.model,
+        ),
+        Err(err) => {
+            log::warn!("Failed to resolve the active model for hook envelopes: {err}");
+            String::new()
+        }
+    }
 }
 
 /// Capabilities advertised at `initialize`.

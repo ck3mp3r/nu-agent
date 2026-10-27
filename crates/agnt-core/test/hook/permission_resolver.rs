@@ -17,6 +17,12 @@ mod interactive_basic;
 #[path = "permission_resolver/policy.rs"]
 mod policy;
 
+#[path = "permission_resolver/permission_auto_resolved.rs"]
+mod permission_auto_resolved;
+
+#[path = "permission_resolver/permission_request_cancelled.rs"]
+mod permission_request_cancelled;
+
 #[path = "permission_resolver/pre_authorize.rs"]
 mod pre_authorize;
 
@@ -25,6 +31,9 @@ mod previewed_cwd;
 
 #[path = "permission_resolver/session_grants.rs"]
 mod session_grants;
+
+#[path = "permission_resolver/submitted.rs"]
+mod submitted;
 
 #[path = "permission_resolver/support.rs"]
 mod support;
@@ -38,5 +47,8 @@ mod timeout;
 // Sub-files now resolve `super::` against this module root, so the shared
 // fixtures are re-exported here.
 use support::*;
+
+// The chain suite submits decisions through the same helper.
+pub(crate) use support::submit_decision;
 
 use super::*;

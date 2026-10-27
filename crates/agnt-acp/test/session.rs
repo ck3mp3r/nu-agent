@@ -17,6 +17,12 @@ mod cancel;
 #[path = "session/config_options.rs"]
 mod config_options;
 
+#[path = "session/compaction.rs"]
+mod compaction;
+
+#[path = "session/compaction_dispatch.rs"]
+mod compaction_dispatch;
+
 #[path = "session/events.rs"]
 mod events;
 
@@ -31,6 +37,9 @@ mod prompt;
 
 #[path = "session/support.rs"]
 mod support;
+
+#[path = "session/switch_events.rs"]
+mod switch_events;
 
 #[path = "session/turn_outcome.rs"]
 mod turn_outcome;

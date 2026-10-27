@@ -95,7 +95,7 @@ fn load_parses_minimal_config() -> Result<()> {
 
 // region:    --- Modules
 
-#[path = "toml_config/hooks.rs"]
+#[path = "toml_config/hooks/mod.rs"]
 mod hooks;
 
 #[path = "toml_config/pricing.rs"]

@@ -21,3 +21,5 @@ tokio = { workspace = true }
 [dev-dependencies]
 rig = { workspace = true }
 tempfile = { workspace = true }
+# `start_paused` drives the closed-channel drain test without real time.
+tokio = { workspace = true, features = ["test-util"] }

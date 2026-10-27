@@ -11,6 +11,8 @@ pub(super) use crate::bus::Bus;
 pub(super) use crate::hook::permission_resolver::{
     AsyncPermissionResolver, InteractivePermissionResolver, PolicyPermissionResolver,
 };
+pub(super) use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
+pub(super) use crate::protocol::event::UiEvent;
 pub(super) use crate::tools::authz::{
     PermissionAction, PermissionDecision as AuthzPermissionDecision, PermissionRuleMatch,
     PermissionsConfig, SessionGrantCache,
@@ -120,3 +122,31 @@ pub(super) fn deny_all_toml_config() -> PermissionsConfig {
         true,
     )
 }
+
+/// Every event already queued on `rx`.
+pub(super) fn drain(rx: &mut crate::bus::UiEventRx) -> Vec<UiEvent> {
+    let mut events = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        events.push(event);
+    }
+    events
+}
+
+// region:    --- Test Support
+
+/// Deliver `decision` for `request_id`, unblocking the waiting `resolve()`.
+///
+/// Performs the same mutation the production seam performs: the orchestrator's
+/// `PermissionStage` and the ACP permission bridge remove the request's oneshot
+/// sender from the shared pending map and send the decision on it.
+pub(crate) fn submit_decision(
+    resolver: &InteractivePermissionResolver,
+    request_id: &str,
+    decision: ProtocolPermissionDecision,
+) {
+    if let Some(tx) = resolver.pending.lock().unwrap().remove(request_id) {
+        let _ = tx.send(decision);
+    }
+}
+
+// endregion: --- Test Support

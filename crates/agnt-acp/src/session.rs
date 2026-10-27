@@ -24,6 +24,7 @@ use agnt_core::conversation::managers::ProviderManager;
 use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::protocol::contracts::CoreRuntime;
 use agnt_core::protocol::model_switching::ModelSwitching;
+use agnt_core::protocol::session_management::SessionPersistence;
 use agnt_core::session::resolver::generate_session_id;
 use agnt_core::session::{RigStoreConfig, SessionInfo};
 use agnt_core::tools::mcp::config::McpServerConfig;
@@ -41,6 +42,16 @@ use crate::runtime::{
 use crate::translator::{EventTranslator, SessionUpdateSink, run_turn_with_notifications};
 
 // endregion: --- Modules
+
+// region:    --- Consts
+
+/// The source the post-turn compaction dispatcher reports.
+///
+/// The chain's auto rule is the only ACP requester, and it always asks for
+/// `"auto"`. ACP has no `/compact` surface, so no other source exists.
+const AUTO_COMPACTION_SOURCE: &str = "auto";
+
+// endregion: --- Consts
 
 // region:    --- Types
 
@@ -83,6 +94,11 @@ pub struct AcpSession {
     cancel_requested: Arc<AtomicBool>,
     bus: Bus,
     runtime: Arc<AsyncMutex<AgentConversationRuntime>>,
+    /// The session's cumulative LLM usage, shared with the runtime's cells.
+    ///
+    /// Held here so the close/delete paths can report it without taking the
+    /// runtime lock an in-flight turn holds.
+    usage: agnt_core::hook::TurnUsage,
 }
 
 impl AcpSession {
@@ -104,6 +120,11 @@ impl AcpSession {
     /// The conversation runtime that drives this session.
     pub fn runtime(&self) -> &Arc<AsyncMutex<AgentConversationRuntime>> {
         &self.runtime
+    }
+
+    /// The session's cumulative LLM usage, readable without the runtime lock.
+    pub fn usage(&self) -> agnt_core::hook::TurnUsageTotals {
+        self.usage.totals()
     }
 }
 
@@ -346,13 +367,20 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                 "unknown model '{model_value}' for session '{session_id}'"
             )));
         }
+        // The identity in use before the switch, so the event reports where the
+        // session came from. `Config` formats as `provider/model`, matching the
+        // identity the core switch publishes.
+        let from = format!(
+            "{}/{}",
+            runtime.provider.provider_config().provider,
+            runtime.provider.provider_config().model
+        );
         let model = model_value
             .split_once('/')
             .map(|(_, model)| model)
             .unwrap_or(model_value);
-        let config = runtime.provider.provider_config_mut();
-        let previous_model = config.model.clone();
-        config.model = model.to_string();
+        let previous_model = runtime.provider.provider_config().model.clone();
+        runtime.provider.provider_config_mut().model = model.to_string();
         let dyn_model = match runtime.provider.build_dyn_model().await {
             Ok(dyn_model) => dyn_model,
             Err(e) => {
@@ -363,6 +391,24 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             }
         };
         *runtime.dyn_model.lock().unwrap() = dyn_model;
+        let to = format!(
+            "{}/{}",
+            runtime.provider.provider_config().provider,
+            runtime.provider.provider_config().model
+        );
+        // Hook envelopes follow the active model, and the switch publishes the
+        // event that tells a hook it moved. This path swaps the model without
+        // the core switch, so both steps live here too. The send is best
+        // effort: the switch already took effect. The other core-switch steps
+        // stay deliberately absent here — no context-window gate, no
+        // compaction-threshold refresh, no session state record — which is
+        // pre-existing behavior, not an omission of this publish.
+        runtime.hook_context.set_model(to.clone());
+        let _ = runtime
+            .bus
+            .session()
+            .send(agnt_core::bus::SessionEvent::ModelSwitched { from, to })
+            .await;
         let mut options = model_options(&runtime, self.models_cache.as_deref());
         options.extend(agent_options(&runtime));
         Ok(options)
@@ -418,13 +464,18 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         session.cancel_requested.store(false, Ordering::SeqCst);
 
         let mut rx = session.bus.ui_event().subscribe();
+        // Compaction events ride their own channel: a drain subscribed only to
+        // `ui_event` never sees them. Subscribed here, before the runtime lock,
+        // so events published while the turn waits for the lock are buffered.
+        let mut compaction_rx = Some(session.bus.compaction().subscribe());
         let mut translator = EventTranslator::new(session_id);
         let result = {
             let mut runtime = session.runtime.lock().await;
             let pending = runtime
                 .interactive_pending_arc()
                 .unwrap_or_else(|| Arc::new(StdMutex::new(HashMap::new())));
-            let mut bridge = AcpPermissionBridge::new(sink, session_id, pending);
+            let mut bridge = AcpPermissionBridge::new(sink, session_id, pending)
+                .with_ui_events(session.bus.ui_event().clone());
             // Control-plane turn-start event: stays on `bus.turn()`, not
             // rendered. No A2A task id exists on the ACP path, so the
             // attribution is always `None`.
@@ -437,7 +488,41 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                 })
                 .await;
             let turn = runtime.execute_turn(&session.bus, prompt_text, None, Span::unknown());
-            run_turn_with_notifications(&mut rx, sink, &mut translator, &mut bridge, turn).await
+            let (result, compaction_requested) = run_turn_with_notifications(
+                &mut rx,
+                &mut compaction_rx,
+                sink,
+                &mut translator,
+                &mut bridge,
+                turn,
+            )
+            .await;
+            // Post-turn compaction dispatch. The chain's auto rule fires in
+            // every mode; ACP is the consumer that runs the request. It runs
+            // here, still under the runtime lock, so it is serialized with
+            // turns exactly as the TUI's worker-busy queue is. The compaction
+            // is itself drained, so the client sees its events live.
+            if compaction_requested {
+                // The chain is the only ACP requester and it always asks for
+                // the auto source; there is no ACP `/compact`.
+                let outcome = run_turn_with_notifications(
+                    &mut rx,
+                    &mut compaction_rx,
+                    sink,
+                    &mut translator,
+                    &mut bridge,
+                    runtime.run_compaction(AUTO_COMPACTION_SOURCE),
+                )
+                .await;
+                // The compaction's own outcome never reaches the stop reason:
+                // the turn already ended. Its failure sites emit `Failed`
+                // inside the drain window, so the client is already informed;
+                // a post-drain `Failed` would reach no client.
+                if let Err(err) = outcome.0 {
+                    log::warn!("session {session_id}: post-turn compaction failed: {err}");
+                }
+            }
+            result
         };
 
         let outcome = if session.cancel_requested.load(Ordering::SeqCst) {
@@ -485,11 +570,17 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             .unwrap()
             .remove(id)
             .ok_or_else(|| AcpError::SessionNotFound(id.to_string()))?;
+        let usage = session.usage();
         let _ = session
             .bus()
             .session()
             .send(SessionEvent::Ended {
                 session_id: id.to_string(),
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                total_tokens: usage.total_tokens,
+                cost: usage.cost,
+                cost_complete: usage.cost_complete,
             })
             .await;
         Ok(())
@@ -507,11 +598,17 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     pub async fn delete_session(&self, id: &str) -> Result<()> {
         let live = self.sessions.lock().unwrap().remove(id);
         if let Some(session) = &live {
+            let usage = session.usage();
             let _ = session
                 .bus()
                 .session()
                 .send(SessionEvent::Ended {
                     session_id: id.to_string(),
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
+                    total_tokens: usage.total_tokens,
+                    cost: usage.cost,
+                    cost_complete: usage.cost_complete,
                 })
                 .await;
         }
@@ -570,6 +667,10 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         mcp_servers: Vec<McpServerConfig>,
     ) -> Result<()> {
         let client_fs = self.client_fs.lock().unwrap().clone();
+        // One agent snapshot per session: the runtime writes it on construction
+        // and on every persona or model switch; the session's hook runner reads
+        // it when it builds an envelope.
+        let hook_context = agnt_core::hooks::HookAgentContext::default();
         let runtime = self
             .runtime_builder
             .build(AcpRuntimeParams {
@@ -577,13 +678,15 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                 mcp_servers,
                 config_path: self.config_path.clone(),
                 runtime_handle: self.runtime_handle.clone(),
-                store_type: self.rig.store_type(),
+                rig: self.rig.clone(),
                 session_id: Some(session_id.to_string()),
                 client_fs,
                 agent_name: self.agent_name.clone(),
+                hook_context: hook_context.clone(),
             })
             .await?;
         let bus = runtime.bus.clone();
+        let usage = runtime.session_usage.clone();
         self.sessions.lock().unwrap().insert(
             session_id.to_string(),
             Arc::new(AcpSession {
@@ -593,6 +696,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                 cancel_requested: Arc::new(AtomicBool::new(false)),
                 bus: bus.clone(),
                 runtime: Arc::new(AsyncMutex::new(runtime)),
+                usage,
             }),
         );
         // Each session owns its bus, so each session starts its own hook
@@ -602,6 +706,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                 &bus,
                 &self.hooks,
                 &cwd,
+                &hook_context,
                 agnt_core::hooks::NuProcess,
             );
         }

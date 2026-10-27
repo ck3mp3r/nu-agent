@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use agnt_core::session::StoreType;
+use agnt_core::session::{RigStoreConfig, StoreType};
 use agnt_core::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
 use super::*;
@@ -53,10 +53,11 @@ pub(super) fn make_params(
         mcp_servers,
         config_path,
         runtime_handle: tokio::runtime::Handle::current(),
-        store_type,
+        rig: RigStoreConfig::new(store_type),
         session_id: None,
         client_fs: None,
         agent_name: None,
+        hook_context: agnt_core::hooks::HookAgentContext::default(),
     }
 }
 

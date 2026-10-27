@@ -340,7 +340,7 @@ cancel auto-denies the pending request and closes the card.
 
 Safety semantics:
 
-- Decision timeout: an unanswered card auto-denies after `decision_timeout_secs` (default 15s, `0` waits forever); the tool is skipped and the turn continues
+- Decision timeout: an unanswered card auto-denies after `decision_timeout_secs` (default 60s, `0` waits forever); the tool is skipped and the turn continues
 - Stale/unknown decision submissions => ignored
 - Rule-identity mismatch submissions => ignored
 - Prompt handling remains deterministic and non-blocking for overall UI loop
@@ -367,6 +367,8 @@ Lifecycle events emitted by runtime/UI path (all delivered on the single `ui_eve
 - `PermissionDecisionSubmitted`
 - `PermissionDecisionTimedOut`
 - `PermissionDecisionIgnored`
+- `PermissionRequestCancelled`
+- `PermissionAutoResolved`
 
 ### Non-interactive ask fallback
 
@@ -828,6 +830,8 @@ Every invocation receives one JSON envelope:
   "event": "turn_started",
   "timestamp": "2026-10-25T14:32:07.481920+00:00",
   "session_id": "9dad1e4e08b0b11c-main",
+  "agent": "planner",
+  "model": "openai/gpt-4o",
   "payload": {
     "prompt": "list the rust files",
     "task_id": null
@@ -839,22 +843,47 @@ Every invocation receives one JSON envelope:
 - `event` — the event name.
 - `timestamp` — RFC 3339 UTC time of the invocation.
 - `session_id` — the session the event belongs to. See [Session id](#session-id).
+- `agent` — the persona slug in effect when the invocation was built. A string, or `null` when no persona is loaded. A handler reads it as `$event.agent`.
+- `model` — the active model identity, as `provider/model`.
 - `payload` — event-specific fields.
+
+`agent` and `model` are additive observability fields. `version` remains `1`, so a handler that reads only the five original keys keeps working.
+
+The runner stamps both values when it builds the invocation, not when the event was published. A persona or model switch that lands between publish and stamping stamps the newer value on the earlier event. The values also reflect the most recently constructed or switched runtime, which matches the best-effort cross-channel attribution of `session_id`.
+
+Agent-class events report the process-level resolved model, which may differ from a session's switched model: an ACP session that switches model or persona updates only its own per-session context.
 
 Payload fields per event:
 
 | Event | Payload fields |
 |-------|----------------|
 | `turn_started` | `prompt` (string), `task_id` (string or null) |
-| `turn_completed` | `tool_calls` (integer) |
+| `turn_completed` | `tool_calls` (integer), `input_tokens` (integer), `output_tokens` (integer), `total_tokens` (integer or null), `cost` (number or null), `cost_complete` (bool), `duration_ms` (integer) |
 | `tool_started` | `name`, `source`, `arguments` (raw JSON string) |
 | `tool_completed` | `name`, `source`, `arguments`, `success` (bool), `error_kind` (string or null), `message` (string or null) |
 | `session_started` | `session_id` (string), `hydrated` (bool) |
-| `session_ended` | `session_id` (string) |
+| `session_ended` | `session_id` (string), `input_tokens` (integer), `output_tokens` (integer), `total_tokens` (integer or null), `cost` (number or null), `cost_complete` (bool) |
+| `permission_requested` | `request_id`, `tool`, `tool_key`, `source`, `mode` (string or null), `matched_rule_identity`, `scope`, `target_field` (string or null), `pattern`, `summary` |
+| `permission_decision_timed_out` | `request_id` |
+| `permission_decision_submitted` | `request_id`, `decision` (`"allow_once"`, `"allow_always"`, or `"deny"`), `matched_rule_identity` |
+| `permission_decision_ignored` | `request_id`, `reason` (`"request_not_pending"`) |
+| `permission_request_cancelled` | `request_id`, `matched_rule_identity` |
+| `permission_auto_resolved` | `matched_rule_identity`, `action` (`"allow"` or `"deny"`), `reason` (string or null) |
+| `compaction_started` | `source` (string) |
+| `compaction_completed` | `source` (string), `summary_preview` (string) |
+| `compaction_failed` | `source` (string), `message` (string) |
+| `agent_switched` | `from` (string or null), `to` (string) |
+| `model_switched` | `from` (string), `to` (string) |
 | `agent_started` | `mode` (`"tui"`, `"stderr"`, or `"acp"`) |
 | `agent_shutdown` | `reason` (`"completed"`, `"shutdown"`, or `"error"`) |
 
 `task_id` is set only when an A2A task drives the turn. The TUI single-turn path, the stderr path, and the ACP path publish no A2A attribution, so `task_id` is null there.
+
+The `turn_completed` usage fields are the turn's sums across its LLM calls, accumulated as each call completed. `total_tokens` is the sum of the per-call totals, each the wire's total or input + output when the wire omitted it; it is null only when no call reported a total. `cost` is the sum of the reported per-call costs and is null when none was priced. `cost_complete` is the AND of the per-call flags, so a sum with one incomplete component is a lower bound. `duration_ms` is the turn's wall-clock span.
+
+The `session_ended` usage fields are the session's cumulative sums across every turn it ran, with the same fallback and completeness conventions. They reset when the runtime switches sessions, so the totals cover the session that ended only. Compaction never resets them: it shrinks the context, not the billing total.
+
+`agent_switched` and `model_switched` report a switch that already happened. Their payloads hold two values: `from` is the value in use before the switch, `to` is the value now active. `agent_switched` carries persona slugs, and its `from` is null when the session had no persona. `model_switched` carries `provider/model` identities, and its `from` is always present. Re-selecting the current value is still a switch, so it reports `from` equal to `to`. Both envelopes are stamped after the switch, so their `agent` and `model` fields report the new state.
 
 ### Session id
 
@@ -865,6 +894,8 @@ The id is an empty string in two cases:
 - The runtime published no session event. Stderr mode and TUI single-turn publish none, so their turn and tool envelopes carry `""`.
 - The event is agent-class. Agent events are process-scoped, so `agent_started` and `agent_shutdown` always carry `""`. This is by design.
 
+The switch events are session-class, so `agent_switched` and `model_switched` carry the tracked session id like every other session event.
+
 ### Ordering
 
 The agent guarantees order in two scopes:
@@ -873,6 +904,8 @@ The agent guarantees order in two scopes:
 - Within one event channel. Events on one channel arrive in publish order. `turn_started` and `turn_completed` share the turn channel, so `turn_started` always precedes `turn_completed`.
 
 Order across channels is best-effort. A `tool_started` and a `turn_completed` that are both ready can arrive in either order. A hook that declares both session-class and agent-class events runs on two runners, so its `agent_started` and `turn_started` have no relative order.
+
+The switch events share the session channel with the session lifecycle events, so they are ordered against them. A persona switch whose model override takes effect emits `agent_switched` before `model_switched`: two user-meaningful facts changed, so a hook sees two invocations.
 
 ### Failure behavior
 
@@ -898,11 +931,38 @@ At exit the agent gives a running handler limited grace:
 | `turn_started`, `turn_completed` | yes | yes | yes | yes |
 | `tool_started`, `tool_completed` | yes | yes | yes | yes |
 | `session_started`, `session_ended` | yes | no | no | yes |
+| `permission_requested` | yes | yes | no | yes |
+| `permission_decision_timed_out` | yes | yes | no | yes |
+| `permission_decision_submitted` | yes | no | no | yes |
+| `permission_decision_ignored` | yes | no | no | yes |
+| `permission_request_cancelled` | yes | no | no | yes |
+| `permission_auto_resolved` | yes | yes | yes | yes |
+| `compaction_started`, `compaction_completed` | yes | no | no | yes |
+| `compaction_failed` | yes | yes | yes | yes |
+| `agent_switched`, `model_switched` | yes | no | no | yes |
 | `agent_started`, `agent_shutdown` | yes | yes | yes | yes |
 
 `session_started` and `session_ended` are per-session events. They fire where a session lifecycle exists: the TUI interactive loop and ACP sessions. Stderr mode and TUI single-turn run one turn and publish no session lifecycle event.
 
+`permission_requested` fires where the agent prompts the user: TUI and ACP. Stderr mode resolves permissions by policy and never prompts, so it never fires there.
+
+`permission_decision_timed_out` fires where a permission card can time out. In TUI single-turn the request is published but no card consumer runs, so the request waits out its decision timeout and the event fires there too. Stderr mode never prompts, so it never fires there.
+
+`permission_decision_submitted` fires where a decision reaches the permission resolver. In TUI single-turn the resolver is installed but no card consumer runs, so no decision is ever submitted and the event never fires there. Stderr mode never prompts, so it never fires there either.
+
+`permission_decision_ignored` fires where a submitted decision can outlive its request. In TUI single-turn the resolver is installed but no card consumer runs, so no decision is ever submitted and the event never fires there. Stderr mode never prompts, so it has no decision submission path and the event never fires there either.
+
+`permission_request_cancelled` fires where a permission prompt can be open when the turn is cancelled. In TUI single-turn the resolver is installed but no card consumer runs and no cancel handling exists, so no cancel reaches the resolver while a request is pending and the event never fires there. Stderr mode never prompts, so it never fires there either.
+
+`permission_auto_resolved` fires where the policy resolves a tool call without prompting. That is every tool call in stderr mode, and every non-asked call in TUI interactive, TUI single-turn, and ACP mode. It is the only permission event that fires in stderr mode. The event fires once per policy-resolved call, so a hook that declares it runs one subprocess per call; the subprocess spawns only when the hook declares the event.
+
+`compaction_started` and `compaction_completed` fire where compaction runs. The chain's threshold decision fires in every mode, but only two modes consume the request: the TUI interactive loop dispatches it through the orchestrator, for both auto threshold compaction and `/compact`, and an ACP session runs it post-turn, after the turn's drain ends and inside a second drain, so the client sees the events. Stderr mode and TUI single-turn run `run_single_turn`, which bypasses the orchestrator loop: the turn pipeline still publishes the compaction request, but nothing dispatches it, so no compaction runs there. `compaction_failed` is the exception: the turn pipeline's store-open failure and its session-load failure emit it in every mode, even where no compaction attempt runs.
+
+`compaction_completed` carries the summary preview only: the full summary body is unbounded and stays out of the envelope. The streamed `CompactionSummaryChunk` is not a hook event, because one subprocess per streamed chunk is unbounded volume.
+
 `agent_started` and `agent_shutdown` are per-process events. They fire exactly once per process in all three modes. The pair is best-effort on signals: no SIGTERM handler exists, so SIGTERM and SIGKILL produce no `agent_shutdown`.
+
+`agent_switched` fires on a user-initiated agent switch: the TUI agent picker and the ACP agent config option. `model_switched` fires on a user-initiated model switch: the TUI model picker and the ACP model config option. Neither fires in stderr mode, TUI single-turn, or the plugin, because none of them has a switch path. A persona switch whose model override takes effect emits `agent_switched` before `model_switched` on the same channel, because two user-meaningful facts changed. In ACP the startup default-agent load is not a switch, and it publishes before the session hook runner subscribes, so no hook observes it.
 
 The plugin `agent` command runs turns but starts no hook runner. Hooks never fire there. The `agent` binary does start the runners. See [Example: signal an external app](#example-signal-an-external-app).
 

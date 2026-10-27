@@ -8,7 +8,7 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
     let mut permission_rx = bus.ui_event().subscribe();
 
-    // Clone the resolver so we can call submit_decision from a separate task
+    // Clone the resolver so the test-support helper can submit from a separate task
     let resolver_clone = resolver.clone();
 
     // --- First call: should trigger PermissionRequested ---
@@ -29,7 +29,11 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
     };
 
     // Submit AllowAlways decision — this should write a grant into session_grants
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowAlways);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::AllowAlways,
+    );
 
     // First resolve() must return Allow
     let decision = resolve_fut
@@ -55,9 +59,15 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
     );
 
     // No new PermissionRequested event should have been emitted for the second call
+    let mut events = Vec::new();
+    while let Ok(event) = permission_rx.try_recv() {
+        events.push(event);
+    }
     assert!(
-        permission_rx.try_recv().is_err(),
-        "Expected no PermissionRequested event for second call after AllowAlways grant"
+        !events
+            .iter()
+            .any(|event| matches!(event, UiEvent::PermissionRequested { .. })),
+        "Expected no PermissionRequested event for second call after AllowAlways grant: {events:?}"
     );
     Ok(())
 }
@@ -185,7 +195,7 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
 
 /// Regression test: two `InteractivePermissionResolver` clones sharing the same
 /// `bus` and `pending` map observe the same `PermissionEvent::Requested` ordering,
-/// and `submit_decision` through one clone unblocks the matching `resolve()`
+/// and a decision submitted through one clone unblocks the matching `resolve()`
 /// future owned by the other clone.
 ///
 /// This covers the shared-bus edge case that arises when the TUI render loop
@@ -233,8 +243,8 @@ async fn shared_bus_resolver_clones_observe_ordering_and_submit_unblocks_other_f
 
     // Submitting through resolver_b must unblock the matching resolve() futures
     // held by resolver_a, because both clones share the `pending` map.
-    resolver_b.submit_decision(&id1, ProtocolPermissionDecision::AllowOnce);
-    resolver_b.submit_decision(&id2, ProtocolPermissionDecision::Deny);
+    submit_decision(&resolver_b, &id1, ProtocolPermissionDecision::AllowOnce);
+    submit_decision(&resolver_b, &id2, ProtocolPermissionDecision::Deny);
 
     assert_eq!(
         fut1.await

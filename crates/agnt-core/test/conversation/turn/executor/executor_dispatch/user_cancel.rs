@@ -55,6 +55,7 @@ async fn dispatch_user_cancel_without_a_reason_sends_the_notice_before_completed
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             None,
+            std::time::Instant::now(),
         )
         .await
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;
@@ -103,6 +104,7 @@ async fn dispatch_user_cancel_with_the_hook_reason_sends_the_notice_before_compl
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             None,
+            std::time::Instant::now(),
         )
         .await
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;

@@ -19,7 +19,7 @@ use agent_client_protocol::schema::v1::{
     ToolCallUpdate, ToolCallUpdateFields, ToolKind, UsageUpdate,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::bus::{Bus, ChannelError, TryRecvError, UiEventRx};
+use agnt_core::bus::{Bus, ChannelError, CompactionEvent, CompactionRx, TryRecvError, UiEventRx};
 use agnt_core::config::defaults;
 use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection, UiEvent};
 use agnt_core::transcript::ir::ContentKind;
@@ -324,20 +324,38 @@ pub fn flush_receiver_to_notifications<S: SessionUpdateSink>(
 /// Drive one prompt turn while streaming its bus events to the client.
 ///
 /// `turn` is the `execute_turn()` future. The loop polls the turn and the bus
-/// receiver together, so events reach the client as they are published. When
-/// the turn completes, the receiver is flushed and the turn output is returned.
+/// receivers together, so events reach the client as they are published. When
+/// the turn completes, the receivers are flushed and the turn output is
+/// returned.
 ///
-/// The receiver must be subscribed before the turn starts, otherwise events
+/// `compaction_rx` carries the session's compaction channel. Compaction events
+/// ride `bus.compaction()`, not `bus.ui_event()`, so a drain that subscribed
+/// only the ui channel would never see them. Each compaction event converts to
+/// its `UiEvent` form exactly once and takes the same send path as a ui event.
+///
+/// The returned flag reports whether a `CompactionEvent::Requested` arrived.
+/// The request is not a client-facing event: it is the chain's auto-compaction
+/// decision, and the caller dispatches it. The flag is a `bool` because one
+/// compaction runs per turn — a turn can trip the threshold on several
+/// completions, and the extras are dropped: after the compaction the context
+/// shrank, so the threshold re-evaluates on the next turn's completions.
+///
+/// The receivers must be subscribed before the turn starts, otherwise events
 /// published before the subscription are lost. Permission requests are routed
 /// to `bridge`; every request still awaiting a decision when the turn ends is
 /// denied.
+///
+/// The drain is turn-scoped: an event published between turns reaches no
+/// client, exactly like every ui event published between turns. That limit is
+/// pre-existing and applies to compaction events unchanged.
 pub async fn run_turn_with_notifications<S, P, F>(
     rx: &mut UiEventRx,
+    compaction_rx: &mut Option<CompactionRx>,
     sink: &S,
     translator: &mut EventTranslator,
     bridge: &mut AcpPermissionBridge<P>,
     turn: F,
-) -> F::Output
+) -> (F::Output, bool)
 where
     S: SessionUpdateSink,
     P: PermissionRequestSink,
@@ -345,6 +363,7 @@ where
 {
     tokio::pin!(turn);
     let mut draining = true;
+    let mut compaction_requested = false;
     let output = loop {
         tokio::select! {
             biased;
@@ -363,18 +382,94 @@ where
                 }
                 Err(_) => draining = false,
             },
+            event = recv_compaction(compaction_rx), if draining => match event {
+                // The chain's auto-compaction decision: not a client-facing
+                // event, so it is recorded rather than converted.
+                Some(CompactionEvent::Requested { .. }) => compaction_requested = true,
+                Some(event) => {
+                    if let Some(ui) = Option::<UiEvent>::from(event)
+                        && !handle_event(sink, translator, bridge, ui).await
+                    {
+                        draining = false;
+                    }
+                }
+                // The channel closed: drop the arm so it pends instead of
+                // spinning on a closed receiver. The ui channel and the turn
+                // keep draining.
+                None => *compaction_rx = None,
+            },
         }
     };
     if draining {
         flush_receiver_to_notifications(rx, sink, translator);
+        compaction_requested |= flush_compaction_to_notifications(compaction_rx, sink, translator);
     }
     bridge.deny_all_pending();
-    output
+    (output, compaction_requested)
 }
 
 // endregion: --- Public Functions
 
 // region:    --- Support
+
+/// Forward every compaction event already buffered on `rx` as a
+/// `session/update` notification, without awaiting new events.
+///
+/// The compaction counterpart of [`flush_receiver_to_notifications`]: a
+/// compaction event published just before the turn completes is still buffered
+/// when the drain loop breaks, so it is flushed here rather than lost.
+///
+/// Returns whether a `CompactionEvent::Requested` was among them. The chain's
+/// auto decision usually lands in this window — the turn's last completion
+/// publishes it — so the flush is where the request is most often seen.
+fn flush_compaction_to_notifications<S: SessionUpdateSink>(
+    rx: &mut Option<CompactionRx>,
+    sink: &S,
+    translator: &mut EventTranslator,
+) -> bool {
+    let Some(rx) = rx else {
+        return false;
+    };
+    let mut requested = false;
+    loop {
+        match rx.try_recv() {
+            Ok(CompactionEvent::Requested { .. }) => requested = true,
+            Ok(event) => {
+                if let Some(ui) = Option::<UiEvent>::from(event) {
+                    send_event(sink, translator, ui);
+                }
+            }
+            Err(TryRecvError::Lagged(dropped)) => {
+                log::warn!(
+                    "session {}: compaction receiver lagged, dropped {dropped} events",
+                    translator.session_id()
+                );
+            }
+            Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+        }
+    }
+    requested
+}
+
+/// Receive the next compaction event, or pend forever when the drain has no
+/// compaction subscription.
+///
+/// `None` means the channel closed; the caller keeps draining the ui channel.
+async fn recv_compaction(rx: &mut Option<CompactionRx>) -> Option<CompactionEvent> {
+    let Some(rx) = rx else {
+        return std::future::pending().await;
+    };
+    loop {
+        match rx.recv().await {
+            Ok(event) => return Some(event),
+            Err(ChannelError::Lagged { dropped }) => {
+                log::warn!("compaction receiver lagged, dropped {dropped} events");
+                continue;
+            }
+            Err(_) => return None,
+        }
+    }
+}
 
 /// Handle one bus event during a drain.
 ///

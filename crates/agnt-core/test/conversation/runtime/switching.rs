@@ -31,6 +31,13 @@ You are the reviewer.
 /// A persona file with no front matter at all.
 const PLAIN_PERSONA: &str = "You are a plain agent.\n";
 
+/// A persona whose front-matter display name differs from its file slug.
+const NAMED_PERSONA: &str = r#"---
+name: My Agent
+---
+You are the named agent.
+"#;
+
 fn allow_decision() -> PermissionDecision {
     PermissionDecision {
         action: PermissionAction::Allow,
@@ -215,6 +222,33 @@ async fn switch_agent_resets_session_grants_and_tool_definitions() -> Result<()>
             .len(),
         0,
         "an agent switch must reset tool definitions to the baseline"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn switch_agent_stamps_the_persona_slug_on_the_hook_context() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut fixture = make_runtime(text_model("unused"))?;
+    fixture.write_persona("named", NAMED_PERSONA)?;
+
+    // -- Exec
+    fixture
+        .runtime
+        .switch_agent("named")
+        .await
+        .map_err(|e| format!("switch_agent should succeed: {e}"))?;
+
+    // -- Check
+    assert_eq!(
+        fixture.runtime.hook_context.persona().as_deref(),
+        Some("named"),
+        "the envelope carries the slug, not the front-matter display name"
+    );
+    assert_eq!(
+        fixture.runtime.hook_context.model(),
+        "mock/mock-model",
+        "a persona without a model override keeps the active model identity"
     );
     Ok(())
 }

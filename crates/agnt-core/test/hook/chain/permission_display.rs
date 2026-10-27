@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::hook::permission_resolver::permission_resolver_test::submit_decision;
+
 #[test]
 fn suppress_previewed_display_drops_it_when_already_shown() {
     // -- Setup & Fixtures
@@ -125,6 +127,8 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
             },
             model: shared_model.lock().expect("model mutex poisoned").clone(),
             last_total_tokens: Arc::new(Mutex::new(None)),
+            turn_usage: crate::hook::TurnUsage::default(),
+            session_usage: crate::hook::TurnUsage::default(),
         },
     );
     // The "add" tool is not in `safe_defaults(true)`'s allow list, so the
@@ -161,7 +165,11 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
             _ => {}
         }
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::AllowOnce,
+    );
     turn.await.map_err(|_| "turn task should not panic")?;
 
     // -- Check
@@ -244,6 +252,8 @@ async fn on_dispatch_publishes_registry_rendered_call_line() -> Result<()> {
             },
             model: shared_model.lock().expect("model mutex poisoned").clone(),
             last_total_tokens: Arc::new(Mutex::new(None)),
+            turn_usage: crate::hook::TurnUsage::default(),
+            session_usage: crate::hook::TurnUsage::default(),
         },
     );
     let agent =

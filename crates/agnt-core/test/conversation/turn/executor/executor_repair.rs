@@ -75,6 +75,8 @@ async fn cancelled_turn_with_a_tool_call_persists_the_closed_delta() -> Result<(
             output_repetition: default_output_repetition(),
             repetition_guard: default_repetition_guard(),
             last_total_tokens: default_last_total_tokens(),
+            turn_usage: crate::hook::TurnUsage::default(),
+            session_usage: crate::hook::TurnUsage::default(),
             bus,
             render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),

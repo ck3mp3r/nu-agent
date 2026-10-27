@@ -512,9 +512,26 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
             state,
             CompactionEvent::Failed { source, message },
         ),
-        UiEvent::Completed { tool_calls } => {
-            crate::state::dispatch_turn_event(state, TurnEvent::Completed { tool_calls })
-        }
+        UiEvent::Completed {
+            tool_calls,
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            cost,
+            cost_complete,
+            duration_ms,
+        } => crate::state::dispatch_turn_event(
+            state,
+            TurnEvent::Completed {
+                tool_calls,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                cost,
+                cost_complete,
+                duration_ms,
+            },
+        ),
         UiEvent::Tick => true,
         UiEvent::TurnError { message } => {
             let error = Notice {
@@ -528,7 +545,18 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
                 status: None,
             });
             state.shift_bookkeeping_after_eviction(evicted);
-            crate::state::dispatch_turn_event(state, TurnEvent::Completed { tool_calls: 0 });
+            crate::state::dispatch_turn_event(
+                state,
+                TurnEvent::Completed {
+                    tool_calls: 0,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    total_tokens: None,
+                    cost: None,
+                    cost_complete: true,
+                    duration_ms: 0,
+                },
+            );
             true
         }
         UiEvent::PermissionRequested {
@@ -565,9 +593,10 @@ pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
             }
             changed
         }
-        UiEvent::PermissionDecisionSubmitted { .. } | UiEvent::PermissionDecisionIgnored { .. } => {
-            false
-        }
+        UiEvent::PermissionDecisionSubmitted { .. }
+        | UiEvent::PermissionDecisionIgnored { .. }
+        | UiEvent::PermissionRequestCancelled { .. }
+        | UiEvent::PermissionAutoResolved { .. } => false,
     }
 }
 

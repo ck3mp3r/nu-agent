@@ -202,9 +202,28 @@ fn turn_and_session_events_do_not_render() {
     assert_eq!(ui, None);
 
     // -- Case 2: TurnEvent::Completed renders
-    let event = TurnEvent::Completed { tool_calls: 3 };
+    let event = TurnEvent::Completed {
+        tool_calls: 3,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: None,
+        cost: None,
+        cost_complete: true,
+        duration_ms: 0,
+    };
     let ui: Option<UiEvent> = event.into();
-    assert_eq!(ui, Some(UiEvent::Completed { tool_calls: 3 }));
+    assert_eq!(
+        ui,
+        Some(UiEvent::Completed {
+            tool_calls: 3,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0
+        })
+    );
 
     // -- Case 3: TurnEvent::TaskCompleted does not render
     let event = TurnEvent::TaskCompleted {
@@ -233,6 +252,11 @@ fn turn_and_session_events_do_not_render() {
     // -- Case 6: SessionEvent::Ended does not render
     let event = SessionEvent::Ended {
         session_id: "s1".to_string(),
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: None,
+        cost: None,
+        cost_complete: true,
     };
     let ui: Option<UiEvent> = event.into();
     assert_eq!(ui, None);

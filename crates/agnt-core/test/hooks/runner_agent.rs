@@ -31,6 +31,16 @@ async fn test_hooks_agent_runner_started_invokes_with_mode() -> Result<()> {
         "",
         "agent envelopes always carry an empty session id"
     );
+    assert_eq!(
+        envelope_json(&calls[0])?["agent"],
+        "reviewer",
+        "agent envelopes carry the persona slug"
+    );
+    assert_eq!(
+        envelope_json(&calls[0])?["model"],
+        "openai/gpt-4o",
+        "agent envelopes carry the active model"
+    );
     Ok(())
 }
 
@@ -177,7 +187,15 @@ async fn test_hooks_agent_runner_and_session_runner_each_invoke_a_both_class_hoo
     // -- Exec
     let _ = bus
         .turn()
-        .send(TurnEvent::Completed { tool_calls: 1 })
+        .send(TurnEvent::Completed {
+            tool_calls: 1,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        })
         .await;
     let _ = agent_tx
         .send(AgentEvent::Started {

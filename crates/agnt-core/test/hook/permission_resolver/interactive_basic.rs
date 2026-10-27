@@ -4,23 +4,25 @@ use super::*;
 // InteractivePermissionResolver tests
 // ---------------------------------------------------------------------------
 
-/// Test 4: InteractivePermissionResolver + explicit allow config → Allow, no PermissionRequested.
+/// Test 4: InteractivePermissionResolver + explicit allow config → Allow, no prompt.
 #[tokio::test]
-async fn interactive_resolver_explicit_allow_returns_allow_no_event() {
+async fn interactive_resolver_explicit_allow_returns_allow_no_prompt() {
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
     let mut permission_rx = bus.ui_event().subscribe();
     let decision = resolver.resolve(ALLOW_TOOL, "{}", None, &bus).await;
     assert_eq!(decision, PermissionDecision::Allow);
-    // No PermissionRequested event should have been emitted
+    let events = drain(&mut permission_rx);
     assert!(
-        permission_rx.try_recv().is_err(),
-        "Expected no PermissionRequested event for explicitly allowed tool"
+        !events
+            .iter()
+            .any(|event| matches!(event, UiEvent::PermissionRequested { .. })),
+        "an explicitly allowed tool must not prompt: {events:?}"
     );
 }
 
-/// Test 5: InteractivePermissionResolver + explicit deny config → Deny, no PermissionRequested.
+/// Test 5: InteractivePermissionResolver + explicit deny config → Deny, no prompt.
 #[tokio::test]
-async fn interactive_resolver_explicit_deny_returns_deny_no_event() {
+async fn interactive_resolver_explicit_deny_returns_deny_no_prompt() {
     let (resolver, bus) = make_interactive(deny_all_config());
     let mut permission_rx = bus.ui_event().subscribe();
     let decision = resolver.resolve(ASK_TOOL, "{}", None, &bus).await;
@@ -28,10 +30,12 @@ async fn interactive_resolver_explicit_deny_returns_deny_no_event() {
         matches!(decision, PermissionDecision::Deny { .. }),
         "expected Deny, got {decision:?}"
     );
-    // No PermissionRequested event should have been emitted
+    let events = drain(&mut permission_rx);
     assert!(
-        permission_rx.try_recv().is_err(),
-        "Expected no PermissionRequested event for explicitly denied tool"
+        !events
+            .iter()
+            .any(|event| matches!(event, UiEvent::PermissionRequested { .. })),
+        "an explicitly denied tool must not prompt: {events:?}"
     );
 }
 
@@ -51,6 +55,14 @@ async fn interactive_auto_approve_publishes_tool_preview() -> Result<()> {
     assert_eq!(decision, PermissionDecision::Allow);
     // Bounded: the bus keeps its sender alive, so a missing event would
     // otherwise block this test forever instead of failing.
+    let first = tokio::time::timeout(std::time::Duration::from_secs(2), ui_rx.recv())
+        .await
+        .map_err(|_| "timed out waiting for the auto-resolved event")?
+        .map_err(|_| "expected an auto-resolved event")?;
+    assert!(
+        matches!(first, UiEvent::PermissionAutoResolved { .. }),
+        "the auto-resolved event precedes the preview: {first:?}"
+    );
     let event = tokio::time::timeout(std::time::Duration::from_secs(2), ui_rx.recv())
         .await
         .map_err(|_| "timed out waiting for a ToolPreview event")?
@@ -82,9 +94,12 @@ async fn interactive_auto_approve_non_previewable_tool_publishes_no_tool_preview
     let mut ui_rx = bus.ui_event().subscribe();
     let decision = resolver.resolve(ALLOW_TOOL, "{}", None, &bus).await;
     assert_eq!(decision, PermissionDecision::Allow);
+    let events = drain(&mut ui_rx);
     assert!(
-        ui_rx.try_recv().is_err(),
-        "a tool without a pre-authorize display must publish no ToolPreview"
+        !events
+            .iter()
+            .any(|event| matches!(event, UiEvent::ToolPreview { .. })),
+        "a tool without a pre-authorize display must publish no ToolPreview: {events:?}"
     );
 }
 
@@ -100,9 +115,12 @@ async fn interactive_deny_publishes_no_tool_preview() {
         matches!(decision, PermissionDecision::Deny { .. }),
         "expected Deny, got {decision:?}"
     );
+    let events = drain(&mut ui_rx);
     assert!(
-        ui_rx.try_recv().is_err(),
-        "a denied tool must publish no ToolPreview"
+        !events
+            .iter()
+            .any(|event| matches!(event, UiEvent::ToolPreview { .. })),
+        "a denied tool must publish no ToolPreview: {events:?}"
     );
 }
 
@@ -139,31 +157,41 @@ async fn interactive_ask_path_publishes_permission_requested_not_tool_preview() 
         }
         other => panic!("expected PermissionRequested, got {other:?}"),
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::AllowOnce,
+    );
     let decision = resolve_fut
         .await
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
+    let mut events = Vec::new();
+    while let Ok(event) = ui_rx.try_recv() {
+        events.push(event);
+    }
     assert!(
-        ui_rx.try_recv().is_err(),
-        "the Ask path must not also publish a ToolPreview"
+        !events
+            .iter()
+            .any(|event| matches!(event, UiEvent::ToolPreview { .. })),
+        "the Ask path must not also publish a ToolPreview: {events:?}"
     );
     Ok(())
 }
 
 /// Test 6: InteractivePermissionResolver + ask config → PermissionRequested sent,
-/// submit_decision(request_id, Allow) → resolve returns Allow.
+/// the test-support `submit_decision` helper (request_id, Allow) → resolve returns Allow.
 #[tokio::test]
 async fn interactive_resolver_ask_config_submit_allow_returns_allow() -> Result<()> {
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
     let mut permission_rx = bus.ui_event().subscribe();
 
-    // Clone the resolver so we can call submit_decision from a separate task
+    // Clone the resolver so the test-support helper can submit from a separate task
     let resolver_clone = resolver.clone();
 
-    // Spawn resolve() — it will block waiting for submit_decision
+    // Spawn resolve() — it will block until the decision is submitted
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
         async move { resolver.resolve(ASK_TOOL, "{}", None, &bus).await }
@@ -180,7 +208,11 @@ async fn interactive_resolver_ask_config_submit_allow_returns_allow() -> Result<
     };
 
     // Submit Allow decision
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::AllowOnce,
+    );
 
     // Verify resolve() returned Allow
     let decision = resolve_fut
@@ -190,7 +222,7 @@ async fn interactive_resolver_ask_config_submit_allow_returns_allow() -> Result<
     Ok(())
 }
 
-/// Test 7: InteractivePermissionResolver + ask config → submit_decision(request_id, Deny) → Deny.
+/// Test 7: InteractivePermissionResolver + ask config → test-support submit_decision(request_id, Deny) → Deny.
 #[tokio::test]
 async fn interactive_resolver_ask_config_submit_deny_returns_deny() -> Result<()> {
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
@@ -214,7 +246,11 @@ async fn interactive_resolver_ask_config_submit_deny_returns_deny() -> Result<()
     };
 
     // Submit Deny decision
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::Deny);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::Deny,
+    );
 
     let decision = resolve_fut
         .await

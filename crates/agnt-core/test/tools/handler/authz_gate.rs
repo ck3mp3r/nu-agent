@@ -5,7 +5,8 @@ use serde_json::json;
 
 use super::*;
 use crate::tools::authz::{
-    AskChoice, AskContext, PermissionDecision, PermissionsConfig, SessionGrantCache,
+    AskChoice, AskContext, PermissionAction, PermissionDecision, PermissionsConfig,
+    SessionGrantCache,
 };
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -60,7 +61,7 @@ async fn config_tools_follow_permission_flow_table() -> Result<()> {
         let mut ask_hook = AlwaysDenyHook;
         let tool_call = make_tool_call(tool_name)?;
 
-        let result = enforce_authorization_for_tool_call(
+        let outcome = enforce_authorization_for_tool_call(
             &tool_call,
             ToolSource::Builtin,
             &permissions,
@@ -71,7 +72,7 @@ async fn config_tools_follow_permission_flow_table() -> Result<()> {
         .await;
 
         assert_eq!(
-            result.is_none(),
+            outcome.deny_reason.is_none(),
             expected_pass,
             "tool '{tool_name}' must {}",
             if expected_pass {
@@ -80,6 +81,33 @@ async fn config_tools_follow_permission_flow_table() -> Result<()> {
                 "be denied by the hook"
             }
         );
+
+        if expected_pass {
+            assert_eq!(
+                outcome.decision.action,
+                PermissionAction::Allow,
+                "tool '{tool_name}' must carry an Allow decision"
+            );
+            assert!(
+                !outcome.decision.matched_rule.identity.is_empty(),
+                "tool '{tool_name}' must carry the matched rule identity"
+            );
+        } else {
+            assert_eq!(
+                outcome.decision.action,
+                PermissionAction::Deny,
+                "tool '{tool_name}' must carry a Deny decision"
+            );
+            let expected_reason = format!(
+                "Permission denied by rule '{}' (scope: {})",
+                outcome.decision.matched_rule.identity, outcome.decision.matched_rule.scope
+            );
+            assert_eq!(
+                outcome.deny_reason.as_deref(),
+                Some(expected_reason.as_str()),
+                "tool '{tool_name}' must carry the rule-derived deny reason"
+            );
+        }
     }
     Ok(())
 }
@@ -95,7 +123,7 @@ async fn non_builtin_tools_go_through_permission_flow() -> Result<()> {
 
     // An unknown MCP tool with deny hook should be denied
     let tool_call = make_tool_call("some_mcp_tool")?;
-    let result = enforce_authorization_for_tool_call(
+    let outcome = enforce_authorization_for_tool_call(
         &tool_call,
         ToolSource::Mcp,
         &permissions,
@@ -105,8 +133,76 @@ async fn non_builtin_tools_go_through_permission_flow() -> Result<()> {
     )
     .await;
     assert!(
-        result.is_some(),
+        outcome.deny_reason.is_some(),
         "non-builtin tool should go through permission flow and be denied",
+    );
+    assert_eq!(
+        outcome.decision.action,
+        PermissionAction::Deny,
+        "non-builtin tool should carry a Deny decision",
+    );
+    assert!(
+        !outcome.decision.matched_rule.identity.is_empty(),
+        "non-builtin tool should carry the matched rule identity",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_grant_override_returns_allow_with_grant_rule() -> Result<()> {
+    // -- Setup & Fixtures
+    // `nu` falls through to the global Ask action. Seed the grant cache with an
+    // allow-always grant for that exact decision, so the gate's grant override
+    // turns the Ask into an Allow without invoking the ask hook.
+    let permissions = PermissionsConfig::safe_defaults(true);
+    let grant_cache = Arc::new(Mutex::new(SessionGrantCache::default()));
+    let flow_context = AuthorizationFlowContext {
+        ask_context: AskContext::default(),
+    };
+    let mut ask_hook = AlwaysDenyHook;
+    let tool_call = make_tool_call("nu")?;
+
+    let ask_decision = permissions.evaluate("nu", &tool_call.function.arguments);
+    assert_eq!(
+        ask_decision.action,
+        PermissionAction::Ask,
+        "fixture requires `nu` to evaluate to Ask",
+    );
+    let grant_identity = ask_decision.matched_rule.identity.clone();
+    grant_cache
+        .lock()
+        .expect("grant_cache lock")
+        .insert_allow_always(
+            &ask_decision,
+            "nu",
+            ToolSource::Builtin.as_str(),
+            &tool_call.function.arguments,
+        );
+
+    // -- Exec
+    let outcome = enforce_authorization_for_tool_call(
+        &tool_call,
+        ToolSource::Builtin,
+        &permissions,
+        Arc::clone(&grant_cache),
+        &flow_context,
+        &mut ask_hook,
+    )
+    .await;
+
+    // -- Check
+    assert_eq!(
+        outcome.decision.action,
+        PermissionAction::Allow,
+        "session grant must override Ask to Allow",
+    );
+    assert_eq!(
+        outcome.decision.matched_rule.identity, grant_identity,
+        "overridden decision must carry the granting rule identity",
+    );
+    assert!(
+        outcome.deny_reason.is_none(),
+        "an allowed call must carry no deny reason",
     );
     Ok(())
 }

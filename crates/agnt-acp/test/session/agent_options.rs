@@ -9,14 +9,14 @@ use agnt_core::tools::authz::PermissionAction;
 
 /// Point the XDG config lookup at `dir` so no host persona file leaks into the
 /// advertised agent list.
-fn isolate_xdg_config(dir: &Path) {
+pub(super) fn isolate_xdg_config(dir: &Path) {
     // SAFETY: nextest gives each test its own process, so no other thread
     // reads the environment concurrently.
     unsafe { std::env::set_var("XDG_CONFIG_HOME", dir) };
 }
 
 /// Write a persona file at `{cwd}/.agents/{name}.md`.
-fn write_persona(cwd: &Path, name: &str, contents: &str) -> Result<()> {
+pub(super) fn write_persona(cwd: &Path, name: &str, contents: &str) -> Result<()> {
     let dir = cwd.join(".agents");
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join(format!("{name}.md")), contents)?;

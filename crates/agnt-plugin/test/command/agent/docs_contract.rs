@@ -119,6 +119,33 @@ fn usage_docs_describe_edit_mode_preview_apply_contract_and_envelope_fields() {
     assert!(docs.contains("proposal_id"));
     assert!(docs.contains("would_change"));
     assert!(docs.contains("diagnostics"));
+    assert!(docs.contains("persona slug"));
+    assert!(docs.contains("additive observability fields"));
+    assert!(docs.contains("stamps both values"));
+    assert!(docs.contains("the active model identity, as"));
+    assert!(docs.contains("process-level resolved model"));
+    assert!(docs.contains("`input_tokens` (integer)"));
+    assert!(docs.contains("`cost_complete` (bool)"));
+    assert!(docs.contains("`duration_ms` (integer)"));
+    assert!(docs.contains("the session's cumulative sums across every turn"));
+    assert!(docs.contains("Compaction never resets them"));
+    assert!(docs.contains("`compaction_started`"));
+    assert!(docs.contains("`compaction_completed`"));
+    assert!(docs.contains("`compaction_failed`"));
+    assert!(docs.contains("is not a hook event"));
+    assert!(docs.contains("bypasses the orchestrator loop"));
+    assert!(docs.contains("session-load failure"));
+    assert!(docs.contains("runs it post-turn"));
+}
+
+#[test]
+fn usage_docs_describe_switch_event_payloads_and_the_double_fire() {
+    let docs = read_usage_docs();
+    assert!(docs.contains("`agent_switched`"));
+    assert!(docs.contains("`model_switched`"));
+    assert!(docs.contains("emits `agent_switched` before `model_switched`"));
+    assert!(docs.contains("The switch events are session-class"));
+    assert!(docs.contains("model override takes effect"));
 }
 
 #[test]
@@ -180,6 +207,8 @@ fn usage_docs_describe_permission_modal_keybindings_and_lifecycle_events() {
     assert!(docs.contains("PermissionDecisionSubmitted"));
     assert!(docs.contains("PermissionDecisionTimedOut"));
     assert!(docs.contains("PermissionDecisionIgnored"));
+    assert!(docs.contains("PermissionRequestCancelled"));
+    assert!(docs.contains("PermissionAutoResolved"));
 }
 
 #[test]

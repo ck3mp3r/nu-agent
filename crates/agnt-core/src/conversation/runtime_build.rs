@@ -6,6 +6,7 @@ use crate::bus::Bus;
 use crate::compaction::CompactionParams;
 use crate::config::{AgentsConfig, Config, ModelRoleConfig, PluginConfig, defaults, vault::Vault};
 use crate::conversation::runtime::AgentConversationRuntime;
+use crate::hooks::HookAgentContext;
 use crate::protocol::persona::PersonaSummary;
 use crate::tools::authz::{PermissionsConfig, PermissionsOverlay};
 use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
@@ -55,6 +56,12 @@ pub struct RuntimeBuildParams {
     pub cwd: std::path::PathBuf,
     pub bus: Bus,
     pub render_registry: ToolRenderRegistry,
+    /// The agent snapshot every hook envelope is stamped with.
+    ///
+    /// The caller creates it and clones it into the hook runners. The runtime
+    /// writes the model identity here on construction and refreshes both cells
+    /// on every persona or model switch.
+    pub hook_context: HookAgentContext,
 }
 
 pub async fn build_runtime(
@@ -72,6 +79,13 @@ pub async fn build_runtime(
         .config
         .max_tool_result_bytes
         .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES);
+    // The hook envelopes stamp the model the runtime starts on. Every switch
+    // refreshes it from the post-switch state.
+    let hook_context = params.hook_context;
+    hook_context.set_model(crate::protocol::picker::format_active_model_identity(
+        &params.config.provider,
+        &params.config.model,
+    ));
     // Resolve the context-window limit before params.config is moved. Used to
     // compute the hook's compaction threshold.
     let max_context_tokens = params
@@ -219,6 +233,8 @@ pub async fn build_runtime(
         last_total_tokens: Arc::new(Mutex::new(None)),
         bus: params.bus,
         render_registry: params.render_registry,
+        hook_context,
+        session_usage: crate::hook::TurnUsage::default(),
         dyn_model,
         compaction,
     })
@@ -390,7 +406,7 @@ pub fn build_preamble_cache(
 // region:    --- Tests
 
 #[cfg(all(test, feature = "integration"))]
-#[path = "../../test/conversation/runtime_build_integration.rs"]
+#[path = "../../test/conversation/runtime_build_integration/test.rs"]
 mod runtime_build_integration_test;
 
 // endregion: --- Tests

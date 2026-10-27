@@ -315,7 +315,15 @@ fn test_translator_stopped_produces_none() -> Result<()> {
 #[test]
 fn test_translator_completed_produces_none() -> Result<()> {
     // -- Setup & Fixtures
-    let event = UiEvent::Completed { tool_calls: 3 };
+    let event = UiEvent::Completed {
+        tool_calls: 3,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: None,
+        cost: None,
+        cost_complete: true,
+        duration_ms: 0,
+    };
 
     // -- Exec & Check
     assert!(translator().translate(event).is_none());

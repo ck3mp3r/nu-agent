@@ -6,6 +6,10 @@ use agnt_core::tools::authz::PermissionsOverlay;
 
 pub(crate) struct PersonaResolution {
     pub(crate) persona: Option<agnt_core::protocol::persona::ParsedPersona>,
+    /// The persona slug: the `--agent` value (or the configured default) when a
+    /// persona loaded, `None` otherwise. This is the value hook envelopes carry
+    /// as `agent`; it is not the front-matter display name.
+    pub(crate) agent_slug: Option<String>,
     pub(crate) agent_identity: Option<String>,
     pub(crate) messaging_identity: Option<String>,
     pub(crate) agent_permissions_overlay: Option<PermissionsOverlay>,
@@ -88,6 +92,8 @@ pub(crate) fn resolve_persona(
         .as_ref()
         .and_then(|p| p.name.clone())
         .or_else(|| effective_agent_name.clone());
+    // Persona slug: the effective agent name, but only when a persona loaded.
+    let agent_slug = persona.as_ref().and(effective_agent_name.clone());
     // Messaging identity: --name > display identity (for multi-agent communication)
     let messaging_identity = cli_name.or_else(|| agent_identity.clone());
     log::debug!(
@@ -128,6 +134,7 @@ pub(crate) fn resolve_persona(
 
     Ok(PersonaResolution {
         persona,
+        agent_slug,
         agent_identity,
         messaging_identity,
         agent_permissions_overlay,

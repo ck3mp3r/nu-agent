@@ -36,7 +36,11 @@ async fn interactive_resolver_nu_call_carries_pre_authorize_display() -> Result<
     };
 
     // Unblock the resolver after inspecting the event.
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::AllowOnce,
+    );
     let decision = resolve_fut
         .await
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
@@ -92,7 +96,11 @@ async fn interactive_resolver_ask_path_context_carries_exact_tool_key() -> Resul
         UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::Deny);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::Deny,
+    );
     let _decision = resolve_fut
         .await
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
@@ -135,7 +143,11 @@ async fn interactive_resolver_other_ask_tool_has_no_pre_authorize_display() -> R
         UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::AllowOnce,
+    );
     let decision = resolve_fut
         .await
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
@@ -174,7 +186,11 @@ async fn interactive_resolver_nu_missing_command_prompts_without_display() -> Re
         UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::AllowOnce,
+    );
     let decision = resolve_fut
         .await
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
@@ -230,7 +246,11 @@ async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display(
         UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::Deny);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::Deny,
+    );
     let _decision = resolve_fut
         .await
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
@@ -301,7 +321,11 @@ async fn interactive_resolver_edit_apply_search_replace_without_expected_version
         UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::Deny);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::Deny,
+    );
     let _decision = resolve_fut
         .await
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;

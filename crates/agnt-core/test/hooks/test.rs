@@ -15,8 +15,41 @@ mod runner;
 #[path = "runner_agent.rs"]
 mod runner_agent;
 
-#[path = "runner_session.rs"]
-mod runner_session;
+#[path = "runner_session/agent_switched.rs"]
+mod runner_session_agent_switched;
+
+#[path = "runner_session/compaction.rs"]
+mod runner_session_compaction;
+
+#[path = "runner_session/model_switched.rs"]
+mod runner_session_model_switched;
+
+#[path = "runner_session/observe_only.rs"]
+mod runner_session_observe_only;
+
+#[path = "runner_session/permission_auto_resolved.rs"]
+mod runner_session_permission_auto_resolved;
+
+#[path = "runner_session/permission_decision_ignored.rs"]
+mod runner_session_permission_decision_ignored;
+
+#[path = "runner_session/permission_decision_submitted.rs"]
+mod runner_session_permission_decision_submitted;
+
+#[path = "runner_session/permission_decision_timed_out.rs"]
+mod runner_session_permission_decision_timed_out;
+
+#[path = "runner_session/permission_request_cancelled.rs"]
+mod runner_session_permission_request_cancelled;
+
+#[path = "runner_session/permission_requested.rs"]
+mod runner_session_permission_requested;
+
+#[path = "runner_session/session_lifecycle.rs"]
+mod runner_session_session_lifecycle;
+
+#[path = "runner_session/stamping.rs"]
+mod runner_session_stamping;
 
 // endregion: --- Modules
 
@@ -24,12 +57,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::bus::{AgentEvent, AgentTx, Bus, SessionEvent, TurnEvent, create_bus};
+use crate::bus::{AgentEvent, AgentTx, Bus, CompactionEvent, SessionEvent, TurnEvent, create_bus};
 use crate::config::{HookEvent, ResolvedHook};
 use crate::hooks::{
-    HookProcess, HookProcessError, build_envelope, spawn_agent_hook_runner, spawn_hook_runner,
+    HookAgentContext, HookProcess, HookProcessError, build_envelope, spawn_agent_hook_runner,
+    spawn_hook_runner,
 };
-use crate::protocol::event::UiEvent;
+use crate::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay, UiEvent};
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -122,6 +156,13 @@ pub(super) fn session_cwd() -> PathBuf {
     PathBuf::from("/tmp/hook-session")
 }
 
+/// The agent snapshot every runner test stamps its envelopes with.
+pub(super) fn agent_context() -> HookAgentContext {
+    HookAgentContext::default()
+        .with_persona(Some("reviewer".to_string()))
+        .with_model("openai/gpt-4o".to_string())
+}
+
 /// A resolved hook named `name` subscribed to `events`.
 pub(super) fn hook(name: &str, events: &[HookEvent]) -> ResolvedHook {
     ResolvedHook {
@@ -164,7 +205,13 @@ pub(super) fn spawn(
     hooks: &[ResolvedHook],
     process: &MockProcess,
 ) -> Vec<tokio::task::JoinHandle<()>> {
-    spawn_hook_runner(bus, hooks, &session_cwd(), process.clone())
+    spawn_hook_runner(
+        bus,
+        hooks,
+        &session_cwd(),
+        &agent_context(),
+        process.clone(),
+    )
 }
 
 /// Spawn the agent-class runner for `hooks` against `agent_tx` with `process`.
@@ -173,7 +220,13 @@ pub(super) fn spawn_agent(
     hooks: &[ResolvedHook],
     process: &MockProcess,
 ) -> Vec<tokio::task::JoinHandle<()>> {
-    spawn_agent_hook_runner(agent_tx, hooks, &session_cwd(), process.clone())
+    spawn_agent_hook_runner(
+        agent_tx,
+        hooks,
+        &session_cwd(),
+        &agent_context(),
+        process.clone(),
+    )
 }
 
 // endregion: --- Test Support

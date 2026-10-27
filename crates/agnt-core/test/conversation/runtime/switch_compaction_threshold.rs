@@ -5,11 +5,8 @@
 //! transport client (TLS provider init + `reqwest::Client`). That is
 //! integration-level work, so the tests live behind the `integration` feature.
 
-use super::harness::*;
+use super::switch_support::*;
 use super::*;
-use crate::config::PluginConfig;
-use crate::config::models_cache::{ModelLimit, ModelSpec, ProviderSpec};
-use crate::conversation::state::provider::ProviderState;
 use crate::protocol::model_switching::ModelSwitching;
 
 /// A persona whose front matter selects `ollama/small`.
@@ -28,57 +25,13 @@ model: ollama/large
 You are the large-context agent.
 "#;
 
-/// One cache row for `model` with `context` as its context limit.
-fn cache_row(model: &str, context: u32) -> (String, ModelSpec) {
-    (
-        model.to_string(),
-        ModelSpec {
-            id: model.to_string(),
-            name: model.to_string(),
-            tool_call: true,
-            limit: ModelLimit {
-                context,
-                output: 500,
-            },
-            cost: None,
-            modalities: None,
-        },
-    )
-}
-
-/// A cache listing two `ollama` rows with different context limits, so a
-/// switch between them changes the active model's context window.
-fn two_limit_cache() -> crate::config::ModelsCache {
-    crate::config::ModelsCache {
-        providers: std::collections::HashMap::from([(
-            "ollama".to_string(),
-            ProviderSpec {
-                id: "ollama".to_string(),
-                name: "ollama".to_string(),
-                env: Vec::new(),
-                api: None,
-                models: std::collections::HashMap::from([
-                    cache_row("small", 1_000),
-                    cache_row("large", 2_000),
-                ]),
-            },
-        )]),
-    }
-}
-
-/// A runtime whose provider resolves model limits from `two_limit_cache`.
-///
-/// Ollama needs no credentials, so the resolved provider builds a client
-/// without touching a keychain or a network.
-fn fixture_with_two_limits() -> Result<RuntimeFixture> {
-    let mut fixture = make_runtime(text_model("unused"))?;
-    let plugin_config = PluginConfig {
-        models_cache: Some(two_limit_cache()),
-        ..PluginConfig::default()
-    };
-    fixture.runtime.provider = ProviderState::new(runtime_config(), Some(plugin_config));
-    Ok(fixture)
-}
+/// A persona whose front-matter display name differs from its file slug.
+const SLUGGED_PERSONA: &str = r#"---
+name: My Agent
+model: ollama/large
+---
+You are the slugged agent.
+"#;
 
 /// A model switch must recompute the compaction threshold against the new
 /// model's context window: 0.8 of 1_000, then 0.8 of 2_000.
@@ -111,6 +64,57 @@ async fn switch_model_refreshes_the_compaction_threshold() -> Result<()> {
         large,
         Some(1_600),
         "the threshold must follow the large model's 2_000-token context"
+    );
+    Ok(())
+}
+
+/// A model switch must refresh the hook context's model cell.
+#[tokio::test]
+async fn switch_model_refreshes_the_hook_context_model() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut fixture = fixture_with_two_limits()?;
+
+    // -- Exec
+    fixture
+        .runtime
+        .switch_model("ollama/small")
+        .await
+        .map_err(|e| format!("the switch to the small model should succeed: {e}"))?;
+
+    // -- Check
+    assert_eq!(
+        fixture.runtime.hook_context.model(),
+        "ollama/small",
+        "the envelope model must follow the switch"
+    );
+    Ok(())
+}
+
+/// A persona switch must refresh BOTH hook context cells: the slug and the
+/// model the persona resolves to.
+#[tokio::test]
+async fn switch_agent_refreshes_both_hook_context_cells() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut fixture = fixture_with_two_limits()?;
+    fixture.write_persona("slugged", SLUGGED_PERSONA)?;
+
+    // -- Exec
+    fixture
+        .runtime
+        .switch_agent("slugged")
+        .await
+        .map_err(|e| format!("the switch to the slugged persona should succeed: {e}"))?;
+
+    // -- Check
+    assert_eq!(
+        fixture.runtime.hook_context.persona().as_deref(),
+        Some("slugged"),
+        "the envelope agent must be the slug, not the display name"
+    );
+    assert_eq!(
+        fixture.runtime.hook_context.model(),
+        "ollama/large",
+        "the envelope model must follow the persona's model override"
     );
     Ok(())
 }

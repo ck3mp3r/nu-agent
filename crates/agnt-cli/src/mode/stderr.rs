@@ -42,8 +42,10 @@ pub async fn run_stderr_mode(
         .unwrap_or(std::path::Path::new("."));
 
     // Zero hooks spawns nothing.
-    let hook_handles = spawn_configured_hooks_with_nu(config, &runtime_impl.bus, cwd);
-    let agent_lifecycle = AgentLifecycle::start_configured("stderr", config, cwd).await;
+    let hook_handles =
+        spawn_configured_hooks_with_nu(config, &runtime_impl.bus, cwd, &runtime_impl.hook_context);
+    let agent_lifecycle =
+        AgentLifecycle::start_configured("stderr", config, cwd, &runtime_impl.hook_context).await;
 
     let result = run_with_agent_lifecycle(agent_lifecycle, "completed", || {
         run_stderr_mode_inner(runtime_impl, prompt, context, ui_policy, stderr_is_tty, a2a)

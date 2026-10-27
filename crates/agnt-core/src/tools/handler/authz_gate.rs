@@ -5,8 +5,8 @@ use serde_json::Value as JsonValue;
 use crate::types::ToolCall;
 
 use crate::tools::authz::{
-    AskApprovalHook, AskContext, PermissionAction, PermissionsConfig, SessionGrantCache,
-    apply_ask_choice, apply_session_grant_override,
+    AskApprovalHook, AskContext, PermissionAction, PermissionDecision, PermissionsConfig,
+    SessionGrantCache, apply_ask_choice, apply_session_grant_override,
 };
 
 use super::types::ToolSource;
@@ -16,6 +16,17 @@ pub struct AuthorizationFlowContext {
     pub ask_context: AskContext,
 }
 
+/// Final authorization outcome for one tool call.
+///
+/// `decision` is the decision after the session-grant override and the ask
+/// hook have been applied. `deny_reason` is `Some` only when the final action
+/// is [`PermissionAction::Deny`], and carries the rule-derived reason string.
+#[derive(Debug, Clone)]
+pub struct AuthzOutcome {
+    pub decision: PermissionDecision,
+    pub deny_reason: Option<String>,
+}
+
 pub async fn enforce_authorization_for_tool_call(
     tool_call: &ToolCall,
     source: ToolSource,
@@ -23,7 +34,7 @@ pub async fn enforce_authorization_for_tool_call(
     grant_cache: Arc<Mutex<SessionGrantCache>>,
     flow_context: &AuthorizationFlowContext,
     ask_hook: &mut impl AskApprovalHook,
-) -> Option<String> {
+) -> AuthzOutcome {
     let mut auth_decision =
         permissions.evaluate(&tool_call.function.name, &tool_call.function.arguments);
     log::debug!(
@@ -87,12 +98,19 @@ pub async fn enforce_authorization_for_tool_call(
             auth_decision.matched_rule.scope,
             auth_decision.matched_rule.pattern
         );
-        return Some(format!(
+        let deny_reason = format!(
             "Permission denied by rule '{}' (scope: {})",
             auth_decision.matched_rule.identity, auth_decision.matched_rule.scope
-        ));
+        );
+        return AuthzOutcome {
+            decision: auth_decision,
+            deny_reason: Some(deny_reason),
+        };
     }
-    None
+    AuthzOutcome {
+        decision: auth_decision,
+        deny_reason: None,
+    }
 }
 
 #[cfg(test)]

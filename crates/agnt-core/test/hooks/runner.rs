@@ -45,7 +45,15 @@ async fn test_hooks_runner_turn_completed_invokes_with_tool_calls() -> Result<()
     // -- Exec
     let _ = bus
         .turn()
-        .send(TurnEvent::Completed { tool_calls: 4 })
+        .send(TurnEvent::Completed {
+            tool_calls: 4,
+            input_tokens: 30,
+            output_tokens: 12,
+            total_tokens: Some(42),
+            cost: Some(0.3),
+            cost_complete: false,
+            duration_ms: 1_500,
+        })
         .await;
     drop(bus);
     finish(handles).await?;
@@ -54,7 +62,14 @@ async fn test_hooks_runner_turn_completed_invokes_with_tool_calls() -> Result<()
     let calls = process.calls();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].event, "turn_completed");
-    assert_eq!(payload(&calls[0])?["tool_calls"], 4);
+    let body = payload(&calls[0])?;
+    assert_eq!(body["tool_calls"], 4);
+    assert_eq!(body["input_tokens"], 30);
+    assert_eq!(body["output_tokens"], 12);
+    assert_eq!(body["total_tokens"], 42);
+    assert_eq!(body["cost"], 0.3);
+    assert_eq!(body["cost_complete"], false);
+    assert_eq!(body["duration_ms"], 1_500);
     Ok(())
 }
 
@@ -147,7 +162,15 @@ async fn test_hooks_runner_skips_unsubscribed_events() -> Result<()> {
         .await;
     let _ = bus
         .turn()
-        .send(TurnEvent::Completed { tool_calls: 1 })
+        .send(TurnEvent::Completed {
+            tool_calls: 1,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        })
         .await;
     drop(bus);
     finish(handles).await?;
@@ -184,7 +207,15 @@ async fn test_hooks_runner_invokes_in_arrival_order() -> Result<()> {
         .await;
     let _ = bus
         .turn()
-        .send(TurnEvent::Completed { tool_calls: 2 })
+        .send(TurnEvent::Completed {
+            tool_calls: 2,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        })
         .await;
     drop(bus);
     finish(handles).await?;
@@ -208,11 +239,27 @@ async fn test_hooks_runner_continues_after_a_timeout() -> Result<()> {
     // -- Exec
     let _ = bus
         .turn()
-        .send(TurnEvent::Completed { tool_calls: 1 })
+        .send(TurnEvent::Completed {
+            tool_calls: 1,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        })
         .await;
     let _ = bus
         .turn()
-        .send(TurnEvent::Completed { tool_calls: 2 })
+        .send(TurnEvent::Completed {
+            tool_calls: 2,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        })
         .await;
     drop(bus);
     finish(handles).await?;
@@ -238,11 +285,27 @@ async fn test_hooks_runner_continues_after_a_failure() -> Result<()> {
     // -- Exec
     let _ = bus
         .turn()
-        .send(TurnEvent::Completed { tool_calls: 1 })
+        .send(TurnEvent::Completed {
+            tool_calls: 1,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        })
         .await;
     let _ = bus
         .turn()
-        .send(TurnEvent::Completed { tool_calls: 2 })
+        .send(TurnEvent::Completed {
+            tool_calls: 2,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        })
         .await;
     drop(bus);
     finish(handles).await?;

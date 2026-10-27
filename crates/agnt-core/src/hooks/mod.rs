@@ -6,10 +6,12 @@
 
 // region:    --- Modules
 
+mod context;
 mod envelope;
 mod process;
 mod runner;
 
+pub use context::HookAgentContext;
 pub use envelope::{ENVELOPE_VERSION, build_envelope};
 pub use process::{HookProcess, HookProcessError, NuProcess};
 pub use runner::{failure_warning, spawn_agent_hook_runner, spawn_hook_runner};

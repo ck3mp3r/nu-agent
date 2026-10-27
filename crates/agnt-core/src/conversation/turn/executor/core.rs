@@ -35,6 +35,7 @@ use crate::conversation::managers::SessionManager;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::output_repetition::RepetitionState;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
+use crate::hook::turn_usage::TurnUsage;
 use crate::session::CachedMemory;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
@@ -90,6 +91,14 @@ pub struct ToolInfra {
     /// Real token count from the last LLM completion, shared across turns. Used by
     /// the hook's compaction threshold check.
     pub last_total_tokens: Arc<Mutex<Option<u64>>>,
+    /// The turn's LLM usage, accumulated by the hook chain as each call
+    /// completes. Created per turn; read when the turn-completed event is
+    /// published.
+    pub turn_usage: TurnUsage,
+    /// The session's cumulative LLM usage. Shared across turns; the chain adds
+    /// every call into it, and it resets only when the runtime switches
+    /// sessions.
+    pub session_usage: TurnUsage,
     /// Shared cancellation bus threaded through the turn pipeline.
     pub bus: Bus,
     /// Per-tool call-line render functions, populated at builtin registration
@@ -154,6 +163,9 @@ where
         permission_resolver: P,
         final_session_id: Option<&str>,
     ) -> Result<TurnOutcome, LabeledError> {
+        // The turn's wall-clock span starts here: the turn-completed event
+        // reports it as `duration_ms`.
+        let turn_started = std::time::Instant::now();
         let prompt = input.prompt;
         let preamble = input.preamble;
         let span = input.span;
@@ -184,7 +196,7 @@ where
             )
             .await;
 
-        self.dispatch_result(visitor_result, prompt, span, final_session_id)
+        self.dispatch_result(visitor_result, prompt, span, final_session_id, turn_started)
             .await
     }
 }

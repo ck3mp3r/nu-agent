@@ -28,7 +28,7 @@ mod edge_paths;
 #[path = "executor_cancel/persistence.rs"]
 mod persistence;
 
-#[path = "executor_cancel/sibling_flush.rs"]
+#[path = "executor_cancel/sibling_flush/test.rs"]
 mod sibling_flush;
 
 // endregion: --- Modules

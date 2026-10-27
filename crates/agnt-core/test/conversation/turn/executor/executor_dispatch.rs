@@ -107,6 +107,7 @@ async fn dispatch_unknown_tool_persists_history_and_reports_failure() -> Result<
             "use a tool".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
+            std::time::Instant::now(),
         )
         .await
         .err()
@@ -162,6 +163,7 @@ async fn dispatch_unknown_tool_without_a_session_skips_persistence() -> Result<(
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             None,
+            std::time::Instant::now(),
         )
         .await
         .err()
@@ -198,6 +200,7 @@ async fn dispatch_tool_execution_failure_reports_the_raw_message() -> Result<()>
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
+            std::time::Instant::now(),
         )
         .await
         .err()
@@ -245,6 +248,7 @@ async fn dispatch_path_c_cancelled_with_an_empty_delta_persists_the_prompt_and_p
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
+            std::time::Instant::now(),
         )
         .await
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;
@@ -291,6 +295,7 @@ async fn dispatch_path_b_uses_the_last_known_history() -> Result<()> {
             "completed work".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
+            std::time::Instant::now(),
         )
         .await
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;
@@ -331,6 +336,7 @@ async fn dispatch_path_b_true_fallback_synthesizes_a_placeholder() -> Result<()>
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
+            std::time::Instant::now(),
         )
         .await
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;
@@ -379,6 +385,7 @@ async fn dispatch_path_c_stop_reason_surfaces_warning_and_completed() -> Result<
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             None,
+            std::time::Instant::now(),
         )
         .await
         .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;

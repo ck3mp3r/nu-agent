@@ -216,10 +216,18 @@ where
         .unwrap_or_else(|_| panic!("worker panicked"));
 
     // One teardown site covers every loop exit (quit, channel close, error).
+    // The session's cumulative usage rides the event: the runtime owns the
+    // cells, so the totals cover this session only.
+    let usage = runtime.session_usage();
     let _ = bus
         .session()
         .send(SessionEvent::Ended {
             session_id: runtime.current_session_id().unwrap_or_default().to_string(),
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            total_tokens: usage.total_tokens,
+            cost: usage.cost,
+            cost_complete: usage.cost_complete,
         })
         .await;
 
@@ -433,7 +441,7 @@ where
                         }
                     }
                     OrchestratorEvent::PermissionDecision { decision } => {
-                        permission.handle(decision, ctx);
+                        permission.handle(decision, ctx).await;
                     }
                     OrchestratorEvent::UiRequest(req) => {
                         ui_request.handle_incoming(req, ctx).await;

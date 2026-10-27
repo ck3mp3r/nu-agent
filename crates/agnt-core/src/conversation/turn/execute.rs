@@ -178,6 +178,8 @@ where
             compaction: ctx.conversation.compaction.clone(),
             model: dyn_model.clone(),
             last_total_tokens: ctx.tool_infra.last_total_tokens.clone(),
+            turn_usage: ctx.tool_infra.turn_usage.clone(),
+            session_usage: ctx.tool_infra.session_usage.clone(),
         },
     );
 

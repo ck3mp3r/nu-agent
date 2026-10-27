@@ -128,9 +128,14 @@ async fn test_translator_run_turn_denies_pending_permission_when_turn_completes(
     let decision_rx = register_pending(&pending, "perm-never-answered");
 
     // -- Exec
-    let output = run_turn_with_notifications(&mut rx, &sink, &mut translator, &mut bridge, async {
-        "done"
-    })
+    let (output, _) = run_turn_with_notifications(
+        &mut rx,
+        &mut None,
+        &sink,
+        &mut translator,
+        &mut bridge,
+        async { "done" },
+    )
     .await;
     let decision = decision_rx.await?;
 

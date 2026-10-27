@@ -18,7 +18,15 @@ impl CoreRuntime for StartupHydrationRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed { tool_calls: 0 })
+            .send(UiEvent::Completed {
+                tool_calls: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: None,
+                cost: None,
+                cost_complete: true,
+                duration_ms: 0,
+            })
             .await;
         Ok(Value::nothing(span))
     }
@@ -292,7 +300,15 @@ fn emit_batch_delivers_all_events() {
             delta: "world".to_string(),
             text: "world".to_string(),
         },
-        UiEvent::Completed { tool_calls: 0 },
+        UiEvent::Completed {
+            tool_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        },
     ];
 
     // Call emit_batch
@@ -450,7 +466,7 @@ async fn interactive_loop_publishes_ended_on_exit() -> TResult {
     let ended = events
         .iter()
         .find_map(|event| match event {
-            crate::bus::SessionEvent::Ended { session_id } => Some(session_id.as_str()),
+            crate::bus::SessionEvent::Ended { session_id, .. } => Some(session_id.as_str()),
             _ => None,
         })
         .ok_or("the loop must publish SessionEvent::Ended on exit")?;

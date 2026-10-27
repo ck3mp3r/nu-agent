@@ -201,9 +201,15 @@ pub struct StoreTypeConfig {
 
 /// A lifecycle event a user hook can subscribe to.
 ///
-/// The v1 surface is eight events in two classes. The session class covers the
-/// per-session lifecycle (turns, tools, and the session itself); the agent class
+/// The v1 surface is nineteen events in two classes. The session class covers
+/// the per-session lifecycle (turns, tools, permission prompts, compaction, the
+/// agent's and model's own switches, and the session itself); the agent class
 /// covers the per-process lifecycle.
+///
+/// The class is not derivable from the name: `agent_switched` is session-class
+/// because a switch belongs to one session, while `agent_started` and
+/// `agent_shutdown` are process-class. [`HookEvent::class`] matches per variant
+/// and no code parses name prefixes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookEvent {
@@ -213,6 +219,17 @@ pub enum HookEvent {
     ToolCompleted,
     SessionStarted,
     SessionEnded,
+    PermissionRequested,
+    PermissionDecisionTimedOut,
+    PermissionDecisionSubmitted,
+    PermissionDecisionIgnored,
+    PermissionRequestCancelled,
+    PermissionAutoResolved,
+    CompactionStarted,
+    CompactionCompleted,
+    CompactionFailed,
+    AgentSwitched,
+    ModelSwitched,
     AgentStarted,
     AgentShutdown,
 }
@@ -231,13 +248,24 @@ pub enum HookEventClass {
 
 impl HookEvent {
     /// Every v1 event name, in declaration order.
-    pub const NAMES: [&'static str; 8] = [
+    pub const NAMES: [&'static str; 19] = [
         "turn_started",
         "turn_completed",
         "tool_started",
         "tool_completed",
         "session_started",
         "session_ended",
+        "permission_requested",
+        "permission_decision_timed_out",
+        "permission_decision_submitted",
+        "permission_decision_ignored",
+        "permission_request_cancelled",
+        "permission_auto_resolved",
+        "compaction_started",
+        "compaction_completed",
+        "compaction_failed",
+        "agent_switched",
+        "model_switched",
         "agent_started",
         "agent_shutdown",
     ];
@@ -251,6 +279,17 @@ impl HookEvent {
             Self::ToolCompleted => "tool_completed",
             Self::SessionStarted => "session_started",
             Self::SessionEnded => "session_ended",
+            Self::PermissionRequested => "permission_requested",
+            Self::PermissionDecisionTimedOut => "permission_decision_timed_out",
+            Self::PermissionDecisionSubmitted => "permission_decision_submitted",
+            Self::PermissionDecisionIgnored => "permission_decision_ignored",
+            Self::PermissionRequestCancelled => "permission_request_cancelled",
+            Self::PermissionAutoResolved => "permission_auto_resolved",
+            Self::CompactionStarted => "compaction_started",
+            Self::CompactionCompleted => "compaction_completed",
+            Self::CompactionFailed => "compaction_failed",
+            Self::AgentSwitched => "agent_switched",
+            Self::ModelSwitched => "model_switched",
             Self::AgentStarted => "agent_started",
             Self::AgentShutdown => "agent_shutdown",
         }
@@ -265,6 +304,17 @@ impl HookEvent {
             "tool_completed" => Some(Self::ToolCompleted),
             "session_started" => Some(Self::SessionStarted),
             "session_ended" => Some(Self::SessionEnded),
+            "permission_requested" => Some(Self::PermissionRequested),
+            "permission_decision_timed_out" => Some(Self::PermissionDecisionTimedOut),
+            "permission_decision_submitted" => Some(Self::PermissionDecisionSubmitted),
+            "permission_decision_ignored" => Some(Self::PermissionDecisionIgnored),
+            "permission_request_cancelled" => Some(Self::PermissionRequestCancelled),
+            "permission_auto_resolved" => Some(Self::PermissionAutoResolved),
+            "compaction_started" => Some(Self::CompactionStarted),
+            "compaction_completed" => Some(Self::CompactionCompleted),
+            "compaction_failed" => Some(Self::CompactionFailed),
+            "agent_switched" => Some(Self::AgentSwitched),
+            "model_switched" => Some(Self::ModelSwitched),
             "agent_started" => Some(Self::AgentStarted),
             "agent_shutdown" => Some(Self::AgentShutdown),
             _ => None,
@@ -279,7 +329,18 @@ impl HookEvent {
             | Self::ToolStarted
             | Self::ToolCompleted
             | Self::SessionStarted
-            | Self::SessionEnded => HookEventClass::Session,
+            | Self::SessionEnded
+            | Self::PermissionRequested
+            | Self::PermissionDecisionTimedOut
+            | Self::PermissionDecisionSubmitted
+            | Self::PermissionDecisionIgnored
+            | Self::PermissionRequestCancelled
+            | Self::PermissionAutoResolved
+            | Self::CompactionStarted
+            | Self::CompactionCompleted
+            | Self::CompactionFailed
+            | Self::AgentSwitched
+            | Self::ModelSwitched => HookEventClass::Session,
             Self::AgentStarted | Self::AgentShutdown => HookEventClass::Agent,
         }
     }

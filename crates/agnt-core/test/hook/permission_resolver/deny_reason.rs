@@ -57,7 +57,11 @@ async fn interactive_resolver_ask_deny_reason_carries_rule_identity() -> Result<
         UiEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::Deny);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::Deny,
+    );
 
     let decision = resolve_fut
         .await

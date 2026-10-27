@@ -13,9 +13,12 @@ async fn interactive_resolver_allowed_tool_emits_no_permission_event_with_displa
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
+    let events = drain(&mut permission_rx);
     assert!(
-        permission_rx.try_recv().is_err(),
-        "allowed tool must not emit a PermissionRequested event"
+        !events
+            .iter()
+            .any(|event| matches!(event, UiEvent::PermissionRequested { .. })),
+        "allowed tool must not emit a PermissionRequested event: {events:?}"
     );
 }
 
@@ -58,7 +61,11 @@ async fn interactive_resolver_take_previewed_is_true_once_after_edit_preview() -
         UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::AllowOnce,
+    );
     resolve_fut
         .await
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
@@ -102,7 +109,11 @@ async fn interactive_resolver_take_previewed_is_true_once_after_nu_preview() -> 
         UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::AllowOnce,
+    );
     resolve_fut
         .await
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
@@ -141,7 +152,11 @@ async fn interactive_resolver_take_previewed_is_false_without_a_nu_preview() -> 
         UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::AllowOnce,
+    );
     resolve_fut
         .await
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
@@ -177,9 +192,12 @@ async fn interactive_resolver_without_preview_rendering_keeps_completion_display
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
+    let events = drain(&mut ui_rx);
     assert!(
-        ui_rx.try_recv().is_err(),
-        "a UI that does not render previews must publish no ToolPreview"
+        !events
+            .iter()
+            .any(|event| matches!(event, UiEvent::ToolPreview { .. })),
+        "a UI that does not render previews must publish no ToolPreview: {events:?}"
     );
     assert!(
         !resolver.take_previewed("nu", arguments),
@@ -214,7 +232,11 @@ async fn interactive_resolver_without_preview_rendering_keeps_completion_display
         UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::AllowOnce);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::AllowOnce,
+    );
     resolve_fut
         .await
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
@@ -283,7 +305,11 @@ async fn interactive_resolver_uses_passed_cwd_not_process_cwd() -> Result<()> {
         UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
-    resolver_clone.submit_decision(&request_id, ProtocolPermissionDecision::Deny);
+    submit_decision(
+        &resolver_clone,
+        &request_id,
+        ProtocolPermissionDecision::Deny,
+    );
     let _decision = resolve_fut
         .await
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;

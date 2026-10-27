@@ -18,9 +18,10 @@ use agnt_core::conversation::state::{
 };
 use agnt_core::hook::DoomLoopState;
 use agnt_core::hook::output_repetition::RepetitionState;
+use agnt_core::hooks::HookAgentContext;
 use agnt_core::protocol::model_switching::ModelSwitching;
 use agnt_core::protocol::persona::{FsPersonaResolver, PersonaLister};
-use agnt_core::session::StoreType;
+use agnt_core::session::RigStoreConfig;
 use agnt_core::tools::authz::{PermissionsConfig, SessionGrantCache};
 use agnt_core::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use agnt_core::tools::handler::McpToolRegistry;
@@ -59,8 +60,12 @@ pub struct AcpRuntimeParams {
     pub config_path: PathBuf,
     /// Handle to the process tokio runtime.
     pub runtime_handle: tokio::runtime::Handle,
-    /// The session store backend the session's rig-memory store is made from.
-    pub store_type: StoreType,
+    /// The rig-memory store config the session's store is made from.
+    ///
+    /// The caller owns the config, so it decides where the store lives: in
+    /// production it carries no cache dir and the store resolves from the XDG
+    /// environment; a test roots it in a tempdir.
+    pub rig: RigStoreConfig,
     /// Persisted session id, when the session is resumed from the store.
     pub session_id: Option<String>,
     /// The ACP client's filesystem capabilities and connection, when the client
@@ -72,6 +77,12 @@ pub struct AcpRuntimeParams {
     /// `agents.default` in config.toml. When `None`, the configured default
     /// agent is used.
     pub agent_name: Option<String>,
+    /// The agent snapshot every hook envelope of this session is stamped with.
+    ///
+    /// The session handler creates it and clones it into the session's hook
+    /// runner. The runtime writes the model identity on construction; the
+    /// startup `switch_agent` flow then writes the persona slug.
+    pub hook_context: HookAgentContext,
 }
 
 // endregion: --- Types
@@ -176,10 +187,11 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
         mcp_servers,
         config_path,
         runtime_handle,
-        store_type,
+        rig,
         session_id,
         client_fs,
         agent_name,
+        hook_context,
     } = params;
 
     // -- Config resolution (shared with the plugin path)
@@ -188,6 +200,14 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     if let Err(msg) = config.validate() {
         return Err(AcpError::Config(format!("config validation failed: {msg}")));
     }
+
+    // The hook envelopes stamp the model the session starts on. The startup
+    // `switch_agent` below then writes the persona slug and the model the
+    // persona resolves to.
+    hook_context.set_model(agnt_core::protocol::picker::format_active_model_identity(
+        &config.provider,
+        &config.model,
+    ));
 
     let max_tool_result_bytes = config
         .max_tool_result_bytes
@@ -406,7 +426,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             SessionGrantCache::default(),
             permissions_startup_summary,
         ),
-        session: MemoryState::new(agnt_core::session::RigStoreConfig::new(store_type)),
+        session: MemoryState::new(rig),
         persona: PersonaState::new(
             None,
             None,
@@ -429,6 +449,8 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
         last_total_tokens: Arc::new(Mutex::new(None)),
         bus,
         render_registry,
+        hook_context,
+        session_usage: agnt_core::hook::TurnUsage::default(),
         dyn_model,
         compaction: agnt_core::conversation::compaction::CompactionConfig {
             compactor,

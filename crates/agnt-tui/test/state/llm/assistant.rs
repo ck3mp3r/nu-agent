@@ -42,7 +42,15 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() -> Resu
         &mut state.transcript,
         &mut state.status,
         &mut state.input_locked,
-        TurnEvent::Completed { tool_calls: 0 },
+        TurnEvent::Completed {
+            tool_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        },
     );
     state.finalize_cycle();
 

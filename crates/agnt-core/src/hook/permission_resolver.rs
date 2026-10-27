@@ -21,8 +21,8 @@ use crate::tools::authz::{
 };
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::{
-    AuthorizationFlowContext, McpToolRegistry, ToolSource, builtin_kinds::BuiltinKind,
-    enforce_authorization_for_tool_call, pre_authorize_fs_tool,
+    AuthorizationFlowContext, AuthzOutcome, McpToolRegistry, ToolSource,
+    builtin_kinds::BuiltinKind, enforce_authorization_for_tool_call, pre_authorize_fs_tool,
 };
 use crate::types::{CallId, ToolCall, ToolFunction, ToolName};
 
@@ -116,6 +116,26 @@ fn summarize_ask_payload(args: &JsonValue) -> String {
     format!("→ {trimmed}")
 }
 
+/// Publish the policy-resolved-without-prompting event for `outcome`.
+///
+/// `action` is `"deny"` when the gate produced a denial reason, `"allow"`
+/// otherwise. `reason` carries the denial reason and is `None` on allow.
+async fn publish_auto_resolved(bus: &crate::bus::Bus, outcome: &AuthzOutcome) {
+    let action = if outcome.deny_reason.is_some() {
+        "deny"
+    } else {
+        "allow"
+    };
+    let _ = bus
+        .ui_event()
+        .send(UiEvent::PermissionAutoResolved {
+            matched_rule_identity: outcome.decision.matched_rule.identity.clone(),
+            action: action.to_string(),
+            reason: outcome.deny_reason.clone(),
+        })
+        .await;
+}
+
 /// Resolve once the decision deadline passes. A `None` deadline never resolves,
 /// so a disabled timeout leaves the request waiting indefinitely.
 async fn wait_for_decision_timeout(deadline: Option<tokio::time::Instant>) {
@@ -185,7 +205,7 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
         tool_name: &str,
         arguments: &str,
         tool_call_id: Option<String>,
-        _bus: &crate::bus::Bus,
+        bus: &crate::bus::Bus,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let tool_name = tool_name.to_string();
         let arguments = arguments.to_string();
@@ -193,6 +213,7 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
         let session_grants = Arc::clone(&self.session_grants);
         let closure_registry = Arc::clone(&self.closure_registry);
         let mcp_registry = Arc::clone(&self.mcp_registry);
+        let bus = bus.clone();
 
         async move {
             let args_json: JsonValue = serde_json::from_str(&arguments)
@@ -212,7 +233,7 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
                 ask_context: AskContext::default(),
             };
 
-            let deny_reason = enforce_authorization_for_tool_call(
+            let outcome = enforce_authorization_for_tool_call(
                 &tool_call,
                 source,
                 &permissions,
@@ -222,7 +243,9 @@ impl AsyncPermissionResolver for PolicyPermissionResolver {
             )
             .await;
 
-            match deny_reason {
+            publish_auto_resolved(&bus, &outcome).await;
+
+            match outcome.deny_reason {
                 Some(reason) => PermissionDecision::Deny { reason },
                 None => PermissionDecision::Allow,
             }
@@ -285,8 +308,9 @@ impl AskApprovalHook for AskContextCapture {
 ///
 /// When the policy requires user confirmation ("Ask"), publishes a
 /// `UiEvent::PermissionRequested` on `bus.ui_event()` and awaits the user's
-/// decision. The TUI event loop must call [`InteractivePermissionResolver::submit_decision`]
-/// to unblock the waiting `resolve()` future.
+/// decision. The orchestrator's `PermissionStage` and the ACP permission bridge
+/// unblock the waiting `resolve()` future by removing the request's oneshot
+/// sender from the shared pending map and sending the decision on it.
 ///
 /// **Design note (deadlock prevention):** This struct does NOT own a
 /// `mpsc::UnboundedSender<UiEvent>`. It publishes permission events on the
@@ -328,7 +352,8 @@ impl InteractivePermissionResolver {
     /// # Parameters
     ///
     /// - `pending`: shared map of request-id → oneshot sender, also held by the
-    ///   orchestrator's permission poll loop so it can call `submit_decision`.
+    ///   orchestrator's `PermissionStage` and the ACP permission bridge, which
+    ///   remove the sender and send the decision to unblock `resolve()`.
     /// - `permissions`: the static permission configuration.
     /// - `session_grants`: shared session grant cache for AllowAlways persistence.
     /// - `closure_registry`: registry of closure-based tools.
@@ -364,13 +389,6 @@ impl InteractivePermissionResolver {
     pub fn with_renders_tool_previews(mut self, renders: bool) -> Self {
         self.renders_tool_previews = renders;
         self
-    }
-
-    /// Called by the TUI event loop to resolve a pending permission request.
-    pub fn submit_decision(&self, request_id: &str, decision: ProtocolPermissionDecision) {
-        if let Some(tx) = self.pending.lock().unwrap().remove(request_id) {
-            let _ = tx.send(decision);
-        }
     }
 }
 
@@ -431,7 +449,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 raw_arguments: arguments.clone(),
             };
 
-            let deny_reason = {
+            let outcome = {
                 enforce_authorization_for_tool_call(
                     &tool_call,
                     source.clone(),
@@ -445,7 +463,8 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
 
             if !capture_hook.was_called {
                 // Policy had an explicit Allow or Deny — no user interaction needed.
-                match deny_reason {
+                publish_auto_resolved(&bus, &outcome).await;
+                match outcome.deny_reason {
                     Some(reason) => PermissionDecision::Deny { reason },
                     None => {
                         // Auto-approved: the user never sees a prompt, so the
@@ -529,6 +548,18 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                         event = cancel_rx.recv() => {
                             if matches!(event, Ok(CancelEvent::Requested)) {
                                 pending.lock().unwrap().remove(&request_id);
+                                let matched_rule_identity = capture_hook
+                                    .captured_auth_decision
+                                    .as_ref()
+                                    .map(|decision| decision.matched_rule.identity.clone())
+                                    .unwrap_or_default();
+                                let _ = bus
+                                    .ui_event()
+                                    .send(UiEvent::PermissionRequestCancelled {
+                                        request_id: request_id.clone(),
+                                        matched_rule_identity,
+                                    })
+                                    .await;
                                 return PermissionDecision::Deny {
                                     reason: TURN_CANCELLED_DENY_REASON.to_string(),
                                 };
@@ -548,6 +579,30 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                         }
                     }
                 };
+
+                // The decision funnel: every prompted decision passes through
+                // here, so one publish covers the TUI and ACP modes. The cancel
+                // and timeout branches above return before this point, so they
+                // publish no submitted event — no decision was submitted.
+                //
+                // The payload carries no origin. A TUI answer, an ACP client
+                // answer, an ACP reject-always memory deny, and the ACP
+                // drain-end forced deny all arrive here as a submitted
+                // decision. A dropped oneshot sender breaks the loop above with
+                // `Deny`, which is the accurate answer at this level.
+                let matched_rule_identity = capture_hook
+                    .captured_auth_decision
+                    .as_ref()
+                    .map(|decision| decision.matched_rule.identity.clone())
+                    .unwrap_or_default();
+                let _ = bus
+                    .ui_event()
+                    .send(UiEvent::PermissionDecisionSubmitted {
+                        request_id: request_id.clone(),
+                        decision: protocol_decision,
+                        matched_rule_identity,
+                    })
+                    .await;
 
                 let ask_choice = match protocol_decision {
                     ProtocolPermissionDecision::AllowOnce => AskChoice::AllowOnce,
@@ -573,7 +628,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                     // The sentinel run's capture hook always answers Deny, so the
                     // authz gate already built the reason from the rule that
                     // triggered the permission prompt — reuse it verbatim.
-                    AskChoice::Deny => match deny_reason {
+                    AskChoice::Deny => match outcome.deny_reason {
                         Some(reason) => PermissionDecision::Deny { reason },
                         // Unreachable in practice (a prompt implies a rule match);
                         // fall back to the legacy bare denial text.
@@ -597,4 +652,4 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
 
 #[cfg(test)]
 #[path = "../../test/hook/permission_resolver.rs"]
-mod permission_resolver_test;
+pub(crate) mod permission_resolver_test;

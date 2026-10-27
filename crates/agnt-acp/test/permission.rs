@@ -11,6 +11,8 @@ mod content;
 mod decision_mapping;
 #[path = "permission/deny_set.rs"]
 mod deny_set;
+#[path = "permission/ignored.rs"]
+mod ignored;
 #[path = "permission/pending.rs"]
 mod pending;
 #[path = "permission/request_shape.rs"]

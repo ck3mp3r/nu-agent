@@ -12,6 +12,7 @@ pub use crate::hook::chain::HookChain;
 pub use crate::hook::doom_loop::{DOOM_LOOP_THRESHOLD, DoomLoopState};
 pub use crate::hook::output_repetition::RepetitionState;
 pub use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
+pub use crate::hook::turn_usage::TurnUsage;
 
 /// Session-scoped state shared across turns via the hook.
 ///
@@ -45,6 +46,14 @@ pub struct HookState {
     /// `None` before the first completion and after a compaction reset; the
     /// compaction threshold falls back to the chars/4 estimate when `None`.
     pub last_total_tokens: Arc<Mutex<Option<u64>>>,
+    /// The turn's LLM usage, accumulated as each call completes. Created per
+    /// turn, so the sums never carry over into the next one; the turn executor
+    /// reads them when it publishes the turn-completed event.
+    pub turn_usage: TurnUsage,
+    /// The session's cumulative LLM usage. Shared across turns; the chain adds
+    /// every call into it, and it resets only when the runtime switches
+    /// sessions.
+    pub session_usage: TurnUsage,
 }
 
 #[cfg(test)]

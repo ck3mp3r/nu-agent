@@ -59,7 +59,11 @@ pub(crate) trait SlashHandler {
 
 /// Stage trait for permission decision handling.
 pub(crate) trait PermissionHandler {
-    fn handle(&mut self, decision: PermissionDecisionSubmission, ctx: &mut OrchestrationContext);
+    async fn handle(
+        &mut self,
+        decision: PermissionDecisionSubmission,
+        ctx: &mut OrchestrationContext,
+    );
 }
 
 /// Stage trait for UI request handling.

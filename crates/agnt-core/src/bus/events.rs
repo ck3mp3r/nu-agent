@@ -81,8 +81,25 @@ pub enum TurnEvent {
         prompt: String,
         task_id: Option<String>,
     },
-    /// A turn finished with a tool-call count for the TUI renderer.
-    Completed { tool_calls: usize },
+    /// A turn finished with the turn's tool-call count and LLM usage.
+    ///
+    /// The usage fields are the turn's sums across its LLM calls, accumulated
+    /// publisher-side as each call completed. `total_tokens` is the sum of the
+    /// per-call totals (each per the chain fallback: the wire's total, else
+    /// input + output) and is `None` when no call reported one. `cost` is the
+    /// sum of the reported per-call costs and is `None` when none was priced;
+    /// `cost_complete` is the AND of the per-call flags, so a sum with one
+    /// incomplete component is a lower bound. `duration_ms` is the turn's
+    /// wall-clock span.
+    Completed {
+        tool_calls: usize,
+        input_tokens: u64,
+        output_tokens: u64,
+        total_tokens: Option<u64>,
+        cost: Option<f64>,
+        cost_complete: bool,
+        duration_ms: u64,
+    },
     /// An external (A2A) task completed with its output.
     TaskCompleted { output: String, task_id: String },
     /// An external (A2A) task failed or was cancelled, with the reason.
@@ -96,12 +113,39 @@ pub enum SessionEvent {
         session_id: String,
         hydrated: bool,
     },
+    /// The session ended. Carries the session's cumulative LLM usage: the
+    /// sums across every turn the session ran, with the same fallback and
+    /// completeness conventions as [`TurnEvent::Completed`].
     Ended {
         session_id: String,
+        input_tokens: u64,
+        output_tokens: u64,
+        total_tokens: Option<u64>,
+        cost: Option<f64>,
+        cost_complete: bool,
     },
     Switched {
         from_session_id: Option<String>,
         to_session_id: String,
+    },
+    /// The session's agent (persona) switched to another slug.
+    ///
+    /// `from` is the persona slug that was active, or `None` when no persona
+    /// was loaded. `to` is the slug now active. The event rides the session
+    /// channel, so a hook envelope is stamped from the session's own hook
+    /// context — which the switch refreshes first.
+    AgentSwitched {
+        from: Option<String>,
+        to: String,
+    },
+    /// The session's model switched to another identity.
+    ///
+    /// `from` is the `provider/model` identity in use before the switch; `to`
+    /// is the identity now active. A model is always resolvable, so unlike
+    /// [`SessionEvent::AgentSwitched`] there is no absent case.
+    ModelSwitched {
+        from: String,
+        to: String,
     },
 }
 
@@ -179,10 +223,14 @@ pub enum PermissionEvent {
 // These `From<XxxEvent> for Option<UiEvent>` impls are retained for the TUI
 // state dispatch layer and for test code. The TUI reconstructs typed events
 // from `UiEvent` fields in `dispatch_ui_event` (reducer.rs) and passes them to
-// the state-level reducers; tests construct the typed enums directly. Only
-// `From<CompactionEvent>` still has a production caller (the TTY drain task in
-// mode_execute.rs). Do not remove the others without first migrating the TUI
-// state layer off the typed enums.
+// the state-level reducers; tests construct the typed enums directly.
+// `From<CompactionEvent>` still has production callers, because compaction
+// events ride their own `bus.compaction()` channel: the stderr drain converts
+// them at the boundary (mode/stderr.rs) and the ACP translator converts them
+// for the client's session/update notifications (translator.rs). The hooks
+// runner (hooks/runner.rs) and the TUI (interactive.rs) consume
+// `CompactionEvent` directly and need no conversion. Do not remove the others
+// without first migrating the TUI state layer off the typed enums.
 
 impl From<ToolEvent> for Option<UiEvent> {
     fn from(event: ToolEvent) -> Self {
@@ -295,7 +343,23 @@ impl From<TurnEvent> for Option<UiEvent> {
         match event {
             // Turn started is not rendered in the TUI.
             TurnEvent::Started { .. } => None,
-            TurnEvent::Completed { tool_calls } => Some(UiEvent::Completed { tool_calls }),
+            TurnEvent::Completed {
+                tool_calls,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                cost,
+                cost_complete,
+                duration_ms,
+            } => Some(UiEvent::Completed {
+                tool_calls,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                cost,
+                cost_complete,
+                duration_ms,
+            }),
             // A2A-only completion — not for the TUI.
             TurnEvent::TaskCompleted { .. } => None,
             // A2A-only failure — not for the TUI.

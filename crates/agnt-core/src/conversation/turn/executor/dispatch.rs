@@ -49,6 +49,7 @@ where
         prompt: String,
         span: Span,
         final_session_id: Option<&str>,
+        turn_started: std::time::Instant,
     ) -> Result<TurnOutcome, LabeledError> {
         let turn_result = match visitor_result {
             Ok(result) => result,
@@ -155,6 +156,10 @@ where
         // Cancelled: rig saved nothing, so the turn's delta is persisted here.
         // Surface the stop reason and return the early-exit response.
         if turn_result.cancelled {
+            // The turn's usage and wall-clock span, as both turn-end paths
+            // report them.
+            let usage = self.tool_infra.turn_usage.totals();
+            let duration_ms = turn_started.elapsed().as_millis() as u64;
             // The hook-Terminate flavor carries rig's chat_history; the
             // bus-cancel flavor drops the stream and leaves only the hook's
             // snapshot of the last LLM call.
@@ -258,6 +263,12 @@ where
                 .ui_event()
                 .send(UiEvent::Completed {
                     tool_calls: turn_result.tool_call_count,
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
+                    total_tokens: usage.total_tokens,
+                    cost: usage.cost,
+                    cost_complete: usage.cost_complete,
+                    duration_ms,
                 })
                 .await;
             let _ = self
@@ -266,6 +277,12 @@ where
                 .turn()
                 .send(TurnEvent::Completed {
                     tool_calls: turn_result.tool_call_count,
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
+                    total_tokens: usage.total_tokens,
+                    cost: usage.cost,
+                    cost_complete: usage.cost_complete,
+                    duration_ms,
                 })
                 .await;
             return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
@@ -315,12 +332,22 @@ where
                 })
                 .await;
         }
+        // The turn's usage and wall-clock span, as both turn-end paths report
+        // them.
+        let usage = self.tool_infra.turn_usage.totals();
+        let duration_ms = turn_started.elapsed().as_millis() as u64;
         let _ = self
             .tool_infra
             .bus
             .ui_event()
             .send(UiEvent::Completed {
                 tool_calls: turn_result.tool_call_count,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                total_tokens: usage.total_tokens,
+                cost: usage.cost,
+                cost_complete: usage.cost_complete,
+                duration_ms,
             })
             .await;
         let _ = self
@@ -329,6 +356,12 @@ where
             .turn()
             .send(TurnEvent::Completed {
                 tool_calls: turn_result.tool_call_count,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                total_tokens: usage.total_tokens,
+                cost: usage.cost,
+                cost_complete: usage.cost_complete,
+                duration_ms,
             })
             .await;
 

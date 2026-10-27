@@ -97,7 +97,15 @@ impl CoreRuntime for PermissionGateRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed { tool_calls: 0 })
+            .send(UiEvent::Completed {
+                tool_calls: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: None,
+                cost: None,
+                cost_complete: true,
+                duration_ms: 0,
+            })
             .await;
         self.finished.store(true, Ordering::SeqCst);
         self.active.store(false, Ordering::SeqCst);

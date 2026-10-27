@@ -33,7 +33,7 @@ pub(crate) use types::execution_error_for_kind;
 pub use types::{McpToolRegistry, ToolErrorKind, ToolHandlerError, ToolSource};
 
 // Export authz_gate types for permission resolvers
-pub use authz_gate::{AuthorizationFlowContext, enforce_authorization_for_tool_call};
+pub use authz_gate::{AuthorizationFlowContext, AuthzOutcome, enforce_authorization_for_tool_call};
 
 pub use resolve::is_builtin_tool_name;
 pub use resolve::resolve_fs_path_for_cwd;

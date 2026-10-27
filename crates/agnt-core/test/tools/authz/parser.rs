@@ -47,11 +47,11 @@ fn decision_timeout_secs_table() -> Result<()> {
 
     let cases: Vec<Case> = vec![
         (
-            "absent key keeps the 15s default",
+            "absent key keeps the 60s default",
             r#"
 "*" = "ask"
 "#,
-            Some(Duration::from_secs(15)),
+            Some(Duration::from_secs(60)),
             None,
         ),
         (
@@ -73,21 +73,21 @@ decision_timeout_secs = 0
             None,
         ),
         (
-            "negative seconds fall back to the 15s default",
+            "negative seconds fall back to the 60s default",
             r#"
 "*" = "ask"
 decision_timeout_secs = -5
 "#,
-            Some(Duration::from_secs(15)),
+            Some(Duration::from_secs(60)),
             Some("permissions.invalid.decision_timeout"),
         ),
         (
-            "non-integer seconds fall back to the 15s default",
+            "non-integer seconds fall back to the 60s default",
             r#"
 "*" = "ask"
 decision_timeout_secs = "soon"
 "#,
-            Some(Duration::from_secs(15)),
+            Some(Duration::from_secs(60)),
             Some("permissions.invalid.decision_timeout"),
         ),
     ];
@@ -149,8 +149,8 @@ fn safe_defaults_carry_the_decision_timeout() {
         let config = PermissionsConfig::safe_defaults(interactive);
         assert_eq!(
             config.decision_timeout(),
-            Some(Duration::from_secs(15)),
-            "safe defaults must carry the 15s decision timeout (interactive={interactive})"
+            Some(Duration::from_secs(60)),
+            "safe defaults must carry the 60s decision timeout (interactive={interactive})"
         );
     }
 }

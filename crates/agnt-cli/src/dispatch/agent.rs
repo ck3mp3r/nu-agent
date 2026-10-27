@@ -12,6 +12,7 @@ use agnt_core::conversation::runtime_build::{
     RuntimeBuildParams, apply_persona_config, apply_persona_model, build_preamble_cache,
     build_runtime,
 };
+use agnt_core::hooks::HookAgentContext;
 use agnt_core::session::resolver::{
     DefaultSessionResolver, SessionResolutionInput, SessionResolver,
 };
@@ -92,9 +93,14 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
     let cli_model_provided = args.model.is_some();
     let persona_resolution = resolve_persona_from_clap(agent_name, cli_name, &agents_config, &cwd)?;
     let persona = persona_resolution.persona;
+    let agent_slug = persona_resolution.agent_slug;
     let agent_identity = persona_resolution.agent_identity;
     let messaging_identity = persona_resolution.messaging_identity;
     let agent_permissions_overlay = persona_resolution.agent_permissions_overlay;
+
+    // The hook envelopes stamp the persona slug; the runtime fills in the model
+    // on construction and refreshes both cells on every switch.
+    let hook_context = HookAgentContext::default().with_persona(agent_slug);
 
     apply_persona_model(
         &mut config,
@@ -251,6 +257,7 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
         cwd: cwd.clone(),
         bus: bus.clone(),
         render_registry,
+        hook_context,
     })
     .await
     .map_err(Error::from)?;

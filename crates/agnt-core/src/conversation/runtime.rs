@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::bus::Bus;
+use crate::bus::{Bus, SessionEvent};
 use crate::hook::agent_hook::DoomLoopState;
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::SessionInfo;
@@ -133,11 +133,21 @@ where
     /// wire's total when it reports one, else input + output. Used by the
     /// hook's compaction threshold check and the model-switch gate.
     pub last_total_tokens: Arc<Mutex<Option<u64>>>,
+    /// The session's cumulative LLM usage: every turn's calls accumulate here,
+    /// and the cells reset only when the runtime switches sessions. The
+    /// `session_ended` event reports these totals.
+    pub session_usage: crate::hook::TurnUsage,
     /// Shared cancellation bus threaded through the turn pipeline.
     pub bus: crate::bus::Bus,
     /// Per-tool call-line render functions, populated at builtin registration
     /// time and threaded to the hook chain via `ToolInfra`.
     pub render_registry: crate::tools::handler::builtin_tool::ToolRenderRegistry,
+    /// The agent snapshot every hook envelope is stamped with.
+    ///
+    /// Shared with the hook runners, which read it when they build an envelope.
+    /// The constructor writes the model identity; `switch_model` and
+    /// `switch_agent` refresh both cells from the post-switch state.
+    pub hook_context: crate::hooks::HookAgentContext,
     // ── Domain managers ──────────────────────────────────────────────────────
     pub provider: Prov,
     pub tools: Tools,
@@ -235,6 +245,8 @@ where
                     output_repetition: Arc::clone(&self.output_repetition),
                     repetition_guard: self.repetition_guard,
                     last_total_tokens: Arc::clone(&self.last_total_tokens),
+                    turn_usage: crate::hook::TurnUsage::default(),
+                    session_usage: self.session_usage.clone(),
                     bus: self.bus.clone(),
                     render_registry: self.render_registry.clone(),
                     cwd: self.cwd.clone(),
@@ -394,6 +406,9 @@ where
     Multi: MultiAgentManager + Send,
 {
     async fn switch_model(&mut self, model_spec: &str) -> Result<(String, Option<u64>), String> {
+        // The identity in use before the switch, so the switch event can report
+        // where the session came from.
+        let from = self.active_model_identity();
         // Keep the previous config so a switch the session does not fit can be
         // rolled back: the resolver has already committed the new one.
         let previous_config = self.provider.provider_config().clone();
@@ -426,6 +441,19 @@ where
         // The threshold is an absolute token count, so it must follow the new
         // model's context window.
         self.refresh_compaction_threshold();
+        // Hook envelopes follow the active model.
+        self.hook_context.set_model(self.active_model_identity());
+        // Every successful switch publishes, so a hook observes the change. The
+        // send is best effort: the switch already took effect, and a closed bus
+        // must not undo it. Both failure returns above sit before this point.
+        let _ = self
+            .bus
+            .session()
+            .send(SessionEvent::ModelSwitched {
+                from,
+                to: self.active_model_identity(),
+            })
+            .await;
         // Record the new model on the session so a listing shows it. The write
         // is best effort: the switch already took effect, and a store that
         // cannot be written must not undo it.
@@ -449,6 +477,12 @@ where
     }
 
     async fn switch_agent(&mut self, agent_name: &str) -> Result<String, String> {
+        // The persona in use before the switch, so the switch event can report
+        // where the session came from. `None` when no persona was loaded.
+        let agent_from = self.hook_context.persona();
+        // The identity the persona's model override replaced, when one took
+        // effect. The override is published as its own switch event.
+        let mut model_from: Option<String> = None;
         let cwd = self
             .mcp_state
             .mcp_caller_cwd()
@@ -464,6 +498,7 @@ where
             // Keep the previous config so a persona model the session does not
             // fit can be rolled back: the persona's other settings still apply.
             let previous_config = self.provider.provider_config().clone();
+            let pre_override_model = self.active_model_identity();
             let switched = self.provider.switch_model(&model).is_ok();
             let consumed = *self.last_total_tokens.lock().expect("model mutex poisoned");
             let blocked = match (switched, consumed, self.max_context_tokens()) {
@@ -484,6 +519,13 @@ where
                 // persona's model serves the next turn (mirrors switch_model).
                 *self.dyn_model.lock().expect("model mutex poisoned") = new_model;
                 self.refresh_compaction_threshold();
+            }
+            // The override took effect when the provider accepted it and the
+            // window gate did not roll it back: the persona's model is what the
+            // session now runs, so it is its own switch event. A dyn-model
+            // rebuild failure does not undo that: the config already committed.
+            if switched && blocked.is_none() {
+                model_from = Some(pre_override_model);
             }
         }
 
@@ -533,6 +575,36 @@ where
         // Invalidate cached client to pick up any changes
         self.provider.invalidate_cache();
 
+        // Hook envelopes follow the new persona slug and the model it resolved
+        // to: `switch_agent` applies the persona's model override, so both
+        // cells are read from the post-switch state.
+        self.hook_context.set_persona(Some(agent_name.to_string()));
+        self.hook_context.set_model(self.active_model_identity());
+
+        // Every successful switch publishes, so a hook observes the change.
+        // Both sends are best effort: the switch already took effect. A persona
+        // whose model override took effect changed two facts, so it publishes
+        // two events — the agent first, then the model — and each envelope
+        // reports the post-switch state it was stamped from.
+        let _ = self
+            .bus
+            .session()
+            .send(SessionEvent::AgentSwitched {
+                from: agent_from,
+                to: agent_name.to_string(),
+            })
+            .await;
+        if let Some(from) = model_from {
+            let _ = self
+                .bus
+                .session()
+                .send(SessionEvent::ModelSwitched {
+                    from,
+                    to: self.active_model_identity(),
+                })
+                .await;
+        }
+
         Ok(result.identity)
     }
 
@@ -576,6 +648,8 @@ where
         let prefix = crate::session::prefix::dir_prefix(&self.cwd);
         let new_id = format!("{prefix}-{new_id}");
         self.final_session_id = Some(new_id);
+        // A new session starts with no usage of its own.
+        self.session_usage.reset();
     }
 
     fn seed_last_total_tokens(&mut self, tokens: Option<u64>) {
@@ -602,6 +676,10 @@ where
 
     fn current_session_id(&self) -> Option<&str> {
         self.final_session_id.as_deref()
+    }
+
+    fn session_usage(&self) -> crate::hook::TurnUsageTotals {
+        self.session_usage.totals()
     }
 
     async fn run_compaction(&mut self, source: &str) -> Result<(), String> {
@@ -654,6 +732,9 @@ where
         self.session.clear();
         self.final_session_id = Some(matched_id.clone());
         self.session.inner_memory().warn_repairs(&matched_id);
+        // The switch starts a new session's usage: the totals cover the
+        // session the runtime is attached to, not the one it left.
+        self.session_usage.reset();
 
         Ok(crate::session::resolver::hydrate_transcript_messages(
             &messages, &self.cwd,
@@ -716,6 +797,9 @@ where
         self.session.clear();
         self.final_session_id = Some(session_id.to_string());
         self.session.inner_memory().warn_repairs(session_id);
+        // The attach starts a new session's usage: the totals cover the
+        // session the runtime is attached to, not the one it left.
+        self.session_usage.reset();
 
         Ok(crate::session::resolver::hydrate_transcript_messages(
             &messages, &self.cwd,
@@ -772,8 +856,8 @@ where
     /// Return a clone of the interactive-mode pending-decision map.
     ///
     /// The orchestrator's main thread calls this before spawning the worker so it
-    /// can hold its own `Arc` clone and call `submit_decision` (or directly manipulate
-    /// the map) when the user delivers a permission decision through the TUI.
+    /// can hold its own `Arc` clone and manipulate the map when the user delivers
+    /// a permission decision through the TUI (see `PermissionStage`).
     ///
     /// Returns `None` in TTY mode.
     pub fn interactive_pending_arc(&self) -> Option<PendingPermissions> {

@@ -27,6 +27,7 @@ async fn dispatch_completed_turn_emits_the_assistant_message_when_no_deltas() ->
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
+            std::time::Instant::now(),
         )
         .await
         .map_err(|e| format!("a completed turn must not be an error: {e}"))?;
@@ -78,6 +79,7 @@ async fn dispatch_completed_turn_skips_the_assistant_message_when_deltas_were_em
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
+            std::time::Instant::now(),
         )
         .await
         .map_err(|e| format!("a completed turn must not be an error: {e}"))?;
@@ -120,6 +122,7 @@ async fn dispatch_completed_turn_without_a_session_skips_token_tracking() -> Res
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             None,
+            std::time::Instant::now(),
         )
         .await
         .map_err(|e| format!("a completed turn must not be an error: {e}"))?;

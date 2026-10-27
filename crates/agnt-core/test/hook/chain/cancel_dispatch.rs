@@ -109,6 +109,8 @@ fn build_hook<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
             },
             model: MockCompletionModel::default().erase(),
             last_total_tokens: Arc::new(Mutex::new(None)),
+            turn_usage: crate::hook::TurnUsage::default(),
+            session_usage: crate::hook::TurnUsage::default(),
         },
     )
 }

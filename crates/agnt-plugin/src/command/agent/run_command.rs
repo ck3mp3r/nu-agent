@@ -17,6 +17,7 @@ use agnt_core::{
         builder::BuildInput,
         runtime_build::{RuntimeBuildParams, build_runtime},
     },
+    hooks::HookAgentContext,
     session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
     tools::{closure::EngineInterfaceLike, handler::McpToolRegistry},
 };
@@ -146,9 +147,14 @@ pub(super) fn run_command(
         &mut config,
     )?;
     let persona = persona_resolution.persona;
+    let agent_slug = persona_resolution.agent_slug;
     let agent_identity = persona_resolution.agent_identity;
     let messaging_identity = persona_resolution.messaging_identity;
     let agent_permissions_overlay = persona_resolution.agent_permissions_overlay;
+
+    // The hook envelopes stamp the persona slug; the runtime fills in the model
+    // on construction and refreshes both cells on every switch.
+    let hook_context = HookAgentContext::default().with_persona(agent_slug);
 
     // 3. Apply persona model (resolves heavy/light role, replaces config)
     super::runtime_build::apply_persona_model(
@@ -320,6 +326,7 @@ pub(super) fn run_command(
             cwd: cwd.clone(),
             bus: bus.clone(),
             render_registry,
+            hook_context,
         })
         .await?;
         log::debug!(

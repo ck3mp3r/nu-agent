@@ -124,6 +124,10 @@ where
                     output_repetition: self.tool_infra.output_repetition.clone(),
                     repetition_guard: self.tool_infra.repetition_guard,
                     last_total_tokens: self.tool_infra.last_total_tokens.clone(),
+                    // A retry is still the same turn: its calls accumulate into
+                    // the same cells, so the turn's sums cover every attempt.
+                    turn_usage: self.tool_infra.turn_usage.clone(),
+                    session_usage: self.tool_infra.session_usage.clone(),
                     bus: self.tool_infra.bus.clone(),
                     render_registry: self.tool_infra.render_registry.clone(),
                     cwd: self.tool_infra.cwd.clone(),

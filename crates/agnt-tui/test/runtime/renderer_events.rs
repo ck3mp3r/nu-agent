@@ -14,7 +14,15 @@ fn runtime_renderer_forwarding_by_mode() -> Result<()> {
     // -- Exec
     tui_active.emit(&UiEvent::LlmStarted);
     tui_active.emit(&UiEvent::Tick);
-    tui_active.emit(&UiEvent::Completed { tool_calls: 0 });
+    tui_active.emit(&UiEvent::Completed {
+        tool_calls: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: None,
+        cost: None,
+        cost_complete: true,
+        duration_ms: 0,
+    });
 
     // -- Check: nothing is forwarded.
     assert!(events.lock().expect("events").is_empty());
@@ -56,7 +64,15 @@ fn runtime_renderer_forwarding_by_mode() -> Result<()> {
         delta: "response".to_string(),
         text: "response".to_string(),
     });
-    payload.emit(&UiEvent::Completed { tool_calls: 1 });
+    payload.emit(&UiEvent::Completed {
+        tool_calls: 1,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: None,
+        cost: None,
+        cost_complete: true,
+        duration_ms: 0,
+    });
 
     // -- Check: nothing is forwarded.
     assert!(events.lock().expect("events").is_empty());
@@ -200,7 +216,15 @@ async fn tick_and_completed_events_update_status_only() -> Result<()> {
     // -- Exec
     driver
         .coordinator_mut()
-        .enqueue_ui_event(UiEvent::Completed { tool_calls: 0 });
+        .enqueue_ui_event(UiEvent::Completed {
+            tool_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        });
     driver.coordinator_mut().drain_transport();
 
     // -- Check
@@ -222,8 +246,15 @@ async fn tick_and_completed_events_update_status_only() -> Result<()> {
     assert!(status_lines.join("\n").contains("(busy)"));
 
     // -- Exec
-    busy.coordinator_mut()
-        .enqueue_ui_event(UiEvent::Completed { tool_calls: 0 });
+    busy.coordinator_mut().enqueue_ui_event(UiEvent::Completed {
+        tool_calls: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: None,
+        cost: None,
+        cost_complete: true,
+        duration_ms: 0,
+    });
     busy.coordinator_mut().drain_transport();
 
     // -- Check: the status area reports idle; the input line is not polluted.

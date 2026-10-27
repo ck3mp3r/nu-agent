@@ -17,8 +17,9 @@ use agent_client_protocol::schema::v1::{
     SessionId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
 use agent_client_protocol::{Client, ConnectionTo};
+use agnt_core::bus::UiEventTx;
 use agnt_core::conversation::runtime::PendingPermissions;
-use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
+use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
 
 use crate::error::Result;
 use crate::translator::content_from_display;
@@ -88,6 +89,7 @@ pub struct AcpPermissionBridge<S: PermissionRequestSink> {
     session_id: String,
     pending: PendingPermissions,
     denied: HashSet<String>,
+    ui_events: Option<UiEventTx>,
 }
 
 // endregion: --- Types
@@ -103,7 +105,18 @@ impl<S: PermissionRequestSink> AcpPermissionBridge<S> {
             session_id: session_id.into(),
             pending,
             denied: HashSet::new(),
+            ui_events: None,
         }
+    }
+
+    /// Publish ignored decisions on `ui_events`.
+    ///
+    /// Without this builder the bridge stays silent: a decision for a request
+    /// that is no longer pending is dropped, as it was before the event
+    /// existed.
+    pub fn with_ui_events(mut self, ui_events: UiEventTx) -> Self {
+        self.ui_events = Some(ui_events);
+        self
     }
 
     /// Ask the client to authorize the tool call described by `context` and
@@ -133,6 +146,17 @@ impl<S: PermissionRequestSink> AcpPermissionBridge<S> {
         };
         if let Some(tx) = self.pending.lock().unwrap().remove(request_id) {
             let _ = tx.send(decision);
+        } else if let Some(ui_events) = &self.ui_events {
+            // The request timed out, was cancelled, or was already resolved.
+            // The decision is dropped, so publish the drop to make it
+            // observable. The payload carries no decision: correlate with the
+            // earlier `permission_requested` event by `request_id`.
+            let _ = ui_events
+                .send(UiEvent::PermissionDecisionIgnored {
+                    request_id: request_id.to_string(),
+                    reason: REASON_REQUEST_NOT_PENDING.to_string(),
+                })
+                .await;
         }
         Ok(decision)
     }
@@ -159,6 +183,12 @@ impl<S: PermissionRequestSink> AcpPermissionBridge<S> {
 // endregion: --- AcpPermissionBridge Impl
 
 // region:    --- Support
+
+/// The only reason a submitted decision is ignored in v1.
+///
+/// The bridge cannot tell a timeout from a cancel from an already-resolved
+/// request, so the reason set is closed at this one value.
+const REASON_REQUEST_NOT_PENDING: &str = "request_not_pending";
 
 /// Option id for "allow this call once".
 const OPTION_ALLOW_ONCE: &str = "allow-once";

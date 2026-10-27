@@ -2,7 +2,7 @@
 #[path = "../../test/renderer/contract.rs"]
 mod contract_test;
 #[cfg(test)]
-#[path = "../../test/renderer/streaming.rs"]
+#[path = "../../test/renderer/streaming/test.rs"]
 mod streaming_test;
 pub mod tty;
 #[cfg(test)]
@@ -274,6 +274,36 @@ impl<W: Write> StderrUiRenderer<W> {
                     ))
                 }
             }
+            UiEvent::PermissionRequestCancelled {
+                request_id,
+                matched_rule_identity,
+            } => {
+                if self.policy.quiet {
+                    None
+                } else {
+                    Some(format!(
+                        "permission request cancelled: request_id={request_id} rule={matched_rule_identity}"
+                    ))
+                }
+            }
+            UiEvent::PermissionAutoResolved {
+                matched_rule_identity,
+                action,
+                reason,
+            } => {
+                if self.policy.quiet {
+                    None
+                } else {
+                    Some(match reason {
+                        Some(reason) => format!(
+                            "permission auto-resolved: rule={matched_rule_identity} action={action} reason={reason}"
+                        ),
+                        None => format!(
+                            "permission auto-resolved: rule={matched_rule_identity} action={action}"
+                        ),
+                    })
+                }
+            }
             UiEvent::Warning { message } => {
                 if self.policy.verbosity >= Verbosity::VeryVerbose {
                     Some(format!("warning: {message}"))
@@ -334,7 +364,7 @@ impl<W: Write> StderrUiRenderer<W> {
                     ))
                 }
             }
-            UiEvent::Completed { tool_calls } => {
+            UiEvent::Completed { tool_calls, .. } => {
                 if self.policy.quiet {
                     None
                 } else {

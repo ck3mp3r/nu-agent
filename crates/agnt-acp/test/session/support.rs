@@ -16,7 +16,7 @@ pub(super) use agent_client_protocol::schema::v1::{
 };
 pub(super) use agent_client_protocol::{Agent, Channel, Client, ConnectionTo};
 pub(super) use agnt_core::bus::{
-    Bus, CancelEvent, OneshotTx, SessionEvent, TurnEvent, TurnRx, create_bus,
+    Bus, CancelEvent, CompactionEvent, OneshotTx, SessionEvent, TurnEvent, TurnRx, create_bus,
 };
 pub(super) use agnt_core::compaction::CompactionParams;
 pub(super) use agnt_core::config::{AgentsConfig, Config, ModelsCache, defaults};
@@ -54,11 +54,57 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// `captured_client_fs` is set, every build records the `client_fs` it received.
 /// When `captured_agent_name` is set, every build records the `agent_name` it
 /// received.
-#[derive(Default)]
 pub(super) struct MockRuntimeBuilder {
     captured_client_fs: Option<Arc<Mutex<Vec<Option<ClientFsState>>>>>,
     captured_agent_name: Option<Arc<Mutex<Vec<Option<String>>>>>,
     bus: Option<Bus>,
+    /// Usage to seed into the runtime of the session with this id, so a test
+    /// can give two sessions distinct cumulative totals.
+    usage_for_session: Option<(String, u64, u64)>,
+    /// How many streaming turns the mock model scripts. One serves the prompt
+    /// turn; a test that also runs a compaction scripts a second for the
+    /// summarizer, which shares the model.
+    stream_turns: usize,
+    /// The chain's auto-compaction threshold. `None` disables the decision.
+    threshold_tokens: Option<usize>,
+}
+
+impl Default for MockRuntimeBuilder {
+    fn default() -> Self {
+        Self {
+            captured_client_fs: None,
+            captured_agent_name: None,
+            bus: None,
+            usage_for_session: None,
+            stream_turns: 1,
+            threshold_tokens: None,
+        }
+    }
+}
+
+impl MockRuntimeBuilder {
+    /// Seed `input`/`output` tokens into the runtime of `session_id`.
+    pub(super) fn with_usage_for_session(
+        mut self,
+        session_id: &str,
+        input: u64,
+        output: u64,
+    ) -> Self {
+        self.usage_for_session = Some((session_id.to_string(), input, output));
+        self
+    }
+
+    /// Script `turns` streaming turns on the mock model.
+    pub(super) fn with_stream_turns(mut self, turns: usize) -> Self {
+        self.stream_turns = turns;
+        self
+    }
+
+    /// Set the chain's auto-compaction threshold, so a turn can trip it.
+    pub(super) fn with_threshold_tokens(mut self, tokens: usize) -> Self {
+        self.threshold_tokens = Some(tokens);
+        self
+    }
 }
 
 impl RuntimeBuilder for MockRuntimeBuilder {
@@ -71,10 +117,11 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             mcp_servers: _,
             config_path: _,
             runtime_handle,
-            store_type,
+            rig,
             session_id,
             client_fs,
             agent_name,
+            hook_context,
         } = params;
         if let Some(captured) = &self.captured_client_fs {
             captured.lock().unwrap().push(client_fs);
@@ -84,12 +131,27 @@ impl RuntimeBuilder for MockRuntimeBuilder {
         }
 
         let bus = self.bus.clone().unwrap_or_else(create_bus);
+        // A test can seed this session's cumulative usage, so two sessions can
+        // carry distinct totals.
+        let session_usage = agnt_core::hook::TurnUsage::default();
+        if let Some((id, input, output)) = &self.usage_for_session
+            && session_id.as_deref() == Some(id.as_str())
+        {
+            session_usage.add_call(*input, *output, Some(input + output), None, false);
+        }
         // The turn path always streams, so the model must script a streaming
         // turn: a unary-only script fails every prompt turn at the provider.
-        let model = MockCompletionModel::from_stream_turns([[
-            MockStreamEvent::Text("mock response".to_string()),
-            MockStreamEvent::final_response_with_default_usage(),
-        ]]);
+        // A test that also runs a compaction scripts one extra turn for the
+        // summarizer, which shares this model.
+        let script: Vec<Vec<MockStreamEvent>> = (0..self.stream_turns)
+            .map(|_| {
+                vec![
+                    MockStreamEvent::Text("mock response".to_string()),
+                    MockStreamEvent::final_response_with_default_usage(),
+                ]
+            })
+            .collect();
+        let model = MockCompletionModel::from_stream_turns(script);
         let compactor_model = model.clone();
         let config = Config {
             provider: "ollama".to_string(),
@@ -139,7 +201,7 @@ impl RuntimeBuilder for MockRuntimeBuilder {
                 SessionGrantCache::default(),
                 String::new(),
             ),
-            session: MemoryState::new(agnt_core::session::RigStoreConfig::new(store_type)),
+            session: MemoryState::new(rig),
             persona: PersonaState::new(None, None, None, None, None, None, None),
             multi_agent: MultiAgentState::new(Vec::new(), AgentsConfig::default()),
             cwd,
@@ -150,13 +212,15 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
             repetition_guard: defaults::REPETITION_GUARD_ENABLED,
             last_total_tokens: Arc::new(Mutex::new(None)),
+            session_usage,
             bus,
             render_registry: ToolRenderRegistry::default(),
+            hook_context,
             dyn_model: Arc::new(Mutex::new(dyn_model)),
             compaction: CompactionConfig {
                 compactor,
                 params: CompactionParams::default(),
-                threshold_tokens: None,
+                threshold_tokens: self.threshold_tokens,
                 threshold_pct: defaults::PROACTIVE_THRESHOLD_PCT,
             },
         })
@@ -190,6 +254,20 @@ pub(super) async fn manager(dir: &Path) -> Result<AcpSessionManager<MockRuntimeB
         dir.join("config.toml"),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder::default(),
+    ))
+}
+
+/// A manager whose runtime builder is `builder`, so a test can configure the
+/// mock model's script and the chain's compaction threshold.
+pub(super) async fn manager_with_builder(
+    dir: &Path,
+    builder: MockRuntimeBuilder,
+) -> Result<AcpSessionManager<MockRuntimeBuilder>> {
+    Ok(AcpSessionManager::with_runtime_builder(
+        rig_config(dir),
+        dir.join("config.toml"),
+        tokio::runtime::Handle::current(),
+        builder,
     ))
 }
 
@@ -233,6 +311,29 @@ pub(super) async fn manager_with_bus_and_rig_store(
             bus: Some(bus),
             ..MockRuntimeBuilder::default()
         },
+    );
+    Ok((manager, rig))
+}
+
+/// A manager whose builder seeds `input`/`output` tokens into the runtime of
+/// `session_id`, so two sessions can carry distinct cumulative totals.
+pub(super) async fn manager_with_usage_for_session(
+    dir: &Path,
+    bus: Bus,
+    session_id: &str,
+    input: u64,
+    output: u64,
+) -> Result<(AcpSessionManager<MockRuntimeBuilder>, RigStoreConfig)> {
+    let rig = rig_config(dir);
+    let manager = AcpSessionManager::with_runtime_builder(
+        rig.clone(),
+        dir.join("config.toml"),
+        tokio::runtime::Handle::current(),
+        MockRuntimeBuilder {
+            bus: Some(bus),
+            ..MockRuntimeBuilder::default()
+        }
+        .with_usage_for_session(session_id, input, output),
     );
     Ok((manager, rig))
 }

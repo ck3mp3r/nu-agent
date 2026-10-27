@@ -325,7 +325,7 @@ Fields:
 
 #### Hook events
 
-Eight event names are valid, in two classes.
+Nineteen event names are valid, in two classes.
 
 Session class — per-session events:
 
@@ -335,13 +335,135 @@ Session class — per-session events:
 - `tool_completed`
 - `session_started`
 - `session_ended`
+- `permission_requested`
+- `permission_decision_timed_out`
+- `permission_decision_submitted`
+- `permission_decision_ignored`
+- `permission_request_cancelled`
+- `permission_auto_resolved`
+- `compaction_started` — fires when a context compaction begins, with its source.
+- `compaction_completed` — fires when compaction finishes, with a summary preview.
+- `compaction_failed` — fires when compaction errors, with the message.
+- `agent_switched` — fires when a user switches the persona, with the slug it left and the slug now active.
+- `model_switched` — fires when a user switches the model, with the identity it left and the identity now active.
 
 Agent class — per-process events:
 
 - `agent_started`
 - `agent_shutdown`
 
-A hook that declares only session-class events runs on the session hook runner. A hook that declares only agent-class events runs on the process-wide agent hook runner. A hook that declares both runs on both runners.
+A hook that declares only session-class events runs on the session hook runner. A hook that declares only agent-class events runs on the process-wide agent hook runner. A hook that declares both runs on both runners. The class is not derivable from the name: `agent_switched` is session-class because a switch belongs to one session, while the `agent_` prefix marks per-process events only for `agent_started` and `agent_shutdown`.
+
+#### The `permission_requested` event
+
+`permission_requested` fires when the agent asks the user to approve a tool call. It fires once per prompt, after the agent publishes the request and before the user answers.
+
+The event fires in TUI mode and in ACP mode. It never fires in stderr mode: that mode resolves permissions by policy and never prompts.
+
+Payload fields:
+
+- `request_id` — the prompt's identifier.
+- `tool` — the tool's display name.
+- `tool_key` — the exact call key, `{tool_name}\n{raw_arguments}`.
+- `source` — the tool's source.
+- `mode` — the call's `mode` argument, or null.
+- `matched_rule_identity` — the rule that produced the prompt.
+- `scope` — the rule's scope.
+- `target_field` — the argument field the rule matched, or null.
+- `pattern` — the rule's pattern.
+- `summary` — the one-line summary shown on the card.
+
+The payload carries no rendered preview. The card's diff preview is a UI artifact and is not part of the envelope.
+
+#### The switch events
+
+`agent_switched` fires when the user switches the persona. `model_switched` fires when the user switches the model. Both fire after the switch took effect, and both carry the session id they belong to.
+
+The events fire in TUI interactive mode, from the agent and model pickers, and in ACP mode, from the client's config options. They never fire in stderr mode, TUI single-turn, or the plugin: none of those has a switch path. In ACP the startup default-agent load is not a switch, and it publishes before the session hook runner subscribes, so no hook observes it.
+
+Payload fields:
+
+- `from` — the value in use before the switch. For `agent_switched` it is a persona slug, or null when the session had no persona. For `model_switched` it is a `provider/model` identity and is always present.
+- `to` — the value now active: the persona slug or the `provider/model` identity.
+
+Re-selecting the current value still counts as a switch, so the payload reports `from` equal to `to`. The envelope's `agent` and `model` fields report the post-switch state, because the runner stamps them after the switch.
+
+A persona switch whose model override takes effect emits `agent_switched` before `model_switched` on the same channel: two user-meaningful facts changed, so a hook sees two invocations.
+
+#### The `permission_decision_timed_out` event
+
+`permission_decision_timed_out` fires when an unanswered permission card reaches its decision timeout. The agent then auto-denies the call. See `decision_timeout_secs` under [Permissions](#permissions).
+
+The event fires in TUI mode and in ACP mode. It never fires in stderr mode: that mode resolves permissions by policy and never prompts.
+
+Payload fields:
+
+- `request_id` — the timed-out prompt's identifier. It matches the `request_id` of the earlier `permission_requested` event for the same card.
+
+The payload carries no tool identity. Correlate with the `permission_requested` event by `request_id`.
+
+#### The `permission_decision_submitted` event
+
+`permission_decision_submitted` fires when a decision reaches the permission resolver for a prompted request. It fires once per answered card, before the agent applies the decision.
+
+The event fires in TUI mode and in ACP mode. It never fires in stderr mode: that mode resolves permissions by policy and never prompts.
+
+The event reports every decision that reaches the resolver, whatever its origin. The payload carries no origin field. These all arrive as a submitted decision:
+
+- the TUI user's answer to the card
+- the ACP client's answer to the `session/request_permission` prompt
+- an ACP reject-always memory deny, which the bridge answers without prompting
+- the ACP drain-end forced deny, which the bridge answers when the session drains
+
+A request that times out or is cancelled publishes no submitted event. Those paths return before the decision funnel, so `permission_decision_timed_out` owns the timeout moment and `permission_request_cancelled` owns the cancel moment.
+
+Payload fields:
+
+- `request_id` — the answered prompt's identifier. It matches the `request_id` of the earlier `permission_requested` event for the same card.
+- `decision` — `"allow_once"`, `"allow_always"`, or `"deny"`.
+- `matched_rule_identity` — the rule that produced the prompt. It matches the `matched_rule_identity` of the earlier `permission_requested` event for the same card.
+
+#### The `permission_decision_ignored` event
+
+`permission_decision_ignored` fires when a decision is submitted for a request that is no longer pending. The request timed out, was cancelled, was already resolved, or its turn ended. The agent drops the decision, so the event makes the drop observable.
+
+The event fires in TUI mode and in ACP mode. It never fires in stderr mode: that mode resolves permissions by policy, never prompts, and so has no decision submission path.
+
+Payload fields:
+
+- `request_id` — the dropped decision's request identifier. It matches the `request_id` of the earlier `permission_requested` event for the same card.
+- `reason` — why the decision was dropped. The v1 reason set is closed: `"request_not_pending"` is the only value. Neither emission site can tell a timeout from a cancel from an already-resolved request, so the event states only that the request was not pending.
+
+The payload carries no decision and no tool identity. Correlate with the `permission_requested` event by `request_id`.
+
+#### The `permission_request_cancelled` event
+
+`permission_request_cancelled` fires when the turn is cancelled while a permission prompt is open. The agent abandons the pending request and denies the call, so the event makes the abandoned prompt observable.
+
+The event fires in TUI mode and in ACP mode. It never fires in stderr mode: that mode resolves permissions by policy and never prompts.
+
+Payload fields:
+
+- `request_id` — the abandoned prompt's identifier. It matches the `request_id` of the earlier `permission_requested` event for the same card.
+- `matched_rule_identity` — the rule that produced the prompt. It matches the `matched_rule_identity` of the earlier `permission_requested` event for the same card.
+
+The payload carries no decision: no decision exists at the moment of the cancel. Correlate with the `permission_requested` event by `request_id`.
+
+#### The `permission_auto_resolved` event
+
+`permission_auto_resolved` fires when the policy resolves a tool call without prompting the user. The agent then executes the call or blocks it, and the event makes that policy decision observable.
+
+The event fires in all three modes. It is the only permission event that fires in stderr mode: that mode resolves every call by policy and never prompts. In TUI and ACP mode it fires for every call the policy resolves without a prompt; a call the policy sends to the prompt publishes `permission_requested` instead.
+
+Payload fields:
+
+- `matched_rule_identity` — the rule that resolved the call.
+- `action` — `"allow"` or `"deny"`.
+- `reason` — the rule-derived denial reason, or null. It is set only when `action` is `"deny"`.
+
+The payload carries no tool identity. `tool_started` precedes this event on the same channel, so a hook correlates by order or subscribes to both events.
+
+**Volume and opt-in.** The event fires once per policy-resolved tool call: every tool call in stderr mode, and every non-asked call in TUI and ACP mode. A hook that declares it runs a subprocess for each of those calls. The subprocess spawns only when the hook declares `permission_auto_resolved` in `events`, so a hook that does not declare it pays nothing. Declare it only for hooks that need the policy decision itself, and keep the handler short.
 
 #### Validation errors
 
@@ -352,7 +474,7 @@ The agent rejects `config.toml` at load time when:
 - an entry has an empty or missing `script`
 - an entry has no `events` array
 - an event name is not a string
-- an event name is not one of the eight names above
+- an event name is not one of the seventeen names above
 
 The error names the hook and the offending event, and lists the valid names. A hook that fails to resolve at runtime is logged and skipped. Hooks never block a turn.
 
@@ -369,7 +491,7 @@ grep = "allow"
 edit = "ask"
 http = "ask"
 skill = "ask"
-decision_timeout_secs = 15   # auto-deny an unanswered card after 15s; 0 waits forever
+decision_timeout_secs = 60   # auto-deny an unanswered card after 60s; 0 waits forever
 ```
 
 ### Actions
@@ -384,7 +506,7 @@ decision_timeout_secs = 15   # auto-deny an unanswered card after 15s; 0 waits f
 
 ### Decision timeout
 
-`decision_timeout_secs` sets how long an interactive permission card waits for a decision before it auto-denies. The default is `15`. `0` waits forever.
+`decision_timeout_secs` sets how long an interactive permission card waits for a decision before it auto-denies. The default is `60`. `0` waits forever.
 
 A timeout is a denial, not a turn failure: the tool is skipped, the turn continues, and an A2A caller receives a completed task whose answer explains the denial. The timeout applies to every card, including cards from user-submitted turns. Raise the value to read longer, or set `0` to restore wait-forever behavior.
 

@@ -25,7 +25,8 @@ use agnt_core::bus::{AgentEvent, AgentTx, Bus, TurnEvent};
 use agnt_core::config::{PluginConfig, ResolvedHook};
 use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::hooks::{
-    HOOK_DRAIN_TIMEOUT, HookProcess, NuProcess, spawn_agent_hook_runner, spawn_hook_runner,
+    HOOK_DRAIN_TIMEOUT, HookAgentContext, HookProcess, NuProcess, spawn_agent_hook_runner,
+    spawn_hook_runner,
 };
 use agnt_core::protocol::contracts::UiMessageSnapshot;
 use agnt_core::protocol::session_management::SessionPersistence;
@@ -93,11 +94,12 @@ pub struct TuiModeOptions {
 /// Returns the spawned tasks, empty when no hooks are configured — the zero-hook
 /// case costs nothing and touches no file. A hook config that fails to resolve
 /// is logged and skipped: hooks are observe-only, so a bad entry never blocks
-/// the turn.
+/// the turn. `context` is the agent snapshot every envelope is stamped with.
 pub fn spawn_configured_hooks<P>(
     config: Option<&PluginConfig>,
     bus: &Bus,
     cwd: &Path,
+    context: &HookAgentContext,
     process: P,
 ) -> Vec<JoinHandle<()>>
 where
@@ -108,7 +110,7 @@ where
         return Vec::new();
     }
     log::debug!("Starting {} hook runner(s)", hooks.len());
-    spawn_hook_runner(bus, &hooks, cwd, process)
+    spawn_hook_runner(bus, &hooks, cwd, context, process)
 }
 
 /// Resolve the configured hooks, or an empty list when the config is absent or
@@ -168,8 +170,9 @@ pub fn spawn_configured_hooks_with_nu(
     config: Option<&PluginConfig>,
     bus: &Bus,
     cwd: &Path,
+    context: &HookAgentContext,
 ) -> Vec<JoinHandle<()>> {
-    spawn_configured_hooks(config, bus, cwd, NuProcess)
+    spawn_configured_hooks(config, bus, cwd, context, NuProcess)
 }
 
 /// Auto-complete an A2A task based on the LLM execution result.
@@ -259,12 +262,13 @@ impl AgentLifecycle {
         mode: &str,
         hooks: &[ResolvedHook],
         cwd: &Path,
+        context: &HookAgentContext,
         process: P,
     ) -> Self
     where
         P: HookProcess + Send + Sync + 'static + Clone,
     {
-        let handles = spawn_agent_hook_runner(&agent_tx, hooks, cwd, process);
+        let handles = spawn_agent_hook_runner(&agent_tx, hooks, cwd, context, process);
         log::debug!("Starting {} agent hook runner(s)", handles.len());
         let _ = agent_tx
             .send(AgentEvent::Started {
@@ -278,9 +282,22 @@ impl AgentLifecycle {
     }
 
     /// Publish `AgentEvent::Started` for `mode` with the configured hooks.
-    pub async fn start_configured(mode: &str, config: Option<&PluginConfig>, cwd: &Path) -> Self {
+    pub async fn start_configured(
+        mode: &str,
+        config: Option<&PluginConfig>,
+        cwd: &Path,
+        context: &HookAgentContext,
+    ) -> Self {
         let hooks = resolve_hooks_or_empty(config);
-        Self::start(AgentTx::new("agent", 16), mode, &hooks, cwd, NuProcess).await
+        Self::start(
+            AgentTx::new("agent", 16),
+            mode,
+            &hooks,
+            cwd,
+            context,
+            NuProcess,
+        )
+        .await
     }
 
     /// Publish `AgentEvent::Shutdown` with `reason`.
