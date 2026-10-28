@@ -189,7 +189,7 @@ cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 80
 
 Upload `lcov.info` to Codecov or Coveralls. `--codecov` emits Codecov's custom JSON format instead, which carries region coverage that the LCOV path drops.
 
-The test job runs `cargo nextest run --features integration --profile ci`, which writes `junit.xml` for the CI test report. The lint job runs `cargo clippy --all-features --tests -- -D warnings` so integration test code is linted too.
+The test job runs `cargo nextest run --features integration --profile ci`, which writes `target/nextest/ci/junit.xml` for the CI test report. The lint job runs `cargo clippy --all-features --tests -- -D warnings` so integration test code is linted too.
 
 ## Merging runs
 
