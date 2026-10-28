@@ -447,6 +447,7 @@ pub fn assemble_tool_definitions(
     agents_config: &crate::config::AgentsConfig,
     discovered_mcp_tools: &[crate::tools::mcp::client::McpToolDefinition],
     cwd: &std::path::Path,
+    agents_dir: &std::path::Path,
     a2a_enabled: bool,
 ) -> Result<ToolAssembly, EmptyToolName> {
     let mut tool_definitions: Vec<ToolDefinition> = closure_registry
@@ -482,11 +483,11 @@ pub fn assemble_tool_definitions(
 
     let available_agents = {
         use crate::protocol::persona::{FsPersonaResolver, PersonaLister};
-        let cwd = cwd.to_path_buf();
-        let config_dir = crate::utils::xdg::config_dir()
-            .map(|base| base.join("nu-agent"))
-            .unwrap_or_default();
-        let resolver = FsPersonaResolver::new(cwd, config_dir, agents_config.clone());
+        let resolver = FsPersonaResolver::new(
+            cwd.to_path_buf(),
+            agents_dir.to_path_buf(),
+            agents_config.clone(),
+        );
         resolver.list_available()
     };
     // Old orchestrator tools removed in favour of A2A:
@@ -543,8 +544,6 @@ pub struct BuildInput<'a> {
     pub engine: Arc<dyn EngineInterfaceLike>,
     /// Span used for error labels (call.head in the binary).
     pub span: Span,
-    pub available_agents: &'a [PersonaSummary],
-    pub messaging_identity: Option<String>,
     pub tool_timeout: std::time::Duration,
     pub session: Option<&'a mut crate::session::Session>,
     pub max_tool_result_bytes: usize,
@@ -552,11 +551,13 @@ pub struct BuildInput<'a> {
     pub bus: Bus,
     /// Already-merged compaction config (defaults ← plugin config ← CLI flags).
     pub merged_compaction: CompactionConfig,
+    /// The resolved tool audit log file
+    /// ([`Paths::audit_log_path`](crate::config::Paths::audit_log_path)).
+    pub audit_log_path: PathBuf,
 }
 
 /// Artifacts produced by the builder's `build()` call.
 pub struct BuildArtifacts {
-    pub parent_name: Option<String>,
     pub merged_compaction: CompactionConfig,
     pub compaction_strategy: CompactionStrategy,
     pub compaction_params: CompactionParams,
@@ -582,8 +583,8 @@ impl<'a> AgentRuntimeBuilder<'a> {
 
     /// Register all tools and wire multi-agent infrastructure.
     ///
-    /// Returns `BuildArtifacts` containing the parent name,
-    /// merged compaction config, and resolved compaction strategy.
+    /// Returns `BuildArtifacts` containing the merged compaction config and
+    /// resolved compaction strategy.
     pub async fn build(self) -> Result<BuildArtifacts, LabeledError> {
         use crate::hook::adapter::closure::adapt_closures;
 
@@ -593,23 +594,22 @@ impl<'a> AgentRuntimeBuilder<'a> {
             cwd,
             engine,
             span,
-            available_agents: _,
-            messaging_identity: _,
             tool_timeout,
             session,
             max_tool_result_bytes,
             bus,
             merged_compaction,
+            audit_log_path,
         } = self.input;
 
-        // Create audit log directory ONCE before prompt loop
-        let log_dir = crate::utils::paths::data_app_dir()
-            .map_err(|e| LabeledError::new(format!("XDG data directory error: {e}")))?;
-        std::fs::create_dir_all(&log_dir)
-            .map_err(|e| LabeledError::new(format!("Failed to create audit log directory: {e}")))?;
-        let log_path = log_dir.join("tool_audit.log");
+        // Create the audit log directory ONCE before the prompt loop
+        if let Some(log_dir) = audit_log_path.parent() {
+            std::fs::create_dir_all(log_dir).map_err(|e| {
+                LabeledError::new(format!("Failed to create audit log directory: {e}"))
+            })?;
+        }
 
-        let audit_logger = Arc::new(AuditLogger::new(log_path));
+        let audit_logger = Arc::new(AuditLogger::new(audit_log_path));
         let tool_executor = ToolExecutor::new(engine, audit_logger, tool_timeout);
 
         // Register closure tools with the ToolServer
@@ -663,7 +663,6 @@ impl<'a> AgentRuntimeBuilder<'a> {
         }
 
         Ok(BuildArtifacts {
-            parent_name: None,
             merged_compaction,
             compaction_strategy,
             compaction_params,

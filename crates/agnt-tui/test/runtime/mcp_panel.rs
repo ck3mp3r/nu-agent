@@ -8,6 +8,9 @@
 #[path = "mcp_panel/details_layout.rs"]
 mod details_layout;
 
+#[path = "mcp_panel/frame_repaint.rs"]
+mod frame_repaint;
+
 #[path = "mcp_panel/selected_details.rs"]
 mod selected_details;
 

@@ -5,6 +5,9 @@
 
 // region:    --- Modules
 
+#[path = "stage/agent_picker.rs"]
+mod agent_picker;
+
 #[path = "stage/concurrent.rs"]
 mod concurrent;
 

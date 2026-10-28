@@ -39,7 +39,9 @@ fn cross_thread_request_is_visible_to_consumer() -> Result<()> {
 
     let producer = thread::spawn(move || {
         controller_for_thread.request_cancel();
-        tx.send(()).expect("send completion signal");
+        // The receiver's bounded wait carries the failure: a dropped signal
+        // surfaces there with a message instead of panicking in this thread.
+        let _ = tx.send(());
     });
 
     // Await the producer's completion signal with a bounded budget: the signal
@@ -50,7 +52,9 @@ fn cross_thread_request_is_visible_to_consumer() -> Result<()> {
 
     assert!(controller.is_cancel_requested());
 
-    producer.join().expect("producer joins cleanly");
+    producer
+        .join()
+        .map_err(|_| "producer should join cleanly")?;
     Ok(())
 }
 

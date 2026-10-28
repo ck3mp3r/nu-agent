@@ -34,17 +34,15 @@ fn build_system_preamble(
     cwd: Option<&str>,
     config_preamble: Option<&str>,
     agent_persona: Option<&str>,
-    sub_agent_instruction: Option<&str>,
     context: Option<&str>,
     agents_chain: Option<&str>,
     available_skills: Option<&str>,
 ) -> Option<String> {
     log::trace!(
-        "build_system_preamble: cwd={}, config_preamble={}, agent_persona={}, sub_agent_instruction={}, context={}, agents_chain={}, available_skills={}",
+        "build_system_preamble: cwd={}, config_preamble={}, agent_persona={}, context={}, agents_chain={}, available_skills={}",
         cwd.is_some(),
         config_preamble.is_some(),
         agent_persona.is_some(),
-        sub_agent_instruction.is_some(),
         context.is_some(),
         agents_chain.is_some(),
         available_skills.is_some()
@@ -54,7 +52,6 @@ fn build_system_preamble(
         cwd,
         config_preamble,
         agent_persona,
-        sub_agent_instruction,
         context,
         agents_chain,
         available_skills,
@@ -98,6 +95,12 @@ where
     pub engine: Arc<dyn EngineInterfaceLike>,
     pub final_session_id: Option<String>,
     pub cwd: PathBuf,
+    /// The resolved application paths.
+    ///
+    /// Carried from [`RuntimeBuildParams`](crate::conversation::runtime_build::RuntimeBuildParams)
+    /// so an agent switch and the hook runners read the persona and config
+    /// directories instead of deriving them.
+    pub paths: crate::config::Paths,
     /// Shared pending-decision map for interactive (TUI) mode.
     ///
     /// When `Some`, `execute_turn` constructs an `InteractivePermissionResolver` instead
@@ -204,7 +207,6 @@ where
             cwd_str.as_deref(),
             self.provider.provider_config().preamble.as_deref(),
             self.persona.agent_persona_body(),
-            self.persona.cached_sub_agent_instruction(),
             context.as_deref(),
             self.persona.cached_agents_chain(),
             self.persona.cached_available_skills(),
@@ -489,9 +491,12 @@ where
             .map(|p| p.to_path_buf())
             .ok_or_else(|| "agent switch unavailable: working directory not set".to_string())?;
 
-        let result =
-            self.persona
-                .switch_agent(agent_name, &cwd, self.multi_agent.agents_config())?;
+        let result = self.persona.switch_agent(
+            agent_name,
+            &cwd,
+            &self.paths.agents_dir,
+            self.multi_agent.agents_config(),
+        )?;
 
         // If persona specifies a model, attempt to switch (ignore errors)
         if let Some(model) = result.model {
@@ -626,6 +631,17 @@ where
 
     fn agent_icon(&self) -> Option<&str> {
         self.persona.agent_icon()
+    }
+
+    fn rescan_available_agents(&self) -> Vec<crate::protocol::persona::PersonaSummary> {
+        use crate::protocol::persona::{FsPersonaResolver, PersonaLister};
+
+        let resolver = FsPersonaResolver::new(
+            self.cwd.clone(),
+            self.paths.agents_dir.clone(),
+            self.multi_agent.agents_config().clone(),
+        );
+        resolver.list_available()
     }
 }
 

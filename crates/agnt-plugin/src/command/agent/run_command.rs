@@ -61,34 +61,19 @@ pub(super) fn run_command(
                 }
             };
 
-            // Resolve log directory: $XDG_STATE_HOME/nu-agent/logs
-            let log_dir = agnt_core::utils::xdg::state_dir()
-                .map_err(|e| {
-                    LabeledError::new(format!("Failed to resolve XDG state directory: {e}"))
-                })?
-                .join("nu-agent")
-                .join("logs");
-
-            // Create log directory
-            std::fs::create_dir_all(&log_dir).map_err(|e| {
-                LabeledError::new(format!(
-                    "Failed to create log directory {}: {}",
-                    log_dir.display(),
-                    e
-                ))
+            // Resolve the log target from the state ladder at process start; a
+            // `[paths].state_home` value retargets the sink after config load.
+            let paths = agnt_core::config::Paths::resolve_for_process(None).map_err(|e| {
+                LabeledError::new(format!("Failed to resolve application paths: {e}"))
             })?;
+            let sink = agnt_core::logging::FileLogSink::open(paths.log_path)
+                .map_err(|e| LabeledError::new(format!("Failed to open the log file: {e}")))?;
+            agnt_core::logging::install_process_sink(&sink);
 
-            // Open log file in append mode
-            let log_file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_dir.join("agent.log"))
-                .map_err(|e| LabeledError::new(format!("Failed to open log file: {e}")))?;
-
-            // Initialize env_logger with file target
+            // Initialize env_logger with the file sink target
             let _ = env_logger::Builder::new()
                 .filter_level(log_level)
-                .target(env_logger::Target::Pipe(Box::new(log_file)))
+                .target(env_logger::Target::Pipe(Box::new(sink)))
                 .format_timestamp_millis()
                 .try_init();
             // Always force the global max level — try_init() is a no-op when a
@@ -103,10 +88,31 @@ pub(super) fn run_command(
 
     // Resolve configuration from all sources with proper precedence:
     // 1. Resolve default role config (--model flag handled here)
-    let (mut config, plugin_config) = resolve_config(call)?;
+    // Discovery comes first: the file the ladder selects carries the `[paths]`
+    // values the full resolution below applies.
+    let discovery = agnt_core::config::Paths::resolve_for_process(None).map_err(|e| {
+        LabeledError::new(format!("Failed to resolve application paths: {e}"))
+            .with_label(e.to_string(), call.head)
+    })?;
+    let (mut config, plugin_config) = resolve_config(call, &discovery.config_path)?;
 
     // Resolve session store type with CLI > env > config > default precedence
     let store_type = plugin.resolve_store_type(call)?;
+
+    // The store path `[paths]` and `NU_AGENT_CACHE_HOME` resolve, passed on
+    // verbatim: this site never joins the store file name.
+    let paths = agnt_core::config::Paths::resolve_for_process(plugin_config.paths.as_ref())
+        .map_err(|e| {
+            LabeledError::new(format!("Failed to resolve application paths: {e}"))
+                .with_label(e.to_string(), call.head)
+        })?;
+    // `[paths].state_home` and `[paths].cache_home` only become known now: the
+    // pre-load window logged to the derived default, and the grammar cache
+    // keeps the OS default until this install.
+    agnt_core::logging::retarget_process_sink(&paths.log_path);
+    agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
+    let rig = agnt_core::session::RigStoreConfig::new(store_type)
+        .with_store_path(paths.store_path.clone());
 
     // Pipeline mode gets a bounded tool-turn budget unless explicitly configured.
     // User-specified value (via --max-turns or config file) always wins.
@@ -140,16 +146,15 @@ pub(super) fn run_command(
     let call_has_model_flag = call.get_flag::<Value>("model").ok().flatten().is_some();
     let persona_resolution = super::persona::resolve_persona(
         agent_name,
-        cli_name,
         &agents_config,
         &cwd,
+        &paths.agents_dir,
         call,
         &mut config,
     )?;
     let persona = persona_resolution.persona;
     let agent_slug = persona_resolution.agent_slug;
     let agent_identity = persona_resolution.agent_identity;
-    let messaging_identity = persona_resolution.messaging_identity;
     let agent_permissions_overlay = persona_resolution.agent_permissions_overlay;
 
     // The hook envelopes stamp the persona slug; the runtime fills in the model
@@ -240,12 +245,12 @@ pub(super) fn run_command(
             &agents_config,
             &discovered_mcp_tools,
             &cwd,
+            &paths.agents_dir,
             false,
         )
         .map_err(|e| LabeledError::new("Invalid tool name").with_label(e.to_string(), call.head))?;
 
-        let resolver =
-            DefaultSessionResolver::new(agnt_core::session::RigStoreConfig::new(store_type));
+        let resolver = DefaultSessionResolver::new(rig.clone());
         let mut session_resolution = resolver
             .resolve(SessionResolutionInput {
                 use_tui: false,
@@ -258,7 +263,6 @@ pub(super) fn run_command(
         let bus = agnt_core::bus::create_bus();
 
         let agnt_core::conversation::builder::BuildArtifacts {
-            parent_name: _,
             merged_compaction,
             compaction_strategy: _,
             compaction_params,
@@ -271,8 +275,6 @@ pub(super) fn run_command(
                 cwd: cwd.clone(),
                 engine: engine_arc.clone(),
                 span: call.head,
-                available_agents: &available_agents,
-                messaging_identity: messaging_identity.clone(),
                 tool_timeout,
                 session: session_resolution.session.as_mut(),
                 max_tool_result_bytes: config
@@ -280,6 +282,7 @@ pub(super) fn run_command(
                     .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
                 bus: bus.clone(),
                 merged_compaction: agnt_core::config::CompactionConfig::default(),
+                audit_log_path: paths.audit_log_path.clone(),
             },
         )
         .await?;
@@ -287,8 +290,8 @@ pub(super) fn run_command(
         let mcp_caller_cwd = cwd.clone();
 
         // ── Preamble cache ────────────────────────────────────────────────────
-        let (cached_agents_chain, cached_available_skills, cached_sub_agent_instruction) =
-            super::runtime_build::build_preamble_cache(&cwd, None);
+        let (cached_agents_chain, cached_available_skills) =
+            super::runtime_build::build_preamble_cache(&cwd, &paths.agents_dir);
 
         // ── Runtime construction ──────────────────────────────────────────────
         let mut runtime_impl = build_runtime(RuntimeBuildParams {
@@ -306,7 +309,7 @@ pub(super) fn run_command(
             vault: plugin_config.vault.clone(),
             mcp_registry,
             engine: engine_arc.clone(),
-            store_type,
+            rig,
             final_session_id: session_resolution.final_session_id,
             compaction_params,
             proactive_threshold_pct: merged_compaction.proactive_threshold_pct,
@@ -320,10 +323,10 @@ pub(super) fn run_command(
             agent_icon: persona.as_ref().and_then(|p| p.icon.clone()),
             cached_agents_chain,
             cached_available_skills,
-            cached_sub_agent_instruction,
             available_agents,
             agents_config,
             cwd: cwd.clone(),
+            paths,
             bus: bus.clone(),
             render_registry,
             hook_context,

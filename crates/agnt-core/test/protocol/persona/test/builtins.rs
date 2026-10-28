@@ -8,7 +8,7 @@ fn resolve_and_list_builtin_personas() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         AgentsConfig::default(),
     );
     let (path, content) = resolver
@@ -36,7 +36,7 @@ fn resolve_and_list_builtin_personas() -> Result<()> {
     };
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         config,
     );
     let (path, content) = resolver
@@ -56,7 +56,7 @@ fn resolve_and_list_builtin_personas() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         AgentsConfig::default(),
     );
     let (path, content) = resolver
@@ -71,7 +71,7 @@ fn resolve_and_list_builtin_personas() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         AgentsConfig::default(),
     );
     let result = resolver.list_available();
@@ -92,7 +92,7 @@ fn resolve_and_list_builtin_personas() -> Result<()> {
     };
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         config,
     );
     let result = resolver.list_available();
@@ -118,7 +118,7 @@ fn resolve_and_list_builtin_personas() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         AgentsConfig::default(),
     );
     let result = resolver.list_available();
@@ -140,7 +140,7 @@ fn resolve_builtin_planner_disabled_not_found() {
     };
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         config,
     );
     let result = resolver.resolve("planner");

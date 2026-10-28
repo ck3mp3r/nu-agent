@@ -48,7 +48,8 @@ async fn test_integration_main_init_logging_targets_state_dir() -> Result<()> {
     init_logging(&cli.args);
 
     // -- Check
-    let log_path = env.state_home_path("nu-agent/logs/agent.log");
+    let relative = format!("{}/logs/agent.log", agnt_core::utils::paths::APP_DIR_NAME);
+    let log_path = env.state_home_path(&relative);
     assert!(
         log_path.exists(),
         "init_logging must open the state-dir log file at {}",

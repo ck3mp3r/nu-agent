@@ -10,27 +10,26 @@ pub struct AgentsLoadResult {
     pub warnings: Vec<String>,
 }
 
-pub fn load_agents_chain_for_cwd(cwd: &Path) -> AgentsLoadResult {
-    let config_dir = crate::utils::xdg::config_dir()
-        .ok()
-        .map(|base| base.join("nu-agent"));
+/// The agents chain for `cwd`, with the user-level `AGENTS.md` taken from
+/// `agents_dir` (the resolved persona directory).
+pub fn load_agents_chain_for_cwd(cwd: &Path, agents_dir: Option<&Path>) -> AgentsLoadResult {
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    load_agents_chain(cwd, config_dir.as_deref(), None, home.as_deref())
+    load_agents_chain(cwd, agents_dir, None, home.as_deref())
 }
 
 pub(crate) fn load_agents_chain(
     cwd: &Path,
-    config_dir: Option<&Path>,
+    agents_dir: Option<&Path>,
     stop_at: Option<&Path>,
     home: Option<&Path>,
 ) -> AgentsLoadResult {
-    log::debug!("load_agents_chain: cwd={cwd:?}, config_dir={config_dir:?}");
+    log::debug!("load_agents_chain: cwd={cwd:?}, agents_dir={agents_dir:?}");
 
     let mut warnings = Vec::new();
     let mut merged_segments = Vec::new();
     let mut seen = HashSet::new();
 
-    for candidate in discover_candidate_paths(cwd, config_dir, stop_at, home) {
+    for candidate in discover_candidate_paths(cwd, agents_dir, stop_at, home) {
         if !candidate.exists() {
             continue;
         }
@@ -77,14 +76,14 @@ fn canonical_path_key(path: &Path) -> PathBuf {
 
 fn discover_candidate_paths(
     cwd: &Path,
-    config_dir: Option<&Path>,
+    agents_dir: Option<&Path>,
     stop_at: Option<&Path>,
     home: Option<&Path>,
 ) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
-    if let Some(cfg_dir) = config_dir {
-        candidates.push(cfg_dir.join("agents").join("AGENTS.md"));
+    if let Some(agents_dir) = agents_dir {
+        candidates.push(agents_dir.join("AGENTS.md"));
     }
 
     if let Some(home_dir) = home {

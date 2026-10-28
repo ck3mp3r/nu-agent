@@ -38,6 +38,12 @@ const COPILOT_DIR_NAME: &str = "github_copilot";
 
 // region:    --- Public Functions
 
+/// The Copilot credential directory name: `github_copilot-dev` in debug
+/// builds, `github_copilot` in release builds.
+pub fn copilot_dir_name() -> &'static str {
+    COPILOT_DIR_NAME
+}
+
 /// The platform default Copilot credential directory.
 ///
 /// `$XDG_CONFIG_HOME/{COPILOT_DIR_NAME}` on unix (falling back to

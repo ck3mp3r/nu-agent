@@ -142,6 +142,7 @@ fn plugin_config_with_provider(
         mcp: None,
         theme: None,
         hooks: Vec::new(),
+        paths: None,
     }
 }
 

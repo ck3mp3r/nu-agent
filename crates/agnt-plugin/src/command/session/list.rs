@@ -132,7 +132,7 @@ impl SimplePluginCommand for AgentSessionList {
         _input: &Value,
     ) -> Result<Value, LabeledError> {
         let store_type = plugin.resolve_store_type(call)?;
-        let rig = RigStoreConfig::new(store_type);
+        let rig = crate::plugin::rig_store_config(store_type)?;
         crate::block_on!(plugin, self.run_inner(engine, call, &rig))
     }
 }

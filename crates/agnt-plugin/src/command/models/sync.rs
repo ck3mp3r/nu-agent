@@ -42,7 +42,9 @@ impl SimplePluginCommand for AgentModelsSync {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let cache = ModelsCache::fetch_and_store()
+        let paths = agnt_core::config::Paths::resolve_from_config_or_default()
+            .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
+        let cache = ModelsCache::fetch_and_store(&paths.models_cache_path)
             .map_err(|e| LabeledError::new(format!("Failed to sync models: {e}")))?;
         let provider_count = cache.providers.len();
         let model_count = cache.list_models(None).len();

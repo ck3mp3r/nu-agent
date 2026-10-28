@@ -10,9 +10,9 @@ use crate::runtime::panels::{
 };
 use crate::runtime::{
     command_palette_table_model, command_palette_title, help_panel_lines, help_panel_max_scroll,
-    help_panel_overflow_cue, mcp_details_height_for_inner_height, mcp_panel_controls_line,
-    mcp_selected_details_lines, mcp_table_model, session_picker::SessionPickerRow,
-    skills_panel_lines, status_panel_lines,
+    help_panel_overflow_cue, mcp_details_height_for_inner_height, mcp_selected_details_lines,
+    mcp_table_model, picker_action_keys, scroll_panel_action_keys,
+    session_picker::SessionPickerRow, skills_panel_lines, status_panel_lines,
 };
 use crate::{
     runtime::{
@@ -107,7 +107,7 @@ impl RuntimeCoordinator {
                 render_modal_frame(frame, popup, title, &self.theme);
 
                 frame.render_widget(
-                    Paragraph::new(Line::from(mcp_panel_controls_line()))
+                    Paragraph::new(Line::from(model.controls_line.clone()))
                         .style(self.theme.subtle_meta),
                     rows[0],
                 );
@@ -164,19 +164,19 @@ impl RuntimeCoordinator {
                     panel_inner_width,
                 ));
                 let panel_title = match panel {
-                    InfoPanel::Help => {
-                        if let Some(cue) = help_panel_overflow_cue(
+                    InfoPanel::Help => format!(
+                        "{title} ({})",
+                        help_panel_overflow_cue(
                             &lines,
                             panel_inner_height,
                             panel_inner_width,
                             panel_scroll,
-                        ) {
-                            format!("{title} ({cue})")
-                        } else {
-                            title.to_string()
-                        }
+                        )
+                    ),
+                    InfoPanel::Status | InfoPanel::Skills => {
+                        format!("{title} ({})", scroll_panel_action_keys())
                     }
-                    _ => title.to_string(),
+                    InfoPanel::Mcps => title.to_string(),
                 };
 
                 render_scroll_text_panel(
@@ -196,7 +196,7 @@ impl RuntimeCoordinator {
         let inner = render_modal_frame(
             frame,
             popup,
-            "Models (↑/↓ or Ctrl-N · Enter · Esc)",
+            format!("Models ({})", picker_action_keys()),
             &self.theme,
         );
         let rows = Layout::default()
@@ -321,7 +321,12 @@ impl RuntimeCoordinator {
 
     pub(crate) fn render_agent_picker(&self, frame: &mut Frame, area: Rect) {
         let popup = modal_rect_for_panel(area, ModalPanelKind::Agents);
-        let inner = render_modal_frame(frame, popup, "Agent (↑/↓ · Enter · Esc)", &self.theme);
+        let inner = render_modal_frame(
+            frame,
+            popup,
+            format!("Agent ({})", picker_action_keys()),
+            &self.theme,
+        );
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(0)])
@@ -389,9 +394,9 @@ impl RuntimeCoordinator {
         let model =
             crate::runtime::session_picker::session_picker_table_model(&self.state, popup.height);
         let title = if let Some(cue) = model.overflow_cue.as_deref() {
-            format!("Sessions ({cue}) (↑/↓ · Enter · Esc)")
+            format!("Sessions ({} · {cue})", picker_action_keys())
         } else {
-            "Sessions (↑/↓ · Enter · Esc)".to_string()
+            format!("Sessions ({})", picker_action_keys())
         };
         let inner = render_modal_frame(frame, popup, title, &self.theme);
         let rows = Layout::default()
@@ -449,7 +454,12 @@ impl RuntimeCoordinator {
 
     pub(crate) fn render_theme_picker(&self, frame: &mut Frame, area: Rect) {
         let popup = modal_rect_for_panel(area, ModalPanelKind::Themes);
-        let inner = render_modal_frame(frame, popup, "Theme (↑/↓ · Enter · Esc)", &self.theme);
+        let inner = render_modal_frame(
+            frame,
+            popup,
+            format!("Theme ({})", picker_action_keys()),
+            &self.theme,
+        );
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(0)])

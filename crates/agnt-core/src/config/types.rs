@@ -10,6 +10,7 @@ use crate::session::StoreType;
 
 use super::defaults;
 use super::models_cache::{ModelCost, ModelsCache};
+use super::paths::PathsConfig;
 use super::vault::Vault;
 
 /// Model limits (context and output token limits)
@@ -178,6 +179,10 @@ pub struct PluginConfig {
     /// User hook handlers (`[[hooks]]` entries).
     #[serde(default)]
     pub hooks: Vec<HookConfig>,
+
+    /// Filesystem path overrides (`[paths]`). Resolved once at startup by
+    /// [`super::paths::Paths::resolve`].
+    pub paths: Option<PathsConfig>,
 }
 
 /// All fields are `Option` — `None` means "use default".

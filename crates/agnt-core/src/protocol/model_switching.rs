@@ -27,4 +27,13 @@ pub trait ModelSwitching {
     fn agent_icon(&self) -> Option<&str> {
         None
     }
+
+    /// Re-scan the persona catalog from disk.
+    ///
+    /// Defaults to an empty catalog for runtimes that cannot scan personas; a
+    /// runtime that can overrides it so the agent picker and the Tab cycle see
+    /// personas added or deleted after startup.
+    fn rescan_available_agents(&self) -> Vec<crate::protocol::persona::PersonaSummary> {
+        Vec::new()
+    }
 }

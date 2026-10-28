@@ -48,9 +48,9 @@ fn make_test_cache() -> ModelsCache {
 }
 
 #[test]
-fn load_returns_error_when_file_missing() {
+fn load_returns_error_when_file_missing() -> Result<()> {
     // Point the loader at a temp dir with no models.json, then verify NotFound.
-    let dir = tempfile::tempdir().expect("temp dir");
+    let dir = tempfile::tempdir().map_err(|e| format!("failed to create temp dir: {e}"))?;
     let path = dir.path().join("nu-agent").join("models.json");
 
     let result = ModelsCache::load_from(&path);
@@ -59,6 +59,7 @@ fn load_returns_error_when_file_missing() {
         Err(ModelsCacheError::NotFound(_)) => (),
         _ => panic!("expected NotFound error, got: {result:?}"),
     }
+    Ok(())
 }
 
 #[test]

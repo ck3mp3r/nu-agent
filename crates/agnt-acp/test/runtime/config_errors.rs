@@ -1,5 +1,7 @@
 //! AGENTS.md warning and config-load error-branch tests for `build_acp_runtime()`.
 
+use agnt_core::conversation::managers::PersonaManager;
+
 use super::runtime_support::*;
 use super::*;
 

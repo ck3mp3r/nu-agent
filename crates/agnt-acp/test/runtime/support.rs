@@ -51,13 +51,33 @@ pub(super) fn make_params(
     AcpRuntimeParams {
         cwd,
         mcp_servers,
-        config_path,
+        paths: test_paths(&config_path),
         runtime_handle: tokio::runtime::Handle::current(),
         rig: RigStoreConfig::new(store_type),
         session_id: None,
         client_fs: None,
         agent_name: None,
         hook_context: agnt_core::hooks::HookAgentContext::default(),
+    }
+}
+
+/// The application paths of a runtime test rooted at `config_path`'s dir.
+pub(super) fn test_paths(config_path: &Path) -> agnt_core::config::Paths {
+    let dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let logs = dir.join("logs");
+    agnt_core::config::Paths {
+        config_path: config_path.to_path_buf(),
+        dotenv_path: dir.join(".env"),
+        agents_dir: dir.join("agents"),
+        copilot_token_dir: dir.join("github_copilot"),
+        store_path: dir.join("rig-sessions.db"),
+        log_dir: logs.clone(),
+        log_path: logs.join("agent.log"),
+        audit_log_path: dir.join("tool_audit.log"),
+        secrets_path: dir.join("secrets.json"),
+        models_cache_path: dir.join("models.json"),
+        theme_path: dir.join("theme.json"),
+        grammar_cache_dir: dir.join("tree-sitter"),
     }
 }
 

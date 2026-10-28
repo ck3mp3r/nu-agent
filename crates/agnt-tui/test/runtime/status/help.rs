@@ -9,7 +9,7 @@ pub(crate) fn help_panel_overflow_cue_for_test(
     lines: &[Line<'_>],
     viewport_height: u16,
     scroll: usize,
-) -> Option<String> {
+) -> String {
     crate::runtime::panels::help_panel_overflow_cue(lines, viewport_height, 80, scroll)
 }
 
@@ -80,6 +80,7 @@ pub(crate) fn skills_panel_scroll_offset_for_test(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct McpTableModelForTest {
+    pub controls_line: String,
     pub columns: Vec<String>,
     pub rows: Vec<[String; 3]>,
     pub selected: Option<usize>,
@@ -120,6 +121,7 @@ pub(crate) fn mcp_table_model_for_test(
     let _ = popup_width;
     let model = crate::runtime::panels::mcp_table_model(state, popup_height);
     McpTableModelForTest {
+        controls_line: model.controls_line,
         columns: model.columns,
         rows: model.rows,
         selected: model.selected,

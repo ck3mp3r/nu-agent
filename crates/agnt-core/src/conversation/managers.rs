@@ -123,9 +123,6 @@ pub trait PersonaManager {
     /// Return the raw agent persona body text (system prompt override).
     fn agent_persona_body(&self) -> Option<&str>;
 
-    /// Return the cached sub-agent instruction fragment.
-    fn cached_sub_agent_instruction(&self) -> Option<&str>;
-
     /// Return the cached agents-chain preamble fragment.
     fn cached_agents_chain(&self) -> Option<&str>;
 
@@ -153,6 +150,7 @@ pub trait PersonaManager {
         &mut self,
         agent_name: &str,
         cwd: &std::path::Path,
+        agents_dir: &std::path::Path,
         agents_config: &crate::config::AgentsConfig,
     ) -> Result<crate::conversation::state::persona::SwitchAgentResult, String>;
 }

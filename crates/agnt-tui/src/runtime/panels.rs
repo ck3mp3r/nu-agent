@@ -57,32 +57,45 @@ pub(super) fn help_panel_overflow_cue(
     viewport_height: u16,
     content_width: u16,
     scroll: usize,
-) -> Option<String> {
+) -> String {
+    let keys = scroll_panel_action_keys();
     let visible_rows = viewport_height.max(1) as usize;
     let total_rows = help_panel_total_visual_rows(lines, content_width.max(1) as usize);
     if total_rows <= visible_rows {
-        return None;
+        return keys.to_string();
     }
 
     let max_scroll = total_rows.saturating_sub(visible_rows);
     let current = scroll.min(max_scroll);
     let start = current.saturating_add(1);
     let end = current.saturating_add(visible_rows).min(total_rows);
-    Some(format!(
-        "PgUp/PgDn j/k | Esc close | {}-{} / {}",
-        start, end, total_rows
-    ))
+    format!("{keys} · {start}-{end} / {total_rows}")
+}
+
+/// Navigation keys every scrollable panel shows in its title.
+pub(super) fn scroll_panel_action_keys() -> &'static str {
+    "↑/↓ · PgUp/PgDn · Esc"
+}
+
+/// Navigation keys every picker shows in its title.
+pub(super) fn picker_action_keys() -> &'static str {
+    "↑/↓ · Enter · Esc"
+}
+
+/// The title of the inline-slash suggestions popup under the input box.
+pub(super) fn inline_slash_title() -> String {
+    format!("Commands ({})", picker_action_keys())
 }
 
 pub(super) fn command_palette_action_keys() -> &'static str {
-    "↑/↓ or Ctrl-N · Enter · Esc"
+    picker_action_keys()
 }
 
 pub(super) fn command_palette_title(overflow_cue: Option<&str>) -> String {
     let base = "Command Palette";
     let global_hint = command_palette_action_keys();
     if let Some(cue) = overflow_cue {
-        format!("{base} ({global_hint} | {cue})")
+        format!("{base} ({global_hint} · {cue})")
     } else {
         format!("{base} ({global_hint})")
     }
@@ -133,6 +146,7 @@ pub(super) struct CommandPaletteTableModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct McpTableModel {
+    pub(super) controls_line: String,
     pub(super) columns: Vec<String>,
     pub(super) rows: Vec<[String; 3]>,
     pub(super) selected: Option<usize>,
@@ -151,11 +165,7 @@ pub(super) struct McpSelectedDetails {
 pub(crate) const MCP_STATUS_COLUMN_WIDTH: u16 = 6;
 
 pub(super) fn mcp_selected_details(state: &AppState) -> Option<McpSelectedDetails> {
-    let server = state
-        .status
-        .mcp
-        .mcp_servers
-        .get(state.status.mcp.mcp_panel_selection)?;
+    let server = state.status.mcp.selected_mcp_server()?;
     let reason = state
         .status
         .mcp
@@ -343,7 +353,7 @@ pub(crate) fn mcp_details_height_for_inner_height(inner_height: u16) -> u16 {
 }
 
 pub(crate) fn mcp_panel_controls_line() -> &'static str {
-    "Session-only toggles | Enter/Space toggle | Esc close"
+    "↑/↓ select · type to filter · Enter/Space toggle · Esc close"
 }
 
 pub(super) fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableModel {
@@ -352,10 +362,11 @@ pub(super) fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableMo
         "Visible tools".to_string(),
         "Status".to_string(),
     ];
+    let query = state.status.mcp.mcp_panel_query();
     let all_rows = state
         .status
         .mcp
-        .mcp_servers
+        .mcp_servers_filtered()
         .iter()
         .map(|server| {
             let visible_tools = state
@@ -415,7 +426,7 @@ pub(super) fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableMo
         let start = window_start.saturating_add(1);
         let end = window_start.saturating_add(window_len).min(all_rows.len());
         Some(format!(
-            "↑/↓ or j/k | Enter/Space toggle | Esc close | {}-{} / {}",
+            "↑/↓ select · Enter/Space toggle · Esc close · {}-{} / {}",
             start,
             end,
             all_rows.len()
@@ -424,7 +435,14 @@ pub(super) fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableMo
         None
     };
 
+    let controls_line = if query.is_empty() {
+        mcp_panel_controls_line().to_string()
+    } else {
+        format!("Query: {query}")
+    };
+
     McpTableModel {
+        controls_line,
         columns,
         rows,
         selected,
@@ -502,12 +520,7 @@ pub(super) fn command_palette_table_model(
     let overflow_cue = if all_rows.len() > window_len && window_len > 0 {
         let start = window_start.saturating_add(1);
         let end = window_start.saturating_add(window_len).min(all_rows.len());
-        Some(format!(
-            "Esc close | {}-{} / {}",
-            start,
-            end,
-            all_rows.len()
-        ))
+        Some(format!("{}-{} / {}", start, end, all_rows.len()))
     } else {
         None
     };

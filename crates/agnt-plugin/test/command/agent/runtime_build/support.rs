@@ -76,6 +76,7 @@ pub(super) fn make_plugin_config(models: HashMap<String, ModelRoleConfig>) -> Pl
         mcp: None,
         theme: None,
         hooks: Vec::new(),
+        paths: None,
     }
 }
 
@@ -122,6 +123,7 @@ pub(super) fn make_plugin_config_with_providers(
         mcp: None,
         theme: None,
         hooks: Vec::new(),
+        paths: None,
     }
 }
 

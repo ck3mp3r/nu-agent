@@ -7,6 +7,7 @@ pub mod file_backend;
 pub mod keychain_backend;
 pub mod loader;
 pub mod models_cache;
+pub mod paths;
 pub mod pricing;
 pub mod resolver;
 pub mod toml_config;
@@ -17,9 +18,10 @@ pub use loader::{
     ConfigLoadError, load_and_resolve_config, resolve_preamble_for_model, resolve_role_config,
 };
 pub use models_cache::{ModelSpec, ModelsCache, ProviderSpec};
-pub use toml_config::{
-    TomlConfigError, config_path, load, resolve_configured_hooks, resolve_hooks,
+pub use paths::{
+    ENV_CACHE_HOME, ENV_CONFIG_HOME, ENV_DATA_HOME, ENV_STATE_HOME, Paths, PathsConfig, PathsError,
 };
+pub use toml_config::{TomlConfigError, load, resolve_hooks};
 pub use types::*;
 pub use vault::{CredentialType, ProviderEntry, Vault, VaultBackendKind, VaultError};
 

@@ -78,12 +78,16 @@ async fn help_panel_scroll_and_escape() -> Result<()> {
         .join("\n");
     assert!(rendered.contains("If text looks stale after resize"));
 
-    // -- Exec & Check: the overflow cue.
-    let cue = help_panel_overflow_cue_for_test(&lines, viewport_inner_height, 3)
-        .ok_or("should have overflow cue when help exceeds viewport")?;
-    assert!(cue.contains("PgUp/PgDn"));
-    assert!(cue.contains("Esc close"));
-    assert!(cue.contains("/"));
+    // -- Exec & Check: the cue always carries the navigation keys, plus the
+    // position only while the content overflows.
+    let cue = help_panel_overflow_cue_for_test(&lines, viewport_inner_height, 3);
+    assert!(cue.starts_with("↑/↓ · PgUp/PgDn · Esc"), "cue={cue}");
+    assert!(cue.contains(" / "), "cue={cue}");
+    assert!(!cue.contains('|'), "no legacy separators: {cue}");
+
+    // -- Exec & Check: short content keeps the keys and drops the position.
+    let short_cue = help_panel_overflow_cue_for_test(&lines, 1000, 3);
+    assert_eq!(short_cue, "↑/↓ · PgUp/PgDn · Esc");
 
     // -- Exec & Check: the scroll offset is clamped.
     let viewport_width = 80u16;

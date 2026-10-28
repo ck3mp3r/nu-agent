@@ -1,5 +1,7 @@
 use super::*;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
 fn agent_picker_lifecycle_table() -> Result<()> {
     // Open + insert char appends to the query.
@@ -10,7 +12,14 @@ fn agent_picker_lifecycle_table() -> Result<()> {
         None,
     );
     assert!(changed);
-    assert_eq!(state.picker.active_state().unwrap().query, "a");
+    assert_eq!(
+        state
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .query,
+        "a"
+    );
     assert_eq!(state.picker.render_kind(), Some(PickerRenderKind::Agent));
 
     // Open + Esc closes the picker.
@@ -54,11 +63,25 @@ fn agent_picker_lifecycle_table() -> Result<()> {
     // Ctrl-P moves the selection up.
     let mut state = setup_agent_picker_open();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+    assert_eq!(
+        state
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .selection,
+        1
+    );
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert!(changed);
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    assert_eq!(
+        state
+            .picker
+            .active_state()
+            .ok_or("picker should be open")?
+            .selection,
+        0
+    );
     assert_eq!(state.picker.render_kind(), Some(PickerRenderKind::Agent));
     Ok(())
 }
@@ -98,7 +121,7 @@ fn agent_picker_tab_table() {
 }
 
 #[test]
-fn agent_slash_and_palette_share_same_action_handler() {
+fn agent_slash_and_palette_share_same_action_handler() -> Result<()> {
     // /agent slash command triggers the agent picker launch.
     let mut slash_state = AppState {
         input: InputState::default().with_pending_submit_text("/agent".to_string()),
@@ -132,9 +155,9 @@ fn agent_slash_and_palette_share_same_action_handler() {
     let selected = palette_state
         .picker
         .active_state()
-        .unwrap()
+        .ok_or("picker should be open")?
         .selected()
-        .unwrap();
+        .ok_or("should have a selection")?;
     assert_eq!(selected.id, "Agents");
     let _ = dispatch_terminal_event(
         &mut palette_state,
@@ -146,4 +169,5 @@ fn agent_slash_and_palette_share_same_action_handler() {
         Some(SharedUiAction::Agents)
     );
     assert_eq!(palette_state.take_next_prompt_for_execution(), None);
+    Ok(())
 }

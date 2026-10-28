@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod hook;
 pub mod hooks;
 pub mod llm;
+pub mod logging;
 pub mod orchestrator;
 pub mod protocol;
 pub mod renderer;

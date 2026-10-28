@@ -47,14 +47,16 @@ mod rig_factory_test;
 mod rig_sqlite_store_test;
 
 pub use factory::{
-    RigStoreConfig, RigStoreError, StoreType, create_rig_store, create_rig_store_in,
-    list_rig_sessions, list_rig_sessions_in,
+    RigStoreConfig, RigStoreError, StoreType, create_rig_store, create_rig_store_at,
+    create_rig_store_in, list_rig_sessions, list_rig_sessions_at, list_rig_sessions_in,
 };
 pub use info::SessionInfo;
 pub use journal::CachedMemory;
 pub use memory_error::{MemoryBackendError, MemoryError};
 pub use model::Session;
-pub use rig_dir_store::{NAME_FILE, read_session_name, session_dir, write_session_name};
+pub use rig_dir_store::{
+    NAME_FILE, read_session_name, session_dir, sessions_root, write_session_name,
+};
 pub use rig_memory::SessionMeta;
 pub use rig_sqlite_store::RigSqliteStore;
 

@@ -2,12 +2,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::utils::env_map::{EnvMap, process_env};
-use crate::utils::xdg;
-use crate::utils::xdg::XdgError;
 
 use super::PluginConfig;
 use super::cmd_refs::{CMD_PREFIX, CmdRunner, DEFAULT_TIMEOUT, ProcessCmdRunner, resolve_cmd_refs};
 use super::defaults;
+use super::paths::{Paths, PathsError};
 use super::types::{HookEvent, ResolvedHook};
 
 #[derive(Debug)]
@@ -15,10 +14,10 @@ pub enum TomlConfigError {
     InvalidApiKey(String),
     CmdHelper(String),
     Hook(String),
+    Paths(String),
     NotFound(PathBuf),
     Parse(toml::de::Error),
     Io(std::io::Error),
-    Xdg(XdgError),
 }
 
 impl std::fmt::Display for TomlConfigError {
@@ -27,32 +26,27 @@ impl std::fmt::Display for TomlConfigError {
             Self::InvalidApiKey(message) => write!(f, "{message}"),
             Self::CmdHelper(message) => write!(f, "{message}"),
             Self::Hook(message) => write!(f, "{message}"),
+            Self::Paths(message) => write!(f, "{message}"),
             Self::NotFound(p) => write!(f, "config not found at {}", p.display()),
             Self::Parse(e) => write!(f, "failed to parse config.toml: {e}"),
             Self::Io(e) => write!(f, "IO error reading config.toml: {e}"),
-            Self::Xdg(e) => write!(f, "XDG error: {e}"),
         }
     }
 }
 
 impl std::error::Error for TomlConfigError {}
 
-/// Returns the path to config.toml: `$XDG_CONFIG_HOME/nu-agent/config.toml`
-pub fn config_path() -> Result<PathBuf, TomlConfigError> {
-    config_path_with(&process_env())
-}
-
-/// Returns the path to config.toml using an explicit environment map.
-pub fn config_path_with(env: &EnvMap) -> Result<PathBuf, TomlConfigError> {
-    let dir = xdg::config_dir_with(env).map_err(TomlConfigError::Xdg)?;
-    Ok(dir.join("nu-agent").join("config.toml"))
+/// Map a path-resolution failure onto the config error.
+fn paths_error(error: PathsError) -> TomlConfigError {
+    TomlConfigError::Paths(format!("failed to resolve the config path: {error}"))
 }
 
 /// Load PluginConfig from config.toml.
 /// Returns `PluginConfig::default()` if the file doesn't exist (not an error).
 /// Returns an error only if the file exists but can't be read or parsed.
 pub fn load() -> Result<PluginConfig, TomlConfigError> {
-    load_from(&config_path()?)
+    let path = Paths::bootstrap_config_path().map_err(paths_error)?;
+    load_from(&path)
 }
 
 /// Load PluginConfig from an explicit path.
@@ -84,6 +78,7 @@ pub fn load_from_with(
     validate_hooks(&value)?;
     let config: PluginConfig = toml::from_str(&contents).map_err(TomlConfigError::Parse)?;
     validate_api_keys(&config)?;
+    validate_paths(&config)?;
     resolve_cmd_refs(&mut value, runner).map_err(|e| TomlConfigError::CmdHelper(e.to_string()))?;
     value.try_into().map_err(TomlConfigError::Parse)
 }
@@ -134,6 +129,34 @@ fn validate_api_keys(config: &PluginConfig) -> Result<(), TomlConfigError> {
         }
         return Err(TomlConfigError::InvalidApiKey(format!(
             "api_key in [providers.{name}] must be a store:, env:, or cmd: reference, not a raw value. Use: agent provider auth login {name}"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate the `[paths]` block before any consumer resolves a path.
+///
+/// Every `[paths]` base override must be absolute or start with `~`: an
+/// override re-roots its whole tree, so a relative value cannot name a base
+/// that stands on its own.
+fn validate_paths(config: &PluginConfig) -> Result<(), TomlConfigError> {
+    let Some(paths) = config.paths.as_ref() else {
+        return Ok(());
+    };
+    let fields = [
+        ("[paths].data_home", paths.data_home.as_deref()),
+        ("[paths].cache_home", paths.cache_home.as_deref()),
+        ("[paths].state_home", paths.state_home.as_deref()),
+    ];
+    for (field, value) in fields {
+        let Some(value) = value.filter(|value| !value.is_empty()) else {
+            continue;
+        };
+        if Path::new(value).is_absolute() || value == "~" || value.starts_with("~/") {
+            continue;
+        }
+        return Err(TomlConfigError::Paths(format!(
+            "{field} must be an absolute path or start with '~', not the relative path '{value}'"
         )));
     }
     Ok(())
@@ -233,23 +256,6 @@ pub fn resolve_hooks(
         })
         .collect()
 }
-
-/// Resolve the configured hooks against the default config directory.
-///
-/// The mode setups call this: they hold a [`PluginConfig`] but not the path it
-/// was loaded from, and a relative hook script resolves against the directory
-/// holding config.toml.
-pub fn resolve_configured_hooks(
-    config: &PluginConfig,
-) -> Result<Vec<ResolvedHook>, TomlConfigError> {
-    let path = config_path()?;
-    let config_dir = path.parent().unwrap_or_else(|| Path::new("."));
-    resolve_hooks(config, config_dir)
-}
-
-#[cfg(test)]
-#[path = "../../test/config/toml_config.rs"]
-mod toml_config_test;
 
 #[cfg(test)]
 #[path = "../../test/config/cmd_timeout.rs"]

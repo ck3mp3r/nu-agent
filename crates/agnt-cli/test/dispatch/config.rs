@@ -144,7 +144,11 @@ fn test_dispatch_config_theme_flag_takes_precedence() -> Result<()> {
     };
 
     // -- Exec
-    let name = resolve_theme_from_clap(Some("catppuccin-frappe"), &plugin_config)?;
+    let name = resolve_theme_from_clap(
+        Some("catppuccin-frappe"),
+        &plugin_config,
+        std::path::Path::new("/nonexistent/theme.json"),
+    )?;
 
     // -- Check
     assert_eq!(name, ThemeName::CatppuccinFrappe);
@@ -157,9 +161,13 @@ fn test_dispatch_config_theme_unknown_flag_errors() -> Result<()> {
     let plugin_config = PluginConfig::default();
 
     // -- Exec
-    let err = resolve_theme_from_clap(Some("solarized"), &plugin_config)
-        .err()
-        .ok_or("should reject unknown theme")?;
+    let err = resolve_theme_from_clap(
+        Some("solarized"),
+        &plugin_config,
+        std::path::Path::new("/nonexistent/theme.json"),
+    )
+    .err()
+    .ok_or("should reject unknown theme")?;
 
     // -- Check
     assert!(err.to_string().contains("Unknown theme"));
@@ -175,7 +183,11 @@ fn test_dispatch_config_theme_from_config() -> Result<()> {
     };
 
     // -- Exec
-    let name = resolve_theme_from_clap(None, &plugin_config)?;
+    let name = resolve_theme_from_clap(
+        None,
+        &plugin_config,
+        std::path::Path::new("/nonexistent/theme.json"),
+    )?;
 
     // -- Check
     assert_eq!(name, ThemeName::CatppuccinMacchiato);

@@ -25,21 +25,25 @@ pub trait PersonaLister {
 }
 
 /// Filesystem-based persona resolver
+///
+/// `agents_dir` is the resolved persona directory
+/// ([`Paths::agents_dir`](crate::config::Paths::agents_dir)); the resolver never
+/// joins an `agents` segment onto it.
 pub struct FsPersonaResolver {
     cwd: PathBuf,
-    config_dir: PathBuf,
+    agents_dir: PathBuf,
     agents_config: crate::config::AgentsConfig,
 }
 
 impl FsPersonaResolver {
     pub fn new(
         cwd: PathBuf,
-        config_dir: PathBuf,
+        agents_dir: PathBuf,
         agents_config: crate::config::AgentsConfig,
     ) -> Self {
         Self {
             cwd,
-            config_dir,
+            agents_dir,
             agents_config,
         }
     }
@@ -63,18 +67,15 @@ impl FsPersonaResolver {
         }
     }
 
-    fn try_read_persona_xdg(
+    fn try_read_persona_agents(
         &self,
         persona_name: &str,
     ) -> Option<Result<(PathBuf, String), PersonaError>> {
-        let path = self
-            .config_dir
-            .join("agents")
-            .join(format!("{persona_name}.md"));
-        log::trace!("try_read_persona_xdg: checking path={path:?}");
+        let path = self.agents_dir.join(format!("{persona_name}.md"));
+        log::trace!("try_read_persona_agents: checking path={path:?}");
 
         if !path.exists() {
-            log::trace!("try_read_persona_xdg: path does not exist");
+            log::trace!("try_read_persona_agents: path does not exist");
             return None;
         }
 
@@ -125,10 +126,9 @@ impl PersonaLister for FsPersonaResolver {
             }
         }
 
-        // Then scan filesystem (XDG first so cwd can override)
+        // Then scan filesystem (agents dir first so cwd can override)
         let mut seen = std::collections::HashMap::<String, PersonaSummary>::new();
-        let xdg_dir = self.config_dir.join("agents");
-        Self::scan_dir(&xdg_dir, &parser, &mut seen);
+        Self::scan_dir(&self.agents_dir, &parser, &mut seen);
 
         let cwd_dir = self.cwd.join(".agents");
         Self::scan_dir(&cwd_dir, &parser, &mut seen);
@@ -202,9 +202,9 @@ impl PersonaFileResolver for FsPersonaResolver {
         }
 
         log::debug!(
-            "persona resolve: name={persona_name:?}, cwd={:?}, config_dir={:?}",
+            "persona resolve: name={persona_name:?}, cwd={:?}, agents_dir={:?}",
             self.cwd,
-            self.config_dir
+            self.agents_dir
         );
 
         // Check built-ins first
@@ -222,9 +222,9 @@ impl PersonaFileResolver for FsPersonaResolver {
             return result;
         }
 
-        // Try XDG config dir second
-        if let Some(result) = self.try_read_persona_xdg(persona_name) {
-            log::debug!("persona resolve: found in XDG config dir");
+        // Try the resolved agents dir second
+        if let Some(result) = self.try_read_persona_agents(persona_name) {
+            log::debug!("persona resolve: found in the agents dir");
             return result;
         }
 
@@ -232,10 +232,7 @@ impl PersonaFileResolver for FsPersonaResolver {
         log::debug!("persona resolve: not found for name={persona_name:?}");
         Err(PersonaError::NotFound {
             cwd_path: self.cwd.join(".agents").join(format!("{persona_name}.md")),
-            config_path: self
-                .config_dir
-                .join("agents")
-                .join(format!("{persona_name}.md")),
+            agents_path: self.agents_dir.join(format!("{persona_name}.md")),
         })
     }
 }

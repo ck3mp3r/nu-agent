@@ -16,15 +16,15 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // region:    --- Test Support
 
-pub(super) fn palette_ids(state: &AppState) -> Vec<String> {
-    state
+pub(super) fn palette_ids(state: &AppState) -> Result<Vec<String>> {
+    Ok(state
         .picker
         .active_state()
-        .unwrap()
+        .ok_or("picker should be open")?
         .filtered()
         .iter()
         .map(|o| o.id.clone())
-        .collect()
+        .collect())
 }
 
 pub(super) fn test_model_options() -> Vec<ModelPickerOption> {

@@ -1,7 +1,28 @@
 use super::*;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// The selection of the open palette, or the ok_or message when none is open.
+fn palette_selection(state: &AppState) -> Result<usize> {
+    Ok(state
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .selection)
+}
+
+/// The query of the open palette, or the ok_or message when none is open.
+fn palette_query(state: &AppState) -> Result<String> {
+    Ok(state
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .query
+        .clone())
+}
+
 #[test]
-fn command_palette_navigation_table() {
+fn command_palette_navigation_table() -> Result<()> {
     // Ctrl-P opens the palette; a second Ctrl-P moves the selection up.
     let mut state = AppState::default();
     let opened = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
@@ -11,7 +32,7 @@ fn command_palette_navigation_table() {
         Some(PickerRenderKind::CommandPalette)
     );
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+    assert_eq!(palette_selection(&state)?, 1);
     let moved_up =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert!(moved_up);
@@ -19,7 +40,7 @@ fn command_palette_navigation_table() {
         state.picker.render_kind(),
         Some(PickerRenderKind::CommandPalette)
     );
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    assert_eq!(palette_selection(&state)?, 0);
     let closed = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Esc), None);
     assert!(closed);
     assert_ne!(
@@ -30,11 +51,11 @@ fn command_palette_navigation_table() {
     // Ctrl-N moves the selection down.
     let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    assert_eq!(palette_selection(&state)?, 0);
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
     assert!(changed);
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+    assert_eq!(palette_selection(&state)?, 1);
     assert_eq!(
         state.picker.render_kind(),
         Some(PickerRenderKind::CommandPalette)
@@ -44,19 +65,20 @@ fn command_palette_navigation_table() {
     let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+    assert_eq!(palette_selection(&state)?, 1);
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     assert!(changed);
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    assert_eq!(palette_selection(&state)?, 0);
     assert_eq!(
         state.picker.render_kind(),
         Some(PickerRenderKind::CommandPalette)
     );
+    Ok(())
 }
 
 #[test]
-fn command_palette_query_feed_table() {
+fn command_palette_query_feed_table() -> Result<()> {
     for ch in ['j', 'k'] {
         let mut state = AppState::default();
         let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
@@ -69,13 +91,14 @@ fn command_palette_query_feed_table() {
             dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Char(ch)), None);
 
         assert!(changed);
-        assert_eq!(state.picker.active_state().unwrap().query, ch.to_string());
-        assert_eq!(state.picker.active_state().unwrap().selection, 0);
+        assert_eq!(palette_query(&state)?, ch.to_string());
+        assert_eq!(palette_selection(&state)?, 0);
         assert_eq!(
             state.picker.render_kind(),
             Some(PickerRenderKind::CommandPalette)
         );
     }
+    Ok(())
 }
 
 #[test]
@@ -113,16 +136,16 @@ fn command_palette_escape_table() {
 }
 
 #[test]
-fn command_palette_routing_table() {
+fn command_palette_routing_table() -> Result<()> {
     // Arrows and Ctrl-N/P navigate; Enter routes the selected action.
     let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+    assert_eq!(palette_selection(&state)?, 1);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    assert_eq!(palette_selection(&state)?, 0);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+    assert_eq!(palette_selection(&state)?, 1);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert_eq!(state.info_panel, Some(InfoPanel::Status));
     assert_ne!(
@@ -135,7 +158,12 @@ fn command_palette_routing_table() {
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
-    let selected = state.picker.active_state().unwrap().selected().unwrap();
+    let selected = state
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .selected()
+        .ok_or("should have a selection")?;
     assert_eq!(selected.id, "MCPs");
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert_eq!(state.info_panel, Some(InfoPanel::Mcps));
@@ -150,7 +178,12 @@ fn command_palette_routing_table() {
     for _ in 0..3 {
         let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
     }
-    let selected = state.picker.active_state().unwrap().selected().unwrap();
+    let selected = state
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .selected()
+        .ok_or("should have a selection")?;
     assert_eq!(selected.id, "Skills");
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert_eq!(state.info_panel, Some(InfoPanel::Skills));
@@ -191,7 +224,7 @@ fn command_palette_routing_table() {
     let ids: Vec<String> = state
         .picker
         .active_state()
-        .unwrap()
+        .ok_or("picker should be open")?
         .filtered()
         .iter()
         .map(|o| o.id.clone())
@@ -203,4 +236,5 @@ fn command_palette_routing_table() {
         state.picker.render_kind(),
         Some(PickerRenderKind::CommandPalette)
     );
+    Ok(())
 }

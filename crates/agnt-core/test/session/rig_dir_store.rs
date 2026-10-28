@@ -1,10 +1,12 @@
 //! Unit tests for the rig-memory `DirStore` wiring.
 
-use super::rig_dir_store::open_session_store;
+use std::path::Path;
+
+use super::rig_dir_store::{open_session_store_at, sessions_root};
 use super::{NAME_FILE, RigStoreError, read_session_name, session_dir, write_session_name};
 use crate::types::Message;
 use rig::completion::message::{DocumentSourceKind, ImageMediaType, UserContent};
-use rig_memory::{Files, LogWriteError, Store, load_images, store_images};
+use rig_memory::{DirStore, Files, LogWriteError, Store, load_images, store_images};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
@@ -177,3 +179,19 @@ fn unsafe_session_id_is_refused() -> Result<()> {
     assert!(matches!(&error, RigStoreError::Io(_)));
     Ok(())
 }
+
+// region:    --- Test Support
+
+/// Opens the store of `session_id` under `cache_dir`.
+///
+/// This is the tree production derives when no store path is pinned:
+/// `{cache_dir}/{APP_DIR_NAME}/sessions/{session_id}`.
+fn open_session_store(
+    cache_dir: &Path,
+    session_id: &str,
+) -> core::result::Result<DirStore, RigStoreError> {
+    let store_dir = crate::utils::paths::app_dir(cache_dir);
+    open_session_store_at(&sessions_root(&store_dir), session_id)
+}
+
+// endregion: --- Test Support

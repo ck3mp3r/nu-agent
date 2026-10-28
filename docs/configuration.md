@@ -2,21 +2,21 @@
 
 `nu-agent` uses a **TOML config file** as its sole source of configuration. The Nushell plugin record is no longer supported — all configuration lives in `config.toml`.
 
-Configuration is organised around three files, all located under the XDG base directories:
+Configuration is organised around three files. Each one lives in its tree's app directory: by default `{XDG base}/nu-agent/`, or `{XDG base}/nu-agent-dev/` in a debug build. An override re-roots the base and the app directory moves with it — see [Paths](#paths).
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `config.toml` | `$XDG_CONFIG_HOME/nu-agent/config.toml` | Main configuration: models, providers, MCP, compaction, agents, session store |
-| `.env` | `$XDG_CONFIG_HOME/nu-agent/.env` and `./.env` | Optional environment variables (see [Secret Storage](#2-secret-storage)) |
-| `models.json` | `$XDG_DATA_HOME/nu-agent/models.json` | Local cache of the `models.dev` database |
+| `config.toml` | `{config base}/nu-agent/config.toml` | Main configuration: models, providers, MCP, compaction, agents, session store |
+| `.env` | `{config base}/nu-agent/.env` and `./.env` | Optional environment variables (see [Secret Storage](#2-secret-storage)) |
+| `models.json` | `{data base}/nu-agent/models.json` | Local cache of the `models.dev` database |
 
-> On macOS/Linux the XDG defaults are `~/.config`, `~/.local/share`, and `~/.cache`. If `XDG_CONFIG_HOME`/`XDG_DATA_HOME` are set they take precedence.
+> On macOS/Linux the XDG defaults are `~/.config`, `~/.local/share`, and `~/.cache`. If `XDG_CONFIG_HOME`/`XDG_DATA_HOME` are set they take precedence, and `NU_AGENT_CONFIG_HOME`/`NU_AGENT_DATA_HOME` take precedence over those. Every base, and the `nu-agent` segment, is described under [Paths](#paths).
 
 ## 1. config.toml
 
 ### Location
 
-`$XDG_CONFIG_HOME/nu-agent/config.toml`
+`{config base}/nu-agent/config.toml` — `$XDG_CONFIG_HOME/nu-agent/config.toml` by default. `NU_AGENT_CONFIG_HOME` re-roots the whole config tree, and a debug build uses `nu-agent-dev` as the app directory. See [Paths](#paths) for the full ladder.
 
 If the file does not exist, `nu-agent` uses built-in defaults (plus environment-variable fallbacks — see [Environment Variable Fallback](#environment-variable-fallback)). It is **not** an error for the file to be absent.
 
@@ -56,9 +56,68 @@ Top-level sections:
 - `[compaction]` — conversation compaction settings (optional)
 - `[agents]` — built-in persona availability (optional)
 - `[session_store]` — session store backend (optional)
+- `[paths]` — base-directory overrides for the data, cache, and state trees (optional, see [Paths](#paths))
 - `a2a_enabled` — enable A2A (agent-to-agent) protocol (default: `false`)
 - `theme` — default TUI theme (optional, see [Theme](#theme))
 - `[[hooks]]` — user hook handlers (optional, see [Hooks](#hooks))
+
+#### Paths
+
+Every path `nu-agent` touches follows one 4-level ladder per tree, most specific
+first:
+
+| Tree | Env override | `[paths]` key | XDG env | Default under `$HOME` |
+|------|--------------|---------------|---------|------------------------|
+| config | `NU_AGENT_CONFIG_HOME` | — | `XDG_CONFIG_HOME` | `~/.config` |
+| data | `NU_AGENT_DATA_HOME` | `data_home` | `XDG_DATA_HOME` | `~/.local/share` |
+| cache | `NU_AGENT_CACHE_HOME` | `cache_home` | `XDG_CACHE_HOME` | `~/.cache` |
+| state | `NU_AGENT_STATE_HOME` | `state_home` | `XDG_STATE_HOME` | `~/.local/state` |
+
+The ladder precedence is `NU_AGENT_<X>_HOME` > `[paths].<x>_home` >
+`XDG_<X>_HOME` > the XDG default under `$HOME`.
+
+```toml
+[paths]
+data_home = "/srv/nu-agent/data"
+cache_home = "~/.cache/nu-agent"
+state_home = "/var/log/nu-agent"
+```
+
+The block has exactly three keys: `data_home`, `cache_home`, `state_home`. Rules:
+
+- **No file pins.** An override re-roots its whole tree: the tree keeps the
+  `{APP_DIR_NAME}/<tail>` substructure, so `config.toml`, `.env`, `agents/`,
+  `logs/agent.log`, `rig-sessions.db`, `tool_audit.log`, `secrets.json`,
+  `models.json`, and `theme.json` all move with their tree. There is no per-file
+  override.
+- **The config tree has no `[paths]` key.** The file that would hold it is the
+  file the ladder has to find first, so the config tree is re-rooted only by
+  `NU_AGENT_CONFIG_HOME` or an XDG level.
+- **One carve-out: the grammar cache.** The tree-sitter grammar cache lives at
+  `{cache base}/tree-sitter/` — no `{APP_DIR_NAME}` segment and no `-dev` split —
+  because the `tree-sitter` CLI shares that layout. Its base still follows the
+  cache ladder; see [Cache path](#cache-path).
+- **Relative values are rejected at every level.** Env values and `[paths]`
+  values must be absolute or start with `~`; a relative `[paths]` value is an
+  error at parse time naming the field, and a relative `NU_AGENT_*_HOME` value is
+  an error during resolution naming the variable. `XDG_*` variables keep their
+  standard semantics.
+- **Unknown `[paths]` keys are rejected at parse time.** A key the block does not
+  define is a hard error that names the key, so a stale key can never silently
+  override nothing.
+- **`~` expands to `$HOME`.** Only a leading `~` or `~/` expands. An empty value
+  counts as absent at both override levels, and resolution never creates a
+  directory: the first consumer that writes there creates it.
+- **Resolve once, inject.** Paths are resolved once at startup by
+  `Paths::resolve_for_process`, and consumers receive the resolved values — no
+  point-of-use XDG resolution.
+- **The `-dev` split.** `APP_DIR_NAME` is `nu-agent-dev` in debug builds and
+  `nu-agent` in release builds. The split applies to every derived path,
+  including the config file's app directory: `.env`, hooks, and `agents/` anchor
+  with it.
+- **Hooks stay relative to the config file's dir.** A relative `script` in
+  `[[hooks]]` resolves against the directory holding `config.toml` (see
+  [Hooks](#hooks)).
 
 ### Theme
 
@@ -630,9 +689,15 @@ The cache is built once per process. If you install a new grammar, restart the a
 
 ### Cache path
 
-Compiled grammars are cached in the XDG cache directory:
+Compiled grammars are read from the grammar cache at `{cache base}/tree-sitter/lib/`:
 
-| All platforms | `$XDG_CACHE_HOME/tree-sitter/lib/` or `~/.cache/tree-sitter/lib/` |
+| Platform | Path |
+|----------|------|
+| All platforms | `{cache base}/tree-sitter/lib/` — `$XDG_CACHE_HOME/tree-sitter/lib/` or `~/.cache/tree-sitter/lib/` by default |
+
+The cache base follows the cache ladder: `NU_AGENT_CACHE_HOME` > `[paths].cache_home` > `XDG_CACHE_HOME` > `~/.cache` under `$HOME`. See [Paths](#paths) for the ladder rules.
+
+The `tree-sitter/` directory keeps no app-dir segment and no `-dev` split: the grammar cache is deliberately shared with the `tree-sitter` CLI, which writes the same layout.
 
 ### Supported languages
 

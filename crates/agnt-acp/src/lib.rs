@@ -57,9 +57,21 @@ type SharedSessions = Arc<AcpSessionManager<DefaultRuntimeBuilder>>;
 /// `agent` selects the agent whose permissions overlay applies to every
 /// session; `None` falls back to the configured default agent.
 pub async fn serve(agent: Option<String>) -> Result<()> {
-    let config_path = toml_config::config_path()
-        .map_err(|e| AcpError::Config(format!("failed to resolve config path: {e}")))?;
-    let models_cache = match ModelsCache::load() {
+    // One ladder, one resolution: the config file the environment selects, then
+    // every application path derived from it. The load below reads the file the
+    // resolution names, so this entry point never re-derives a base.
+    let loaded = toml_config::load();
+    let paths = agnt_core::config::Paths::resolve_for_process(
+        loaded
+            .as_ref()
+            .ok()
+            .and_then(|config| config.paths.as_ref()),
+    )
+    .map_err(|err| AcpError::Config(format!("failed to resolve application paths: {err}")))?;
+    agnt_core::logging::retarget_process_sink(&paths.log_path);
+    agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
+    let config_dir = paths.config_dir();
+    let models_cache = match ModelsCache::load_from(&paths.models_cache_path) {
         Ok(cache) => Some(Arc::new(cache)),
         Err(err) => {
             log::debug!("models cache unavailable, advertising only the configured model: {err}");
@@ -67,17 +79,13 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
         }
     };
     let client_fs: Arc<StdMutex<Option<ClientFsState>>> = Arc::new(StdMutex::new(None));
-    // The agent writes each session's conversation to the rig-memory store of
-    // the configured backend; `session/load` and `session/resume` read it back.
-    let rig = agnt_core::session::RigStoreConfig::new(agnt_core::session::StoreType::Sqlite);
     // Resolve the user hooks once: every session starts a runner for them on
     // its own bus. A config that fails to load or resolve leaves hooks empty,
     // so the server still serves. The same load supplies the model identity the
     // process-level agent hook envelopes carry.
-    let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
-    let (hooks, agent_hook_context) = match toml_config::load_from(&config_path) {
+    let (hooks, agent_hook_context) = match &loaded {
         Ok(config) => {
-            let hooks = match agnt_core::config::resolve_hooks(&config, config_dir) {
+            let hooks = match agnt_core::config::resolve_hooks(config, config_dir) {
                 Ok(hooks) => hooks,
                 Err(err) => {
                     log::warn!("Failed to resolve hooks: {err}");
@@ -85,8 +93,12 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
                 }
             };
             let context = HookAgentContext::default()
-                .with_persona(persona_slug(agent.as_deref(), config_dir, &config.agents))
-                .with_model(active_model_identity(&config));
+                .with_persona(persona_slug(
+                    agent.as_deref(),
+                    &paths.agents_dir,
+                    &config.agents,
+                ))
+                .with_model(active_model_identity(config));
             (hooks, context)
         }
         Err(err) => {
@@ -94,6 +106,10 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
             (Vec::new(), HookAgentContext::default())
         }
     };
+    // The rig-memory store of each session is the store path the resolution
+    // carries.
+    let rig = agnt_core::session::RigStoreConfig::new(agnt_core::session::StoreType::Sqlite)
+        .with_store_path(paths.store_path.clone());
     // Agent events are process-scoped, so they ride a standalone channel rather
     // than the per-session bus. The agent-class hook runner is spawned once for
     // this process; hooks with no agent-class event spawn nothing.
@@ -106,7 +122,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
         agnt_core::hooks::NuProcess,
     );
     let sessions: SharedSessions = Arc::new(
-        AcpSessionManager::new(rig, config_path, tokio::runtime::Handle::current())
+        AcpSessionManager::new(rig, paths, tokio::runtime::Handle::current())
             .with_models_cache(models_cache)
             .with_client_fs(Arc::clone(&client_fs))
             .with_agent_name(agent)
@@ -325,12 +341,12 @@ fn agent_info() -> Implementation {
 /// process-scoped, so they cannot read a session's snapshot.
 fn persona_slug(
     agent: Option<&str>,
-    config_dir: &std::path::Path,
+    agents_dir: &std::path::Path,
     agents_config: &AgentsConfig,
 ) -> Option<String> {
     let name = agent?;
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let resolver = FsPersonaResolver::new(cwd, config_dir.to_path_buf(), agents_config.clone());
+    let resolver = FsPersonaResolver::new(cwd, agents_dir.to_path_buf(), agents_config.clone());
     resolver.resolve(name).ok().map(|_| name.to_string())
 }
 

@@ -115,7 +115,7 @@ impl RuntimeBuilder for MockRuntimeBuilder {
         let AcpRuntimeParams {
             cwd,
             mcp_servers: _,
-            config_path: _,
+            paths,
             runtime_handle,
             rig,
             session_id,
@@ -202,9 +202,10 @@ impl RuntimeBuilder for MockRuntimeBuilder {
                 String::new(),
             ),
             session: MemoryState::new(rig),
-            persona: PersonaState::new(None, None, None, None, None, None, None),
+            persona: PersonaState::new(None, None, None, None, None, None),
             multi_agent: MultiAgentState::new(Vec::new(), AgentsConfig::default()),
             cwd,
+            paths,
             interactive_pending: Some(Arc::new(Mutex::new(HashMap::new()))),
             renders_tool_previews: false,
             circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
@@ -248,10 +249,32 @@ pub(super) fn rig_config(dir: &Path) -> RigStoreConfig {
     RigStoreConfig::new(StoreType::Sqlite).with_cache_dir(dir)
 }
 
+/// The application paths of a session test rooted at `dir`.
+///
+/// The config file and the persona dir sit under `dir`, so the manager never
+/// reads the user's real config or persona files.
+pub(super) fn test_paths(dir: &Path) -> agnt_core::config::Paths {
+    let logs = dir.join("logs");
+    agnt_core::config::Paths {
+        config_path: dir.join("config.toml"),
+        dotenv_path: dir.join(".env"),
+        agents_dir: dir.join("agents"),
+        copilot_token_dir: dir.join("github_copilot"),
+        store_path: dir.join("rig-sessions.db"),
+        log_dir: logs.clone(),
+        log_path: logs.join("agent.log"),
+        audit_log_path: dir.join("tool_audit.log"),
+        secrets_path: dir.join("secrets.json"),
+        models_cache_path: dir.join("models.json"),
+        theme_path: dir.join("theme.json"),
+        grammar_cache_dir: dir.join("tree-sitter"),
+    }
+}
+
 pub(super) async fn manager(dir: &Path) -> Result<AcpSessionManager<MockRuntimeBuilder>> {
     Ok(AcpSessionManager::with_runtime_builder(
         rig_config(dir),
-        dir.join("config.toml"),
+        test_paths(dir),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder::default(),
     ))
@@ -265,7 +288,7 @@ pub(super) async fn manager_with_builder(
 ) -> Result<AcpSessionManager<MockRuntimeBuilder>> {
     Ok(AcpSessionManager::with_runtime_builder(
         rig_config(dir),
-        dir.join("config.toml"),
+        test_paths(dir),
         tokio::runtime::Handle::current(),
         builder,
     ))
@@ -287,7 +310,7 @@ pub(super) async fn manager_with_bus(
 ) -> Result<AcpSessionManager<MockRuntimeBuilder>> {
     Ok(AcpSessionManager::with_runtime_builder(
         rig_config(dir),
-        dir.join("config.toml"),
+        test_paths(dir),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder {
             bus: Some(bus),
@@ -305,7 +328,7 @@ pub(super) async fn manager_with_bus_and_rig_store(
     let rig = rig_config(dir);
     let manager = AcpSessionManager::with_runtime_builder(
         rig.clone(),
-        dir.join("config.toml"),
+        test_paths(dir),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder {
             bus: Some(bus),
@@ -327,7 +350,7 @@ pub(super) async fn manager_with_usage_for_session(
     let rig = rig_config(dir);
     let manager = AcpSessionManager::with_runtime_builder(
         rig.clone(),
-        dir.join("config.toml"),
+        test_paths(dir),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder {
             bus: Some(bus),
@@ -346,7 +369,7 @@ pub(super) async fn manager_with_rig_store(
     let rig = rig_config(dir);
     let manager = AcpSessionManager::with_runtime_builder(
         rig.clone(),
-        dir.join("config.toml"),
+        test_paths(dir),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder::default(),
     );
@@ -400,7 +423,7 @@ pub(super) async fn manager_capturing_client_fs(
     let captured = Arc::new(Mutex::new(Vec::new()));
     let manager = AcpSessionManager::with_runtime_builder(
         rig_config(dir),
-        dir.join("config.toml"),
+        test_paths(dir),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder {
             captured_client_fs: Some(Arc::clone(&captured)),
@@ -420,7 +443,7 @@ pub(super) async fn manager_capturing_agent_name(
     let captured = Arc::new(Mutex::new(Vec::new()));
     let manager = AcpSessionManager::with_runtime_builder(
         rig_config(dir),
-        dir.join("config.toml"),
+        test_paths(dir),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder {
             captured_agent_name: Some(Arc::clone(&captured)),

@@ -11,15 +11,14 @@ pub(crate) struct PersonaResolution {
     /// as `agent`; it is not the front-matter display name.
     pub(crate) agent_slug: Option<String>,
     pub(crate) agent_identity: Option<String>,
-    pub(crate) messaging_identity: Option<String>,
     pub(crate) agent_permissions_overlay: Option<PermissionsOverlay>,
 }
 
 pub(crate) fn resolve_persona(
     agent_name: Option<String>,
-    cli_name: Option<String>,
     agents_config: &AgentsConfig,
     cwd: &std::path::Path,
+    agents_dir: &std::path::Path,
     call: &EvaluatedCall,
     config: &mut Config,
 ) -> Result<PersonaResolution, LabeledError> {
@@ -51,14 +50,7 @@ pub(crate) fn resolve_persona(
 
     let persona = if let Some(name) = &effective_agent_name {
         let cwd = std::path::PathBuf::from(cwd);
-        let config_dir = agnt_core::utils::xdg::config_dir()
-            .map(|base| base.join("nu-agent"))
-            .map_err(|e| {
-                LabeledError::new("Cannot determine config directory")
-                    .with_label(e.to_string(), call.head)
-            })?;
-
-        let resolver = FsPersonaResolver::new(cwd, config_dir, agents_config.clone());
+        let resolver = FsPersonaResolver::new(cwd, agents_dir.to_path_buf(), agents_config.clone());
         let (_path, contents) = resolver.resolve(name).map_err(|e| {
             LabeledError::new("Agent persona not found").with_label(e.to_string(), call.head)
         })?;
@@ -94,11 +86,7 @@ pub(crate) fn resolve_persona(
         .or_else(|| effective_agent_name.clone());
     // Persona slug: the effective agent name, but only when a persona loaded.
     let agent_slug = persona.as_ref().and(effective_agent_name.clone());
-    // Messaging identity: --name > display identity (for multi-agent communication)
-    let messaging_identity = cli_name.or_else(|| agent_identity.clone());
-    log::debug!(
-        "resolved agent_identity={agent_identity:?}, messaging_identity={messaging_identity:?}"
-    );
+    log::debug!("resolved agent_identity={agent_identity:?}");
 
     // Wire permissions field
     let agent_permissions_overlay = persona
@@ -136,7 +124,6 @@ pub(crate) fn resolve_persona(
         persona,
         agent_slug,
         agent_identity,
-        messaging_identity,
         agent_permissions_overlay,
     })
 }

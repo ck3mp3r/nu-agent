@@ -3,7 +3,6 @@ use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value
 
 use agnt_core::config::copilot_tokens::read_copilot_token_record;
 use agnt_core::config::vault::Vault;
-use agnt_core::types::copilot_token_dir;
 
 use crate::plugin::AgentPlugin;
 
@@ -68,22 +67,25 @@ impl SimplePluginCommand for AgentProviderAuthLogout {
         _input: &Value,
     ) -> Result<Value, LabeledError> {
         let name: String = call.req(0)?;
+        let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+            .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
 
         // github-copilot stores its tokens in files, not the vault.
         if (name == "github-copilot" || name == "copilot")
-            && let Some(dir) = copilot_token_dir()
-            && read_copilot_token_record(&dir)
+            && read_copilot_token_record(&application_paths.copilot_token_dir)
                 .map_err(LabeledError::new)?
                 .is_some()
         {
-            remove_copilot_token_files(&dir).map_err(LabeledError::new)?;
+            remove_copilot_token_files(&application_paths.copilot_token_dir)
+                .map_err(LabeledError::new)?;
             return Ok(Value::string(
                 format!("Removed credentials for '{name}'"),
                 call.head,
             ));
         }
 
-        let vault = Vault::auto_detect().map_err(|e| LabeledError::new(e.to_string()))?;
+        let vault = Vault::auto_detect(&application_paths.secrets_path)
+            .map_err(|e| LabeledError::new(e.to_string()))?;
 
         let removed = vault
             .remove_provider(&name)

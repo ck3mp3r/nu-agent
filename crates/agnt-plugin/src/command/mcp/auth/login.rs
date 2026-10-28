@@ -150,7 +150,12 @@ async fn run_inner(
     })?;
 
     // 5. Construct the vault
-    let vault = Arc::new(Vault::auto_detect().map_err(|e| LabeledError::new(e.to_string()))?);
+    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
+    let vault = Arc::new(
+        Vault::auto_detect(&application_paths.secrets_path)
+            .map_err(|e| LabeledError::new(e.to_string()))?,
+    );
 
     // 6. Start callback server on a random port
     let callback_server = CallbackServer::start(0)

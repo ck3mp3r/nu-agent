@@ -24,7 +24,7 @@ use crate::bus::create_bus;
 use crate::compaction::CompactionParams;
 use crate::config::models_cache::{ModelCost, ModelLimit, ModelSpec, ProviderSpec};
 use crate::config::{AgentsConfig, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
-use crate::session::StoreType;
+use crate::session::{RigStoreConfig, StoreType};
 use crate::tools::authz::PermissionsConfig;
 use crate::tools::closure::{ClosureRegistry, CwdEngine};
 use crate::tools::handler::McpToolRegistry;
@@ -65,7 +65,7 @@ fn make_params(
         vault: None,
         mcp_registry: McpToolRegistry::empty(),
         engine: CwdEngine::shared(cwd.to_string_lossy().to_string()),
-        store_type,
+        rig: RigStoreConfig::new(store_type),
         final_session_id: None,
         compaction_params: CompactionParams::default(),
         proactive_threshold_pct: None,
@@ -79,9 +79,9 @@ fn make_params(
         agent_icon: Some("robot".to_string()),
         cached_agents_chain: Some("agents chain".to_string()),
         cached_available_skills: Some("available skills".to_string()),
-        cached_sub_agent_instruction: None,
         available_agents: Vec::new(),
         agents_config: AgentsConfig::default(),
+        paths: crate::test_support::paths_in(&cwd),
         cwd,
         bus: create_bus(),
         render_registry: ToolRenderRegistry::default(),

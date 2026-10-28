@@ -57,6 +57,7 @@ pub async fn run_tui_mode(
         runtime_impl
             .mcp_caller_cwd()
             .unwrap_or(std::path::Path::new(".")),
+        runtime_impl.paths.config_dir(),
         &runtime_impl.hook_context,
     )
     .await;
@@ -108,6 +109,7 @@ async fn run_tui_mode_inner(
     // selections over this channel; the receiving task saves them fire-and-forget.
     let (theme_persist_tx, mut theme_persist_rx) = tokio::sync::mpsc::channel::<String>(8);
     tui_ui.set_theme_persist_tx(theme_persist_tx);
+    let theme_path = runtime_impl.paths.theme_path.clone();
     tokio::spawn(async move {
         while let Some(name) = theme_persist_rx.recv().await {
             // Normalize to the canonical kebab-case form so the preference file
@@ -119,7 +121,7 @@ async fn run_tui_mode_inner(
                 continue;
             };
             let pref = agnt_core::theme_pref::ThemePreference { theme: Some(kebab) };
-            if let Err(e) = pref.save() {
+            if let Err(e) = pref.save_to(&theme_path) {
                 log::warn!("Failed to persist theme preference: {e}");
             }
         }
@@ -174,6 +176,14 @@ async fn run_tui_mode_inner(
     }
     tui_ui.set_mcp_lifecycle_projection(runtime_impl.mcp_lifecycle_projection().to_vec());
     tui_ui.set_llm_visible_mcp_tool_count(runtime_impl.llm_visible_mcp_tool_count());
+    // The per-server count and name events are published before the render loop
+    // subscribes to the UI-state channel, so they are dropped. Push them here
+    // instead, after the projection: `set_mcp_servers` retains counts and names
+    // only for servers the projection lists.
+    for (server_name, names) in runtime_impl.llm_visible_mcp_tool_names_by_server() {
+        tui_ui.set_mcp_visible_tool_count_by_server_name(&server_name, names.len());
+        tui_ui.set_mcp_visible_tool_names_by_server_name(&server_name, names);
+    }
     tui_ui.set_context_window_max_tokens(runtime_impl.max_context_tokens());
 
     tui_ui.push_startup_logo();
@@ -261,6 +271,7 @@ async fn run_tui_mode_inner(
         runtime_impl
             .mcp_caller_cwd()
             .unwrap_or(std::path::Path::new(".")),
+        runtime_impl.paths.config_dir(),
         &runtime_impl.hook_context,
     );
 
@@ -277,6 +288,14 @@ async fn run_tui_mode_inner(
             .await
             .map_err(Error::from)
     } else if hydration.should_hydrate {
+        // The startup `HydrateTranscript` event is published before the render
+        // loop subscribes to the UI-state channel, so it is dropped. Push the
+        // persisted transcript directly, before `make_render_loop_spawner`
+        // moves the coordinator into the render loop.
+        tui_ui.hydrate_transcript(
+            hydration.initial_messages.clone(),
+            hydration.last_total_tokens,
+        );
         let mut config = InteractiveLoopConfig::new(Span::unknown())
             .with_bus(runtime_impl.bus.clone())
             .with_hydration(hydration.initial_messages, hydration.last_total_tokens)

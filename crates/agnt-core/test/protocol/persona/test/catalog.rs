@@ -7,7 +7,7 @@ fn list_available_scenarios() -> Result<()> {
     let temp_config = TempDir::new().unwrap();
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         no_builtins(),
     );
     let result = resolver.list_available();
@@ -27,7 +27,7 @@ fn list_available_scenarios() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         no_builtins(),
     );
     let result = resolver.list_available();
@@ -50,7 +50,7 @@ fn list_available_scenarios() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         no_builtins(),
     );
     let result = resolver.list_available();
@@ -70,7 +70,7 @@ fn list_available_scenarios() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         no_builtins(),
     );
     let result = resolver.list_available();
@@ -91,7 +91,7 @@ fn list_available_scenarios() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         no_builtins(),
     );
     let result = resolver.list_available();
@@ -121,7 +121,7 @@ fn list_available_scenarios() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         no_builtins(),
     );
     let result = resolver.list_available();

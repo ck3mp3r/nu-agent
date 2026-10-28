@@ -1,5 +1,60 @@
 use super::*;
 
+/// A typed query filters the table rows and replaces the controls line with the
+/// palette-style query line; the selection re-bases onto the filtered rows.
+#[test]
+fn mcp_table_model_filters_rows_by_query() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.status.mcp.set_mcp_servers(vec![
+        crate::state::McpServerState {
+            name: "c5t".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        crate::state::McpServerState {
+            name: "context7".to_string(),
+            state: McpServerUsabilityState::Disabled,
+        },
+        crate::state::McpServerState {
+            name: "github".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+    ]);
+
+    // -- Check: no query shows every row under the static controls line.
+    let model = mcp_table_model_for_test(&state, 80, 10);
+    assert_eq!(model.rows.len(), 3);
+    assert_eq!(model.controls_line, mcp_panel_controls_line());
+    assert_eq!(model.selected, Some(0));
+    assert_eq!(model.overflow_cue, None);
+
+    // -- Exec: a subsequence query.
+    for ch in "ct7".chars() {
+        state.status.mcp.append_mcp_panel_query_char(ch);
+    }
+
+    // -- Check: only the match renders, under the query line, still selected.
+    let model = mcp_table_model_for_test(&state, 80, 10);
+    assert_eq!(model.controls_line, "Query: ct7");
+    let names = model
+        .rows
+        .iter()
+        .map(|row| row[0].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["context7"]);
+    assert_eq!(model.selected, Some(0));
+
+    // -- Exec: a query matching nothing.
+    state.status.mcp.append_mcp_panel_query_char('z');
+
+    // -- Check: an empty table keeps its columns and drops the selection.
+    let model = mcp_table_model_for_test(&state, 80, 10);
+    assert_eq!(model.controls_line, "Query: ct7z");
+    assert!(model.rows.is_empty());
+    assert_eq!(model.selected, None);
+    Ok(())
+}
+
 /// The MCP table model keeps the required columns at a narrow width.
 #[test]
 fn mcp_table_model_narrow_width_keeps_required_columns() -> Result<()> {
@@ -45,21 +100,21 @@ fn mcp_table_model_overflow_windows() -> Result<()> {
             0,
             0,
             "srv-0",
-            "↑/↓ or j/k | Enter/Space toggle | Esc close | 1-5 / 8",
+            "↑/↓ select · Enter/Space toggle · Esc close · 1-5 / 8",
         ),
         (
             "middle",
             5,
             4,
             "srv-5",
-            "↑/↓ or j/k | Enter/Space toggle | Esc close | 2-6 / 8",
+            "↑/↓ select · Enter/Space toggle · Esc close · 2-6 / 8",
         ),
         (
             "bottom",
             7,
             4,
             "srv-7",
-            "↑/↓ or j/k | Enter/Space toggle | Esc close | 4-8 / 8",
+            "↑/↓ select · Enter/Space toggle · Esc close · 4-8 / 8",
         ),
     ];
 

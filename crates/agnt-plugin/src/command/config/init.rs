@@ -1,5 +1,4 @@
 use crate::plugin::AgentPlugin;
-use agnt_core::config;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, LabeledError, Signature, Value};
 
@@ -37,8 +36,9 @@ impl SimplePluginCommand for AgentConfigInit {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let path = config::toml_config::config_path()
+        let paths = agnt_core::config::Paths::resolve_for_process(None)
             .map_err(|e| LabeledError::new(format!("Cannot determine config path: {e}")))?;
+        let path = paths.config_path;
 
         let force = call
             .has_flag("force")

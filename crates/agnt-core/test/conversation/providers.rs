@@ -109,6 +109,7 @@ fn plugin_config_read_timeout_secs_propagates_to_resolved_config() -> Result<()>
         mcp: None,
         theme: None,
         hooks: Vec::new(),
+        paths: None,
     };
 
     let role_config = ModelRoleConfig {
@@ -171,6 +172,7 @@ fn plugin_config_without_read_timeout_secs_resolves_to_none() -> Result<()> {
         mcp: None,
         theme: None,
         hooks: Vec::new(),
+        paths: None,
     };
 
     let role_config = ModelRoleConfig {

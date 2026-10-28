@@ -4,7 +4,6 @@ use agnt_core::config::copilot_tokens::{
     read_copilot_token_record, verify_copilot_login_persistence,
 };
 use agnt_core::config::vault::{CredentialType, Vault};
-use agnt_core::types::copilot_token_dir;
 
 use crate::ProviderAuthCommand;
 use crate::ProviderCommand;
@@ -50,7 +49,10 @@ async fn run_provider_login(args: &ProviderLoginArgs) -> Result<()> {
         })?,
     };
 
-    let vault = Vault::auto_detect().map_err(|e| Error::Custom(e.to_string()))?;
+    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
+    let vault = Vault::auto_detect(&application_paths.secrets_path)
+        .map_err(|e| Error::Custom(e.to_string()))?;
     vault
         .store_api_key(name, &key)
         .map_err(|e| Error::Custom(format!("Failed to store API key: {e}")))?;
@@ -71,7 +73,9 @@ async fn run_copilot_login() -> Result<()> {
         );
     });
 
-    let token_dir = copilot_device_login(handler)
+    let paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
+    let token_dir = copilot_device_login(handler, paths.copilot_token_dir)
         .await
         .map_err(|e| Error::Custom(e.to_string()))?;
     verify_copilot_login_persistence(&token_dir).map_err(Error::Custom)?;
@@ -86,20 +90,22 @@ async fn run_copilot_login() -> Result<()> {
 /// Clear stored credentials for an LLM provider.
 fn run_provider_logout(args: &ProviderLogoutArgs) -> Result<()> {
     let name = args.name.as_str();
+    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
 
     // github-copilot stores its tokens in files, not the vault.
     if (name == "github-copilot" || name == "copilot")
-        && let Some(dir) = copilot_token_dir()
-        && read_copilot_token_record(&dir)
+        && read_copilot_token_record(&application_paths.copilot_token_dir)
             .map_err(Error::Custom)?
             .is_some()
     {
-        remove_copilot_token_files(&dir).map_err(Error::Custom)?;
+        remove_copilot_token_files(&application_paths.copilot_token_dir).map_err(Error::Custom)?;
         println!("Removed credentials for '{name}'");
         return Ok(());
     }
 
-    let vault = Vault::auto_detect().map_err(|e| Error::Custom(e.to_string()))?;
+    let vault = Vault::auto_detect(&application_paths.secrets_path)
+        .map_err(|e| Error::Custom(e.to_string()))?;
     let removed = vault
         .remove_provider(name)
         .map_err(|e| Error::Custom(format!("Failed to remove credentials: {e}")))?;
@@ -114,7 +120,10 @@ fn run_provider_logout(args: &ProviderLogoutArgs) -> Result<()> {
 
 /// Show stored credentials for all LLM providers.
 fn run_provider_status() -> Result<()> {
-    let vault = Vault::auto_detect().map_err(|e| Error::Custom(e.to_string()))?;
+    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
+    let vault = Vault::auto_detect(&application_paths.secrets_path)
+        .map_err(|e| Error::Custom(e.to_string()))?;
     let entries = vault
         .list_providers()
         .map_err(|e| Error::Custom(format!("Failed to list credentials: {e}")))?;
@@ -131,8 +140,8 @@ fn run_provider_status() -> Result<()> {
         .collect();
 
     // github-copilot stores its tokens in files, not the vault.
-    if let Some(dir) = copilot_token_dir()
-        && let Some(record) = read_copilot_token_record(&dir).map_err(Error::Custom)?
+    if let Some(record) =
+        read_copilot_token_record(&application_paths.copilot_token_dir).map_err(Error::Custom)?
     {
         rows.push(vec![
             "github-copilot".to_string(),

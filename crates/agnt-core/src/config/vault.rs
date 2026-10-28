@@ -8,6 +8,7 @@
 
 // region:    --- Modules
 
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::utils::env_map::{EnvMap, process_env};
@@ -224,19 +225,26 @@ impl Vault<VaultBackendKind> {
     /// env-only backend without probing, `file` probes the file backend only,
     /// and `keychain` or `auto` probe keychain, then file, then env-only.
     ///
+    /// `secrets_path` is the resolved secrets file
+    /// ([`Paths::secrets_path`](crate::config::Paths::secrets_path)); the file
+    /// backend writes exactly there.
+    ///
     /// # Errors
     /// - [`VaultError::BackendUnavailable`] when the keychain probe fails with
     ///   anything other than [`VaultError::NoBackend`]
-    pub fn auto_detect() -> Result<Self, VaultError> {
-        Self::auto_detect_with(&process_env())
+    pub fn auto_detect(secrets_path: &Path) -> Result<Self, VaultError> {
+        Self::auto_detect_with(&process_env(), secrets_path)
     }
 
     /// Select a backend from an explicit environment map.
     ///
     /// The map-taking variant keeps the selection testable without mutating
     /// the process environment.
-    fn auto_detect_with(env: &EnvMap) -> Result<Self, VaultError> {
-        Ok(Self::new(resolve_backend(backend_choice(env))?))
+    fn auto_detect_with(env: &EnvMap, secrets_path: &Path) -> Result<Self, VaultError> {
+        Ok(Self::new(resolve_backend(
+            backend_choice(env),
+            secrets_path,
+        )?))
     }
 
     /// Construct an env-only vault. All lookups return `None`.
@@ -505,10 +513,15 @@ fn backend_choice(env: &EnvMap) -> BackendChoice {
 }
 
 /// Resolve a backend choice to a concrete backend, probing as needed.
-fn resolve_backend(choice: BackendChoice) -> Result<VaultBackendKind, VaultError> {
+fn resolve_backend(
+    choice: BackendChoice,
+    secrets_path: &Path,
+) -> Result<VaultBackendKind, VaultError> {
     match choice {
-        BackendChoice::Auto => auto_chain(),
-        choice => resolve_backend_with(choice, KeychainBackend::probe, FileBackend::probe),
+        BackendChoice::Auto => auto_chain(secrets_path),
+        choice => resolve_backend_with(choice, KeychainBackend::probe, || {
+            FileBackend::probe(secrets_path)
+        }),
     }
 }
 
@@ -536,8 +549,8 @@ fn resolve_backend_with(
 /// A keychain probe failure other than [`VaultError::NoBackend`] aborts the
 /// chain: silently downgrading to the file backend would store plaintext
 /// secrets while the user believes the keychain holds them.
-fn auto_chain() -> Result<VaultBackendKind, VaultError> {
-    auto_chain_with(KeychainBackend::probe, FileBackend::probe)
+fn auto_chain(secrets_path: &Path) -> Result<VaultBackendKind, VaultError> {
+    auto_chain_with(KeychainBackend::probe, || FileBackend::probe(secrets_path))
 }
 
 /// Probe keychain, then file, then env-only using injectable probes.

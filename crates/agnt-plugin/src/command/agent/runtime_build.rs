@@ -1,4 +1,6 @@
 use nu_plugin::EvaluatedCall;
+use std::path::Path;
+
 use nu_protocol::{LabeledError, Value};
 
 use agnt_core::config::{self, Config, PluginConfig};
@@ -16,18 +18,22 @@ fn get_string_flag(call: &EvaluatedCall, name: &str) -> Option<String> {
 
 /// Resolve configuration from all sources with proper precedence.
 ///
+/// `config_path` is the config file the entry point discovered from the resolved
+/// [`Paths`](agnt_core::config::Paths); this function never re-derives it.
+///
 /// Resolution pipeline:
 /// 1. Load PluginConfig from config.toml and resolve the active model role
 ///    through the shared `agnt-core` loader. The `--model` flag selects the
 ///    role; otherwise `models.default` is used.
 /// 2. Apply CLI flag overrides (temperature, max-context/output-tokens, etc.).
 /// 3. Validate and return.
-pub fn resolve_config(call: &EvaluatedCall) -> Result<(Config, PluginConfig), LabeledError> {
-    let config_path = config::toml_config::config_path()
-        .map_err(|e| LabeledError::new(format!("Cannot determine config path: {e}")))?;
+pub fn resolve_config(
+    call: &EvaluatedCall,
+    config_path: &Path,
+) -> Result<(Config, PluginConfig), LabeledError> {
     let model_override = get_string_flag(call, "model");
     let (mut config, plugin_config) =
-        config::load_and_resolve_config(&config_path, model_override.as_deref())
+        config::load_and_resolve_config(config_path, model_override.as_deref())
             .map_err(|e| map_config_load_error(e, call))?;
 
     // Apply CLI flag overrides (highest precedence).
@@ -60,6 +66,9 @@ fn map_config_load_error(err: config::ConfigLoadError, call: &EvaluatedCall) -> 
             LabeledError::new("Failed to resolve model").with_label(msg, call.head)
         }
         ConfigLoadError::Vault(e) => LabeledError::new(e.to_string()),
+        ConfigLoadError::Paths(e) => {
+            LabeledError::new(format!("Failed to resolve application paths: {e}"))
+        }
     }
 }
 

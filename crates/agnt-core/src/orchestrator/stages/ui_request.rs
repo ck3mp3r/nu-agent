@@ -149,6 +149,17 @@ impl UiRequestHandler for UiRequestStage {
                 }
                 // If already in-flight, skip silently.
             }
+            UiRequest::RefreshAgentPicker => {
+                let already_in_flight = self
+                    .pending_concurrent
+                    .iter()
+                    .any(|r| matches!(r, UiRequest::RefreshAgentPicker));
+                if !already_in_flight {
+                    self.dispatch_concurrent(UiRequest::RefreshAgentPicker, ctx)
+                        .await;
+                }
+                // If already in-flight, skip silently.
+            }
         }
     }
 
@@ -253,10 +264,11 @@ impl UiRequestHandler for UiRequestStage {
         response: UiRequestResponse,
         ctx: &mut OrchestrationContext<'_>,
     ) {
-        let (remove_mcp_server, remove_session_refresh) = match &response {
-            UiRequestResponse::McpToggle { server, .. } => (Some(server.clone()), false),
-            UiRequestResponse::SessionRefresh(_) => (None, true),
-            _ => (None, false),
+        let (remove_mcp_server, remove_session_refresh, remove_agent_refresh) = match &response {
+            UiRequestResponse::McpToggle { server, .. } => (Some(server.clone()), false, false),
+            UiRequestResponse::SessionRefresh(_) => (None, true, false),
+            UiRequestResponse::AgentRefresh(_) => (None, false, true),
+            _ => (None, false, false),
         };
         match response {
             UiRequestResponse::McpToggle {
@@ -341,12 +353,29 @@ impl UiRequestHandler for UiRequestStage {
                     .send(UiEvent::Warning { message: msg })
                     .await;
             }
+            UiRequestResponse::AgentRefresh(Ok(summaries)) => {
+                let _ = ctx
+                    .bus
+                    .ui_state()
+                    .send(UiStateEvent::SetAgentPickerOptions(summaries))
+                    .await;
+            }
+            UiRequestResponse::AgentRefresh(Err(msg)) => {
+                let _ = ctx
+                    .bus
+                    .ui_event()
+                    .send(UiEvent::Warning { message: msg })
+                    .await;
+            }
             _ => {}
         }
         // Remove the matching entry from pending_concurrent.
         self.pending_concurrent.retain(|r| {
             if remove_session_refresh {
                 return !matches!(r, UiRequest::RefreshSessionPicker);
+            }
+            if remove_agent_refresh {
+                return !matches!(r, UiRequest::RefreshAgentPicker);
             }
             if let Some(server) = &remove_mcp_server {
                 return !matches!(r, UiRequest::ToggleMcp { server: s, .. } if s == server);

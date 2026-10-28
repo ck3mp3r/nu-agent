@@ -51,8 +51,8 @@ fn test_vault_auto_detect_with_env_selects_env_only() -> Result<()> {
     let env = EnvMap::from([("AGENT_VAULT_BACKEND".to_string(), "env".to_string())]);
 
     // -- Exec
-    let vault =
-        Vault::auto_detect_with(&env).map_err(|e| format!("env choice must not probe: {e}"))?;
+    let vault = Vault::auto_detect_with(&env, std::path::Path::new("/nonexistent/secrets.json"))
+        .map_err(|e| format!("env choice must not probe: {e}"))?;
 
     // -- Check
     assert_eq!(
@@ -103,8 +103,8 @@ fn test_vault_auto_detect_with_nextest_selects_env_only() -> Result<()> {
     let env = EnvMap::from([("NEXTEST".to_string(), "1".to_string())]);
 
     // -- Exec
-    let vault =
-        Vault::auto_detect_with(&env).map_err(|e| format!("nextest must not probe: {e}"))?;
+    let vault = Vault::auto_detect_with(&env, std::path::Path::new("/nonexistent/secrets.json"))
+        .map_err(|e| format!("nextest must not probe: {e}"))?;
 
     // -- Check
     assert_eq!(
@@ -155,7 +155,8 @@ fn test_vault_auto_detect_under_nextest_selects_env_only() -> Result<()> {
     }
 
     // -- Exec
-    let vault = Vault::auto_detect().map_err(|e| format!("auto_detect must not probe: {e}"))?;
+    let vault = Vault::auto_detect(std::path::Path::new("/nonexistent/secrets.json"))
+        .map_err(|e| format!("auto_detect must not probe: {e}"))?;
 
     // -- Check
     assert_eq!(

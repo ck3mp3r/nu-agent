@@ -69,6 +69,8 @@ pub(super) fn make_compactor(chunks: &[&str], bus: Bus) -> Result<NuCompactor> {
 }
 
 /// An in-memory SQLite rig store.
+///
+/// A memory store resolves no path, so no ambient cache directory is touched.
 pub(super) fn memory_store() -> Result<Arc<dyn Store>> {
     Ok(RigStoreConfig::in_memory().open(CONV)?)
 }

@@ -9,7 +9,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 fn not_found() -> PersonaError {
     PersonaError::NotFound {
         cwd_path: PathBuf::from("/cwd/persona.md"),
-        config_path: PathBuf::from("/config/persona.md"),
+        agents_path: PathBuf::from("/config/agents/persona.md"),
     }
 }
 
@@ -35,7 +35,7 @@ fn test_protocol_persona_error_persona_error_display() -> Result<()> {
     // -- Check
     assert!(not_found_msg.contains("Persona file not found"));
     assert!(not_found_msg.contains("/cwd/persona.md"));
-    assert!(not_found_msg.contains("/config/persona.md"));
+    assert!(not_found_msg.contains("/config/agents/persona.md"));
     assert!(read_failed_msg.contains("Failed to read persona file at /cwd/persona.md"));
     assert!(read_failed_msg.contains("denied"));
     Ok(())

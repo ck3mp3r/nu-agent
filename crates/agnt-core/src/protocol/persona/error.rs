@@ -4,10 +4,11 @@ use std::path::PathBuf;
 /// Error type for persona file resolution
 #[derive(Debug)]
 pub enum PersonaError {
-    /// Persona file not found in either cwd or config directory
+    /// Persona file not found in either the cwd `.agents` dir or the resolved
+    /// agents dir
     NotFound {
         cwd_path: PathBuf,
-        config_path: PathBuf,
+        agents_path: PathBuf,
     },
     /// Failed to read persona file
     ReadFailed {
@@ -23,13 +24,13 @@ impl fmt::Display for PersonaError {
         match self {
             PersonaError::NotFound {
                 cwd_path,
-                config_path,
+                agents_path,
             } => {
                 write!(
                     f,
                     "Persona file not found. Checked:\n  - {}\n  - {}",
                     cwd_path.display(),
-                    config_path.display()
+                    agents_path.display()
                 )
             }
             PersonaError::ReadFailed { path, source } => {

@@ -23,6 +23,12 @@ static GRAMMAR_CACHE: OnceLock<HashMap<String, LoadedGrammar>> = OnceLock::new()
 /// Language name → grammar directory that exists but has no compiled library.
 static UNCOMPILED_DIRS: OnceLock<HashMap<String, PathBuf>> = OnceLock::new();
 
+/// The compiled-grammar cache directory injected at startup, from
+/// [`Paths::grammar_cache_dir`](crate::config::Paths::grammar_cache_dir).
+///
+/// `None` leaves the OS default, read from the process environment, in use.
+static GRAMMAR_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
 /// Maximum number of parsed trees kept in the tree cache.
 const TREE_CACHE_CAPACITY: usize = 64;
 
@@ -90,6 +96,10 @@ fn shared_library_extensions() -> &'static [&'static str] {
 }
 
 /// The OS cache directory where `tree-sitter` stores compiled grammars.
+///
+/// This is the fallback seam: the process-environment read serves a binary that
+/// installs no resolved paths, and a test that injects a directory never
+/// reaches it.
 fn os_cache_dir() -> Option<PathBuf> {
     std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
@@ -101,9 +111,39 @@ fn os_cache_dir() -> Option<PathBuf> {
         .map(|p| p.join("tree-sitter"))
 }
 
+/// Install the resolved grammar-cache directory for the process.
+///
+/// The config-load site calls this with
+/// [`Paths::grammar_cache_dir`](crate::config::Paths::grammar_cache_dir) once
+/// config.toml is parsed: the cache ladder has a `[paths]` level that the
+/// process environment cannot see, so a pre-config install would pin the wrong
+/// directory. Until this runs, the grammar lookup reads the OS default.
+///
+/// A second install is ignored, and a grammar cache built before the install
+/// keeps the directory it scanned. AST tools only load grammars on first use,
+/// which is always after the config load.
+pub fn install_grammar_cache_dir(dir: &Path) {
+    log::debug!("grammar cache dir installed at {}", dir.display());
+    let _ = GRAMMAR_CACHE_DIR.set(dir.to_path_buf());
+}
+
+/// The grammar-cache directory in use: the injected one, else the OS default.
+fn grammar_cache_dir() -> Option<PathBuf> {
+    GRAMMAR_CACHE_DIR.get().cloned().or_else(os_cache_dir)
+}
+
 /// Locate a pre-compiled shared library for a grammar, checking the grammar's
-/// `build/` directory, the grammar root, and the OS cache `lib/` subdirectory.
-fn find_compiled_library(grammar_dir: &Path, language: &str) -> Option<PathBuf> {
+/// `build/` directory, the grammar root, and the grammar cache `lib/`
+/// subdirectory.
+///
+/// `cache_dir` is the injected grammar cache
+/// ([`Paths::grammar_cache_dir`](crate::config::Paths::grammar_cache_dir)); the
+/// `None` case falls back to the OS default.
+fn find_compiled_library(
+    grammar_dir: &Path,
+    language: &str,
+    cache_dir: Option<&Path>,
+) -> Option<PathBuf> {
     let search_dirs = [grammar_dir.join("build"), grammar_dir.to_path_buf()];
     for dir in &search_dirs {
         for ext in shared_library_extensions() {
@@ -113,7 +153,7 @@ fn find_compiled_library(grammar_dir: &Path, language: &str) -> Option<PathBuf> 
             }
         }
     }
-    if let Some(cache_dir) = os_cache_dir() {
+    if let Some(cache_dir) = cache_dir {
         let lib_dir = cache_dir.join("lib");
         for ext in shared_library_extensions() {
             let candidate = lib_dir.join(format!("{language}.{ext}"));
@@ -176,6 +216,7 @@ fn load_parser_directories() -> Result<Vec<PathBuf>, ToolHandlerError> {
 /// pre-compiled shared libraries.
 fn build_grammar_cache() -> Result<HashMap<String, LoadedGrammar>, ToolHandlerError> {
     let parser_dirs = load_parser_directories()?;
+    let cache_dir = grammar_cache_dir();
     let mut map = HashMap::new();
     let mut uncompiled = HashMap::new();
     for dir in parser_dirs {
@@ -196,7 +237,7 @@ fn build_grammar_cache() -> Result<HashMap<String, LoadedGrammar>, ToolHandlerEr
             if language.is_empty() {
                 continue;
             }
-            match find_compiled_library(&path, language) {
+            match find_compiled_library(&path, language, cache_dir.as_deref()) {
                 Some(lib_path) => match load_grammar(language, &lib_path) {
                     Ok(grammar) => {
                         map.insert(language.to_string(), grammar);
@@ -592,5 +633,5 @@ fn node_to_sexp(
 mod tests;
 
 #[cfg(test)]
-#[path = "../../../test/tools/handler/tree_sitter_grammar.rs"]
+#[path = "../../../test/tools/handler/tree_sitter_grammar/mod.rs"]
 mod grammar_tests;

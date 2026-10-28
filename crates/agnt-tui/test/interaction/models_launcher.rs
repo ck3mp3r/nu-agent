@@ -1,14 +1,21 @@
 use super::*;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
-fn models_palette_and_slash_share_action_handler() {
+fn models_palette_and_slash_share_action_handler() -> Result<()> {
     // The command palette Models action opens the inline model picker.
     let mut state = AppState::default();
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
     for _ in 0..4 {
         let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
     }
-    let selected = state.picker.active_state().unwrap().selected().unwrap();
+    let selected = state
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .selected()
+        .ok_or("should have a selection")?;
     assert_eq!(selected.id, "Models");
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert_eq!(
@@ -80,10 +87,11 @@ fn models_palette_and_slash_share_action_handler() {
         Some(SharedUiAction::Models)
     );
     assert_eq!(state.take_next_prompt_for_execution(), None);
+    Ok(())
 }
 
 #[test]
-fn models_launcher_opens_picker_while_worker_active() {
+fn models_launcher_opens_picker_while_worker_active() -> Result<()> {
     // Palette path.
     let mut state = AppState::default();
     state.enqueue_prompt("first".to_string());
@@ -126,4 +134,5 @@ fn models_launcher_opens_picker_while_worker_active() {
     assert_eq!(state.take_next_prompt_for_execution(), None);
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(state.is_active_cycle());
+    Ok(())
 }

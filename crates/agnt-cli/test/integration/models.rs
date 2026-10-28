@@ -1,7 +1,7 @@
 //! Integration tests for `dispatch::utility::run_models_command`.
 //!
-//! The models cache is read from `$XDG_DATA_HOME/nu-agent/models.json`, so the
-//! tests write a fixture into the tempdir data home. `models sync` reaches
+//! The models cache is read from `$XDG_DATA_HOME/{APP_DIR_NAME}/models.json`, so
+//! the tests write a fixture into the tempdir data home. `models sync` reaches
 //! models.dev over the network and is out of scope.
 
 use super::*;

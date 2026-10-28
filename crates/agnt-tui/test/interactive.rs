@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use agnt_core::bus::Bus;
 use agnt_core::orchestrator::OrchestratorEvent;
+use agnt_core::protocol::contracts::UiMessageSnapshot;
 use agnt_core::protocol::event::UiEvent;
 use agnt_core::renderer::UiRenderer;
 use tokio::sync::mpsc;
@@ -59,6 +60,96 @@ fn set_active_persona_icon_clears_state_when_none() {
             .status
             .identity
             .active_persona_icon,
+        None
+    );
+}
+
+#[test]
+fn set_mcp_visible_tool_count_by_server_name_updates_state() {
+    let mut ui = make_ui();
+
+    ui.set_mcp_visible_tool_count_by_server_name("c5t", 37);
+
+    assert_eq!(
+        ui.renderer
+            .coordinator
+            .state
+            .status
+            .mcp
+            .mcp_visible_tool_count_for_server_name("c5t"),
+        37
+    );
+}
+
+#[test]
+fn set_mcp_visible_tool_names_by_server_name_sorts_and_dedups() {
+    let mut ui = make_ui();
+
+    ui.set_mcp_visible_tool_names_by_server_name(
+        "c5t",
+        vec![
+            "task_list".to_string(),
+            "task_get".to_string(),
+            "task_list".to_string(),
+        ],
+    );
+
+    assert_eq!(
+        ui.renderer
+            .coordinator
+            .state
+            .status
+            .mcp
+            .mcp_visible_tool_names_for_server_name("c5t"),
+        vec!["task_get".to_string(), "task_list".to_string()]
+    );
+}
+
+#[test]
+fn hydrate_transcript_restores_the_persisted_messages_and_tokens_once() {
+    let mut ui = make_ui();
+
+    ui.hydrate_transcript(
+        vec![
+            UiMessageSnapshot::new("user", "restored question"),
+            UiMessageSnapshot::new("assistant", "restored answer"),
+        ],
+        Some(1234),
+    );
+
+    let blocks = ui.renderer.coordinator.state.transcript.blocks();
+    assert_eq!(
+        blocks.len(),
+        2,
+        "each restored message renders exactly once"
+    );
+    assert_eq!(blocks[0].source.plain_text(), "restored question");
+    assert_eq!(blocks[1].source.plain_text(), "restored answer");
+    assert_eq!(
+        ui.renderer
+            .coordinator
+            .state
+            .status
+            .tokens
+            .latest_total_tokens,
+        Some(1234)
+    );
+}
+
+#[test]
+fn hydrate_transcript_with_no_messages_leaves_the_transcript_empty() {
+    let mut ui = make_ui();
+
+    ui.hydrate_transcript(Vec::new(), None);
+
+    assert!(ui.renderer.coordinator.state.transcript.blocks().is_empty());
+    assert_eq!(
+        ui.renderer
+            .coordinator
+            .state
+            .status
+            .tokens
+            .latest_total_tokens,
         None
     );
 }
@@ -126,12 +217,12 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
         terminal_tx
             .send(TerminalEvent::Key(key))
             .await
-            .expect("send char");
+            .map_err(|_| "should send char")?;
     }
     terminal_tx
         .send(TerminalEvent::Key(TerminalKey::Enter))
         .await
-        .expect("submit first");
+        .map_err(|_| "should submit first")?;
     let first = event_rx
         .recv()
         .await
@@ -147,12 +238,12 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
         terminal_tx
             .send(TerminalEvent::Key(key))
             .await
-            .expect("send x");
+            .map_err(|_| "should send x")?;
     }
     terminal_tx
         .send(TerminalEvent::Key(TerminalKey::Enter))
         .await
-        .expect("submit second");
+        .map_err(|_| "should submit second")?;
     // The stacked prompt must not drain while the turn is active. Await the
     // event channel with a bounded budget: a drain would arrive immediately,
     // expiry proves none was sent.
@@ -175,7 +266,7 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
             duration_ms: 0,
         })
         .await
-        .expect("publish UiEvent::Completed");
+        .map_err(|_| "should publish UiEvent::Completed")?;
     let second = tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
         .await
         .map_err(|_| "should receive second PromptSubmitted before timeout")?

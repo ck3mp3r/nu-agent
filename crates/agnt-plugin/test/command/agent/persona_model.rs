@@ -53,6 +53,7 @@ fn apply_persona_model_overrides_plugin_config() -> Result<()> {
         mcp: None,
         theme: None,
         hooks: Vec::new(),
+        paths: None,
     };
 
     let applied = runtime_build::apply_persona_model(
@@ -176,6 +177,7 @@ fn apply_persona_model_clears_provider_impl() -> Result<()> {
         mcp: None,
         theme: None,
         hooks: Vec::new(),
+        paths: None,
     };
 
     let applied = runtime_build::apply_persona_model(

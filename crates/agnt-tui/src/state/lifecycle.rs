@@ -286,12 +286,7 @@ impl AppState {
 
         self.picker.clamp_selections();
 
-        if self.status.mcp.mcp_servers.is_empty() {
-            self.status.mcp.mcp_panel_selection = 0;
-        } else if self.status.mcp.mcp_panel_selection >= self.status.mcp.mcp_servers.len() {
-            self.status.mcp.mcp_panel_selection =
-                self.status.mcp.mcp_servers.len().saturating_sub(1);
-        }
+        self.status.mcp.clamp_mcp_panel_selection();
 
         // With ListState, viewport invariants are managed by ratatui automatically
 

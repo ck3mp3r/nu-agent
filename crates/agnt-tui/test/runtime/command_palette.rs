@@ -28,13 +28,15 @@ fn command_palette_table_and_inline_slash() -> Result<()> {
     assert!(actions.contains(&"Skills"));
     assert!(actions.contains(&"Models"));
 
-    // -- Exec & Check: the overflow cue at a small viewport.
+    // -- Exec & Check: the overflow cue at a small viewport carries only the
+    // position, so the title can join it to the always-on hint with " · ".
     let small = command_palette_table_model_for_test(&state, 80, 5);
     let cue = small
         .overflow_cue
         .ok_or("should have overflow cue when rows exceed viewport")?;
-    assert!(cue.contains("/"));
-    assert!(cue.contains("Esc close"));
+    assert!(cue.contains(" / "), "cue={cue}");
+    assert!(!cue.contains('|'), "cue={cue}");
+    assert!(!cue.contains("Esc close"), "cue={cue}");
 
     // -- Setup & Fixtures: inline slash suggestions.
     let mut slash = AppState::default();
@@ -46,7 +48,15 @@ fn command_palette_table_and_inline_slash() -> Result<()> {
     assert!(rows[0].contains("/compact"));
     assert!(rows[0].starts_with('❯'));
     let title = super::command_palette_title(None);
-    assert!(title.contains("↑/↓ or Ctrl-N · Enter · Esc"));
+    assert_eq!(title, "Command Palette (↑/↓ · Enter · Esc)");
+    let overflow_title = super::command_palette_title(Some("1-5 / 8"));
+    assert_eq!(
+        overflow_title,
+        "Command Palette (↑/↓ · Enter · Esc · 1-5 / 8)"
+    );
+
+    // -- Exec & Check: the inline-slash popup carries the same hint contract.
+    assert_eq!(super::inline_slash_title(), "Commands (↑/↓ · Enter · Esc)");
     Ok(())
 }
 

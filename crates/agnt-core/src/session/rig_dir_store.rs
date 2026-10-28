@@ -34,20 +34,30 @@ const LEGACY_EXTENSION: &str = "jsonl";
 
 /// The directory of `session_id` under `cache_dir`.
 pub fn session_dir(cache_dir: &Path, session_id: &str) -> PathBuf {
-    crate::utils::paths::app_dir(cache_dir)
-        .join(SESSIONS)
-        .join(session_id)
+    sessions_root(&crate::utils::paths::app_dir(cache_dir)).join(session_id)
 }
 
-/// Opens the `DirStore` of `session_id` under `cache_dir`.
+/// The directory holding one directory per session, inside `store_dir`.
+///
+/// `store_dir` is the app's store directory: `{cache}/{APP_DIR_NAME}` when the
+/// store is derived from the cache base, or the parent of the resolved store
+/// path when `[paths]` or `NU_AGENT_CACHE_HOME` re-roots it.
+pub fn sessions_root(store_dir: &Path) -> PathBuf {
+    store_dir.join(SESSIONS)
+}
+
+/// Opens the `DirStore` of `session_id` under an explicit sessions directory.
 ///
 /// # Errors
 ///
 /// [`RigStoreError::Legacy`] when the session was saved by the JSONL store
 /// nu-agent kept before rig-memory; it is left as it is.
-pub fn open_session_store(cache_dir: &Path, session_id: &str) -> Result<DirStore, RigStoreError> {
+pub fn open_session_store_at(
+    sessions_dir: &Path,
+    session_id: &str,
+) -> Result<DirStore, RigStoreError> {
     check_name(session_id)?;
-    let dir = session_dir(cache_dir, session_id);
+    let dir = sessions_dir.join(session_id);
     refuse_legacy(&dir, session_id)?;
     match DirStore::open(&dir) {
         Ok(store) => Ok(store),
@@ -72,14 +82,13 @@ pub fn read_session_name(files: &(impl Files + ?Sized)) -> io::Result<Option<Str
     }
 }
 
-/// The ids of the sessions under `cache_dir`, in order.
+/// The ids of the sessions under an explicit sessions directory, in order.
 ///
 /// # Errors
 ///
 /// When the sessions directory cannot be read.
-pub fn session_ids(cache_dir: &Path) -> Result<Vec<String>, RigStoreError> {
-    let dir = crate::utils::paths::app_dir(cache_dir).join(SESSIONS);
-    let entries = match std::fs::read_dir(&dir) {
+pub fn session_ids_at(sessions_dir: &Path) -> Result<Vec<String>, RigStoreError> {
+    let entries = match std::fs::read_dir(sessions_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(RigStoreError::Io(error)),

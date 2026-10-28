@@ -75,9 +75,23 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
 
     let session_id = args.session.clone();
 
-    let (mut config, plugin_config) = resolve_config_from_clap(args)?;
+    // Discovery comes first: the file the ladder selects carries the `[paths]`
+    // values the full resolution below applies.
+    let discovery = agnt_core::config::Paths::resolve_for_process(None)
+        .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
+    let (mut config, plugin_config) = resolve_config_from_clap(args, &discovery.config_path)?;
 
     let store_type = resolve_store_type_from_clap(args, config.session_store_type)?;
+    let paths = agnt_core::config::Paths::resolve_for_process(plugin_config.paths.as_ref())
+        .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
+    // `[paths].state_home` and `[paths].cache_home` only become known now: the
+    // pre-load window logged to the derived default, and the grammar cache
+    // keeps the OS default until this install.
+    agnt_core::logging::retarget_process_sink(&paths.log_path);
+    agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
+    let theme_path = paths.theme_path.clone();
+    let rig = agnt_core::session::RigStoreConfig::new(store_type)
+        .with_store_path(paths.store_path.clone());
 
     // Apply mode-specific defaults for max_tool_turns if not explicitly configured.
     // User-specified value (via --max-turns or config file) always wins.
@@ -99,7 +113,13 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     let has_explicit_name = cli_name.is_some();
 
     let cli_model_provided = args.model.is_some();
-    let persona_resolution = resolve_persona_from_clap(agent_name, cli_name, &agents_config, &cwd)?;
+    let persona_resolution = resolve_persona_from_clap(
+        agent_name,
+        cli_name,
+        &agents_config,
+        &cwd,
+        &paths.agents_dir,
+    )?;
     let persona = persona_resolution.persona;
     let agent_slug = persona_resolution.agent_slug;
     let agent_identity = persona_resolution.agent_identity;
@@ -214,11 +234,12 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         &agents_config,
         &discovered_mcp_tools,
         &cwd,
+        &paths.agents_dir,
         true,
     )
     .map_err(|e| Error::Custom(format!("Invalid tool name: {e}")))?;
 
-    let resolver = DefaultSessionResolver::new(agnt_core::session::RigStoreConfig::new(store_type));
+    let resolver = DefaultSessionResolver::new(rig.clone());
     let mut session_resolution = resolver
         .resolve(SessionResolutionInput {
             use_tui: mode.is_tui(),
@@ -238,7 +259,6 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         merge_compaction_configs(plugin_config.compaction.as_ref(), &cli_compaction);
 
     let BuildArtifacts {
-        parent_name: _,
         merged_compaction,
         compaction_strategy: _,
         compaction_params,
@@ -249,8 +269,6 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         cwd: cwd.clone(),
         engine: Arc::clone(&engine),
         span: Span::unknown(),
-        available_agents: &available_agents,
-        messaging_identity: messaging_identity.clone(),
         tool_timeout,
         session: session_resolution.session.as_mut(),
         max_tool_result_bytes: config
@@ -258,6 +276,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
             .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
         bus: bus.clone(),
         merged_compaction,
+        audit_log_path: paths.audit_log_path.clone(),
     })
     .build()
     .await
@@ -271,8 +290,8 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         log::warn!("A2A tool registration failed (non-fatal): {e}");
     }
 
-    let (cached_agents_chain, cached_available_skills, cached_sub_agent_instruction) =
-        build_preamble_cache(&cwd, None);
+    let (cached_agents_chain, cached_available_skills) =
+        build_preamble_cache(&cwd, &paths.agents_dir);
 
     let mut runtime_impl = build_runtime(RuntimeBuildParams {
         runtime: tokio::runtime::Handle::current(),
@@ -289,7 +308,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         vault: plugin_config.vault.clone(),
         mcp_registry,
         engine,
-        store_type,
+        rig,
         final_session_id: session_resolution.final_session_id.clone(),
         compaction_params,
         proactive_threshold_pct: merged_compaction.proactive_threshold_pct,
@@ -303,10 +322,10 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         agent_icon: persona.as_ref().and_then(|p| p.icon.clone()),
         cached_agents_chain,
         cached_available_skills,
-        cached_sub_agent_instruction,
         available_agents,
         agents_config,
         cwd: cwd.clone(),
+        paths,
         bus: bus.clone(),
         render_registry,
         hook_context,
@@ -331,7 +350,8 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
 
     let result = match mode {
         CliMode::Tui => {
-            let theme_name = resolve_theme_from_clap(a2a.ui.theme.as_deref(), &plugin_config)?;
+            let theme_name =
+                resolve_theme_from_clap(a2a.ui.theme.as_deref(), &plugin_config, &theme_path)?;
             run_tui_mode(
                 runtime_impl,
                 None,

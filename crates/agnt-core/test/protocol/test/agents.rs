@@ -12,7 +12,7 @@ fn loads_agents_from_sources() {
     fs::create_dir_all(&cwd).expect("cwd");
     fs::write(config.join("agents/AGENTS.md"), "CONFIG\n").expect("write config agents");
 
-    let loaded = load_agents_chain(&cwd, Some(&config), Some(tmp.path()), None);
+    let loaded = load_agents_chain(&cwd, Some(&config.join("agents")), Some(tmp.path()), None);
 
     assert_eq!(loaded.merged_chain.as_deref(), Some("CONFIG\n"));
     assert!(loaded.warnings.is_empty());

@@ -8,6 +8,9 @@ use crate::state::CommandPaletteAction;
 
 // region:    --- Types
 
+/// Rows a PgUp/PgDn (Ctrl-U/Ctrl-D) page moves in any popup.
+pub(crate) const PANEL_PAGE_LINES: usize = 8;
+
 /// A single sort-key part attached at the conversion boundary. The picker
 /// orders options by comparing these parts with ONE generic comparator; an
 /// empty key under a stable sort preserves insertion order.
@@ -28,8 +31,8 @@ pub trait PickerItem: Clone {
     fn id(&self) -> String;
     fn matches_query(&self, query: &str) -> bool {
         let q = query.to_ascii_lowercase();
-        self.display().to_ascii_lowercase().contains(q.as_str())
-            || self.id().to_ascii_lowercase().contains(q.as_str())
+        fuzzy_matches(&q, &self.display().to_ascii_lowercase())
+            || fuzzy_matches(&q, &self.id().to_ascii_lowercase())
     }
 }
 
@@ -52,18 +55,9 @@ impl PickerItem for PickerOption {
     }
     fn matches_query(&self, query: &str) -> bool {
         let q = query.to_ascii_lowercase();
-        match &self.payload {
-            PickerPayload::Command(_) | PickerPayload::Slash(_) => {
-                fuzzy_matches(&q, &self.display.to_ascii_lowercase())
-                    || fuzzy_matches(&q, &self.id.to_ascii_lowercase())
-                    || fuzzy_matches(&q, &self.search_text.to_ascii_lowercase())
-            }
-            _ => {
-                self.display.to_ascii_lowercase().contains(q.as_str())
-                    || self.id.to_ascii_lowercase().contains(q.as_str())
-                    || self.search_text.to_ascii_lowercase().contains(q.as_str())
-            }
-        }
+        fuzzy_matches(&q, &self.display.to_ascii_lowercase())
+            || fuzzy_matches(&q, &self.id.to_ascii_lowercase())
+            || fuzzy_matches(&q, &self.search_text.to_ascii_lowercase())
     }
 }
 
@@ -179,6 +173,24 @@ impl<T: PickerItem> PickerState<T> {
             return;
         }
         self.selection = (self.selection + 1) % len;
+    }
+    /// Move the selection one page up, clamped to the first row.
+    pub fn move_page_up(&mut self) {
+        let len = self.filtered().len();
+        if len == 0 {
+            self.selection = 0;
+            return;
+        }
+        self.selection = self.selection.saturating_sub(PANEL_PAGE_LINES).min(len - 1);
+    }
+    /// Move the selection one page down, clamped to the last row.
+    pub fn move_page_down(&mut self) {
+        let len = self.filtered().len();
+        if len == 0 {
+            self.selection = 0;
+            return;
+        }
+        self.selection = self.selection.saturating_add(PANEL_PAGE_LINES).min(len - 1);
     }
     pub fn append_query_char(&mut self, ch: char) {
         self.query.push(ch);
@@ -375,12 +387,22 @@ impl PickerContainer {
                     entry.state.close();
                     (UserAction::Noop, true)
                 }
-                UserAction::HistoryUp => {
+                UserAction::ScrollLineUp
+                | UserAction::HistoryUp
+                | UserAction::ToggleCommandPalette => {
                     entry.state.move_up();
                     (UserAction::Noop, true)
                 }
-                UserAction::HistoryDown => {
+                UserAction::ScrollLineDown | UserAction::HistoryDown | UserAction::QueryNext => {
                     entry.state.move_down();
+                    (UserAction::Noop, true)
+                }
+                UserAction::ScrollPageUp => {
+                    entry.state.move_page_up();
+                    (UserAction::Noop, true)
+                }
+                UserAction::ScrollPageDown => {
+                    entry.state.move_page_down();
                     (UserAction::Noop, true)
                 }
                 other => (other, false),
@@ -414,6 +436,14 @@ impl PickerContainer {
             }
             UserAction::ScrollLineDown | UserAction::HistoryDown | UserAction::QueryNext => {
                 entry.state.move_down();
+                (UserAction::Noop, true)
+            }
+            UserAction::ScrollPageUp => {
+                entry.state.move_page_up();
+                (UserAction::Noop, true)
+            }
+            UserAction::ScrollPageDown => {
+                entry.state.move_page_down();
                 (UserAction::Noop, true)
             }
             UserAction::Backspace if edit_query => {
@@ -621,13 +651,21 @@ impl AppState {
     pub fn take_next_session_picker_refresh_request(&mut self) -> bool {
         std::mem::take(&mut self.pending_session_picker_refresh)
     }
+
+    /// Take the pending agent-picker refresh request, if one is queued.
+    /// Repeated opens before a drain collapse into one request.
+    pub fn take_next_agent_picker_refresh_request(&mut self) -> bool {
+        std::mem::take(&mut self.pending_agent_picker_refresh)
+    }
 }
 
 fn sort_picker_options(options: &mut [PickerOption]) {
     options.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
 }
 
-fn fuzzy_matches(query: &str, candidate: &str) -> bool {
+/// Subsequence match: every char of `query` appears in `candidate` in order.
+/// Case-insensitive by contract — callers lowercase both sides.
+pub(crate) fn fuzzy_matches(query: &str, candidate: &str) -> bool {
     if query.is_empty() {
         return true;
     }

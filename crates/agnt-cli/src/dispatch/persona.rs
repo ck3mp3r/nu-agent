@@ -38,6 +38,7 @@ pub fn resolve_persona_from_clap(
     cli_name: Option<String>,
     agents_config: &AgentsConfig,
     cwd: &std::path::Path,
+    agents_dir: &std::path::Path,
 ) -> Result<PersonaResolution> {
     let span = Span::unknown();
 
@@ -63,15 +64,7 @@ pub fn resolve_persona_from_clap(
 
     let persona = if let Some(name) = &effective_agent_name {
         let cwd = std::path::PathBuf::from(cwd);
-        let config_dir = agnt_core::utils::xdg::config_dir()
-            .map(|base| base.join("nu-agent"))
-            .map_err(|e| {
-                Error::Runtime(LabeledError::new(format!(
-                    "Cannot determine config directory: {e}"
-                )))
-            })?;
-
-        let resolver = FsPersonaResolver::new(cwd, config_dir, agents_config.clone());
+        let resolver = FsPersonaResolver::new(cwd, agents_dir.to_path_buf(), agents_config.clone());
         let (_path, contents) = resolver.resolve(name).map_err(|e| {
             Error::Runtime(LabeledError::new(format!("Agent persona not found: {e}")))
         })?;

@@ -53,6 +53,23 @@
 # catalog = "ollama-cloud"  # opt in to the cloud list prices
 
 
+# ─── Paths ────────────────────────────────────────────────
+# Base-directory overrides for the four trees. Most specific first:
+#   NU_AGENT_<X>_HOME env  >  [paths].<x>_home  >  XDG_<X>_HOME  >  the XDG default under $HOME
+# Each value must be absolute or start with ~; a relative value is rejected at
+# parse time. An unknown key is rejected at parse time too: the block has
+# exactly the three keys below, and the config tree has no key here (the file
+# that would hold it is the file the ladder has to find first).
+#
+# An override re-roots its whole tree and keeps the {APP_DIR_NAME}/<tail>
+# substructure — there is no per-file override.
+#
+# [paths]
+# data_home = "/srv/nu-agent/data"    # tool_audit.log, secrets.json, models.json, theme.json
+# cache_home = "~/.cache/nu-agent"    # rig-sessions.db; the grammar cache sits at {cache}/tree-sitter (no app dir)
+# state_home = "/var/log/nu-agent"    # logs/agent.log
+
+
 # ─── Permissions ──────────────────────────────────────────
 # Tool permission defaults. "*" = global policy for all tools.
 # Individual tools can override: read, edit, glob, grep, http, skill, etc.

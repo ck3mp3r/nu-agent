@@ -154,7 +154,10 @@ fn current_dir() -> Result<PathBuf> {
 
 fn open_rig(args: &AgentArgs) -> Result<RigStoreConfig> {
     let store_type = resolve_store_type_from_clap(args, resolve_session_store_type_from_config())?;
-    Ok(RigStoreConfig::new(store_type))
+    let config = agnt_core::config::toml_config::load().unwrap_or_default();
+    let paths = agnt_core::config::Paths::resolve_for_process(config.paths.as_ref())
+        .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
+    Ok(RigStoreConfig::new(store_type).with_store_path(paths.store_path))
 }
 
 /// Extract the role and text content from a stored message.

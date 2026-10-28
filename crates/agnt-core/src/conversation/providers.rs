@@ -56,10 +56,15 @@ pub(crate) fn build_http_client(
 ///
 /// Copilot is an OpenAI-shaped provider in rig 0.45: the client is an `OpenAI`
 /// built on the Copilot dialect.
+///
+/// `token_dir` is the resolved credential directory
+/// ([`Paths::copilot_token_dir`](crate::config::Paths::copilot_token_dir));
+/// `None` leaves the legacy platform default in use.
 pub(super) async fn build_copilot_client(
     config: &Config,
+    token_dir: Option<&Path>,
 ) -> Result<rig::providers::openai::OpenAI, LabeledError> {
-    build_copilot_client_with(config, &process_env(), None).await
+    build_copilot_client_with(config, &process_env(), token_dir).await
 }
 
 /// Build a GitHub Copilot client against an explicit environment map.
@@ -183,16 +188,14 @@ where
 
 /// Run the GitHub Copilot OAuth device-code flow.
 ///
-/// Persists the credential record under the platform token directory and
-/// returns that directory. The device flow is allowed here — this is the
-/// interactive sign-in path, unlike the runtime client builder.
-pub async fn copilot_device_login(handler: DeviceCodeHandler) -> Result<PathBuf, LabeledError> {
-    let token_dir = copilot_token_dir().ok_or_else(|| {
-        LabeledError::new(
-            "GitHub Copilot credential directory unavailable: set XDG_CONFIG_HOME or HOME.",
-        )
-    })?;
-
+/// Persists the credential record under `token_dir`
+/// ([`Paths::copilot_token_dir`](crate::config::Paths::copilot_token_dir)) and
+/// returns it. The device flow is allowed here — this is the interactive
+/// sign-in path, unlike the runtime client builder.
+pub async fn copilot_device_login(
+    handler: DeviceCodeHandler,
+    token_dir: PathBuf,
+) -> Result<PathBuf, LabeledError> {
     let http_client = build_http_client(None)?;
     let authenticator = Authenticator::new(
         AuthSource::OAuth,

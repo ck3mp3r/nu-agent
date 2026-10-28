@@ -13,6 +13,7 @@ use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
+use agnt_core::utils::paths::APP_DIR_NAME;
 use agnt_testkit::MockServer;
 use clap::Parser;
 
@@ -53,7 +54,7 @@ impl TestEnv {
         for dir in [&config_home, &cache_home, &data_home, &state_home, &home] {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::create_dir_all(config_home.join("nu-agent"))?;
+        std::fs::create_dir_all(config_home.join(APP_DIR_NAME))?;
 
         let mut restore = EnvRestore::apply(&[
             ("XDG_CONFIG_HOME", config_home.clone()),
@@ -91,7 +92,7 @@ impl TestEnv {
 
     /// The `config.toml` path the CLI resolves from the environment.
     pub fn config_path(&self) -> PathBuf {
-        self.config_home.join("nu-agent").join("config.toml")
+        self.config_home.join(APP_DIR_NAME).join("config.toml")
     }
 
     /// Write `contents` to the resolved `config.toml`.
@@ -303,7 +304,7 @@ pub const MODELS_CACHE: &str = r#"
 
 /// Write [`MODELS_CACHE`] to the resolved models cache path.
 pub fn write_models_cache(env: &TestEnv) -> Result<PathBuf> {
-    let path = env.data_home_path("nu-agent/models.json");
+    let path = env.data_home_path(&format!("{APP_DIR_NAME}/models.json"));
     let parent = path.parent().ok_or("models cache path has no parent")?;
     std::fs::create_dir_all(parent)?;
     std::fs::write(&path, MODELS_CACHE)?;

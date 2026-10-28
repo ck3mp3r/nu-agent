@@ -58,7 +58,7 @@ async fn test_bottom_box_status_content_aligns_with_input_box_interior() -> Resu
     let temp_dir = tempfile::TempDir::new()?;
     let repo = temp_dir.path().join("repo");
     std::fs::create_dir_all(&repo)?;
-    init_repo_with_branch(&repo, "feature/status-align");
+    init_repo_with_branch(&repo, "feature/status-align")?;
     let mut driver = RenderLoopDriver::new(120, 30);
     driver
         .coordinator_mut()

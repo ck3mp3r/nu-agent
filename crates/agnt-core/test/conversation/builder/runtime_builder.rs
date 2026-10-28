@@ -98,13 +98,12 @@ async fn build_with(
         cwd: cwd.clone(),
         engine: CwdEngine::shared(cwd.to_string_lossy().to_string()),
         span: Span::unknown(),
-        available_agents: &[],
-        messaging_identity: None,
         tool_timeout: Duration::from_secs(5),
         session: None,
         max_tool_result_bytes: 20_000,
         bus: Bus::default(),
         merged_compaction,
+        audit_log_path: temp.path().join("tool_audit.log"),
     })
     .build()
     .await
@@ -130,7 +129,6 @@ async fn build_with_empty_closure_registry_registers_only_builtins() -> Result<(
         builtin_names()?,
         "an empty closure registry must register exactly the builtin tools"
     );
-    assert_eq!(artifacts.parent_name, None);
     assert_eq!(
         artifacts.compaction_strategy,
         CompactionParams::default().compaction_strategy,

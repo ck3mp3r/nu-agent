@@ -188,7 +188,8 @@ fn a2a_tools_absent_when_disabled() -> Result<()> {
     let agents_config = agnt_core::config::AgentsConfig::default();
     let cwd = std::path::Path::new("/tmp");
 
-    let assembly = assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, false)?;
+    let assembly =
+        assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, cwd, false)?;
 
     let names: Vec<&str> = assembly
         .tool_definitions
@@ -241,7 +242,8 @@ fn a2a_tools_present_when_enabled() -> Result<()> {
     let agents_config = agnt_core::config::AgentsConfig::default();
     let cwd = std::path::Path::new("/tmp");
 
-    let assembly = assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, true)?;
+    let assembly =
+        assemble_tool_definitions(&closure_registry, &agents_config, &[], cwd, cwd, true)?;
 
     let names: Vec<&str> = assembly
         .tool_definitions

@@ -41,6 +41,7 @@ fn test_resolve_model_with_env_fallback() -> Result<()> {
         mcp: None,
         theme: None,
         hooks: Vec::new(),
+        paths: None,
     };
 
     let role_config = ModelRoleConfig {

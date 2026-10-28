@@ -19,8 +19,10 @@ fn model_picker_lifecycle() -> Result<()> {
     assert_eq!(s.query, "");
     assert_eq!(s.filtered().len(), 2);
 
-    // -- Exec & Check: filtering narrows the list.
-    type_query(&mut state, "openai")?;
+    // -- Exec & Check: filtering narrows the list. The query targets the
+    // model name, not the provider: a provider query such as `openai` is also
+    // a subsequence of the other row's search text.
+    type_query(&mut state, "gpt")?;
     let filtered = state
         .picker
         .active_state()

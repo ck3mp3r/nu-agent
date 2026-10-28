@@ -37,7 +37,7 @@ pub(super) async fn manager_with_cache(
 ) -> Result<AcpSessionManager<MockRuntimeBuilder>> {
     Ok(AcpSessionManager::with_runtime_builder(
         rig_config(dir),
-        dir.join("config.toml"),
+        test_paths(dir),
         tokio::runtime::Handle::current(),
         MockRuntimeBuilder::default(),
     )

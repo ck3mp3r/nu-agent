@@ -8,14 +8,14 @@ use super::format::{compact_token_count, status_indicator, tail_ellipsize};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-pub(crate) fn run_git(dir: &Path, args: &[&str]) -> String {
+pub(crate) fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
     let output = Command::new("git")
         .current_dir(dir)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .args(args)
         .output()
-        .expect("run git command");
+        .map_err(|e| format!("failed to run git command: {e}"))?;
     assert!(
         output.status.success(),
         "git command failed in {}: git {}\nstdout: {}\nstderr: {}",
@@ -24,17 +24,18 @@ pub(crate) fn run_git(dir: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-pub(crate) fn init_repo_with_branch(path: &Path, branch: &str) {
-    run_git(path, &["init"]);
-    run_git(path, &["config", "user.email", "nu-agent@test.local"]);
-    run_git(path, &["config", "user.name", "nu-agent-test"]);
-    fs::write(path.join("README.md"), "seed\n").expect("seed file");
-    run_git(path, &["add", "README.md"]);
-    run_git(path, &["commit", "-m", "seed"]);
-    run_git(path, &["checkout", "-b", branch]);
+pub(crate) fn init_repo_with_branch(path: &Path, branch: &str) -> Result<()> {
+    run_git(path, &["init"])?;
+    run_git(path, &["config", "user.email", "nu-agent@test.local"])?;
+    run_git(path, &["config", "user.name", "nu-agent-test"])?;
+    fs::write(path.join("README.md"), "seed\n").map_err(|e| format!("failed to seed file: {e}"))?;
+    run_git(path, &["add", "README.md"])?;
+    run_git(path, &["commit", "-m", "seed"])?;
+    run_git(path, &["checkout", "-b", branch])?;
+    Ok(())
 }
 
 const BRANCH_ICON_PREFIX: &str = "\u{e725} ";

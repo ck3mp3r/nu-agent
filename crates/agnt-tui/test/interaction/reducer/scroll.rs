@@ -2,8 +2,10 @@ use super::*;
 use crate::state::selection::TranscriptSelection;
 use ratatui::layout::Rect;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 #[test]
-fn scroll_line_cursor_and_viewport_table() {
+fn scroll_line_cursor_and_viewport_table() -> Result<()> {
     // Normal j moves the cursor, not the viewport.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Normal),
@@ -78,7 +80,7 @@ fn scroll_line_cursor_and_viewport_table() {
             None,
         );
     }
-    let sel = state.scroll.selection.expect("selection should exist");
+    let sel = state.scroll.selection.ok_or("selection should exist")?;
     assert_eq!(sel.cursor(), 7);
     assert_eq!(state.scroll.cursor_visual_row, 7);
     assert_eq!(state.scroll.scroll_offset, 1);
@@ -110,10 +112,11 @@ fn scroll_line_cursor_and_viewport_table() {
     assert_eq!(state.scroll.cursor_visual_row, 54);
     assert_eq!(state.scroll.scroll_offset, 50);
     assert!(!state.scroll.following_tail);
+    Ok(())
 }
 
 #[test]
-fn scroll_page_and_selection_table() {
+fn scroll_page_and_selection_table() -> Result<()> {
     // Ctrl-U moves the cursor up by a page.
     let mut state = AppState {
         input: InputState::default().with_mode(InputMode::Normal),
@@ -192,7 +195,7 @@ fn scroll_page_and_selection_table() {
         ReducerInput::User(UserAction::ScrollPageUp),
         None,
     );
-    let sel = state.scroll.selection.expect("selection should exist");
+    let sel = state.scroll.selection.ok_or("selection should exist")?;
     assert_eq!(state.scroll.cursor_visual_row, 2);
     assert_eq!(sel.cursor(), 2);
 
@@ -220,9 +223,10 @@ fn scroll_page_and_selection_table() {
         ReducerInput::User(UserAction::ScrollPageDown),
         None,
     );
-    let sel = state.scroll.selection.expect("selection should exist");
+    let sel = state.scroll.selection.ok_or("selection should exist")?;
     assert_eq!(state.scroll.cursor_visual_row, 8);
     assert_eq!(sel.cursor(), 8);
+    Ok(())
 }
 
 #[test]

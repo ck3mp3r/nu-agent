@@ -2,6 +2,8 @@
 // Phase I: AgentConversationRuntime accessor method tests
 // ========================================================================
 
+use crate::conversation::managers::PersonaManager;
+
 #[test]
 fn accessor_provider_returns_provider_string() {
     // Verifies that runtime.provider() delegates to provider_state.config().provider
@@ -219,9 +221,8 @@ fn accessor_startup_plugin_config_returns_none_when_default() {
 #[test]
 fn accessor_agent_identity_returns_none_when_default() {
     // PersonaState with no agent_identity set must return None
-    let persona_state = crate::conversation::state::persona::PersonaState::new(
-        None, None, None, None, None, None, None,
-    );
+    let persona_state =
+        crate::conversation::state::persona::PersonaState::new(None, None, None, None, None, None);
     assert_eq!(persona_state.agent_identity(), None);
 }
 
@@ -230,7 +231,6 @@ fn accessor_agent_identity_returns_some_when_set() {
     let persona_state = crate::conversation::state::persona::PersonaState::new(
         None,
         Some("developer".to_string()),
-        None,
         None,
         None,
         None,

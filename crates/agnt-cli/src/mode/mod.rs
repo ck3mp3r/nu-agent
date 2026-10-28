@@ -95,17 +95,20 @@ pub struct TuiModeOptions {
 /// case costs nothing and touches no file. A hook config that fails to resolve
 /// is logged and skipped: hooks are observe-only, so a bad entry never blocks
 /// the turn. `context` is the agent snapshot every envelope is stamped with.
+/// `config_dir` is the directory the config was loaded from: a relative hook
+/// script joins it.
 pub fn spawn_configured_hooks<P>(
     config: Option<&PluginConfig>,
     bus: &Bus,
     cwd: &Path,
+    config_dir: &Path,
     context: &HookAgentContext,
     process: P,
 ) -> Vec<JoinHandle<()>>
 where
     P: HookProcess + Send + Sync + 'static + Clone,
 {
-    let hooks = resolve_hooks_or_empty(config);
+    let hooks = resolve_hooks_or_empty(config, config_dir);
     if hooks.is_empty() {
         return Vec::new();
     }
@@ -118,14 +121,14 @@ where
 ///
 /// Hooks are observe-only, so a bad entry never blocks the turn: the failure is
 /// logged and the caller proceeds with no hooks.
-fn resolve_hooks_or_empty(config: Option<&PluginConfig>) -> Vec<ResolvedHook> {
+fn resolve_hooks_or_empty(config: Option<&PluginConfig>, config_dir: &Path) -> Vec<ResolvedHook> {
     let Some(config) = config else {
         return Vec::new();
     };
     if config.hooks.is_empty() {
         return Vec::new();
     }
-    match agnt_core::config::resolve_configured_hooks(config) {
+    match agnt_core::config::resolve_hooks(config, config_dir) {
         Ok(hooks) => hooks,
         Err(e) => {
             log::warn!("Failed to resolve hooks: {e}");
@@ -170,9 +173,10 @@ pub fn spawn_configured_hooks_with_nu(
     config: Option<&PluginConfig>,
     bus: &Bus,
     cwd: &Path,
+    config_dir: &Path,
     context: &HookAgentContext,
 ) -> Vec<JoinHandle<()>> {
-    spawn_configured_hooks(config, bus, cwd, context, NuProcess)
+    spawn_configured_hooks(config, bus, cwd, config_dir, context, NuProcess)
 }
 
 /// Auto-complete an A2A task based on the LLM execution result.
@@ -286,9 +290,10 @@ impl AgentLifecycle {
         mode: &str,
         config: Option<&PluginConfig>,
         cwd: &Path,
+        config_dir: &Path,
         context: &HookAgentContext,
     ) -> Self {
-        let hooks = resolve_hooks_or_empty(config);
+        let hooks = resolve_hooks_or_empty(config, config_dir);
         Self::start(
             AgentTx::new("agent", 16),
             mode,

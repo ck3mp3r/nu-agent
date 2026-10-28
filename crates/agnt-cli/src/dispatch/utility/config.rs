@@ -1,7 +1,5 @@
 //! `agent config` subcommand dispatch.
 
-use agnt_core::config;
-
 use crate::ConfigCommand;
 use crate::ConfigInitArgs;
 use crate::error::{Error, Result};
@@ -9,17 +7,23 @@ use crate::error::{Error, Result};
 // region:    --- Functions
 
 /// Dispatch an `agent config` subcommand.
+///
+/// The config file path is resolved once here, from the [`Paths`] the
+/// environment ladder selects, and handed to the subcommand.
+///
+/// [`Paths`]: agnt_core::config::Paths
 pub fn run_config_command(command: &ConfigCommand) -> Result<()> {
+    let paths = agnt_core::config::Paths::resolve_for_process(None)
+        .map_err(|e| Error::Custom(format!("Cannot determine config path: {e}")))?;
     match command {
-        ConfigCommand::Init(args) => run_config_init(args),
+        ConfigCommand::Init(args) => run_config_init(args, &paths.config_path),
     }
 }
 
 /// Generate a starter config.toml from the current environment variables.
-fn run_config_init(args: &ConfigInitArgs) -> Result<()> {
-    let path = config::toml_config::config_path()
-        .map_err(|e| Error::Custom(format!("Cannot determine config path: {e}")))?;
-
+///
+/// `path` is the resolved config file path; this function never re-derives it.
+fn run_config_init(args: &ConfigInitArgs, path: &std::path::Path) -> Result<()> {
     if path.exists() && !args.force {
         return Err(Error::Custom(format!(
             "config.toml already exists at {}. Use --force to overwrite.",
@@ -32,7 +36,7 @@ fn run_config_init(args: &ConfigInitArgs) -> Result<()> {
         std::fs::create_dir_all(parent)
             .map_err(|e| Error::Custom(format!("Failed to create config dir: {e}")))?;
     }
-    std::fs::write(&path, &content)
+    std::fs::write(path, &content)
         .map_err(|e| Error::Custom(format!("Failed to write config: {e}")))?;
 
     println!(

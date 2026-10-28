@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
 
-use crate::utils::env_map::{EnvMap, process_env};
+use crate::utils::env_map::EnvMap;
 
 use super::vault::{BackendKind, VaultBackend, VaultError};
 
@@ -49,12 +49,14 @@ impl FileBackend {
         Self { path: path.into() }
     }
 
-    /// Probe whether the XDG data directory is writable.
+    /// Probe whether the resolved secrets file is writable.
     ///
-    /// Creates the application subdirectory when missing, then proves
-    /// writability by creating and dropping a probe file inside it.
-    pub fn probe() -> Result<Self, VaultError> {
-        Self::probe_in(&Self::default_path()?)
+    /// `secrets_path` is the final file path
+    /// ([`Paths::secrets_path`](crate::config::Paths::secrets_path)); the parent
+    /// directory is created when missing, then writability is proved by
+    /// creating and dropping a probe file inside it.
+    pub fn probe(secrets_path: &Path) -> Result<Self, VaultError> {
+        Self::probe_in(secrets_path)
     }
 
     /// Probe whether `path` is writable.
@@ -75,13 +77,12 @@ impl FileBackend {
         &self.path
     }
 
-    /// Resolve `$XDG_DATA_HOME/{APP_DIR_NAME}/secrets.json`.
-    pub fn default_path() -> Result<PathBuf, VaultError> {
-        Self::default_path_with(&process_env())
-    }
-
     /// Resolve `$XDG_DATA_HOME/{APP_DIR_NAME}/secrets.json` from an explicit env
     /// map.
+    ///
+    /// This is the test seam over the data ladder's lower two levels; a caller
+    /// that holds the resolved [`Paths`](crate::config::Paths) passes
+    /// [`Paths::secrets_path`](crate::config::Paths::secrets_path) instead.
     pub fn default_path_with(env: &EnvMap) -> Result<PathBuf, VaultError> {
         let dir = crate::utils::paths::data_app_dir_with(env).map_err(|_| VaultError::NoDataDir)?;
         Ok(dir.join(SECRETS_FILE))

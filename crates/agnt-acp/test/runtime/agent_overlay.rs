@@ -1,5 +1,6 @@
 //! Agent permissions overlay tests for `build_acp_runtime()`.
 
+use agnt_core::conversation::managers::PersonaManager;
 use agnt_core::tools::authz::PermissionAction;
 
 use super::runtime_support::*;

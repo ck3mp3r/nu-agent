@@ -227,6 +227,13 @@ impl CommandRouter {
                     .send(UiRequestResponse::SessionRefresh(result))
                     .await;
             }
+            UiRequest::RefreshAgentPicker => {
+                log::debug!("Router: UiRequest RefreshAgentPicker");
+                let summaries = runtime.rescan_available_agents();
+                let _ = response_tx
+                    .send(UiRequestResponse::AgentRefresh(Ok(summaries)))
+                    .await;
+            }
         }
     }
 }

@@ -10,6 +10,9 @@ use nu_protocol::LabeledError;
 pub struct ProviderState {
     config: Config,
     startup_plugin_config: Option<PluginConfig>,
+    /// The resolved Copilot credential directory; `None` falls back to the
+    /// legacy platform default.
+    copilot_token_dir: Option<std::path::PathBuf>,
     cached_client: Option<CachedProviderClient>,
     cached_client_key: Option<ClientCacheKey>,
 }
@@ -19,9 +22,17 @@ impl ProviderState {
         Self {
             config,
             startup_plugin_config,
+            copilot_token_dir: None,
             cached_client: None,
             cached_client_key: None,
         }
+    }
+
+    /// Inject the resolved Copilot credential directory
+    /// ([`Paths::copilot_token_dir`](crate::config::Paths::copilot_token_dir)).
+    pub fn with_copilot_token_dir(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
+        self.copilot_token_dir = Some(dir.into());
+        self
     }
 
     /// Construct a provider state with a pre-built client.
@@ -71,7 +82,9 @@ impl ProviderState {
             self.config.model
         );
         let client = match provider_type {
-            "copilot" | "github-copilot" | "github_copilot" => CachedProviderClient::Copilot(build_copilot_client(&self.config).await?),
+            "copilot" | "github-copilot" | "github_copilot" => CachedProviderClient::Copilot(
+                build_copilot_client(&self.config, self.copilot_token_dir.as_deref()).await?,
+            ),
             "openai" => {
                 let client = build_openai_client(&self.config)?;
                 // rig 0.43 carries the route in the client's `OpenAIConfig`:

@@ -18,9 +18,6 @@ use crate::utils::env_map::{EnvMap, process_env};
 
 // region:    --- Constants
 
-/// Subdirectory of the XDG config directory holding the user-level `.env`.
-const CONFIG_SUBDIR: &str = "nu-agent";
-
 /// File name of the `.env` file.
 const DOTENV_FILE: &str = ".env";
 
@@ -34,10 +31,15 @@ const DOTENV_FILE: &str = ".env";
 /// project value overrides a user-level value for keys not already set in the
 /// process environment. Missing files are ignored. Malformed lines are logged
 /// and skipped — this function never fails.
+///
+/// The user-level path is [`Paths::dotenv_path`], resolved before config.toml is
+/// read; an unresolvable path (no `HOME`, no XDG base) simply skips that file.
 pub fn load_env_files() {
     let mut env = process_env();
-    let user_config_dir = crate::utils::xdg::config_dir().ok();
-    let applied = load_env_files_into(&mut env, user_config_dir.as_deref(), Path::new("."));
+    let user_dotenv = crate::config::Paths::resolve_for_process(None)
+        .ok()
+        .map(|paths| paths.dotenv_path);
+    let applied = load_env_files_into(&mut env, user_dotenv.as_deref(), Path::new("."));
     for (key, value) in applied {
         // SAFETY: called once at startup, before the process spawns threads that
         // read the environment concurrently.
@@ -49,21 +51,18 @@ pub fn load_env_files() {
 
 /// Merge the user-level and project-level `.env` files into `env`.
 ///
-/// `user_config_dir` is the XDG config directory, or `None` when it cannot be
-/// resolved. `project_dir` holds the project-level `.env`. Entries already
-/// present in `env` are never overwritten. Returns the assignments that were
-/// applied, in load order.
+/// `user_dotenv` is the final user-level `.env` file path, or `None` when no
+/// application config directory resolves. `project_dir` holds the project-level
+/// `.env`. Entries already present in `env` are never overwritten. Returns the
+/// assignments that were applied, in load order.
 pub fn load_env_files_into(
     env: &mut EnvMap,
-    user_config_dir: Option<&Path>,
+    user_dotenv: Option<&Path>,
     project_dir: &Path,
 ) -> Vec<(String, String)> {
     let mut applied = Vec::new();
-    if let Some(dir) = user_config_dir {
-        applied.extend(load_env_file_into(
-            env,
-            &dir.join(CONFIG_SUBDIR).join(DOTENV_FILE),
-        ));
+    if let Some(path) = user_dotenv {
+        applied.extend(load_env_file_into(env, path));
     }
     applied.extend(load_env_file_into(env, &project_dir.join(DOTENV_FILE)));
     applied

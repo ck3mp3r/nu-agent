@@ -16,6 +16,7 @@ fn test_resolve_model_invalid_format() -> Result<()> {
         mcp: None,
         theme: None,
         hooks: Vec::new(),
+        paths: None,
     };
 
     // -- Exec & Check
@@ -62,6 +63,7 @@ fn test_resolve_model_resolves_without_provider_or_model_config() -> Result<()> 
         mcp: None,
         theme: None,
         hooks: Vec::new(),
+        paths: None,
     };
     let with_provider = PluginConfig {
         models: HashMap::new(),
@@ -91,6 +93,7 @@ fn test_resolve_model_resolves_without_provider_or_model_config() -> Result<()> 
         mcp: None,
         theme: None,
         hooks: Vec::new(),
+        paths: None,
     };
 
     // -- Exec & Check

@@ -1,6 +1,7 @@
 use super::*;
 
 use super::config_options::{current_value, select_values};
+use agnt_core::conversation::managers::PersonaManager;
 use agnt_core::tools::authz::PermissionAction;
 
 // ---------------------------------------------------------------------------

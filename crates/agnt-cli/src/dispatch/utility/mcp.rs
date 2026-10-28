@@ -73,7 +73,12 @@ async fn run_mcp_login(args: &McpLoginArgs) -> Result<()> {
     agnt_core::tools::mcp::safe_http_client::validate_url(server_url)
         .map_err(|e| Error::Custom(format!("Invalid MCP server URL for '{server_name}': {e}")))?;
 
-    let vault = Arc::new(Vault::auto_detect().map_err(|e| Error::Custom(e.to_string()))?);
+    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
+    let vault = Arc::new(
+        Vault::auto_detect(&application_paths.secrets_path)
+            .map_err(|e| Error::Custom(e.to_string()))?,
+    );
 
     let callback_server = CallbackServer::start(0)
         .await
@@ -189,7 +194,10 @@ async fn run_mcp_login(args: &McpLoginArgs) -> Result<()> {
 
 /// Clear stored OAuth credentials for an MCP server.
 fn run_mcp_logout(args: &McpLogoutArgs) -> Result<()> {
-    let vault = Vault::auto_detect().map_err(|e| Error::Custom(e.to_string()))?;
+    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
+    let vault = Vault::auto_detect(&application_paths.secrets_path)
+        .map_err(|e| Error::Custom(e.to_string()))?;
     println!("{}", perform_logout(&vault, &args.server));
     Ok(())
 }
@@ -206,7 +214,10 @@ fn run_mcp_status() -> Result<()> {
         return Ok(());
     }
 
-    let vault = Vault::auto_detect().map_err(|e| Error::Custom(e.to_string()))?;
+    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
+    let vault = Vault::auto_detect(&application_paths.secrets_path)
+        .map_err(|e| Error::Custom(e.to_string()))?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())

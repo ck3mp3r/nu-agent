@@ -19,6 +19,7 @@ use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, ActiveSession, Agent, Builder, Client, HandleDispatchFrom, NullClose,
     NullRun, SessionMessage, on_receive_request,
 };
+use agnt_core::utils::paths::APP_DIR_NAME;
 use agnt_testkit::MockServer;
 
 pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -28,7 +29,7 @@ pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// A throwaway environment for one ACP subprocess.
 ///
 /// The temp directory holds three trees: `config/` (the `XDG_CONFIG_HOME`
-/// containing `nu-agent/config.toml`), `cache/` (the `XDG_CACHE_HOME` holding
+/// containing `{APP_DIR_NAME}/config.toml`), `cache/` (the `XDG_CACHE_HOME` holding
 /// the SQLite session store) and `cwd/` (the session working directory).
 /// Dropping the value removes all three.
 pub struct TestEnv {
@@ -50,14 +51,14 @@ impl TestEnv {
         let config_home = temp.path().join("config");
         let cache_home = temp.path().join("cache");
         let cwd = temp.path().join("cwd");
-        std::fs::create_dir_all(config_home.join("nu-agent"))?;
+        std::fs::create_dir_all(config_home.join(APP_DIR_NAME))?;
         std::fs::create_dir_all(&cache_home)?;
         std::fs::create_dir_all(&cwd)?;
 
         let config = format!(
             "[models.default]\nmodel = \"ollama/llama3\"\n\n[providers.ollama]\nbase_url = \"{llm_base_url}\"\n\n{extra_config}\n"
         );
-        std::fs::write(config_home.join("nu-agent").join("config.toml"), config)?;
+        std::fs::write(config_home.join(APP_DIR_NAME).join("config.toml"), config)?;
 
         Ok(Self {
             temp,
@@ -90,7 +91,7 @@ impl TestEnv {
             "def agent_started [event] {{ $event | to json | save --append '{log}' }}\n\
              def agent_shutdown [event] {{ $event | to json | save --append '{log}' }}\n"
         );
-        std::fs::write(self.config_home.join("nu-agent").join(name), body)?;
+        std::fs::write(self.config_home.join(APP_DIR_NAME).join(name), body)?;
         Ok(())
     }
 

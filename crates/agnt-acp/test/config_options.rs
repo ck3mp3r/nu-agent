@@ -142,7 +142,12 @@ fn test_build_agent_config_options_sets_mode_category() -> Result<()> {
     let agents_config = AgentsConfig::default();
 
     // -- Exec
-    let options = build_agent_config_options(&agents_config, temp.path(), None);
+    let options = build_agent_config_options(
+        &agents_config,
+        temp.path(),
+        &temp.path().join("agents"),
+        None,
+    );
 
     // -- Check
     let option = options.first().ok_or("one option must be advertised")?;

@@ -339,4 +339,65 @@ async fn render_loop_driver_routes_tool_event_through_bus_ui_event_arm() -> Resu
     Ok(())
 }
 
+/// Every popup renders its navigation keys in the title, with " · " between
+/// hint items: scroll panels advertise ↑/↓ · PgUp/PgDn · Esc, pickers advertise
+/// ↑/↓ · Enter · Esc.
+#[tokio::test]
+async fn every_popup_title_shows_its_navigation_keys() -> Result<()> {
+    // -- Setup & Fixtures: one popup per case, opened through the real state.
+    let cases: [(&str, &str); 9] = [
+        ("status", "Status (↑/↓ · PgUp/PgDn · Esc)"),
+        ("skills", "Skills (↑/↓ · PgUp/PgDn · Esc)"),
+        ("help", "Help (↑/↓ · PgUp/PgDn · Esc"),
+        ("palette", "Command Palette (↑/↓ · Enter · Esc"),
+        ("models", "Models (↑/↓ · Enter · Esc)"),
+        ("agent", "Agent (↑/↓ · Enter · Esc)"),
+        ("sessions", "Sessions (↑/↓ · Enter · Esc"),
+        ("theme", "Theme (↑/↓ · Enter · Esc)"),
+        ("inline_slash", "Commands (↑/↓ · Enter · Esc)"),
+    ];
+
+    for (label, expected) in cases {
+        // -- Setup & Fixtures: a fresh driver per popup.
+        let mut driver = RenderLoopDriver::new(160, 40);
+        {
+            let state = &mut driver.coordinator_mut().state;
+            match label {
+                "status" => state.open_info_panel(crate::state::InfoPanel::Status),
+                "skills" => state.open_info_panel(crate::state::InfoPanel::Skills),
+                "help" => state.open_info_panel(crate::state::InfoPanel::Help),
+                "palette" => {
+                    state
+                        .picker
+                        .open(crate::state::ActivePicker::CommandPalette);
+                }
+                "models" => {
+                    state.picker.open(crate::state::ActivePicker::Model);
+                }
+                "agent" => {
+                    state.picker.open(crate::state::ActivePicker::Agent);
+                }
+                "sessions" => {
+                    state.picker.open(crate::state::ActivePicker::Session);
+                }
+                "inline_slash" => state.check_inline_slash("/"),
+                _ => {
+                    state.picker.open(crate::state::ActivePicker::Theme);
+                }
+            }
+        }
+
+        // -- Exec: settle past the render throttle so a frame lands.
+        driver.advance_with_frame(&[]).await?;
+
+        // -- Check: the rendered title carries the keys, never a legacy " | ".
+        let buffer = driver.buffer_text();
+        assert!(
+            buffer.contains(expected),
+            "{label}: expected title fragment {expected:?} in:\n{buffer}"
+        );
+    }
+    Ok(())
+}
+
 // endregion: --- Tests

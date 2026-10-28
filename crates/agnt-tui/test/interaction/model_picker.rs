@@ -1,7 +1,43 @@
 use super::*;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// The selection of the open picker, or the ok_or message when none is open.
+fn picker_selection(state: &AppState) -> Result<usize> {
+    Ok(state
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .selection)
+}
+
+/// The query of the open picker, or the ok_or message when none is open.
+fn picker_query(state: &AppState) -> Result<String> {
+    Ok(state
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .query
+        .clone())
+}
+
+/// The number of rows the open picker's query keeps.
+fn picker_filtered_len(state: &AppState) -> Result<usize> {
+    Ok(state
+        .picker
+        .active_state()
+        .ok_or("picker should be open")?
+        .filtered()
+        .len())
+}
+
+/// The selection of an open query picker in this state.
+fn palette_selection(state: &AppState) -> Result<usize> {
+    picker_selection(state)
+}
+
 #[test]
-fn model_picker_navigation_table() {
+fn model_picker_navigation_table() -> Result<()> {
     // Model picker Ctrl-N moves to the next item.
     let mut state = AppState::default();
     state.set_picker_options(
@@ -39,7 +75,7 @@ fn model_picker_navigation_table() {
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlN), None);
 
     assert!(changed);
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+    assert_eq!(picker_selection(&state)?, 1);
 
     // Query picker Ctrl-N moves to the next item consistently.
     let mut palette_state = AppState::default();
@@ -59,7 +95,7 @@ fn model_picker_navigation_table() {
         None,
     );
     assert!(palette_changed);
-    assert_eq!(palette_state.picker.active_state().unwrap().selection, 1);
+    assert_eq!(palette_selection(&palette_state)?, 1);
 
     // Model picker Ctrl-P moves the selection up.
     let mut state = AppState::default();
@@ -95,18 +131,19 @@ fn model_picker_navigation_table() {
     state.picker.open(ActivePicker::Model);
 
     let _ = dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+    assert_eq!(picker_selection(&state)?, 1);
 
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlP), None);
 
     assert!(changed);
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    assert_eq!(picker_selection(&state)?, 0);
     assert_eq!(state.picker.render_kind(), Some(PickerRenderKind::Model));
+    Ok(())
 }
 
 #[test]
-fn model_picker_query_table() {
+fn model_picker_query_table() -> Result<()> {
     // The query accepts j and k characters.
     let mut state = AppState::default();
     state.set_picker_options(
@@ -153,8 +190,8 @@ fn model_picker_query_table() {
 
     assert!(j_changed);
     assert!(k_changed);
-    assert_eq!(state.picker.active_state().unwrap().query, "jk");
-    assert_eq!(state.picker.active_state().unwrap().filtered().len(), 2);
+    assert_eq!(picker_query(&state)?, "jk");
+    assert_eq!(picker_filtered_len(&state)?, 2);
 
     // Navigation does not consume query jk input.
     let mut state = AppState::default();
@@ -204,7 +241,7 @@ fn model_picker_query_table() {
     let down_changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
     assert!(down_changed);
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+    assert_eq!(picker_selection(&state)?, 1);
 
     let j_changed = dispatch_terminal_event(
         &mut state,
@@ -212,8 +249,8 @@ fn model_picker_query_table() {
         None,
     );
     assert!(j_changed);
-    assert_eq!(state.picker.active_state().unwrap().query, "j");
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    assert_eq!(picker_query(&state)?, "j");
+    assert_eq!(picker_selection(&state)?, 0);
 
     let k_changed = dispatch_terminal_event(
         &mut state,
@@ -221,16 +258,17 @@ fn model_picker_query_table() {
         None,
     );
     assert!(k_changed);
-    assert_eq!(state.picker.active_state().unwrap().query, "jk");
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    assert_eq!(picker_query(&state)?, "jk");
+    assert_eq!(picker_selection(&state)?, 0);
 
     let down_again_changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Down), None);
     assert!(down_again_changed);
-    assert_eq!(state.picker.active_state().unwrap().selection, 1);
+    assert_eq!(picker_selection(&state)?, 1);
 
     let up_changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Up), None);
     assert!(up_changed);
-    assert_eq!(state.picker.active_state().unwrap().selection, 0);
+    assert_eq!(picker_selection(&state)?, 0);
+    Ok(())
 }

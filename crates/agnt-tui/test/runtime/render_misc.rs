@@ -169,10 +169,11 @@ fn startup_logo_and_bottom_align() -> Result<()> {
 #[tokio::test]
 async fn status_section_lane_layout() -> Result<()> {
     // -- Setup & Fixtures: a wrapping identity with a message.
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let temp_dir =
+        tempfile::TempDir::new().map_err(|e| format!("failed to create temp dir: {e}"))?;
     let repo = temp_dir.path().join("repo");
-    fs::create_dir_all(&repo).expect("repo dir");
-    init_repo_with_branch(&repo, "feature/status-lane-wrap");
+    fs::create_dir_all(&repo).map_err(|e| format!("failed to create dir: {e}"))?;
+    init_repo_with_branch(&repo, "feature/status-lane-wrap")?;
 
     let mut driver = RenderLoopDriver::new(60, 30);
     driver

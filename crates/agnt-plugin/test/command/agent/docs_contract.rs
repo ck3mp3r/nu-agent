@@ -13,6 +13,94 @@ fn read_usage_docs() -> String {
         .expect("usage docs")
 }
 
+fn read_configuration_docs() -> String {
+    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/configuration.md"))
+        .expect("configuration docs")
+}
+
+#[test]
+fn docs_describe_the_paths_ladder_and_its_rules() {
+    let docs = read_configuration_docs();
+    for env_var in [
+        "NU_AGENT_CONFIG_HOME",
+        "NU_AGENT_DATA_HOME",
+        "NU_AGENT_CACHE_HOME",
+        "NU_AGENT_STATE_HOME",
+    ] {
+        assert!(docs.contains(env_var), "the docs name {env_var}");
+    }
+    assert!(docs.contains("[paths]"), "the docs name the [paths] block");
+    assert!(
+        docs.contains("The ladder precedence is `NU_AGENT_<X>_HOME` > `[paths].<x>_home` >"),
+        "the docs state the ladder precedence"
+    );
+    assert!(
+        docs.contains("`XDG_<X>_HOME` > the XDG default under `$HOME`."),
+        "the docs state the ladder's XDG and HOME levels"
+    );
+    assert!(
+        docs.contains("**No file pins.**")
+            && docs.contains("An override re-roots its whole tree: the tree keeps the"),
+        "the docs state the no-file-pin rule"
+    );
+    assert!(
+        docs.contains("`{APP_DIR_NAME}/<tail>` substructure"),
+        "the docs state the re-rooted substructure"
+    );
+    assert!(
+        docs.contains("**The config tree has no `[paths]` key.**"),
+        "the docs state that the config tree has no TOML key"
+    );
+    assert!(
+        docs.contains("**Relative values are rejected at every level.**"),
+        "the docs state the relative-value rejection"
+    );
+    assert!(
+        docs.contains("**Unknown `[paths]` keys are rejected at parse time.**"),
+        "the docs state the unknown-key rejection"
+    );
+    assert!(
+        docs.contains("**Resolve once, inject.**") && docs.contains("point-of-use XDG resolution"),
+        "the docs state the resolve-once/inject model"
+    );
+    assert!(
+        docs.contains("**The `-dev` split.**") && docs.contains("`nu-agent-dev` in debug builds"),
+        "the docs state the -dev split"
+    );
+    assert!(
+        docs.contains("**Hooks stay relative to the config file's dir.**"),
+        "the docs state the hook anchoring contract"
+    );
+    assert!(
+        docs.contains("**One carve-out: the grammar cache.**")
+            && docs.contains(
+                "`{cache base}/tree-sitter/` — no `{APP_DIR_NAME}` segment and no `-dev` split"
+            ),
+        "the docs state the grammar-cache carve-out"
+    );
+    assert!(
+        docs.contains("The cache base follows the cache ladder"),
+        "the cache-path section states the cache ladder"
+    );
+}
+
+#[test]
+fn docs_describe_the_log_target_and_its_post_load_swap() {
+    let docs = read_usage_docs();
+    assert!(
+        docs.contains("`NU_AGENT_STATE_HOME` applies from process start"),
+        "the docs state that the env level applies from process start"
+    );
+    assert!(
+        docs.contains("the sink swaps to"),
+        "the docs state the post-load sink swap"
+    );
+    assert!(
+        docs.contains("pre-load window") && docs.contains("the log goes to the derived default"),
+        "the docs state where the pre-load window logs"
+    );
+}
+
 #[test]
 fn help_includes_compact_mcp_help_status_slash_commands() {
     let help = read_help_markdown();

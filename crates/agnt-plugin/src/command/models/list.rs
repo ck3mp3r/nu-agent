@@ -49,7 +49,9 @@ impl SimplePluginCommand for AgentModelsList {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let cache = ModelsCache::load().map_err(|e| {
+        let paths = agnt_core::config::Paths::resolve_from_config_or_default()
+            .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
+        let cache = ModelsCache::load_from(&paths.models_cache_path).map_err(|e| {
             LabeledError::new(format!(
                 "Failed to load models cache: {e}\nRun 'agent models sync' first."
             ))

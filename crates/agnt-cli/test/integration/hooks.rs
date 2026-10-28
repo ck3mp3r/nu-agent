@@ -93,6 +93,9 @@ async fn test_integration_hooks_zero_hooks_spawns_no_runner() -> Result<()> {
         env.config_path()
             .parent()
             .ok_or("config path has no parent")?,
+        env.config_path()
+            .parent()
+            .ok_or("config path has no parent")?,
         &agnt_core::hooks::HookAgentContext::default(),
         process.clone(),
     );
@@ -128,6 +131,7 @@ async fn test_integration_hooks_configured_hooks_start_a_runner() -> Result<()> 
     let handles = crate::mode::spawn_configured_hooks(
         Some(&config),
         &bus,
+        &config_dir,
         &config_dir,
         &agnt_core::hooks::HookAgentContext::default(),
         process.clone(),

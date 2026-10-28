@@ -52,6 +52,8 @@ Persona file resolution (first match wins):
 - `.agents/<name>.md` (project-local)
 - `$XDG_CONFIG_HOME/nu-agent/agents/<name>.md` (global, usually `~/.config/nu-agent/agents/`)
 
+`NU_AGENT_CONFIG_HOME` re-roots the global candidate with the whole config tree; a debug build uses `nu-agent-dev` as the app directory. See [Paths](configuration.md#paths).
+
 ### Front matter keys (optional YAML)
 
 ```yaml
@@ -914,7 +916,7 @@ The switch events share the session channel with the session lifecycle events, s
 A hook failure never affects the agent run.
 
 - A handler that exits non-zero, fails to spawn, or exceeds `timeout_ms` produces one warning log line: `hook '<name>' failed on <event>: <error>`.
-- The warning goes to the agent log file at `$XDG_STATE_HOME/nu-agent/logs/agent.log`. The agent never writes log output to the terminal.
+- The warning goes to the agent log file (`{state base}/nu-agent/logs/agent.log`, see [Log file](#log-file)). The agent never writes log output to the terminal.
 - A timeout kills the subprocess.
 - The agent never retries a failed hook.
 - The agent never publishes a hook result.
@@ -1084,7 +1086,7 @@ edit = "deny"
 - `--mesh-key <string>` — mesh isolation key; agents only discover peers with the same key (default: SHA-256 of cwd)
 - `--verbose` / `-v` — increase UX detail; repeat (`-v`, `-vv`, `-vvv`)
 - `--quiet` / `-q` — suppress non-essential UX progress output
-- `--log-level <string>` — file log level (`error|warn|info|debug|trace`); writes to `$XDG_STATE_HOME/nu-agent/logs/agent.log`
+- `--log-level <string>` — file log level (`error|warn|info|debug|trace`); writes to `{state base}/nu-agent/logs/agent.log` (see [Log file](#log-file))
 - `--agent <name>` — load an agent persona from `.agents/<name>.md`
 - `--name <string>` — agent instance identity for multi-agent messaging
 - `--parent-name <string>` — parent agent name for sub-agent reporting (internal)
@@ -1093,6 +1095,15 @@ edit = "deny"
 - `--token-budget <int>` — token budget for `token_truncate` strategy
 - `--proactive-threshold-pct <number>` — proactive compaction threshold 0.0–1.0 (default: 0.80)
 - `--store <string>` — session store backend: `sqlite|jsonl|memory`
+
+## Log file
+
+The agent logs to a file only; it never writes log output to the terminal.
+
+- The target is `{state base}/nu-agent/logs/agent.log` — `$XDG_STATE_HOME/nu-agent/logs/agent.log` by default, and `nu-agent-dev` instead of `nu-agent` in a debug build. See [Paths](configuration.md#paths) for the full ladder.
+- `NU_AGENT_STATE_HOME` applies from process start: the environment is readable before `config.toml` loads, so the log target is correct from the first line, with no re-initialization.
+- A `[paths].state_home` value in `config.toml` applies only after the config file is loaded: the sink swaps to `{value}/nu-agent/logs/agent.log` at that point.
+- In the pre-load window — the first few startup lines — the log goes to the derived default, i.e. `$XDG_STATE_HOME`'s tree or `~/.local/state`.
 
 ## Subcommands
 

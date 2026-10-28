@@ -9,7 +9,6 @@ pub struct PersonaState {
     agent_icon: Option<String>,
     cached_agents_chain: Option<String>,
     cached_available_skills: Option<String>,
-    cached_sub_agent_instruction: Option<String>,
 }
 
 /// Result of a successful agent switch, carrying side-effects the caller must apply.
@@ -33,7 +32,6 @@ impl PersonaState {
         agent_icon: Option<String>,
         cached_agents_chain: Option<String>,
         cached_available_skills: Option<String>,
-        cached_sub_agent_instruction: Option<String>,
     ) -> Self {
         Self {
             agent_persona_body,
@@ -42,39 +40,48 @@ impl PersonaState {
             agent_icon,
             cached_agents_chain,
             cached_available_skills,
-            cached_sub_agent_instruction,
         }
     }
+}
 
-    pub fn agent_persona_body(&self) -> Option<&str> {
+impl PersonaManager for PersonaState {
+    fn agent_persona_body(&self) -> Option<&str> {
         self.agent_persona_body.as_deref()
     }
-    pub fn agent_identity(&self) -> Option<&str> {
-        self.agent_identity.as_deref()
-    }
-    pub fn agent_description(&self) -> Option<&str> {
-        self.agent_description.as_deref()
-    }
-    pub fn agent_icon(&self) -> Option<&str> {
-        self.agent_icon.as_deref()
-    }
-    pub fn cached_agents_chain(&self) -> Option<&str> {
+
+    fn cached_agents_chain(&self) -> Option<&str> {
         self.cached_agents_chain.as_deref()
     }
-    pub fn cached_available_skills(&self) -> Option<&str> {
+
+    fn cached_available_skills(&self) -> Option<&str> {
         self.cached_available_skills.as_deref()
     }
-    pub fn cached_sub_agent_instruction(&self) -> Option<&str> {
-        self.cached_sub_agent_instruction.as_deref()
+
+    fn agent_identity(&self) -> Option<&str> {
+        self.agent_identity.as_deref()
     }
-    pub fn persona_body_len(&self) -> Option<usize> {
+
+    fn persona_body_len(&self) -> Option<usize> {
         self.agent_persona_body.as_ref().map(|b| b.len())
     }
 
-    pub fn switch_agent(
+    fn agent_description(&self) -> Option<&str> {
+        self.agent_description.as_deref()
+    }
+
+    fn agent_icon(&self) -> Option<&str> {
+        self.agent_icon.as_deref()
+    }
+
+    fn active_model_identity(&self, config: &Config) -> String {
+        format!("{}/{}", config.provider, config.model)
+    }
+
+    fn switch_agent(
         &mut self,
         agent_name: &str,
         cwd: &std::path::Path,
+        agents_dir: &std::path::Path,
         agents_config: &crate::config::AgentsConfig,
     ) -> Result<SwitchAgentResult, String> {
         use crate::protocol::persona::{
@@ -82,11 +89,11 @@ impl PersonaState {
             PulldownCmarkFrontMatterParser, interpret_front_matter,
         };
 
-        let config_dir = crate::utils::xdg::config_dir()
-            .map(|base| base.join("nu-agent"))
-            .map_err(|e| format!("agent switch failed: cannot determine config directory: {e}"))?;
-
-        let resolver = FsPersonaResolver::new(cwd.to_path_buf(), config_dir, agents_config.clone());
+        let resolver = FsPersonaResolver::new(
+            cwd.to_path_buf(),
+            agents_dir.to_path_buf(),
+            agents_config.clone(),
+        );
         let (_path, contents) = resolver
             .resolve(agent_name)
             .map_err(|e| format!("agent switch failed: {e}"))?;
@@ -137,56 +144,5 @@ impl PersonaState {
             additional_params: parsed.additional_params,
             permissions_overlay,
         })
-    }
-
-    pub fn active_model_identity(&self, config: &Config) -> String {
-        format!("{}/{}", config.provider, config.model)
-    }
-}
-
-impl PersonaManager for PersonaState {
-    fn agent_persona_body(&self) -> Option<&str> {
-        self.agent_persona_body.as_deref()
-    }
-
-    fn cached_sub_agent_instruction(&self) -> Option<&str> {
-        self.cached_sub_agent_instruction.as_deref()
-    }
-
-    fn cached_agents_chain(&self) -> Option<&str> {
-        self.cached_agents_chain.as_deref()
-    }
-
-    fn cached_available_skills(&self) -> Option<&str> {
-        self.cached_available_skills.as_deref()
-    }
-
-    fn agent_identity(&self) -> Option<&str> {
-        self.agent_identity.as_deref()
-    }
-
-    fn persona_body_len(&self) -> Option<usize> {
-        self.agent_persona_body.as_ref().map(|b| b.len())
-    }
-
-    fn agent_description(&self) -> Option<&str> {
-        self.agent_description.as_deref()
-    }
-
-    fn agent_icon(&self) -> Option<&str> {
-        self.agent_icon.as_deref()
-    }
-
-    fn active_model_identity(&self, config: &Config) -> String {
-        self.active_model_identity(config)
-    }
-
-    fn switch_agent(
-        &mut self,
-        agent_name: &str,
-        cwd: &std::path::Path,
-        agents_config: &crate::config::AgentsConfig,
-    ) -> Result<SwitchAgentResult, String> {
-        self.switch_agent(agent_name, cwd, agents_config)
     }
 }

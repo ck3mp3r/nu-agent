@@ -1,5 +1,7 @@
 //! Construction: what `build_runtime` puts on the runtime from its params.
 
+use crate::conversation::managers::PersonaManager;
+
 use super::*;
 
 #[tokio::test]

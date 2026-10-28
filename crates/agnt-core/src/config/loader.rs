@@ -16,6 +16,7 @@ use crate::utils::env_map::{EnvMap, process_env};
 
 use super::dotenv;
 use super::models_cache::{ModelsCache, ModelsCacheError};
+use super::paths::{Paths, PathsError};
 use super::toml_config::{self, TomlConfigError};
 use super::types::{Config, ModelRoleConfig, PluginConfig};
 use super::vault::{Vault, VaultError};
@@ -39,6 +40,8 @@ pub enum ConfigLoadError {
     Resolve(String),
     /// The vault backend could not be selected.
     Vault(VaultError),
+    /// The application paths could not be resolved.
+    Paths(PathsError),
 }
 
 impl std::fmt::Display for ConfigLoadError {
@@ -50,6 +53,7 @@ impl std::fmt::Display for ConfigLoadError {
             Self::NoDefaultModel => write!(f, "no model configured"),
             Self::Resolve(msg) => write!(f, "failed to resolve model: {msg}"),
             Self::Vault(e) => write!(f, "vault backend unavailable: {e}"),
+            Self::Paths(e) => write!(f, "failed to resolve application paths: {e}"),
         }
     }
 }
@@ -86,14 +90,19 @@ pub fn load_and_resolve_config(
         return Err(ConfigLoadError::NotFound(config_path.to_path_buf()));
     }
     let mut plugin_config = toml_config::load_from(config_path).map_err(ConfigLoadError::Toml)?;
+    // The `[paths]` values in the config decide where the vault and the models
+    // cache live, so the paths resolve before either is read.
+    let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let paths =
+        Paths::resolve(plugin_config.paths.as_ref(), config_dir).map_err(ConfigLoadError::Paths)?;
     // Load .env files before anything reads the environment. User-level and
     // project-level values only fill variables that are not already set.
     dotenv::load_env_files();
     // Probe keychain, then file, then env-only. The first available wins.
     plugin_config.vault = Some(Arc::new(
-        Vault::auto_detect().map_err(ConfigLoadError::Vault)?,
+        Vault::auto_detect(&paths.secrets_path).map_err(ConfigLoadError::Vault)?,
     ));
-    match ModelsCache::load() {
+    match ModelsCache::load_from(&paths.models_cache_path) {
         Ok(cache) => plugin_config.models_cache = Some(cache),
         Err(ModelsCacheError::NotFound(_)) => {}
         Err(e) => log::warn!("Failed to load models cache: {e}"),

@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::rendering::theme::TuiTheme;
-use crate::runtime::panels::render_permission_controls;
+use crate::runtime::panels::{inline_slash_title, render_permission_controls};
 use crate::tui_renderer::{layout, measure};
 use crate::{
     runtime::inline_slash_lines_for_render,
@@ -174,7 +174,7 @@ impl RuntimeCoordinator {
                         .borders(Borders::ALL)
                         .border_set(ratatui::symbols::border::ROUNDED)
                         .border_style(self.theme.subtle_meta)
-                        .title("Commands (up/down - Enter - Esc)");
+                        .title(inline_slash_title());
                     let inner = block.inner(slash_rect);
                     frame.render_widget(block, slash_rect);
                     frame.render_widget(Text::from(slash_lines), inner);

@@ -1,6 +1,6 @@
 use crate::{
     interaction::{cancel::CancelController, input::TerminalEvent, reducer::UserAction},
-    state::{AppState, InputMode, PaneFocus, UiPhase},
+    state::{AppState, InputMode, PANEL_PAGE_LINES, PaneFocus, UiPhase},
 };
 
 pub fn dispatch_terminal_event(
@@ -16,56 +16,85 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
         return (
             match panel {
                 crate::state::InfoPanel::Mcps => match action {
+                    UserAction::Esc => {
+                        state.status.mcp.clear_mcp_panel_query();
+                        UserAction::Esc
+                    }
+                    UserAction::Quit => UserAction::Quit,
+                    // The frame repaints only while the dirty flag is set, so
+                    // each mutation reports whether it changed what the panel
+                    // draws. A move that wraps onto the same row changes nothing.
+                    UserAction::ScrollLineUp
+                    | UserAction::HistoryUp
+                    | UserAction::ToggleCommandPalette => {
+                        let before = state.status.mcp.mcp_panel_selection;
+                        state.status.mcp.mcp_panel_move_up();
+                        let moved = state.status.mcp.mcp_panel_selection != before;
+                        return (UserAction::Noop, moved);
+                    }
+                    UserAction::ScrollLineDown
+                    | UserAction::HistoryDown
+                    | UserAction::QueryNext => {
+                        let before = state.status.mcp.mcp_panel_selection;
+                        state.status.mcp.mcp_panel_move_down();
+                        let moved = state.status.mcp.mcp_panel_selection != before;
+                        return (UserAction::Noop, moved);
+                    }
+                    UserAction::ScrollPageUp => {
+                        let before = state.status.mcp.mcp_panel_selection;
+                        state.status.mcp.mcp_panel_page_up();
+                        let moved = state.status.mcp.mcp_panel_selection != before;
+                        return (UserAction::Noop, moved);
+                    }
+                    UserAction::ScrollPageDown => {
+                        let before = state.status.mcp.mcp_panel_selection;
+                        state.status.mcp.mcp_panel_page_down();
+                        let moved = state.status.mcp.mcp_panel_selection != before;
+                        return (UserAction::Noop, moved);
+                    }
+                    UserAction::Submit | UserAction::InsertChar(' ') => {
+                        let queued = state.status.mcp.queue_selected_mcp_toggle_request();
+                        return (UserAction::Noop, queued);
+                    }
+                    // Every other character filters the panel, as it does in the
+                    // palette and the pickers. Space stays with the toggle.
+                    UserAction::InsertChar(ch) => {
+                        state.status.mcp.append_mcp_panel_query_char(ch);
+                        return (UserAction::Noop, true);
+                    }
+                    UserAction::Backspace => {
+                        let changed = state.status.mcp.backspace_mcp_panel_query_char();
+                        return (UserAction::Noop, changed);
+                    }
+                    _ => UserAction::Noop,
+                },
+                _ => match action {
                     UserAction::Esc => UserAction::Esc,
                     UserAction::Quit => UserAction::Quit,
                     UserAction::ScrollLineUp
                     | UserAction::HistoryUp
                     | UserAction::ToggleCommandPalette => {
-                        state.status.mcp.mcp_panel_move_up();
-                        UserAction::Noop
+                        state.info_panel_scroll = state.info_panel_scroll.saturating_sub(1);
+                        return (UserAction::Noop, true);
                     }
                     UserAction::ScrollLineDown
                     | UserAction::HistoryDown
                     | UserAction::QueryNext => {
-                        state.status.mcp.mcp_panel_move_down();
-                        UserAction::Noop
+                        state.info_panel_scroll = state.info_panel_scroll.saturating_add(1);
+                        return (UserAction::Noop, true);
                     }
-                    UserAction::Submit | UserAction::InsertChar(' ') => {
-                        let _ = state.status.mcp.queue_selected_mcp_toggle_request();
-                        UserAction::Noop
+                    UserAction::ScrollPageUp => {
+                        state.info_panel_scroll =
+                            state.info_panel_scroll.saturating_sub(PANEL_PAGE_LINES);
+                        return (UserAction::Noop, true);
+                    }
+                    UserAction::ScrollPageDown => {
+                        state.info_panel_scroll =
+                            state.info_panel_scroll.saturating_add(PANEL_PAGE_LINES);
+                        return (UserAction::Noop, true);
                     }
                     _ => UserAction::Noop,
                 },
-                _ => {
-                    const PANEL_PAGE_LINES: usize = 8;
-                    match action {
-                        UserAction::Esc => UserAction::Esc,
-                        UserAction::Quit => UserAction::Quit,
-                        UserAction::ScrollLineUp
-                        | UserAction::HistoryUp
-                        | UserAction::ToggleCommandPalette => {
-                            state.info_panel_scroll = state.info_panel_scroll.saturating_sub(1);
-                            return (UserAction::Noop, true);
-                        }
-                        UserAction::ScrollLineDown
-                        | UserAction::HistoryDown
-                        | UserAction::QueryNext => {
-                            state.info_panel_scroll = state.info_panel_scroll.saturating_add(1);
-                            return (UserAction::Noop, true);
-                        }
-                        UserAction::ScrollPageUp => {
-                            state.info_panel_scroll =
-                                state.info_panel_scroll.saturating_sub(PANEL_PAGE_LINES);
-                            return (UserAction::Noop, true);
-                        }
-                        UserAction::ScrollPageDown => {
-                            state.info_panel_scroll =
-                                state.info_panel_scroll.saturating_add(PANEL_PAGE_LINES);
-                            return (UserAction::Noop, true);
-                        }
-                        _ => UserAction::Noop,
-                    }
-                }
             },
             false,
         );

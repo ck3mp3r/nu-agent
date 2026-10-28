@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use crate::protocol::{
     contracts::{McpUsabilityState, SharedUiAction, UiMessageSnapshot},
     event::PermissionDecisionSubmission,
+    persona::PersonaSummary,
 };
 use crate::session::SessionInfo;
 
@@ -19,6 +20,7 @@ pub type ModelSwitchResult = Result<(String, Option<u64>), String>;
 pub type AgentSwitchResult = Result<(String, String, Option<u64>, Option<String>), String>;
 pub type SessionSwitchResult = Result<Vec<UiMessageSnapshot>, String>;
 pub type RefreshSessionPickerResult = Result<Vec<SessionInfo>, String>;
+pub type RefreshAgentPickerResult = Result<Vec<PersonaSummary>, String>;
 
 /// Events flowing into the orchestrator loop from the TUI. The orchestrator
 /// drains this channel with `while let Some` in a `select!` arm.
@@ -46,6 +48,7 @@ pub enum UiRequest {
     SwitchSession { id: String },
     ToggleMcp { server: String, enable: bool },
     RefreshSessionPicker,
+    RefreshAgentPicker,
 }
 
 /// Per-type response to a `UiRequest`.
@@ -65,6 +68,7 @@ pub enum UiRequestResponse {
         names_by_server: Vec<(String, Vec<String>)>,
     },
     SessionRefresh(RefreshSessionPickerResult),
+    AgentRefresh(RefreshAgentPickerResult),
 }
 
 /// UI state updates broadcast to the TUI render loop.
@@ -94,6 +98,7 @@ pub enum UiStateEvent {
         names: Vec<String>,
     },
     SetSessionPickerOptions(Vec<SessionInfo>),
+    SetAgentPickerOptions(Vec<PersonaSummary>),
     EnqueueExternalPrompt {
         text: String,
     },

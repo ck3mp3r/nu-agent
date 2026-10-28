@@ -71,11 +71,11 @@ fn mcp_panel_layout_controls_and_visible_count() -> Result<()> {
     // -- Check: multiple rows are visible at a common modal height.
     assert!(model.rows.len() > 1);
 
-    // -- Exec & Check: the controls line is compact.
+    // -- Exec & Check: the controls line documents navigation and filtering.
     let line = super::mcp_panel_controls_line();
     assert_eq!(
         line,
-        "Session-only toggles | Enter/Space toggle | Esc close"
+        "↑/↓ select · type to filter · Enter/Space toggle · Esc close"
     );
     assert!(!line.contains("enabled"));
     assert!(!line.contains("disabled"));

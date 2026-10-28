@@ -243,6 +243,7 @@ pub struct AppState {
     pub(crate) pending_launch: VecDeque<SharedUiAction>,
     pub(crate) pending_theme_persist: VecDeque<String>,
     pub(crate) pending_session_picker_refresh: bool,
+    pub(crate) pending_agent_picker_refresh: bool,
     pub info_panel: Option<InfoPanel>,
     pub info_panel_scroll: usize,
     pub permission: PermissionState,
@@ -281,6 +282,7 @@ impl Default for AppState {
             pending_launch: VecDeque::new(),
             pending_theme_persist: VecDeque::new(),
             pending_session_picker_refresh: false,
+            pending_agent_picker_refresh: false,
             info_panel: None,
             info_panel_scroll: 0,
             permission: PermissionState::default(),
@@ -350,6 +352,9 @@ impl AppState {
             events.push(OrchestratorEvent::UiRequest(
                 UiRequest::RefreshSessionPicker,
             ));
+        }
+        if self.take_next_agent_picker_refresh_request() {
+            events.push(OrchestratorEvent::UiRequest(UiRequest::RefreshAgentPicker));
         }
         if cancel_controller.take_cancel_requested() {
             events.push(OrchestratorEvent::CancelRequested);
@@ -422,6 +427,16 @@ impl AppState {
                     sessions.into_iter().map(PickerOption::from).collect();
                 self.set_picker_options(ActivePicker::Session, tui_options)
             }
+            UiStateEvent::SetAgentPickerOptions(summaries) => {
+                // One scan feeds both surfaces: the picker rows and the Tab cycle.
+                self.status.identity.agent_cycle_names =
+                    summaries.iter().map(|s| s.name.clone()).collect();
+                let catalog = agnt_core::protocol::picker::build_agent_picker_catalog(&summaries);
+                let tui_options: Vec<PickerOption> =
+                    catalog.into_iter().map(PickerOption::from).collect();
+                self.set_picker_options(ActivePicker::Agent, tui_options);
+                self.ensure_invariants();
+            }
             UiStateEvent::EnqueueExternalPrompt { text } => {
                 self.enqueue_prompt(text);
             }
@@ -459,6 +474,7 @@ impl AppState {
             SharedUiAction::Agents => {
                 self.close_info_panel();
                 self.picker.open(ActivePicker::Agent);
+                self.pending_agent_picker_refresh = true;
                 self.ensure_invariants();
                 true
             }

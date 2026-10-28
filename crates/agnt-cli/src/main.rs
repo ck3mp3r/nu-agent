@@ -395,37 +395,38 @@ fn init_logging(args: &AgentArgs) {
         builder.filter_level(level.parse().unwrap_or(log::LevelFilter::Info));
     }
 
+    // The state tree is readable from the environment at process start, so the
+    // log target resolves here once. The grammar cache is installed after
+    // config load instead: its ladder has a `[paths]` level the environment
+    // cannot see.
+    let paths = agnt_core::config::Paths::resolve_for_process(None).ok();
+
     // Log to a file, never to stderr. The TUI renders on stderr, so stderr log
     // output corrupts the display and reappears on the terminal once the TUI
     // leaves the alternate screen.
-    builder.target(log_target());
+    builder.target(log_target(paths.as_ref()));
     builder.format_timestamp_millis();
     builder.init();
 }
 
-/// Open the file log target at `$XDG_STATE_HOME/nu-agent/logs/agent.log`.
+/// Open the file log target at the resolved `Paths.log_path`.
 ///
+/// The target derives from the state ladder at process start; a
+/// `[paths].state_home` value retargets the sink once config.toml loads.
 /// Falls back to a sink when the log directory or file cannot be opened, so
 /// that logging never writes to stderr.
-fn log_target() -> env_logger::Target {
+fn log_target(paths: Option<&agnt_core::config::Paths>) -> env_logger::Target {
     let sink = || env_logger::Target::Pipe(Box::new(std::io::sink()));
 
-    let Ok(state_dir) = agnt_core::utils::xdg::state_dir() else {
+    let Some(paths) = paths else {
         return sink();
     };
-    let log_dir = state_dir.join("nu-agent").join("logs");
-    if std::fs::create_dir_all(&log_dir).is_err() {
-        return sink();
-    }
-    let Ok(file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_dir.join("agent.log"))
-    else {
+    let Ok(file_sink) = agnt_core::logging::FileLogSink::open(paths.log_path.clone()) else {
         return sink();
     };
+    agnt_core::logging::install_process_sink(&file_sink);
 
-    env_logger::Target::Pipe(Box::new(file))
+    env_logger::Target::Pipe(Box::new(file_sink))
 }
 
 // endregion: --- Support

@@ -20,7 +20,8 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::{Client, ConnectionTo};
 use agnt_core::bus::{Bus, ChannelError, SessionEvent, TurnEvent};
 use agnt_core::config::ModelsCache;
-use agnt_core::conversation::managers::ProviderManager;
+use agnt_core::config::Paths;
+use agnt_core::conversation::managers::{PersonaManager, ProviderManager};
 use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::protocol::contracts::CoreRuntime;
 use agnt_core::protocol::model_switching::ModelSwitching;
@@ -173,7 +174,9 @@ pub struct AcpSessionManager<R: RuntimeBuilder> {
     /// How the rig-memory store of a session is made. The agent writes its
     /// conversation there, so `session/load` and `session/resume` read it.
     rig: RigStoreConfig,
-    config_path: PathBuf,
+    /// The resolved application paths: the config file every session runtime is
+    /// built from, and the persona directory.
+    paths: Paths,
     runtime_handle: tokio::runtime::Handle,
     runtime_builder: R,
     models_cache: Option<Arc<ModelsCache>>,
@@ -190,16 +193,12 @@ impl AcpSessionManager<DefaultRuntimeBuilder> {
     /// Create a manager whose sessions all share `rig`.
     ///
     /// `rig` is how each session's rig-memory store is made — the store the
-    /// agent writes its conversation to. `config_path` is the config.toml every
-    /// session runtime is built from; `runtime_handle` is the process tokio
-    /// runtime the sessions spawn on. Session runtimes are built by
-    /// [`DefaultRuntimeBuilder`].
-    pub fn new(
-        rig: RigStoreConfig,
-        config_path: impl Into<PathBuf>,
-        runtime_handle: tokio::runtime::Handle,
-    ) -> Self {
-        Self::with_runtime_builder(rig, config_path, runtime_handle, DefaultRuntimeBuilder)
+    /// agent writes its conversation to. `paths` carries the config.toml every
+    /// session runtime is built from and the persona directory; `runtime_handle`
+    /// is the process tokio runtime the sessions spawn on. Session runtimes are
+    /// built by [`DefaultRuntimeBuilder`].
+    pub fn new(rig: RigStoreConfig, paths: Paths, runtime_handle: tokio::runtime::Handle) -> Self {
+        Self::with_runtime_builder(rig, paths, runtime_handle, DefaultRuntimeBuilder)
     }
 }
 
@@ -210,14 +209,14 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     /// that never touches the network.
     pub fn with_runtime_builder(
         rig: RigStoreConfig,
-        config_path: impl Into<PathBuf>,
+        paths: Paths,
         runtime_handle: tokio::runtime::Handle,
         runtime_builder: R,
     ) -> Self {
         Self {
             sessions: StdMutex::new(HashMap::new()),
             rig,
-            config_path: config_path.into(),
+            paths,
             runtime_handle,
             runtime_builder,
             models_cache: None,
@@ -676,7 +675,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             .build(AcpRuntimeParams {
                 cwd: cwd.clone(),
                 mcp_servers,
-                config_path: self.config_path.clone(),
+                paths: self.paths.clone(),
                 runtime_handle: self.runtime_handle.clone(),
                 rig: self.rig.clone(),
                 session_id: Some(session_id.to_string()),
@@ -760,6 +759,7 @@ fn agent_options(runtime: &AgentConversationRuntime) -> Vec<SessionConfigOption>
     build_agent_config_options(
         runtime.multi_agent.agents_config(),
         &runtime.cwd,
+        &runtime.paths.agents_dir,
         runtime.persona.agent_identity(),
     )
 }

@@ -10,7 +10,6 @@ fn build_system_preamble_joins_non_empty_parts() -> Result<()> {
         None,
         Some("preamble text"),
         None,
-        None,
         Some("context text"),
         Some("agents chain"),
         Some("available skills"),
@@ -30,7 +29,6 @@ fn build_system_preamble_includes_cwd_first() -> Result<()> {
     let result = super::super::build_system_preamble(
         Some("Working directory: /tmp/project"),
         Some("config preamble"),
-        None,
         None,
         None,
         None,
@@ -57,7 +55,7 @@ fn build_system_preamble_includes_cwd_first() -> Result<()> {
 
 #[test]
 fn build_system_preamble_returns_none_when_all_empty() {
-    let result = super::super::build_system_preamble(None, None, None, None, None, None, None);
+    let result = super::super::build_system_preamble(None, None, None, None, None, None);
     assert!(result.is_none());
 }
 
@@ -66,7 +64,6 @@ fn build_system_preamble_handles_partial_inputs() -> Result<()> {
     let result = super::super::build_system_preamble(
         None,
         Some("preamble"),
-        None,
         None,
         None,
         Some("agents"),
@@ -86,7 +83,6 @@ fn build_system_preamble_includes_persona_in_correct_position() -> Result<()> {
         None,
         Some("config preamble"),
         Some("agent persona"),
-        None,
         Some("context text"),
         Some("agents chain"),
         Some("available skills"),
@@ -122,65 +118,11 @@ fn build_system_preamble_includes_persona_in_correct_position() -> Result<()> {
 
 #[test]
 fn build_system_preamble_persona_only() -> Result<()> {
-    let result = super::super::build_system_preamble(
-        None,
-        None,
-        Some("persona only"),
-        None,
-        None,
-        None,
-        None,
-    );
+    let result =
+        super::super::build_system_preamble(None, None, Some("persona only"), None, None, None);
 
     assert!(result.is_some());
     let text = result.ok_or("build_system_preamble should yield a Some")?;
     assert_eq!(text, "persona only");
-    Ok(())
-}
-
-#[test]
-fn build_system_preamble_includes_sub_agent_instruction() -> Result<()> {
-    let result = super::super::build_system_preamble(
-        None,
-        None,
-        Some("persona"),
-        Some("sub-agent instruction"),
-        None,
-        None,
-        None,
-    );
-
-    assert!(result.is_some());
-    let text = result.ok_or("build_system_preamble should yield a Some")?;
-    assert!(text.contains("persona"));
-    assert!(text.contains("sub-agent instruction"));
-
-    // sub-agent instruction should come after persona
-    let persona_pos = text.find("persona").ok_or("persona marker missing")?;
-    let instruction_pos = text
-        .find("sub-agent instruction")
-        .ok_or("sub-agent instruction marker missing")?;
-    assert!(
-        persona_pos < instruction_pos,
-        "sub-agent instruction should come after persona"
-    );
-    Ok(())
-}
-
-#[test]
-fn build_system_preamble_sub_agent_instruction_only() -> Result<()> {
-    let result = super::super::build_system_preamble(
-        None,
-        None,
-        None,
-        Some("you are a sub-agent"),
-        None,
-        None,
-        None,
-    );
-
-    assert!(result.is_some());
-    let text = result.ok_or("build_system_preamble should yield a Some")?;
-    assert_eq!(text, "you are a sub-agent");
     Ok(())
 }

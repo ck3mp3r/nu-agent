@@ -20,7 +20,9 @@ pub fn run_models_command(command: &ModelsCommand) -> Result<()> {
 
 /// Fetch the latest model specs from models.dev and update the local cache.
 fn run_models_sync() -> Result<()> {
-    let cache = ModelsCache::fetch_and_store()
+    let paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
+    let cache = ModelsCache::fetch_and_store(&paths.models_cache_path)
         .map_err(|e| Error::Custom(format!("Failed to sync models: {e}")))?;
     let provider_count = cache.providers.len();
     let model_count = cache.list_models(None).len();
@@ -30,7 +32,9 @@ fn run_models_sync() -> Result<()> {
 
 /// List available models from the local cache.
 fn run_models_list(args: &ModelsListArgs) -> Result<()> {
-    let cache = ModelsCache::load().map_err(|e| {
+    let paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
+    let cache = ModelsCache::load_from(&paths.models_cache_path).map_err(|e| {
         Error::Custom(format!(
             "Failed to load models cache: {e}\nRun 'agent models sync' first."
         ))

@@ -310,7 +310,7 @@ async fn build_copilot_client_sets_base_url_on_config() -> Result<()> {
     };
 
     // -- Exec
-    let client = build_copilot_client(&config)
+    let client = build_copilot_client(&config, None)
         .await
         .map_err(|e| format!("{e:?}"))?;
 
@@ -334,7 +334,7 @@ async fn cached_provider_client_copilot_variant_holds_client() -> Result<()> {
         api_key: Some("fake-token".to_string()),
         ..Config::default()
     };
-    let client = build_copilot_client(&config)
+    let client = build_copilot_client(&config, None)
         .await
         .map_err(|e| format!("{e:?}"))?;
     let c = CachedProviderClient::Copilot(client);

@@ -225,6 +225,34 @@ async fn dispatch_ui_request_toggle_mcp() -> core::result::Result<(), Box<dyn st
 }
 
 #[tokio::test]
+async fn dispatch_ui_request_refresh_agent_picker()
+-> core::result::Result<(), Box<dyn std::error::Error>> {
+    let mut runtime = AgentSwitchRuntime::default();
+    let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
+
+    CommandRouter::dispatch_ui_request(
+        UiRequest::RefreshAgentPicker,
+        &mut runtime,
+        &None,
+        response_tx,
+    )
+    .await;
+
+    let response = response_rx.recv().await.ok_or("response should be sent")?;
+    match response {
+        UiRequestResponse::AgentRefresh(result) => {
+            let summaries = result.map_err(|e| format!("scan should succeed: {e}"))?;
+            assert!(
+                summaries.is_empty(),
+                "a mock runtime's default scan returns no personas"
+            );
+        }
+        other => panic!("expected AgentRefresh, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn dispatch_ui_request_refresh_session_picker()
 -> core::result::Result<(), Box<dyn std::error::Error>> {
     let mut runtime = AgentSwitchRuntime::default();

@@ -98,6 +98,32 @@ where
             .set_llm_visible_mcp_tool_count(count);
     }
 
+    pub fn hydrate_transcript(
+        &mut self,
+        messages: Vec<agnt_core::protocol::contracts::UiMessageSnapshot>,
+        last_total_tokens: Option<u64>,
+    ) {
+        self.renderer
+            .coordinator
+            .hydrate_transcript_from_messages(messages, last_total_tokens);
+    }
+
+    pub fn set_mcp_visible_tool_count_by_server_name(&mut self, server_name: &str, count: usize) {
+        self.renderer
+            .coordinator
+            .set_mcp_visible_tool_count_by_server_name(server_name, count);
+    }
+
+    pub fn set_mcp_visible_tool_names_by_server_name(
+        &mut self,
+        server_name: &str,
+        names: Vec<String>,
+    ) {
+        self.renderer
+            .coordinator
+            .set_mcp_visible_tool_names_by_server_name(server_name, names);
+    }
+
     pub fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
         self.renderer
             .coordinator

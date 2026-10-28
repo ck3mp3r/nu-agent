@@ -13,7 +13,7 @@ fn resolve_persona_from_sources() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         AgentsConfig::default(),
     );
     let (path, content) = resolver
@@ -33,7 +33,7 @@ fn resolve_persona_from_sources() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         AgentsConfig::default(),
     );
     let (path, content) = resolver
@@ -58,7 +58,7 @@ fn resolve_persona_from_sources() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         AgentsConfig::default(),
     );
     let (path, content) = resolver
@@ -76,7 +76,7 @@ fn resolve_not_found_lists_both_paths() {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         AgentsConfig::default(),
     );
     let result = resolver.resolve("nonexistent");
@@ -84,7 +84,7 @@ fn resolve_not_found_lists_both_paths() {
     assert!(result.is_err());
     if let Err(PersonaError::NotFound {
         cwd_path,
-        config_path,
+        agents_path,
     }) = result
     {
         assert_eq!(
@@ -92,7 +92,7 @@ fn resolve_not_found_lists_both_paths() {
             temp_cwd.path().join(".agents").join("nonexistent.md")
         );
         assert_eq!(
-            config_path,
+            agents_path,
             temp_config.path().join("agents").join("nonexistent.md")
         );
     } else {
@@ -121,7 +121,7 @@ fn resolve_read_error() {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         AgentsConfig::default(),
     );
     let result = resolver.resolve("test-agent");
@@ -153,7 +153,7 @@ fn resolve_rejects_path_separators() -> Result<()> {
     let temp_config = TempDir::new().map_err(|e| format!("temp config: {e}"))?;
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         AgentsConfig::default(),
     );
 
@@ -178,7 +178,7 @@ fn resolve_rejects_dot_and_empty_names() -> Result<()> {
     let temp_config = TempDir::new().map_err(|e| format!("temp config: {e}"))?;
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         AgentsConfig::default(),
     );
 
@@ -208,7 +208,7 @@ fn resolve_rejects_traversal_without_reading_outside_file() -> Result<()> {
 
     let resolver = FsPersonaResolver::new(
         temp_cwd.path().to_path_buf(),
-        temp_config.path().to_path_buf(),
+        temp_config.path().join("agents"),
         AgentsConfig::default(),
     );
 

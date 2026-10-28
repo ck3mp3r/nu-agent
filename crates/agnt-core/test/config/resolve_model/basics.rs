@@ -77,6 +77,7 @@ fn test_resolve_model_basic() -> Result<()> {
         mcp: None,
         theme: None,
         hooks: Vec::new(),
+        paths: None,
     };
 
     let role_config = ModelRoleConfig {

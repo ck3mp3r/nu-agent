@@ -158,7 +158,7 @@ fn test_dotenv_load_env_files_reads_user_level_file() -> Result<()> {
     let mut env = EnvMap::new();
 
     // -- Exec
-    load_env_files_into(&mut env, Some(dir.path()), project.path());
+    load_env_files_into(&mut env, Some(&env_path), project.path());
 
     // -- Check
     assert_eq!(
@@ -181,7 +181,7 @@ fn test_dotenv_existing_env_var_takes_precedence() -> Result<()> {
     env.insert(key.to_string(), "sk-from-shell".to_string());
 
     // -- Exec
-    load_env_files_into(&mut env, Some(dir.path()), project.path());
+    load_env_files_into(&mut env, Some(&env_path), project.path());
 
     // -- Check
     assert_eq!(
@@ -204,7 +204,7 @@ fn test_dotenv_load_env_files_is_silent_when_files_absent() -> Result<()> {
     let mut env = EnvMap::new();
 
     // -- Exec
-    load_env_files_into(&mut env, Some(dir.path()), project.path());
+    load_env_files_into(&mut env, Some(&missing), project.path());
 
     // -- Check
     assert_eq!(

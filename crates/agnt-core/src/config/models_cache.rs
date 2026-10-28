@@ -3,9 +3,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::env_map::{EnvMap, process_env};
-use crate::utils::xdg::{self, XdgError};
-
 /// Local cache of the models.dev database.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ModelsCache {
@@ -74,7 +71,6 @@ pub enum ModelsCacheError {
     Parse(serde_json::Error),
     Io(std::io::Error),
     Http(String),
-    Xdg(XdgError),
 }
 
 impl std::fmt::Display for ModelsCacheError {
@@ -84,7 +80,6 @@ impl std::fmt::Display for ModelsCacheError {
             Self::Parse(e) => write!(f, "failed to parse models cache: {e}"),
             Self::Io(e) => write!(f, "IO error: {e}"),
             Self::Http(e) => write!(f, "HTTP error fetching models cache: {e}"),
-            Self::Xdg(e) => write!(f, "failed to resolve data directory: {e}"),
         }
     }
 }
@@ -92,22 +87,8 @@ impl std::fmt::Display for ModelsCacheError {
 impl std::error::Error for ModelsCacheError {}
 
 impl ModelsCache {
-    fn path() -> Result<PathBuf, ModelsCacheError> {
-        Self::path_with(&process_env())
-    }
-
-    /// Resolve the cache path using an explicit environment map.
-    fn path_with(env: &EnvMap) -> Result<PathBuf, ModelsCacheError> {
-        let dir = xdg::data_dir_with(env).map_err(ModelsCacheError::Xdg)?;
-        Ok(dir.join("nu-agent").join("models.json"))
-    }
-
-    /// Load the models cache from disk.
-    pub fn load() -> Result<Self, ModelsCacheError> {
-        Self::load_from(&Self::path()?)
-    }
-
-    /// Load the models cache from an explicit path.
+    /// Load the models cache from the resolved path
+    /// ([`Paths::models_cache_path`](crate::config::Paths::models_cache_path)).
     pub fn load_from(path: &Path) -> Result<Self, ModelsCacheError> {
         if !path.exists() {
             return Err(ModelsCacheError::NotFound(path.to_path_buf()));
@@ -118,8 +99,9 @@ impl ModelsCache {
         Ok(cache)
     }
 
-    /// Fetch the latest models.dev database and store it locally.
-    pub fn fetch_and_store() -> Result<Self, ModelsCacheError> {
+    /// Fetch the latest models.dev database and store it at the resolved path
+    /// ([`Paths::models_cache_path`](crate::config::Paths::models_cache_path)).
+    pub fn fetch_and_store(path: &Path) -> Result<Self, ModelsCacheError> {
         let client = reqwest::blocking::Client::new();
         let response = client
             .get("https://models.dev/api.json")
@@ -129,12 +111,11 @@ impl ModelsCache {
             .map_err(|e| ModelsCacheError::Http(e.to_string()))?;
         let cache: ModelsCache =
             serde_json::from_str(&response).map_err(ModelsCacheError::Parse)?;
-        let path = Self::path()?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(ModelsCacheError::Io)?;
         }
         let pretty = serde_json::to_string_pretty(&cache).map_err(ModelsCacheError::Parse)?;
-        std::fs::write(&path, pretty).map_err(ModelsCacheError::Io)?;
+        std::fs::write(path, pretty).map_err(ModelsCacheError::Io)?;
         Ok(cache)
     }
 

@@ -56,15 +56,18 @@ pub struct AcpRuntimeParams {
     /// MCP servers declared by the ACP client. These take precedence over
     /// config.toml servers with the same name.
     pub mcp_servers: Vec<McpServerConfig>,
-    /// Path to config.toml.
-    pub config_path: PathBuf,
+    /// The resolved application paths.
+    ///
+    /// Carries the config file and the persona directory, so the runtime and the
+    /// agent selector read them instead of deriving them.
+    pub paths: agnt_core::config::Paths,
     /// Handle to the process tokio runtime.
     pub runtime_handle: tokio::runtime::Handle,
     /// The rig-memory store config the session's store is made from.
     ///
     /// The caller owns the config, so it decides where the store lives: in
-    /// production it carries no cache dir and the store resolves from the XDG
-    /// environment; a test roots it in a tempdir.
+    /// production it carries the store path `Paths` resolved, so no site
+    /// re-derives it; a test roots the store in a tempdir with `with_cache_dir`.
     pub rig: RigStoreConfig,
     /// Persisted session id, when the session is resumed from the store.
     pub session_id: Option<String>,
@@ -148,12 +151,14 @@ pub fn build_model_config_options(
 pub fn build_agent_config_options(
     agents_config: &AgentsConfig,
     cwd: &Path,
+    agents_dir: &Path,
     current: Option<&str>,
 ) -> Vec<SessionConfigOption> {
-    let config_dir = agnt_core::utils::xdg::config_dir()
-        .map(|base| base.join("nu-agent"))
-        .unwrap_or_else(|_| cwd.to_path_buf());
-    let resolver = FsPersonaResolver::new(cwd.to_path_buf(), config_dir, agents_config.clone());
+    let resolver = FsPersonaResolver::new(
+        cwd.to_path_buf(),
+        agents_dir.to_path_buf(),
+        agents_config.clone(),
+    );
     let mut options: Vec<SessionConfigSelectOption> = resolver
         .list_available()
         .into_iter()
@@ -178,14 +183,14 @@ pub fn build_agent_config_options(
 
 /// Build an `AgentConversationRuntime` for one ACP session.
 ///
-/// Configuration comes from `params.config_path` only — ACP has no CLI flags.
+/// Configuration comes from `params.paths` only — ACP has no CLI flags.
 /// Built-in tools are registered directly on a fresh tool server; closure tools
 /// are never registered because ACP has no Nushell engine.
 pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversationRuntime> {
     let AcpRuntimeParams {
         cwd,
         mcp_servers,
-        config_path,
+        paths,
         runtime_handle,
         rig,
         session_id,
@@ -196,7 +201,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
 
     // -- Config resolution (shared with the plugin path)
     let (config, plugin_config) =
-        load_and_resolve_config(&config_path, None).map_err(map_config_load_error)?;
+        load_and_resolve_config(&paths.config_path, None).map_err(map_config_load_error)?;
     if let Err(msg) = config.validate() {
         return Err(AcpError::Config(format!("config validation failed: {msg}")));
     }
@@ -354,7 +359,8 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     );
 
     // -- Preamble cache: AGENTS.md chain and available skills
-    let agents_load = agnt_core::protocol::agents::load_agents_chain_for_cwd(&cwd);
+    let agents_load =
+        agnt_core::protocol::agents::load_agents_chain_for_cwd(&cwd, Some(&paths.agents_dir));
     for warning in &agents_load.warnings {
         log::warn!("AGENTS.md load warning: {warning}");
     }
@@ -434,10 +440,10 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             None,
             cached_agents_chain,
             cached_available_skills,
-            None,
         ),
         multi_agent: MultiAgentState::new(Vec::new(), plugin_config.agents.clone()),
         cwd,
+        paths,
         interactive_pending: Some(pending),
         // ACP has no preview phase: the translator drops `ToolPreview`, so the
         // completion display must reach the client for the diff to appear.
@@ -551,6 +557,9 @@ fn map_config_load_error(err: agnt_core::config::ConfigLoadError) -> AcpError {
             AcpError::Config(format!("failed to resolve model: {msg}"))
         }
         ConfigLoadError::Vault(e) => AcpError::Config(e.to_string()),
+        ConfigLoadError::Paths(e) => {
+            AcpError::Config(format!("failed to resolve application paths: {e}"))
+        }
     }
 }
 

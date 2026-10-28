@@ -93,7 +93,11 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
                     );
                 });
 
-                let token_dir = copilot_device_login(handler).await?;
+                let paths =
+                    agnt_core::config::Paths::resolve_from_config_or_default().map_err(|e| {
+                        LabeledError::new(format!("Failed to resolve application paths: {e}"))
+                    })?;
+                let token_dir = copilot_device_login(handler, paths.copilot_token_dir).await?;
                 verify_copilot_login_persistence(&token_dir).map_err(LabeledError::new)?;
 
                 Ok(Value::string(
@@ -120,7 +124,12 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
                 ));
             };
 
-            let vault = Vault::auto_detect().map_err(|e| LabeledError::new(e.to_string()))?;
+            let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+                .map_err(|e| {
+                    LabeledError::new(format!("Failed to resolve application paths: {e}"))
+                })?;
+            let vault = Vault::auto_detect(&application_paths.secrets_path)
+                .map_err(|e| LabeledError::new(e.to_string()))?;
             vault
                 .store_api_key(&name, &key)
                 .map_err(|e| LabeledError::new(format!("Failed to store API key: {e}")))?;

@@ -44,7 +44,7 @@ async fn test_session_manager_new_session_builder_error_returns_error() -> Resul
     let temp = tempfile::tempdir()?;
     let manager = AcpSessionManager::with_runtime_builder(
         rig_config(temp.path()),
-        temp.path().join("config.toml"),
+        test_paths(temp.path()),
         tokio::runtime::Handle::current(),
         FailingRuntimeBuilder,
     );

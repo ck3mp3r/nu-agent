@@ -4,13 +4,14 @@
 //! the wrapped `CachedMemory` and through the token tracking on `MemoryState`.
 
 use crate::conversation::state::memory::MemoryState;
+use crate::session::RigStoreConfig;
 use crate::types::Message;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Build a `MemoryState` backed by an in-memory rig store.
 fn make_state() -> MemoryState {
-    MemoryState::new(crate::session::RigStoreConfig::in_memory())
+    MemoryState::new(RigStoreConfig::in_memory())
 }
 
 /// `MemoryState` exposes the wrapped `CachedMemory` via `inner_memory()`, which

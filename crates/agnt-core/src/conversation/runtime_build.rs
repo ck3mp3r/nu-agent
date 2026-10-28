@@ -35,8 +35,8 @@ pub struct RuntimeBuildParams {
     pub vault: Option<Arc<Vault>>,
     pub mcp_registry: McpToolRegistry,
     pub engine: Arc<dyn EngineInterfaceLike>,
-    /// The session store backend the runtime's rig-memory stores are made from.
-    pub store_type: crate::session::StoreType,
+    /// The rig-memory store config the session's store is made from.
+    pub rig: crate::session::RigStoreConfig,
     pub final_session_id: Option<String>,
     pub compaction_params: CompactionParams,
     pub proactive_threshold_pct: Option<f64>,
@@ -50,10 +50,14 @@ pub struct RuntimeBuildParams {
     pub agent_icon: Option<String>,
     pub cached_agents_chain: Option<String>,
     pub cached_available_skills: Option<String>,
-    pub cached_sub_agent_instruction: Option<String>,
     pub available_agents: Vec<PersonaSummary>,
     pub agents_config: AgentsConfig,
     pub cwd: std::path::PathBuf,
+    /// The resolved application paths.
+    ///
+    /// Carried so the runtime's agent switch and the hook runners never re-derive
+    /// a config or persona directory.
+    pub paths: crate::config::Paths,
     pub bus: Bus,
     pub render_registry: ToolRenderRegistry,
     /// The agent snapshot every hook envelope is stamped with.
@@ -126,7 +130,8 @@ pub async fn build_runtime(
     // built from it on every turn. It is constructed eagerly at startup so it
     // is ready for any operation (including `/compact` before the first turn),
     // and rewritten by every `switch_model()`.
-    let mut provider = ProviderState::new(params.config, params.plugin_config);
+    let mut provider = ProviderState::new(params.config, params.plugin_config)
+        .with_copilot_token_dir(params.paths.copilot_token_dir.clone());
     let dyn_model = provider
         .build_dyn_model()
         .await
@@ -139,7 +144,8 @@ pub async fn build_runtime(
     // service invoked directly by the hook's compaction logic.
     let compactor_model = match light_config {
         Some(light_config) => {
-            let mut light_provider = ProviderState::new(light_config, compactor_plugin_config);
+            let mut light_provider = ProviderState::new(light_config, compactor_plugin_config)
+                .with_copilot_token_dir(params.paths.copilot_token_dir.clone());
             light_provider
                 .build_dyn_model()
                 .await
@@ -161,7 +167,7 @@ pub async fn build_runtime(
     // The memory state holds the `CachedMemory` backend directly; all compaction
     // logic lives in the hook. The rig-memory store of each session is made on
     // first use from the configured backend.
-    let session = MemoryState::new(crate::session::RigStoreConfig::new(params.store_type));
+    let session = MemoryState::new(params.rig);
 
     // Surface what reading the session repaired, such as an image whose blob is
     // gone. A session that cannot be read still opens; the next save reports it.
@@ -218,10 +224,10 @@ pub async fn build_runtime(
             params.agent_icon,
             params.cached_agents_chain,
             params.cached_available_skills,
-            params.cached_sub_agent_instruction,
         ),
         multi_agent: MultiAgentState::new(params.available_agents, params.agents_config),
         cwd: params.cwd,
+        paths: params.paths,
         interactive_pending: None,
         renders_tool_previews: false,
         circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
@@ -370,12 +376,16 @@ pub fn apply_persona_config(
 }
 
 /// Cache preamble components once at startup — loaded once, reused every turn.
-/// Returns (cached_agents_chain, cached_available_skills, cached_sub_agent_instruction).
+/// Returns (cached_agents_chain, cached_available_skills).
+///
+/// The user-level `AGENTS.md` comes from `agents_dir`, the resolved persona
+/// directory; the cwd and `HOME` candidates are unchanged.
 pub fn build_preamble_cache(
     cwd: &std::path::Path,
-    parent_name: Option<&str>,
-) -> (Option<String>, Option<String>, Option<String>) {
-    let loaded_agents_result = crate::protocol::agents::load_agents_chain_for_cwd(cwd);
+    agents_dir: &std::path::Path,
+) -> (Option<String>, Option<String>) {
+    let loaded_agents_result =
+        crate::protocol::agents::load_agents_chain_for_cwd(cwd, Some(agents_dir));
 
     for warning in &loaded_agents_result.warnings {
         log::warn!("AGENTS.md load warning: {}", warning);
@@ -385,22 +395,7 @@ pub fn build_preamble_cache(
 
     let cached_available_skills = crate::protocol::skills::render_available_skills_preamble(cwd);
 
-    let cached_sub_agent_instruction = parent_name.map(|parent| {
-        format!(
-            "You are a sub-agent. When you have completed your task, report your results back \
-             to your parent agent using the send_message tool with kind 'completion': \
-             send_message(to: \"{parent}\", message: \"<your results>\", kind: \"completion\"). \
-             If you are blocked and need a decision from your parent, use kind 'question': \
-             send_message(to: \"{parent}\", message: \"<your question>\", kind: \"question\"). \
-             Work autonomously — only use 'question' when truly blocked."
-        )
-    });
-
-    (
-        cached_agents_chain,
-        cached_available_skills,
-        cached_sub_agent_instruction,
-    )
+    (cached_agents_chain, cached_available_skills)
 }
 
 // region:    --- Tests

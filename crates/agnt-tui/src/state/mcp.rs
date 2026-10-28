@@ -6,6 +6,8 @@ use super::*;
 pub struct McpSkillsState {
     pub(crate) mcp_servers: Vec<McpServerState>,
     pub(crate) mcp_panel_selection: usize,
+    /// Type-to-filter query; empty means every row shows.
+    pub(crate) mcp_panel_query: String,
     pub(crate) discoverable_skills: Vec<DiscoverableSkill>,
     pub(crate) skills_discovery_failed: bool,
     pub(crate) llm_visible_mcp_tool_count: usize,
@@ -27,11 +29,75 @@ impl McpSkillsState {
                 server.name == *name && server.state == McpServerUsabilityState::Failed
             })
         });
-        if self.mcp_servers.is_empty() {
-            self.mcp_panel_selection = 0;
-        } else if self.mcp_panel_selection >= self.mcp_servers.len() {
-            self.mcp_panel_selection = self.mcp_servers.len().saturating_sub(1);
+        self.mcp_panel_query.clear();
+        self.clamp_mcp_panel_selection();
+    }
+
+    /// The active type-to-filter query. Empty means every server row shows.
+    pub fn mcp_panel_query(&self) -> &str {
+        &self.mcp_panel_query
+    }
+
+    /// Server rows matching the active query, in server order.
+    pub fn mcp_servers_filtered(&self) -> Vec<&McpServerState> {
+        self.mcp_filtered_indices()
+            .into_iter()
+            .filter_map(|idx| self.mcp_servers.get(idx))
+            .collect()
+    }
+
+    /// Append a filter character and re-filter from the top row.
+    pub fn append_mcp_panel_query_char(&mut self, ch: char) {
+        self.mcp_panel_query.push(ch);
+        self.mcp_panel_selection = 0;
+        self.clamp_mcp_panel_selection();
+    }
+
+    /// Drop the last filter character. Returns false when the query is already
+    /// empty, so a caller can skip the repaint.
+    pub fn backspace_mcp_panel_query_char(&mut self) -> bool {
+        if self.mcp_panel_query.pop().is_none() {
+            return false;
         }
+        self.mcp_panel_selection = 0;
+        self.clamp_mcp_panel_selection();
+        true
+    }
+
+    pub fn clear_mcp_panel_query(&mut self) {
+        self.mcp_panel_query.clear();
+        self.clamp_mcp_panel_selection();
+    }
+
+    /// Clamp the selection into the filtered rows.
+    pub fn clamp_mcp_panel_selection(&mut self) {
+        let len = self.mcp_filtered_indices().len();
+        if len == 0 {
+            self.mcp_panel_selection = 0;
+        } else if self.mcp_panel_selection >= len {
+            self.mcp_panel_selection = len.saturating_sub(1);
+        }
+    }
+
+    /// Indices of the server rows the query keeps, in server order.
+    fn mcp_filtered_indices(&self) -> Vec<usize> {
+        if self.mcp_panel_query.is_empty() {
+            return (0..self.mcp_servers.len()).collect();
+        }
+        let q = self.mcp_panel_query.to_ascii_lowercase();
+        self.mcp_servers
+            .iter()
+            .enumerate()
+            .filter(|(_, server)| fuzzy_matches(&q, &server.name.to_ascii_lowercase()))
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    /// Index into `mcp_servers` of the selected row of the filtered view.
+    fn mcp_selected_server_index(&self) -> Option<usize> {
+        self.mcp_filtered_indices()
+            .get(self.mcp_panel_selection)
+            .copied()
     }
 
     pub fn set_llm_visible_mcp_tool_count(&mut self, count: usize) {
@@ -105,7 +171,7 @@ impl McpSkillsState {
     }
 
     pub fn mcp_panel_move_up(&mut self) {
-        let len = self.mcp_servers.len();
+        let len = self.mcp_filtered_indices().len();
         if len == 0 {
             self.mcp_panel_selection = 0;
             return;
@@ -119,7 +185,7 @@ impl McpSkillsState {
     }
 
     pub fn mcp_panel_move_down(&mut self) {
-        let len = self.mcp_servers.len();
+        let len = self.mcp_filtered_indices().len();
         if len == 0 {
             self.mcp_panel_selection = 0;
             return;
@@ -128,16 +194,47 @@ impl McpSkillsState {
         self.mcp_panel_selection = (self.mcp_panel_selection + 1) % len;
     }
 
+    /// Move the filtered selection one page up, clamped to the first row.
+    pub fn mcp_panel_page_up(&mut self) {
+        let len = self.mcp_filtered_indices().len();
+        if len == 0 {
+            self.mcp_panel_selection = 0;
+            return;
+        }
+
+        self.mcp_panel_selection = self
+            .mcp_panel_selection
+            .saturating_sub(PANEL_PAGE_LINES)
+            .min(len - 1);
+    }
+
+    /// Move the filtered selection one page down, clamped to the last row.
+    pub fn mcp_panel_page_down(&mut self) {
+        let len = self.mcp_filtered_indices().len();
+        if len == 0 {
+            self.mcp_panel_selection = 0;
+            return;
+        }
+
+        self.mcp_panel_selection = self
+            .mcp_panel_selection
+            .saturating_add(PANEL_PAGE_LINES)
+            .min(len - 1);
+    }
+
     pub fn selected_mcp_server_name(&self) -> Option<&str> {
-        self.mcp_servers
-            .get(self.mcp_panel_selection)
+        self.selected_mcp_server()
             .map(|server| server.name.as_str())
     }
 
     pub fn selected_mcp_server_state(&self) -> Option<McpServerUsabilityState> {
-        self.mcp_servers
-            .get(self.mcp_panel_selection)
-            .map(|server| server.state)
+        self.selected_mcp_server().map(|server| server.state)
+    }
+
+    /// The server row selected in the filtered view.
+    pub fn selected_mcp_server(&self) -> Option<&McpServerState> {
+        self.mcp_selected_server_index()
+            .and_then(|idx| self.mcp_servers.get(idx))
     }
 
     pub fn set_mcp_server_state_by_name(
@@ -197,7 +294,10 @@ impl McpSkillsState {
     }
 
     pub fn queue_selected_mcp_toggle_request(&mut self) -> bool {
-        let Some(server) = self.mcp_servers.get_mut(self.mcp_panel_selection) else {
+        let Some(idx) = self.mcp_selected_server_index() else {
+            return false;
+        };
+        let Some(server) = self.mcp_servers.get_mut(idx) else {
             return false;
         };
 

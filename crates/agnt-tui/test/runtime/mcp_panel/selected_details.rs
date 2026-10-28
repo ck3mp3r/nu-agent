@@ -81,6 +81,40 @@ fn mcp_selected_details_model_and_visible_count() -> Result<()> {
     Ok(())
 }
 
+/// The details pane follows the filtered selection: with a query active, the
+/// selected row of the filtered view drives the details, not the same index of
+/// the unfiltered server list.
+#[test]
+fn mcp_selected_details_follows_the_filtered_selection() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.status.mcp.set_mcp_servers(vec![
+        crate::state::McpServerState {
+            name: "c5t".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        crate::state::McpServerState {
+            name: "context7".to_string(),
+            state: McpServerUsabilityState::Disabled,
+        },
+        crate::state::McpServerState {
+            name: "github".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+    ]);
+
+    // -- Exec: filter down to the last server in the unfiltered list.
+    for ch in "github".chars() {
+        state.status.mcp.append_mcp_panel_query_char(ch);
+    }
+
+    // -- Check: the details name the filtered row, not the unfiltered row 0.
+    let details =
+        super::mcp_selected_details_for_test(&state).ok_or("should have selected MCP details")?;
+    assert_eq!(details.server_line, "Server: github (enabled)");
+    Ok(())
+}
+
 /// The selected details height budget preserves the error line: zero rows
 /// render nothing, one row keeps the server+error, two rows keep the full
 /// error, and the normal height keeps all three rows.

@@ -14,6 +14,7 @@ fn test_mode_spawn_configured_hooks_without_a_config_spawns_nothing() -> Result<
         None,
         &bus,
         std::path::Path::new("/tmp"),
+        std::path::Path::new("/tmp"),
         &agent_context(),
         process.clone(),
     );
@@ -38,6 +39,7 @@ fn test_mode_spawn_configured_hooks_with_empty_hooks_spawns_nothing() -> Result<
     let handles = spawn_configured_hooks(
         Some(&config),
         &bus,
+        std::path::Path::new("/tmp"),
         std::path::Path::new("/tmp"),
         &agent_context(),
         process.clone(),

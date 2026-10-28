@@ -1,12 +1,12 @@
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
 /// The persisted TUI theme preference.
 ///
-/// Stored as a single JSON key `{"theme": "<kebab-name>"}` at
-/// `$XDG_DATA_HOME/nu-agent/theme.json` with mode 0600.
+/// Stored as a single JSON key `{"theme": "<kebab-name>"}` at the resolved
+/// [`Paths::theme_path`](crate::config::Paths::theme_path) with mode 0600.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ThemePreference {
     /// The kebab-case theme name (e.g. "catppuccin-frappe").
@@ -21,17 +21,9 @@ pub enum ThemePreferenceError {
     Io(#[from] std::io::Error),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("No data directory found — set XDG_DATA_HOME")]
-    NoDataDir,
 }
 
 impl ThemePreference {
-    /// Load from the default path (`$XDG_DATA_HOME/nu-agent/theme.json`).
-    pub fn load() -> Result<Self, ThemePreferenceError> {
-        let path = Self::default_path()?;
-        Self::load_from(&path)
-    }
-
     /// Load from a specific path.
     ///
     /// Returns an empty preference if the file does not exist or contains
@@ -45,12 +37,6 @@ impl ThemePreference {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(ThemePreferenceError::Io(e)),
         }
-    }
-
-    /// Save to the default path with mode 0600.
-    pub fn save(&self) -> Result<(), ThemePreferenceError> {
-        let path = Self::default_path()?;
-        self.save_to(&path)
     }
 
     /// Save to a specific path with mode 0600.
@@ -94,13 +80,6 @@ impl ThemePreference {
         }
 
         Ok(())
-    }
-
-    /// Resolve the default file path.
-    pub fn default_path() -> Result<PathBuf, ThemePreferenceError> {
-        let data_dir =
-            crate::utils::xdg::data_dir().map_err(|_| ThemePreferenceError::NoDataDir)?;
-        Ok(data_dir.join("nu-agent").join("theme.json"))
     }
 }
 

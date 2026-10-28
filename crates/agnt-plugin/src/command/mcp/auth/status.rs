@@ -105,7 +105,10 @@ impl SimplePluginCommand for AgentAuthMcpStatus {
         })?;
 
         // 2. Construct the vault
-        let vault = Vault::auto_detect().map_err(|e| LabeledError::new(e.to_string()))?;
+        let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+            .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
+        let vault = Vault::auto_detect(&application_paths.secrets_path)
+            .map_err(|e| LabeledError::new(e.to_string()))?;
 
         // 3. Build status rows
         let mut rows: Vec<Value> = Vec::new();

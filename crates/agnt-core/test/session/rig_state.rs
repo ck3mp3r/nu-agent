@@ -17,7 +17,7 @@ const CONV: &str = "conv-1";
 
 /// An in-memory rig store holding a two-message conversation.
 fn seeded_store() -> Result<Arc<dyn Store>> {
-    let store = RigStoreConfig::in_memory().open(CONV)?;
+    let store = crate::session::RigStoreConfig::in_memory().open(CONV)?;
     let mut conversation = rig_memory::load(&*store, CONV)?;
     conversation.extend([
         Message::user("how do I read a file?"),

@@ -20,6 +20,9 @@ mod container;
 #[path = "picker/conversions.rs"]
 mod conversions;
 
+#[path = "picker/fuzzy.rs"]
+mod fuzzy;
+
 #[path = "picker/inline_slash.rs"]
 mod inline_slash;
 
@@ -29,6 +32,9 @@ mod models;
 #[path = "picker/options_sorting.rs"]
 mod options_sorting;
 
+#[path = "picker/page_move.rs"]
+mod page_move;
+
 #[path = "picker/picker_state.rs"]
 mod picker_state;
 
@@ -37,6 +43,9 @@ mod selection_position;
 
 #[path = "picker/session_refresh.rs"]
 mod session_refresh;
+
+#[path = "picker/agent_refresh.rs"]
+mod agent_refresh;
 
 #[path = "picker/submit.rs"]
 mod submit;

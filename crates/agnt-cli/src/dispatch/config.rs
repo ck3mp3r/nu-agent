@@ -1,5 +1,6 @@
 //! clap-based config, UI policy, theme, and compaction resolution for the CLI.
 
+use std::path::Path;
 use std::time::Duration;
 
 use agnt_core::compaction::CompactionStrategy;
@@ -16,16 +17,20 @@ use crate::error::{Error, Result};
 
 /// Resolve the runtime config and plugin config from config.toml and clap flags.
 ///
+/// `config_path` is the config file the entry point discovered from the resolved
+/// [`Paths`](agnt_core::config::Paths); this function never re-derives it.
+///
 /// Resolution pipeline:
 /// 1. Load `PluginConfig` from config.toml and resolve the active model role.
 ///    `--model` selects the role; otherwise `models.default` is used.
 /// 2. Apply clap flag overrides (temperature, max-context/output-tokens, etc.).
 /// 3. Validate and return.
-pub fn resolve_config_from_clap(args: &AgentArgs) -> Result<(Config, PluginConfig)> {
-    let config_path = config::toml_config::config_path()
-        .map_err(|e| Error::Custom(format!("Cannot determine config path: {e}")))?;
+pub fn resolve_config_from_clap(
+    args: &AgentArgs,
+    config_path: &Path,
+) -> Result<(Config, PluginConfig)> {
     let (mut config, plugin_config) =
-        config::load_and_resolve_config(&config_path, args.model.as_deref())
+        config::load_and_resolve_config(config_path, args.model.as_deref())
             .map_err(map_config_load_error)?;
 
     apply_cli_flags_from_clap(&mut config, args);
@@ -49,6 +54,7 @@ fn map_config_load_error(err: config::ConfigLoadError) -> Error {
         ConfigLoadError::NoDefaultModel => "No model configured. Edit config.toml to add a model:\n  [models.default]\n  model = \"ollama-cloud/glm-5.2\"\n\nRun `agent models sync && agent models list` to see available models.".to_string(),
         ConfigLoadError::Resolve(msg) => format!("Failed to resolve model: {msg}"),
         ConfigLoadError::Vault(e) => e.to_string(),
+        ConfigLoadError::Paths(e) => format!("Failed to resolve application paths: {e}"),
     };
     Error::Custom(message)
 }
@@ -116,6 +122,7 @@ pub fn resolve_ui_policy_from_clap(args: &AgentArgs) -> UiPolicy {
 pub fn resolve_theme_from_clap(
     theme: Option<&str>,
     plugin_config: &PluginConfig,
+    theme_path: &Path,
 ) -> Result<ThemeName> {
     if let Some(flag) = theme {
         return ThemeName::from_name(flag).ok_or_else(|| {
@@ -132,7 +139,7 @@ pub fn resolve_theme_from_clap(
         log::warn!("Unknown theme in config.toml: '{raw}'; using default");
     }
 
-    if let Ok(pref) = agnt_core::theme_pref::ThemePreference::load()
+    if let Ok(pref) = agnt_core::theme_pref::ThemePreference::load_from(theme_path)
         && let Some(raw) = pref.theme.as_deref()
         && let Some(name) = ThemeName::from_name(raw)
     {

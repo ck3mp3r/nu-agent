@@ -37,6 +37,8 @@ mod persona;
 mod preamble;
 #[path = "runtime/provider.rs"]
 mod provider;
+#[path = "runtime/rescan_agents.rs"]
+mod rescan_agents;
 #[path = "runtime/session_usage.rs"]
 mod session_usage;
 #[cfg(all(test, feature = "integration"))]
