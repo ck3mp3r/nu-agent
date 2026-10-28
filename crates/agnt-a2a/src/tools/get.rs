@@ -17,7 +17,9 @@ pub async fn handle(ctx: A2aToolContext, params: Value) -> ToolResult {
         .get(target)
         .ok_or_else(|| format!("Agent '{target}' not found"))?;
 
-    let task = crate::get_task(&ctx.client, &peer.url, task_id)
+    let task_id = super::resolve::resolve_task_id(&ctx.client, &peer.url, task_id).await?;
+
+    let task = crate::get_task(&ctx.client, &peer.url, &task_id)
         .await
         .map_err(|e| format!("A2A error: {e}"))?;
 

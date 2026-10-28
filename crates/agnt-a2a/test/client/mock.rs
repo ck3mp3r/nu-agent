@@ -1,4 +1,7 @@
-use super::{A2aHttpClient, MockHttpClient, get_agent_card, get_task, send_task};
+use super::{
+    A2aHttpClient, MAX_LIST_PAGES, MockHttpClient, get_agent_card, get_task, list_all_tasks,
+    page_body, send_task,
+};
 use crate::A2aError;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -210,5 +213,122 @@ async fn test_get_agent_card_with_mock() -> Result<()> {
         .map_err(|e| format!("{e:?}"))?;
     assert_eq!(result.name, "mock-agent");
     assert_eq!(result.version, "2.0");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_list_all_tasks_single_page() -> Result<()> {
+    // -- Setup & Fixtures
+    let mock = MockHttpClient::default();
+    // Only the first page URL is registered: a second GET would fail with
+    // "no mock response registered".
+    mock.expect_get_ok(
+        "http://example.com/tasks?pageSize=100",
+        page_body(&[("task-a", "TASK_STATE_WORKING")], "")?,
+    );
+
+    // -- Exec
+    let tasks = list_all_tasks(&mock, "http://example.com")
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].id, "task-a");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_list_all_tasks_follows_next_page_token() -> Result<()> {
+    // -- Setup & Fixtures
+    let mock = MockHttpClient::default();
+    mock.expect_get_ok(
+        "http://example.com/tasks?pageSize=100",
+        page_body(
+            &[
+                ("task-a", "TASK_STATE_WORKING"),
+                ("task-b", "TASK_STATE_COMPLETED"),
+            ],
+            "page-2",
+        )?,
+    );
+    mock.expect_get_ok(
+        "http://example.com/tasks?pageSize=100&pageToken=page-2",
+        page_body(&[("task-c", "TASK_STATE_CANCELED")], "")?,
+    );
+
+    // -- Exec
+    let tasks = list_all_tasks(&mock, "http://example.com/")
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids, vec!["task-a", "task-b", "task-c"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_list_all_tasks_stops_at_page_cap_on_echoed_token() -> Result<()> {
+    // -- Setup & Fixtures
+    let mock = MockHttpClient::default();
+    // An echo server answers every page with the same non-empty token. Only
+    // two URLs are registered; a request past the cap would fail with
+    // "no mock response registered", so an Ok result proves the loop stopped.
+    mock.expect_get_ok(
+        "http://example.com/tasks?pageSize=100",
+        page_body(&[("task-a", "TASK_STATE_WORKING")], "same-token")?,
+    );
+    mock.expect_get_ok(
+        "http://example.com/tasks?pageSize=100&pageToken=same-token",
+        page_body(&[("task-b", "TASK_STATE_WORKING")], "same-token")?,
+    );
+
+    // -- Exec
+    let tasks = list_all_tasks(&mock, "http://example.com")
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(
+        tasks.len(),
+        MAX_LIST_PAGES,
+        "must fetch exactly one task per page up to the cap"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_list_all_tasks_stops_at_page_cap_on_distinct_tokens() -> Result<()> {
+    // -- Setup & Fixtures
+    let mock = MockHttpClient::default();
+    // Every page mints a fresh token, so a visited-token set would never stop.
+    // Exactly MAX_LIST_PAGES page URLs are registered: the cap must be hit
+    // before an eleventh request is attempted.
+    mock.expect_get_ok(
+        "http://example.com/tasks?pageSize=100",
+        page_body(&[("task-0", "TASK_STATE_WORKING")], "p1")?,
+    );
+    for page in 1..MAX_LIST_PAGES {
+        mock.expect_get_ok(
+            &format!("http://example.com/tasks?pageSize=100&pageToken=p{page}"),
+            page_body(
+                &[("task-ignored", "TASK_STATE_WORKING")],
+                &format!("p{}", page + 1),
+            )?,
+        );
+    }
+
+    // -- Exec
+    let tasks = list_all_tasks(&mock, "http://example.com")
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(
+        tasks.len(),
+        MAX_LIST_PAGES,
+        "must fetch exactly one page per allowed request"
+    );
     Ok(())
 }

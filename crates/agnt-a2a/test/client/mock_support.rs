@@ -122,3 +122,24 @@ impl A2aHttpClient for MockHttpClient {
         })
     }
 }
+
+type PageBodyResult<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// Build a raw `GET /tasks` response body with the given `(id, state)` pairs.
+pub fn page_body(entries: &[(&str, &str)], next_page_token: &str) -> PageBodyResult<Vec<u8>> {
+    let tasks: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|(id, state)| {
+            serde_json::json!({
+                "id": id,
+                "status": {
+                    "state": state,
+                    "timestamp": "2026-01-01T00:00:00Z"
+                },
+                "artifacts": []
+            })
+        })
+        .collect();
+    let body = serde_json::json!({ "tasks": tasks, "nextPageToken": next_page_token });
+    Ok(serde_json::to_vec(&body)?)
+}

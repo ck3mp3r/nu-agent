@@ -291,6 +291,10 @@ fn test_tasks_get_description_documents_remote_and_shape() -> Result<()> {
         "must not claim the task store is local"
     );
     assert!(
+        d.contains("prefix") && d.contains('8'),
+        "must document short task-ID prefix acceptance"
+    );
+    assert!(
         d.contains("{taskId, state, artifacts}"),
         "must document the response shape"
     );
@@ -348,6 +352,10 @@ fn test_tasks_cancel_description_documents_usage_and_shape() -> Result<()> {
     assert!(
         d.contains("taskId") && d.contains("target") && d.contains("required"),
         "must state both taskId and target are required"
+    );
+    assert!(
+        d.contains("prefix") && d.contains('8'),
+        "must document short task-ID prefix acceptance"
     );
     assert!(
         d.contains("{taskId, state}"),

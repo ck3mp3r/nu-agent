@@ -138,6 +138,61 @@ pub async fn list_tasks<C: A2aHttpClient>(
 }
 
 // ---------------------------------------------------------------------------
+// list_all_tasks
+// ---------------------------------------------------------------------------
+
+/// Maximum number of `GET /tasks` pages [`list_all_tasks`] walks.
+///
+/// The reference server never mints a repeating token, but a third-party
+/// server that echoes a token — or mints a fresh one per page — would loop
+/// forever. The cap bounds every non-termination shape.
+pub const MAX_LIST_PAGES: usize = 10;
+
+/// List every task from an A2A agent, following `nextPageToken` to exhaustion.
+///
+/// The server caps `pageSize` at 100 and returns a non-empty
+/// `nextPageToken` until the last page, so a single `GET /tasks` can hide
+/// tasks beyond the first page. This function walks all pages and returns
+/// the tasks concatenated in page order.
+///
+/// The walk stops after [`MAX_LIST_PAGES`] pages. If the last page still
+/// carries a non-empty `nextPageToken`, the tasks collected so far are
+/// returned with a `warn` log; the listing is then truncated rather than
+/// complete, which is recoverable, where a hang is not.
+pub async fn list_all_tasks<C: A2aHttpClient>(
+    client: &C,
+    target_url: &str,
+) -> Result<Vec<Task>, A2aError> {
+    let base = target_url.trim_end_matches('/');
+    let mut url = format!("{base}/tasks?pageSize=100");
+    let mut all_tasks = Vec::new();
+
+    for _ in 0..MAX_LIST_PAGES {
+        let bytes = client.get_bytes(&url).await?;
+        let result = super::a2a_client::parse_response_body(&bytes)?;
+
+        let tasks_val = result.get("tasks").cloned().unwrap_or_default();
+        let tasks: Vec<Task> = serde_json::from_value(tasks_val)
+            .map_err(|e| A2aError::SerializationError(format!("invalid task list: {e}")))?;
+        all_tasks.extend(tasks);
+
+        let next_token = result
+            .get("nextPageToken")
+            .and_then(|token| token.as_str())
+            .unwrap_or_default();
+        if next_token.is_empty() {
+            return Ok(all_tasks);
+        }
+        url = format!("{base}/tasks?pageSize=100&pageToken={next_token}");
+    }
+
+    log::warn!(
+        "task listing from {target_url} stopped after {MAX_LIST_PAGES} pages; results may be truncated"
+    );
+    Ok(all_tasks)
+}
+
+// ---------------------------------------------------------------------------
 // get_agent_card
 // ---------------------------------------------------------------------------
 

@@ -17,6 +17,9 @@ mod misc;
 #[path = "test/send.rs"]
 mod send;
 
+#[path = "test/short_id.rs"]
+mod short_id;
+
 #[path = "test/support.rs"]
 mod support;
 

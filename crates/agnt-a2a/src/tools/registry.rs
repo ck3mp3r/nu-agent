@@ -41,13 +41,13 @@ impl Tool {
                 "Send a task to another agent over A2A. The task runs asynchronously: this tool returns immediately with a taskId, and the result arrives later as a new conversation turn. Do NOT poll tasks_get or tasks_list for completion.\n\nSession control: omit contextId to start a fresh session and lose all prior context; ALWAYS include contextId from a prior response to resume that session.\n\nReturns {taskId, contextId, status, message}. Keep taskId and contextId for follow-up sends. Check if the agent is busy first with tasks_list(status=\"TASK_STATE_WORKING\", target=name)."
             }
             Tool::Get => {
-                "Fetch a task's current state and artifacts from a remote agent. Use after a completion notification to read the full result. Requires taskId (from tasks_send) and target (agent name from agent_list).\n\nReturns {taskId, state, artifacts}. The artifacts array holds the result content; read the text parts."
+                "Fetch a task's current state and artifacts from a remote agent. Use after a completion notification to read the full result. Requires taskId (from tasks_send) and target (agent name from agent_list). taskId accepts a full ID or a unique prefix of at least 8 hex characters; an ambiguous prefix fails with the candidate list.\n\nReturns {taskId, state, artifacts}. The artifacts array holds the result content; read the text parts."
             }
             Tool::List => {
                 "List tasks, optionally filtered by status. With target, lists tasks from that remote agent. Without target, lists tasks in the local store (tasks received by this agent).\n\nFilter by any TASK_STATE_* value (e.g. TASK_STATE_WORKING, TASK_STATE_COMPLETED). Use TASK_STATE_WORKING with target to check if an agent is busy.\n\nReturns {tasks: [...]}. Do NOT poll repeatedly for a task you just sent — completion arrives as a new turn."
             }
             Tool::Cancel => {
-                "Cancel a running task on a remote agent. Use when a task is no longer needed or runs too long. Both taskId (from tasks_send) and target (agent name from agent_list) are required.\n\nReturns {taskId, state}. A successful cancel yields TASK_STATE_CANCELED. Canceling an already-terminal task fails."
+                "Cancel a running task on a remote agent. Use when a task is no longer needed or runs too long. Both taskId (from tasks_send) and target (agent name from agent_list) are required. taskId accepts a full ID or a unique prefix of at least 8 hex characters; an ambiguous prefix fails with the candidate list.\n\nReturns {taskId, state}. A successful cancel yields TASK_STATE_CANCELED. Canceling an already-terminal task fails."
             }
             Tool::AgentList => {
                 "List all connected A2A agents on the network mesh. Call this first to discover which agents you can delegate tasks to. Excludes yourself.\n\nReturns {agents: [{name, url, description, skills}]}. Use name as the target parameter for tasks_send, tasks_get, and tasks_cancel."
@@ -73,7 +73,7 @@ impl Tool {
             Tool::Get => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "taskId": {"type": "string", "description": "Task ID returned by tasks_send"},
+                    "taskId": {"type": "string", "description": "Full task ID or a unique prefix of at least 8 hex characters"},
                     "target": {"type": "string", "description": "Name of the agent that owns the task, from agent_list"}
                 },
                 "required": ["taskId", "target"]
@@ -88,7 +88,7 @@ impl Tool {
             Tool::Cancel => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "taskId": {"type": "string", "description": "Task ID returned by tasks_send"},
+                    "taskId": {"type": "string", "description": "Full task ID or a unique prefix of at least 8 hex characters"},
                     "target": {"type": "string", "description": "Name of the agent that owns the task, from agent_list"}
                 },
                 "required": ["taskId", "target"]
