@@ -2,6 +2,7 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::time::Instant;
 
 pub(crate) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -43,8 +44,11 @@ impl GrammarEnv {
         let Some(grammar) = host_rust_grammar() else {
             return Ok(None);
         };
+        let tempdir_started = Instant::now();
         let root = tempfile::tempdir()?;
+        let tempdir_ms = tempdir_started.elapsed().as_millis();
 
+        let config_started = Instant::now();
         // A parser directory holding a `tree-sitter-rust` grammar repo.
         let parsers = root.path().join("parsers");
         std::fs::create_dir_all(parsers.join("tree-sitter-rust"))?;
@@ -56,14 +60,21 @@ impl GrammarEnv {
             config_dir.join("config.json"),
             serde_json::json!({ "parser-directories": [parsers] }).to_string(),
         )?;
+        let config_ms = config_started.elapsed().as_millis();
 
+        let copy_started = Instant::now();
         // The OS grammar cache holding the copied compiled grammar.
         let lib_dir = root.path().join("cache").join("tree-sitter").join("lib");
         std::fs::create_dir_all(&lib_dir)?;
-        std::fs::copy(
+        let bytes = std::fs::copy(
             &grammar,
             lib_dir.join(format!("rust.{}", library_extension())),
         )?;
+        let copy_ms = copy_started.elapsed().as_millis();
+        let total_ms = tempdir_ms + config_ms + copy_ms;
+        eprintln!(
+            "[grammar-fixture] tempdir={tempdir_ms}ms config={config_ms}ms copy={copy_ms}ms total={total_ms}ms bytes={bytes}"
+        );
 
         let previous_tree_sitter_dir = std::env::var_os("TREE_SITTER_DIR");
         let previous_xdg_cache_home = std::env::var_os("XDG_CACHE_HOME");
