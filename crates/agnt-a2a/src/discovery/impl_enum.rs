@@ -90,4 +90,22 @@ impl PeerDiscoveryImpl {
             }
         }
     }
+
+    /// Start a fresh mDNS browse, replacing the current one.
+    ///
+    /// Returns the receiver of the new browse, or `None` for non-mDNS variants
+    /// (logged at debug level) and when mDNS is not active.
+    pub fn rediscover(&mut self) -> Option<mpsc::Receiver<PeerEvent>> {
+        match self {
+            PeerDiscoveryImpl::Mdns(m) => m.rediscover(),
+            PeerDiscoveryImpl::Static(_) => {
+                log::debug!("PeerDiscoveryImpl::rediscover: static discovery, no-op");
+                None
+            }
+            PeerDiscoveryImpl::Noop => {
+                log::debug!("PeerDiscoveryImpl::rediscover: noop discovery, no-op");
+                None
+            }
+        }
+    }
 }

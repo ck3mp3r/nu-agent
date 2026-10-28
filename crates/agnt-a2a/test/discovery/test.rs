@@ -3,13 +3,16 @@ use std::time::Duration;
 
 use mdns_sd::ServiceDaemon;
 use tokio::sync::mpsc;
+use tokio::time::timeout;
 
 use crate::TEST_BLOCKING_TIMEOUT;
 
 // Import discovery module items — some are pub(crate) and not re-exported
 // via the pub glob in lib.rs.
-use crate::discovery::{DiscoveryBrowser, DiscoveryService, PeerEvent};
+use crate::discovery::{DiscoveryBrowser, DiscoveryService, PeerDiscoveryImpl, PeerEvent};
 use crate::{A2aServer, AgentCard, Peer, PeerCache};
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -209,6 +212,57 @@ async fn test_cross_daemon_mesh_scoping() {
     drop(browser);
     let _ = daemon_a.shutdown();
     let _ = daemon_b.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// Rediscover leak pin
+// ---------------------------------------------------------------------------
+
+/// Verify `rediscover()` unsubscribes the previous browse: each superseded
+/// peer-event receiver closes within 5 s while the newest one stays open.
+///
+/// A plain re-browse leaves the previous listener in the retransmission queue
+/// holding a sender clone, so the superseded receiver would stay open and the
+/// browse thread would park forever. Requires a working mDNS responder.
+#[tokio::test]
+async fn test_rediscover_closes_superseded_receivers() -> Result<()> {
+    // -- Setup & Fixtures
+    let card = test_card("rediscover-agent", 52097);
+    let mut discovery = PeerDiscoveryImpl::Mdns(Box::default());
+    discovery.start("rediscover-agent-52097", 52097, &card, "rediscover-mesh");
+    let mut rx1 = discovery
+        .take_peer_rx()
+        .ok_or("start should open a browse receiver")?;
+
+    // -- Exec
+    let mut rx2 = discovery
+        .rediscover()
+        .ok_or("first rediscover should return a receiver")?;
+    let first_closed = timeout(Duration::from_secs(5), rx1.recv()).await;
+
+    let mut rx3 = discovery
+        .rediscover()
+        .ok_or("second rediscover should return a receiver")?;
+    let second_closed = timeout(Duration::from_secs(5), rx2.recv()).await;
+
+    let third_open = timeout(Duration::from_millis(200), rx3.recv()).await;
+
+    // -- Check
+    assert!(
+        matches!(first_closed, Ok(None)),
+        "rx1 should close within 5s of its supersession, got {first_closed:?}"
+    );
+    assert!(
+        matches!(second_closed, Ok(None)),
+        "rx2 should close within 5s of its supersession, got {second_closed:?}"
+    );
+    assert!(
+        third_open.is_err(),
+        "rx3 must stay open after its browse starts, got {third_open:?}"
+    );
+
+    discovery.shutdown();
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

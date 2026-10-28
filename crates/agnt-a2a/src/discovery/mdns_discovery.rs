@@ -4,7 +4,9 @@ use mdns_sd::ServiceDaemon;
 use tokio::sync::mpsc;
 
 use crate::AgentCard;
-use crate::discovery::{DiscoveryBrowser, DiscoveryService, PeerEvent, build_service_info};
+use crate::discovery::{
+    DiscoveryBrowser, DiscoveryService, PeerEvent, SERVICE_TYPE, build_service_info,
+};
 
 /// Concrete mDNS-based peer discovery.
 ///
@@ -174,6 +176,64 @@ impl MdnsPeerDiscovery {
             }
             Err(e) => {
                 log::warn!("mDNS rename: registration failed for '{new_name}': {e}");
+            }
+        }
+    }
+
+    /// Start a fresh mDNS browse, replacing the current one.
+    ///
+    /// The current browse is unsubscribed with `stop_browse` first: a plain
+    /// re-browse replaces only the querier map entry while the retransmission
+    /// queue keeps a sender clone for the same listener, so the old channel
+    /// would stay connected and its thread would park forever. `stop_browse`
+    /// drops those senders, so the previous channel closes, the previous
+    /// browse thread exits, and dropping the previous [`DiscoveryBrowser`]
+    /// joins it.
+    ///
+    /// Returns the receiver of the new browse, or `None` when mDNS is not
+    /// active (no daemon, mesh key, or port).
+    pub fn rediscover(&mut self) -> Option<mpsc::Receiver<PeerEvent>> {
+        let daemon = match self.daemon.as_ref() {
+            Some(d) => d.clone(),
+            None => {
+                log::debug!("MdnsPeerDiscovery::rediscover: no daemon, skipping");
+                return None;
+            }
+        };
+        let mesh_key = match &self.mesh_key {
+            Some(k) => k.clone(),
+            None => {
+                log::debug!("MdnsPeerDiscovery::rediscover: no mesh key, skipping");
+                return None;
+            }
+        };
+        let port = match self.port {
+            Some(p) => p,
+            None => {
+                log::debug!("MdnsPeerDiscovery::rediscover: no port, skipping");
+                return None;
+            }
+        };
+
+        // stop_browse is the canonical unsubscribe: it drops the querier sender
+        // and purges every pending retransmission, which otherwise keeps a
+        // sender clone alive forever. It must run BEFORE the fresh browse —
+        // both share the same service-type key.
+        if let Err(e) = daemon.stop_browse(SERVICE_TYPE) {
+            log::warn!("mDNS rediscover: stop_browse failed for '{SERVICE_TYPE}': {e}");
+        }
+
+        match DiscoveryBrowser::browse(daemon, &mesh_key, port) {
+            Ok((browser, rx)) => {
+                // Replacing the browser drops the previous one, which joins the
+                // superseded browse thread before this call returns.
+                self.browser = Some(browser);
+                log::debug!("mDNS browse re-queried for mesh '{mesh_key}'");
+                Some(rx)
+            }
+            Err(e) => {
+                log::warn!("mDNS rediscover: browse failed: {e}");
+                None
             }
         }
     }

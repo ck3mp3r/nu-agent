@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -174,21 +175,8 @@ impl AgentBuilder {
         discovery.start(&card.name, actual_port, &card, &self.mesh_key);
 
         // Feed peer events into the cache.
-        if let Some(mut rx) = discovery.take_peer_rx() {
-            let cache_clone = cache.clone();
-            tokio::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        PeerEvent::PeerDiscovered(peer) => {
-                            cache_clone.add_or_update(*peer);
-                        }
-                        PeerEvent::PeerLost(name) => {
-                            cache_clone.remove(&name);
-                        }
-                    }
-                }
-                log::warn!("peer event channel closed — agent is no longer discovering new peers");
-            });
+        if let Some(rx) = discovery.take_peer_rx() {
+            tokio::spawn(forward_peer_events(rx, cache.clone(), card.url.clone()));
         }
 
         let discovery = Arc::new(Mutex::new(discovery));
@@ -208,9 +196,11 @@ impl AgentBuilder {
         cache.add_or_update(own_peer);
 
         // ── Peer eviction ──────────────────────────────────────────────────────
-        // Peers are only removed on connection failure (task.send/get/cancel fails
-        // with ConnectionRefused/Timeout). mDNS's 75s TTL + ServiceRemoved goodbye
-        // packets handle the crash-detection path via PeerLost → cache.remove().
+        // Peers enter the cache on PeerDiscovered and leave it only on PeerLost,
+        // which mDNS emits as ServiceRemoved (goodbye packet on graceful shutdown,
+        // instance expiry on hard kill). No connection-failure eviction exists.
+        // mdns-sd 0.20 expires an instance once its SRV record TTL lapses (SRV/A
+        // records 120s, PTR/TXT records 4500s).
 
         let client = A2aClient::new().map_err(|e| (e, None))?;
         let card_handle = Some(server.agent_card_handle());
@@ -240,6 +230,72 @@ impl AgentBuilder {
                 }
             }
         });
+
+        // ── Peer health sweep ──────────────────────────────────────────────────
+        // mDNS silence is not proof of death: mdns-sd drops an instance from
+        // every listener once its SRV TTL lapses, even while the peer's HTTP
+        // server is up. Fetching the card over HTTP keeps the registry honest
+        // in both directions — live peers stay, dead peers are evicted after
+        // SWEEP_MAX_FAILURES consecutive failures.
+        let sweep_cache = cache.clone();
+        let sweep_own_url = card.url.clone();
+        let sweep_token = reregister_token.clone();
+        let sweep_fetcher = HttpCardFetcher::new(client.clone());
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(SWEEP_INTERVAL);
+            interval.tick().await;
+            let mut failures: HashMap<String, u32> = HashMap::new();
+            loop {
+                tokio::select! {
+                    _ = sweep_token.cancelled() => {
+                        log::debug!("peer sweep task cancelled");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        sweep_peers(&sweep_cache, &sweep_own_url, &sweep_fetcher, &mut failures)
+                            .await;
+                    }
+                }
+            }
+        });
+
+        // ── Periodic mDNS re-query ─────────────────────────────────────────────
+        // The browse retransmission delay doubles up to a 3600 s cap, so after a
+        // mass eviction the next self-query can be an hour away and the cache
+        // stays empty. A fresh browse re-queries the service type: every live
+        // peer answers and repopulates the cache without restarting anything.
+        let rediscover_token = reregister_token.clone();
+        let rediscover_discovery = discovery.clone();
+        let rediscover_cache = cache.clone();
+        let rediscover_own_url = card.url.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(REDISCOVER_INTERVAL);
+            interval.tick().await;
+            loop {
+                tokio::select! {
+                    _ = rediscover_token.cancelled() => {
+                        log::debug!("mDNS rediscover task cancelled");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        let mut discovery = match rediscover_discovery.lock() {
+                            Ok(guard) => guard,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        let rx = discovery.rediscover();
+                        drop(discovery);
+                        if let Some(rx) = rx {
+                            log::debug!("mDNS rediscover started a fresh browse");
+                            tokio::spawn(forward_peer_events(
+                                rx,
+                                rediscover_cache.clone(),
+                                rediscover_own_url.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+        });
         Ok(AgentHandle {
             server,
             client,
@@ -255,3 +311,165 @@ impl AgentBuilder {
         })
     }
 }
+
+// region:    --- Support
+
+/// Interval between peer health sweeps.
+pub(crate) const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Consecutive card-fetch failures that evict a peer from the cache.
+pub(crate) const SWEEP_MAX_FAILURES: u32 = 3;
+
+/// Interval between mDNS re-queries that repopulate the peer cache.
+pub(crate) const REDISCOVER_INTERVAL: Duration = Duration::from_secs(300);
+
+/// Apply one peer event to the cache, logging the transition.
+///
+/// Pure cache logic — no network and no await — so the startup forwarding task
+/// and every rediscover forwarding task share exactly these semantics.
+pub(crate) fn apply_peer_event(cache: &PeerCache, own_url: &str, event: &PeerEvent) {
+    match event {
+        PeerEvent::PeerDiscovered(peer) => {
+            log::info!("mesh peer discovered: {} ({})", peer.name, peer.url);
+            cache.add_or_update(peer.as_ref().clone());
+        }
+        PeerEvent::PeerLost(name) => {
+            log::warn!("mesh peer lost: {name}");
+            cache.remove(name);
+            let other_peers = cache
+                .list()
+                .iter()
+                .filter(|peer| peer.url != own_url)
+                .count();
+            if other_peers == 0 {
+                log::warn!("mesh peer cache empty — no peers besides this agent");
+            }
+        }
+    }
+}
+
+/// Forward every event from `rx` into the cache until the channel closes.
+///
+/// Used for the startup browse receiver and for every receiver handed back by
+/// a rediscover; the superseded task ends when its channel disconnects.
+pub(crate) async fn forward_peer_events(
+    mut rx: mpsc::Receiver<PeerEvent>,
+    cache: Arc<PeerCache>,
+    own_url: String,
+) {
+    while let Some(event) = rx.recv().await {
+        apply_peer_event(&cache, &own_url, &event);
+    }
+    log::debug!(
+        "peer event forwarding stopped: browse receiver closed by a rediscover or shutdown"
+    );
+}
+
+/// Fetches the agent card of a peer.
+///
+/// Injected into [`sweep_peers`] so the sweep pass runs without HTTP in unit
+/// tests; production uses [`HttpCardFetcher`].
+pub(crate) trait CardFetcher {
+    /// Fetch the card served under `peer_url`'s well-known path.
+    fn fetch_card(
+        &self,
+        peer_url: &str,
+    ) -> impl Future<Output = Result<AgentCard, A2aError>> + Send;
+}
+
+/// Production [`CardFetcher`] over the shared A2A HTTP client.
+pub(crate) struct HttpCardFetcher {
+    client: A2aClient,
+}
+
+impl HttpCardFetcher {
+    pub(crate) fn new(client: A2aClient) -> Self {
+        Self { client }
+    }
+}
+
+impl CardFetcher for HttpCardFetcher {
+    fn fetch_card(
+        &self,
+        peer_url: &str,
+    ) -> impl Future<Output = Result<AgentCard, A2aError>> + Send {
+        get_agent_card(&self.client, peer_url)
+    }
+}
+
+/// Run one health-sweep pass over the cached peers.
+///
+/// Every peer except the agent itself gets a card fetch. A successful fetch
+/// replaces the entry in place under its existing key — the mDNS instance
+/// name, never the card's name, which may lack the port suffix — with a fresh
+/// `discovered_at`, and clears its failure count. A peer is evicted after
+/// [`SWEEP_MAX_FAILURES`] consecutive failures. `failures` is owned by the
+/// sweep task so counts survive between passes.
+pub(crate) async fn sweep_peers<F>(
+    cache: &PeerCache,
+    own_url: &str,
+    fetcher: &F,
+    failures: &mut HashMap<String, u32>,
+) where
+    F: CardFetcher,
+{
+    let peers: Vec<Peer> = cache
+        .list()
+        .into_iter()
+        .filter(|peer| peer.url != own_url)
+        .collect();
+
+    if peers.is_empty() {
+        return;
+    }
+
+    for peer in peers {
+        let name = peer.name.clone();
+        let url = peer.url.clone();
+
+        match fetcher.fetch_card(&url).await {
+            Ok(card) => {
+                log::debug!("peer sweep refreshed {name} ({url})");
+                failures.insert(name.clone(), 0);
+                cache.add_or_update(Peer {
+                    name,
+                    url,
+                    host: peer.host,
+                    port: peer.port,
+                    card: Some(card),
+                    discovered_at: std::time::Instant::now(),
+                });
+            }
+            Err(err) => {
+                let consecutive = failures.entry(name.clone()).or_insert(0);
+                *consecutive += 1;
+                if *consecutive >= SWEEP_MAX_FAILURES {
+                    failures.remove(&name);
+                    cache.remove(&name);
+                    log::warn!(
+                        "peer sweep evicted peer {} ({}) after {} failed card fetches: {err}",
+                        name,
+                        url,
+                        SWEEP_MAX_FAILURES
+                    );
+                } else {
+                    log::debug!("peer sweep card fetch failed for {name} ({url}): {err}");
+                }
+            }
+        }
+    }
+}
+
+// endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../test/agent/forwarding.rs"]
+mod forwarding_test;
+
+#[cfg(test)]
+#[path = "../../test/agent/sweep.rs"]
+mod sweep_test;
+
+// endregion: --- Tests

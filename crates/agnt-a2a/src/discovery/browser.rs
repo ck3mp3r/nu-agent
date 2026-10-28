@@ -14,6 +14,9 @@ use super::service::{peer_from_service, peer_name_from_fullname};
 // DiscoveryBrowser — mDNS service browsing
 // ---------------------------------------------------------------------------
 
+/// The mDNS service type this mesh registers and browses.
+pub(crate) const SERVICE_TYPE: &str = "_nu-agent-a2a._tcp.local.";
+
 /// Events emitted by the [`DiscoveryBrowser`] when peers appear or disappear.
 #[derive(Debug, Clone)]
 pub enum PeerEvent {
@@ -29,10 +32,13 @@ pub enum PeerEvent {
 /// Uses the pure-Rust [`ServiceDaemon`] from the `mdns-sd` crate — no C FFI
 /// dependency.
 pub(crate) struct DiscoveryBrowser {
-    // NOTE: field order matters for Drop.  When the manual Drop impl runs,
-    // it drops the daemon first (disconnecting the flume channel), then
-    // joins the poll thread.  The daemon field is *last* so that if Rust's
-    // auto-drop runs after the manual Drop, the daemon outlives the thread.
+    // NOTE: field order matters for Drop.  The manual Drop impl releases this
+    // daemon clone, then joins the poll thread.  Dropping the clone does not
+    // close the browse channel — that channel closes when the querier goes
+    // away: `stop_browse` removes it and purges its pending retransmissions
+    // (the rediscover path), and daemon shutdown does the same.  The daemon
+    // field is *last* so that if Rust's auto-drop runs after the manual Drop,
+    // the daemon outlives the thread.
     poll_thread: Option<JoinHandle<()>>,
     _daemon: Option<ServiceDaemon>,
 }
@@ -52,7 +58,7 @@ impl DiscoveryBrowser {
         own_port: u16,
     ) -> Result<(Self, mpsc::Receiver<PeerEvent>), A2aError> {
         let receiver = daemon
-            .browse("_nu-agent-a2a._tcp.local.")
+            .browse(SERVICE_TYPE)
             .map_err(|e| A2aError::Internal(format!("mdns-sd browse: {e}")))?;
 
         let (tx, rx) = mpsc::channel::<PeerEvent>(64);
@@ -61,15 +67,19 @@ impl DiscoveryBrowser {
         let filters = filter::build_filters(own_port, &mesh_key);
 
         let handle = std::thread::spawn(move || {
-            // Initialise card fetcher inside the browse thread — safe because
-            // we are *not* inside a tokio runtime here.
-            if CARD_FETCHER.set(CardFetcher::new()).is_err() {
-                log::warn!("CardFetcher already initialized — duplicate browse thread");
+            // Initialise the card fetcher inside the browse thread — safe because
+            // we are *not* inside a tokio runtime here. A rediscover re-enters
+            // this path, so only the first browse may build one: `set` evaluates
+            // its argument eagerly, so an unguarded call would build a reqwest
+            // client and a tokio runtime only to drop them.
+            if CARD_FETCHER.get().is_none() {
+                let _ = CARD_FETCHER.set(CardFetcher::new());
             }
 
-            // recv() blocks until an event arrives.  When the daemon is
-            // shut down (on drop) the channel disconnects and recv()
-            // returns Err.
+            // recv() blocks until an event arrives. recv() returns Err when the
+            // browse channel closes: `stop_browse` removes the querier and purges
+            // its pending retransmissions (the rediscover path), and daemon
+            // shutdown does the same.
             while let Ok(service_event) = receiver.recv() {
                 match service_event {
                     ServiceEvent::ServiceResolved(resolved) => {
@@ -109,7 +119,9 @@ impl DiscoveryBrowser {
                     }
                 }
             }
-            log::error!("mDNS browse thread: daemon channel closed — peer discovery stopped");
+            log::debug!(
+                "mDNS browse thread stopped: browse replaced by a rediscover or daemon shut down"
+            );
         });
 
         Ok((
@@ -124,8 +136,11 @@ impl DiscoveryBrowser {
 
 impl Drop for DiscoveryBrowser {
     fn drop(&mut self) {
-        // Drop the daemon first (disconnects the flume channel in the browse
-        // thread), then join the thread.
+        // A `ServiceDaemon` is a cloneable channel handle with no `Drop` impl:
+        // dropping this clone disconnects nothing. The browse channel closes
+        // when the querier goes away — `stop_browse` removes it and purges its
+        // pending retransmissions (the rediscover path), and daemon shutdown
+        // does the same. Join the thread once it has exited.
         drop(self._daemon.take());
 
         if let Some(handle) = self.poll_thread.take() {
