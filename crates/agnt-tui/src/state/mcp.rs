@@ -314,12 +314,17 @@ impl McpSkillsState {
                     enable: false,
                 }
             }
-            McpServerUsabilityState::Disabled | McpServerUsabilityState::Failed => {
+            McpServerUsabilityState::Failed => {
+                server.state = McpServerUsabilityState::Disabled;
                 McpToggleRequest {
                     server_name: server.name.clone(),
-                    enable: true,
+                    enable: false,
                 }
             }
+            McpServerUsabilityState::Disabled => McpToggleRequest {
+                server_name: server.name.clone(),
+                enable: true,
+            },
         };
 
         self.pending_mcp_toggle_requests.push_back(request);

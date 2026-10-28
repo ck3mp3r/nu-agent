@@ -1,4 +1,6 @@
 use crate::state::*;
+use agnt_core::orchestrator::UiStateEvent;
+use agnt_core::protocol::contracts::McpUsabilityState;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -47,14 +49,27 @@ fn mcp_server_toggle_and_counts_follow_selected_row() -> Result<()> {
 
 #[test]
 fn mcp_toggle_request_and_counts_follow_server_state() -> Result<()> {
-    // -- Setup & Fixtures: (initial state, expected request enable, expected counts)
+    // -- Setup & Fixtures: (initial state, request enable, state after toggle)
     let cases = [
-        (McpServerUsabilityState::Failed, true, (1, 0, 0, 1)),
-        (McpServerUsabilityState::Enabled, false, (1, 0, 1, 0)),
+        (
+            McpServerUsabilityState::Failed,
+            false,
+            McpServerUsabilityState::Disabled,
+        ),
+        (
+            McpServerUsabilityState::Enabled,
+            false,
+            McpServerUsabilityState::Disabled,
+        ),
+        (
+            McpServerUsabilityState::Disabled,
+            true,
+            McpServerUsabilityState::Disabled,
+        ),
     ];
 
     // -- Exec & Check
-    for (initial, expected_enable, expected_counts) in cases {
+    for (initial, expected_enable, expected_state) in cases {
         let mut state = AppState::default();
         state
             .status
@@ -73,8 +88,8 @@ fn mcp_toggle_request_and_counts_follow_server_state() -> Result<()> {
         assert_eq!(request.server_name, "gh");
         assert_eq!(request.enable, expected_enable, "initial={initial:?}");
         assert_eq!(
-            state.status.mcp.mcp_counts(),
-            expected_counts,
+            state.status.mcp.selected_mcp_server_state(),
+            Some(expected_state),
             "initial={initial:?}"
         );
 
@@ -87,6 +102,85 @@ fn mcp_toggle_request_and_counts_follow_server_state() -> Result<()> {
         );
         assert_eq!(state.status.mcp.mcp_counts(), (1, 0, 0, 1));
     }
+    Ok(())
+}
+
+/// Toggling a failed server disables it; the confirming response drops the
+/// failure reason, and the next toggle retries the connection.
+#[test]
+fn failed_server_toggle_disables_and_drops_the_failure_reason() -> Result<()> {
+    // -- Setup & Fixtures: a failed server carrying a load error.
+    let mut state = AppState::default();
+    state
+        .status
+        .mcp
+        .set_mcp_servers(vec![mcp_server("broken", McpServerUsabilityState::Failed)]);
+    assert!(state.status.mcp.set_mcp_server_state_by_name_with_reason(
+        "broken",
+        McpServerUsabilityState::Failed,
+        Some("connection refused".to_string()),
+    ));
+    assert_eq!(
+        state.status.mcp.failed_mcp_servers_with_reasons(),
+        vec![("broken", Some("connection refused"))]
+    );
+
+    // -- Exec: toggling the failed row asks for a disable, not a retry.
+    assert!(state.status.mcp.queue_selected_mcp_toggle_request());
+    let request = state
+        .status
+        .mcp
+        .take_next_mcp_toggle_request()
+        .ok_or("should have toggle request")?;
+    assert_eq!(request.server_name, "broken");
+    assert!(!request.enable, "a failed server toggles off");
+
+    // -- Check: the local row flips to Disabled immediately.
+    assert_eq!(
+        state.status.mcp.selected_mcp_server_state(),
+        Some(McpServerUsabilityState::Disabled)
+    );
+
+    // -- Exec: the disable response confirms Disabled with no error.
+    assert!(
+        state
+            .status
+            .reduce_ui_state_event(UiStateEvent::SetMcpServerState {
+                server: "broken".to_string(),
+                state: McpUsabilityState::Disabled,
+                error: None,
+                total: 0,
+            })
+    );
+
+    // -- Check: the row stays Disabled and the failure reason is gone.
+    assert_eq!(
+        state.status.mcp.selected_mcp_server_state(),
+        Some(McpServerUsabilityState::Disabled)
+    );
+    assert!(
+        state
+            .status
+            .mcp
+            .failed_mcp_servers_with_reasons()
+            .is_empty(),
+        "disabling must drop the failure reason"
+    );
+
+    // -- Exec: toggling the now-disabled server retries the connection.
+    assert!(state.status.mcp.queue_selected_mcp_toggle_request());
+    let retry = state
+        .status
+        .mcp
+        .take_next_mcp_toggle_request()
+        .ok_or("should have retry request")?;
+    assert!(retry.enable, "a disabled server retries on toggle");
+
+    // -- Check: the retry leaves the local row for the runtime to confirm.
+    assert_eq!(
+        state.status.mcp.selected_mcp_server_state(),
+        Some(McpServerUsabilityState::Disabled)
+    );
     Ok(())
 }
 

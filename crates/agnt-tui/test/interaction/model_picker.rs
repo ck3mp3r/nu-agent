@@ -272,3 +272,54 @@ fn model_picker_query_table() -> Result<()> {
     assert_eq!(picker_selection(&state)?, 0);
     Ok(())
 }
+
+#[test]
+fn model_picker_control_j_and_k_move_without_touching_the_query() -> Result<()> {
+    // -- Setup & Fixtures: three rows so both directions are observable.
+    let mut state = AppState::default();
+    state.set_picker_options(
+        ActivePicker::Model,
+        vec![
+            model_option("jk-provider-a", true),
+            model_option("jk-provider-b", false),
+            model_option("jk-provider-c", false),
+        ],
+    );
+    state.picker.open(ActivePicker::Model);
+
+    // -- Exec: Ctrl-J moves the selection down one row.
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlJ), None);
+
+    // -- Check: the move repaints, moves one row and leaves the query empty.
+    assert!(changed);
+    assert_eq!(picker_selection(&state)?, 1);
+    assert_eq!(picker_query(&state)?, "");
+    assert_eq!(picker_filtered_len(&state)?, 3);
+
+    // -- Exec: Ctrl-K moves it back up.
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlK), None);
+
+    // -- Check
+    assert!(changed);
+    assert_eq!(picker_selection(&state)?, 0);
+    assert_eq!(picker_query(&state)?, "");
+    Ok(())
+}
+
+/// One model-picker row for the Ctrl-J/Ctrl-K navigation fixture.
+fn model_option(name: &str, active: bool) -> agnt_core::protocol::picker::ModelPickerOption {
+    agnt_core::protocol::picker::ModelPickerOption {
+        provider: name.to_string(),
+        model: "jk-model".to_string(),
+        identity: format!("{name}/jk-model"),
+        display: format!("{name} / jk-model"),
+        active,
+        context_window: None,
+        max_output: None,
+        configured: false,
+        provider_display_name: String::new(),
+        cost: None,
+    }
+}

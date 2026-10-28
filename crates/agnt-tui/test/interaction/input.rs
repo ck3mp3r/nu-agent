@@ -99,6 +99,16 @@ fn table_driven_key_mapping_unlocked_state() {
             expected: Some(UserAction::ToggleCommandPalette),
         },
         MappingCase {
+            event: TerminalEvent::Key(TerminalKey::CtrlJ),
+            locked: false,
+            expected: Some(UserAction::QueryNext),
+        },
+        MappingCase {
+            event: TerminalEvent::Key(TerminalKey::CtrlK),
+            locked: false,
+            expected: Some(UserAction::QueryPrev),
+        },
+        MappingCase {
             event: TerminalEvent::Key(TerminalKey::Char(' ')),
             locked: false,
             expected: Some(UserAction::InsertChar(' ')),

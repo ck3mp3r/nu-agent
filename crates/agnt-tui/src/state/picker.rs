@@ -389,7 +389,8 @@ impl PickerContainer {
                 }
                 UserAction::ScrollLineUp
                 | UserAction::HistoryUp
-                | UserAction::ToggleCommandPalette => {
+                | UserAction::ToggleCommandPalette
+                | UserAction::QueryPrev => {
                     entry.state.move_up();
                     (UserAction::Noop, true)
                 }
@@ -430,7 +431,10 @@ impl PickerContainer {
                 };
                 (UserAction::PickerSubmit(resolved), true)
             }
-            UserAction::ScrollLineUp | UserAction::HistoryUp | UserAction::ToggleCommandPalette => {
+            UserAction::ScrollLineUp
+            | UserAction::HistoryUp
+            | UserAction::ToggleCommandPalette
+            | UserAction::QueryPrev => {
                 entry.state.move_up();
                 (UserAction::Noop, true)
             }

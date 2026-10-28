@@ -26,7 +26,8 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
                     // draws. A move that wraps onto the same row changes nothing.
                     UserAction::ScrollLineUp
                     | UserAction::HistoryUp
-                    | UserAction::ToggleCommandPalette => {
+                    | UserAction::ToggleCommandPalette
+                    | UserAction::QueryPrev => {
                         let before = state.status.mcp.mcp_panel_selection;
                         state.status.mcp.mcp_panel_move_up();
                         let moved = state.status.mcp.mcp_panel_selection != before;
@@ -73,7 +74,8 @@ pub(crate) fn rewrite_action(state: &mut AppState, action: UserAction) -> (UserA
                     UserAction::Quit => UserAction::Quit,
                     UserAction::ScrollLineUp
                     | UserAction::HistoryUp
-                    | UserAction::ToggleCommandPalette => {
+                    | UserAction::ToggleCommandPalette
+                    | UserAction::QueryPrev => {
                         state.info_panel_scroll = state.info_panel_scroll.saturating_sub(1);
                         return (UserAction::Noop, true);
                     }

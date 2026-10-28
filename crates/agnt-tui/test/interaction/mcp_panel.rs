@@ -273,6 +273,41 @@ fn esc_closes_mcps_panel_and_preserves_insert_mode() {
 }
 
 #[test]
+fn mcp_panel_control_j_and_k_move_without_touching_the_filter() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.status.mcp.set_mcp_servers(vec![
+        McpServerState {
+            name: "gh".to_string(),
+            state: McpServerUsabilityState::Enabled,
+        },
+        McpServerState {
+            name: "k8s".to_string(),
+            state: McpServerUsabilityState::Disabled,
+        },
+    ]);
+    state.open_info_panel(InfoPanel::Mcps);
+
+    // -- Exec: Ctrl-J moves the selection down one row.
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlJ), None);
+
+    // -- Check: the move repaints and leaves the filter empty.
+    assert!(changed);
+    assert_eq!(state.status.mcp.mcp_panel_selection, 1);
+    assert_eq!(state.status.mcp.mcp_panel_query(), "");
+
+    // -- Exec: Ctrl-K moves it back up.
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlK), None);
+
+    // -- Check
+    assert!(changed);
+    assert_eq!(state.status.mcp.mcp_panel_selection, 0);
+    assert_eq!(state.status.mcp.mcp_panel_query(), "");
+}
+
+#[test]
 fn mcp_panel_navigation_table() {
     let cases = [
         (TerminalKey::CtrlN, 0usize, 1usize),

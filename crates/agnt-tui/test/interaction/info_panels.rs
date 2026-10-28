@@ -15,6 +15,29 @@ fn escape_closes_info_panel_without_mode_regression() {
 }
 
 #[test]
+fn help_panel_control_j_and_k_scroll_the_panel() {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.open_info_panel(crate::state::InfoPanel::Help);
+
+    // -- Exec: Ctrl-J scrolls down one line.
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlJ), None);
+
+    // -- Check
+    assert!(changed);
+    assert_eq!(state.info_panel_scroll, 1);
+
+    // -- Exec: Ctrl-K scrolls back up.
+    let changed =
+        dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::CtrlK), None);
+
+    // -- Check
+    assert!(changed);
+    assert_eq!(state.info_panel_scroll, 0);
+}
+
+#[test]
 fn help_panel_scroll_table() {
     // Ctrl-N scrolls down.
     let mut state = AppState::default();

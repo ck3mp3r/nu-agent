@@ -719,6 +719,8 @@ impl RuntimeCoordinator {
             | TerminalKey::CtrlD
             | TerminalKey::CtrlP
             | TerminalKey::CtrlN
+            | TerminalKey::CtrlJ
+            | TerminalKey::CtrlK
             | TerminalKey::Tab
             | TerminalKey::BackTab
             | TerminalKey::CtrlC => false,

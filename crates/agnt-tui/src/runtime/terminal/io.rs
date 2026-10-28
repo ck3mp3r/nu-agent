@@ -56,7 +56,9 @@ fn set_nonblocking(file: &File) -> Result<(), String> {
 fn map_tty_byte(byte: u8) -> Option<TerminalEvent> {
     let key = match byte {
         3 => TerminalKey::CtrlC,
-        b'\r' | b'\n' => TerminalKey::Enter,
+        b'\r' => TerminalKey::Enter,
+        10 => TerminalKey::CtrlJ,
+        11 => TerminalKey::CtrlK,
         8 | 127 => TerminalKey::Backspace,
         27 => TerminalKey::Esc,
         value if value.is_ascii_graphic() || value == b' ' => TerminalKey::Char(value as char),
@@ -72,3 +74,11 @@ pub fn open_tty_reader() -> Result<File, String> {
         .open("/dev/tty")
         .map_err(|err| format!("failed to open /dev/tty for reading: {err}"))
 }
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../../../test/runtime/terminal/io.rs"]
+mod io_test;
+
+// endregion: --- Tests

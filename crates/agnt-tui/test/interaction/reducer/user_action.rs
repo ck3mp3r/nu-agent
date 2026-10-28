@@ -39,6 +39,11 @@ fn table_driven_user_action_noop_and_contract_matrix() {
             pre: busy,
         },
         Case {
+            name: "query_prev_noop",
+            action: UserAction::QueryPrev,
+            pre: busy,
+        },
+        Case {
             name: "complete_forward_noop",
             action: UserAction::CompleteForward,
             pre: busy,
@@ -90,6 +95,7 @@ fn table_driven_user_action_noop_and_contract_matrix() {
         match case.name {
             "history_up_noop"
             | "history_down_noop"
+            | "query_prev_noop"
             | "complete_forward_noop"
             | "complete_backward_noop"
             | "resize_noop" => {

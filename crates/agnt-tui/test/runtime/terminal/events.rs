@@ -199,6 +199,35 @@ fn scripted_event_parser_supports_ctrln_for_query_picker_navigation() {
 }
 
 #[test]
+fn test_map_crossterm_event_control_j_and_k_keep_their_modifier() {
+    // -- Setup & Fixtures: crossterm delivers Ctrl-J/Ctrl-K as Char + CONTROL.
+    let control_cases = [('j', TerminalKey::CtrlJ), ('k', TerminalKey::CtrlK)];
+    let plain_cases = [('j', TerminalKey::Char('j')), ('k', TerminalKey::Char('k'))];
+
+    // -- Exec & Check: with CONTROL they are named navigation keys.
+    for (ch, expected) in control_cases {
+        let mapped = map_crossterm_event_for_test(crossterm::event::Event::Key(
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(ch),
+                crossterm::event::KeyModifiers::CONTROL,
+            ),
+        ));
+        assert_eq!(mapped, Some(TerminalEvent::Key(expected)), "ctrl-{ch}");
+    }
+
+    // -- Check: without CONTROL they stay plain characters (type-to-filter).
+    for (ch, expected) in plain_cases {
+        let mapped = map_crossterm_event_for_test(crossterm::event::Event::Key(
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(ch),
+                crossterm::event::KeyModifiers::NONE,
+            ),
+        ));
+        assert_eq!(mapped, Some(TerminalEvent::Key(expected)), "plain {ch}");
+    }
+}
+
+#[test]
 fn test_map_crossterm_event_mouse_wheel_maps_direction_and_position() {
     // -- Setup & Fixtures
     let scroll_up = crossterm::event::Event::Mouse(crossterm::event::MouseEvent {

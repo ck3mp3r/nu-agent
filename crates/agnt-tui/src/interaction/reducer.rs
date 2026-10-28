@@ -40,6 +40,7 @@ pub enum UserAction {
     CompleteForward,
     CompleteBackward,
     QueryNext,
+    QueryPrev,
     ToggleCommandPalette,
     PickerSubmit(SubmitAction),
     Resize { columns: u16, rows: u16 },
@@ -149,7 +150,10 @@ fn reduce_user_action(
         UserAction::PickerSubmit(submit) => handle_picker_submit(state, submit),
         UserAction::HistoryUp => false,
         UserAction::HistoryDown => false,
-        UserAction::QueryNext | UserAction::CompleteForward | UserAction::CompleteBackward => false,
+        UserAction::QueryNext
+        | UserAction::QueryPrev
+        | UserAction::CompleteForward
+        | UserAction::CompleteBackward => false,
         UserAction::ScrollPageUp => state
             .scroll
             .reduce_scroll_action(ScrollAction::PageUp { select }),

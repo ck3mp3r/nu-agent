@@ -244,6 +244,12 @@ pub(crate) fn map_crossterm_event(event: crossterm::event::Event) -> Option<Term
                 KeyCode::Char('n') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                     TerminalKey::CtrlN
                 }
+                KeyCode::Char('j') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                    TerminalKey::CtrlJ
+                }
+                KeyCode::Char('k') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                    TerminalKey::CtrlK
+                }
                 KeyCode::Char(ch) => TerminalKey::Char(ch),
                 KeyCode::Enter if key_event.modifiers.contains(KeyModifiers::ALT) => {
                     TerminalKey::AltEnter
