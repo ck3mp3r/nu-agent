@@ -131,9 +131,9 @@ fn layout_non_banner_source_on_system_blank_lane_is_centered() -> Result<()> {
     // whitespace than the bare lane prefix.
     let leading = leading_spaces(lines.first().ok_or("row 0 must exist")?);
     assert!(
-        leading > lane_prefix_width(),
+        leading > lane_prefix_width(&Lane::SystemBlank),
         "Lane::SystemBlank must center regardless of source; leading={leading}, prefix={}",
-        lane_prefix_width()
+        lane_prefix_width(&Lane::SystemBlank)
     );
     Ok(())
 }
@@ -161,7 +161,7 @@ fn layout_banner_source_on_blank_lane_is_not_centered() -> Result<()> {
     let leading = leading_spaces(lines.first().ok_or("row 0 must exist")?);
     assert_eq!(
         leading,
-        lane_prefix_width(),
+        lane_prefix_width(&Lane::Blank),
         "a Banner source on Lane::Blank must not be centered; leading={leading}"
     );
     Ok(())
@@ -187,9 +187,9 @@ fn layout_banner_on_system_blank_lane_is_centered() -> Result<()> {
     // -- Check
     let leading = leading_spaces(lines.first().ok_or("row 0 must exist")?);
     assert!(
-        leading > lane_prefix_width(),
+        leading > lane_prefix_width(&Lane::SystemBlank),
         "a banner block must stay centered; leading={leading}, prefix={}",
-        lane_prefix_width()
+        lane_prefix_width(&Lane::SystemBlank)
     );
     Ok(())
 }

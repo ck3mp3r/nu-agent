@@ -6,6 +6,7 @@ pub mod dispatch;
 pub mod error;
 pub mod mode;
 
+use std::future::Future;
 use std::io::IsTerminal;
 
 use clap::{ArgAction, Args, Parser, Subcommand};
@@ -325,34 +326,24 @@ fn main() {
 
     init_logging(&args);
 
-    let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime,
-        Err(err) => {
-            eprintln!("agent: failed to start runtime: {err}");
-            std::process::exit(1);
-        }
+    let result = match command {
+        // Utility subcommands stay on the main thread. Their sync I/O builds a
+        // temporary runtime (reqwest's blocking client), and tokio panics when
+        // a runtime is dropped inside an async context.
+        Some(Command::Config(cmd)) => dispatch::run_config_command(&cmd),
+        Some(Command::Models(cmd)) => dispatch::run_models_command(&cmd),
+        Some(Command::Acp(acp)) => block_on(dispatch::run_acp(acp.agent)),
+        Some(Command::A2a(a2a)) => block_on(dispatch::run_a2a(&args, &a2a)),
+        Some(Command::Provider(cmd)) => block_on(dispatch::run_provider_command(&cmd)),
+        Some(Command::Mcp(cmd)) => block_on(dispatch::run_mcp_command(&cmd)),
+        Some(Command::Session(cmd)) => block_on(dispatch::run_session_command(&args, &cmd)),
+        None => block_on(async {
+            // Only the default mode consumes stdin as a prompt; ACP owns
+            // stdin as its protocol channel.
+            let prompt = resolve_prompt(prompt);
+            dispatch::run_agent(&args, prompt, &ui).await
+        }),
     };
-
-    let result = runtime.block_on(async {
-        match command {
-            Some(Command::Acp(acp)) => dispatch::run_acp(acp.agent).await,
-            Some(Command::A2a(a2a)) => dispatch::run_a2a(&args, &a2a).await,
-            Some(Command::Config(cmd)) => dispatch::run_config_command(&cmd),
-            Some(Command::Models(cmd)) => dispatch::run_models_command(&cmd),
-            Some(Command::Provider(cmd)) => dispatch::run_provider_command(&cmd).await,
-            Some(Command::Mcp(cmd)) => dispatch::run_mcp_command(&cmd).await,
-            Some(Command::Session(cmd)) => dispatch::run_session_command(&args, &cmd).await,
-            None => {
-                // Only the default mode consumes stdin as a prompt; ACP owns
-                // stdin as its protocol channel.
-                let prompt = resolve_prompt(prompt);
-                dispatch::run_agent(&args, prompt, &ui).await
-            }
-        }
-    });
 
     if let Err(err) = result {
         eprintln!("agent: {err}");
@@ -361,6 +352,22 @@ fn main() {
 }
 
 // region:    --- Support
+
+/// Run `future` to completion on a fresh multi-thread runtime.
+///
+/// Only the async modes build a runtime. A runtime dropped inside an async
+/// context panics, so the sync utility subcommands — whose blocking HTTP
+/// client builds its own temporary runtime — never reach this function.
+fn block_on<F>(future: F) -> error::Result<()>
+where
+    F: Future<Output = error::Result<()>>,
+{
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| error::Error::Custom(format!("failed to start runtime: {err}")))?;
+    runtime.block_on(future)
+}
 
 /// Resolve the single-turn prompt from the positional arg or piped stdin.
 ///

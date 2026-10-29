@@ -1,3 +1,5 @@
+use unicode_width::UnicodeWidthStr;
+
 use super::*;
 
 /// A typed query filters the table rows and replaces the controls line with the
@@ -52,6 +54,44 @@ fn mcp_table_model_filters_rows_by_query() -> Result<()> {
     assert_eq!(model.controls_line, "Query: ct7z");
     assert!(model.rows.is_empty());
     assert_eq!(model.selected, None);
+    Ok(())
+}
+
+/// The Name cell budget is the Name column the solver resolves, so a name wider
+/// than the column fills it exactly at every table width. Below a 42-column
+/// table the column pins at 18 while the previous assumed-overhead formula
+/// (`table_width - 24`) undershot it — 8 cells at table width 32, 17 at 21, and
+/// none at all below 25 (task 41ba78ae).
+#[test]
+fn mcp_table_model_name_budget_follows_resolved_column() -> Result<()> {
+    // -- Setup & Fixtures: a name wider than every resolved column.
+    let mut state = AppState::default();
+    state
+        .status
+        .mcp
+        .set_mcp_servers(vec![crate::state::McpServerState {
+            name: "s".repeat(80),
+            state: McpServerUsabilityState::Enabled,
+        }]);
+    let cases: [(u16, usize); 7] = [
+        (21, 17),
+        (22, 18),
+        (32, 18),
+        (41, 18),
+        (42, 18),
+        (54, 30),
+        (70, 46),
+    ];
+
+    // -- Exec & Check
+    for (table_width, expected_name_cells) in cases {
+        let model = mcp_table_model_for_test(&state, table_width, 8);
+        assert_eq!(
+            UnicodeWidthStr::width(model.rows[0][0].as_str()),
+            expected_name_cells,
+            "the Name cell must fill the resolved column at table width {table_width}"
+        );
+    }
     Ok(())
 }
 

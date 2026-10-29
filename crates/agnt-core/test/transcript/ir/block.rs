@@ -41,7 +41,7 @@ fn block_construction_table() -> Result<()> {
             markdown: "hi".to_string(),
         }
     );
-    assert_eq!(message_block.lane, Lane::Marker("▏"));
+    assert_eq!(message_block.lane, Lane::Marker("╎"));
     assert_eq!(message_block.fill, Fill::Full);
     assert!(message_block.status.is_none());
 

@@ -36,6 +36,11 @@ fn render_loop_trailing_separator_after_final_user_block() -> Result<()> {
         Some(full_bg),
         "the trailing separator row below the user block bleeds the user background"
     );
+    assert_eq!(
+        cell_symbol(&terminal, 0, 1),
+        "╎",
+        "the trailing separator row below the user block must carry the user rail"
+    );
     Ok(())
 }
 

@@ -75,7 +75,8 @@ pub enum NoticeKind {
 /// Lane prefix style. Applied to row 0; continuation rows are blank.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lane {
-    /// Fixed marker glyph: "▏" User, "⚙" Tool, "~" Compaction, "·" System.
+    /// Fixed marker glyph: "╎" User (dotted rail), "⚙" Tool, "~" Compaction,
+    /// "·" System.
     Marker(&'static str),
     /// Assistant prose and Spacer — blank prefix, assistant/neutral styling.
     Blank,

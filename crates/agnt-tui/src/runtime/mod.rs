@@ -52,4 +52,8 @@ mod renderer_test;
 mod session_picker_test;
 
 #[cfg(test)]
+#[path = "../../test/runtime/alignment.rs"]
+mod alignment_test;
+
+#[cfg(test)]
 pub(crate) use status::help_test::*;

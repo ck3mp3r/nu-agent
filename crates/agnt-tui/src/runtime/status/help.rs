@@ -3,18 +3,18 @@ use ratatui::text::{Line, Span};
 use agnt_core::transcript::ir::ContentLine;
 
 use crate::rendering::theme::{TuiTheme, hint_to_style};
+use crate::runtime::panels::wrap_panel_lines;
 use crate::state::{AppState, PickerPayload, PickerRenderKind};
 
 use super::content::build_status_lines;
 
-pub(crate) fn help_panel_lines(theme: &TuiTheme) -> (&'static str, Vec<Line<'static>>) {
-    (
-        "Help",
-        crate::markdown::project_markdown_to_lines(help_panel_markdown_source(), None)
+pub(crate) fn help_panel_lines(theme: &TuiTheme, width: u16) -> (&'static str, Vec<Line<'static>>) {
+    let lines =
+        crate::markdown::project_markdown_to_lines(help_panel_markdown_source(), Some(width))
             .into_iter()
             .map(|line| content_line_to_ratatui_line(line, theme))
-            .collect(),
-    )
+            .collect();
+    ("Help", wrap_panel_lines(lines, width))
 }
 
 fn content_line_to_ratatui_line(line: ContentLine, theme: &TuiTheme) -> Line<'static> {
@@ -37,12 +37,15 @@ pub(super) fn help_panel_markdown_source() -> &'static str {
     include_str!("../help/help.md")
 }
 
-pub(crate) fn status_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
+pub(crate) fn status_panel_lines(
+    state: &AppState,
+    width: u16,
+) -> (&'static str, Vec<Line<'static>>) {
     let lines = build_status_lines(state)
         .into_iter()
         .map(Line::from)
         .collect();
-    ("Status", lines)
+    ("Status", wrap_panel_lines(lines, width))
 }
 
 pub(crate) fn inline_slash_lines_for_render(

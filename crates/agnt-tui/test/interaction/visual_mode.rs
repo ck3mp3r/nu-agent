@@ -79,7 +79,7 @@ fn normal_v_key_enters_visual_mode_and_j_yank_works() -> Result<()> {
     // -- Check: rows 0 and 1 are the first block's content row and the first
     // separator row above the second block.
     let clipboard = state.input.take_clipboard_request();
-    assert_eq!(clipboard, Some("    assistant text 1\n".to_string()));
+    assert_eq!(clipboard, Some("  assistant text 1\n".to_string()));
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
     Ok(())
@@ -122,11 +122,11 @@ fn visual_yank_beyond_viewport_copies_every_selected_row() -> Result<()> {
         16,
         "every selected visual row must be copied, got:\n{clipboard}"
     );
-    assert_eq!(rows[0], "    assistant text 1");
+    assert_eq!(rows[0], "  assistant text 1");
     assert_eq!(rows[1], "");
     assert_eq!(rows[2], "");
-    assert_eq!(rows[3], "    assistant text 2");
-    assert_eq!(rows[15], "    assistant text 6");
+    assert_eq!(rows[3], "  assistant text 2");
+    assert_eq!(rows[15], "  assistant text 6");
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
     Ok(())

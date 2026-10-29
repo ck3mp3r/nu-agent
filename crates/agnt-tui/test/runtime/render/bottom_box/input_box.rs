@@ -112,7 +112,7 @@ async fn test_bottom_box_theme_switch_repaints_status_and_gap() -> Result<()> {
     let lines: Vec<&str> = buffer.lines().collect();
     let stack_row = lines
         .iter()
-        .position(|line| line.contains("▏ queued-under-mocha"))
+        .position(|line| line.contains("╎ queued-under-mocha"))
         .ok_or("the queued prompt must paint a stack row")? as u16;
     let top = input_top_row(&driver)?;
     let input_h = driver.coordinator().input_height;
@@ -150,7 +150,7 @@ async fn test_bottom_box_theme_switch_repaints_status_and_gap() -> Result<()> {
     let lines: Vec<&str> = buffer.lines().collect();
     let stack_row = lines
         .iter()
-        .position(|line| line.contains("▏ queued-under-mocha"))
+        .position(|line| line.contains("╎ queued-under-mocha"))
         .ok_or("the queued prompt must stay stacked after the switch")? as u16;
     let top = input_top_row(&driver)?;
     let input_h = driver.coordinator().input_height;

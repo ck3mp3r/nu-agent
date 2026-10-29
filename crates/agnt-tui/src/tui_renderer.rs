@@ -11,9 +11,15 @@ pub struct TuiRenderer<'a> {
     pub theme: &'a TuiTheme,
 }
 
-pub fn lane_prefix_width() -> usize {
-    // cursor_str (2 chars: "> " or "  ") + label (2 chars: lane icon + space)
-    4
+/// Width of the lane prefix a block renders before its content. The tool,
+/// compaction, system, and banner lanes render the 2-char cursor slot plus the
+/// 2-char marker slot; the user rail and assistant prose render the marker slot
+/// alone, so their text starts at the cog column (task 45b99a84).
+pub fn lane_prefix_width(lane: &Lane) -> usize {
+    match lane {
+        Lane::Marker("╎") | Lane::Blank => 2,
+        Lane::Marker(_) | Lane::SystemBlank => 4,
+    }
 }
 
 /// Pre-wrap a single text row at `width` display columns so no rendered
@@ -67,13 +73,17 @@ impl TuiRenderer<'_> {
     /// ContentLine wraps with the reduced budget), and adds the Fill::Code
     /// margin rows. Same inputs, same count as `render_block(..).len()`.
     fn measure_block(&self, block: &Block, width: usize) -> usize {
-        let mut content_lines = block.source.project(width);
+        let has_status = block.status.is_some();
+        let wrap_width = crate::state::code_block::content_wrap_width(
+            width,
+            has_status,
+            lane_prefix_width(&block.lane),
+        );
+
+        let mut content_lines = block.source.project(wrap_width);
         if content_lines.is_empty() {
             content_lines.push(ContentLine::empty());
         }
-
-        let has_status = block.status.is_some();
-        let wrap_width = crate::state::code_block::content_wrap_width(width, has_status);
 
         let lane = LaneContext::from(block, self.theme);
         let mut content_rows = 0usize;
@@ -116,13 +126,17 @@ impl TuiRenderer<'_> {
     }
 
     fn render_block(&self, block: &Block, ctx: &FrameContext) -> Vec<Line<'static>> {
-        let mut content_lines = block.source.project(ctx.width);
+        let has_status = block.status.is_some();
+        let wrap_width = crate::state::code_block::content_wrap_width(
+            ctx.width,
+            has_status,
+            lane_prefix_width(&block.lane),
+        );
+
+        let mut content_lines = block.source.project(wrap_width);
         if content_lines.is_empty() {
             content_lines.push(ContentLine::empty());
         }
-
-        let has_status = block.status.is_some();
-        let wrap_width = crate::state::code_block::content_wrap_width(ctx.width, has_status);
 
         let lane = LaneContext::from(block, self.theme);
         let mut result = Vec::new();
@@ -326,23 +340,37 @@ impl TuiRenderer<'_> {
         result
     }
 
+    /// Lane prefix for row 0. Lanes with a cursor slot (tool, compaction,
+    /// system, banner) render `[cursor slot][marker]`; the user rail and
+    /// assistant prose render the marker slot alone, pinning their text to the
+    /// cog column (task 45b99a84).
     fn lane_prefix(&self, lane: &LaneContext, cursor: bool) -> Vec<RatatuiSpan<'static>> {
         let cursor_str = if cursor { "> " } else { "  " };
-        vec![
-            RatatuiSpan::styled(cursor_str.to_string(), Style::default()),
-            RatatuiSpan::styled(lane.marker.clone(), lane.marker_style),
-        ]
+        let mut spans = Vec::with_capacity(2);
+        if lane.cursor_slot {
+            spans.push(RatatuiSpan::styled(
+                cursor_str.to_string(),
+                Style::default(),
+            ));
+        }
+        spans.push(RatatuiSpan::styled(lane.marker.clone(), lane.marker_style));
+        spans
     }
 
     /// Lane prefix for wrapped continuation rows: identical lane styling but
     /// a blank marker — except the user rail, which stays on every row so a
     /// multi-row user block keeps a constant gutter (task 667e4926, task
-    /// 7bd175d2).
+    /// 7bd175d2), and the compact lanes, which never carry a cursor slot.
     fn lane_prefix_continuation(&self, lane: &LaneContext) -> Vec<RatatuiSpan<'static>> {
-        vec![
-            RatatuiSpan::styled("  ".to_string(), Style::default()),
-            RatatuiSpan::styled(lane.continuation_marker.to_string(), lane.marker_style),
-        ]
+        let mut spans = Vec::with_capacity(2);
+        if lane.cursor_slot {
+            spans.push(RatatuiSpan::styled("  ".to_string(), Style::default()));
+        }
+        spans.push(RatatuiSpan::styled(
+            lane.continuation_marker.to_string(),
+            lane.marker_style,
+        ));
+        spans
     }
 
     fn indicator_style(&self, status: &ItemStatus) -> Style {
@@ -410,6 +438,10 @@ struct LaneContext {
     marker: String,
     /// The marker slot for continuation rows (blank unless user rail).
     continuation_marker: &'static str,
+    /// Whether row 0 and continuation rows carry the 2-char cursor slot ahead
+    /// of the marker slot. Tool, compaction, system, and banner lanes do; the
+    /// user rail and assistant prose do not (task 45b99a84).
+    cursor_slot: bool,
     marker_style: Style,
     role_style: Style,
     row_style: Style,
@@ -420,10 +452,13 @@ impl LaneContext {
     /// `block.source`. A block's lane is frozen at construction time and
     /// already encodes the styling the source needs (task 46ca79fe).
     fn from(block: &Block, theme: &TuiTheme) -> Self {
+        // The budget derives from the same prefix width the rows render, so the
+        // rendered prefix and `content_wrap_width` never disagree.
+        let cursor_slot = lane_prefix_width(&block.lane) > 2;
         match block.lane {
             Lane::Marker(icon) => {
                 let (marker_style, role_style, row_style) = match icon {
-                    "▏" => (
+                    "╎" => (
                         theme.lane_prefix_user,
                         theme.role_user,
                         theme.row_user.bg(theme.row_user_bg),
@@ -446,13 +481,14 @@ impl LaneContext {
                     ),
                 };
                 // The user rail stays on every row (the pre-refactor
-                // `Role::User => "▏ "` continuation label); other marker
+                // `Role::User => "╎ "` continuation label); other marker
                 // lanes render a blank continuation slot. This keeps a
                 // constant gutter down a multi-row user block (task 667e4926).
-                let continuation_marker = if icon == "▏" { "▏ " } else { "  " };
+                let continuation_marker = if icon == "╎" { "╎ " } else { "  " };
                 Self {
                     marker: format!("{icon} "),
                     continuation_marker,
+                    cursor_slot,
                     marker_style,
                     role_style,
                     row_style,
@@ -462,6 +498,7 @@ impl LaneContext {
             Lane::Blank => Self {
                 marker: "  ".to_string(),
                 continuation_marker: "  ",
+                cursor_slot,
                 marker_style: theme.lane_prefix_assistant,
                 role_style: theme.role_assistant,
                 row_style: theme.row_assistant,
@@ -472,6 +509,7 @@ impl LaneContext {
             Lane::SystemBlank => Self {
                 marker: "  ".to_string(),
                 continuation_marker: "  ",
+                cursor_slot,
                 marker_style: theme.role_system,
                 role_style: theme.role_system,
                 row_style: theme.row_system,

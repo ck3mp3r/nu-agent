@@ -372,7 +372,7 @@ async fn theme_picker_popup_does_not_bleed_transcript_glyphs() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Themes,

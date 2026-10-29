@@ -120,7 +120,7 @@ fn push_block_stores_content_blocks_without_spacers() -> Result<()> {
         .blocks()
         .first()
         .ok_or("should have block")?;
-    assert_eq!(block.lane, agnt_core::transcript::ir::Lane::Marker("▏"));
+    assert_eq!(block.lane, agnt_core::transcript::ir::Lane::Marker("╎"));
     assert_eq!(block.fill, agnt_core::transcript::ir::Fill::Full);
 
     // -- Exec & Check: a tool block carries its status.

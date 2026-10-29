@@ -142,7 +142,7 @@ fn hydration_reconstructs_tool_blocks_and_display() -> Result<()> {
         "expected one User markdown block, got {:?}",
         block.source
     );
-    assert_eq!(block.lane, agnt_core::transcript::ir::Lane::Marker("▏"));
+    assert_eq!(block.lane, agnt_core::transcript::ir::Lane::Marker("╎"));
     assert_eq!(block.fill, agnt_core::transcript::ir::Fill::Full);
     assert_eq!(block.source.plain_text(), "line1\n\nline2");
 
@@ -159,11 +159,11 @@ fn hydration_reconstructs_tool_blocks_and_display() -> Result<()> {
         lines.len()
     );
     for (idx, line) in lines.iter().enumerate() {
-        let marker = line.spans.get(1).ok_or("marker span must exist")?;
-        assert!(
-            marker.content.contains('▏'),
-            "row {idx} must carry the user rail; got {:?}",
-            marker.content
+        let rail = line.spans.first().ok_or("rail span must exist")?;
+        assert_eq!(
+            rail.content.as_ref(),
+            "╎ ",
+            "row {idx} must carry the user rail at list-local 0"
         );
     }
     Ok(())

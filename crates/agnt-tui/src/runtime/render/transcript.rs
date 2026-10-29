@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::rendering::theme::TuiTheme;
-use crate::runtime::render::expand_to_visual_rows;
+use crate::runtime::render::{expand_to_visual_rows, user_rail_line};
 use crate::tui_renderer::layout;
 use crate::{
     runtime::render::frame::current_time_millis,
@@ -257,7 +257,9 @@ pub(crate) fn build_transcript_lines(
         // Separator rows keep the pre-refactor bleed: the first row of
         // a run bleeds the user background when the preceding block is
         // a user turn; the last row bleeds when the incoming block is a
-        // user turn. Other rows stay on the base background.
+        // user turn. A bleeding row sits inside the user background box, so
+        // it also carries the user rail — otherwise the box's top and bottom
+        // rows break the gutter. Other rows stay blank on the base background.
         let prev_is_user = idx
             .checked_sub(1)
             .and_then(|i| blocks.get(i))
@@ -266,7 +268,11 @@ pub(crate) fn build_transcript_lines(
         for s in 0..separators {
             let bleed = (s == 0 && prev_is_user) || (s == separators - 1 && incoming_is_user);
             let bg = if bleed { theme.row_user_bg } else { theme.base };
-            all_lines.push(Line::from(""));
+            all_lines.push(if bleed {
+                user_rail_line(theme)
+            } else {
+                Line::from("")
+            });
             block_indices.push(idx);
             line_bgs.push(Some(bg));
         }
@@ -298,7 +304,11 @@ pub(crate) fn build_transcript_lines(
                 theme.base
             };
             for _ in 0..trailing {
-                all_lines.push(Line::from(""));
+                all_lines.push(if last_is_user {
+                    user_rail_line(theme)
+                } else {
+                    Line::from("")
+                });
                 block_indices.push(last_idx);
                 line_bgs.push(Some(bg));
             }

@@ -1,10 +1,11 @@
 use std::{fs, path::Path, process::Command};
 
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use crate::{rendering::theme::TuiTheme, state::AppState};
 
-use super::format::{compact_token_count, status_indicator, tail_ellipsize};
+use super::format::{compact_token_count, ellipsize, status_indicator, tail_ellipsize};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -352,5 +353,57 @@ fn status_message_line_warning_uses_status_failed_style() -> Result<()> {
     // -- Check
     let span = line.spans.first().ok_or("should have a span")?;
     assert_eq!(span.style, TuiTheme::default().status_failed);
+    Ok(())
+}
+
+#[test]
+fn test_format_ellipsize_wide_glyphs_keep_cell_budget() -> Result<()> {
+    // -- Setup & Fixtures
+    let input = "日本語";
+
+    // -- Exec & Check: each glyph is two cells wide, so a 3-cell budget keeps a
+    // single glyph before the ellipsis.
+    let three_cells = ellipsize(input, 3);
+    assert_eq!(three_cells, "日…");
+    assert_eq!(UnicodeWidthStr::width(three_cells.as_str()), 3);
+
+    let two_cells = ellipsize(input, 2);
+    assert_eq!(two_cells, "…");
+    assert_eq!(UnicodeWidthStr::width(two_cells.as_str()), 1);
+    Ok(())
+}
+
+#[test]
+fn test_format_tail_ellipsize_wide_glyphs_keep_cell_budget() -> Result<()> {
+    // -- Setup & Fixtures
+    let input = "日本語テスト";
+
+    // -- Exec
+    let out = tail_ellipsize(input, 6);
+
+    // -- Check: a 6-cell budget leaves 3 cells for the suffix, one 2-cell glyph.
+    assert_eq!(out, "...ト");
+    assert_eq!(UnicodeWidthStr::width(out.as_str()), 5);
+    Ok(())
+}
+
+#[test]
+fn test_status_content_status_left_content_wide_glyph_identities_fit_width() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    state.status.identity.active_model_identity = "モデル日本語テスト".to_string();
+    state.set_active_agent_identity("エージェント");
+    let available_width = 30;
+
+    // -- Exec
+    let line = super::status_left_content(None, &state, &TuiTheme::default(), available_width);
+
+    // -- Check
+    let joined: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let width = UnicodeWidthStr::width(joined.as_str());
+    assert!(
+        width <= available_width,
+        "status line must fit {available_width} cells, got {width}: {joined:?}"
+    );
     Ok(())
 }

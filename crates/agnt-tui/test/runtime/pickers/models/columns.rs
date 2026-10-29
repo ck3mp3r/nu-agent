@@ -49,7 +49,7 @@ async fn model_picker_renders_active_and_configured_glyphs() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -129,7 +129,7 @@ async fn model_picker_renders_context_window_column() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -200,7 +200,7 @@ async fn model_picker_renders_cost_column() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -257,7 +257,7 @@ async fn model_picker_renders_wide_cost_cell_untruncated() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -311,7 +311,7 @@ async fn model_picker_renders_cost_cell_right_aligned() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -327,12 +327,12 @@ async fn model_picker_renders_cost_cell_right_aligned() -> Result<()> {
         .position(|l| l.contains("PRICE"))
         .ok_or("should find the column header row")?;
     assert!(
-        lines[data_row].ends_with("$3.00/$15.00  *  ◆    │"),
+        lines[data_row].ends_with("$3.00/$15.00 * ◆│"),
         "data line must end with the right-aligned cost then the glyph columns; row: {:?}\n{popup_text}",
         lines[data_row]
     );
     assert!(
-        lines[header_row].ends_with("PRICE          │"),
+        lines[header_row].ends_with("PRICE    │"),
         "header line must end with the right-aligned PRICE label; row: {:?}\n{popup_text}",
         lines[header_row]
     );
@@ -374,7 +374,7 @@ async fn model_picker_renders_right_aligned_numeric_gutters() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 64, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -391,12 +391,12 @@ async fn model_picker_renders_right_aligned_numeric_gutters() -> Result<()> {
         .ok_or("should find the column header row")?;
     let data_line = lines[data_row];
     assert!(
-        data_line.ends_with("$3.00/$15.00  *  ◆    │"),
-        "numeric cells must stay right-aligned with two-space glyph gutters at the minimum popup width; row: {data_line:?}\n{popup_text}"
+        data_line.ends_with("$3.00/$15.00 * ◆│"),
+        "numeric cells must stay right-aligned with one-space glyph gutters at the minimum popup width; row: {data_line:?}\n{popup_text}"
     );
     let header_line = lines[header_row];
     assert!(
-        header_line.ends_with("PRICE          │"),
+        header_line.ends_with("PRICE    │"),
         "header must keep the right-aligned PRICE label at the minimum popup width; row: {header_line:?}\n{popup_text}"
     );
     Ok(())
@@ -437,7 +437,7 @@ async fn model_picker_renders_tight_context_price_gap() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -460,8 +460,8 @@ async fn model_picker_renders_tight_context_price_gap() -> Result<()> {
         .get(ctx_end..price_at)
         .ok_or("context window must precede the price")?;
     assert_eq!(
-        gap, "      ",
-        "CTX and PRICE must be separated by exactly six spaces; row: {data_line:?}\n{popup_text}"
+        gap, "     ",
+        "CTX and PRICE must be separated by exactly one column gap plus the PRICE padding; row: {data_line:?}\n{popup_text}"
     );
     Ok(())
 }

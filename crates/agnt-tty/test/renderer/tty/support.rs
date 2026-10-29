@@ -36,7 +36,7 @@ pub(super) fn render_plain(block: &Block) -> String {
 
 pub(super) fn markdown_block(role: MessageRole, markdown: &str) -> Block {
     let (lane, fill) = match role {
-        MessageRole::User => (Lane::Marker("▏"), Fill::None),
+        MessageRole::User => (Lane::Marker("╎"), Fill::None),
         MessageRole::Assistant => (Lane::Blank, Fill::None),
     };
     Block {

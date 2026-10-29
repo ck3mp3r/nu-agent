@@ -11,6 +11,7 @@ use ratatui::{
 
 use crate::rendering::theme::TuiTheme;
 use crate::runtime::panels::{inline_slash_title, render_permission_controls};
+use crate::runtime::render::{render_modal_frame, user_rail_line};
 use crate::tui_renderer::{layout, measure};
 use crate::{
     runtime::inline_slash_lines_for_render,
@@ -50,7 +51,8 @@ impl RuntimeCoordinator {
         // user message it becomes. The whole stack is ONE merged block: one
         // tinted padding row, every queued prompt's rows back to back (the
         // user rail continues down the block, so the gutter never breaks),
-        // then one tinted padding row.
+        // then one tinted padding row. Both padding rows sit inside the same
+        // background box, so they carry the rail too (task 4d99956c).
         let stack_gap = u16::from(stack_h > 0);
         let stack_top = bottom_box_rect.y.saturating_add(stack_gap);
         let stack_width = bottom_box_rect.width.saturating_sub(2);
@@ -72,11 +74,11 @@ impl RuntimeCoordinator {
                 selected: false,
             };
             let mut lines: Vec<Line<'static>> = Vec::with_capacity(stack_h as usize);
-            lines.push(Line::from(""));
+            lines.push(user_rail_line(&self.theme));
             for block in stack_blocks {
                 lines.extend(layout(block, &ctx, &self.theme));
             }
-            lines.push(Line::from(""));
+            lines.push(user_rail_line(&self.theme));
             frame.render_widget(
                 Paragraph::new(Text::from(lines)),
                 Rect {
@@ -165,18 +167,8 @@ impl RuntimeCoordinator {
                         width: textarea_rect.width,
                         height: total_height,
                     };
-                    frame.render_widget(Clear, slash_rect);
-                    frame.render_widget(
-                        Block::default().style(Style::default().bg(self.theme.base)),
-                        slash_rect,
-                    );
-                    let block = Block::default()
-                        .borders(Borders::ALL)
-                        .border_set(ratatui::symbols::border::ROUNDED)
-                        .border_style(self.theme.subtle_meta)
-                        .title(inline_slash_title());
-                    let inner = block.inner(slash_rect);
-                    frame.render_widget(block, slash_rect);
+                    let inner =
+                        render_modal_frame(frame, slash_rect, inline_slash_title(), &self.theme);
                     frame.render_widget(Text::from(slash_lines), inner);
                 }
             }

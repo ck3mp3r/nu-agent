@@ -1235,17 +1235,25 @@ impl RuntimeCoordinator {
 
             match self.state.picker.render_kind() {
                 Some(PickerRenderKind::CommandPalette) => {
-                    self.render_command_palette(frame, area);
+                    self.render_command_palette(frame, transcript_content_area);
                 }
-                Some(PickerRenderKind::Model) => self.render_model_picker(frame, area),
-                Some(PickerRenderKind::Agent) => self.render_agent_picker(frame, area),
-                Some(PickerRenderKind::Session) => self.render_session_picker(frame, area),
-                Some(PickerRenderKind::Theme) => self.render_theme_picker(frame, area),
+                Some(PickerRenderKind::Model) => {
+                    self.render_model_picker(frame, transcript_content_area)
+                }
+                Some(PickerRenderKind::Agent) => {
+                    self.render_agent_picker(frame, transcript_content_area)
+                }
+                Some(PickerRenderKind::Session) => {
+                    self.render_session_picker(frame, transcript_content_area)
+                }
+                Some(PickerRenderKind::Theme) => {
+                    self.render_theme_picker(frame, transcript_content_area)
+                }
                 Some(PickerRenderKind::InlineSlash) | None => {}
             }
 
             if self.state.info_panel.is_some() {
-                self.render_info_panel(frame, area);
+                self.render_info_panel(frame, transcript_content_area);
             }
         })
         .map_err(|err| format!("TUI render failed: {err}"))?;

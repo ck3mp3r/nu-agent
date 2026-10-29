@@ -158,7 +158,7 @@ fn visual_yank_table() {
         None,
     );
     let clipboard = state.input.take_clipboard_request();
-    assert_eq!(clipboard, Some("  ▏ line 0".to_string()));
+    assert_eq!(clipboard, Some("╎ line 0".to_string()));
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
 
@@ -182,7 +182,7 @@ fn visual_yank_table() {
         None,
     );
     let clipboard = state.input.take_clipboard_request();
-    assert_eq!(clipboard, Some("  ▏ line 1".to_string()));
+    assert_eq!(clipboard, Some("╎ line 1".to_string()));
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
 
@@ -212,7 +212,9 @@ fn visual_yank_table() {
         None,
     );
     let clipboard = state.input.take_clipboard_request();
-    assert_eq!(clipboard, Some("  ▏ line 1\n".to_string()));
+    // Row 4 is the bleed separator row below the user block, which carries the
+    // user rail (task 4d99956c), so the payload keeps the rail glyph.
+    assert_eq!(clipboard, Some("╎ line 1\n╎".to_string()));
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
 

@@ -33,7 +33,7 @@ async fn model_picker_renders_column_header_row() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -110,7 +110,7 @@ async fn model_picker_renders_glyph_columns_at_row_end() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -140,7 +140,7 @@ async fn model_picker_renders_glyph_columns_at_row_end() -> Result<()> {
         "configured glyph must follow the identity; row: {data_line:?}\n{popup_text}"
     );
     assert!(
-        data_line.ends_with("◆    │"),
+        data_line.ends_with("◆│"),
         "selected+configured data line must end with the configured glyph; row: {data_line:?}\n{popup_text}"
     );
     let openai_group_row = lines
@@ -165,7 +165,7 @@ async fn model_picker_renders_glyph_columns_at_row_end() -> Result<()> {
 }
 
 #[tokio::test]
-async fn model_picker_paints_section_header_bar() -> Result<()> {
+async fn model_picker_paints_section_header_without_a_background_band() -> Result<()> {
     // -- Setup & Fixtures
     let mut driver = RenderLoopDriver::new(120, 30);
     driver.coordinator_mut().state.set_picker_options(
@@ -187,7 +187,7 @@ async fn model_picker_paints_section_header_bar() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -207,8 +207,8 @@ async fn model_picker_paints_section_header_bar() -> Result<()> {
         for x in inner_x.clone() {
             assert_eq!(
                 driver.cell_style_at(x, y).bg,
-                Some(palette.surface1),
-                "{name} header bar must cover x={x} on row {row}\n{popup_text}"
+                Some(theme.base),
+                "{name} header must not paint a band at x={x} on row {row}\n{popup_text}"
             );
         }
         let name_at = lines[row]
@@ -216,10 +216,17 @@ async fn model_picker_paints_section_header_bar() -> Result<()> {
             .ok_or(format!("{name} header row should contain the display name"))?;
         let name_col = lines[row][..name_at].chars().count();
         let name_x = popup.x + u16::try_from(name_col)?;
+        let name_style = driver.cell_style_at(name_x, y);
         assert_eq!(
-            driver.cell_style_at(name_x, y).fg,
+            name_style.fg,
             Some(palette.subtext0),
             "{name} header text must render in subtext0\n{popup_text}"
+        );
+        assert!(
+            name_style
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD),
+            "{name} header text must render bold\n{popup_text}"
         );
     }
 
@@ -260,7 +267,7 @@ async fn model_picker_paints_section_header_bar() -> Result<()> {
 }
 
 #[tokio::test]
-async fn model_picker_renders_bold_section_titles_left_of_model_rows() -> Result<()> {
+async fn model_picker_aligns_bold_section_titles_with_model_rows() -> Result<()> {
     // -- Setup & Fixtures
     let mut driver = RenderLoopDriver::new(120, 30);
     driver.coordinator_mut().state.set_picker_options(
@@ -280,7 +287,7 @@ async fn model_picker_renders_bold_section_titles_left_of_model_rows() -> Result
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -301,8 +308,8 @@ async fn model_picker_renders_bold_section_titles_left_of_model_rows() -> Result
         let name_x = popup.x + u16::try_from(name_col)?;
         assert_eq!(
             name_x,
-            popup.x + 4,
-            "{name} title must start one character after the selection gutter\n{popup_text}"
+            popup.x + 5,
+            "{name} title must start on the model identity column\n{popup_text}"
         );
         assert!(
             driver
@@ -338,9 +345,8 @@ async fn model_picker_renders_bold_section_titles_left_of_model_rows() -> Result
     let title_col = lines[title_row][..title_at].chars().count();
     let title_x = popup.x + u16::try_from(title_col)?;
     assert_eq!(
-        identity_x,
-        title_x + 1,
-        "section title must sit one character left of the model identity\n{popup_text}"
+        identity_x, title_x,
+        "section title must sit on the model identity column\n{popup_text}"
     );
     Ok(())
 }

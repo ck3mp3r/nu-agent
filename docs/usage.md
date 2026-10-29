@@ -353,6 +353,14 @@ TUI rendering guardrails:
 - Permission decision controls are rendered in a **sticky footer row** so controls remain visible independent of transcript window clipping.
 - Viewport fitting preserves a required permission-context row while ask is active; manual user scroll override disables auto-recentering jitter but keeps required-row preservation state.
 
+Transcript gutters (columns are list-local; column 0 is the transcript list area's first column):
+
+- User messages render a dotted `╎` rail at column 0 on the first row and on every wrapped row; the text starts at column 2 (the cog column).
+- Assistant prose starts at column 2 and carries no rail.
+- Tool, compaction, and system rows keep the two-column cursor slot: the marker glyph (`⚙`, `~`, `·`) sits at column 2 and the text starts at column 4, on the first row and on every wrapped row.
+- The banner stays centered within the pane.
+- Every entry keeps a two-column right margin: the wrap budget stops short of the list area's right edge, so no line writes into its last two columns. The background fills still span the full list width.
+
 Nu command rendering:
 
 - Each tool call row starts with the tool name (for example `edit`, `read`, `nu`) followed by the call summary. The name carries the tool lane's emphasis style; the summary carries the muted style. The `nu` call line carries the applied timeout as `⏱ {timeout}s` (120s when the call omits `timeout_seconds`) — the command renders only in the preview block below it.
@@ -747,7 +755,7 @@ CLI flags override config.toml, which overrides built-in defaults.
 ### Prompt queue and cancel-on-empty-Enter
 
 - Submitting a prompt while a turn is busy queues it; the queued prompts run after the active turn completes.
-- Queued prompts render as one merged user-message block stacked directly above the input box: a tinted padding line above and below the text, a continuous `▏` gutter down every row with no separators between messages, and one blank row separating the block from the transcript. Text wraps at the transcript user-message width.
+- Queued prompts render as one merged user-message block stacked directly above the input box: a tinted padding line above and below the text, a continuous `╎` gutter down every row with no separators between messages, and one blank row separating the block from the transcript. Text wraps at the transcript user-message width, so the stack's rail and text columns match the transcript user rows.
 - The queue drains as one submission, and that submitted block renders the same one-row-per-message rhythm as the stack — no blank line between the coalesced prompts.
 - Pressing Enter on empty input while a turn is busy and at least one prompt is queued cancels the active turn. The queued prompts then run through the normal drain path.
 - Pressing Enter on empty input while idle, or while busy with no queued prompts, does nothing.

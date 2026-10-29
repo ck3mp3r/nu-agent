@@ -65,7 +65,7 @@ fn test_session_picker_table_model_empty() -> Result<()> {
     state.picker.open(ActivePicker::Session);
 
     // -- Exec
-    let model = session_picker_table_model(&state, 20);
+    let model = session_picker_table_model(&state, 20, 80);
 
     // -- Check
     assert!(model.rows.is_empty());
@@ -90,7 +90,7 @@ fn test_session_picker_table_model_single_day_single_header() -> Result<()> {
     state.picker.open(ActivePicker::Session);
 
     // -- Exec
-    let model = session_picker_table_model(&state, 20);
+    let model = session_picker_table_model(&state, 20, 80);
 
     // -- Check
     assert_eq!(model.rows.len(), 4);
@@ -116,7 +116,7 @@ fn test_session_picker_table_model_groups_by_day() -> Result<()> {
     state.picker.open(ActivePicker::Session);
 
     // -- Exec
-    let model = session_picker_table_model(&state, 20);
+    let model = session_picker_table_model(&state, 20, 80);
 
     // -- Check
     assert_eq!(model.rows.len(), 6);
@@ -157,7 +157,7 @@ fn test_session_picker_table_model_header_includes_year_for_other_year() -> Resu
     state.picker.open(ActivePicker::Session);
 
     // -- Exec
-    let model = session_picker_table_model(&state, 20);
+    let model = session_picker_table_model(&state, 20, 80);
 
     // -- Check
     assert_eq!(
@@ -188,12 +188,41 @@ fn test_session_picker_table_model_selected_maps_to_table_row() -> Result<()> {
     picker_state.selection = 1;
 
     // -- Exec
-    let model = session_picker_table_model(&state, 20);
+    let model = session_picker_table_model(&state, 20, 80);
 
     // -- Check
     // Table rows: [header, today, header, yesterday] — the second option is row 3.
     assert_eq!(model.rows.len(), 4);
     assert_eq!(model.selected, Some(3));
+    Ok(())
+}
+
+#[test]
+fn test_session_picker_table_model_overflow_cue_accounts_for_footer_rows() -> Result<()> {
+    // -- Setup & Fixtures
+    let today = today();
+    let options: Vec<PickerOption> = (0..5)
+        .map(|i| {
+            session_option(
+                &format!("id{i}"),
+                Some(&format!("Session {i}")),
+                today,
+                i + 1,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut state = AppState::default();
+    state.set_picker_options(ActivePicker::Session, options);
+    state.picker.open(ActivePicker::Session);
+
+    // -- Exec
+    // A 10-row popup leaves inner height 8, so the details ladder reserves two
+    // footer rows. The render path passes popup.height - dh = 8 → inner 6 →
+    // query=1, header=1 → available_rows=4, minus one day header → 3 rows.
+    let model = session_picker_table_model(&state, 8, 80);
+
+    // -- Check
+    assert_eq!(model.overflow_cue, Some("3 of 5".to_string()));
     Ok(())
 }
 
@@ -218,7 +247,7 @@ fn test_session_picker_table_model_overflow_cue_counts_session_rows() -> Result<
     // -- Exec
     // popup_height=8 → inner_height=6 → query=1, header=1 → available_rows=4
     // One day group → 1 header row → 3 session rows fit.
-    let model = session_picker_table_model(&state, 8);
+    let model = session_picker_table_model(&state, 8, 80);
 
     // -- Check
     assert_eq!(model.rows.len(), 6);
@@ -254,7 +283,7 @@ fn test_session_picker_table_model_overflow_cue_accounts_for_header_rows() -> Re
     // -- Exec
     // popup_height=8 → available_rows=4. Three day groups → 3 header rows, so
     // only 1 session row fits even though 3 sessions <= 4 available rows.
-    let model = session_picker_table_model(&state, 8);
+    let model = session_picker_table_model(&state, 8, 80);
 
     // -- Check
     assert_eq!(model.rows.len(), 6);
@@ -284,7 +313,7 @@ fn test_session_picker_table_model_no_overflow_cue_when_all_rows_fit() -> Result
     // -- Exec
     // popup_height=8 → available_rows=4. Two day groups → 2 header rows, so 2
     // session rows fit and both sessions are visible.
-    let model = session_picker_table_model(&state, 8);
+    let model = session_picker_table_model(&state, 8, 80);
 
     // -- Check
     assert_eq!(model.rows.len(), 4);
@@ -304,7 +333,7 @@ fn test_session_picker_table_model_renders_message_count_cell() -> Result<()> {
     state.picker.open(ActivePicker::Session);
 
     // -- Exec
-    let model = session_picker_table_model(&state, 20);
+    let model = session_picker_table_model(&state, 20, 80);
 
     // -- Check
     assert_eq!(model.rows.len(), 2);
@@ -319,6 +348,48 @@ fn test_session_picker_table_model_renders_message_count_cell() -> Result<()> {
     assert!(!relative.is_empty());
     assert_eq!(title, "My Session");
     assert_eq!(*message_count, 42);
+    Ok(())
+}
+
+#[test]
+fn test_session_picker_table_model_ellipsizes_long_title() -> Result<()> {
+    // -- Setup & Fixtures
+    let today = today();
+    let long_title = "t".repeat(60);
+    let mut state = AppState::default();
+    state.set_picker_options(
+        ActivePicker::Session,
+        vec![session_option("id0", Some(&long_title), today, 1)?],
+    );
+    state.picker.open(ActivePicker::Session);
+
+    // -- Exec
+    // table_width=80 → title budget 80 - 25 = 55 chars.
+    let model = session_picker_table_model(&state, 20, 80);
+
+    // -- Check
+    let expected = format!("{}…", "t".repeat(54));
+    assert_eq!(session_titles(&model.rows), vec![expected]);
+    Ok(())
+}
+
+#[test]
+fn test_session_picker_table_model_keeps_fitting_title() -> Result<()> {
+    // -- Setup & Fixtures
+    let today = today();
+    let title = "t".repeat(55);
+    let mut state = AppState::default();
+    state.set_picker_options(
+        ActivePicker::Session,
+        vec![session_option("id0", Some(&title), today, 1)?],
+    );
+    state.picker.open(ActivePicker::Session);
+
+    // -- Exec
+    let model = session_picker_table_model(&state, 20, 80);
+
+    // -- Check
+    assert_eq!(session_titles(&model.rows), vec![title]);
     Ok(())
 }
 

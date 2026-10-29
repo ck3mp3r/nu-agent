@@ -312,7 +312,7 @@ fn latte_body_text_uses_dark_text_fg() {
 }
 
 #[test]
-fn picker_section_header_uses_subtext0_on_surface1_for_all_flavors() {
+fn picker_section_header_uses_subtext0_bold_without_a_bg_for_all_flavors() {
     let cases = [
         (TuiTheme::catppuccin_mocha(), CatppuccinPalette::mocha()),
         (TuiTheme::catppuccin_latte(), CatppuccinPalette::latte()),
@@ -325,7 +325,10 @@ fn picker_section_header_uses_subtext0_on_surface1_for_all_flavors() {
 
     for (theme, palette) in cases {
         assert_eq!(theme.picker_section_header.fg, Some(palette.subtext0));
-        assert_eq!(theme.picker_section_header.bg, Some(palette.surface1));
+        assert_eq!(
+            theme.picker_section_header.bg, None,
+            "picker section header must paint no background"
+        );
         assert!(
             theme
                 .picker_section_header

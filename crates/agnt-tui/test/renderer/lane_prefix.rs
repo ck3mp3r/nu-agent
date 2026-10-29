@@ -96,12 +96,20 @@ fn layout_every_marker_lane_renders_two_char_marker() -> Result<()> {
         status: None,
     };
 
-    // -- Exec & Check
-    for (block, expected) in [
-        (&user, "\u{258f} "),
-        (&compaction, "~ "),
-        (&system, "\u{00b7} "),
-    ] {
+    // -- Exec & Check: the user rail replaces the cursor slot, so it is the
+    // first span of the row; the other marker lanes keep their cursor slot, so
+    // their marker is the second span.
+    let user_lines = layout(&user, &frame_ctx(80), &TuiTheme::default());
+    let rail = user_lines
+        .first()
+        .and_then(|line| line.spans.first())
+        .ok_or("user rail span must exist")?;
+    assert_eq!(
+        rail.content.as_ref(),
+        "\u{254e} ",
+        "the user rail must be glyph + trailing space at list-local 0"
+    );
+    for (block, expected) in [(&compaction, "~ "), (&system, "\u{00b7} ")] {
         let lines = layout(block, &frame_ctx(80), &TuiTheme::default());
         let marker = row_zero_marker(&lines).ok_or("marker span must exist")?;
         assert_eq!(
@@ -115,30 +123,50 @@ fn layout_every_marker_lane_renders_two_char_marker() -> Result<()> {
 
 #[test]
 fn lane_prefix_width_matches_rendered_prefix_width() -> Result<()> {
-    // -- Setup & Fixtures
-    let block = tool_block_with_status(None);
+    // -- Setup & Fixtures: one block per lane shape, with the prefix its lane
+    // renders (cursor slot + marker, or the marker slot alone).
+    let tool = tool_block_with_status(None);
+    let compaction = Block {
+        source: BlockSource::Notice {
+            kind: NoticeKind::Compaction,
+            text: "c".to_string(),
+        },
+        lane: Lane::Marker("~"),
+        fill: Fill::None,
+        status: None,
+    };
+    let user = markdown_block(MessageRole::User, "hi", Fill::Full);
+    let assistant = markdown_block(MessageRole::Assistant, "hi", Fill::None);
 
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
-    let row0 = lines.first().ok_or("row 0 must exist")?;
-    let cursor = row0.spans.first().ok_or("cursor span must exist")?;
-    let marker = row_zero_marker(&lines).ok_or("marker span must exist")?;
-    let rendered_prefix = cursor.content.chars().count() + marker.content.chars().count();
-
-    // -- Check
-    assert_eq!(
-        rendered_prefix,
-        lane_prefix_width(),
-        "lane_prefix_width() must equal the rendered cursor + marker width"
-    );
-    assert_eq!(lane_prefix_width(), 4, "cursor 2 + marker 2");
+    // -- Exec & Check
+    for (block, expected) in [
+        (&tool, "  \u{2699} "),
+        (&compaction, "  ~ "),
+        (&user, "\u{254e} "),
+        (&assistant, "  "),
+    ] {
+        let lines = layout(block, &frame_ctx(80), &TuiTheme::default());
+        let row0 = lines.first().ok_or("row 0 must exist")?;
+        let text: String = row0.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.starts_with(expected),
+            "row 0 must start with prefix {expected:?}; got {text:?}"
+        );
+        assert_eq!(
+            expected.chars().count(),
+            lane_prefix_width(&block.lane),
+            "lane_prefix_width must equal the rendered prefix width for lane {:?}",
+            block.lane
+        );
+    }
     Ok(())
 }
 
 // ========== lane prefix on continuation rows (task 667e4926) ==========
 
 /// WHEN `layout()` renders a user `BlockSource::Markdown` block with multiple
-/// ContentLines, THE lane prefix span of every row SHALL contain `▏`.
+/// ContentLines, THE dotted rail `╎` SHALL sit at list-local 0 on every row and
+/// THE text SHALL start at list-local 2.
 #[test]
 fn layout_user_multi_content_line_rows_all_carry_rail() -> Result<()> {
     // -- Setup & Fixtures: a soft break splits the paragraph into two
@@ -155,22 +183,18 @@ fn layout_user_multi_content_line_rows_all_carry_rail() -> Result<()> {
         lines.len()
     );
     for (idx, line) in lines.iter().enumerate() {
-        let marker = row_marker(line).ok_or("marker span must exist")?;
-        assert!(
-            marker.content.contains('▏'),
-            "row {idx} must carry the user rail; got {:?}",
-            marker.content
-        );
+        assert_user_rail_at_zero(line, idx)?;
     }
     Ok(())
 }
 
 /// WHEN `layout()` renders a user `BlockSource::Markdown` block where the
-/// first ContentLine wraps to multiple rows, THE lane prefix span of every
-/// wrapped continuation row SHALL contain `▏`.
+/// first ContentLine wraps to multiple rows, THE dotted rail `╎` SHALL sit at
+/// list-local 0 on row 0 and on every wrapped continuation row, and THE text
+/// SHALL start at list-local 2.
 #[test]
 fn layout_user_wrapped_continuation_rows_carry_rail() -> Result<()> {
-    // -- Setup & Fixtures: wraps at width 24 (20-col budget after the prefix).
+    // -- Setup & Fixtures: wraps at width 24 (20-col budget after the rail).
     let long_text = "aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd";
     let block = markdown_block(MessageRole::User, long_text, Fill::Full);
 
@@ -184,12 +208,7 @@ fn layout_user_wrapped_continuation_rows_carry_rail() -> Result<()> {
         lines.len()
     );
     for (idx, line) in lines.iter().enumerate() {
-        let marker = row_marker(line).ok_or("marker span must exist")?;
-        assert!(
-            marker.content.contains('▏'),
-            "wrapped row {idx} must carry the user rail; got {:?}",
-            marker.content
-        );
+        assert_user_rail_at_zero(line, idx)?;
     }
     Ok(())
 }
@@ -267,5 +286,35 @@ fn layout_compaction_wrapped_continuation_rows_have_blank_marker() -> Result<()>
             marker.content
         );
     }
+    Ok(())
+}
+
+// -- Test Support
+
+/// Assert one rendered user row carries the dotted rail at list-local 0 and
+/// starts its text at list-local 2 (the cog column), with no legacy `▏` left.
+fn assert_user_rail_at_zero(line: &ratatui::text::Line<'static>, idx: usize) -> Result<()> {
+    let rail = line
+        .spans
+        .first()
+        .ok_or("rail span must exist on every user row")?;
+    assert_eq!(
+        rail.content.as_ref(),
+        "\u{254e} ",
+        "row {idx} must carry the dotted rail at list-local 0"
+    );
+    let first_text = line
+        .spans
+        .get(1)
+        .ok_or("user row must carry text after the rail")?;
+    assert!(
+        !first_text.content.is_empty(),
+        "row {idx} must start its text at list-local 2"
+    );
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(
+        !text.contains('\u{258f}'),
+        "no user row may carry the legacy rail; got {text:?}"
+    );
     Ok(())
 }

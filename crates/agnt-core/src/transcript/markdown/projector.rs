@@ -1,6 +1,6 @@
 use crate::transcript::ir::{ContentLine, Span as IrSpan, StyleHint};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use unicodeit;
 
 use super::code_blocks::{CodeBlockState, fence_language_hint, highlighted_code_lines};
@@ -23,6 +23,26 @@ fn latex_to_unicode(latex: &str) -> String {
         result.replace_range(start..=close, &inner);
     }
     unicodeit::replace(&result)
+}
+
+/// Wrap one table cell's text at `width` display columns. Words break at ASCII
+/// spaces; a word longer than the column breaks at character boundaries. A cell
+/// line never exceeds its allocated width, provided the caller allocates at
+/// least the column's widest single-char display width — textwrap never
+/// truncates, so a narrower column would let a wide glyph overflow
+/// (`render_table` floors every column there). Always returns at least one
+/// line, so an empty cell still occupies its physical row.
+fn wrap_table_cell(cell: &str, width: usize) -> Vec<String> {
+    let options =
+        textwrap::Options::new(width.max(1)).word_splitter(textwrap::WordSplitter::NoHyphenation);
+    let mut lines: Vec<String> = textwrap::wrap(cell, options)
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect();
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 #[derive(Debug, Default)]
@@ -76,8 +96,9 @@ struct Projector {
     code_block: Option<CodeBlockState>,
     pending_prefix: bool,
     table: Option<TableBuffer>,
-    /// Maximum canvas width threaded from the render context.
-    /// Passed to `render_table`; clamping logic is a separate task.
+    /// Maximum content width threaded from the render context — the wrap
+    /// budget, so the table clamp target matches the width its lines are
+    /// wrapped at. Passed to `render_table`.
     max_width: Option<u16>,
     /// True once the projector has emitted any non-empty line.
     has_content: bool,
@@ -186,8 +207,11 @@ impl Projector {
         }
     }
 
-    fn render_table(&mut self, mut table: TableBuffer, max_width: Option<u16>) {
+    fn render_table(&mut self, table: TableBuffer, max_width: Option<u16>) {
         let col_count = table.header_row.len();
+        if col_count == 0 {
+            return;
+        }
 
         // Measure column widths using display cell width (unicode_width).
         let mut widths = vec![0usize; col_count];
@@ -199,93 +223,111 @@ impl Projector {
             }
         }
 
-        // Clamp number of columns so total width fits within max_width.
-        // Table width = 1 (left │) + sum(col_width + 2) + (col_count - 1) (inter-col │) + 1 (right │)
-        //             = 1 + 3*col_count + sum(widths)
-        // Always keep at least 1 column.
+        // Floor every column at the widest single char in its own cells: textwrap
+        // breaks words at char boundaries and never truncates, so a column
+        // narrower than one of its chars would emit a cell line wider than the
+        // slot and break the border alignment. Never below 1, so no column
+        // collapses to zero width.
+        let floors: Vec<usize> = (0..col_count)
+            .map(|i| {
+                std::iter::once(&table.header_row)
+                    .chain(table.data_rows.iter())
+                    .filter_map(|row| row.get(i))
+                    .flat_map(|cell| cell.chars())
+                    .filter_map(UnicodeWidthChar::width)
+                    .max()
+                    .unwrap_or(0)
+                    .max(1)
+            })
+            .collect();
+
+        // Shrink the widest columns above their floor until the table fits
+        // max_width. The column count never shrinks: cell contents wrap instead,
+        // so no value is ever dropped. Table width = 1 (left │) + sum(col_width
+        // + 2) + (col_count - 1) (inter-col │) + 1 (right │) = 1 + 3*col_count +
+        // sum(widths). On ties the leftmost widest column shrinks first.
+        //
+        // Residual: when max_width < 1 + 3*col_count + sum(floors), the table
+        // stops at that structural minimum and so exceeds max_width by that
+        // bounded excess. Removing it would mean dropping columns or truncating
+        // graphemes, both rejected to keep the no-drop invariant.
         if let Some(max) = max_width {
-            while widths.len() > 1 {
-                let total = 1 + 3 * widths.len() + widths.iter().sum::<usize>();
-                if total <= max as usize {
-                    break;
-                }
-                widths.pop();
-                table.header_row.pop();
-                for row in &mut table.data_rows {
-                    row.pop();
-                }
+            let budget = max as usize;
+            for (i, width) in widths.iter_mut().enumerate() {
+                *width = (*width).max(floors[i]);
+            }
+            while 1 + 3 * col_count + widths.iter().sum::<usize>() > budget {
+                let widest = widths
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, w)| **w > floors[*i])
+                    .fold(None, |best: Option<usize>, (i, w)| match best {
+                        Some(best) if widths[best] >= *w => Some(best),
+                        _ => Some(i),
+                    });
+                let Some(widest) = widest else { break };
+                widths[widest] -= 1;
             }
         }
 
-        let active_cols = widths.len();
+        // A single-line horizontal border at the allocated widths.
+        let border = |left: char, joiner: char, right: char| {
+            let joiner = joiner.to_string();
+            let segments: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
+            format!("{left}{}{right}", segments.join(&joiner))
+        };
 
         // Top border: ╭──...──┬──...──╮
-        let top = format!(
-            "╭{}╮",
-            widths
-                .iter()
-                .map(|w| "─".repeat(w + 2))
-                .collect::<Vec<_>>()
-                .join("┬")
-        );
+        let top = border('╭', '┬', '╮');
         self.push_text(&top, StyleHint::Normal);
         self.flush_line();
 
-        // Header row: │ cell │ cell │
-        let header_hint = StyleHint::MdHeading(0);
-        self.push_text("│", StyleHint::Normal);
-        for (i, cell) in table.header_row.iter().enumerate() {
-            let cell_width = UnicodeWidthStr::width(cell.as_str());
-            let pad_count = widths[i].saturating_sub(cell_width);
-            let padded = format!(" {}{} ", cell, " ".repeat(pad_count));
-            self.push_text(&padded, header_hint.clone());
-            if i + 1 < active_cols {
-                self.push_text("│", StyleHint::Normal);
-            }
-        }
-        self.push_text("│", StyleHint::Normal);
-        self.flush_line();
+        // Header row: every physical line of a wrapped header cell keeps the
+        // generic heading hint, so a wrapped header reads as one heading block.
+        self.push_table_row(&table.header_row, &widths, StyleHint::MdHeading(0));
 
         // Separator: ├──...──┼──...──┤
-        let sep = format!(
-            "├{}┤",
-            widths
-                .iter()
-                .map(|w| "─".repeat(w + 2))
-                .collect::<Vec<_>>()
-                .join("┼")
-        );
+        let sep = border('├', '┼', '┤');
         self.push_text(&sep, StyleHint::Normal);
         self.flush_line();
 
-        // Data rows: │ cell │ cell │
+        // Data rows: │ cell │ cell │, one physical line per wrapped cell line.
         for row in &table.data_rows {
-            self.push_text("│", StyleHint::Normal);
-            for (i, cell) in row.iter().enumerate().take(active_cols) {
-                let col_width = widths.get(i).copied().unwrap_or(0);
-                let cell_width = UnicodeWidthStr::width(cell.as_str());
-                let pad_count = col_width.saturating_sub(cell_width);
-                let padded = format!(" {}{} ", cell, " ".repeat(pad_count));
-                self.push_text(&padded, StyleHint::Normal);
-                if i + 1 < active_cols {
-                    self.push_text("│", StyleHint::Normal);
-                }
-            }
-            self.push_text("│", StyleHint::Normal);
-            self.flush_line();
+            self.push_table_row(row, &widths, StyleHint::Normal);
         }
 
         // Bottom border: ╰──...──┴──...──╯
-        let bottom = format!(
-            "╰{}╯",
-            widths
-                .iter()
-                .map(|w| "─".repeat(w + 2))
-                .collect::<Vec<_>>()
-                .join("┴")
-        );
+        let bottom = border('╰', '┴', '╯');
         self.push_text(&bottom, StyleHint::Normal);
         self.flush_line();
+    }
+
+    /// Emit one logical table row at the already-allocated column widths: each
+    /// cell wraps into as many physical lines as its text needs and the row
+    /// spans the tallest cell's line count. Shorter cells pad with spaces, so
+    /// every physical line carries the complete border structure.
+    fn push_table_row(&mut self, cells: &[String], widths: &[usize], cell_hint: StyleHint) {
+        let wrapped: Vec<Vec<String>> = widths
+            .iter()
+            .enumerate()
+            .map(|(i, width)| {
+                let text = cells.get(i).map(String::as_str).unwrap_or("");
+                wrap_table_cell(text, *width)
+            })
+            .collect();
+        let row_count = wrapped.iter().map(Vec::len).max().unwrap_or(1).max(1);
+
+        for row_idx in 0..row_count {
+            self.push_text("│", StyleHint::Normal);
+            for (i, cell_lines) in wrapped.iter().enumerate() {
+                let text = cell_lines.get(row_idx).map(String::as_str).unwrap_or("");
+                let pad_count = widths[i].saturating_sub(UnicodeWidthStr::width(text));
+                let padded = format!(" {text}{} ", " ".repeat(pad_count));
+                self.push_text(&padded, cell_hint.clone());
+                self.push_text("│", StyleHint::Normal);
+            }
+            self.flush_line();
+        }
     }
 
     fn on_start(&mut self, tag: Tag<'_>) {

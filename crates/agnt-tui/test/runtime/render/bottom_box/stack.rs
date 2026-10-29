@@ -11,7 +11,7 @@ use crate::tui_renderer::layout;
 
 /// WHEN two or more prompts are stacked, THE bottom box SHALL render one
 /// `row_user_bg` padding row, the message rows back to back with a continuous
-/// `▏` gutter (no blank row between messages), one `row_user_bg` padding row,
+/// `╎` gutter (no blank row between messages), one `row_user_bg` padding row,
 /// a `base` gap row above the stack, and THEN the input box top border flush
 /// below the bottom padding row.
 #[tokio::test]
@@ -36,11 +36,11 @@ async fn test_bottom_box_queued_stack_paints_user_rows_gap_and_footer_status() -
     let lines: Vec<&str> = buffer.lines().collect();
     let first = lines
         .iter()
-        .position(|line| line.contains("▏ first-queued"))
+        .position(|line| line.contains("╎ first-queued"))
         .ok_or("should find the first stack row")? as u16;
     let second = lines
         .iter()
-        .position(|line| line.contains("▏ second-queued"))
+        .position(|line| line.contains("╎ second-queued"))
         .ok_or("should find the second stack row")? as u16;
     assert_eq!(
         second,
@@ -64,14 +64,19 @@ async fn test_bottom_box_queued_stack_paints_user_rows_gap_and_footer_status() -
     }
     for y in [first, second] {
         assert!(
-            lines[y as usize].contains('▏'),
+            lines[y as usize].contains('╎'),
             "every stack text row must carry the user rail\n{buffer}"
         );
     }
+    let rail_col = lines[first as usize]
+        .chars()
+        .position(|c| c == '╎')
+        .ok_or("the stack text row must carry the rail")?;
     for y in [padding_top, padding_bottom] {
-        assert!(
-            !lines[y as usize].contains('▏'),
-            "the padding rows bracketing the text must be blank\n{buffer}"
+        assert_eq!(
+            lines[y as usize].chars().nth(rail_col),
+            Some('╎'),
+            "the padding rows bracketing the text must carry the rail at the stack's first column\n{buffer}"
         );
     }
     assert_eq!(
@@ -85,7 +90,7 @@ async fn test_bottom_box_queued_stack_paints_user_rows_gap_and_footer_status() -
         "a base gap must sit above the stack"
     );
     assert!(
-        !lines[gap as usize].contains('▏'),
+        !lines[gap as usize].contains('╎'),
         "the gap row above the stack must be blank\n{buffer}"
     );
     let top = input_top_row(&driver)?;
@@ -115,7 +120,7 @@ async fn test_bottom_box_queued_stack_paints_user_rows_gap_and_footer_status() -
 }
 
 /// WHEN a queued prompt is wider than the wrap width, THE bottom box SHALL wrap
-/// it onto consecutive `row_user_bg` rows, SHALL carry the `▏` rail on every
+/// it onto consecutive `row_user_bg` rows, SHALL carry the `╎` rail on every
 /// wrapped row, SHALL bracket the text with one `row_user_bg` padding row on
 /// each side, and SHALL render every word (no `…` truncation).
 #[tokio::test]
@@ -140,7 +145,7 @@ async fn test_bottom_box_long_queued_prompt_wraps_with_rail_and_no_truncation() 
     let lines: Vec<&str> = buffer.lines().collect();
     let first = lines
         .iter()
-        .position(|line| line.contains("▏ word0"))
+        .position(|line| line.contains("╎ word0"))
         .ok_or("should find the first wrapped stack row")? as u16;
     let last = lines
         .iter()
@@ -152,7 +157,7 @@ async fn test_bottom_box_long_queued_prompt_wraps_with_rail_and_no_truncation() 
     );
     for y in first..=last {
         assert!(
-            lines[y as usize].contains('▏'),
+            lines[y as usize].contains('╎'),
             "every wrapped stack row must carry the rail\n{buffer}"
         );
         assert_eq!(
@@ -172,6 +177,10 @@ async fn test_bottom_box_long_queued_prompt_wraps_with_rail_and_no_truncation() 
     );
     let padding_top = first - 1;
     let padding_bottom = last + 1;
+    let rail_col = lines[first as usize]
+        .chars()
+        .position(|c| c == '╎')
+        .ok_or("the stack text row must carry the rail")?;
     for y in [padding_top, padding_bottom] {
         assert_eq!(
             cell_bg(&driver, 1, y),
@@ -183,9 +192,10 @@ async fn test_bottom_box_long_queued_prompt_wraps_with_rail_and_no_truncation() 
             Some(theme.row_user_bg),
             "a padding row must paint row_user_bg at the right edge"
         );
-        assert!(
-            !lines[y as usize].contains('▏'),
-            "a padding row must be blank\n{buffer}"
+        assert_eq!(
+            lines[y as usize].chars().nth(rail_col),
+            Some('╎'),
+            "a padding row must carry the rail at the stack's first column\n{buffer}"
         );
     }
     let top = input_top_row(&driver)?;
@@ -231,11 +241,11 @@ async fn test_bottom_box_stack_text_aligns_with_transcript_user_message() -> Res
         .ok_or("the queued prompt must render in the stack")?;
     let transcript_rail = lines[transcript_row]
         .chars()
-        .position(|c| c == '▏')
+        .position(|c| c == '╎')
         .ok_or("the transcript user row must paint the rail")?;
     let stack_rail = lines[stack_row]
         .chars()
-        .position(|c| c == '▏')
+        .position(|c| c == '╎')
         .ok_or("the stack row must paint the rail")?;
     assert_eq!(
         stack_rail, transcript_rail,

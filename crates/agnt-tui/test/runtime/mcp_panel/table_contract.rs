@@ -72,3 +72,31 @@ fn mcp_table_contract() -> Result<()> {
     assert_eq!(model.rows[2][2], "🔴");
     Ok(())
 }
+
+/// The Name cell is ellipsized to the column budget and returns a fitting
+/// name unchanged.
+#[test]
+fn mcp_table_contract_ellipsizes_long_server_names() -> Result<()> {
+    // -- Setup & Fixtures
+    let long_name = "a".repeat(60);
+    let fitting_name = "b".repeat(40);
+    let mut state = AppState::default();
+    state.status.mcp.set_mcp_servers(vec![
+        crate::state::McpServerState {
+            name: long_name,
+            state: McpServerUsabilityState::Enabled,
+        },
+        crate::state::McpServerState {
+            name: fitting_name.clone(),
+            state: McpServerUsabilityState::Disabled,
+        },
+    ]);
+
+    // -- Exec
+    let model = mcp_table_model_for_test(&state, 80, 10);
+
+    // -- Check: the table width 80 leaves 56 chars for the Name column.
+    assert_eq!(model.rows[0][0], format!("{}…", "a".repeat(55)));
+    assert_eq!(model.rows[1][0], fitting_name);
+    Ok(())
+}

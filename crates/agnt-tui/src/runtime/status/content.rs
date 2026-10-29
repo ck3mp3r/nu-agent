@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use crate::{rendering::theme::TuiTheme, state::AppState};
 
@@ -86,9 +87,11 @@ pub(crate) fn status_left_content(
     });
 
     let token_str = token_string_for_state(state).unwrap_or_default();
-    let token_segment_width = SEP_WIDTH + token_str.chars().count();
+    let token_segment_width = SEP_WIDTH + UnicodeWidthStr::width(token_str.as_str());
 
-    let agent_width = agent_str.as_ref().map(|s| SEP_WIDTH + s.chars().count());
+    let agent_width = agent_str
+        .as_ref()
+        .map(|s| SEP_WIDTH + UnicodeWidthStr::width(s.as_str()));
 
     let model_budget = {
         let after_tokens = budget.saturating_sub(token_segment_width);
@@ -104,7 +107,7 @@ pub(crate) fn status_left_content(
         }
     };
     let model_display = tail_ellipsize(model, model_budget);
-    let model_len_used = model_display.chars().count();
+    let model_len_used = UnicodeWidthStr::width(model_display.as_str());
 
     let mut spans: Vec<Span<'static>> = Vec::new();
     spans.push(Span::styled(indicator.to_string(), indicator_style));
@@ -112,7 +115,10 @@ pub(crate) fn status_left_content(
     spans.push(Span::styled(model_display, theme.subtle_meta));
 
     if let Some(agent_display) = agent_str {
-        let needed = prefix_width + model_len_used + SEP_WIDTH + agent_display.chars().count();
+        let needed = prefix_width
+            + model_len_used
+            + SEP_WIDTH
+            + UnicodeWidthStr::width(agent_display.as_str());
         if needed + token_segment_width <= available_width {
             spans.push(Span::styled(SEP.to_string(), theme.role_separator));
             spans.push(Span::styled(agent_display, theme.role_assistant));

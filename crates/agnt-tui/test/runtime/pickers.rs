@@ -5,14 +5,26 @@
 
 // region:    --- Modules
 
-#[path = "pickers/agents.rs"]
-mod agents;
+#[path = "pickers/agents/rows.rs"]
+mod agents_rows;
+
+#[path = "pickers/agents/footer.rs"]
+mod agents_footer;
 
 #[path = "pickers/models.rs"]
 mod models;
 
+#[path = "pickers/popup_bounds.rs"]
+mod popup_bounds;
+
+#[path = "pickers/sessions.rs"]
+mod sessions;
+
 #[path = "pickers/support.rs"]
 mod support;
+
+#[path = "pickers/themes.rs"]
+mod themes;
 
 // The monolith resolved `super::render::frame::*` and the picker cell
 // helpers against `crate::runtime::test`. Sub-files now resolve `super::`

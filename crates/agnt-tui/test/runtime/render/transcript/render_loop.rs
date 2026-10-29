@@ -32,7 +32,7 @@ fn render_loop_full_fill_user_rows_and_adjacent_separator_bleed_user_bg() -> Res
             role: MessageRole::User,
             markdown: "hi".to_string(),
         },
-        lane: L::Marker("▏"),
+        lane: L::Marker("╎"),
         fill: Fill::Full,
         status: None,
     });
@@ -78,11 +78,17 @@ fn render_loop_full_fill_user_rows_and_adjacent_separator_bleed_user_bg() -> Res
         Some(full_bg),
         "user row background must be continuous"
     );
-    // The separator row directly above the user block bleeds the user bg too.
+    // The separator row directly above the user block bleeds the user bg too,
+    // and carries the user rail at list-local 0.
     assert_eq!(
         cell_bg(&terminal, 1, separator_after_assistant as u16),
         Some(full_bg),
         "separator row adjacent to the incoming user block must bleed user bg"
+    );
+    assert_eq!(
+        cell_symbol(&terminal, 0, separator_after_assistant as u16),
+        "╎",
+        "the bleed row above the user block must carry the user rail"
     );
     // Non-user content stays on the base background.
     assert_eq!(
@@ -90,6 +96,89 @@ fn render_loop_full_fill_user_rows_and_adjacent_separator_bleed_user_bg() -> Res
         Some(base),
         "banner row must stay on the base background"
     );
+    Ok(())
+}
+
+/// WHEN the transcript renders a user block bracketed by non-user blocks, THE
+/// separator rows directly above and below the block SHALL carry `╎` at
+/// list-local 0 on the user background, WHILE every other separator row of each
+/// run SHALL stay blank on the base background (task 4d99956c).
+#[test]
+fn render_loop_bleed_rows_above_and_below_user_block_carry_rail() -> Result<()> {
+    // -- Setup & Fixtures: assistant, user, assistant. Each separator run is two
+    // rows, so the user box (one text row plus two bleed rows) has exactly one
+    // rail row above and one below.
+    let mut coord = RuntimeCoordinator::new(40, 20, None);
+    coord.state.transcript.push_block(Block {
+        source: BlockSource::Markdown {
+            role: MessageRole::Assistant,
+            markdown: "above".to_string(),
+        },
+        lane: L::Blank,
+        fill: Fill::None,
+        status: None,
+    });
+    coord.state.transcript.push_block(Block {
+        source: BlockSource::Markdown {
+            role: MessageRole::User,
+            markdown: "rail-user".to_string(),
+        },
+        lane: L::Marker("╎"),
+        fill: Fill::Full,
+        status: None,
+    });
+    coord.state.transcript.push_block(Block {
+        source: BlockSource::Markdown {
+            role: MessageRole::Assistant,
+            markdown: "below".to_string(),
+        },
+        lane: L::Blank,
+        fill: Fill::None,
+        status: None,
+    });
+
+    // -- Exec
+    let terminal = render_transcript_pane_to_backend(&mut coord, 40, 20, true, 0);
+
+    // -- Check: 1 + 2 + 1 + 2 + 1 rows, bottom-aligned in the 20-row viewport.
+    assert_eq!(
+        coord.state.scroll.total_visual_rows, 7,
+        "the fixture must render two 2-row separator runs"
+    );
+    let user_row = (0..20u16)
+        .find(|y| {
+            (0..40u16)
+                .map(|x| cell_symbol(&terminal, x, *y))
+                .collect::<String>()
+                .contains("rail-user")
+        })
+        .ok_or("the user block must render")?;
+    let full_bg = coord.theme.row_user_bg;
+    let base = coord.theme.base;
+    for (label, y) in [("above", user_row - 1), ("below", user_row + 1)] {
+        assert_eq!(
+            cell_symbol(&terminal, 0, y),
+            "╎",
+            "the bleed row {label} the user block must carry the user rail"
+        );
+        assert_eq!(
+            cell_bg(&terminal, 0, y),
+            Some(full_bg),
+            "the bleed row {label} the user block must paint the user background"
+        );
+    }
+    for (label, y) in [("above", user_row - 2), ("below", user_row + 2)] {
+        assert_eq!(
+            cell_symbol(&terminal, 0, y),
+            " ",
+            "the far separator row {label} the user block must stay blank"
+        );
+        assert_eq!(
+            cell_bg(&terminal, 0, y),
+            Some(base),
+            "the far separator row {label} the user block must stay on base"
+        );
+    }
     Ok(())
 }
 

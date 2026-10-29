@@ -211,8 +211,10 @@ impl ThemeName {
 pub struct TuiTheme {
     pub focus: Style,
     pub subtle_meta: Style,
-    /// Full-width background bar behind picker section titles (provider
-    /// headers in the model picker).
+    /// Foreground-only bold style behind picker section titles (provider
+    /// headers in the model picker, day headers in the session picker). It paints
+    /// no background: section titles carry their weight through the bold
+    /// modifier alone.
     pub picker_section_header: Style,
     /// Dimmed style for model picker rows whose context window cannot hold the
     /// session's consumed tokens.
@@ -325,7 +327,6 @@ impl TuiTheme {
             subtle_meta: fg(palette.overlay1),
             picker_section_header: Style::default()
                 .fg(palette.subtext0)
-                .bg(palette.surface1)
                 .add_modifier(Modifier::BOLD),
             picker_row_unavailable: fg_dim(palette.overlay1),
             input_prompt: fg(palette.blue),

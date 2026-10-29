@@ -23,7 +23,7 @@ pub(super) fn user_block() -> agnt_core::transcript::ir::Block {
             role: MessageRole::User,
             markdown: "hi".to_string(),
         },
-        lane: Lane::Marker("▏"),
+        lane: Lane::Marker("╎"),
         fill: Fill::Full,
         status: None,
     }
@@ -153,6 +153,15 @@ pub(super) fn render_transcript_pane_to_backend(
         match never {}
     }
     terminal
+}
+
+/// Symbol of the cell at `(x, y)` in the rendered buffer.
+pub(super) fn cell_symbol(
+    terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,
+    x: u16,
+    y: u16,
+) -> String {
+    terminal.backend().buffer()[(x, y)].symbol().to_string()
 }
 
 /// Background of the cell at `(x, y)` in the rendered buffer.

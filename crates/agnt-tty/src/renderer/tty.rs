@@ -62,7 +62,7 @@ pub fn layout(block: &Block, ctx: &FrameContext, use_color: bool) -> String {
 /// text equivalent (assistant, banner, spacer).
 fn lane_text_prefix(icon: &str) -> &'static str {
     match icon {
-        "▏" => "[user] ",
+        "╎" => "[user] ",
         "⚙" => "[tool] ",
         "~" => "[compaction] ",
         "·" => "[system] ",

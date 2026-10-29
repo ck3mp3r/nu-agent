@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
 const BUSY_SPINNER_FRAMES: &[&str] = &["◐", "◓", "◑", "◒"];
 const IDLE_INDICATOR: &str = "○";
 
@@ -9,8 +11,7 @@ const IDLE_INDICATOR: &str = "○";
 /// narrow to fit even the icon plus a single label character, the icon is
 /// dropped and the raw label is ellipsized as before.
 pub(super) fn tail_ellipsize(input: &str, max_chars: usize) -> String {
-    let count = input.chars().count();
-    if count <= max_chars {
+    if UnicodeWidthStr::width(input) <= max_chars {
         return input.to_string();
     }
 
@@ -23,20 +24,25 @@ pub(super) fn tail_ellipsize(input: &str, max_chars: usize) -> String {
     }
 
     let keep = max_chars - 3;
-    let suffix = input
-        .chars()
-        .skip(count.saturating_sub(keep))
-        .collect::<String>();
-    format!("...{suffix}")
+    let mut start = input.len();
+    let mut width = 0usize;
+    for (idx, ch) in input.char_indices().rev() {
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + char_width > keep {
+            break;
+        }
+        width += char_width;
+        start = idx;
+    }
+    format!("...{}", &input[start..])
 }
 
-pub(super) fn ellipsize(input: &str, max_chars: usize) -> String {
+pub(in crate::runtime) fn ellipsize(input: &str, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();
     }
 
-    let count = input.chars().count();
-    if count <= max_chars {
+    if UnicodeWidthStr::width(input) <= max_chars {
         return input.to_string();
     }
 
@@ -45,7 +51,16 @@ pub(super) fn ellipsize(input: &str, max_chars: usize) -> String {
     }
 
     let keep = max_chars - 1;
-    let mut out = input.chars().take(keep).collect::<String>();
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in input.chars() {
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + char_width > keep {
+            break;
+        }
+        width += char_width;
+        out.push(ch);
+    }
     out.push('…');
     out
 }

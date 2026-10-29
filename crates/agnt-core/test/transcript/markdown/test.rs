@@ -26,7 +26,7 @@ mod render_lines;
 #[path = "test/support.rs"]
 mod support;
 
-#[path = "test/tables.rs"]
+#[path = "test/tables/test.rs"]
 mod tables;
 
 #[path = "test/unwrap_fenced.rs"]

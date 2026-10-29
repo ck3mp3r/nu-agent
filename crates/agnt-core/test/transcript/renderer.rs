@@ -79,7 +79,7 @@ fn renderable_impls_answer_three_questions_for_message_spacer_banner() {
 
     // -- Exec & Check
     // User: marker lane, full fill.
-    assert_eq!(user.lane(), Lane::Marker("▏"));
+    assert_eq!(user.lane(), Lane::Marker("╎"));
     assert_eq!(user.fill(), Fill::Full);
     // Assistant: blank lane, no fill.
     assert_eq!(assistant.lane(), Lane::Blank);

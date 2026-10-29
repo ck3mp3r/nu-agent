@@ -363,7 +363,7 @@ fn filled_content_predicates_table() {
                     role: MessageRole::User,
                     markdown: "hi".to_string(),
                 },
-                lane: Lane::Marker("▏"),
+                lane: Lane::Marker("╎"),
                 fill: Fill::Full,
                 status: None,
             },

@@ -25,7 +25,7 @@ impl Renderable for Message {
 
     fn lane(&self) -> Lane {
         match self.role {
-            MessageRole::User => Lane::Marker("▏"),
+            MessageRole::User => Lane::Marker("╎"),
             MessageRole::Assistant => Lane::Blank,
         }
     }

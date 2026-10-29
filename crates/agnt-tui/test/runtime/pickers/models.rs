@@ -11,6 +11,21 @@ mod cells;
 #[path = "models/columns.rs"]
 mod columns;
 
+#[path = "models/ellipsis.rs"]
+mod ellipsis;
+
+#[path = "models/footer/identity.rs"]
+mod identity;
+
+#[path = "models/footer/wrap.rs"]
+mod wrap;
+
+#[path = "models/footer/visibility.rs"]
+mod visibility;
+
+#[path = "models/footer/style.rs"]
+mod style;
+
 #[path = "models/structure/dim.rs"]
 mod dim;
 

@@ -1,11 +1,13 @@
 use ratatui::{
-    layout::Rect,
+    layout::{Constraint, Rect},
     text::{Line, Span, Text},
     widgets::Paragraph,
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     rendering::theme::TuiTheme,
+    runtime::{render::frame::picker_column_budgets, status::format::ellipsize},
     state::{AppState, PickerPayload},
 };
 
@@ -22,45 +24,19 @@ pub(super) fn render_permission_controls(frame: &mut ratatui::Frame, area: Rect,
     frame.render_widget(widget, area);
 }
 
-pub(super) fn wrapped_visual_rows_for_rendered_line(
-    rendered_line: &Line<'_>,
-    content_width: usize,
-) -> usize {
-    let width = rendered_line
-        .spans
-        .iter()
-        .map(|span| span.content.chars().count())
-        .sum::<usize>()
-        .max(1);
-    width.div_ceil(content_width.max(1))
-}
-
-pub(super) fn help_panel_total_visual_rows(lines: &[Line<'_>], content_width: usize) -> usize {
-    lines
-        .iter()
-        .map(|line| wrapped_visual_rows_for_rendered_line(line, content_width.max(1)))
-        .sum()
-}
-
-pub(super) fn help_panel_max_scroll(
-    lines: &[Line<'_>],
-    viewport_height: u16,
-    content_width: u16,
-) -> usize {
+pub(super) fn help_panel_max_scroll(lines: &[Line<'_>], viewport_height: u16) -> usize {
     let visible_rows = viewport_height.max(1) as usize;
-    let total_rows = help_panel_total_visual_rows(lines, content_width.max(1) as usize);
-    total_rows.saturating_sub(visible_rows)
+    lines.len().saturating_sub(visible_rows)
 }
 
 pub(super) fn help_panel_overflow_cue(
     lines: &[Line<'_>],
     viewport_height: u16,
-    content_width: u16,
     scroll: usize,
 ) -> String {
     let keys = scroll_panel_action_keys();
     let visible_rows = viewport_height.max(1) as usize;
-    let total_rows = help_panel_total_visual_rows(lines, content_width.max(1) as usize);
+    let total_rows = lines.len();
     if total_rows <= visible_rows {
         return keys.to_string();
     }
@@ -70,6 +46,94 @@ pub(super) fn help_panel_overflow_cue(
     let start = current.saturating_add(1);
     let end = current.saturating_add(visible_rows).min(total_rows);
     format!("{keys} · {start}-{end} / {total_rows}")
+}
+
+/// A popup title: the base label with its optional navigation keys and
+/// optional overflow cue joined into `{base} ({keys} · {cue})`, bounded to the
+/// popup's title row. The row spans the popup width minus the two border
+/// corners, and a block title past that width hard-clips without a marker.
+pub(super) fn popup_title(
+    base: &str,
+    keys: Option<&str>,
+    cue: Option<&str>,
+    popup_width: u16,
+) -> String {
+    let hint = match (keys, cue) {
+        (Some(keys), Some(cue)) => Some(format!("{keys} · {cue}")),
+        (Some(keys), None) => Some(keys.to_string()),
+        (None, Some(cue)) => Some(cue.to_string()),
+        (None, None) => None,
+    };
+    let title = match hint {
+        Some(hint) => format!("{base} ({hint})"),
+        None => base.to_string(),
+    };
+    ellipsize(&title, popup_width.saturating_sub(2) as usize)
+}
+
+/// The scroll-panel title (Help/Status/Skills): the panel label with its
+/// position cue and no keys hint.
+pub(super) fn scroll_panel_title(base: &str, cue: &str, popup_width: u16) -> String {
+    popup_title(base, None, Some(cue), popup_width)
+}
+
+/// Wrap every panel line to `width` display columns so the lines returned here
+/// are exactly the rows the panel paints: the render drops `Paragraph`'s own
+/// wrap and the scroll math counts these lines.
+pub(super) fn wrap_panel_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .flat_map(|line| wrap_panel_line(line, width))
+        .collect()
+}
+
+/// Wrap one rendered line to `width` display columns, keeping each span's
+/// style: the wrapped rows are byte substrings of the joined span text, so the
+/// forward scan slices the original spans at each row's range.
+fn wrap_panel_line(line: Line<'static>, width: u16) -> Vec<Line<'static>> {
+    let width_cells = usize::from(width.max(1));
+    if line.width() <= width_cells {
+        return vec![line];
+    }
+
+    let text = line.to_string();
+    let mut rows = Vec::new();
+    let mut cursor = 0usize;
+    for row in wrap_at_ascii_spaces(&text, width) {
+        if row.is_empty() {
+            rows.push(Line::default());
+            continue;
+        }
+        let Some(start) = text[cursor..].find(&row).map(|rel| cursor + rel) else {
+            rows.push(Line::from(row));
+            continue;
+        };
+        let end = start + row.len();
+        cursor = end;
+        rows.push(Line::from(slice_line_spans(&line.spans, start, end)));
+    }
+    rows
+}
+
+/// The spans covering byte range `[start, end)` of the joined span text.
+fn slice_line_spans(spans: &[Span<'static>], start: usize, end: usize) -> Vec<Span<'static>> {
+    let mut result = Vec::new();
+    let mut offset = 0usize;
+    for span in spans {
+        let span_start = offset;
+        let span_end = offset + span.content.len();
+        offset = span_end;
+        let from = start.max(span_start);
+        let to = end.min(span_end);
+        if from >= to {
+            continue;
+        }
+        result.push(Span::styled(
+            span.content[from - span_start..to - span_start].to_string(),
+            span.style,
+        ));
+    }
+    result
 }
 
 /// Navigation keys every scrollable panel shows in its title.
@@ -82,6 +146,12 @@ pub(super) fn picker_action_keys() -> &'static str {
     "↑/↓ · Enter · Esc"
 }
 
+/// The hint line a picker shows above its table: the literal prefix and the
+/// query the user has typed so far.
+pub(super) fn picker_query_line(query: &str) -> String {
+    format!("Query: {query}")
+}
+
 /// The title of the inline-slash suggestions popup under the input box.
 pub(super) fn inline_slash_title() -> String {
     format!("Commands ({})", picker_action_keys())
@@ -91,35 +161,49 @@ pub(super) fn command_palette_action_keys() -> &'static str {
     picker_action_keys()
 }
 
-pub(super) fn command_palette_title(overflow_cue: Option<&str>) -> String {
-    let base = "Command Palette";
-    let global_hint = command_palette_action_keys();
-    if let Some(cue) = overflow_cue {
-        format!("{base} ({global_hint} · {cue})")
-    } else {
-        format!("{base} ({global_hint})")
-    }
+/// The command palette title: its label, the global keys hint, and the
+/// optional overflow cue.
+pub(super) fn command_palette_title(overflow_cue: Option<&str>, popup_width: u16) -> String {
+    popup_title(
+        "Command Palette",
+        Some(command_palette_action_keys()),
+        overflow_cue,
+        popup_width,
+    )
+}
+
+/// The MCPs panel title: the panel label with its optional overflow cue and no
+/// keys hint.
+pub(super) fn mcp_panel_title(overflow_cue: Option<&str>, popup_width: u16) -> String {
+    popup_title("MCPs", None, overflow_cue, popup_width)
 }
 
 pub(super) const MODEL_PICKER_EMPTY_STATE_MESSAGE: &str =
     "No models available in cached startup config.";
 pub(super) const AGENT_PICKER_EMPTY_STATE_MESSAGE: &str =
     "No agent personas found. Create .agents/<name>.md files.";
+pub(super) const THEME_PICKER_EMPTY_STATE_MESSAGE: &str = "No themes available";
 
-pub(crate) fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'static>>) {
+pub(crate) fn skills_panel_lines(
+    state: &AppState,
+    width: u16,
+) -> (&'static str, Vec<Line<'static>>) {
     if state.status.mcp.skills_discovery_failed() {
         return (
             "Skills",
-            vec![Line::from(
-                "Skills discovery unavailable. Showing no skills.",
-            )],
+            wrap_panel_lines(
+                vec![Line::from(
+                    "Skills discovery unavailable. Showing no skills.",
+                )],
+                width,
+            ),
         );
     }
 
     if state.status.mcp.discoverable_skills().is_empty() {
         return (
             "Skills",
-            vec![Line::from("No discoverable skills available.")],
+            wrap_panel_lines(vec![Line::from("No discoverable skills available.")], width),
         );
     }
 
@@ -132,7 +216,7 @@ pub(crate) fn skills_panel_lines(state: &AppState) -> (&'static str, Vec<Line<'s
             .unwrap_or_default();
         Line::from(format!("- {} ({}){suffix}", skill.name, skill.source))
     }));
-    ("Skills", lines)
+    ("Skills", wrap_panel_lines(lines, width))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -340,6 +424,48 @@ pub(super) fn mcp_selected_details_lines(
     }
 }
 
+/// The rows the MCP details pane paints: each detail line wrapped to `width`
+/// display columns and the whole stack cut to the ladder's `max_rows` budget.
+/// Rendering these rows without `Paragraph`'s own wrap keeps measurement and
+/// rendering in lockstep — the rows returned here are exactly the rows the pane
+/// paints, so the details rect can be sized to them.
+pub(crate) fn mcp_details_rows(
+    lines: &[Line<'static>],
+    width: u16,
+    max_rows: u16,
+) -> Vec<Line<'static>> {
+    let max_rows = usize::from(max_rows);
+    let width_cells = usize::from(width);
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    for line in lines {
+        if rows.len() >= max_rows {
+            break;
+        }
+        // A fitting line renders verbatim: the tool rows carry a continuation
+        // indent the wrap would trim, and re-wrapping them buys nothing.
+        if line.width() <= width_cells {
+            rows.push(line.clone());
+            continue;
+        }
+        // An over-wide line is wrapped by hand so the leading indent (a tool
+        // row's continuation offset) survives on every wrapped row and the body
+        // wraps in the width left after it.
+        let text = line.to_string();
+        let indent_len = text
+            .len()
+            .saturating_sub(text.trim_start_matches(' ').len());
+        let (indent, body) = text.split_at(indent_len);
+        let body_width = width.saturating_sub(indent_len as u16);
+        rows.extend(
+            wrap_at_ascii_spaces(body, body_width)
+                .into_iter()
+                .map(|row| Line::from(format!("{indent}{row}"))),
+        );
+    }
+    rows.truncate(max_rows);
+    rows
+}
+
 pub(crate) fn mcp_details_height_for_inner_height(inner_height: u16) -> u16 {
     match inner_height {
         0..=4 => 0,
@@ -352,11 +478,73 @@ pub(crate) fn mcp_details_height_for_inner_height(inner_height: u16) -> u16 {
     }
 }
 
+pub(crate) fn picker_details_height_for_inner_height(inner_height: u16) -> u16 {
+    match inner_height {
+        0..=7 => 0,
+        8..=12 => 2,
+        _ => 3,
+    }
+}
+
+/// The greedy first-fit wrap shared by the pickers' footer and the MCP
+/// details rows: breaks on ASCII spaces only and splits overlong words at the
+/// column boundary — the same fill ratatui's `Wrap` uses — so text with no
+/// spaces (a model identity, a long error) keeps every character across rows
+/// instead of breaking at a `/` or `-` separator.
+pub(crate) fn wrap_at_ascii_spaces(text: &str, width: u16) -> Vec<String> {
+    textwrap::wrap(
+        text,
+        textwrap::Options::new(usize::from(width.max(1)))
+            .word_separator(textwrap::WordSeparator::AsciiSpace)
+            .word_splitter(textwrap::WordSplitter::NoHyphenation),
+    )
+    .into_iter()
+    .map(|line| line.into_owned())
+    .collect()
+}
+
 pub(crate) fn mcp_panel_controls_line() -> &'static str {
     "↑/↓ select · type to filter · Enter/Space toggle · Esc close"
 }
 
-pub(super) fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableModel {
+/// The MCP table's column constraints: the server name, the visible tool count,
+/// and the status icon. Shared with the renderer so the ellipsize budgets come
+/// from the constraints the table resolves.
+pub(super) const MCP_TABLE_COLUMNS: [Constraint; 3] = [
+    Constraint::Min(18),
+    Constraint::Length(14),
+    Constraint::Length(MCP_STATUS_COLUMN_WIDTH),
+];
+
+/// Column spacing of the MCP table.
+pub(super) const MCP_TABLE_COLUMN_SPACING: u16 = 1;
+
+/// The selection symbol every picker table paints in the selection column it
+/// carves out before it lays out the data columns; its width is that column's
+/// width.
+pub(crate) const PICKER_HIGHLIGHT_SYMBOL: &str = "❯ ";
+
+/// The MCP table's highlight symbol; its width is the selection column the
+/// table carves out before it lays out the data columns.
+pub(super) const MCP_TABLE_HIGHLIGHT_SYMBOL: &str = PICKER_HIGHLIGHT_SYMBOL;
+
+pub(super) fn mcp_table_model(
+    state: &AppState,
+    table_width: u16,
+    table_height: u16,
+) -> McpTableModel {
+    // The table carves out the selection column and the column spacing before
+    // it resolves the constraints, so derive the Name cell budget from the
+    // width the solver gives that column instead of assuming the fixed
+    // overhead fits: below a 42-column table the Name minimum pins that column
+    // and the budget follows it down instead of undershooting.
+    let budgets = picker_column_budgets(
+        table_width,
+        UnicodeWidthStr::width(MCP_TABLE_HIGHLIGHT_SYMBOL) as u16,
+        MCP_TABLE_COLUMN_SPACING,
+        &MCP_TABLE_COLUMNS,
+    );
+    let name_budget = budgets.first().copied().unwrap_or_default();
     let columns = vec![
         "Name".to_string(),
         "Visible tools".to_string(),
@@ -375,7 +563,7 @@ pub(super) fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableMo
                 .mcp_visible_tool_count_for_server_name(server.name.as_str())
                 .to_string();
             [
-                server.name.clone(),
+                ellipsize(&server.name, name_budget),
                 visible_tools,
                 server.state.icon().to_string(),
             ]
@@ -435,10 +623,13 @@ pub(super) fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableMo
         None
     };
 
+    // The controls line renders into a one-row rect with no wrap, so it must
+    // fit the rendered width itself — an over-wide line hard-clips without a
+    // marker at the popup's minimum width.
     let controls_line = if query.is_empty() {
-        mcp_panel_controls_line().to_string()
+        ellipsize(mcp_panel_controls_line(), table_width as usize)
     } else {
-        format!("Query: {query}")
+        ellipsize(&picker_query_line(query), table_width as usize)
     };
 
     McpTableModel {
@@ -450,9 +641,22 @@ pub(super) fn mcp_table_model(state: &AppState, table_height: u16) -> McpTableMo
     }
 }
 
+/// The command palette table's column constraints: the Action label and the
+/// Summary text. Shared with the renderer so the ellipsize budgets come from
+/// the constraints the table resolves.
+pub(super) const COMMAND_PALETTE_COLUMNS: [Constraint; 2] =
+    [Constraint::Length(8), Constraint::Min(12)];
+
+/// Column spacing of the command palette table.
+pub(super) const COMMAND_PALETTE_COLUMN_SPACING: u16 = 2;
+
+/// The command palette's highlight symbol; its width is the selection column
+/// the table carves out before it lays out the data columns.
+pub(super) const COMMAND_PALETTE_HIGHLIGHT_SYMBOL: &str = PICKER_HIGHLIGHT_SYMBOL;
+
 pub(super) fn command_palette_table_model(
     state: &AppState,
-    popup_width: u16,
+    table_width: u16,
     popup_height: u16,
 ) -> CommandPaletteTableModel {
     let Some(picker_state) = state.picker.active_state() else {
@@ -465,7 +669,19 @@ pub(super) fn command_palette_table_model(
         };
     };
     let actions = picker_state.filtered();
-    let _ = popup_width;
+    // The table carves out the selection column and the column spacing before
+    // it resolves the constraints, so derive each cell budget from the width
+    // the solver gives that column instead of assuming the constraints fit:
+    // below a 24-column table the Summary minimum pins that column and the
+    // Action column takes the remainder.
+    let budgets = picker_column_budgets(
+        table_width,
+        UnicodeWidthStr::width(COMMAND_PALETTE_HIGHLIGHT_SYMBOL) as u16,
+        COMMAND_PALETTE_COLUMN_SPACING,
+        &COMMAND_PALETTE_COLUMNS,
+    );
+    let action_budget = budgets.first().copied().unwrap_or_default();
+    let summary_budget = budgets.get(1).copied().unwrap_or_default();
     let columns = vec!["Action".to_string(), "Summary".to_string()];
 
     let all_rows = actions
@@ -476,8 +692,8 @@ pub(super) fn command_palette_table_model(
                 _ => unreachable!(),
             };
             [
-                action.label().to_string(),
-                action.summary().to_string(),
+                ellipsize(action.label(), action_budget),
+                ellipsize(action.summary(), summary_budget),
                 String::new(),
             ]
         })
@@ -526,7 +742,7 @@ pub(super) fn command_palette_table_model(
     };
 
     CommandPaletteTableModel {
-        query_line: format!("Query: {}", picker_state.query),
+        query_line: picker_query_line(&picker_state.query),
         columns,
         rows,
         selected,

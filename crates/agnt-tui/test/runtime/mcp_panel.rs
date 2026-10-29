@@ -5,6 +5,12 @@
 
 // region:    --- Modules
 
+#[path = "mcp_panel/controls_line.rs"]
+mod controls_line;
+
+#[path = "mcp_panel/details_bottom_pin.rs"]
+mod details_bottom_pin;
+
 #[path = "mcp_panel/details_layout.rs"]
 mod details_layout;
 
@@ -17,8 +23,14 @@ mod selected_details;
 #[path = "mcp_panel/table_contract.rs"]
 mod table_contract;
 
+#[path = "mcp_panel/table_ellipsis.rs"]
+mod table_ellipsis;
+
 #[path = "mcp_panel/table_model.rs"]
 mod table_model;
+
+#[path = "mcp_panel/title_ellipsis.rs"]
+mod title_ellipsis;
 
 // The monolith resolved `super::<item>` against `crate::runtime`.
 // Sub-files now resolve `super::` against this module root, so the shared

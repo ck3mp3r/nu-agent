@@ -1,8 +1,21 @@
 use ratatui::text::Line;
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::state::{AppState, PickerPayload};
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// The cue shape the overflow path builds: the keys hint plus the position
+/// tail, which pushes the Status title past its title row at the popup's
+/// minimum width.
+const SCROLL_PANEL_OVERFLOW_CUE: &str = "↑/↓ · PgUp/PgDn · Esc · 1-6 / 128";
+
+/// The keys-only cue every scroll panel shows while its content fits.
+const SCROLL_PANEL_KEYS_CUE: &str = "↑/↓ · PgUp/PgDn · Esc";
+
 pub(crate) fn help_panel_max_scroll_for_test(lines: &[Line<'_>], viewport_height: u16) -> usize {
-    crate::runtime::panels::help_panel_max_scroll(lines, viewport_height, 80)
+    crate::runtime::panels::help_panel_max_scroll(lines, viewport_height)
 }
 
 pub(crate) fn help_panel_overflow_cue_for_test(
@@ -10,31 +23,30 @@ pub(crate) fn help_panel_overflow_cue_for_test(
     viewport_height: u16,
     scroll: usize,
 ) -> String {
-    crate::runtime::panels::help_panel_overflow_cue(lines, viewport_height, 80, scroll)
+    crate::runtime::panels::help_panel_overflow_cue(lines, viewport_height, scroll)
 }
 
-pub(crate) fn help_panel_visible_window_for_test(
-    lines: &[Line<'_>],
+pub(crate) fn help_panel_visible_window_for_test<'a>(
+    lines: &[Line<'a>],
     viewport_height: u16,
     scroll: usize,
-) -> Vec<Line<'static>> {
+) -> Vec<Line<'a>> {
     crate::runtime::panels_test::help_panel_visible_window(
         lines,
-        80,
         scroll,
         viewport_height.max(1) as usize,
     )
 }
 
 /// Returns the effective (clamped) scroll offset that would be passed to
-/// `render_scroll_text_panel` for the Help panel given a terminal area and
+/// `render_scroll_text_panel` for the Help panel given a viewport inner size and
 /// a requested scroll offset. The clamp uses `help_panel_max_scroll`, which
-/// accounts for word-wrap using the actual content width.
+/// counts the lines the panel builder wrapped at the viewport width — the same
+/// rows the render paints.
 ///
-/// Status and Skills panels share the same clamp logic; only Help additionally
-/// shows an overflow cue in the title. The cue is omitted for Status/Skills
-/// because those panels are short and rarely scroll in practice — add a cue
-/// there if that assumption changes.
+/// The Status and Skills panels share the clamp and the overflow cue: their
+/// lines are wrapped at the same viewport width, so their titles report true
+/// ranges.
 pub(crate) fn help_panel_scroll_offset_for_test(
     viewport_height: u16,
     viewport_width: u16,
@@ -42,11 +54,11 @@ pub(crate) fn help_panel_scroll_offset_for_test(
 ) -> usize {
     let (_title, lines) = crate::runtime::status::help::help_panel_lines(
         &crate::rendering::theme::TuiTheme::default(),
+        viewport_width,
     );
     requested_scroll.min(crate::runtime::panels::help_panel_max_scroll(
         &lines,
         viewport_height,
-        viewport_width,
     ))
 }
 
@@ -56,11 +68,10 @@ pub(crate) fn status_panel_scroll_offset_for_test(
     viewport_width: u16,
     requested_scroll: usize,
 ) -> usize {
-    let (_title, lines) = crate::runtime::status::help::status_panel_lines(state);
+    let (_title, lines) = crate::runtime::status::help::status_panel_lines(state, viewport_width);
     requested_scroll.min(crate::runtime::panels::help_panel_max_scroll(
         &lines,
         viewport_height,
-        viewport_width,
     ))
 }
 
@@ -70,11 +81,10 @@ pub(crate) fn skills_panel_scroll_offset_for_test(
     viewport_width: u16,
     requested_scroll: usize,
 ) -> usize {
-    let (_title, lines) = crate::runtime::panels::skills_panel_lines(state);
+    let (_title, lines) = crate::runtime::panels::skills_panel_lines(state, viewport_width);
     requested_scroll.min(crate::runtime::panels::help_panel_max_scroll(
         &lines,
         viewport_height,
-        viewport_width,
     ))
 }
 
@@ -115,11 +125,10 @@ pub(crate) fn mcp_selected_details_lines_for_test(
 
 pub(crate) fn mcp_table_model_for_test(
     state: &AppState,
-    popup_width: u16,
-    popup_height: u16,
+    table_width: u16,
+    table_height: u16,
 ) -> McpTableModelForTest {
-    let _ = popup_width;
-    let model = crate::runtime::panels::mcp_table_model(state, popup_height);
+    let model = crate::runtime::panels::mcp_table_model(state, table_width, table_height);
     McpTableModelForTest {
         controls_line: model.controls_line,
         columns: model.columns,
@@ -140,11 +149,11 @@ pub(crate) struct CommandPaletteTableModelForTest {
 
 pub(crate) fn command_palette_table_model_for_test(
     state: &AppState,
-    popup_width: u16,
+    table_width: u16,
     popup_height: u16,
 ) -> CommandPaletteTableModelForTest {
     let model =
-        crate::runtime::panels::command_palette_table_model(state, popup_width, popup_height);
+        crate::runtime::panels::command_palette_table_model(state, table_width, popup_height);
     CommandPaletteTableModelForTest {
         query_line: model.query_line,
         columns: model.columns,
@@ -324,4 +333,95 @@ pub(crate) fn agent_picker_row_cells_for_test(state: &AppState) -> Vec<Vec<Strin
             vec![name, description.unwrap_or_default(), active.to_string()]
         })
         .collect()
+}
+
+/// At the Status popup's minimum width the position tail pushes the composed
+/// title past the title row, so the title ellipsizes to that row with a
+/// trailing marker instead of hard-clipping at the frame border.
+#[test]
+fn test_panels_scroll_panel_title_ellipsizes_overflow_cue() -> Result<()> {
+    // -- Setup & Fixtures
+    let unbounded = format!("Status ({SCROLL_PANEL_OVERFLOW_CUE})");
+    let row_width = 40usize;
+
+    // -- Exec
+    let title = crate::runtime::panels::scroll_panel_title("Status", SCROLL_PANEL_OVERFLOW_CUE, 42);
+
+    // -- Check
+    assert!(
+        UnicodeWidthStr::width(unbounded.as_str()) > row_width,
+        "the fixture must overflow the {row_width}-cell title row; unbounded: {unbounded:?}"
+    );
+    assert_eq!(
+        UnicodeWidthStr::width(title.as_str()),
+        row_width,
+        "the title must fill the {row_width}-cell title row; title: {title:?}"
+    );
+    assert!(
+        title.ends_with('…'),
+        "the overflowing title must ellipsize with a marker; title: {title:?}"
+    );
+    Ok(())
+}
+
+/// The keys-only Status title fits the title row at the popup's minimum width,
+/// so it renders verbatim with no marker.
+#[test]
+fn test_panels_scroll_panel_title_renders_fitting_cue_verbatim() -> Result<()> {
+    // -- Setup & Fixtures
+    let expected = format!("Status ({SCROLL_PANEL_KEYS_CUE})");
+    let row_width = 40usize;
+
+    // -- Exec
+    let title = crate::runtime::panels::scroll_panel_title("Status", SCROLL_PANEL_KEYS_CUE, 42);
+
+    // -- Check
+    assert!(
+        UnicodeWidthStr::width(expected.as_str()) <= row_width,
+        "the fixture must fit the {row_width}-cell title row; expected: {expected:?}"
+    );
+    assert_eq!(
+        title, expected,
+        "a fitting title must render verbatim with no marker"
+    );
+    Ok(())
+}
+
+/// The title never exceeds the title row across the Status popup's whole width
+/// range: it truncates to the row while it overflows and renders whole once the
+/// overflow cue fits.
+#[test]
+fn test_panels_scroll_panel_title_fits_title_row_at_every_popup_width() -> Result<()> {
+    // -- Setup & Fixtures: the unbounded title the renderer would clip.
+    let unbounded = format!("Status ({SCROLL_PANEL_OVERFLOW_CUE})");
+    let unbounded_width = UnicodeWidthStr::width(unbounded.as_str());
+
+    // -- Exec & Check: popup widths 42..=72 span the Status popup's range.
+    for popup_width in 42u16..=72 {
+        let title = crate::runtime::panels::scroll_panel_title(
+            "Status",
+            SCROLL_PANEL_OVERFLOW_CUE,
+            popup_width,
+        );
+        let row_width = usize::from(popup_width.saturating_sub(2));
+        assert_eq!(
+            UnicodeWidthStr::width(title.as_str()),
+            unbounded_width.min(row_width),
+            "the title must fill the {row_width}-cell title row at popup width \
+             {popup_width}; title: {title:?}"
+        );
+        if unbounded_width > row_width {
+            assert!(
+                title.ends_with('…'),
+                "the overflowing title must truncate at popup width {popup_width}; \
+                 title: {title:?}"
+            );
+        } else {
+            assert_eq!(
+                title, unbounded,
+                "the fitting title must render verbatim at popup width {popup_width}"
+            );
+        }
+    }
+    Ok(())
 }

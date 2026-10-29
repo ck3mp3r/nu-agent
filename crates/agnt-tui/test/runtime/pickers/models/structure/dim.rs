@@ -39,7 +39,7 @@ async fn model_picker_dims_rows_the_session_does_not_fit() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,
@@ -99,7 +99,7 @@ async fn model_picker_never_dims_the_active_model() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Models,

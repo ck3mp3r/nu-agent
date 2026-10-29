@@ -12,7 +12,7 @@ fn yank_payload_matches_displayed_rows() -> Result<()> {
             role: MessageRole::User,
             markdown: "a user prompt long enough to wrap at the narrow pane width".to_string(),
         },
-        lane: L::Marker("▏"),
+        lane: L::Marker("╎"),
         fill: Fill::Full,
         status: None,
     });

@@ -1,3 +1,6 @@
+//! Agent picker rows: the active marker, the description column, the
+//! ellipsize budget, and the row-cell shape.
+
 use super::*;
 
 #[tokio::test]
@@ -43,7 +46,7 @@ async fn agent_picker_renders_active_marker_from_identity() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Agents,
@@ -102,7 +105,7 @@ async fn agent_picker_renders_description_column() -> Result<()> {
     driver.advance_with_frame(&[]).await?;
 
     // -- Check
-    let area = ratatui::layout::Rect::new(0, 0, 120, 30);
+    let area = driver.state().scroll.transcript_area;
     let popup = super::render::frame::modal_rect_for_panel(
         area,
         super::render::frame::ModalPanelKind::Agents,
@@ -126,6 +129,50 @@ async fn agent_picker_renders_description_column() -> Result<()> {
         !lines[none_row].contains("Runs reviews"),
         "None-description row must not render a description; row: {:?}\n{popup_text}",
         lines[none_row]
+    );
+    Ok(())
+}
+
+/// A description wider than the Description column renders ellipsized inside
+/// the popup at the minimum popup width.
+#[tokio::test]
+async fn agent_picker_ellipsizes_long_description_at_narrow_width() -> Result<()> {
+    // -- Setup & Fixtures
+    let description = "d".repeat(60);
+    let mut driver = RenderLoopDriver::new(58, 24);
+    driver.coordinator_mut().state.set_picker_options(
+        ActivePicker::Agent,
+        vec![agnt_core::protocol::picker::AgentPickerOption {
+            name: "reviewer".to_string(),
+            description: Some(description),
+            display: "reviewer".to_string(),
+            builtin: false,
+        }],
+    );
+    driver
+        .coordinator_mut()
+        .state
+        .picker
+        .open(ActivePicker::Agent);
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check: popup width 56 → table width 54. The two Min columns equalize
+    // to (54 - 5) / 2 = 24 chars, so the Description budget is 24.
+    let popup = super::render::frame::modal_rect_for_panel(
+        driver.state().scroll.transcript_area,
+        super::render::frame::ModalPanelKind::Agents,
+    );
+    let popup_text = driver.buffer_text_in_rect(popup);
+    let row = popup_text
+        .lines()
+        .find(|line| line.contains("reviewer"))
+        .ok_or("should render the reviewer row")?;
+    let clipped = format!("{}…", "d".repeat(23));
+    assert!(
+        row.contains(&clipped),
+        "the description cell should be ellipsized to {clipped:?}; row: {row:?}\n{popup_text}"
     );
     Ok(())
 }

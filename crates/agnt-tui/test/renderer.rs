@@ -5,6 +5,9 @@
 
 // region:    --- Modules
 
+#[path = "renderer/alignment.rs"]
+mod alignment;
+
 #[path = "renderer/diff_tint.rs"]
 mod diff_tint;
 
@@ -28,6 +31,9 @@ mod measure;
 
 #[path = "renderer/support.rs"]
 mod support;
+
+#[path = "renderer/table_clamp.rs"]
+mod table_clamp;
 
 #[path = "renderer/theme_threading.rs"]
 mod theme_threading;

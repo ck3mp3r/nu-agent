@@ -1,6 +1,8 @@
 use chrono::Datelike;
 use ratatui::text::Line;
 
+use crate::runtime::panels::picker_query_line;
+use crate::runtime::status::format::ellipsize;
 use crate::state::{AppState, PickerPayload};
 
 pub(super) const SESSION_PICKER_EMPTY_STATE_MESSAGE: &str =
@@ -9,6 +11,7 @@ pub(super) const SESSION_PICKER_EMPTY_STATE_MESSAGE: &str =
 pub(super) fn session_picker_table_model(
     state: &AppState,
     popup_height: u16,
+    table_width: u16,
 ) -> SessionPickerTableModel {
     let inner_height = popup_height.saturating_sub(2) as usize;
     let query_height: usize = 1;
@@ -16,6 +19,8 @@ pub(super) fn session_picker_table_model(
     let available_rows = inner_height
         .saturating_sub(query_height)
         .saturating_sub(header_height);
+    // When + Msgs columns, their spacing, and the selection column.
+    let title_budget = table_width.saturating_sub(25) as usize;
 
     let Some(picker_state) = state.picker.active_state() else {
         return SessionPickerTableModel {
@@ -50,7 +55,7 @@ pub(super) fn session_picker_table_model(
         }
         rows.push(SessionPickerRow::Session {
             relative: relative_timestamp(*created_at, now),
-            title: title.as_deref().unwrap_or("(untitled)").to_string(),
+            title: ellipsize(title.as_deref().unwrap_or("(untitled)"), title_budget),
             message_count,
         });
         if option_idx == picker_state.selection {
@@ -58,7 +63,7 @@ pub(super) fn session_picker_table_model(
         }
     }
 
-    let query_line = Line::from(format!("Query: {}", picker_state.query));
+    let query_line = Line::from(picker_query_line(&picker_state.query));
 
     // Header rows consume table rows, so the number of session rows that fit
     // is the available height minus one row per day group.

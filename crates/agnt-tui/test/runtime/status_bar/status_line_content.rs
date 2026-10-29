@@ -57,7 +57,7 @@ fn status_lines_model_and_mcp_content() -> Result<()> {
             state: McpServerUsabilityState::Disabled,
         },
     ]);
-    let (title, lines) = status_panel_lines(&panel);
+    let (title, lines) = status_panel_lines(&panel, 200);
     assert_eq!(title, "Status");
     let rendered = lines
         .iter()

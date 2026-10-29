@@ -30,7 +30,7 @@ fn message_stores_role_markdown_and_renderable_shape() {
     assert_eq!(assistant, assistant.clone(), "clone must be equal");
 
     // -- Check: user carries the marker lane and full fill.
-    assert_eq!(user.lane(), Lane::Marker("▏"));
+    assert_eq!(user.lane(), Lane::Marker("╎"));
     assert_eq!(user.fill(), Fill::Full);
     assert_eq!(
         user.source(),

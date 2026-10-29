@@ -28,7 +28,7 @@ fn renderable_impls_table() -> Result<()> {
             markdown: "hi".to_string(),
         }
     );
-    assert_eq!(user.lane(), Lane::Marker("▏"));
+    assert_eq!(user.lane(), Lane::Marker("╎"));
     assert_eq!(user.fill(), Fill::Full);
 
     // -- Check: assistant message — blank lane, no fill, markdown source.
