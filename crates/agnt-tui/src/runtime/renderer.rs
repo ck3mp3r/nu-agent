@@ -32,7 +32,7 @@ where
     ) -> Self {
         Self {
             inner,
-            coordinator: RuntimeCoordinator::new(columns, rows, Some(true)),
+            coordinator: RuntimeCoordinator::new(columns, rows, None),
             event_source,
             live_terminal,
             tui_active,

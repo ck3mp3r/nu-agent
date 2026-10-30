@@ -20,9 +20,8 @@ fn render_needed_gating() -> Result<()> {
     let mut clean = RuntimeCoordinator::new(80, 24, None);
     clean.set_render_needed(false);
     clean.set_last_render_at(Instant::now() - Duration::from_secs(1));
-    let mut live: Option<
-        &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stderr>>,
-    > = None;
+    // No live terminal is opened, so the test backend stands in for the live one.
+    let mut live: Option<&mut ratatui::Terminal<ratatui::backend::TestBackend>> = None;
 
     // -- Exec & Check: skips when not dirty.
     assert!(clean.render_if_needed(&mut live).is_ok());
@@ -32,9 +31,7 @@ fn render_needed_gating() -> Result<()> {
     let mut soon = RuntimeCoordinator::new(80, 24, None);
     soon.set_render_needed(true);
     soon.set_last_render_at(Instant::now());
-    let mut live: Option<
-        &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stderr>>,
-    > = None;
+    let mut live: Option<&mut ratatui::Terminal<ratatui::backend::TestBackend>> = None;
 
     // -- Exec & Check: skips when the frame interval has not elapsed.
     assert!(soon.render_if_needed(&mut live).is_ok());
@@ -44,9 +41,7 @@ fn render_needed_gating() -> Result<()> {
     let mut elapsed = RuntimeCoordinator::new(80, 24, None);
     elapsed.set_render_needed(true);
     elapsed.set_last_render_at(Instant::now() - Duration::from_secs(1));
-    let mut live: Option<
-        &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stderr>>,
-    > = None;
+    let mut live: Option<&mut ratatui::Terminal<ratatui::backend::TestBackend>> = None;
 
     // -- Exec & Check: fires and clears the flag.
     assert!(elapsed.render_if_needed(&mut live).is_ok());

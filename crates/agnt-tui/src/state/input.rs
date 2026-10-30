@@ -13,11 +13,29 @@ pub enum InputMode {
     Visual,
 }
 
+/// The glyph the buffer-cell caret paints for an [`InputMode`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaretGlyph {
+    /// Paint this glyph over the cell the caret occupies.
+    Bar(char),
+    /// Keep the character under the caret and reverse its style.
+    Underlying,
+}
+
 impl InputMode {
     pub fn cursor_style(&self) -> crossterm::cursor::SetCursorStyle {
         match self {
             InputMode::Insert => crossterm::cursor::SetCursorStyle::SteadyBar,
             InputMode::Normal | InputMode::Visual => crossterm::cursor::SetCursorStyle::SteadyBlock,
+        }
+    }
+
+    /// The buffer-cell caret's glyph: a hairline bar in insert mode, the
+    /// character under the caret in normal/visual mode.
+    pub fn caret_glyph(&self) -> CaretGlyph {
+        match self {
+            InputMode::Insert => CaretGlyph::Bar('▏'),
+            InputMode::Normal | InputMode::Visual => CaretGlyph::Underlying,
         }
     }
 }

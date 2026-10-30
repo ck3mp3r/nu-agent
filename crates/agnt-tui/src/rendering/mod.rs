@@ -1,8 +1,13 @@
 pub use agnt_core::transcript::highlight;
+pub mod chrome;
 pub mod layout;
 pub mod modal;
 pub mod selection;
 pub mod theme;
+
+#[cfg(test)]
+#[path = "../../test/rendering/chrome.rs"]
+mod chrome_test;
 
 #[cfg(test)]
 #[path = "../../test/rendering/layout.rs"]

@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use crate::interaction::input::{TerminalEvent, TerminalKey};
-use crate::runtime::test_driver::DriveEvent;
+use crate::runtime::test_driver::{CellProbe, DriveEvent, RenderLoopDriver};
 use crate::runtime::{InputSourceDiagnostics, RuntimeCoordinator, TerminalEventSource};
 use crate::state::{AppState, PickerRenderKind, TranscriptRole};
 use agnt_core::transcript::ir::{Block, MessageRole, NoticeKind};
@@ -111,6 +111,41 @@ pub(crate) fn input_pane_content_width_for_test(inner_width: u16) -> usize {
 }
 
 // region:    --- Test Support
+
+/// The bar glyph the insert-mode caret paints as a buffer cell.
+pub(super) const CARET_BAR: &str = "▏";
+
+/// Row of the input's mode indicator, i.e. the input area's first row.
+pub(super) fn indicator_row(driver: &RenderLoopDriver) -> super::Result<u16> {
+    driver
+        .buffer_text()
+        .lines()
+        .position(|line| line.contains('❯') || line.contains('❮'))
+        .map(|row| row as u16)
+        .ok_or_else(|| "should find the mode indicator row".into())
+}
+
+/// Column of the textarea's first cell on `row`: the first cell past the border
+/// and the mode indicator.
+pub(super) fn text_start_x(driver: &RenderLoopDriver, row: u16) -> super::Result<u16> {
+    let buffer = driver.buffer_text();
+    let line = buffer
+        .lines()
+        .nth(row as usize)
+        .ok_or("should have the input row")?;
+    let x = line
+        .chars()
+        .position(|c| !matches!(c, '│' | ' ' | '❯' | '❮'))
+        .ok_or("should find the input text")?;
+    Ok(x as u16)
+}
+
+/// The insert-mode caret cell, found by its bar glyph.
+pub(super) fn caret_cell(driver: &RenderLoopDriver) -> super::Result<CellProbe> {
+    driver
+        .cell_with_symbol(CARET_BAR)
+        .ok_or_else(|| "should paint the insert-mode caret bar cell".into())
+}
 
 /// Wraps a [`TerminalKey`] as a scripted driver event for the real render loop.
 pub(super) fn key(key: TerminalKey) -> DriveEvent {

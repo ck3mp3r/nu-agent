@@ -1,4 +1,4 @@
-mod backend;
+pub(crate) mod backend;
 pub(crate) mod branch_watcher;
 pub mod coordinator;
 pub mod layout;

@@ -1,12 +1,15 @@
 use ratatui::{
     Frame,
-    layout::{Margin, Rect},
+    layout::Rect,
     style::Style,
     text::{Line, Text},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
 };
 
-use crate::rendering::theme::TuiTheme;
+use crate::rendering::{
+    chrome::{Chrome, ContainerBorder},
+    theme::TuiTheme,
+};
 
 pub(super) fn render_scroll_text_panel(
     frame: &mut Frame,
@@ -29,23 +32,14 @@ pub(super) fn render_modal_frame(
     title: impl Into<Line<'static>>,
     theme: &TuiTheme,
 ) -> Rect {
-    frame.render_widget(Clear, area);
-    frame.render_widget(
-        Block::default().style(Style::default().bg(theme.base)),
-        area,
-    );
-    frame.render_widget(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_set(ratatui::symbols::border::ROUNDED)
-            .border_style(theme.subtle_meta)
-            .title(title),
-        area,
-    );
-    area.inner(Margin {
-        vertical: 1,
-        horizontal: 1,
-    })
+    Chrome::default()
+        .with_clear(true)
+        .with_bg(Style::default().bg(theme.base))
+        .with_border(ContainerBorder::Rounded)
+        .with_border_style(theme.subtle_meta)
+        .with_title(title)
+        .with_title_style(theme.subtle_meta)
+        .draw(frame, area)
 }
 
 /// Render a popup's one-row hint band: the line at the rect's first row in the
@@ -160,6 +154,10 @@ mod bottom_box_status_test;
 #[cfg(test)]
 #[path = "../../../test/runtime/render/bottom_box/input_box.rs"]
 mod bottom_box_input_box_test;
+
+#[cfg(test)]
+#[path = "../../../test/runtime/render/bottom_box/caret.rs"]
+mod bottom_box_caret_test;
 
 #[cfg(test)]
 #[path = "../../../test/runtime/render/empty_state.rs"]

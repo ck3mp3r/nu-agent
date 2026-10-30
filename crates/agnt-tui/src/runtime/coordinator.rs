@@ -8,7 +8,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::Style;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 
 use crate::interaction::{
     cancel::CancelController,
@@ -18,9 +18,11 @@ use crate::interaction::{
 };
 use crate::platform::transport::{TransportItem, TuiTransport};
 use crate::rendering::{
+    chrome::{Chrome, ContainerBorder},
     layout::{INPUT_MAX_HEIGHT, INPUT_MIN_HEIGHT, MAIN_SIDE_MARGIN, input_content_row_count},
     theme::{ThemeName, TuiTheme},
 };
+use crate::runtime::backend::FrameSync;
 use crate::runtime::layout::{compute_bottom_box_height, compute_status_h};
 use crate::runtime::render::bottom_box::{queued_prompt_blocks, stacked_messages_height};
 use crate::runtime::render::frame::current_time_millis;
@@ -47,7 +49,6 @@ pub struct RuntimeCoordinator {
     pub(crate) cancel_controller: CancelController,
     pub(crate) input_height: u16,
     last_input_content_width: usize,
-    pub(crate) last_input_scroll_top: u16,
     side_pane_visible: Option<bool>,
     pub(crate) quit_requested: bool,
     pub(crate) fatal_error: Option<String>,
@@ -84,13 +85,10 @@ impl RuntimeCoordinator {
         textarea
     }
 
-    /// Replace the input textarea, resetting the scroll-top mirror. The crate's
-    /// internal scroll state lives on the `TextArea` and resets to 0 on
-    /// replacement, so the mirror must reset too or the terminal cursor renders
-    /// stale rows above the caret.
+    /// Replace the input textarea. The crate's scroll state lives on the
+    /// `TextArea` itself and starts at the top of the new content.
     fn replace_textarea(&mut self, lines: Vec<String>) {
         self.textarea = Self::new_textarea(lines);
-        self.last_input_scroll_top = 0;
     }
 
     pub fn hydrate_transcript_from_messages(
@@ -110,10 +108,9 @@ impl RuntimeCoordinator {
     pub(crate) fn new_with_watchdog(
         columns: u16,
         _rows: u16,
-        _side_pane_visible: Option<bool>,
+        side_pane_visible: Option<bool>,
         input_watchdog_timeout: Duration,
     ) -> Self {
-        let side_pane_visible = Some(false);
         let theme_name = ThemeName::default();
         let theme = theme_name.resolve();
         let (event_tx, _event_rx) =
@@ -126,7 +123,6 @@ impl RuntimeCoordinator {
             cancel_controller: CancelController::default(),
             input_height: INPUT_MIN_HEIGHT,
             last_input_content_width,
-            last_input_scroll_top: 0,
             side_pane_visible,
             quit_requested: false,
             fatal_error: None,
@@ -617,9 +613,8 @@ impl RuntimeCoordinator {
                 }
             }
             TerminalKey::Down => {
-                let buffer = self.textarea.lines().join("\n");
                 let wrapped_row_count =
-                    input_content_row_count(&buffer, self.last_input_content_width);
+                    input_content_row_count(&self.textarea, self.last_input_content_width as u16);
                 if self.textarea.screen_cursor().row + 1 < wrapped_row_count as usize {
                     self.textarea.input(ratatui_textarea::Input {
                         key: ratatui_textarea::Key::Down,
@@ -896,9 +891,9 @@ impl RuntimeCoordinator {
     }
 
     fn recompute_layout_for_current_input(&mut self) {
-        let buffer = self.textarea.lines().join("\n");
-        self.input_height = input_content_row_count(&buffer, self.last_input_content_width)
-            .clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
+        self.input_height =
+            input_content_row_count(&self.textarea, self.last_input_content_width as u16)
+                .clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
     }
 
     fn flush_clipboard_request(&mut self) {
@@ -1067,7 +1062,7 @@ impl RuntimeCoordinator {
         self.state.status.message.is_pending()
     }
 
-    pub(crate) fn render_if_needed<B: ratatui::backend::Backend>(
+    pub(crate) fn render_if_needed<B: ratatui::backend::Backend + FrameSync>(
         &mut self,
         live: &mut Option<&mut ratatui::Terminal<B>>,
     ) -> Result<(), String> {
@@ -1108,13 +1103,19 @@ impl RuntimeCoordinator {
         }
     }
 
-    pub(crate) fn render_frame<B: ratatui::backend::Backend>(
+    pub(crate) fn render_frame<B: ratatui::backend::Backend + FrameSync>(
         &mut self,
         live: &mut Option<&mut ratatui::Terminal<B>>,
     ) -> Result<(), String> {
         let Some(live) = live.as_mut() else {
             return Ok(());
         };
+        let cursor_style = self.state.input.mode.cursor_style();
+
+        // A synchronized-output block must never outlive its frame: the terminal
+        // would keep buffering and stop repainting. So open the block, run every
+        // phase, and only then report the first failure.
+        let begin_sync = live.backend_mut().begin_sync().map_err(frame_sync_error);
 
         // Capture values needed inside the FnOnce draw closure (avoid borrowing self mutably)
         let transcript_following_tail = self.state.scroll.following_tail;
@@ -1126,137 +1127,158 @@ impl RuntimeCoordinator {
         // position — otherwise the first scroll-up would jump to offset 0.
         let mut rendered_scroll_offset: Option<usize> = None;
 
-        live.draw(|frame| {
-            let area = frame.area();
-            frame.render_widget(
-                Block::default().style(Style::default().bg(self.theme.base)),
-                area,
-            );
-            let has_side = self.side_pane_visible.unwrap_or(false);
-            let horizontal = if has_side {
-                Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-                    .split(area)
-            } else {
-                Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(100)])
-                    .split(area)
-            };
-
-            let main = horizontal[0];
-            let side_margin = if main.width >= 8 { MAIN_SIDE_MARGIN } else { 0 };
-            let content_main = main.inner(Margin {
-                vertical: 0,
-                horizontal: side_margin,
-            });
-            self.last_input_content_width = content_main.width.saturating_sub(4) as usize;
-            let available_inner_w = content_main.width.saturating_sub(2) as usize;
-            let pre_right_width = {
-                let rc = status_right_content(
-                    self.repo_branch(),
-                    self.repo_branch_tracker
-                        .as_ref()
-                        .and_then(|t| t.caller_cwd()),
-                    &self.theme,
+        let draw = live
+            .draw(|frame| {
+                let area = frame.area();
+                frame.render_widget(
+                    Block::default().style(Style::default().bg(self.theme.base)),
+                    area,
                 );
-                rc.map(|line| {
-                    line.spans
+                let has_side = self.side_pane_visible.unwrap_or(false);
+                let horizontal = if has_side {
+                    Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                        .split(area)
+                } else {
+                    Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(100)])
+                        .split(area)
+                };
+
+                let main = horizontal[0];
+                let side_margin = if main.width >= 8 { MAIN_SIDE_MARGIN } else { 0 };
+                let content_main = main.inner(Margin {
+                    vertical: 0,
+                    horizontal: side_margin,
+                });
+                self.last_input_content_width = content_main.width.saturating_sub(4) as usize;
+                let available_inner_w = content_main.width.saturating_sub(2) as usize;
+                let pre_right_width = {
+                    let rc = status_right_content(
+                        self.repo_branch(),
+                        self.repo_branch_tracker
+                            .as_ref()
+                            .and_then(|t| t.caller_cwd()),
+                        &self.theme,
+                    );
+                    rc.map(|line| {
+                        line.spans
+                            .iter()
+                            .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                            .sum::<usize>()
+                    })
+                    .unwrap_or(0)
+                };
+                let pre_left_width = {
+                    let probe =
+                        status_left_content(None, &self.state, &self.theme, available_inner_w);
+                    probe
+                        .spans
                         .iter()
                         .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                         .sum::<usize>()
-                })
-                .unwrap_or(0)
-            };
-            let pre_left_width = {
-                let probe = status_left_content(None, &self.state, &self.theme, available_inner_w);
-                probe
-                    .spans
-                    .iter()
-                    .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
-                    .sum::<usize>()
-            };
-            let has_message = !self.state.status.message.status_line().is_empty();
-            let status_h = compute_status_h(
-                available_inner_w,
-                pre_left_width,
-                pre_right_width,
-                has_message,
-            );
-            let stack_blocks = queued_prompt_blocks(&self.state);
-            let stack_h = stacked_messages_height(&stack_blocks, available_inner_w, &self.theme);
-            let bottom_box_h = compute_bottom_box_height(stack_h, self.input_height, status_h);
-            let vertical = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(0),
-                    Constraint::Fill(1),
-                    Constraint::Length(bottom_box_h),
-                ])
-                .split(content_main);
-            // vertical[0]=unused [1]=transcript [2]=entire bottom box
-
-            let transcript_content_area = vertical[1];
-            self.state.scroll.transcript_area = transcript_content_area;
-            let transcript_list_area = Rect {
-                width: transcript_content_area.width.saturating_sub(2),
-                ..transcript_content_area
-            };
-
-            if vertical[1].height > 0 {
-                self.render_transcript_pane(
-                    frame,
-                    transcript_content_area,
-                    transcript_list_area,
-                    transcript_following_tail,
-                    transcript_scroll_offset,
-                    &mut rendered_scroll_offset,
+                };
+                let has_message = !self.state.status.message.status_line().is_empty();
+                let status_h = compute_status_h(
+                    available_inner_w,
+                    pre_left_width,
+                    pre_right_width,
+                    has_message,
                 );
-            }
+                let stack_blocks = queued_prompt_blocks(&self.state);
+                let stack_h =
+                    stacked_messages_height(&stack_blocks, available_inner_w, &self.theme);
+                let bottom_box_h = compute_bottom_box_height(stack_h, self.input_height, status_h);
+                let vertical = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(0),
+                        Constraint::Fill(1),
+                        Constraint::Length(bottom_box_h),
+                    ])
+                    .split(content_main);
+                // vertical[0]=unused [1]=transcript [2]=entire bottom box
 
-            let now_millis = current_time_millis();
-            self.render_bottom_box(
-                frame,
-                vertical[2],
-                &stack_blocks,
-                stack_h,
-                self.input_height,
-                now_millis,
-            );
+                let transcript_content_area = vertical[1];
+                self.state.scroll.transcript_area = transcript_content_area;
+                let transcript_list_area = Rect {
+                    width: transcript_content_area.width.saturating_sub(2),
+                    ..transcript_content_area
+                };
 
-            if has_side {
-                let side = horizontal[1];
-                let side_widget = Paragraph::new(Line::from("Events pane reserved"))
-                    .style(Style::default().fg(self.theme.row_assistant.fg.unwrap_or_default()))
-                    .block(Block::default().borders(Borders::ALL).title("Events"));
-                frame.render_widget(side_widget, side);
-            }
+                if vertical[1].height > 0 {
+                    self.render_transcript_pane(
+                        frame,
+                        transcript_content_area,
+                        transcript_list_area,
+                        transcript_following_tail,
+                        transcript_scroll_offset,
+                        &mut rendered_scroll_offset,
+                    );
+                }
 
-            match self.state.picker.render_kind() {
-                Some(PickerRenderKind::CommandPalette) => {
-                    self.render_command_palette(frame, transcript_content_area);
-                }
-                Some(PickerRenderKind::Model) => {
-                    self.render_model_picker(frame, transcript_content_area)
-                }
-                Some(PickerRenderKind::Agent) => {
-                    self.render_agent_picker(frame, transcript_content_area)
-                }
-                Some(PickerRenderKind::Session) => {
-                    self.render_session_picker(frame, transcript_content_area)
-                }
-                Some(PickerRenderKind::Theme) => {
-                    self.render_theme_picker(frame, transcript_content_area)
-                }
-                Some(PickerRenderKind::InlineSlash) | None => {}
-            }
+                let now_millis = current_time_millis();
+                self.render_bottom_box(
+                    frame,
+                    vertical[2],
+                    &stack_blocks,
+                    stack_h,
+                    self.input_height,
+                    now_millis,
+                );
 
-            if self.state.info_panel.is_some() {
-                self.render_info_panel(frame, transcript_content_area);
-            }
-        })
-        .map_err(|err| format!("TUI render failed: {err}"))?;
+                if has_side {
+                    let side = horizontal[1];
+                    let pane_style =
+                        Style::default().fg(self.theme.row_assistant.fg.unwrap_or_default());
+                    // The pane's foreground covers the whole rect, border included,
+                    // so paint it before the chrome lays the rules down.
+                    frame.render_widget(Block::default().style(pane_style), side);
+                    let side_inner = Chrome::default()
+                        .with_border(ContainerBorder::Plain)
+                        .with_title("Events")
+                        .draw(frame, side);
+                    frame.render_widget(
+                        Paragraph::new(Line::from("Events pane reserved")).style(pane_style),
+                        side_inner,
+                    );
+                }
+
+                match self.state.picker.render_kind() {
+                    Some(PickerRenderKind::CommandPalette) => {
+                        self.render_command_palette(frame, transcript_content_area);
+                    }
+                    Some(PickerRenderKind::Model) => {
+                        self.render_model_picker(frame, transcript_content_area)
+                    }
+                    Some(PickerRenderKind::Agent) => {
+                        self.render_agent_picker(frame, transcript_content_area)
+                    }
+                    Some(PickerRenderKind::Session) => {
+                        self.render_session_picker(frame, transcript_content_area)
+                    }
+                    Some(PickerRenderKind::Theme) => {
+                        self.render_theme_picker(frame, transcript_content_area)
+                    }
+                    Some(PickerRenderKind::InlineSlash) | None => {}
+                }
+
+                if self.state.info_panel.is_some() {
+                    self.render_info_panel(frame, transcript_content_area);
+                }
+            })
+            .map(|_completed| ())
+            .map_err(|err| format!("TUI render failed: {err}"));
+        let set_cursor_style = live
+            .backend_mut()
+            .set_cursor_style(cursor_style)
+            .map_err(frame_sync_error);
+        let end_sync = live.backend_mut().end_sync().map_err(frame_sync_error);
+
+        begin_sync?;
+        draw?;
 
         // Write back the resolved scroll offset so that scroll_offset always
         // reflects the actual rendered position. Without this, when following_tail is true
@@ -1265,9 +1287,17 @@ impl RuntimeCoordinator {
             self.state.scroll.scroll_offset = offset;
         }
 
-        let cursor_style = self.state.input.mode.cursor_style();
-        let _ = crossterm::execute!(std::io::stdout(), cursor_style);
-
+        set_cursor_style?;
+        end_sync?;
         Ok(())
     }
+}
+
+#[cfg(test)]
+#[path = "../../test/runtime/coordinator.rs"]
+mod coordinator_test;
+
+/// Map a frame-control write failure to the render path's error string.
+fn frame_sync_error(err: std::io::Error) -> String {
+    format!("TUI frame sync failed: {err}")
 }

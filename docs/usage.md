@@ -751,6 +751,7 @@ CLI flags override config.toml, which overrides built-in defaults.
 - Immediate slash command text is not echoed into the transcript and is not persisted as a session turn message.
 - Compaction result artifacts remain transcript-visible (for example, compaction summary/source/count rows).
 - Input soft-wraps at word boundaries; the input box grows up to 6 rows, then scrolls internally keeping the caret visible.
+- The input caret is a buffer cell, not the terminal cursor. Insert mode paints a `▏` bar in the input text style; normal/visual mode reverses the character under the caret. The terminal cursor stays hidden, so the caret does not flicker when the pane repaints.
 
 ### Prompt queue and cancel-on-empty-Enter
 

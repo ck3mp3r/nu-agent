@@ -257,20 +257,10 @@ pub(crate) fn input_prompt_prefix(mode: crate::state::InputMode) -> &'static str
     }
 }
 
-pub(crate) fn input_rows_with_prompt_for_test(state: &AppState, pane_width: u16) -> Vec<String> {
-    let rows =
-        crate::rendering::layout::wrapped_input_rows("", pane_width.saturating_sub(2) as usize);
-
-    let mut lines = Vec::new();
-    let prompt_prefix = input_prompt_prefix(state.input.mode);
-    if let Some((first, rest)) = rows.split_first() {
-        lines.push(format!("{prompt_prefix}{first}"));
-        for row in rest {
-            lines.push(format!("  {row}"));
-        }
-    }
-
-    lines
+/// The rows an empty input paints: the mode indicator alone on its one visual
+/// row.
+pub(crate) fn input_rows_with_prompt_for_test(state: &AppState) -> Vec<String> {
+    vec![input_prompt_prefix(state.input.mode).to_string()]
 }
 
 pub(crate) fn model_picker_row_cells_for_test(state: &AppState) -> Vec<Vec<String>> {

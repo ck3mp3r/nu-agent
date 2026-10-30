@@ -43,6 +43,15 @@ pub(crate) enum DriveEvent {
     UiEvent(Box<UiEvent>),
 }
 
+/// A cell from the last rendered frame: where it sits, its glyph, and its
+/// resolved style.
+#[derive(Debug, Clone)]
+pub(crate) struct CellProbe {
+    pub(crate) position: ratatui::layout::Position,
+    pub(crate) symbol: String,
+    pub(crate) style: ratatui::style::Style,
+}
+
 /// Drives the real production render loop with a `TestBackend` terminal.
 pub(crate) struct RenderLoopDriver {
     bus: Bus,
@@ -70,7 +79,7 @@ impl RenderLoopDriver {
         Self {
             bus: Bus::default(),
             cancel_controller: CancelController::default(),
-            coordinator: RuntimeCoordinator::new(columns, rows, Some(true)),
+            coordinator: RuntimeCoordinator::new(columns, rows, None),
             terminal: test_terminal(columns, rows),
             orchestrator_events: Vec::new(),
         }
@@ -114,9 +123,52 @@ impl RenderLoopDriver {
         text
     }
 
-    /// The terminal cursor position from the last rendered frame.
-    pub(crate) fn cursor_position(&self) -> ratatui::layout::Position {
-        self.terminal.backend().cursor_position()
+    /// Whether the terminal cursor is visible in the last rendered frame.
+    pub(crate) fn cursor_visible(&self) -> bool {
+        self.terminal.backend().cursor_visible()
+    }
+
+    /// The cell at `(x, y)` in the last rendered frame.
+    pub(crate) fn cell_at(&self, x: u16, y: u16) -> CellProbe {
+        let cell = &self.terminal.backend().buffer()[(x, y)];
+        CellProbe {
+            position: ratatui::layout::Position { x, y },
+            symbol: cell.symbol().to_string(),
+            style: cell.style(),
+        }
+    }
+
+    /// The first cell (if any) whose glyph equals `symbol`, scanning row-major
+    /// across the whole rendered buffer.
+    pub(crate) fn cell_with_symbol(&self, symbol: &str) -> Option<CellProbe> {
+        self.probe_cells(|cell| cell.symbol() == symbol)
+    }
+
+    /// The first cell (if any) whose style carries the reversed modifier,
+    /// scanning row-major across the whole rendered buffer.
+    pub(crate) fn reversed_cell(&self) -> Option<CellProbe> {
+        self.probe_cells(|cell| {
+            cell.style()
+                .add_modifier
+                .contains(ratatui::style::Modifier::REVERSED)
+        })
+    }
+
+    fn probe_cells(&self, matches: impl Fn(&ratatui::buffer::Cell) -> bool) -> Option<CellProbe> {
+        let buffer = self.terminal.backend().buffer();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                let cell = &buffer[(x, y)];
+                if matches(cell) {
+                    return Some(CellProbe {
+                        position: ratatui::layout::Position { x, y },
+                        symbol: cell.symbol().to_string(),
+                        style: cell.style(),
+                    });
+                }
+            }
+        }
+        None
     }
 
     /// Returns the first cell (if any) whose style has no explicit background,

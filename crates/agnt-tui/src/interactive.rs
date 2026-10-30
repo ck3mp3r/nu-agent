@@ -183,7 +183,7 @@ where
     ) -> impl FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static {
         let coordinator = std::mem::replace(
             &mut self.renderer.coordinator,
-            RuntimeCoordinator::new(120, 30, Some(true)),
+            RuntimeCoordinator::new(120, 30, None),
         );
         let theme_persist_tx = self.theme_persist_tx.take();
         let live_terminal = self.renderer.take_live_terminal();
@@ -313,7 +313,9 @@ async fn drain_theme_persist(
 /// Render loop driving `RuntimeCoordinator` from terminal events, bus
 /// channels, and a periodic tick. Owns `&mut RuntimeCoordinator` and calls
 /// `AppState` methods directly.
-pub(crate) async fn run_render_loop<B: ratatui::backend::Backend>(
+pub(crate) async fn run_render_loop<
+    B: ratatui::backend::Backend + crate::runtime::backend::FrameSync,
+>(
     coordinator: &mut RuntimeCoordinator,
     bus: &agnt_core::bus::Bus,
     cancel_controller: &CancelController,

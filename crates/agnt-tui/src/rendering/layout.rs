@@ -1,3 +1,7 @@
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::widgets::Widget;
+
 pub const SIDE_PANE_COLLAPSE_COLUMNS: u16 = 120;
 pub const INPUT_PROMPT_WIDTH: u16 = 2;
 pub const INPUT_MIN_HEIGHT: u16 = 1;
@@ -31,37 +35,38 @@ pub fn compute_columns(
     (main_width, Some(side_width))
 }
 
-pub fn wrapped_input_rows(input: &str, content_width: usize) -> Vec<String> {
-    let width = content_width.max(1);
-    let mut rows = Vec::new();
+/// The number of visual rows the input textarea renders at `content_width`,
+/// counting soft-wrapped rows.
+///
+/// The count is read from the textarea's own wrap state, never recomputed here.
+/// Rendering the widget into a scratch buffer at the content width installs the
+/// crate's screen map, and [`TextArea::screen_to_data`] then reports the text
+/// position each visual row starts at. That position strictly increases while a
+/// row exists and stops advancing past the last one, so the row index at which it
+/// repeats is the visual row count.
+///
+/// The scratch render leaves the widget's viewport pointing at the scratch rect,
+/// so the caller's next render repaints the input and restores it.
+pub fn input_content_row_count(
+    textarea: &ratatui_textarea::TextArea<'_>,
+    content_width: u16,
+) -> u16 {
+    let scratch = Rect {
+        x: 0,
+        y: 0,
+        width: content_width.max(1),
+        height: INPUT_MAX_HEIGHT,
+    };
+    let mut buffer = Buffer::empty(scratch);
+    textarea.render(scratch, &mut buffer);
 
-    for logical_line in input.split('\n') {
-        let wrapped = textwrap::wrap(
-            logical_line,
-            textwrap::Options::new(width).word_splitter(textwrap::WordSplitter::NoHyphenation),
-        );
-        if wrapped.is_empty() {
-            rows.push(String::new());
-        } else {
-            rows.extend(wrapped.into_iter().map(|row| row.into_owned()));
+    let mut previous = textarea.screen_to_data(0, 0);
+    for row in 1..=usize::from(u16::MAX) {
+        let current = textarea.screen_to_data(row, 0);
+        if current == previous {
+            return u16::try_from(row).unwrap_or(u16::MAX);
         }
+        previous = current;
     }
-
-    if rows.is_empty() {
-        rows.push(String::new());
-    }
-
-    rows
-}
-
-pub fn input_content_row_count(input: &str, content_width: usize) -> u16 {
-    wrapped_input_rows(input, content_width)
-        .len()
-        .min(u16::MAX as usize) as u16
-}
-
-pub fn input_pane_height_for_content(input: &str, pane_width: u16) -> u16 {
-    let content_width = pane_width.saturating_sub(4).max(1) as usize;
-    let content_rows = input_content_row_count(input, content_width);
-    content_rows.clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT)
+    u16::MAX
 }

@@ -8,6 +8,9 @@ use crate::platform::{
     terminal::{TerminalBackend, TerminalLifecycle, TerminalLifecycleError},
 };
 
+pub(crate) mod dedup;
+pub(crate) use dedup::{DedupBackend, FrameSync};
+
 #[derive(Debug)]
 pub enum RuntimeRunError<E> {
     Enter(TerminalLifecycleError),
@@ -153,14 +156,19 @@ where
 }
 
 pub(crate) struct LiveTerminalUi {
-    pub(crate) terminal: Terminal<CrosstermBackend<std::io::Stderr>>,
+    pub(crate) terminal: Terminal<DedupBackend<CrosstermBackend<std::io::Stderr>>>,
 }
 
 impl LiveTerminalUi {
     pub(crate) fn new() -> Result<Self, String> {
-        let backend = CrosstermBackend::new(std::io::stderr());
+        let backend =
+            DedupBackend::new(CrosstermBackend::new(std::io::stderr()), std::io::stderr());
         let terminal = Terminal::new(backend)
             .map_err(|err| format!("failed to initialize ratatui terminal: {err}"))?;
         Ok(Self { terminal })
     }
 }
+
+#[cfg(test)]
+#[path = "../../test/runtime/backend.rs"]
+mod backend_test;

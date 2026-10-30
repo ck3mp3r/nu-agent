@@ -11,6 +11,7 @@ mod command_palette;
 mod compaction;
 mod ctrl_c_guard;
 mod help_panel;
+mod input_caret;
 mod input_cursor;
 mod input_events;
 mod lane_2;
@@ -45,7 +46,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::rendering::layout::wrapped_input_rows;
 use crate::rendering::theme::TuiTheme;
 use crate::runtime::renderer_test::{CapturingRenderer, FakeRenderer};
 use crate::runtime::status::test::{init_repo_with_branch, run_git};

@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::rendering::layout::input_content_row_count;
+
 #[test]
 fn cursor_style_maps_insert_to_bar_and_normal_visual_to_block() {
     assert!(matches!(
@@ -17,8 +19,8 @@ fn cursor_style_maps_insert_to_bar_and_normal_visual_to_block() {
 }
 
 /// The prompt prefix uses the mode indicator (insert vs normal/visual), appears
-/// only on the first visual row, switches immediately on a mode change, and the
-/// content width subtracts only the 2-char prompt prefix.
+/// only on an empty input's single visual row, switches immediately on a mode
+/// change, and the content width subtracts only the 2-char prompt prefix.
 #[test]
 fn prompt_prefix_and_content_width() -> Result<()> {
     // -- Setup & Fixtures
@@ -36,12 +38,12 @@ fn prompt_prefix_and_content_width() -> Result<()> {
     };
 
     // -- Exec & Check: the mode indicator.
-    assert_eq!(input_rows_with_prompt_for_test(&insert, 20), vec!["❯ "]);
-    assert_eq!(input_rows_with_prompt_for_test(&normal, 20), vec!["❮ "]);
-    assert_eq!(input_rows_with_prompt_for_test(&visual, 20), vec!["❮ "]);
+    assert_eq!(input_rows_with_prompt_for_test(&insert), vec!["❯ "]);
+    assert_eq!(input_rows_with_prompt_for_test(&normal), vec!["❮ "]);
+    assert_eq!(input_rows_with_prompt_for_test(&visual), vec!["❮ "]);
 
-    // -- Exec & Check: the icon appears only on the first visual row.
-    let rows = input_rows_with_prompt_for_test(&insert, 5);
+    // -- Exec & Check: an empty input paints the indicator alone.
+    let rows = input_rows_with_prompt_for_test(&insert);
     assert_eq!(rows, vec!["❯ "]);
 
     // -- Exec & Check: the prefix switches immediately on a mode change.
@@ -49,15 +51,17 @@ fn prompt_prefix_and_content_width() -> Result<()> {
         input: InputState::default().with_mode(InputMode::Insert),
         ..Default::default()
     };
-    assert_eq!(input_rows_with_prompt_for_test(&switching, 20), vec!["❯ "]);
+    assert_eq!(input_rows_with_prompt_for_test(&switching), vec!["❯ "]);
     switching.input.mode = InputMode::Normal;
-    assert_eq!(input_rows_with_prompt_for_test(&switching, 20), vec!["❮ "]);
+    assert_eq!(input_rows_with_prompt_for_test(&switching), vec!["❮ "]);
 
-    // -- Exec & Check: the content width subtracts only the prompt prefix.
+    // -- Exec & Check: the content width subtracts only the prompt prefix, and
+    // the textarea wraps at that width.
     let inner_width: u16 = 10;
-    assert_eq!(input_pane_content_width_for_test(inner_width), 8);
-    let rows = wrapped_input_rows("abcdefghi", input_pane_content_width_for_test(inner_width));
-    assert_eq!(rows, vec!["abcdefgh", "i"]);
+    let content_width = input_pane_content_width_for_test(inner_width);
+    assert_eq!(content_width, 8);
+    let textarea = RuntimeCoordinator::new_textarea(vec!["abcdefghi".to_string()]);
+    assert_eq!(input_content_row_count(&textarea, content_width as u16), 2);
     Ok(())
 }
 
@@ -138,68 +142,6 @@ async fn input_height_wraps_and_recomputes() -> Result<()> {
 
     // -- Check: the box height grows to the wrapped row count.
     assert!(resizing.coordinator().input_height > 1);
-    Ok(())
-}
-
-/// The terminal cursor renders on the correct visual row for a wrapped line, an
-/// alt-return new logical line, and an internally scrolled input.
-#[tokio::test]
-async fn screen_cursor_positions_on_visual_row() -> Result<()> {
-    // -- Setup & Fixtures: a wrapped line.
-    let mut wrapped = RenderLoopDriver::new(20, 30);
-    let script: Vec<DriveEvent> = "hello world foo"
-        .chars()
-        .map(|c| key(TerminalKey::Char(c)))
-        .collect();
-
-    // -- Exec
-    wrapped.advance_with_frame(&script).await?;
-
-    // -- Check: the caret sits on the second visual row.
-    let buffer = wrapped.buffer_text();
-    let indicator_y = buffer
-        .lines()
-        .position(|l| l.contains("❯"))
-        .ok_or("should find mode indicator row")? as u16;
-    assert_eq!(wrapped.cursor_position().y, indicator_y + 1);
-
-    // -- Setup & Fixtures: a wrapping line plus AltEnter.
-    let mut alt = RenderLoopDriver::new(20, 30);
-    let mut script: Vec<DriveEvent> = "hello world foo"
-        .chars()
-        .map(|c| key(TerminalKey::Char(c)))
-        .collect();
-    script.push(key(TerminalKey::AltEnter));
-
-    // -- Exec
-    alt.advance_with_frame(&script).await?;
-
-    // -- Check: the new logical line starts at visual row 2.
-    let buffer = alt.buffer_text();
-    let indicator_y = buffer
-        .lines()
-        .position(|l| l.contains("❯"))
-        .ok_or("should find mode indicator row")? as u16;
-    assert_eq!(alt.cursor_position().y, indicator_y + 2);
-
-    // -- Setup & Fixtures: a long single word that wraps to >6 visual rows.
-    let mut scrolled = RenderLoopDriver::new(20, 30);
-    let script: Vec<DriveEvent> = "x"
-        .repeat(100)
-        .chars()
-        .map(|c| key(TerminalKey::Char(c)))
-        .collect();
-
-    // -- Exec
-    scrolled.advance_with_frame(&script).await?;
-
-    // -- Check: the caret is on the last visible row.
-    let buffer = scrolled.buffer_text();
-    let indicator_y = buffer
-        .lines()
-        .position(|l| l.contains("❯"))
-        .ok_or("should find mode indicator row")? as u16;
-    assert_eq!(scrolled.cursor_position().y, indicator_y + 5);
     Ok(())
 }
 
@@ -301,49 +243,6 @@ async fn render_loop_driver_wrapped_prompt_round_trips_exactly_on_submit() -> Re
         submitted,
         vec![typed],
         "wrapped prompt must round-trip exactly on submit"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn render_loop_driver_replace_textarea_resets_scroll_top_mirror() -> Result<()> {
-    // -- Setup & Fixtures
-    let mut driver = RenderLoopDriver::new(20, 30);
-
-    // -- Exec: scroll first by typing a long single word that wraps to >6
-    // visual rows, so the scroll-top mirror becomes nonzero.
-    let script: Vec<DriveEvent> = "x"
-        .repeat(100)
-        .chars()
-        .map(|c| key(TerminalKey::Char(c)))
-        .collect();
-    driver.advance_with_frame(&script).await?;
-    assert!(
-        driver.coordinator().last_input_scroll_top > 0,
-        "scrolled frame must leave a nonzero scroll-top mirror"
-    );
-
-    // Replace the textarea via cancel-restore with a shorter buffer whose
-    // caret lands at screen row 2 (0 < 2 < height). The next terminal event
-    // triggers pickup_restored_input_text, which replaces the textarea.
-    driver.coordinator_mut().state.input.restored_input_text =
-        Some("hello world foo bar baz qux".to_string());
-    driver
-        .advance_with_frame(&[key(TerminalKey::Char('z'))])
-        .await?;
-
-    // -- Check: the caret's rendered row must be indicator_y + 2, not
-    // indicator_y + (2 - stale_top).
-    let buffer = driver.buffer_text();
-    let indicator_y = buffer
-        .lines()
-        .position(|l| l.contains("❯"))
-        .ok_or("should find mode indicator row")? as u16;
-    let pos = driver.cursor_position();
-    assert_eq!(
-        pos.y,
-        indicator_y + 2,
-        "replaced textarea must render the caret on its own screen row, not a stale scroll offset"
     );
     Ok(())
 }
