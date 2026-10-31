@@ -29,7 +29,8 @@ pub fn classify_model_family(provider: &str, model: &str) -> ModelFamily {
     }
 
     if provider == "github-copilot" {
-        // Legacy format: "backend/model" - classify from backend parts
+        // A three-part identity (`provider/backend/model`) leaves the backend
+        // in the model part: classify from the backend segments.
         if let Some((backend, backend_model)) = model.split_once('/') {
             return classify_from_backend_parts(backend, backend_model);
         }
@@ -38,7 +39,8 @@ pub fn classify_model_family(provider: &str, model: &str) -> ModelFamily {
     ModelFamily::Unknown
 }
 
-/// Classify model based on backend provider and model name (legacy format)
+/// Classify a three-part identity's model part by its backend provider and
+/// model name.
 fn classify_from_backend_parts(backend: &str, model: &str) -> ModelFamily {
     if backend == "anthropic" {
         if model.contains("sonnet") {

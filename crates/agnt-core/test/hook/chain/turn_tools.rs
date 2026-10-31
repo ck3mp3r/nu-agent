@@ -61,7 +61,6 @@ fn tool_turn(model: &MockCompletionModel) -> Result<ToolTurn> {
                     rig_memory::CompactionPolicy::default(),
                     test_model_spec(),
                 ),
-                params: CompactionParams::default(),
                 threshold_tokens: None,
                 threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
             },

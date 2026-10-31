@@ -254,42 +254,14 @@ fn agent_command_signature_has_permissions_flag_as_record() -> Result<()> {
 }
 
 #[test]
-fn agent_command_signature_does_not_expose_legacy_permission_flag() {
+fn agent_command_signature_does_not_expose_the_repeated_permission_flag() {
     let (agent, _temp_dir) = create_test_agent();
     let sig = SimplePluginCommand::signature(&agent);
 
-    let legacy = sig.named.iter().find(|f| f.long == "permission");
+    let repeated = sig.named.iter().find(|f| f.long == "permission");
     assert!(
-        legacy.is_none(),
-        "Legacy repeated --permission flag must not be exposed"
-    );
-}
-
-#[test]
-fn cli_does_not_expose_unsupported_compaction_modes() {
-    let (agent, _temp_dir) = create_test_agent();
-    let sig = SimplePluginCommand::signature(&agent);
-    let rendered = format!("{sig:?}").to_ascii_lowercase();
-    // Ensure serde aliases (standalone shorthand names) are not exposed in the CLI.
-    // Canonical names like "token_truncate" and "sliding_window" are fine since they
-    // appear in the --compaction-strategy description.
-    //
-    // Strip canonical names before checking for standalone aliases.
-    let stripped = rendered
-        .replace("sliding_summary", "")
-        .replace("sliding_window", "")
-        .replace("token_truncate", "");
-    assert!(
-        !stripped.contains("truncate"),
-        "standalone alias 'truncate' should not appear in CLI"
-    );
-    assert!(
-        !stripped.contains("\"sliding\""),
-        "standalone alias 'sliding' should not appear in CLI"
-    );
-    assert!(
-        !stripped.contains("summarize"),
-        "standalone alias 'summarize' should not appear in CLI"
+        repeated.is_none(),
+        "The repeated --permission flag must not be exposed"
     );
 }
 

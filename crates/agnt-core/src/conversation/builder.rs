@@ -4,7 +4,6 @@ use std::sync::Arc;
 use nu_protocol::{LabeledError, Span};
 
 use crate::bus::Bus;
-use crate::compaction::{CompactionParams, CompactionStrategy};
 use crate::config::CompactionConfig;
 use crate::protocol::persona::PersonaSummary;
 use crate::tools::audit::AuditLogger;
@@ -26,25 +25,21 @@ pub fn merge_compaction_configs(
 ) -> CompactionConfig {
     let base = base.cloned().unwrap_or_default();
     CompactionConfig {
-        strategy: override_cfg.strategy.or(base.strategy),
         proactive_threshold_pct: override_cfg
             .proactive_threshold_pct
             .or(base.proactive_threshold_pct),
+        reserve: override_cfg.reserve.or(base.reserve),
+        summary_tokens: override_cfg.summary_tokens.or(base.summary_tokens),
+        snippet_chars: override_cfg.snippet_chars.or(base.snippet_chars),
+        unknown_window_chars: override_cfg
+            .unknown_window_chars
+            .or(base.unknown_window_chars),
+        keep_recent: override_cfg.keep_recent.or(base.keep_recent),
+        keep_asked: override_cfg.keep_asked.or(base.keep_asked),
+        clearing: override_cfg.clearing.clone().or(base.clearing),
+        tracked: override_cfg.tracked.clone().or(base.tracked),
+        prompts: override_cfg.prompts.clone().or(base.prompts),
     }
-}
-
-/// Build a `CompactionParams` from a merged `CompactionConfig`.
-///
-/// Applies `CompactionConfig` field overrides on top of `CompactionParams::default()`.
-/// Fields that are `None` in the config use the `CompactionParams` defaults.
-pub fn build_compaction_params(merged: &CompactionConfig) -> CompactionParams {
-    let mut config = CompactionParams::default();
-
-    if let Some(strategy) = merged.strategy {
-        config.compaction_strategy = strategy;
-    }
-
-    config
 }
 
 // ── Tool definitions (moved from binary tool_defs.rs) ───────────────────────
@@ -559,8 +554,6 @@ pub struct BuildInput<'a> {
 /// Artifacts produced by the builder's `build()` call.
 pub struct BuildArtifacts {
     pub merged_compaction: CompactionConfig,
-    pub compaction_strategy: CompactionStrategy,
-    pub compaction_params: CompactionParams,
     /// Per-tool call-line render functions, populated as each builtin is
     /// registered. Threaded to the runtime so the hook chain can build the
     /// transcript call line for each tool call.
@@ -584,7 +577,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
     /// Register all tools and wire multi-agent infrastructure.
     ///
     /// Returns `BuildArtifacts` containing the merged compaction config and
-    /// resolved compaction strategy.
+    /// the per-tool render registry.
     pub async fn build(self) -> Result<BuildArtifacts, LabeledError> {
         use crate::hook::adapter::closure::adapt_closures;
 
@@ -595,7 +588,7 @@ impl<'a> AgentRuntimeBuilder<'a> {
             engine,
             span,
             tool_timeout,
-            session,
+            session: _,
             max_tool_result_bytes,
             bus,
             merged_compaction,
@@ -632,17 +625,10 @@ impl<'a> AgentRuntimeBuilder<'a> {
             LabeledError::new("Invalid builtin tool name").with_label(e.to_string(), span)
         })?;
 
-        // Build CompactionParams from merged compaction config
+        // Validate the merged compaction config
         merged_compaction.validate().map_err(|msg| {
             LabeledError::new("Compaction config validation failed").with_label(msg, span)
         })?;
-        let compaction_params = build_compaction_params(&merged_compaction);
-        let compaction_strategy = compaction_params.compaction_strategy;
-
-        // Apply config to session
-        if let Some(session) = session {
-            session.set_compaction_config(compaction_params.clone());
-        }
 
         // Registry of per-tool call-line render functions, populated as each
         // builtin is registered. Returned in `BuildArtifacts` and threaded
@@ -664,8 +650,6 @@ impl<'a> AgentRuntimeBuilder<'a> {
 
         Ok(BuildArtifacts {
             merged_compaction,
-            compaction_strategy,
-            compaction_params,
             render_registry,
         })
     }

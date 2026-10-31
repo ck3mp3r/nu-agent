@@ -287,7 +287,7 @@ fn assert_user_row(backend: &RatatuiBackend, y: u16) -> Result<()> {
     );
     assert!(
         !row.contains('\u{258f}'),
-        "no user row may carry the legacy rail; got {row:?}"
+        "no user row may carry a left rail; got {row:?}"
     );
     Ok(())
 }

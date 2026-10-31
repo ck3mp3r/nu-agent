@@ -1,7 +1,8 @@
 use crate::plugin::AgentPlugin;
-use agnt_core::compaction::CompactionParams;
+use agnt_core::config::CompactionConfig;
+use agnt_core::conversation::runtime_build::build_compaction_policy;
 use agnt_core::session::RigStoreConfig;
-use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy};
+use agnt_core::session::prefix::dir_prefix;
 use agnt_core::types::{AssistantContent, Message, UserContent};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Record, Signature, SyntaxShape, Value};
@@ -33,22 +34,20 @@ impl AgentSessionInspect {
         engine: &C,
         call: &EvaluatedCall,
         rig: &RigStoreConfig,
+        compaction: &CompactionConfig,
     ) -> Result<Value, LabeledError> {
         let session_id: String = call.req(0)?;
 
         let cwd = std::path::PathBuf::from(engine.get_current_dir()?);
-        let new_prefix = dir_prefix(&cwd);
-        let legacy_prefix = dir_prefix_legacy(&cwd);
-        let new_id = format!("{new_prefix}-{session_id}");
-        let legacy_id = format!("{legacy_prefix}-{session_id}");
+        let prefix = dir_prefix(&cwd);
+        let id = format!("{prefix}-{session_id}");
 
-        // Open the session's rig-memory store, trying the new prefix first and
-        // falling back to the legacy prefix for sessions created before the
-        // prefix length increase.
-        let id = [new_id, legacy_id]
-            .into_iter()
-            .find(|id| rig.holds(id).unwrap_or(false))
-            .ok_or_else(|| LabeledError::new(format!("Session not found: {session_id}")))?;
+        // The session must exist in the rig-memory store.
+        if !rig.holds(&id).unwrap_or(false) {
+            return Err(LabeledError::new(format!(
+                "Session not found: {session_id}"
+            )));
+        }
 
         let view = rig
             .view(&id)
@@ -117,14 +116,34 @@ impl AgentSessionInspect {
             })
             .collect();
 
-        // Convert config to Nushell Value (record).
-        // Compaction params are not persisted in the new store format;
-        // display defaults for the config block.
-        let config = CompactionParams::default();
+        // Convert the resolved compaction policy to a Nushell Value (record).
+        // The policy is not persisted in the store format: it is the resolved
+        // policy the runtime compacts with, built from the loaded config.
+        let policy = build_compaction_policy(compaction);
         let mut config_record = Record::new();
         config_record.push(
-            "compaction_strategy",
-            Value::string(config.compaction_strategy.as_str(), call.head),
+            "keep_recent",
+            Value::int(policy.keep_recent as i64, call.head),
+        );
+        config_record.push(
+            "keep_asked",
+            Value::int(policy.keep_asked as i64, call.head),
+        );
+        config_record.push(
+            "reserve",
+            Value::int(policy.summarizer.limits.reserve as i64, call.head),
+        );
+        config_record.push(
+            "summary_tokens",
+            Value::int(policy.summarizer.limits.summary_tokens as i64, call.head),
+        );
+        config_record.push(
+            "keep_tokens",
+            Value::int(policy.clearing.keep_tokens as i64, call.head),
+        );
+        config_record.push(
+            "keep_under",
+            Value::int(policy.clearing.keep_under as i64, call.head),
         );
 
         // Build the final session record
@@ -217,6 +236,10 @@ impl SimplePluginCommand for AgentSessionInspect {
     ) -> Result<Value, LabeledError> {
         let store_type = plugin.resolve_store_type(call)?;
         let rig = crate::plugin::rig_store_config(store_type)?;
-        crate::block_on!(plugin, self.run_inner(engine, call, &rig))
+        let compaction = agnt_core::config::toml_config::load()
+            .unwrap_or_default()
+            .compaction
+            .unwrap_or_default();
+        crate::block_on!(plugin, self.run_inner(engine, call, &rig, &compaction))
     }
 }

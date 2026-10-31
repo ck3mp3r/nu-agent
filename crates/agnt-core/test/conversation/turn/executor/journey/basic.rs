@@ -215,7 +215,7 @@ async fn journey_three_batched_tool_calls_in_one_response() -> Result<()> {
 
 /// A tool that always fails with a real execution error (io::Error). The
 /// persisted failure text is rig's redacted model feedback for a source
-/// error (`"the tool failed"`), which legacy text sniffing classifies as
+/// error (`"the tool failed"`), which text sniffing classifies as
 /// SUCCESS — the persisted verdict flag is what fixes rehydration.
 struct TestFailingTool;
 

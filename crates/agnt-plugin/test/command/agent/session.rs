@@ -137,9 +137,9 @@ mod tui_session_resolution_tests {
     }
 
     #[test]
-    fn non_tui_with_session_keeps_legacy_get_or_create_behavior() {
-        let request = resolve_session_request(false, Some("chat-legacy".to_string()));
-        assert_eq!(request, SessionRequest::Create("chat-legacy".to_string()));
+    fn non_tui_with_session_creates_the_named_session() {
+        let request = resolve_session_request(false, Some("chat-42".to_string()));
+        assert_eq!(request, SessionRequest::Create("chat-42".to_string()));
     }
 
     #[test]

@@ -11,7 +11,7 @@ async fn test_handle_tasks_send_missing_param() {
         runtime_handle: None,
     };
     let params = serde_json::json!({"target": "someone"});
-    let result = handle_tasks_send(ctx, params).await;
+    let result = Tool::Send.handle(ctx, params).await;
     assert!(result.is_err());
 }
 
@@ -22,7 +22,8 @@ async fn test_handle_tasks_send_to_real_server() -> Result<()> {
     let ctx = tool_ctx(&server);
 
     let params = serde_json::json!({"target": "test-agent", "text": "Hello!"});
-    let result = handle_tasks_send(ctx.clone(), params)
+    let result = Tool::Send
+        .handle(ctx.clone(), params)
         .await
         .map_err(|e| format!("{e:?}"))?;
     assert!(result.get("taskId").is_some(), "Should have a taskId");
@@ -46,7 +47,8 @@ async fn test_handle_tasks_send_with_context_id_returns_context_id() -> Result<(
         "text": "Hello!",
         "contextId": "ctx-abc"
     });
-    let result = handle_tasks_send(ctx.clone(), params)
+    let result = Tool::Send
+        .handle(ctx.clone(), params)
         .await
         .map_err(|e| format!("{e:?}"))?;
 
@@ -67,7 +69,8 @@ async fn test_handle_tasks_send_without_context_id_returns_uuid() -> Result<()> 
 
     // -- Exec
     let params = serde_json::json!({"target": "test-agent", "text": "Hello!"});
-    let result = handle_tasks_send(ctx.clone(), params)
+    let result = Tool::Send
+        .handle(ctx.clone(), params)
         .await
         .map_err(|e| format!("{e:?}"))?;
 
@@ -106,7 +109,8 @@ async fn test_handle_tasks_send_with_own_card_url() -> Result<()> {
     );
 
     let params = serde_json::json!({"target": "test-agent", "text": "Hello!"});
-    let result = handle_tasks_send(ctx.clone(), params)
+    let result = Tool::Send
+        .handle(ctx.clone(), params)
         .await
         .map_err(|e| format!("{e:?}"))?;
     assert!(result.get("taskId").is_some(), "Should have a taskId");
@@ -122,7 +126,8 @@ async fn test_handle_tasks_get_to_real_server() -> Result<()> {
 
     // First send a task
     let send_params = serde_json::json!({"target": "test-agent", "text": "Hello!"});
-    let send_result = handle_tasks_send(ctx.clone(), send_params)
+    let send_result = Tool::Send
+        .handle(ctx.clone(), send_params)
         .await
         .map_err(|e| format!("{e:?}"))?;
     let task_id = send_result["taskId"]
@@ -132,7 +137,8 @@ async fn test_handle_tasks_get_to_real_server() -> Result<()> {
 
     // Then get it
     let get_params = serde_json::json!({"target": "test-agent", "taskId": task_id});
-    let get_result = handle_tasks_get(ctx, get_params)
+    let get_result = Tool::Get
+        .handle(ctx, get_params)
         .await
         .map_err(|e| format!("{e:?}"))?;
     assert_eq!(get_result["taskId"], task_id);

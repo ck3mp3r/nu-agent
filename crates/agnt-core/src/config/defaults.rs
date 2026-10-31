@@ -54,7 +54,7 @@ pub const DEFAULT_OUTPUT_BUDGET_EMPTY_REMEDY: &str = "the response hit the outpu
      produce your answer immediately without extended reasoning";
 
 /// Default OutputBudget remedy mode. "empty_output" steers the model to
-/// produce its answer immediately; "shorter_response" keeps the legacy
+/// produce its answer immediately; "shorter_response" keeps the
 /// shorten-the-response guidance.
 pub const DEFAULT_OUTPUT_BUDGET_REMEDY_MODE: &str = "empty_output";
 

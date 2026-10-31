@@ -21,7 +21,6 @@ mod construction;
 use super::*;
 
 use crate::bus::create_bus;
-use crate::compaction::CompactionParams;
 use crate::config::models_cache::{ModelCost, ModelLimit, ModelSpec, ProviderSpec};
 use crate::config::{AgentsConfig, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
 use crate::session::{RigStoreConfig, StoreType};
@@ -67,7 +66,6 @@ fn make_params(
         engine: CwdEngine::shared(cwd.to_string_lossy().to_string()),
         rig: RigStoreConfig::new(store_type),
         final_session_id: None,
-        compaction_params: CompactionParams::default(),
         proactive_threshold_pct: None,
         base_permissions: PermissionsConfig::safe_defaults(true),
         effective_permissions: PermissionsConfig::safe_defaults(true),

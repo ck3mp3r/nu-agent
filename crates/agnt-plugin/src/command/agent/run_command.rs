@@ -264,8 +264,6 @@ pub(super) fn run_command(
 
         let agnt_core::conversation::builder::BuildArtifacts {
             merged_compaction,
-            compaction_strategy: _,
-            compaction_params,
             render_registry,
         } = super::setup::register_tools(
             call,
@@ -311,7 +309,6 @@ pub(super) fn run_command(
             engine: engine_arc.clone(),
             rig,
             final_session_id: session_resolution.final_session_id,
-            compaction_params,
             proactive_threshold_pct: merged_compaction.proactive_threshold_pct,
             base_permissions,
             effective_permissions,

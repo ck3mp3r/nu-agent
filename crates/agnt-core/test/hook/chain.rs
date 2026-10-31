@@ -43,7 +43,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::bus::Bus;
-use crate::compaction::CompactionParams;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::compaction::compactor::NuCompactor;
 use crate::hook::doom_loop::DoomLoopState;

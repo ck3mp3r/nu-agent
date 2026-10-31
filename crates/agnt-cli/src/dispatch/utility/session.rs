@@ -2,9 +2,11 @@
 
 use std::path::PathBuf;
 
-use agnt_core::compaction::CompactionParams;
+use agnt_core::config::CompactionConfig;
+use agnt_core::conversation::runtime_build::build_compaction_policy;
+use agnt_core::rig_memory::CompactionPolicy;
 use agnt_core::session::RigStoreConfig;
-use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy, match_prefixs};
+use agnt_core::session::prefix::dir_prefix;
 use agnt_core::types::{AssistantContent, Message, UserContent};
 
 use crate::AgentArgs;
@@ -31,8 +33,7 @@ async fn run_session_list(args: &AgentArgs) -> Result<()> {
     let cwd = current_dir()?;
     let rig = open_rig(args)?;
 
-    let new_prefix = dir_prefix(&cwd);
-    let legacy_prefix = dir_prefix_legacy(&cwd);
+    let prefixed = format!("{}-", dir_prefix(&cwd));
 
     let ids = rig
         .session_ids()
@@ -42,7 +43,7 @@ async fn run_session_list(args: &AgentArgs) -> Result<()> {
     // must not hide the others.
     let mut rows: Vec<Vec<String>> = Vec::new();
     for id in ids {
-        let Some(display_id) = match_prefixs(&id, &new_prefix, &legacy_prefix) else {
+        let Some(display_id) = id.strip_prefix(&prefixed) else {
             continue;
         };
         let Ok(meta) = rig.listing(&id) else {
@@ -72,18 +73,13 @@ async fn run_session_clear(args: &AgentArgs, id: &SessionIdArgs) -> Result<()> {
     let cwd = current_dir()?;
     let rig = open_rig(args)?;
 
-    let new_prefix = dir_prefix(&cwd);
-    let legacy_prefix = dir_prefix_legacy(&cwd);
-    let new_id = format!("{new_prefix}-{}", id.id);
-    let legacy_id = format!("{legacy_prefix}-{}", id.id);
+    let prefix = dir_prefix(&cwd);
+    let target_id = format!("{prefix}-{}", id.id);
 
-    // Determine which prefixed ID exists, trying the new prefix first and
-    // falling back to the legacy prefix for sessions created before the
-    // prefix length increase.
-    let target_id = [new_id, legacy_id]
-        .into_iter()
-        .find(|id| rig.holds(id).unwrap_or(false))
-        .ok_or_else(|| Error::Custom(format!("Session not found: {}", id.id)))?;
+    // The session must exist in the rig-memory store.
+    if !rig.holds(&target_id).unwrap_or(false) {
+        return Err(Error::Custom(format!("Session not found: {}", id.id)));
+    }
 
     // Delete the session's rig-memory store: its logs and its files.
     rig.destroy(&target_id)
@@ -98,24 +94,18 @@ async fn run_session_inspect(args: &AgentArgs, id: &SessionIdArgs) -> Result<()>
     let cwd = current_dir()?;
     let rig = open_rig(args)?;
 
-    let new_prefix = dir_prefix(&cwd);
-    let legacy_prefix = dir_prefix_legacy(&cwd);
-    let new_id = format!("{new_prefix}-{}", id.id);
-    let legacy_id = format!("{legacy_prefix}-{}", id.id);
+    let prefix = dir_prefix(&cwd);
+    let session_id = format!("{prefix}-{}", id.id);
 
-    let (session_id, view) = [new_id, legacy_id]
-        .into_iter()
-        .find(|id| rig.holds(id).unwrap_or(false))
-        .map(|id| {
-            let view = rig.view(&id);
-            (id, view)
-        })
-        .ok_or_else(|| Error::Custom(format!("Session not found: {}", id.id)))?;
-    let view = view.map_err(|e| Error::Custom(format!("Failed to read session: {e}")))?;
+    if !rig.holds(&session_id).unwrap_or(false) {
+        return Err(Error::Custom(format!("Session not found: {}", id.id)));
+    }
+    let view = rig
+        .view(&session_id)
+        .map_err(|e| Error::Custom(format!("Failed to read session: {e}")))?;
 
-    // Compaction params are not persisted in the store format; display defaults.
-    let config = CompactionParams::default();
-
+    // The compaction policy is not persisted in the store format: display the
+    // policy the runtime resolves from the loaded config.
     println!("Session: {session_id}");
     if let Some(ms) = view.started_ms
         && let Some(created) = chrono::DateTime::from_timestamp_millis(ms as i64)
@@ -125,10 +115,10 @@ async fn run_session_inspect(args: &AgentArgs, id: &SessionIdArgs) -> Result<()>
     println!("Title: {}", view.title.as_deref().unwrap_or(""));
     println!("Model: {}", view.model.as_deref().unwrap_or(""));
     println!("Messages: {}", view.messages.len());
-    println!(
-        "Compaction strategy: {}",
-        config.compaction_strategy.as_str()
-    );
+    let compaction = load_compaction_config();
+    for line in compaction_display(&build_compaction_policy(&compaction)) {
+        println!("{line}");
+    }
     for repair in &view.repairs {
         println!("Repair: {repair}");
     }
@@ -146,6 +136,30 @@ async fn run_session_inspect(args: &AgentArgs, id: &SessionIdArgs) -> Result<()>
 // endregion: --- Functions
 
 // region:    --- Support
+
+/// The compaction record lines for a resolved policy: the values the runtime
+/// compacts with, not a hardcoded default.
+fn compaction_display(policy: &CompactionPolicy) -> Vec<String> {
+    vec![
+        format!("Compaction keep_recent: {}", policy.keep_recent),
+        format!("Compaction keep_asked: {}", policy.keep_asked),
+        format!("Compaction reserve: {}", policy.summarizer.limits.reserve),
+        format!(
+            "Compaction summary_tokens: {}",
+            policy.summarizer.limits.summary_tokens
+        ),
+        format!("Compaction keep_tokens: {}", policy.clearing.keep_tokens),
+        format!("Compaction keep_under: {}", policy.clearing.keep_under),
+    ]
+}
+
+/// The `[compaction]` block of the user's config, empty when it cannot be read.
+fn load_compaction_config() -> CompactionConfig {
+    agnt_core::config::toml_config::load()
+        .unwrap_or_default()
+        .compaction
+        .unwrap_or_default()
+}
 
 fn current_dir() -> Result<PathBuf> {
     std::env::current_dir()

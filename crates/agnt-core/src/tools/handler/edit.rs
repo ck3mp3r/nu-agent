@@ -111,72 +111,15 @@ fn make_edit_diagnostic(class: &str, message: impl Into<String>) -> JsonValue {
 
 /// Embed a tool display into a tool result JSON under the `display` key, so
 /// the TUI/TTY layers can project it without re-deriving it from the raw
-/// result payload.
+/// result payload. The display serializes with its `kind` discriminator, the
+/// same shape [`tool_display_from_result`](super::result::tool_display_from_result)
+/// reads back on rehydration.
 fn embed_display_payload(response: &mut JsonValue, display: &ToolDisplay) {
-    let sections = display
-        .sections
-        .iter()
-        .map(|section| {
-            let mut section_obj = serde_json::Map::new();
-            section_obj.insert(
-                "label".to_string(),
-                section
-                    .label
-                    .clone()
-                    .map_or(JsonValue::Null, JsonValue::String),
-            );
-            section_obj.insert(
-                "language".to_string(),
-                JsonValue::String(section.kind.language().to_string()),
-            );
-            if let ContentKind::Diff { path, .. } = &section.kind {
-                section_obj.insert("path".to_string(), JsonValue::String(path.clone()));
-            }
-            section_obj.insert(
-                "content".to_string(),
-                JsonValue::String(section.content.clone()),
-            );
-            if let Some(stats) = &section.stats {
-                let mut stats_obj = serde_json::Map::new();
-                if let Some(files_changed) = stats.files_changed {
-                    stats_obj.insert("files_changed".to_string(), JsonValue::from(files_changed));
-                }
-                if let Some(insertions) = stats.insertions {
-                    stats_obj.insert("insertions".to_string(), JsonValue::from(insertions));
-                }
-                if let Some(deletions) = stats.deletions {
-                    stats_obj.insert("deletions".to_string(), JsonValue::from(deletions));
-                }
-                if let Some(diff_truncated) = stats.diff_truncated {
-                    stats_obj.insert(
-                        "diff_truncated".to_string(),
-                        JsonValue::Bool(diff_truncated),
-                    );
-                }
-                if let Some(omitted_files) = stats.omitted_files {
-                    stats_obj.insert("omitted_files".to_string(), JsonValue::from(omitted_files));
-                }
-                if let Some(omitted_hunks) = stats.omitted_hunks {
-                    stats_obj.insert("omitted_hunks".to_string(), JsonValue::from(omitted_hunks));
-                }
-                section_obj.insert("stats".to_string(), JsonValue::Object(stats_obj));
-            }
-            JsonValue::Object(section_obj)
-        })
-        .collect::<Vec<_>>();
-
-    let mut display_obj = serde_json::Map::new();
-    display_obj.insert(
-        "title".to_string(),
-        display
-            .title
-            .clone()
-            .map_or(JsonValue::Null, JsonValue::String),
-    );
-    display_obj.insert("sections".to_string(), JsonValue::Array(sections));
-
+    let Ok(value) = serde_json::to_value(display) else {
+        return;
+    };
     if let Some(obj) = response.as_object_mut() {
-        obj.insert("display".to_string(), JsonValue::Object(display_obj));
+        obj.insert("display".to_string(), value);
     }
 }
 

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::plugin::AgentPlugin;
 use agnt_core::session::RigStoreConfig;
-use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy, match_prefixs};
+use agnt_core::session::prefix::dir_prefix;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Record, Signature, Value};
 
@@ -35,8 +35,7 @@ impl AgentSessionList {
         rig: &RigStoreConfig,
     ) -> Result<Value, LabeledError> {
         let cwd = PathBuf::from(engine.get_current_dir()?);
-        let new_prefix = dir_prefix(&cwd);
-        let legacy_prefix = dir_prefix_legacy(&cwd);
+        let prefixed = format!("{}-", dir_prefix(&cwd));
 
         let ids = rig
             .session_ids()
@@ -47,7 +46,7 @@ impl AgentSessionList {
         // must not hide the others.
         let mut session_values: Vec<Value> = Vec::new();
         for id in ids {
-            let Some(display_id) = match_prefixs(&id, &new_prefix, &legacy_prefix) else {
+            let Some(display_id) = id.strip_prefix(&prefixed) else {
                 continue;
             };
             let Ok(meta) = rig.listing(&id) else {

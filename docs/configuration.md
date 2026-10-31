@@ -41,7 +41,7 @@ api_key = "store:openai"
 [providers.openai.models.gpt-4o]
 
 [compaction]
-strategy = "sliding_summary"
+proactive_threshold_pct = 0.80
 
 [agents]
 planner_enabled = true
@@ -329,15 +329,38 @@ Precedence for store type: CLI `--store` flag > `AGENT_SESSION_STORE_TYPE` env v
 
 ```toml
 [compaction]
-strategy = "sliding_summary"    # or "sliding_window", "token_truncate"
-keep_recent = 10                # minimum-message guard for sliding_summary; last N kept for sliding_window
-# token_budget = 4000          # required for token_truncate
-proactive_threshold_pct = 0.80  # 0.0-1.0 fraction of max_context_tokens before compaction fires
+proactive_threshold_pct = 0.80    # 0.0-1.0 fraction of the context window before compaction fires
+reserve = 16384                  # tokens kept free below the model's window
+summary_tokens = 12000           # the longest summary asked for, in tokens
+snippet_chars = 2000             # characters of a tool's output or arguments the summarizer sees
+unknown_window_chars = 400000    # characters of conversation sent when the model window is unknown
+keep_recent = 20000              # tokens of the newest messages an automatic compaction keeps verbatim
+keep_asked = 0                   # tokens of the newest messages an asked compaction keeps verbatim
+clearing = { keep_tokens = 20000, keep_under = 500 }  # the newest tool output kept, and the size never cleared
+# tracked = [{ tool = "read", argument = "path", set = "files_read" }]  # the tool arguments a summary tracks
+# [compaction.prompts]           # the summarizer's prompts; each key unset keeps the rig default
+# system = "..."
+# initial = "..."
+# update = "..."
+# format = "..."
+# in_place = "..."
+# notes = "..."
 ```
 
-- `sliding_summary` (default) — LLM summarizes all messages into a single system message. `keep_recent` acts only as a minimum-message guard.
-- `sliding_window` — drops old messages, keeps the last `keep_recent` verbatim. No LLM call.
-- `token_truncate` — keeps newest messages within a token budget (chars/4 estimate). Requires `token_budget`. No LLM call.
+Every key is optional: a key left out keeps the default named in its row. `proactive_threshold_pct` is this agent's own trigger knob. Every other key is a rig-memory policy field; rig-memory owns its meaning, and rig nests the four summarizer limits while this block sets them at the top level:
+
+- `proactive_threshold_pct` (float) — the fraction of the context window at which auto compaction fires. Default `0.80`. This is the only field range-checked here (0.0-1.0); rig owns the rest.
+- `reserve` (u64) — tokens kept free below the model's window. Unset = the rig default, `16384`.
+- `summary_tokens` (u64) — the longest summary asked for, in tokens. Unset = the rig default, `12000`.
+- `snippet_chars` (usize) — characters of a tool's output or arguments the summarizer sees. Unset = the rig default, `2000`.
+- `unknown_window_chars` (usize) — characters of conversation sent when the model window is unknown. Unset = the rig default, `400000`.
+- `keep_recent` (usize) — tokens of the newest messages an automatic compaction keeps verbatim, a quarter of the window at most. Unset = the rig default, `20000`.
+- `keep_asked` (usize) — tokens of the newest messages a compaction the user asked for keeps verbatim; the newest reply or message always stays. Unset = the rig default, `0`.
+- `clearing` — `keep_tokens` (tokens of the newest tool output kept) and `keep_under` (an output under this many tokens is never cleared). Unset = the rig defaults, `20000` / `500`.
+- `tracked` — one rule per entry: `tool`, `argument`, `set`. The set collects that argument of every matching call, and the summary carries it. Unset = the rig default, none.
+- `prompts` — the summarizer's six prompts: `system`, `initial`, `update`, `format`, `in_place`, `notes`. Unset = the rig defaults.
+
+Not yet configurable: `near_window` (rig's summarize-or-clear choice near the window) and a `/compact` focus (`/compact` args stay reserved). Both keep rig-memory's default, and neither has a config key.
 
 `max_context_tokens` lives on the active model role, not in the `[compaction]` block, but it directly controls when compaction fires. Set it to match your model's actual context window.
 

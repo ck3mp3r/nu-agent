@@ -50,7 +50,6 @@ temperature = 0.5
 tool_call = true
 
 [compaction]
-strategy = "sliding_summary"
 proactive_threshold_pct = 0.75
 
 [agents]
@@ -82,10 +81,6 @@ default = "planner"
 
         // Compaction
         let compaction = config.compaction.ok_or("compaction")?;
-        assert_eq!(
-            compaction.strategy,
-            Some(CompactionStrategy::SlidingSummary)
-        );
         assert_eq!(compaction.proactive_threshold_pct, Some(0.75));
 
         // Agents
@@ -95,6 +90,69 @@ default = "planner"
 
         // A2A
         assert_eq!(config.a2a_enabled, Some(true));
+        Ok(())
+    })
+}
+
+#[test]
+fn load_parses_every_compaction_policy_field() -> Result<()> {
+    with_xdg_config_home(|dir| {
+        let config_path = write_config(
+            dir,
+            r#"
+[compaction]
+proactive_threshold_pct = 0.75
+reserve = 8000
+summary_tokens = 6000
+snippet_chars = 1500
+unknown_window_chars = 200000
+keep_recent = 12000
+keep_asked = 2000
+tracked = [{ tool = "read", argument = "path", set = "files_read" }]
+
+[compaction.clearing]
+keep_tokens = 9000
+keep_under = 250
+
+[compaction.prompts]
+system = "system prompt"
+initial = "initial prompt"
+update = "update prompt"
+format = "format prompt"
+in_place = "in place prompt"
+notes = "notes prompt"
+"#,
+        )?;
+
+        // -- Exec
+        let config = load_from(&config_path).map_err(|e| format!("load should succeed: {e:?}"))?;
+
+        // -- Check
+        let compaction = config.compaction.ok_or("compaction")?;
+        assert_eq!(compaction.reserve, Some(8000));
+        assert_eq!(compaction.summary_tokens, Some(6000));
+        assert_eq!(compaction.snippet_chars, Some(1500));
+        assert_eq!(compaction.unknown_window_chars, Some(200_000));
+        assert_eq!(compaction.keep_recent, Some(12_000));
+        assert_eq!(compaction.keep_asked, Some(2_000));
+
+        let clearing = compaction.clearing.ok_or("clearing")?;
+        assert_eq!(clearing.keep_tokens, 9000);
+        assert_eq!(clearing.keep_under, 250);
+
+        let tracked = compaction.tracked.ok_or("tracked")?;
+        assert_eq!(tracked.len(), 1);
+        assert_eq!(tracked[0].tool, "read");
+        assert_eq!(tracked[0].argument, "path");
+        assert_eq!(tracked[0].set, "files_read");
+
+        let prompts = compaction.prompts.ok_or("prompts")?;
+        assert_eq!(prompts.system, "system prompt");
+        assert_eq!(prompts.initial, "initial prompt");
+        assert_eq!(prompts.update, "update prompt");
+        assert_eq!(prompts.format, "format prompt");
+        assert_eq!(prompts.in_place, "in place prompt");
+        assert_eq!(prompts.notes, "notes prompt");
         Ok(())
     })
 }

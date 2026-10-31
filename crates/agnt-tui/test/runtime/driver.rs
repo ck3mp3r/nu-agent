@@ -449,7 +449,7 @@ async fn every_popup_title_shows_its_navigation_keys() -> Result<()> {
         // -- Exec: settle past the render throttle so a frame lands.
         driver.advance_with_frame(&[]).await?;
 
-        // -- Check: the rendered title carries the keys, never a legacy " | ".
+        // -- Check: the rendered title carries the keys, never a bare " | ".
         let buffer = driver.buffer_text();
         assert!(
             buffer.contains(expected),

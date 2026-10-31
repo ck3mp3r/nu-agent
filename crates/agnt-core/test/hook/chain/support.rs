@@ -7,7 +7,6 @@
 pub(super) use std::sync::{Arc, Mutex};
 
 pub(super) use crate::bus::Bus;
-pub(super) use crate::compaction::CompactionParams;
 pub(super) use crate::conversation::compaction::CompactionConfig;
 pub(super) use crate::conversation::compaction::compactor::NuCompactor;
 pub(super) use crate::hook::chain::HookEnv;
@@ -60,7 +59,6 @@ pub(super) fn decide_fixture() -> Result<DecideFixture> {
     let bus = Bus::default();
     let compaction = CompactionConfig {
         compactor,
-        params: CompactionParams::default(),
         threshold_tokens: Some(80_000),
         threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
     };
@@ -124,7 +122,6 @@ pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissi
                     rig_memory::CompactionPolicy::default(),
                     test_model_spec(),
                 ),
-                params: CompactionParams::default(),
                 threshold_tokens: None,
                 threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
             },
@@ -182,7 +179,6 @@ impl RepetitionTurnFixture {
                         rig_memory::CompactionPolicy::default(),
                         test_model_spec(),
                     ),
-                    params: CompactionParams::default(),
                     threshold_tokens: None,
                     threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
                 },

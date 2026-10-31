@@ -329,7 +329,7 @@ fn output_budget_remedy_empty_output_mode_uses_empty_steering() -> TestResult<()
     Ok(())
 }
 
-/// OutputBudget remedy uses the legacy shorten-the-response text when mode is
+/// OutputBudget remedy uses the shorten-the-response text when mode is
 /// "shorter_response".
 #[test]
 fn output_budget_remedy_shorter_response_mode_uses_shorten_steering() -> TestResult<()> {

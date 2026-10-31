@@ -293,17 +293,9 @@ pub struct AgentArgs {
     #[arg(long, global = true)]
     pub name: Option<String>,
 
-    /// Compaction strategy: sliding_summary, sliding_window, token_truncate.
-    #[arg(long, global = true)]
-    pub compaction_strategy: Option<String>,
-
     /// Number of recent messages to keep during compaction.
     #[arg(long, global = true)]
     pub keep_recent: Option<u32>,
-
-    /// Token budget for the token_truncate strategy.
-    #[arg(long, global = true)]
-    pub token_budget: Option<u64>,
 
     /// Proactive compaction threshold percentage (0.0 to 1.0).
     #[arg(long, global = true)]

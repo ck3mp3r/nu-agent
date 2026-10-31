@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::compaction::CompactionStrategy;
 use crate::session::StoreType;
 
 use super::defaults;
@@ -186,12 +185,36 @@ pub struct PluginConfig {
 }
 
 /// All fields are `Option` — `None` means "use default".
+///
+/// The `[compaction]` keys mirror rig-memory's own compaction policy table. Every
+/// policy field is optional: a missing key is rig-memory's default, and rig owns
+/// the meaning of the value. No host-side range check applies to them.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CompactionConfig {
-    /// Primary compaction strategy: "sliding_summary"
-    pub strategy: Option<CompactionStrategy>,
     /// Proactive compaction threshold percentage 0.0-1.0 (default: 0.80)
     pub proactive_threshold_pct: Option<f64>,
+    /// Tokens kept free below the model's window (rig-memory default: 16384).
+    pub reserve: Option<u64>,
+    /// The longest summary asked for, in tokens (rig-memory default: 12000).
+    pub summary_tokens: Option<u64>,
+    /// Characters of a tool's output or arguments the summarizer sees
+    /// (rig-memory default: 2000).
+    pub snippet_chars: Option<usize>,
+    /// Characters of conversation sent when the window is unknown
+    /// (rig-memory default: 400000).
+    pub unknown_window_chars: Option<usize>,
+    /// Tokens of the newest messages an automatic compaction keeps verbatim
+    /// (rig-memory default: 20000).
+    pub keep_recent: Option<usize>,
+    /// Tokens of the newest messages a compaction the user asked for keeps
+    /// verbatim (rig-memory default: 0).
+    pub keep_asked: Option<usize>,
+    /// How old tool outputs are cleared before a summary is asked for.
+    pub clearing: Option<rig_memory::ClearToolOutputs>,
+    /// The tool arguments tracked across compactions.
+    pub tracked: Option<Vec<rig_memory::TrackArgument>>,
+    /// The summarizer's prompts.
+    pub prompts: Option<rig_memory::SummaryPrompts>,
 }
 
 /// Configuration for session store backend selection.

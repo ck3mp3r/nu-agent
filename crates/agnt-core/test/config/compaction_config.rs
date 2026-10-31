@@ -1,6 +1,5 @@
 //! Compaction config serde and validation tests.
 
-use crate::compaction::CompactionStrategy;
 use crate::config::CompactionConfig;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -10,8 +9,9 @@ fn compaction_config_defaults_and_serde_roundtrip() -> Result<()> {
     // -- Setup & Fixtures
     let default = CompactionConfig::default();
     let config = CompactionConfig {
-        strategy: Some(CompactionStrategy::SlidingSummary),
         proactive_threshold_pct: Some(0.75),
+        keep_recent: Some(12_000),
+        ..CompactionConfig::default()
     };
 
     // -- Exec
@@ -19,8 +19,8 @@ fn compaction_config_defaults_and_serde_roundtrip() -> Result<()> {
     let deserialized: CompactionConfig = serde_json::from_str(&json)?;
 
     // -- Check
-    assert_eq!(default.strategy, None);
     assert_eq!(default.proactive_threshold_pct, None);
+    assert_eq!(default.keep_recent, None);
     assert_eq!(config, deserialized);
     Ok(())
 }

@@ -1,5 +1,4 @@
 use super::clear::{AgentSessionClear, CwdInterface};
-use agnt_core::session::prefix::dir_prefix_legacy;
 use agnt_core::session::{RigStoreConfig, StoreType};
 use agnt_core::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
@@ -137,16 +136,17 @@ async fn test_delete_session_removes_only_target_session() -> Result<()> {
 }
 
 #[tokio::test]
-async fn clear_deletes_legacy_prefixed_session_via_fallback() -> Result<()> {
+async fn clear_ignores_sessions_of_another_cwd() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
     let rig = rig_at(&temp_dir);
 
-    // Create a session with the legacy 7-char prefix (as if created before the
-    // prefix length increase).
-    let legacy_prefix = dir_prefix_legacy(temp_dir.path());
-    let legacy_id = format!("{legacy_prefix}-old-session");
-    seed(&rig, &legacy_id, vec![Message::user("hello")])?;
+    // A session of another cwd must not be reachable from this cwd.
+    let foreign_id = format!(
+        "{}-old-session",
+        agnt_core::session::prefix::dir_prefix(std::path::Path::new("/other/dir"))
+    );
+    seed(&rig, &foreign_id, vec![Message::user("hello")])?;
 
     // -- Exec
     let command = AgentSessionClear;
@@ -154,15 +154,16 @@ async fn clear_deletes_legacy_prefixed_session_via_fallback() -> Result<()> {
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call("old-session");
-    command
-        .run_inner(&engine, &call, &rig)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+    let result = command.run_inner(&engine, &call, &rig).await;
 
     // -- Check
     assert!(
-        !rig.holds(&legacy_id).map_err(|e| format!("{e:?}"))?,
-        "legacy-prefixed session should be deleted after clear"
+        result.is_err(),
+        "a session of another cwd must not be cleared from this cwd"
+    );
+    assert!(
+        rig.holds(&foreign_id).map_err(|e| format!("{e:?}"))?,
+        "the foreign session must still exist"
     );
     Ok(())
 }

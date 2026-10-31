@@ -5,6 +5,36 @@ use agnt_core::types::{AssistantMessage, CallId, Opaque, Text, ToolName, ToolRes
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
+fn test_utility_session_compaction_display_reports_the_resolved_policy() -> Result<()> {
+    // -- Setup & Fixtures
+    let policy = agnt_core::rig_memory::CompactionPolicy {
+        keep_recent: 5000,
+        clearing: agnt_core::rig_memory::ClearToolOutputs {
+            keep_tokens: 9000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    // -- Exec
+    let lines = compaction_display(&policy);
+
+    // -- Check
+    assert_eq!(
+        lines,
+        vec![
+            "Compaction keep_recent: 5000".to_string(),
+            "Compaction keep_asked: 0".to_string(),
+            "Compaction reserve: 16384".to_string(),
+            "Compaction summary_tokens: 12000".to_string(),
+            "Compaction keep_tokens: 9000".to_string(),
+            "Compaction keep_under: 500".to_string(),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
 fn test_utility_session_extract_message_info_system() {
     // -- Setup & Fixtures
     let msg = Message::System {

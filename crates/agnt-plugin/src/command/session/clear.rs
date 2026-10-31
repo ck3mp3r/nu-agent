@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::plugin::AgentPlugin;
 use agnt_core::session::RigStoreConfig;
-use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy};
+use agnt_core::session::prefix::dir_prefix;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
 
@@ -38,18 +38,15 @@ impl AgentSessionClear {
         let session_id: String = call.req(0)?;
 
         let cwd = PathBuf::from(engine.get_current_dir()?);
-        let new_prefix = dir_prefix(&cwd);
-        let legacy_prefix = dir_prefix_legacy(&cwd);
-        let new_id = format!("{new_prefix}-{session_id}");
-        let legacy_id = format!("{legacy_prefix}-{session_id}");
+        let prefix = dir_prefix(&cwd);
+        let target_id = format!("{prefix}-{session_id}");
 
-        // Determine which prefixed ID exists, trying the new prefix first and
-        // falling back to the legacy prefix for sessions created before the
-        // prefix length increase.
-        let target_id = [new_id, legacy_id]
-            .into_iter()
-            .find(|id| rig.holds(id).unwrap_or(false))
-            .ok_or_else(|| LabeledError::new(format!("Session not found: {session_id}")))?;
+        // The session must exist in the rig-memory store.
+        if !rig.holds(&target_id).unwrap_or(false) {
+            return Err(LabeledError::new(format!(
+                "Session not found: {session_id}"
+            )));
+        }
 
         // Delete the session's rig-memory store: its logs and its files.
         rig.destroy(&target_id)

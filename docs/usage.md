@@ -714,11 +714,9 @@ the store that was dropped.
 
 ### Compaction triggers and persistence
 
-- Auto compaction trigger evaluation uses threshold tolerance and hysteresis:
-  - fire bound: `threshold - tolerance`
-  - rearm bound: `threshold - (tolerance + hysteresis_margin)`
+- Auto compaction fires when the conversation reaches `proactive_threshold_pct` (default: 0.80) of the model's context window.
 - Manual slash trigger:
-  - `/compact` triggers force compaction immediately (bypasses threshold gate)
+  - `/compact` triggers force compaction immediately (bypasses the threshold gate)
   - `/compact <args>` is treated as unknown for now
   - unknown slash commands emit a warning and processing continues
 - Slash command text is runtime control input and is not forwarded as prompt text to the LLM.
@@ -727,23 +725,33 @@ the store that was dropped.
   - the compacted message set is what the next run loads
   - transcript-visible compaction summary artifact includes source + summarized counts
   - compaction summary artifact includes summary preview/body from the produced summary text
+  - the real token count resets after a compaction, so the next turn estimates from the summary until its first completion reports a counted total
 
-### Compaction strategies
+### Compaction policy
 
-Three compaction strategies are available:
+The `[compaction]` keys mirror rig-memory's policy fields, plus this agent's own `proactive_threshold_pct` trigger. Every field is optional: a key left out keeps the rig default, except the trigger, which keeps `0.80`. rig owns the meaning of every policy value.
 
-- `sliding_summary` (default) — LLM summarizes old messages, keeps recent verbatim window.
-- `sliding_window` — drops old messages, keeps only the last N. No LLM call.
-- `token_truncate` — keeps newest messages within a token budget (chars/4 estimate). No LLM call.
+| key | type | meaning | unset |
+|---|---|---|---|
+| `proactive_threshold_pct` | float | fraction of the context window at which auto compaction fires (0.0–1.0) | `0.80` |
+| `reserve` | int | tokens kept free below the model's window | the rig default, `16384` |
+| `summary_tokens` | int | the longest summary asked for, in tokens | the rig default, `12000` |
+| `snippet_chars` | int | characters of a tool's output or arguments the summarizer sees | the rig default, `2000` |
+| `unknown_window_chars` | int | characters of conversation sent when the model window is unknown | the rig default, `400000` |
+| `keep_recent` | int | tokens of the newest messages an automatic compaction keeps verbatim (a quarter of the window at most) | the rig default, `20000` |
+| `keep_asked` | int | tokens of the newest messages a `/compact` keeps verbatim | the rig default, `0` |
+| `clearing.keep_tokens` | int | tokens of the newest tool output kept before clearing | the rig default, `20000` |
+| `clearing.keep_under` | int | size under which a tool output is never cleared | the rig default, `500` |
+| `tracked` | array | the tool arguments a summary tracks: `tool`, `argument`, `set` | the rig default, none |
+| `prompts` | table | the summarizer's six prompts: `system`, `initial`, `update`, `format`, `in_place`, `notes` | the rig defaults |
 
-Legacy stored strategy values `truncate`, `sliding`, and `summarize` normalize to `sliding_summary` on deserialize.
+The behavior those fields shape:
 
-### Two-tier compaction policy
+- The newest messages stay verbatim within the keep budget; the older ones become the summary.
+- Old tool outputs are cleared before the summary is asked for. Error results and outputs under `keep_under` tokens stay, and so do the calls themselves.
+- A short conversation is still summarized when `/compact` asks for it; the newest reply or message always stays.
 
-Compaction uses a two-tier policy:
-
-1. **Proactive compaction** fires when context usage reaches `proactive_threshold_pct` (default: 0.80 = 80%) of the context window. Uses the configured primary strategy.
-2. **Fallback compaction** fires at 95% of the context window using the ordered `fallback_strategies` list (default: `["sliding_window"]`). This is a safety net if the primary strategy is unavailable or insufficient.
+The block reference lives in [Configuration](configuration.md#compaction).
 
 CLI flags override config.toml, which overrides built-in defaults.
 
@@ -1119,9 +1127,6 @@ edit = "deny"
 - `--agent <name>` — load an agent persona from `.agents/<name>.md`
 - `--name <string>` — agent instance identity for multi-agent messaging
 - `--parent-name <string>` — parent agent name for sub-agent reporting (internal)
-- `--compaction-strategy <string>` — `sliding_summary`, `sliding_window`, `token_truncate`
-- `--keep-recent <int>` — recent messages to keep during compaction (default: 10)
-- `--token-budget <int>` — token budget for `token_truncate` strategy
 - `--proactive-threshold-pct <number>` — proactive compaction threshold 0.0–1.0 (default: 0.80)
 - `--store <string>` — session store backend: `sqlite|jsonl|memory`
 

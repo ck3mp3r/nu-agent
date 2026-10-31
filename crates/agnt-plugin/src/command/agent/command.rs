@@ -51,15 +51,8 @@ Persona file front matter (optional YAML):
 
 CLI flags override front matter values. Front matter overrides plugin config.
 
-Compaction strategies via --compaction-strategy:
-  - sliding_summary (default): LLM summarizes old messages, keeps recent verbatim window.
-  - sliding_window: drops old messages, keeps only the last N. No LLM call.
-  - token_truncate: keeps newest messages within a token budget (chars/4 estimate). No LLM call.
-
 Compaction flags:
-  --compaction-strategy <string>   Primary strategy (sliding_summary, sliding_window, token_truncate)
   --keep-recent <int>              Recent messages to keep during compaction (default: 10)
-  --token-budget <int>             Token budget for token_truncate strategy
   --proactive-threshold-pct <num>  Proactive compaction threshold 0.0-1.0 (default: 0.80)"
     }
 
@@ -114,11 +107,6 @@ Compaction flags:
             Example {
                 description: "Use persona with model override",
                 example: r#""research this topic" | agent --agent researcher --model anthropic/claude-sonnet-4-20250514"#,
-                result: None,
-            },
-            Example {
-                description: "Use sliding_window compaction strategy",
-                example: r#"agent --compaction-strategy sliding_window"#,
                 result: None,
             },
             Example {
@@ -245,21 +233,9 @@ Compaction flags:
                 None,
             )
             .named(
-                "compaction-strategy",
-                nu_protocol::SyntaxShape::String,
-                "Compaction strategy: sliding_summary, sliding_window, token_truncate",
-                None,
-            )
-            .named(
                 "keep-recent",
                 nu_protocol::SyntaxShape::Int,
                 "Number of recent messages to keep during compaction",
-                None,
-            )
-            .named(
-                "token-budget",
-                nu_protocol::SyntaxShape::Int,
-                "Token budget for token_truncate strategy",
                 None,
             )
             .named(

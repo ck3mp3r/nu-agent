@@ -17,7 +17,8 @@ async fn test_handle_tasks_get_with_unique_prefix() -> Result<()> {
 
     // -- Exec
     let params = serde_json::json!({"target": "test-agent", "taskId": prefix});
-    let result = handle_tasks_get(ctx, params)
+    let result = Tool::Get
+        .handle(ctx, params)
         .await
         .map_err(|e| format!("{e:?}"))?;
 
@@ -44,7 +45,8 @@ async fn test_handle_tasks_cancel_with_unique_prefix() -> Result<()> {
 
     // -- Exec
     let params = serde_json::json!({"target": "test-agent", "taskId": prefix});
-    let result = handle_tasks_cancel(ctx, params)
+    let result = Tool::Cancel
+        .handle(ctx, params)
         .await
         .map_err(|e| format!("{e:?}"))?;
 
@@ -77,7 +79,8 @@ async fn test_handle_tasks_get_with_unknown_prefix() -> Result<()> {
 
     // -- Exec
     let params = serde_json::json!({"target": "test-agent", "taskId": prefix});
-    let err = handle_tasks_get(ctx, params)
+    let err = Tool::Get
+        .handle(ctx, params)
         .await
         .err()
         .ok_or("an unknown prefix should return an error")?;
@@ -104,7 +107,8 @@ async fn test_handle_tasks_get_with_prefix_shorter_than_eight() -> Result<()> {
 
     // -- Exec
     let params = serde_json::json!({"target": "test-agent", "taskId": too_short});
-    let err = handle_tasks_get(ctx, params)
+    let err = Tool::Get
+        .handle(ctx, params)
         .await
         .err()
         .ok_or("a short prefix should return an error")?;

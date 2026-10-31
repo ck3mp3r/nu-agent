@@ -1,5 +1,6 @@
 use super::inspect::{AgentSessionInspect, CwdInterface};
-use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy};
+use agnt_core::config::CompactionConfig;
+use agnt_core::session::prefix::dir_prefix;
 use agnt_core::session::{RigStoreConfig, StoreType};
 use agnt_core::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
@@ -48,7 +49,7 @@ async fn test_agent_session_inspect_displays_full_session_details() -> Result<()
     };
     let call = make_call("test-session");
     let result = command
-        .run_inner(&engine, &call, &rig)
+        .run_inner(&engine, &call, &rig, &CompactionConfig::default())
         .await
         .map_err(|e| format!("{e:?}"))?;
 
@@ -82,7 +83,9 @@ async fn test_agent_session_inspect_returns_error_for_nonexistent_session() -> R
         dir: temp_dir.path().to_string_lossy().to_string(),
     };
     let call = make_call("nonexistent");
-    let result = command.run_inner(&engine, &call, &rig).await;
+    let result = command
+        .run_inner(&engine, &call, &rig, &CompactionConfig::default())
+        .await;
 
     // -- Check
     assert!(
@@ -127,7 +130,7 @@ async fn run_prepends_cwd_prefix_to_session_id() -> Result<()> {
     };
     let call = make_call("my-session");
     let result = command
-        .run_inner(&engine, &call, &rig)
+        .run_inner(&engine, &call, &rig, &CompactionConfig::default())
         .await
         .map_err(|e| format!("{e:?}"))?;
 
@@ -148,16 +151,17 @@ async fn run_prepends_cwd_prefix_to_session_id() -> Result<()> {
 }
 
 #[tokio::test]
-async fn inspect_finds_legacy_prefixed_session_via_fallback() -> Result<()> {
+async fn inspect_ignores_sessions_of_another_cwd() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
     let rig = rig_at(&temp_dir);
 
-    // Create a session with the legacy 7-char prefix (as if created before the
-    // prefix length increase).
-    let legacy_prefix = dir_prefix_legacy(temp_dir.path());
-    let legacy_id = format!("{legacy_prefix}-old-session");
-    seed(&rig, &legacy_id, vec![Message::user("hello")])?;
+    // A session of another cwd must not be reachable from this cwd.
+    let foreign_id = format!(
+        "{}-old-session",
+        dir_prefix(std::path::Path::new("/other/dir"))
+    );
+    seed(&rig, &foreign_id, vec![Message::user("hello")])?;
 
     // -- Exec
     let command = AgentSessionInspect;
@@ -166,27 +170,115 @@ async fn inspect_finds_legacy_prefixed_session_via_fallback() -> Result<()> {
     };
     let call = make_call("old-session");
     let result = command
-        .run_inner(&engine, &call, &rig)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
+        .run_inner(&engine, &call, &rig, &CompactionConfig::default())
+        .await;
 
     // -- Check
-    let id = match &result {
-        Value::Record { val, .. } => val
-            .get("id")
-            .and_then(|v| v.as_str().ok())
-            .map(|s| s.to_owned()),
-        _ => None,
-    };
-    assert_eq!(
-        id.as_deref(),
-        Some(legacy_id.as_str()),
-        "returned id should equal the legacy-prefixed session id"
+    assert!(
+        result.is_err(),
+        "a session of another cwd must not resolve in this cwd"
     );
     Ok(())
 }
 
+#[tokio::test]
+async fn test_agent_session_inspect_shows_the_default_compaction_policy() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp_dir = TempDir::new().unwrap();
+    let rig = rig_at(&temp_dir);
+    let prefix = dir_prefix(temp_dir.path());
+    let full_id = format!("{prefix}-test-session");
+    seed(&rig, &full_id, vec![Message::user("hello")])?;
+    let command = AgentSessionInspect;
+    let engine = MockCwd {
+        dir: temp_dir.path().to_string_lossy().to_string(),
+    };
+    let call = make_call("test-session");
+    let default = agnt_core::rig_memory::CompactionPolicy::default();
+
+    // -- Exec
+    let result = command
+        .run_inner(&engine, &call, &rig, &CompactionConfig::default())
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(
+        config_int(&result, "keep_recent"),
+        Some(default.keep_recent as i64)
+    );
+    assert_eq!(
+        config_int(&result, "keep_asked"),
+        Some(default.keep_asked as i64)
+    );
+    assert_eq!(
+        config_int(&result, "reserve"),
+        Some(default.summarizer.limits.reserve as i64)
+    );
+    assert_eq!(
+        config_int(&result, "summary_tokens"),
+        Some(default.summarizer.limits.summary_tokens as i64)
+    );
+    assert_eq!(
+        config_int(&result, "keep_tokens"),
+        Some(default.clearing.keep_tokens as i64)
+    );
+    assert_eq!(
+        config_int(&result, "keep_under"),
+        Some(default.clearing.keep_under as i64)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_agent_session_inspect_shows_the_configured_compaction_policy() -> Result<()> {
+    // -- Setup & Fixtures
+    let temp_dir = TempDir::new().unwrap();
+    let rig = rig_at(&temp_dir);
+    let prefix = dir_prefix(temp_dir.path());
+    let full_id = format!("{prefix}-test-session");
+    seed(&rig, &full_id, vec![Message::user("hello")])?;
+    let command = AgentSessionInspect;
+    let engine = MockCwd {
+        dir: temp_dir.path().to_string_lossy().to_string(),
+    };
+    let call = make_call("test-session");
+    let config = CompactionConfig {
+        keep_recent: Some(5000),
+        reserve: Some(8000),
+        clearing: Some(agnt_core::rig_memory::ClearToolOutputs {
+            keep_tokens: 9000,
+            keep_under: 250,
+        }),
+        ..CompactionConfig::default()
+    };
+
+    // -- Exec
+    let result = command
+        .run_inner(&engine, &call, &rig, &config)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+
+    // -- Check
+    assert_eq!(config_int(&result, "keep_recent"), Some(5000));
+    assert_eq!(config_int(&result, "reserve"), Some(8000));
+    assert_eq!(config_int(&result, "keep_tokens"), Some(9000));
+    assert_eq!(config_int(&result, "keep_under"), Some(250));
+    Ok(())
+}
+
 // -- Test Support
+
+/// One integer field of an inspected session's `config` record.
+fn config_int(result: &Value, field: &str) -> Option<i64> {
+    let Value::Record { val, .. } = result else {
+        return None;
+    };
+    let Value::Record { val, .. } = val.get("config")? else {
+        return None;
+    };
+    val.get(field)?.as_int().ok()
+}
 
 /// A `DirStore` rig store rooted at `temp_dir`.
 fn rig_at(temp_dir: &TempDir) -> RigStoreConfig {

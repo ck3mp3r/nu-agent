@@ -133,7 +133,7 @@ fn classify_model_family_table() {
         ("openai", "o4-mini", ModelFamily::Gpt4x),
         ("openai", "o3", ModelFamily::Gpt4x),
         ("openai", "o4", ModelFamily::Gpt4x),
-        // GitHub Copilot legacy reasoning-model format.
+        // GitHub Copilot three-part identity (`github-copilot/openai/<model>`).
         ("github-copilot", "openai/o4-mini", ModelFamily::Gpt4x),
         ("github-copilot", "openai/o3", ModelFamily::Gpt4x),
     ];

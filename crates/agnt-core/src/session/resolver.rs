@@ -57,25 +57,11 @@ impl SessionResolver for DefaultSessionResolver {
         &self,
         input: SessionResolutionInput,
     ) -> Result<SessionResolution, LabeledError> {
-        let new_prefix = crate::session::prefix::dir_prefix(&input.cwd);
-        let legacy_prefix = crate::session::prefix::dir_prefix_legacy(&input.cwd);
+        let prefix = crate::session::prefix::dir_prefix(&input.cwd);
         let request = resolve_session_request(input.use_tui, input.session_id);
         let request = match request {
-            SessionRequest::Attach(id) => {
-                let new_id = format!("{new_prefix}-{id}");
-                let legacy_id = format!("{legacy_prefix}-{id}");
-                // Try the new prefix first, then fall back to the legacy prefix
-                // for sessions created before the prefix length increase.
-                let resolved = if self.holds(&new_id)? {
-                    new_id
-                } else if self.holds(&legacy_id)? {
-                    legacy_id
-                } else {
-                    new_id
-                };
-                SessionRequest::Attach(resolved)
-            }
-            SessionRequest::Create(id) => SessionRequest::Create(format!("{new_prefix}-{id}")),
+            SessionRequest::Attach(id) => SessionRequest::Attach(format!("{prefix}-{id}")),
+            SessionRequest::Create(id) => SessionRequest::Create(format!("{prefix}-{id}")),
             SessionRequest::None => SessionRequest::None,
         };
         match request {
@@ -122,11 +108,6 @@ impl DefaultSessionResolver {
         self.rig
             .open(session_id)
             .map_err(|e| LabeledError::new(format!("Failed to open session '{session_id}': {e}")))
-    }
-
-    /// Whether the rig store holds `session_id`.
-    fn holds(&self, session_id: &str) -> Result<bool, LabeledError> {
-        holds(&self.open(session_id)?, session_id)
     }
 }
 
@@ -229,7 +210,7 @@ pub fn hydrate_transcript_messages(
     //          whose call id has no matching ToolCall yields no display — the
     //          same guard the ToolResult branch used to apply. The status is the
     //          one the store carries; a row with no recorded status keeps the
-    //          stored `is_error` verdict (the legacy disposition). A cancelled
+    //          stored `is_error` verdict. A cancelled
     //          call carries the ⊘ mark and the args preview of what the turn
     //          would have run, the same preview the live permission gate shows.
     let mut tool_displays: HashMap<CallId, ToolDisplay> = HashMap::new();

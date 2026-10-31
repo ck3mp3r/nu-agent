@@ -18,7 +18,6 @@ pub(super) use agent_client_protocol::{Agent, Channel, Client, ConnectionTo};
 pub(super) use agnt_core::bus::{
     Bus, CancelEvent, OneshotTx, SessionEvent, TurnEvent, TurnRx, create_bus,
 };
-pub(super) use agnt_core::compaction::CompactionParams;
 pub(super) use agnt_core::config::{AgentsConfig, Config, ModelsCache, defaults};
 pub(super) use agnt_core::conversation::compaction::CompactionConfig;
 pub(super) use agnt_core::conversation::compaction::compactor::NuCompactor;
@@ -221,7 +220,6 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             dyn_model: Arc::new(Mutex::new(dyn_model)),
             compaction: CompactionConfig {
                 compactor,
-                params: CompactionParams::default(),
                 threshold_tokens: self.threshold_tokens,
                 threshold_pct: defaults::PROACTIVE_THRESHOLD_PCT,
             },

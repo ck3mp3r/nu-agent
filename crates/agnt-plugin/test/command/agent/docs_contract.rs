@@ -112,10 +112,85 @@ fn help_includes_compact_mcp_help_status_slash_commands() {
 }
 
 #[test]
-fn help_describes_auto_compaction_threshold_behavior() {
+fn help_lists_the_wired_compaction_policy_fields() {
     let help = read_help_markdown();
-    assert!(help.contains("threshold - tolerance"));
-    assert!(help.contains("threshold - (tolerance + hysteresis_margin)"));
+    for key in [
+        "`proactive_threshold_pct`",
+        "`keep_recent`",
+        "`keep_asked`",
+        "`clearing.keep_tokens`",
+        "`clearing.keep_under`",
+        "`reserve`",
+        "`summary_tokens`",
+        "`snippet_chars`",
+        "`unknown_window_chars`",
+        "`tracked`",
+        "`prompts`",
+    ] {
+        assert!(help.contains(key), "the help lists the {key} knob");
+    }
+    assert!(
+        help.contains("unset = the rig default"),
+        "the help states that an unset knob keeps the rig default"
+    );
+    assert!(
+        help.contains("reserved for a future focus option"),
+        "the help states that /compact args are reserved"
+    );
+}
+
+#[test]
+fn usage_docs_list_the_wired_compaction_policy_fields() {
+    let docs = read_usage_docs();
+    for key in [
+        "`proactive_threshold_pct`",
+        "`reserve`",
+        "`summary_tokens`",
+        "`snippet_chars`",
+        "`unknown_window_chars`",
+        "`keep_recent`",
+        "`keep_asked`",
+        "`clearing.keep_tokens`",
+        "`clearing.keep_under`",
+        "`tracked`",
+        "`prompts`",
+    ] {
+        assert!(docs.contains(key), "the usage docs list the {key} knob");
+    }
+    assert!(
+        docs.contains("a key left out keeps the rig default"),
+        "the usage docs state that an unset knob keeps the rig default"
+    );
+}
+
+#[test]
+fn configuration_docs_list_the_wired_compaction_policy_fields() {
+    let docs = read_configuration_docs();
+    for key in [
+        "`proactive_threshold_pct`",
+        "`reserve`",
+        "`summary_tokens`",
+        "`snippet_chars`",
+        "`unknown_window_chars`",
+        "`keep_recent`",
+        "`keep_asked`",
+        "`clearing`",
+        "`tracked`",
+        "`prompts`",
+    ] {
+        assert!(
+            docs.contains(key),
+            "the configuration docs list the {key} knob"
+        );
+    }
+    assert!(
+        docs.contains("Unset = the rig default"),
+        "the configuration docs state that an unset knob keeps the rig default"
+    );
+    assert!(
+        docs.contains("Not yet configurable: `near_window`"),
+        "the configuration docs carry the deferred `near_window` note"
+    );
 }
 
 #[test]
@@ -146,14 +221,6 @@ fn help_describes_inline_slash_suggestions_behavior() {
     assert!(help.contains("open when input starts with `/`"));
     assert!(help.contains("filters incrementally"));
     assert!(help.contains("independent of the command palette"));
-}
-
-#[test]
-fn help_describes_compaction_strategies() {
-    let help = read_help_markdown();
-    assert!(help.contains("sliding_summary"));
-    assert!(help.contains("sliding_window"));
-    assert!(help.contains("token_truncate"));
 }
 
 #[test]

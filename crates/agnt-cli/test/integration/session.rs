@@ -5,7 +5,7 @@
 
 use super::*;
 
-use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy};
+use agnt_core::session::prefix::dir_prefix;
 use agnt_core::session::{RigStoreConfig, StoreType};
 use agnt_core::types::{Message, Text, UserContent};
 use agnt_core::utils::paths::APP_DIR_NAME;
@@ -136,22 +136,25 @@ async fn test_integration_session_clear_deletes_seeded_session() -> Result<()> {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn test_integration_session_clear_falls_back_to_legacy_prefix() -> Result<()> {
+async fn test_integration_session_clear_ignores_another_cwd() -> Result<()> {
     // -- Setup & Fixtures
     let _env = support::TestEnv::new().await?;
-    let cwd = std::env::current_dir()?;
-    let legacy_prefix = dir_prefix_legacy(&cwd);
-    seed_session(&legacy_prefix, "legacycase").await?;
-    let (args, command) = support::parse_session_command(&["session", "clear", "legacycase"])?;
+    let foreign_prefix = dir_prefix(std::path::Path::new("/other/dir"));
+    seed_session(&foreign_prefix, "foreigncase").await?;
+    let (args, command) = support::parse_session_command(&["session", "clear", "foreigncase"])?;
 
     // -- Exec
-    dispatch::run_session_command(&args, &command).await?;
+    let result = dispatch::run_session_command(&args, &command).await;
 
     // -- Check
+    assert!(
+        result.is_err(),
+        "a session of another cwd must not be cleared from this cwd"
+    );
     let rig = RigStoreConfig::new(StoreType::Sqlite);
     assert!(
-        !rig.holds(&format!("{legacy_prefix}-legacycase"))?,
-        "the legacy session must be gone"
+        rig.holds(&format!("{foreign_prefix}-foreigncase"))?,
+        "the foreign session must still exist"
     );
     Ok(())
 }

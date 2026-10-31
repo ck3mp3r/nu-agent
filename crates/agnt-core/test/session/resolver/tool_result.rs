@@ -142,6 +142,7 @@ fn test_tool_result_nu_explicit_display_wins_over_fallback() -> Result<()> {
                             "title": "custom",
                             "sections": [{
                                 "label": "output",
+                                "kind": "code",
                                 "language": "text",
                                 "content": "embedded result"
                             }]
@@ -256,6 +257,7 @@ fn test_tool_result_with_explicit_display_key() {
                             "title": "custom output",
                             "sections": [{
                                 "label": "output",
+                                "kind": "code",
                                 "language": "text",
                                 "content": "some result"
                             }]

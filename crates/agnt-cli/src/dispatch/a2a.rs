@@ -260,8 +260,6 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
 
     let BuildArtifacts {
         merged_compaction,
-        compaction_strategy: _,
-        compaction_params,
         render_registry,
     } = AgentRuntimeBuilder::new(BuildInput {
         tool_server_handle: &tool_server_handle,
@@ -310,7 +308,6 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         engine,
         rig,
         final_session_id: session_resolution.final_session_id.clone(),
-        compaction_params,
         proactive_threshold_pct: merged_compaction.proactive_threshold_pct,
         base_permissions,
         effective_permissions,

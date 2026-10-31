@@ -11,7 +11,7 @@ pub struct ProviderState {
     config: Config,
     startup_plugin_config: Option<PluginConfig>,
     /// The resolved Copilot credential directory; `None` falls back to the
-    /// legacy platform default.
+    /// platform default.
     copilot_token_dir: Option<std::path::PathBuf>,
     cached_client: Option<CachedProviderClient>,
     cached_client_key: Option<ClientCacheKey>,

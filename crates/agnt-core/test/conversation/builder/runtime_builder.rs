@@ -121,18 +121,13 @@ async fn build_with_empty_closure_registry_registers_only_builtins() -> Result<(
     let registry = ClosureRegistry::default();
 
     // -- Exec
-    let (handle, artifacts, _temp) = build_with(&registry, CompactionConfig::default()).await?;
+    let (handle, _artifacts, _temp) = build_with(&registry, CompactionConfig::default()).await?;
 
     // -- Check
     assert_eq!(
         registered_names(&handle),
         builtin_names()?,
         "an empty closure registry must register exactly the builtin tools"
-    );
-    assert_eq!(
-        artifacts.compaction_strategy,
-        CompactionParams::default().compaction_strategy,
-        "an unset compaction config must fall back to the default strategy"
     );
     Ok(())
 }
@@ -163,27 +158,18 @@ async fn build_with_one_closure_registers_the_closure_tool() -> Result<()> {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn build_applies_the_merged_compaction_strategy() -> Result<()> {
+async fn build_applies_the_merged_compaction_config() -> Result<()> {
     // -- Setup & Fixtures
     let registry = ClosureRegistry::default();
     let merged = CompactionConfig {
-        strategy: Some(CompactionStrategy::SlidingSummary),
         proactive_threshold_pct: Some(0.5),
+        ..CompactionConfig::default()
     };
 
     // -- Exec
     let (_handle, artifacts, _temp) = build_with(&registry, merged).await?;
 
     // -- Check
-    assert_eq!(
-        artifacts.compaction_strategy,
-        CompactionStrategy::SlidingSummary,
-        "the merged strategy must reach the artifacts"
-    );
-    assert_eq!(
-        artifacts.compaction_params.compaction_strategy,
-        CompactionStrategy::SlidingSummary
-    );
     assert_eq!(
         artifacts.merged_compaction.proactive_threshold_pct,
         Some(0.5)

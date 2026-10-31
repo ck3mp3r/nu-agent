@@ -292,7 +292,6 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
 
     let compaction_config = crate::conversation::compaction::CompactionConfig {
         compactor,
-        params: crate::compaction::CompactionParams::default(),
         // A tiny threshold so the pre-populated conversation (20 messages) is
         // over the threshold and auto-compaction fires on the first turn.
         threshold_tokens: Some(1),

@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 use nu_protocol::LabeledError;
 
 use crate::bus::Bus;
-use crate::compaction::CompactionParams;
-use crate::config::{AgentsConfig, Config, ModelRoleConfig, PluginConfig, defaults, vault::Vault};
+use crate::config::{
+    AgentsConfig, CompactionConfig, Config, ModelRoleConfig, PluginConfig, defaults, vault::Vault,
+};
 use crate::conversation::runtime::AgentConversationRuntime;
 use crate::hooks::HookAgentContext;
 use crate::protocol::persona::PersonaSummary;
@@ -38,7 +39,6 @@ pub struct RuntimeBuildParams {
     /// The rig-memory store config the session's store is made from.
     pub rig: crate::session::RigStoreConfig,
     pub final_session_id: Option<String>,
-    pub compaction_params: CompactionParams,
     pub proactive_threshold_pct: Option<f64>,
     pub base_permissions: PermissionsConfig,
     pub effective_permissions: PermissionsConfig,
@@ -125,6 +125,15 @@ pub async fn build_runtime(
     // The compactor's provider needs the plugin config after the agent provider
     // takes ownership of it.
     let compactor_plugin_config = params.plugin_config.clone();
+    // The compaction policy: rig-memory's default with the `[compaction]`
+    // block's overrides on top. Read from the plugin config before the provider
+    // takes ownership of it.
+    let compaction_config = params
+        .plugin_config
+        .as_ref()
+        .and_then(|plugin_config| plugin_config.compaction.clone())
+        .unwrap_or_default();
+    let compaction_policy = build_compaction_policy(&compaction_config);
 
     // The shared model is the single point of model identity: the agent is
     // built from it on every turn. It is constructed eagerly at startup so it
@@ -160,7 +169,7 @@ pub async fn build_runtime(
     let compactor = NuCompactor::from_shared_model(
         Arc::clone(&compactor_model),
         params.bus.clone(),
-        rig_memory::CompactionPolicy::default(),
+        compaction_policy,
         compaction_spec,
     );
 
@@ -184,7 +193,6 @@ pub async fn build_runtime(
 
     let compaction = crate::conversation::compaction::CompactionConfig {
         compactor,
-        params: params.compaction_params,
         threshold_tokens,
         threshold_pct,
     };
@@ -270,6 +278,46 @@ fn resolve_light_config(plugin_config: Option<&PluginConfig>) -> Option<Config> 
             None
         }
     }
+}
+
+/// The compaction policy a `[compaction]` block asks for.
+///
+/// Starts from rig-memory's default policy and overwrites each field the block
+/// sets. A field the block leaves unset keeps rig-memory's default value. rig
+/// owns the meaning of every value, so no range check runs here; `near_window`
+/// has no config key and always keeps rig-memory's default.
+pub fn build_compaction_policy(cfg: &CompactionConfig) -> rig_memory::CompactionPolicy {
+    let mut policy = rig_memory::CompactionPolicy::default();
+
+    if let Some(reserve) = cfg.reserve {
+        policy.summarizer.limits.reserve = reserve;
+    }
+    if let Some(summary_tokens) = cfg.summary_tokens {
+        policy.summarizer.limits.summary_tokens = summary_tokens;
+    }
+    if let Some(snippet_chars) = cfg.snippet_chars {
+        policy.summarizer.limits.snippet_chars = snippet_chars;
+    }
+    if let Some(unknown_window_chars) = cfg.unknown_window_chars {
+        policy.summarizer.limits.unknown_window_chars = unknown_window_chars;
+    }
+    if let Some(keep_recent) = cfg.keep_recent {
+        policy.keep_recent = keep_recent;
+    }
+    if let Some(keep_asked) = cfg.keep_asked {
+        policy.keep_asked = keep_asked;
+    }
+    if let Some(clearing) = &cfg.clearing {
+        policy.clearing = clearing.clone();
+    }
+    if let Some(tracked) = &cfg.tracked {
+        policy.tracked = tracked.clone();
+    }
+    if let Some(prompts) = &cfg.prompts {
+        policy.summarizer.prompts = prompts.clone();
+    }
+
+    policy
 }
 
 /// Apply persona model override if CLI --model was not provided.

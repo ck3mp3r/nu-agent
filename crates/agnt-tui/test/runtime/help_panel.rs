@@ -242,7 +242,7 @@ async fn help_panel_scroll_and_escape() -> Result<()> {
     let cue = help_panel_overflow_cue_for_test(&lines, viewport_inner_height, 3);
     assert!(cue.starts_with("↑/↓ · PgUp/PgDn · Esc"), "cue={cue}");
     assert!(cue.contains(" / "), "cue={cue}");
-    assert!(!cue.contains('|'), "no legacy separators: {cue}");
+    assert!(!cue.contains('|'), "no pipe separators: {cue}");
 
     // -- Exec & Check: short content keeps the keys and drops the position.
     let short_cue = help_panel_overflow_cue_for_test(&lines, 1000, 3);

@@ -375,19 +375,13 @@ fn classify_from_display(msg: &str) -> CompletionErrorKind {
         return CompletionErrorKind::Network;
     }
     if lower.contains("error decoding") {
-        // Matches "error decoding response body" — the bug fix vs old "decode error" pattern
+        // Matches "error decoding response body".
         return CompletionErrorKind::Network;
     }
     if lower.contains("connection reset") || lower.contains("connection refused") {
         return CompletionErrorKind::Network;
     }
     if lower.contains("network error") {
-        return CompletionErrorKind::Network;
-    }
-    // Note: old pattern was "decode error" — misses "error decoding response body".
-    // We keep "decode error" here for backward compatibility but the primary fix
-    // is "error decoding" above.
-    if lower.contains("decode error") {
         return CompletionErrorKind::Network;
     }
     if lower.contains("invalid utf-8") || lower.contains("unexpected eof") {

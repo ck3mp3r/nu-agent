@@ -72,61 +72,14 @@ fn extract_agent_flags_neither() {
     assert_eq!(name, None);
 }
 
-// --- parse_strategy_from_str ---
-
-use super::args::{extract_compaction_flags, parse_strategy_from_str};
-use agnt_core::compaction::CompactionStrategy;
-
-#[test]
-fn parse_strategy_sliding_summary() {
-    let result = parse_strategy_from_str("sliding_summary").unwrap();
-    assert_eq!(result, CompactionStrategy::SlidingSummary);
-}
-
-#[test]
-fn parse_strategy_sliding_window() {
-    let result = parse_strategy_from_str("sliding_window").unwrap();
-    assert_eq!(result, CompactionStrategy::SlidingSummary);
-}
-
-#[test]
-fn parse_strategy_token_truncate() {
-    let result = parse_strategy_from_str("token_truncate").unwrap();
-    assert_eq!(result, CompactionStrategy::SlidingSummary);
-}
-
-#[test]
-fn parse_strategy_alias_truncate() {
-    let result = parse_strategy_from_str("truncate").unwrap();
-    assert_eq!(result, CompactionStrategy::SlidingSummary);
-}
-
-#[test]
-fn parse_strategy_invalid_rejected() {
-    let result = parse_strategy_from_str("bogus");
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.contains("Unknown compaction strategy 'bogus'"));
-}
-
 // --- extract_compaction_flags ---
 
-fn mock_call_with_compaction_flags(
-    strategy: Option<&str>,
-    proactive_pct: Option<f64>,
-) -> EvaluatedCall {
+use super::args::extract_compaction_flags;
+
+fn mock_call_with_compaction_flags(proactive_pct: Option<f64>) -> EvaluatedCall {
     let span = Span::test_data();
     let mut named: Vec<(Spanned<String>, Option<Value>)> = Vec::new();
 
-    if let Some(s) = strategy {
-        named.push((
-            Spanned {
-                item: "compaction-strategy".to_string(),
-                span,
-            },
-            Some(Value::string(s, span)),
-        ));
-    }
     if let Some(p) = proactive_pct {
         named.push((
             Spanned {
@@ -145,24 +98,15 @@ fn mock_call_with_compaction_flags(
 }
 
 #[test]
-fn extract_compaction_flags_all_provided() {
-    let call = mock_call_with_compaction_flags(Some("sliding_summary"), Some(0.75));
+fn extract_compaction_flags_provided() {
+    let call = mock_call_with_compaction_flags(Some(0.75));
     let result = extract_compaction_flags(&call).unwrap();
-    assert_eq!(result.strategy, Some(CompactionStrategy::SlidingSummary));
     assert_eq!(result.proactive_threshold_pct, Some(0.75));
 }
 
 #[test]
 fn extract_compaction_flags_none_provided() {
-    let call = mock_call_with_compaction_flags(None, None);
+    let call = mock_call_with_compaction_flags(None);
     let result = extract_compaction_flags(&call).unwrap();
-    assert!(result.strategy.is_none());
     assert!(result.proactive_threshold_pct.is_none());
-}
-
-#[test]
-fn extract_compaction_flags_invalid_strategy_error() {
-    let call = mock_call_with_compaction_flags(Some("bogus"), None);
-    let result = extract_compaction_flags(&call);
-    assert!(result.is_err());
 }

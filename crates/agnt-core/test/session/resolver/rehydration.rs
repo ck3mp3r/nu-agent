@@ -24,17 +24,17 @@ fn hydrate_unflagged_tool_results_rehydrate_as_success() -> Result<()> {
         ),
         (
             "tool quote text",
-            "call_legacy_quote_1",
+            "call_quote_1",
             "Tool 'nonexistent' is not available.",
         ),
         (
             "enriched denial text",
-            "call_legacy_denial_1",
+            "call_denial_1",
             "Permission denied by rule 'global:*' (scope: global)",
         ),
         (
             "unmatched failure text",
-            "call_legacy_unmatched_1",
+            "call_unmatched_1",
             "read failed: No such file or directory (os error 2)",
         ),
     ];
@@ -153,7 +153,10 @@ fn hydrate_orphan_tool_result_emits_no_display() {
                     "stderr": "",
                     "exit_code": 0,
                     "display": {
-                        "sections": [{"language": "", "content": "orphan display"}]
+                        "sections": [{
+                            "kind": "plain",
+                            "content": "orphan display"
+                        }]
                     }
                 })
                 .to_string(),

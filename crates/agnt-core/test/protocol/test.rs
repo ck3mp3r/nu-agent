@@ -11,9 +11,6 @@ mod agents;
 #[path = "test/call_line.rs"]
 mod call_line;
 
-#[path = "test/compaction.rs"]
-mod compaction;
-
 #[path = "test/json_fields.rs"]
 mod json_fields;
 
@@ -36,10 +33,6 @@ use std::fs;
 use tempfile::tempdir;
 
 use super::agents::load_agents_chain;
-use super::compaction::{
-    CompactionTriggerDecision, CompactionTriggerPolicy, CompactionTriggerSource,
-    TokenCompactionPolicy,
-};
 use super::skills::{
     SkillResolveError, SkillSource, discover_skill_catalog, extract_skill_description,
     is_higher_precedence, render_available_skills_preamble_from_catalog,
@@ -51,7 +44,6 @@ use super::slash::{
 };
 use super::tool_args;
 
-use crate::compaction::CompactionStrategy;
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext};
 use crate::protocol::events::{RequestId, SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
 use crate::transcript::ir::ToolName;

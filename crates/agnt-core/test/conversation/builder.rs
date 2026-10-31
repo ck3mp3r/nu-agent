@@ -11,10 +11,9 @@ mod runtime_builder;
 // endregion: --- Modules
 
 use super::{
-    build_compaction_params, builtin_tool_definitions, merge_compaction_configs,
-    messaging_tool_definitions, orchestrator_tool_definitions,
+    builtin_tool_definitions, merge_compaction_configs, messaging_tool_definitions,
+    orchestrator_tool_definitions,
 };
-use crate::compaction::{CompactionParams, CompactionStrategy};
 use crate::config::CompactionConfig;
 use crate::protocol::persona::PersonaSummary;
 
@@ -25,33 +24,31 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 #[test]
 fn merge_cli_overrides_plugin_config() {
     let plugin = CompactionConfig {
-        strategy: Some(CompactionStrategy::SlidingSummary),
         proactive_threshold_pct: Some(0.85),
+        ..CompactionConfig::default()
     };
 
     let cli = CompactionConfig {
-        strategy: None,
         proactive_threshold_pct: None,
+        ..CompactionConfig::default()
     };
 
     let merged = merge_compaction_configs(Some(&plugin), &cli);
 
-    assert_eq!(merged.strategy, Some(CompactionStrategy::SlidingSummary));
     assert_eq!(merged.proactive_threshold_pct, Some(0.85));
 }
 
 #[test]
 fn merge_plugin_config_overrides_default() {
     let plugin = CompactionConfig {
-        strategy: Some(CompactionStrategy::SlidingSummary),
         proactive_threshold_pct: Some(0.9),
+        ..CompactionConfig::default()
     };
 
     let cli = CompactionConfig::default();
 
     let merged = merge_compaction_configs(Some(&plugin), &cli);
 
-    assert_eq!(merged.strategy, Some(CompactionStrategy::SlidingSummary));
     assert_eq!(merged.proactive_threshold_pct, Some(0.9));
 }
 
@@ -60,73 +57,24 @@ fn merge_default_used_when_no_config() {
     let cli = CompactionConfig::default();
     let merged = merge_compaction_configs(None, &cli);
 
-    assert!(merged.strategy.is_none());
     assert!(merged.proactive_threshold_pct.is_none());
-}
-
-// ── build_compaction_params ──────────────────────────────────────────────────
-
-#[test]
-fn build_compaction_params_applies_merged_values() {
-    let merged = CompactionConfig {
-        strategy: Some(CompactionStrategy::SlidingSummary),
-        proactive_threshold_pct: Some(0.9),
-    };
-
-    let config = build_compaction_params(&merged);
-
-    assert_eq!(
-        config.compaction_strategy,
-        CompactionStrategy::SlidingSummary
-    );
-}
-
-#[test]
-fn build_compaction_params_uses_defaults_when_none() {
-    let merged = CompactionConfig::default();
-    let config = build_compaction_params(&merged);
-    let defaults = CompactionParams::default();
-
-    assert_eq!(config.compaction_strategy, defaults.compaction_strategy);
-}
-
-#[test]
-fn build_compaction_params_partial_override() {
-    let merged = CompactionConfig {
-        strategy: Some(CompactionStrategy::SlidingSummary),
-        proactive_threshold_pct: None,
-    };
-
-    let config = build_compaction_params(&merged);
-    let defaults = CompactionParams::default();
-
-    assert_eq!(
-        config.compaction_strategy,
-        CompactionStrategy::SlidingSummary
-    );
-    assert_eq!(config.compaction_strategy, defaults.compaction_strategy);
 }
 
 #[test]
 fn full_precedence_default_then_plugin_then_cli() {
     let plugin = CompactionConfig {
-        strategy: Some(CompactionStrategy::SlidingSummary),
         proactive_threshold_pct: Some(0.70),
+        ..CompactionConfig::default()
     };
 
     let cli = CompactionConfig {
-        strategy: None,
-        proactive_threshold_pct: None,
+        proactive_threshold_pct: Some(0.50),
+        ..CompactionConfig::default()
     };
 
     let merged = merge_compaction_configs(Some(&plugin), &cli);
-    let config = build_compaction_params(&merged);
 
-    assert_eq!(
-        config.compaction_strategy,
-        CompactionStrategy::SlidingSummary
-    );
-    assert_eq!(merged.proactive_threshold_pct, Some(0.70));
+    assert_eq!(merged.proactive_threshold_pct, Some(0.50));
 }
 
 // ── builtin_tool_definitions ─────────────────────────────────────────────────
@@ -174,8 +122,7 @@ fn builtin_tool_registration_explicitly_rejects_prefixed_names() -> Result<()> {
 }
 
 #[test]
-fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_fields() -> Result<()>
-{
+fn builtin_edit_definition_uses_mode_and_operation_contract_with_compat_fields() -> Result<()> {
     let edit = builtin_tool_definitions()?
         .into_iter()
         .find(|tool| tool.name == "edit")

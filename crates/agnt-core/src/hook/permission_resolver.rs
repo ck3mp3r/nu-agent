@@ -656,7 +656,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                     AskChoice::Deny => match outcome.deny_reason {
                         Some(reason) => PermissionDecision::Deny { reason },
                         // Unreachable in practice (a prompt implies a rule match);
-                        // fall back to the legacy bare denial text.
+                        // fall back to the bare denial text.
                         None => PermissionDecision::Deny {
                             reason: "Permission denied".to_string(),
                         },

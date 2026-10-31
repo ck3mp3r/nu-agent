@@ -10,9 +10,10 @@ use agent_client_protocol::schema::v1::{
     SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
 };
 use agnt_core::config::{AgentsConfig, Config, ModelsCache, defaults, load_and_resolve_config};
-use agnt_core::conversation::builder::{build_compaction_params, builtin_tool_definitions};
+use agnt_core::conversation::builder::builtin_tool_definitions;
 use agnt_core::conversation::compaction::compactor::NuCompactor;
 use agnt_core::conversation::runtime::{AgentConversationRuntime, PendingPermissions};
+use agnt_core::conversation::runtime_build::build_compaction_policy;
 use agnt_core::conversation::state::{
     McpState, MemoryState, MultiAgentState, PermissionState, PersonaState, ProviderState, ToolState,
 };
@@ -373,11 +374,11 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     merged_compaction
         .validate()
         .map_err(|msg| AcpError::Config(format!("compaction config invalid: {msg}")))?;
-    let compaction_params = build_compaction_params(&merged_compaction);
     let threshold_pct = merged_compaction
         .proactive_threshold_pct
         .unwrap_or(defaults::PROACTIVE_THRESHOLD_PCT);
     let threshold_tokens = Some((max_context_tokens as f64 * threshold_pct) as usize);
+    let compaction_policy = build_compaction_policy(&merged_compaction);
 
     // -- Model and compactor share one erased model per consumer
     let mut provider = ProviderState::new(config, Some(plugin_config.clone()));
@@ -394,7 +395,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     let compactor = NuCompactor::from_shared_model(
         Arc::clone(&compactor_model),
         bus.clone(),
-        rig_memory::CompactionPolicy::default(),
+        compaction_policy,
         compaction_spec,
     );
 
@@ -460,7 +461,6 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
         dyn_model,
         compaction: agnt_core::conversation::compaction::CompactionConfig {
             compactor,
-            params: compaction_params,
             threshold_tokens,
             threshold_pct,
         },
@@ -590,6 +590,10 @@ mod runtime_client_fs;
 #[cfg(all(test, feature = "integration"))]
 #[path = "../test/runtime/compaction_spec.rs"]
 mod runtime_compaction_spec;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "../test/runtime/compaction_policy.rs"]
+mod runtime_compaction_policy;
 
 #[cfg(all(test, feature = "integration"))]
 #[path = "../test/runtime/config_errors.rs"]

@@ -78,7 +78,7 @@ impl UiMessageSnapshot {
         self.tool_arguments = arguments;
         self.tool_result = result;
         self.tool_success = success;
-        // The verdict the row states is the legacy classification: a row the
+        // The verdict the row states is the boolean fallback: a row the
         // store records a status for overrides it with `with_tool_status`.
         self.tool_status = success.map(|success| {
             if success {

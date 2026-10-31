@@ -59,7 +59,7 @@ pub(crate) fn build_http_client(
 ///
 /// `token_dir` is the resolved credential directory
 /// ([`Paths::copilot_token_dir`](crate::config::Paths::copilot_token_dir));
-/// `None` leaves the legacy platform default in use.
+/// `None` uses the platform default credential directory.
 pub(super) async fn build_copilot_client(
     config: &Config,
     token_dir: Option<&Path>,

@@ -160,31 +160,3 @@ async fn test_tasks_send_with_context_and_parent() {
 
     server.shutdown().await;
 }
-
-#[tokio::test]
-async fn test_tasks_send_ignores_legacy_session_field() {
-    let (server, client) = test_server().await;
-
-    let resp = client
-        .post(format!("{}/message:send", server.local_url))
-        .json(&json!({
-            "message": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
-            "sessionId": "sess-ignored"
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(
-        resp.status(),
-        200,
-        "sessionId must be ignored, not rejected"
-    );
-    let body: serde_json::Value = resp.json().await.unwrap();
-    assert!(
-        body["task"].get("sessionId").is_none(),
-        "sessionId must not be echoed back on the task"
-    );
-
-    server.shutdown().await;
-}

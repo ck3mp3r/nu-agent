@@ -17,7 +17,6 @@ mod vault_refs;
 
 // endregion: --- Modules
 
-use crate::compaction::CompactionStrategy;
 use crate::config::toml_config::{TomlConfigError, load_from, load_from_with};
 use crate::config::{AgentsConfig, PluginConfig};
 

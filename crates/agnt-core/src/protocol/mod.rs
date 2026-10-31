@@ -1,5 +1,4 @@
 pub mod agents;
-pub mod compaction;
 pub mod contracts;
 pub mod event;
 pub mod events;

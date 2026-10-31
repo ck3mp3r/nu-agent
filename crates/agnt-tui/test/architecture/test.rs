@@ -13,6 +13,7 @@
 
 // region:    --- Modules
 
+mod docs;
 mod source_shape;
 
 // endregion: --- Modules

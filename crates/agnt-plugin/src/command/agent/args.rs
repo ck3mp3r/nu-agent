@@ -116,58 +116,18 @@ pub(crate) fn extract_agent_flags(call: &EvaluatedCall) -> (Option<String>, Opti
     (agent, name)
 }
 
-/// Parse a compaction strategy string into a `CompactionStrategy` enum.
-///
-/// Uses serde deserialization which supports the canonical name and aliases:
-/// - `"sliding_summary"` / `"truncate"` / `"sliding"` / `"summarize"` /
-///   `"sliding_window"` / `"token_truncate"` → `SlidingSummary`
-///
-/// # Arguments
-/// * `s` - The strategy string to parse
-///
-/// # Returns
-/// Ok(CompactionStrategy) if valid, Err(String) with user-facing message if invalid.
-pub(crate) fn parse_strategy_from_str(
-    s: &str,
-) -> Result<agnt_core::compaction::CompactionStrategy, String> {
-    serde_json::from_value(serde_json::Value::String(s.to_string())).map_err(|_| {
-        format!(
-            "Unknown compaction strategy '{}'. Valid values: sliding_summary",
-            s
-        )
-    })
-}
-
 /// Extract compaction-related CLI flags into a `CompactionConfig`.
 ///
 /// All fields are `Option` — `None` means the flag was not provided.
-/// The `--compaction-strategy` flag is parsed into a `CompactionStrategy` enum.
 ///
 /// # Arguments
 /// * `call` - The EvaluatedCall containing the compaction flags
 ///
 /// # Returns
-/// Ok(CompactionConfig) with provided flag values, Err if strategy string is invalid.
-///
-/// # Errors
-/// Returns LabeledError if `--compaction-strategy` contains an invalid strategy name.
+/// Ok(CompactionConfig) with provided flag values.
 pub(crate) fn extract_compaction_flags(
     call: &EvaluatedCall,
 ) -> Result<agnt_core::config::CompactionConfig, LabeledError> {
-    // Parse --compaction-strategy
-    let strategy = if let Some(strategy_str) = call
-        .get_flag::<Value>("compaction-strategy")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_str().map(|s| s.to_string()).ok())
-    {
-        Some(parse_strategy_from_str(&strategy_str).map_err(|msg| {
-            LabeledError::new("Invalid --compaction-strategy").with_label(msg, call.head)
-        })?)
-    } else {
-        None
-    };
-
     // Parse --proactive-threshold-pct
     let proactive_threshold_pct = call
         .get_flag::<Value>("proactive-threshold-pct")
@@ -176,7 +136,7 @@ pub(crate) fn extract_compaction_flags(
         .and_then(|v| v.as_float().ok());
 
     Ok(agnt_core::config::CompactionConfig {
-        strategy,
         proactive_threshold_pct,
+        ..Default::default()
     })
 }

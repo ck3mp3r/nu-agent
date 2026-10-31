@@ -67,7 +67,7 @@ fn test_tasks_send_requires_target_and_text() -> Result<()> {
 }
 
 #[test]
-fn test_tasks_send_schema_has_no_legacy_session_field() -> Result<()> {
+fn test_tasks_send_schema_has_no_session_field() -> Result<()> {
     let defs = a2a_tool_defs();
     let tool = defs
         .iter()
@@ -223,7 +223,7 @@ fn test_descriptions_avoid_banned_words() -> Result<()> {
 }
 
 #[test]
-fn test_descriptions_are_within_token_budget() -> Result<()> {
+fn test_descriptions_stay_within_a_char_limit() -> Result<()> {
     // -- Setup & Fixtures
     const MAX_CHARS: usize = 600;
 

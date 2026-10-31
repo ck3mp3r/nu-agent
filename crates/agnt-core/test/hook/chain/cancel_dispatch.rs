@@ -103,7 +103,6 @@ fn build_hook<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
                     rig_memory::CompactionPolicy::default(),
                     test_model_spec(),
                 ),
-                params: CompactionParams::default(),
                 threshold_tokens: None,
                 threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
             },

@@ -3,7 +3,6 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agnt_core::compaction::CompactionStrategy;
 use agnt_core::config::{self, CompactionConfig, Config, PluginConfig};
 use agnt_core::session::StoreType;
 use agnt_core::utils::process_env;
@@ -155,27 +154,10 @@ pub fn resolve_theme_from_clap(
 
 /// Extract compaction-related clap flags into a `CompactionConfig`.
 pub fn extract_compaction_flags_from_clap(args: &AgentArgs) -> Result<CompactionConfig> {
-    let strategy = match args.compaction_strategy.as_deref() {
-        Some(s) => Some(
-            parse_strategy_from_str(s)
-                .map_err(|msg| Error::Custom(format!("Invalid --compaction-strategy: {msg}")))?,
-        ),
-        None => None,
-    };
-
     Ok(CompactionConfig {
-        strategy,
         proactive_threshold_pct: args.proactive_threshold_pct,
+        ..Default::default()
     })
-}
-
-/// Parse a compaction strategy string into a `CompactionStrategy` enum.
-///
-/// Uses serde deserialization so the canonical name and aliases stay in sync
-/// with the enum definition.
-fn parse_strategy_from_str(s: &str) -> std::result::Result<CompactionStrategy, String> {
-    serde_json::from_value(serde_json::Value::String(s.to_string()))
-        .map_err(|_| format!("Unknown compaction strategy '{s}'. Valid values: sliding_summary"))
 }
 
 // endregion: --- Compaction

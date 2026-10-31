@@ -77,7 +77,6 @@ impl JourneyHarness {
                     Some(1_024),
                 ),
             ),
-            params: crate::compaction::CompactionParams::default(),
             threshold_tokens: None,
             threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
         };

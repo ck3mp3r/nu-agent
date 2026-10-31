@@ -36,7 +36,8 @@ async fn agent_list_excludes_self() -> Result<()> {
         discovered_at: std::time::Instant::now(),
     });
 
-    let result = handle_agent_list(ctx, serde_json::json!({}))
+    let result = Tool::AgentList
+        .handle(ctx, serde_json::json!({}))
         .await
         .map_err(|e| format!("{e:?}"))?;
     let agents = result["agents"]
@@ -75,7 +76,8 @@ async fn test_handle_tasks_send_completion_event_carries_context_id() -> Result<
         "text": "Hello!",
         "contextId": "ctx-abc"
     });
-    let result = handle_tasks_send(ctx.clone(), params)
+    let result = Tool::Send
+        .handle(ctx.clone(), params)
         .await
         .map_err(|e| format!("{e:?}"))?;
     let task_id = result["taskId"]

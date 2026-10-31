@@ -10,7 +10,8 @@ async fn test_handle_agent_list_empty() -> Result<()> {
         completion_tx: None,
         runtime_handle: None,
     };
-    let result = handle_agent_list(ctx, serde_json::json!({}))
+    let result = Tool::AgentList
+        .handle(ctx, serde_json::json!({}))
         .await
         .map_err(|e| format!("{e:?}"))?;
     let agents = result["agents"]
@@ -49,7 +50,8 @@ async fn test_handle_agent_list_with_peers() -> Result<()> {
         }),
         discovered_at: std::time::Instant::now(),
     });
-    let result = handle_agent_list(ctx, serde_json::json!({}))
+    let result = Tool::AgentList
+        .handle(ctx, serde_json::json!({}))
         .await
         .map_err(|e| format!("{e:?}"))?;
     let agents = result["agents"]
@@ -71,7 +73,7 @@ async fn test_handle_agent_get_card_not_found() {
         runtime_handle: None,
     };
     let params = serde_json::json!({"name": "nonexistent"});
-    let result = handle_agent_get_card(ctx, params).await;
+    let result = Tool::GetCard.handle(ctx, params).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("not found"));
 }

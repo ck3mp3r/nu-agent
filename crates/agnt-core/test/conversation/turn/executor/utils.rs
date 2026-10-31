@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::bus::{BroadcastRx, Bus, CompactionRx, UiEventRx};
-use crate::compaction::CompactionParams;
 use crate::config::Config;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use crate::protocol::events::SystemEvent;
@@ -156,7 +155,6 @@ pub(super) fn test_compaction_config(
 ) -> crate::conversation::compaction::CompactionConfig {
     crate::conversation::compaction::CompactionConfig {
         compactor: test_compactor(bus.clone()),
-        params: CompactionParams::default(),
         threshold_tokens: None,
         threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
     }

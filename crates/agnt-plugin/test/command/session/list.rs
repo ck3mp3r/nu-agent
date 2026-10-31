@@ -1,5 +1,5 @@
 use super::list::{AgentSessionList, CwdInterface};
-use agnt_core::session::prefix::{dir_prefix, dir_prefix_legacy};
+use agnt_core::session::prefix::dir_prefix;
 use agnt_core::session::{RigStoreConfig, StoreType};
 use agnt_core::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
@@ -113,22 +113,24 @@ fn test_agent_session_list_command_signature() {
 }
 
 #[tokio::test]
-async fn list_returns_both_new_and_legacy_prefixed_sessions() -> Result<()> {
+async fn list_returns_only_prefixed_sessions() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
     let rig = rig_at(&temp_dir);
-    let new_prefix = dir_prefix(temp_dir.path());
-    let legacy_prefix = dir_prefix_legacy(temp_dir.path());
+    let prefix = dir_prefix(temp_dir.path());
 
-    // Create one session with the new 16-char prefix and one with the legacy 7-char prefix
+    // One session carries the cwd prefix; the other carries a foreign prefix.
     seed(
         &rig,
-        &format!("{new_prefix}-new-session"),
+        &format!("{prefix}-new-session"),
         vec![Message::user("hello")],
     )?;
     seed(
         &rig,
-        &format!("{legacy_prefix}-legacy-session"),
+        &format!(
+            "{}-foreign-session",
+            dir_prefix(std::path::Path::new("/other/dir"))
+        ),
         vec![Message::user("hello")],
     )?;
 
@@ -160,11 +162,11 @@ async fn list_returns_both_new_and_legacy_prefixed_sessions() -> Result<()> {
 
     assert!(
         ids.contains(&"new-session".to_string()),
-        "expected new-prefixed session in list, got: {ids:?}"
+        "expected prefixed session in list, got: {ids:?}"
     );
     assert!(
-        ids.contains(&"legacy-session".to_string()),
-        "expected legacy-prefixed session in list, got: {ids:?}"
+        !ids.iter().any(|id| id.contains("foreign-session")),
+        "a session of another cwd must not be listed, got: {ids:?}"
     );
     Ok(())
 }

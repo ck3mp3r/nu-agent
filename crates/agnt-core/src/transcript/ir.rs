@@ -1,4 +1,5 @@
 use crate::protocol::event::ToolDisplayStats;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageRole {
@@ -33,8 +34,10 @@ pub struct DisplaySection {
 }
 
 /// What kind of content a display section carries. Determines how the
-/// renderer projects and styles it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// renderer projects and styles it. Serialized with a `kind` discriminator so
+/// a persisted display round-trips without a second shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ContentKind {
     Diff { language: String, path: String },
     Code { language: String },

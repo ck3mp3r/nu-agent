@@ -251,7 +251,7 @@ fn tool_pair(
         call_line_render_for(name, arguments),
     );
     let outcome = ToolOutcome {
-        // A row with no persisted verdict was not a success. The legacy
+        // A row with no persisted verdict was not a success. The removed
         // `Unknown` status was hydration-only; a completion carries a verdict.
         success: message.tool_success().unwrap_or(false),
         // The status the resolver recorded for the row. A snapshot carrying

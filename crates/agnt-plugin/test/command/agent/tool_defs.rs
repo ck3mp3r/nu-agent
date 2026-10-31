@@ -156,8 +156,7 @@ fn builtin_tool_registration_explicitly_rejects_prefixed_names() -> Result<()> {
 }
 
 #[test]
-fn builtin_edit_definition_uses_mode_and_operation_contract_with_legacy_compat_fields() -> Result<()>
-{
+fn builtin_edit_definition_uses_mode_and_operation_contract_with_compat_fields() -> Result<()> {
     let edit = builtin_tool_definitions()?
         .into_iter()
         .find(|tool| tool.name == "edit")

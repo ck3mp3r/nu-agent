@@ -25,8 +25,8 @@ model = "ollama/gemma4:31b"
 base_url = "http://127.0.0.1:11434"
 
 [compaction]
-strategy = "sliding_summary"
-keep_recent = 10
+proactive_threshold_pct = 0.80
+keep_recent = 20000
 ```
 
 Use it:

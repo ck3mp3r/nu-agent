@@ -1,5 +1,3 @@
-use crate::compaction::CompactionParams;
-
 use rig::DynModel;
 use rig::catalog::ModelSpec;
 use rig::operation::Completion;
@@ -14,7 +12,6 @@ use super::compactor::NuCompactor;
 #[derive(Clone)]
 pub struct CompactionConfig {
     pub compactor: NuCompactor,
-    pub params: CompactionParams,
     pub threshold_tokens: Option<usize>,
     /// The fraction of the active model's context the compaction threshold
     /// uses. A model switch re-derives `threshold_tokens` from it, so the

@@ -15,7 +15,8 @@ async fn test_handle_tasks_list_with_local_store() -> Result<()> {
         runtime_handle: None,
     };
 
-    let result = handle_tasks_list(ctx, serde_json::json!({}))
+    let result = Tool::List
+        .handle(ctx, serde_json::json!({}))
         .await
         .map_err(|e| format!("{e:?}"))?;
     let tasks = result["tasks"]
@@ -43,7 +44,8 @@ async fn test_handle_tasks_list_with_local_store_filtered() -> Result<()> {
         runtime_handle: None,
     };
 
-    let result = handle_tasks_list(ctx, serde_json::json!({"status": "TASK_STATE_WORKING"}))
+    let result = Tool::List
+        .handle(ctx, serde_json::json!({"status": "TASK_STATE_WORKING"}))
         .await
         .map_err(|e| format!("{e:?}"))?;
     let tasks = result["tasks"]
@@ -74,12 +76,13 @@ async fn test_handle_tasks_list_with_local_store_filtered_auth_required() -> Res
 
     // No task is in AuthRequired, but the filter must parse and apply — an
     // unparseable status would return Err instead of an empty list.
-    let result = handle_tasks_list(
-        ctx,
-        serde_json::json!({"status": "TASK_STATE_AUTH_REQUIRED"}),
-    )
-    .await
-    .map_err(|e| format!("{e:?}"))?;
+    let result = Tool::List
+        .handle(
+            ctx,
+            serde_json::json!({"status": "TASK_STATE_AUTH_REQUIRED"}),
+        )
+        .await
+        .map_err(|e| format!("{e:?}"))?;
     let tasks = result["tasks"]
         .as_array()
         .ok_or("should have tasks array")?;
@@ -104,7 +107,9 @@ async fn test_handle_tasks_list_invalid_status_returns_error() -> Result<()> {
         runtime_handle: None,
     };
 
-    let result = handle_tasks_list(ctx, serde_json::json!({"status": "INVALID_BOGUS"})).await;
+    let result = Tool::List
+        .handle(ctx, serde_json::json!({"status": "INVALID_BOGUS"}))
+        .await;
     let err = result
         .err()
         .ok_or("invalid status should return an error")?;
@@ -133,7 +138,8 @@ async fn test_handle_tasks_list_no_status_returns_all() -> Result<()> {
         runtime_handle: None,
     };
 
-    let result = handle_tasks_list(ctx, serde_json::json!({}))
+    let result = Tool::List
+        .handle(ctx, serde_json::json!({}))
         .await
         .map_err(|e| format!("{e:?}"))?;
     let tasks = result["tasks"]
@@ -154,7 +160,8 @@ async fn test_handle_tasks_list_no_store() -> Result<()> {
         runtime_handle: None,
     };
 
-    let result = handle_tasks_list(ctx, serde_json::json!({}))
+    let result = Tool::List
+        .handle(ctx, serde_json::json!({}))
         .await
         .map_err(|e| format!("{e:?}"))?;
     let tasks = result["tasks"]

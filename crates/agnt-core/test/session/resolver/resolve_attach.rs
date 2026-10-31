@@ -95,49 +95,6 @@ async fn attach_existing_session_returns_initial_messages_and_no_tokens() -> Res
     Ok(())
 }
 
-#[tokio::test]
-async fn attach_falls_back_to_legacy_prefixed_session() -> Result<()> {
-    use crate::session::RigStoreConfig;
-    use crate::session::resolver::{
-        DefaultSessionResolver, SessionResolutionInput, SessionResolver,
-    };
-    use crate::types::Message;
-    use tempfile::TempDir;
-
-    let temp_dir = TempDir::new().unwrap();
-    let rig = RigStoreConfig::new(crate::session::StoreType::Jsonl).with_cache_dir(temp_dir.path());
-    let cwd = std::path::PathBuf::from("/home/user/project");
-
-    // Create a session with the legacy 7-char prefix (as if created before the
-    // prefix length increase).
-    let legacy_prefix = crate::session::prefix::dir_prefix_legacy(&cwd);
-    let raw_id = "old-session";
-    let legacy_id = format!("{legacy_prefix}-{raw_id}");
-    seed(&rig, &legacy_id, vec![Message::user("hello")])?;
-
-    let resolver = DefaultSessionResolver::new(rig);
-    let result = resolver
-        .resolve(SessionResolutionInput {
-            use_tui: true,
-            session_id: Some(raw_id.to_string()),
-            cwd: cwd.clone(),
-        })
-        .await
-        .unwrap();
-
-    // The resolved final_session_id must be the legacy-prefixed ID
-    assert_eq!(
-        result.final_session_id.as_deref(),
-        Some(legacy_id.as_str()),
-        "expected legacy-prefixed session to be resolved via fallback"
-    );
-    assert!(
-        result.should_hydrate_transcript,
-        "should_hydrate_transcript must be true when legacy session has messages"
-    );
-    Ok(())
-}
-
 // -- Test Support
 
 /// Seed the rig-memory store of `session_id` with `messages`.

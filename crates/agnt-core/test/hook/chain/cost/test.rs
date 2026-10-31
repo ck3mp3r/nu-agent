@@ -119,7 +119,6 @@ fn turn_hook(
             conversation_id: "cost-test-conv".to_string(),
             compaction: CompactionConfig {
                 compactor,
-                params: CompactionParams::default(),
                 threshold_tokens: None,
                 threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
             },

@@ -197,18 +197,12 @@ fn test_dispatch_config_theme_from_config() -> Result<()> {
 #[test]
 fn test_dispatch_config_compaction_flags() -> Result<()> {
     // -- Setup & Fixtures
-    let args = parse_args(&[
-        "--compaction-strategy",
-        "sliding_window",
-        "--proactive-threshold-pct",
-        "0.5",
-    ])?;
+    let args = parse_args(&["--proactive-threshold-pct", "0.5"])?;
 
     // -- Exec
     let config = extract_compaction_flags_from_clap(&args)?;
 
     // -- Check
-    assert_eq!(config.strategy, Some(CompactionStrategy::SlidingSummary));
     assert_eq!(config.proactive_threshold_pct, Some(0.5));
     Ok(())
 }
@@ -222,23 +216,7 @@ fn test_dispatch_config_compaction_defaults() -> Result<()> {
     let config = extract_compaction_flags_from_clap(&args)?;
 
     // -- Check
-    assert_eq!(config.strategy, None);
     assert_eq!(config.proactive_threshold_pct, None);
-    Ok(())
-}
-
-#[test]
-fn test_dispatch_config_compaction_invalid_strategy_errors() -> Result<()> {
-    // -- Setup & Fixtures
-    let args = parse_args(&["--compaction-strategy", "bogus"])?;
-
-    // -- Exec
-    let err = extract_compaction_flags_from_clap(&args)
-        .err()
-        .ok_or("should reject unknown strategy")?;
-
-    // -- Check
-    assert!(err.to_string().contains("Invalid --compaction-strategy"));
     Ok(())
 }
 

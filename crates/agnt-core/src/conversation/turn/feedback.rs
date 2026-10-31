@@ -133,7 +133,7 @@ pub fn build_max_turns_feedback_message(max_turns: usize) -> String {
 ///
 /// `output_budget_remedy_mode` selects the mode: "empty_output" (default)
 /// steers the model to produce its answer immediately; "shorter_response"
-/// keeps the legacy shorten-the-response guidance. In "empty_output" mode,
+/// keeps the shorten-the-response guidance. In "empty_output" mode,
 /// `output_budget_empty_remedy` overrides the built-in default when set.
 ///
 /// The `phase` escalates the remedy: [`FeedbackPhase::First`] steers the model

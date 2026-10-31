@@ -76,27 +76,33 @@
 
 # Compaction
 
-Three compaction strategies are available:
+Auto compaction fires when the conversation reaches `proactive_threshold_pct` (default: 0.80) of the model's context window.
 
-- `sliding_summary` (default) — LLM summarizes old messages, keeps recent verbatim window.
-- `sliding_window` — drops old messages, keeps only the last N. No LLM call.
-- `token_truncate` — keeps newest messages within a token budget (chars/4 estimate). No LLM call.
+These fields mirror rig-memory's own policy. Each is optional, and unset = the rig default:
 
-Legacy serialized values (`truncate`, `sliding`, `summarize`) normalize to `sliding_summary`.
+- `keep_recent` — tokens of the newest messages an automatic compaction keeps verbatim (unset = the rig default, 20000 tokens, a quarter of the window at most).
+- `keep_asked` — tokens of the newest messages an asked compaction keeps verbatim (unset = the rig default, 0 tokens).
+- `clearing.keep_tokens` / `clearing.keep_under` — the newest tool output kept, and the size under which an output is never cleared (unset = the rig defaults, 20000 / 500).
+- `reserve` — tokens kept free below the model's window (unset = the rig default, 16384).
+- `summary_tokens` — the longest summary asked for, in tokens (unset = the rig default, 12000).
+- `snippet_chars` — characters of a tool's output or arguments the summarizer sees (unset = the rig default, 2000).
+- `unknown_window_chars` — characters of conversation sent when the model window is unknown (unset = the rig default, 400000).
+- `tracked` / `prompts` — advanced: the tool arguments a summary tracks, and the summarizer's six prompts (unset = the rig defaults).
 
-Use `/compact` to trigger manual compaction immediately (bypasses threshold gating).
+Use `/compact` to trigger compaction immediately; it bypasses threshold gating. `/compact` args are reserved for a future focus option.
 
 # Auto compaction behavior
 
-- Auto compaction fires when usage reaches `threshold - tolerance`.
-- Default tolerance is `0` unless configured.
-- After firing, compaction is disarmed to avoid duplicate triggers near the boundary.
-- Rearm occurs only when usage drops to `threshold - (tolerance + hysteresis_margin)`.
+- Auto compaction fires once the conversation reaches `proactive_threshold_pct` of the context window.
+- Manual and auto compaction share one execution path.
+- Old tool outputs are cleared before the summary is asked for; error results and small outputs stay.
+- The newest messages stay verbatim within the keep budget, and the older ones become the summary.
+- The splice is written to the session's rig-memory log, and the next run loads the compacted set.
 
 # Session memory persistence
 
-- Compaction updates are persisted to the session JSONL file.
-- Persisted updates include compacted message set and incremented `compaction_count` metadata.
+- Compaction updates are persisted to the session's rig-memory log.
+- The persisted update is the compacted message set; the next run loads it.
 - Compaction emits a transcript-visible summary artifact including source and summarized/kept counts.
 
 # Troubleshooting

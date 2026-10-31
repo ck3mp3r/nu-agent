@@ -33,7 +33,6 @@ async fn decide_compaction_surfaces_store_error_as_failed() -> Result<()> {
             rig_memory::CompactionPolicy::default(),
             test_model_spec(),
         ),
-        params: CompactionParams::default(),
         threshold_tokens: Some(100),
         threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
     };
