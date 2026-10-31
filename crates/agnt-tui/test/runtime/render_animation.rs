@@ -8,6 +8,9 @@
 #[path = "render_animation/animation.rs"]
 mod animation;
 
+#[path = "render_animation/cadence.rs"]
+mod cadence;
+
 #[path = "render_animation/drain.rs"]
 mod drain;
 

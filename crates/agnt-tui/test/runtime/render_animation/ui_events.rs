@@ -1,6 +1,10 @@
 use super::*;
 
-/// A warning UiEvent sets the status line and marks the frame dirty; a
+use agnt_core::transcript::entry::TranscriptEntry;
+
+use agnt_core::protocol::events::{AutoResolutionAction, RequestId, SystemKind};
+
+/// A warning SystemEvent sets the status line and marks the frame dirty; a
 /// TurnError falls through to the transcript and finalizes the cycle.
 #[test]
 fn ui_event_warning_and_turn_error() -> Result<()> {
@@ -9,8 +13,9 @@ fn ui_event_warning_and_turn_error() -> Result<()> {
     coordinator.set_render_needed(false);
 
     // -- Exec
-    let handled = coordinator.reduce_ui_event(UiEvent::Warning {
-        message: "warned".to_string(),
+    let handled = coordinator.reduce_system_event(SystemEvent::SystemMessage {
+        kind: SystemKind::Warning,
+        text: "warned".to_string(),
     });
     if handled {
         coordinator.mark_render_needed();
@@ -27,14 +32,15 @@ fn ui_event_warning_and_turn_error() -> Result<()> {
     erroring.state.input_locked = true;
 
     // -- Exec
-    let handled = erroring.reduce_ui_event(UiEvent::TurnError {
-        message: "boom".to_string(),
+    let handled = erroring.reduce_system_event(SystemEvent::SystemMessage {
+        kind: SystemKind::TurnError,
+        text: "boom".to_string(),
     });
 
     // -- Check
     assert!(handled, "TurnError must fall through and be handled");
-    let error_line = erroring.state.transcript.blocks().iter().any(|b| {
-        block_to_role(b) == TranscriptRole::System && b.source.plain_text().contains("Error: boom")
+    let error_line = erroring.state.transcript.entries().iter().any(|entry| {
+        entry_to_role(entry) == TranscriptRole::System && entry_text(entry).contains("Error: boom")
     });
     assert!(error_line, "TurnError must land on the transcript");
     assert_eq!(erroring.state.phase, UiPhase::Idle);
@@ -108,7 +114,7 @@ fn reduce_ui_state_event_routing() -> Result<()> {
 
     // -- Setup & Fixtures: a fresh coordinator.
     let mut fallback = RuntimeCoordinator::new(120, 40, Some(false));
-    assert!(fallback.state.transcript.blocks().is_empty());
+    assert!(fallback.state.transcript.entries().is_empty());
 
     // -- Exec
     fallback.reduce_ui_state_event(UiStateEvent::PushStartupLogo);
@@ -117,14 +123,14 @@ fn reduce_ui_state_event_routing() -> Result<()> {
     let has_logo = fallback
         .state
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .any(|b| matches!(b.source, BlockSource::Banner { .. }));
+        .any(|entry| matches!(entry, TranscriptEntry::Banner(_)));
     assert!(has_logo);
     Ok(())
 }
 
-/// A PermissionRequested UiEvent applies all effects and marks the frame
+/// A PermissionRequested SystemEvent applies all effects and marks the frame
 /// dirty; decision variants skip effects; a pre-authorize display is applied
 /// before the prompt opens.
 #[test]
@@ -134,8 +140,8 @@ fn ui_event_permission_group() -> Result<()> {
     coordinator.set_render_needed(false);
     coordinator.state.status.message.set_message("idle");
     coordinator.state.scroll.following_tail = false;
-    let event = UiEvent::PermissionRequested {
-        request_id: "ask-0000000000000001".to_string(),
+    let event = SystemEvent::PermissionRequested {
+        request_id: RequestId::new("ask-0000000000000001"),
         context: PermissionRequestContext {
             tool: "nu(command=echo hi)".to_string(),
             tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
@@ -151,7 +157,7 @@ fn ui_event_permission_group() -> Result<()> {
     };
 
     // -- Exec
-    let handled = coordinator.reduce_ui_event(event);
+    let handled = coordinator.reduce_system_event(event);
     if handled {
         coordinator.mark_render_needed();
     }
@@ -165,25 +171,25 @@ fn ui_event_permission_group() -> Result<()> {
 
     // -- Exec & Check: decision variants skip effects.
     for event in [
-        UiEvent::PermissionDecisionSubmitted {
-            request_id: "ask-0000000000000001".to_string(),
+        SystemEvent::PermissionDecisionSubmitted {
+            request_id: RequestId::new("ask-0000000000000001"),
             decision: PermissionDecision::AllowOnce,
             matched_rule_identity: "nested:nu.command:*".to_string(),
         },
-        UiEvent::PermissionDecisionTimedOut {
-            request_id: "ask-0000000000000001".to_string(),
+        SystemEvent::PermissionDecisionTimedOut {
+            request_id: RequestId::new("ask-0000000000000001"),
         },
-        UiEvent::PermissionDecisionIgnored {
-            request_id: "ask-0000000000000001".to_string(),
+        SystemEvent::PermissionDecisionIgnored {
+            request_id: RequestId::new("ask-0000000000000001"),
             reason: "user closed".to_string(),
         },
-        UiEvent::PermissionRequestCancelled {
-            request_id: "ask-0000000000000001".to_string(),
+        SystemEvent::PermissionRequestCancelled {
+            request_id: RequestId::new("ask-0000000000000001"),
             matched_rule_identity: "nested:nu.command:*".to_string(),
         },
-        UiEvent::PermissionAutoResolved {
+        SystemEvent::PermissionAutoResolved {
             matched_rule_identity: "tool:read".to_string(),
-            action: "allow".to_string(),
+            action: AutoResolutionAction::Allow,
             reason: None,
         },
     ] {
@@ -192,7 +198,7 @@ fn ui_event_permission_group() -> Result<()> {
         decision.state.status.message.set_message("idle");
         decision.state.scroll.following_tail = false;
 
-        let handled = decision.reduce_ui_event(event);
+        let handled = decision.reduce_system_event(event);
         if handled {
             decision.mark_render_needed();
         }
@@ -205,11 +211,13 @@ fn ui_event_permission_group() -> Result<()> {
 
     // -- Setup & Fixtures: a pending tool call for the pre-authorize display.
     let mut preview = RuntimeCoordinator::new(120, 40, Some(false));
-    preview.reduce_ui_event(UiEvent::ToolStarted {
-        name: "write".to_string(),
-        source: "user".to_string(),
-        arguments: "{}".to_string(),
-        call_line: agnt_core::protocol::tool_args::CallLine::from_json_summary("{}"),
+    preview.reduce_system_event(SystemEvent::ToolStarted {
+        call: agnt_core::protocol::events::ToolCall::new(
+            agnt_core::transcript::ir::ToolName("write".to_string()),
+            "user",
+            "{}",
+            agnt_core::protocol::tool_args::CallLine::from_json_summary("{}"),
+        ),
     });
     let context = PermissionRequestContext {
         tool: "write".to_string(),
@@ -228,19 +236,21 @@ fn ui_event_permission_group() -> Result<()> {
     };
 
     // -- Exec
-    let handled = preview.reduce_ui_event(UiEvent::PermissionRequested {
-        request_id: "ask-0000000000000001".to_string(),
+    let handled = preview.reduce_system_event(SystemEvent::PermissionRequested {
+        request_id: RequestId::new("ask-0000000000000001"),
         context,
     });
 
-    // -- Check: the display is pushed before the prompt opens.
+    // -- Check: the display is set on the entry's preview before the prompt
+    // opens.
     assert!(handled, "PermissionRequested must reduce to true");
-    let preview_pushed = preview
-        .state
-        .transcript
-        .blocks()
-        .iter()
-        .any(|b| matches!(b.source, BlockSource::ToolDisplay { .. }));
+    let preview_pushed = preview.state.transcript.entries().iter().any(|entry| {
+        matches!(
+            entry,
+            agnt_core::transcript::entry::TranscriptEntry::Tool(tool)
+                if tool.preview.is_some()
+        )
+    });
     assert!(preview_pushed);
     assert!(preview.state.permission.has_prompt());
     Ok(())

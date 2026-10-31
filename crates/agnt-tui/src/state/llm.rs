@@ -2,14 +2,13 @@
 //! accounting on completion, and streaming assistant message rendering with
 //! diff-regurgitation dedup.
 
-use agnt_core::bus::LlmEvent;
 use agnt_core::conversation::turn::executor::TURN_STOPPED_NOTICE;
-use agnt_core::transcript::ir::{Block, ContentLine, MessageRole};
-use agnt_core::transcript::items::Message;
-use agnt_core::transcript::renderer::Renderable;
+use agnt_core::protocol::events::Usage;
+use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_core::transcript::ir::{ContentKind, ContentLine, MessageRole};
 
 use super::transcript_store::TranscriptStore;
-use super::{AppState, ScrollState, StatusMessageKind, StatusState, UiPhase};
+use super::{ScrollState, StatusMessageKind, StatusState, UiPhase};
 
 /// LLM-domain decisions extracted from the former `reduce_ui_event_impl` LLM
 /// arms. The streaming cursor lives in [`TranscriptStore`]
@@ -19,45 +18,53 @@ use super::{AppState, ScrollState, StatusMessageKind, StatusState, UiPhase};
 pub struct LlmState;
 
 impl LlmState {
-    /// Reduce an LLM lifecycle event. Returns `(changed, evicted)` — whether
-    /// the TUI changed and the evicted count from any block push inside, so
-    /// the top-level caller can shift domain bookkeeping.
-    pub fn reduce_llm_event(
+    /// Fold an `InferenceStarted` event.
+    pub fn started(
+        &mut self,
+        store: &mut TranscriptStore,
+        status: &mut StatusState,
+        phase: &mut UiPhase,
+        input_locked: &mut bool,
+    ) -> bool {
+        self.handle_start(store, status, phase, input_locked)
+    }
+
+    /// Fold an `InferenceCompleted` event: record the call's usage.
+    pub fn completed(&mut self, status: &mut StatusState, usage: &Usage) -> bool {
+        handle_llm_end(
+            status,
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.total_tokens,
+            usage.cost,
+            usage.cost_complete,
+        )
+    }
+
+    /// Fold an `InferenceChunk` event: re-render the streamed assistant block
+    /// from the accumulated text the event carries.
+    pub fn chunk(
+        &mut self,
+        store: &mut TranscriptStore,
+        scroll: &mut ScrollState,
+        aggregated: &str,
+    ) -> bool {
+        log::trace!(
+            "reducer: InferenceChunk aggregated_len={}",
+            aggregated.len()
+        );
+        self.assistant_message(store, scroll, aggregated)
+    }
+
+    /// Fold an `InferenceStopped` event.
+    pub fn stopped(
         &mut self,
         store: &mut TranscriptStore,
         status: &mut StatusState,
         scroll: &mut ScrollState,
-        phase: &mut UiPhase,
-        input_locked: &mut bool,
-        event: LlmEvent,
-    ) -> (bool, usize) {
-        let mut evicted = 0usize;
-        let changed = match event {
-            LlmEvent::Started => self.handle_start(store, status, phase, input_locked),
-            LlmEvent::Completed {
-                input_tokens,
-                output_tokens,
-                total_tokens,
-                cost,
-                cost_complete,
-                ..
-            } => handle_llm_end(
-                status,
-                input_tokens,
-                output_tokens,
-                total_tokens,
-                cost,
-                cost_complete,
-            ),
-            LlmEvent::AssistantMessage { text } => {
-                log::trace!("reducer: AssistantMessage text_len={}", text.len());
-                self.assistant_message(store, scroll, &text, &mut evicted)
-            }
-            LlmEvent::Stopped { reason } => {
-                self.stopped(store, status, scroll, &reason, &mut evicted)
-            }
-        };
-        (changed, evicted)
+        reason: &str,
+    ) -> bool {
+        self.stopped_impl(store, status, scroll, reason)
     }
 
     /// Render a hook-stop reason. The generic user-cancel marker
@@ -67,13 +74,12 @@ impl LlmState {
     /// block (Fix 2 of the repetition stop UX). The streaming cursor is
     /// cleared so the streamed block stays intact and any later assistant
     /// message starts a fresh block.
-    fn stopped(
+    fn stopped_impl(
         &mut self,
         store: &mut TranscriptStore,
         status: &mut StatusState,
         scroll: &mut ScrollState,
         reason: &str,
-        evicted: &mut usize,
     ) -> bool {
         let trimmed = reason.trim();
         if trimmed.is_empty() {
@@ -95,21 +101,15 @@ impl LlmState {
             status.message.set_notice(TURN_STOPPED_NOTICE);
             return true;
         }
-        // Close the in-progress streamed block: push_block's unified spacer
+        // Close the in-progress streamed entry: push_entry's unified spacer
         // rule separates it from the notice, and the cursor resets so nothing
         // later truncates it.
         store.assistant_stream_start = None;
         scroll.scroll_transcript_to_bottom();
-        let msg = Message {
+        store.push_entry(TranscriptEntry::Message(MessageEntry {
             role: MessageRole::Assistant,
             markdown: trimmed.to_string(),
-        };
-        *evicted += store.push_block(Block {
-            source: msg.source(),
-            lane: msg.lane(),
-            fill: msg.fill(),
-            status: None,
-        });
+        }));
         true
     }
 
@@ -140,7 +140,6 @@ impl LlmState {
         store: &mut TranscriptStore,
         scroll: &mut ScrollState,
         text: &str,
-        evicted: &mut usize,
     ) -> bool {
         let trimmed = text.trim();
         if trimmed.is_empty() {
@@ -148,8 +147,8 @@ impl LlmState {
         }
 
         // If this is the first delta, record where the message starts.
-        // push_block's unified spacer rule separates the streamed block from
-        // whatever precedes it (tool block or previous turn).
+        // push_entry's unified spacer rule separates the streamed entry from
+        // whatever precedes it (tool entry or previous turn).
         if store.assistant_stream_start.is_none() {
             store.assistant_stream_start = Some(store.len());
         }
@@ -168,16 +167,10 @@ impl LlmState {
 
         // Always follow tail with ListState
         scroll.scroll_transcript_to_bottom();
-        let msg = Message {
+        store.push_entry(TranscriptEntry::Message(MessageEntry {
             role: MessageRole::Assistant,
             markdown: trimmed.to_string(),
-        };
-        *evicted += store.push_block(Block {
-            source: msg.source(),
-            lane: msg.lane(),
-            fill: msg.fill(),
-            status: None,
-        });
+        }));
         true
     }
 }
@@ -197,45 +190,13 @@ fn handle_llm_end(
     true
 }
 
-/// Single dispatch seam for the LLM domain: owns the
-/// (`LlmState`, `TranscriptStore`, `StatusState`, `ScrollState`, phase,
-/// input-lock) borrow split so both event paths share it. `LlmStarted` runs
-/// `AppState::ensure_invariants` after the Idle→Busy transition, matching the
-/// historical `handle_llm_start` (the call is a state fixpoint, so it is a
-/// no-op when the phase transition did not happen).
-pub(crate) fn dispatch_llm_event(state: &mut AppState, event: LlmEvent) -> bool {
-    if matches!(event, LlmEvent::Started) {
-        let (changed, evicted) = state.llm.reduce_llm_event(
-            &mut state.transcript,
-            &mut state.status,
-            &mut state.scroll,
-            &mut state.phase,
-            &mut state.input_locked,
-            event,
-        );
-        state.ensure_invariants();
-        state.shift_bookkeeping_after_eviction(evicted);
-        return changed;
-    }
-    let (changed, evicted) = state.llm.reduce_llm_event(
-        &mut state.transcript,
-        &mut state.status,
-        &mut state.scroll,
-        &mut state.phase,
-        &mut state.input_locked,
-        event,
-    );
-    state.shift_bookkeeping_after_eviction(evicted);
-    changed
-}
-
 // region:    --- Support
 
 fn assistant_diff_regurgitation_is_redundant(
     store: &TranscriptStore,
     assistant_lines: &[ContentLine],
 ) -> bool {
-    let Some(latest_tool_display_diff) = latest_tool_display_diff_lines(store) else {
+    let Some(latest_tool_display_diff) = last_tool_display_diff_lines(store) else {
         return false;
     };
 
@@ -288,39 +249,28 @@ fn normalize_diff_line_for_comparison(line: &str) -> String {
     line.to_string()
 }
 
-fn latest_tool_display_diff_lines(store: &TranscriptStore) -> Option<Vec<String>> {
-    let mut lines = Vec::new();
-    for block in store.blocks().iter().rev() {
-        let text = block.source.plain_text();
-        if text.trim().is_empty() {
-            continue;
-        }
-        lines.push(text);
+/// The Diff-section content lines of the last tool entry's unified display.
+///
+/// The store is the sibling seam: the walk runs in reverse and stops at the
+/// last tool entry, so an intervening message does not blind the check. Only
+/// typed `ContentKind::Diff` sections contribute — the check never scans entry
+/// text for diff markers. `None` when the last tool entry carries no display,
+/// or when its display carries no diff section.
+fn last_tool_display_diff_lines(store: &TranscriptStore) -> Option<Vec<String>> {
+    let display = store.entries().iter().rev().find_map(|entry| match entry {
+        TranscriptEntry::Tool(tool) => Some(tool.result.as_ref().or(tool.preview.as_ref())),
+        _ => None,
+    })?;
+    let display = display?;
 
-        if !lines.is_empty() {
-            break;
-        }
-    }
+    let lines = display
+        .sections
+        .iter()
+        .filter(|section| matches!(section.kind, ContentKind::Diff { .. }))
+        .flat_map(|section| section.content.lines().map(str::to_string))
+        .collect::<Vec<_>>();
 
-    if lines.is_empty() {
-        return None;
-    }
-
-    lines.reverse();
-    Some(
-        lines
-            .into_iter()
-            .filter(|line| {
-                line.starts_with("--- ")
-                    || line.starts_with("+++ ")
-                    || line.starts_with("@@ ")
-                    || line.starts_with(' ')
-                    || line.starts_with('-')
-                    || line.starts_with('+')
-                    || line.starts_with('\\')
-            })
-            .collect(),
-    )
+    (!lines.is_empty()).then_some(lines)
 }
 
 // endregion: --- Support

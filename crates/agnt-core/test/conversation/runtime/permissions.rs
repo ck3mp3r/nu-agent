@@ -27,7 +27,7 @@ fn permissions_startup_summary_does_not_emit_warning() {
     let mut count = 0usize;
     loop {
         match ui_event_rx.try_recv() {
-            Ok(crate::protocol::event::UiEvent::Warning { .. }) => count += 1,
+            Ok(crate::protocol::events::SystemEvent::SystemMessage { .. }) => count += 1,
             Ok(_) => {}
             Err(crate::bus::TryRecvError::Empty) => break,
             Err(crate::bus::TryRecvError::Lagged(_)) => continue,
@@ -83,7 +83,7 @@ fn set_permissions_replaces_config_and_does_not_emit_warning() -> Result<()> {
     let mut count = 0usize;
     loop {
         match ui_event_rx.try_recv() {
-            Ok(crate::protocol::event::UiEvent::Warning { .. }) => count += 1,
+            Ok(crate::protocol::events::SystemEvent::SystemMessage { .. }) => count += 1,
             Ok(_) => {}
             Err(crate::bus::TryRecvError::Empty) => break,
             Err(crate::bus::TryRecvError::Lagged(_)) => continue,

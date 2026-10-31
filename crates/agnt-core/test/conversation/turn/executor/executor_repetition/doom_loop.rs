@@ -95,17 +95,17 @@ async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -
 
     let events = event_collector.drain();
     assert!(
-        events.iter().any(|e| matches!(e, UiEvent::Warning { message } if message.starts_with(DOOM_LOOP_STOP_PREFIX))),
+        events.iter().any(|e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text.starts_with(DOOM_LOOP_STOP_PREFIX))),
         "must emit a Warning starting with DOOM_LOOP_STOP_PREFIX; got: {events:?}"
     );
-    // Fix 2: the stop reason rides `UiEvent::Stopped` (appended as a notice),
+    // Fix 2: the stop reason rides `SystemEvent::InferenceStopped` (appended as a notice),
     // never `AssistantMessage` (which truncates the streamed block).
     assert!(
-        events.iter().any(|e| matches!(e, UiEvent::Stopped { reason } if reason.starts_with(DOOM_LOOP_STOP_PREFIX))),
+        events.iter().any(|e| matches!(e, SystemEvent::InferenceStopped { reason } if reason.starts_with(DOOM_LOOP_STOP_PREFIX))),
         "must emit a Stopped event starting with DOOM_LOOP_STOP_PREFIX; got: {events:?}"
     );
     assert!(
-        !events.iter().any(|e| matches!(e, UiEvent::AssistantMessage { text, .. } if text.starts_with(DOOM_LOOP_STOP_PREFIX))),
+        !events.iter().any(|e| matches!(e, SystemEvent::InferenceChunk { delta, aggregated } if delta.starts_with(DOOM_LOOP_STOP_PREFIX) || aggregated.starts_with(DOOM_LOOP_STOP_PREFIX))),
         "the stop reason must NOT ride AssistantMessage; got: {events:?}"
     );
 

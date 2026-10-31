@@ -2,7 +2,9 @@ use nu_protocol::{LabeledError, Span, Value};
 
 use crate::bus::Bus;
 use crate::orchestrator::OrchestratorEvent;
-use crate::protocol::event::{ToolDisplay, UiEvent};
+use crate::protocol::event::ToolDisplay;
+use crate::protocol::events::SystemEvent;
+use crate::session::tool_status::ToolStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpUsabilityState {
@@ -37,7 +39,10 @@ pub struct UiMessageSnapshot {
     tool_arguments: Option<String>,
     tool_result: Option<String>,
     tool_success: Option<bool>,
-    tool_not_run: bool,
+    /// The call's structural status. A row the resolver reads carries the
+    /// variant the store wrote; a row built without one carries the verdict its
+    /// `tool_success` states.
+    tool_status: Option<ToolStatus>,
     tool_display: Option<ToolDisplay>,
     pub usage: Option<UiMessageUsageSnapshot>,
 }
@@ -58,7 +63,7 @@ impl UiMessageSnapshot {
             tool_arguments: None,
             tool_result: None,
             tool_success: None,
-            tool_not_run: false,
+            tool_status: None,
             tool_display: None,
             usage: None,
         }
@@ -73,6 +78,15 @@ impl UiMessageSnapshot {
         self.tool_arguments = arguments;
         self.tool_result = result;
         self.tool_success = success;
+        // The verdict the row states is the legacy classification: a row the
+        // store records a status for overrides it with `with_tool_status`.
+        self.tool_status = success.map(|success| {
+            if success {
+                ToolStatus::Success
+            } else {
+                ToolStatus::Failed
+            }
+        });
         self
     }
 
@@ -81,10 +95,10 @@ impl UiMessageSnapshot {
         self
     }
 
-    /// Mark the snapshot as a call the turn never ran: the transcript renders
-    /// the ⊘ status and the reason block under the tool block.
-    pub fn with_tool_not_run(mut self) -> Self {
-        self.tool_not_run = true;
+    /// Mark the snapshot with the call's structural status: the variant the
+    /// store carries for it.
+    pub fn with_tool_status(mut self, status: ToolStatus) -> Self {
+        self.tool_status = Some(status);
         self
     }
 
@@ -113,10 +127,9 @@ impl UiMessageSnapshot {
         self.tool_success
     }
 
-    /// Whether the row is a call the turn never ran (⊘), rather than a settled
-    /// success or failure.
-    pub fn tool_not_run(&self) -> bool {
-        self.tool_not_run
+    /// The call's structural status, when the row carries one.
+    pub fn tool_status(&self) -> Option<ToolStatus> {
+        self.tool_status
     }
 
     pub fn take_tool_display(&mut self) -> Option<ToolDisplay> {
@@ -147,10 +160,10 @@ impl UiMessageUsageSnapshot {
 }
 
 pub trait ProgressUi {
-    fn emit(&mut self, event: &UiEvent);
+    fn emit(&mut self, event: &SystemEvent);
     fn flush(&mut self);
     fn take_cancel_requested(&self) -> bool;
-    fn emit_batch(&mut self, events: &[UiEvent]) {
+    fn emit_batch(&mut self, events: &[SystemEvent]) {
         for event in events {
             self.emit(event);
         }

@@ -32,20 +32,14 @@ impl crate::hook::permission_resolver::AsyncPermissionResolver for DenyAllResolv
 /// message)`, with the last three `None` for a `ToolStarted`.
 type ToolEventSummary = (String, Option<bool>, Option<String>, Option<String>);
 
-fn tool_event_summary(event: &UiEvent) -> Option<ToolEventSummary> {
+fn tool_event_summary(event: &SystemEvent) -> Option<ToolEventSummary> {
     match event {
-        UiEvent::ToolStarted { name, .. } => Some((name.clone(), None, None, None)),
-        UiEvent::ToolCompleted {
-            name,
-            success,
-            error_kind,
-            message,
-            ..
-        } => Some((
-            name.clone(),
-            Some(*success),
-            error_kind.clone(),
-            message.clone(),
+        SystemEvent::ToolStarted { call } => Some((call.name.0.clone(), None, None, None)),
+        SystemEvent::ToolCompleted { call, outcome } => Some((
+            call.name.0.clone(),
+            Some(outcome.success),
+            outcome.error_kind.clone(),
+            outcome.message.clone(),
         )),
         _ => None,
     }
@@ -171,7 +165,7 @@ async fn drive_denied_call<P: crate::hook::permission_resolver::AsyncPermissionR
     permission: P,
     tool_name: &str,
     args: serde_json::Value,
-) -> Result<Vec<UiEvent>> {
+) -> Result<Vec<SystemEvent>> {
     let bus = Bus::default();
     let hook = build_hook_with(bus.clone(), permission);
     let model = MockCompletionModel::from_stream_turns([
@@ -205,36 +199,34 @@ async fn drive_denied_call<P: crate::hook::permission_resolver::AsyncPermissionR
 }
 
 /// The ordered tool-event kinds the assertions compare.
-fn tool_event_kinds(events: &[UiEvent]) -> Vec<&'static str> {
+fn tool_event_kinds(events: &[SystemEvent]) -> Vec<&'static str> {
     events
         .iter()
         .filter_map(|event| match event {
-            UiEvent::ToolStarted { .. } => Some("started"),
-            UiEvent::ToolPreview { .. } => Some("preview"),
-            UiEvent::ToolCompleted { .. } => Some("completed"),
+            SystemEvent::ToolStarted { .. } => Some("started"),
+            SystemEvent::PreviewRequested { .. } => Some("preview"),
+            SystemEvent::ToolCompleted { .. } => Some("completed"),
             _ => None,
         })
         .collect()
 }
 
 /// The `arguments` string the `ToolStarted` event for `name` carries.
-fn started_arguments(events: &[UiEvent], name: &str) -> Option<String> {
+fn started_arguments(events: &[SystemEvent], name: &str) -> Option<String> {
     events.iter().find_map(|event| match event {
-        UiEvent::ToolStarted {
-            name: started,
-            arguments,
-            ..
-        } if started == name => Some(arguments.clone()),
+        SystemEvent::ToolStarted { call } if call.name.0 == name => Some(call.arguments.clone()),
         _ => None,
     })
 }
 
 /// The `(tool_key, display)` pairs of every `ToolPreview` the turn published.
-fn previews(events: &[UiEvent]) -> Vec<(String, crate::protocol::event::ToolDisplay)> {
+fn previews(events: &[SystemEvent]) -> Vec<(String, crate::protocol::event::ToolDisplay)> {
     events
         .iter()
         .filter_map(|event| match event {
-            UiEvent::ToolPreview { tool_key, display } => Some((tool_key.clone(), display.clone())),
+            SystemEvent::PreviewRequested { call, display } => {
+                Some((call.id.as_str().to_string(), display.clone()))
+            }
             _ => None,
         })
         .collect()

@@ -18,7 +18,7 @@ async fn test_hooks_runner_compaction_started_invokes_with_source() -> Result<()
     // -- Exec
     let _ = bus
         .compaction()
-        .send(CompactionEvent::Started {
+        .send(SystemEvent::CompactionStarted {
             source: "auto".to_string(),
         })
         .await;
@@ -54,7 +54,7 @@ async fn test_hooks_runner_compaction_completed_carries_preview_and_no_body() ->
     // -- Exec
     let _ = bus
         .compaction()
-        .send(CompactionEvent::Completed {
+        .send(SystemEvent::CompactionCompleted {
             source: "manual".to_string(),
             summary_preview: "The session covered the parser rewrite".to_string(),
             summary_body: "The session covered the parser rewrite in full detail".to_string(),
@@ -100,7 +100,7 @@ async fn test_hooks_runner_compaction_failed_carries_message() -> Result<()> {
     // -- Exec
     let _ = bus
         .compaction()
-        .send(CompactionEvent::Failed {
+        .send(SystemEvent::CompactionFailed {
             source: "auto".to_string(),
             message: "the summarizer returned nothing".to_string(),
         })
@@ -145,7 +145,7 @@ async fn test_hooks_runner_compaction_events_stamp_session_id() -> Result<()> {
         .await;
     let _ = bus
         .compaction()
-        .send(CompactionEvent::Completed {
+        .send(SystemEvent::CompactionCompleted {
             source: "auto".to_string(),
             summary_preview: "preview".to_string(),
             summary_body: "body".to_string(),
@@ -187,7 +187,7 @@ async fn test_hooks_runner_compaction_summary_chunk_invokes_nothing() -> Result<
     // -- Exec
     let _ = bus
         .compaction()
-        .send(CompactionEvent::SummaryChunk {
+        .send(SystemEvent::CompactionSummaryChunk {
             source: "auto".to_string(),
             delta: "chunk".to_string(),
             aggregated: "chunk".to_string(),

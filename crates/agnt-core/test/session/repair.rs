@@ -3,7 +3,7 @@
 //! `close_unanswered_tool_calls_with` closes the tool calls a cancelled or
 //! failed turn never answered, preferring the result the turn observed.
 
-use crate::session::repair::close_unanswered_tool_calls_with;
+use crate::session::repair::{UNANSWERED_RESULT_TEXT, close_unanswered_tool_calls_with};
 use crate::types::{
     AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolName,
     ToolResultContent, UserContent,
@@ -54,9 +54,9 @@ fn close_unanswered_tool_calls_with_prefers_the_settled_result() -> Result<()> {
     Ok(())
 }
 
-/// A call the turn never settled closes with the interrupted marker.
+/// A call the turn never settled closes with the unanswered marker.
 #[test]
-fn close_unanswered_tool_calls_with_marks_an_unsettled_call_interrupted() -> Result<()> {
+fn close_unanswered_tool_calls_with_marks_an_unsettled_call_unanswered() -> Result<()> {
     // -- Setup & Fixtures
     let messages = vec![assistant_tool_calls(&["tc1"])?];
     let results = vec![(CallId::from_wire("tc2"), "other".to_string(), false)];
@@ -72,8 +72,8 @@ fn close_unanswered_tool_calls_with_marks_an_unsettled_call_interrupted() -> Res
         return Err("the close must be a tool result".into());
     };
     assert!(
-        matches!(&result.content[0], ToolResultContent::Text(text) if text.text == "[interrupted]"),
-        "an unsettled call carries the interrupted marker; got {result:?}"
+        matches!(&result.content[0], ToolResultContent::Text(text) if text.text == UNANSWERED_RESULT_TEXT),
+        "an unsettled call carries the unanswered marker; got {result:?}"
     );
     assert!(
         !result.is_error,

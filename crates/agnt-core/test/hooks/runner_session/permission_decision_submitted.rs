@@ -13,8 +13,8 @@ async fn test_hooks_runner_permission_decision_submitted_invokes_with_payload() 
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionSubmitted {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionSubmitted {
+            request_id: RequestId::new("req-1"),
             decision: PermissionDecision::AllowOnce,
             matched_rule_identity: "permissions.nu".to_string(),
         })
@@ -58,8 +58,8 @@ async fn test_hooks_runner_permission_decision_submitted_encodes_every_decision(
     ] {
         let _ = bus
             .ui_event()
-            .send(UiEvent::PermissionDecisionSubmitted {
-                request_id: "req-1".to_string(),
+            .send(SystemEvent::PermissionDecisionSubmitted {
+                request_id: RequestId::new("req-1"),
                 decision,
                 matched_rule_identity: "permissions.nu".to_string(),
             })
@@ -95,8 +95,8 @@ async fn test_hooks_runner_permission_decision_submitted_stamps_session_id() -> 
         .await;
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionSubmitted {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionSubmitted {
+            request_id: RequestId::new("req-1"),
             decision: PermissionDecision::Deny,
             matched_rule_identity: "permissions.nu".to_string(),
         })
@@ -130,14 +130,14 @@ async fn test_hooks_runner_permission_decision_submitted_ignores_other_decisions
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionTimedOut {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionTimedOut {
+            request_id: RequestId::new("req-1"),
         })
         .await;
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionIgnored {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionIgnored {
+            request_id: RequestId::new("req-1"),
             reason: "turn cancelled".to_string(),
         })
         .await;

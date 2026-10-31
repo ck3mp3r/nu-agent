@@ -22,7 +22,7 @@ async fn test_hook_permission_resolver_cancel_while_awaiting_denies() -> Result<
         .map_err(|_| "timed out waiting for PermissionRequested")?
         .map_err(|_| "expected a PermissionRequested event")?;
     let request_id = match event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id,
+        SystemEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("expected PermissionRequested, got {other:?}"),
     };
     assert!(
@@ -30,7 +30,7 @@ async fn test_hook_permission_resolver_cancel_while_awaiting_denies() -> Result<
             .pending
             .lock()
             .map_err(|_| "pending lock poisoned")?
-            .contains_key(&request_id),
+            .contains_key(request_id.as_str()),
         "the request must be pending before the cancel"
     );
 

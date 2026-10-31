@@ -1,7 +1,8 @@
 use chrono::{Datelike, TimeZone};
 
+use crate::runtime::render::section_head_count;
 use crate::runtime::session_picker::{
-    SessionPickerRow, relative_timestamp, session_picker_table_model,
+    day_header_label, relative_timestamp, session_picker_table_model,
 };
 use crate::state::{ActivePicker, AppState, PickerOption, PickerPayload, PickerSortKeyPart};
 
@@ -58,6 +59,24 @@ fn test_session_picker_relative_timestamp_years() {
     assert_eq!(relative_timestamp(ts, now), "1y ago");
 }
 
+/// The day head names the current day and its predecessor, shortens a day of
+/// the current year, and carries the year for any earlier one.
+#[test]
+fn test_session_picker_day_header_label_reads_relative_to_today() -> Result<()> {
+    // -- Setup & Fixtures
+    let today = chrono::NaiveDate::from_ymd_opt(2025, 10, 31).ok_or("should build a date")?;
+    let yesterday = chrono::NaiveDate::from_ymd_opt(2025, 10, 30).ok_or("should build a date")?;
+    let same_year = chrono::NaiveDate::from_ymd_opt(2025, 9, 30).ok_or("should build a date")?;
+    let other_year = chrono::NaiveDate::from_ymd_opt(2024, 9, 30).ok_or("should build a date")?;
+
+    // -- Exec & Check
+    assert_eq!(day_header_label(today, today), "Today");
+    assert_eq!(day_header_label(yesterday, today), "Yesterday");
+    assert_eq!(day_header_label(same_year, today), "Sep 30");
+    assert_eq!(day_header_label(other_year, today), "Sep 30, 2024");
+    Ok(())
+}
+
 #[test]
 fn test_session_picker_table_model_empty() -> Result<()> {
     // -- Setup & Fixtures
@@ -68,14 +87,14 @@ fn test_session_picker_table_model_empty() -> Result<()> {
     let model = session_picker_table_model(&state, 20, 80);
 
     // -- Check
-    assert!(model.rows.is_empty());
+    assert!(model.options.is_empty());
     assert_eq!(model.selected, None);
     assert_eq!(model.query_line.to_string(), "Query: ");
     Ok(())
 }
 
 #[test]
-fn test_session_picker_table_model_single_day_single_header() -> Result<()> {
+fn test_session_picker_table_model_single_day_single_head() -> Result<()> {
     // -- Setup & Fixtures
     let today = today();
     let mut state = AppState::default();
@@ -93,13 +112,17 @@ fn test_session_picker_table_model_single_day_single_header() -> Result<()> {
     let model = session_picker_table_model(&state, 20, 80);
 
     // -- Check
-    assert_eq!(model.rows.len(), 4);
-    assert_eq!(header_labels(&model.rows), vec!["Today".to_string()]);
+    assert_eq!(model.options.len(), 3);
+    assert_eq!(
+        section_head_count(&model.options),
+        1,
+        "one day group renders one head row"
+    );
     Ok(())
 }
 
 #[test]
-fn test_session_picker_table_model_groups_by_day() -> Result<()> {
+fn test_session_picker_table_model_heads_one_per_day() -> Result<()> {
     // -- Setup & Fixtures
     let today = today();
     let yesterday = today - chrono::Duration::days(1);
@@ -118,18 +141,15 @@ fn test_session_picker_table_model_groups_by_day() -> Result<()> {
     // -- Exec
     let model = session_picker_table_model(&state, 20, 80);
 
-    // -- Check
-    assert_eq!(model.rows.len(), 6);
+    // -- Check: one head per day, newest day first, and the options keep the
+    // titles the rows render.
+    assert_eq!(section_head_count(&model.options), 3);
     assert_eq!(
-        header_labels(&model.rows),
-        vec![
-            "Today".to_string(),
-            "Yesterday".to_string(),
-            expected_day_label(older, today),
-        ]
+        section_keys(&model.options),
+        vec![today.to_string(), yesterday.to_string(), older.to_string(),]
     );
     assert_eq!(
-        session_titles(&model.rows),
+        session_titles(&model.options),
         vec![
             "Today Session".to_string(),
             "Yesterday Session".to_string(),
@@ -139,36 +159,10 @@ fn test_session_picker_table_model_groups_by_day() -> Result<()> {
     Ok(())
 }
 
+/// The model reports the selected OPTION index; the head rows the table inserts
+/// above it are the render walk's accounting.
 #[test]
-fn test_session_picker_table_model_header_includes_year_for_other_year() -> Result<()> {
-    // -- Setup & Fixtures
-    let today = today();
-    let previous_year = today - chrono::Duration::days(400);
-    let mut state = AppState::default();
-    state.set_picker_options(
-        ActivePicker::Session,
-        vec![session_option(
-            "id0",
-            Some("Old Session"),
-            previous_year,
-            1,
-        )?],
-    );
-    state.picker.open(ActivePicker::Session);
-
-    // -- Exec
-    let model = session_picker_table_model(&state, 20, 80);
-
-    // -- Check
-    assert_eq!(
-        header_labels(&model.rows),
-        vec![previous_year.format("%b %d, %Y").to_string()]
-    );
-    Ok(())
-}
-
-#[test]
-fn test_session_picker_table_model_selected_maps_to_table_row() -> Result<()> {
+fn test_session_picker_table_model_selected_is_the_option_index() -> Result<()> {
     // -- Setup & Fixtures
     let today = today();
     let yesterday = today - chrono::Duration::days(1);
@@ -181,19 +175,18 @@ fn test_session_picker_table_model_selected_maps_to_table_row() -> Result<()> {
         ],
     );
     state.picker.open(ActivePicker::Session);
-    let picker_state = state
+    state
         .picker
         .active_state_mut()
-        .ok_or("should have an active session picker")?;
-    picker_state.selection = 1;
+        .ok_or("should have an active session picker")?
+        .selection = 1;
 
     // -- Exec
     let model = session_picker_table_model(&state, 20, 80);
 
     // -- Check
-    // Table rows: [header, today, header, yesterday] — the second option is row 3.
-    assert_eq!(model.rows.len(), 4);
-    assert_eq!(model.selected, Some(3));
+    assert_eq!(model.options.len(), 2);
+    assert_eq!(model.selected, Some(1));
     Ok(())
 }
 
@@ -218,7 +211,7 @@ fn test_session_picker_table_model_overflow_cue_accounts_for_footer_rows() -> Re
     // -- Exec
     // A 10-row popup leaves inner height 8, so the details ladder reserves two
     // footer rows. The render path passes popup.height - dh = 8 → inner 6 →
-    // query=1, header=1 → available_rows=4, minus one day header → 3 rows.
+    // query=1, header=1 → available_rows=4, minus one day head → 3 rows.
     let model = session_picker_table_model(&state, 8, 80);
 
     // -- Check
@@ -246,17 +239,17 @@ fn test_session_picker_table_model_overflow_cue_counts_session_rows() -> Result<
 
     // -- Exec
     // popup_height=8 → inner_height=6 → query=1, header=1 → available_rows=4
-    // One day group → 1 header row → 3 session rows fit.
+    // One day group → 1 head row → 3 session rows fit.
     let model = session_picker_table_model(&state, 8, 80);
 
     // -- Check
-    assert_eq!(model.rows.len(), 6);
+    assert_eq!(section_head_count(&model.options), 1);
     assert_eq!(model.overflow_cue, Some("3 of 5".to_string()));
     Ok(())
 }
 
 #[test]
-fn test_session_picker_table_model_overflow_cue_accounts_for_header_rows() -> Result<()> {
+fn test_session_picker_table_model_overflow_cue_accounts_for_head_rows() -> Result<()> {
     // -- Setup & Fixtures
     let today = today();
     let mut state = AppState::default();
@@ -281,12 +274,12 @@ fn test_session_picker_table_model_overflow_cue_accounts_for_header_rows() -> Re
     state.picker.open(ActivePicker::Session);
 
     // -- Exec
-    // popup_height=8 → available_rows=4. Three day groups → 3 header rows, so
+    // popup_height=8 → available_rows=4. Three day groups → 3 head rows, so
     // only 1 session row fits even though 3 sessions <= 4 available rows.
     let model = session_picker_table_model(&state, 8, 80);
 
     // -- Check
-    assert_eq!(model.rows.len(), 6);
+    assert_eq!(section_head_count(&model.options), 3);
     assert_eq!(model.overflow_cue, Some("1 of 3".to_string()));
     Ok(())
 }
@@ -311,24 +304,27 @@ fn test_session_picker_table_model_no_overflow_cue_when_all_rows_fit() -> Result
     state.picker.open(ActivePicker::Session);
 
     // -- Exec
-    // popup_height=8 → available_rows=4. Two day groups → 2 header rows, so 2
+    // popup_height=8 → available_rows=4. Two day groups → 2 head rows, so 2
     // session rows fit and both sessions are visible.
     let model = session_picker_table_model(&state, 8, 80);
 
     // -- Check
-    assert_eq!(model.rows.len(), 4);
+    assert_eq!(section_head_count(&model.options), 2);
     assert_eq!(model.overflow_cue, None);
     Ok(())
 }
 
+/// The model hands the render arm the title budget its rows ellipsize with: the
+/// table width less the When and Msgs columns, their spacing, and the selection
+/// gutter.
 #[test]
-fn test_session_picker_table_model_renders_message_count_cell() -> Result<()> {
+fn test_session_picker_table_model_title_budget_leaves_the_columns() -> Result<()> {
     // -- Setup & Fixtures
     let today = today();
     let mut state = AppState::default();
     state.set_picker_options(
         ActivePicker::Session,
-        vec![session_option("abc123", Some("My Session"), today, 42)?],
+        vec![session_option("id0", Some("My Session"), today, 42)?],
     );
     state.picker.open(ActivePicker::Session);
 
@@ -336,60 +332,22 @@ fn test_session_picker_table_model_renders_message_count_cell() -> Result<()> {
     let model = session_picker_table_model(&state, 20, 80);
 
     // -- Check
-    assert_eq!(model.rows.len(), 2);
-    let Some(SessionPickerRow::Session {
-        relative,
+    assert_eq!(model.title_budget, 55);
+    let Some(option) = model.options.first() else {
+        return Err("should carry the session option".into());
+    };
+    let PickerPayload::Session {
         title,
         message_count,
-    }) = model.rows.get(1)
+        created_at,
+        ..
+    } = &option.payload
     else {
-        return Err("should have a session row at index 1".into());
+        return Err("should carry a session payload".into());
     };
-    assert!(!relative.is_empty());
-    assert_eq!(title, "My Session");
+    assert_eq!(title.as_deref(), Some("My Session"));
     assert_eq!(*message_count, 42);
-    Ok(())
-}
-
-#[test]
-fn test_session_picker_table_model_ellipsizes_long_title() -> Result<()> {
-    // -- Setup & Fixtures
-    let today = today();
-    let long_title = "t".repeat(60);
-    let mut state = AppState::default();
-    state.set_picker_options(
-        ActivePicker::Session,
-        vec![session_option("id0", Some(&long_title), today, 1)?],
-    );
-    state.picker.open(ActivePicker::Session);
-
-    // -- Exec
-    // table_width=80 → title budget 80 - 25 = 55 chars.
-    let model = session_picker_table_model(&state, 20, 80);
-
-    // -- Check
-    let expected = format!("{}…", "t".repeat(54));
-    assert_eq!(session_titles(&model.rows), vec![expected]);
-    Ok(())
-}
-
-#[test]
-fn test_session_picker_table_model_keeps_fitting_title() -> Result<()> {
-    // -- Setup & Fixtures
-    let today = today();
-    let title = "t".repeat(55);
-    let mut state = AppState::default();
-    state.set_picker_options(
-        ActivePicker::Session,
-        vec![session_option("id0", Some(&title), today, 1)?],
-    );
-    state.picker.open(ActivePicker::Session);
-
-    // -- Exec
-    let model = session_picker_table_model(&state, 20, 80);
-
-    // -- Check
-    assert_eq!(session_titles(&model.rows), vec![title]);
+    assert!(!relative_timestamp(*created_at, model.now).is_empty());
     Ok(())
 }
 
@@ -417,6 +375,7 @@ fn session_option(
         id: id.to_string(),
         display: display.clone(),
         search_text: display,
+        section: Some(crate::state::session_day(created_at).to_string()),
         sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(created_at))],
         payload: PickerPayload::Session {
             session_id: id.to_string(),
@@ -427,28 +386,19 @@ fn session_option(
     })
 }
 
-fn expected_day_label(day: chrono::NaiveDate, today: chrono::NaiveDate) -> String {
-    if day.year() == today.year() {
-        day.format("%b %d").to_string()
-    } else {
-        day.format("%b %d, %Y").to_string()
-    }
-}
-
-fn header_labels(rows: &[SessionPickerRow]) -> Vec<String> {
-    rows.iter()
-        .filter_map(|row| match row {
-            SessionPickerRow::DayHeader(label) => Some(label.clone()),
-            SessionPickerRow::Session { .. } => None,
-        })
+fn section_keys(options: &[PickerOption]) -> Vec<String> {
+    options
+        .iter()
+        .map(|option| option.section.clone().unwrap_or_default())
         .collect()
 }
 
-fn session_titles(rows: &[SessionPickerRow]) -> Vec<String> {
-    rows.iter()
-        .filter_map(|row| match row {
-            SessionPickerRow::Session { title, .. } => Some(title.clone()),
-            SessionPickerRow::DayHeader(_) => None,
+fn session_titles(options: &[PickerOption]) -> Vec<String> {
+    options
+        .iter()
+        .filter_map(|option| match &option.payload {
+            PickerPayload::Session { title, .. } => title.clone(),
+            _ => None,
         })
         .collect()
 }

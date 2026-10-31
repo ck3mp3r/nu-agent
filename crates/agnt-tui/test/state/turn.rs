@@ -3,20 +3,19 @@
 //! `interaction/reducer_test.rs` `reduce_ui_event_impl` effect tests, driven
 //! through `dispatch_turn_event` (the single turn dispatch seam).
 
-use crate::interaction::reducer::{ReducerInput, UserAction, reduce_with_cancel_controller};
-use crate::state::{AppState, InputState, StatusMessageKind, UiPhase};
-use agnt_core::bus::TurnEvent;
+use crate::interaction::reducer::reduce;
+use crate::state::{AppState, StatusMessageKind, UiPhase};
 use agnt_core::conversation::turn::executor::TURN_STOPPED_NOTICE;
-use agnt_core::transcript::ir::{Block, BlockSource, MessageRole};
-use agnt_core::transcript::items::Message;
-use agnt_core::transcript::renderer::Renderable;
+use agnt_core::protocol::events::SystemEvent;
+use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_core::transcript::ir::MessageRole;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 fn finalize_turn(state: &mut AppState) {
-    crate::state::dispatch_turn_event(
+    reduce(
         state,
-        TurnEvent::Completed {
+        SystemEvent::TurnCompleted {
             tool_calls: 0,
             input_tokens: 0,
             output_tokens: 0,
@@ -25,41 +24,41 @@ fn finalize_turn(state: &mut AppState) {
             cost_complete: true,
             duration_ms: 0,
         },
+        None,
     );
 }
 
 #[test]
 fn finalize_cycle_effects() -> Result<()> {
     // -- Setup & Fixtures
-    let mut state = AppState {
-        input: InputState::default().with_pending_submit_text("prompt".to_string()),
-        ..Default::default()
-    };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    let mut state = AppState::default();
+    reduce(
+        &mut state,
+        SystemEvent::PromptSubmitted {
+            text: "prompt".to_string(),
+        },
+        None,
+    );
     let _ = state.activate_next_prompt();
-    let msg = Message {
-        role: MessageRole::Assistant,
-        markdown: "response".to_string(),
-    };
-    state.transcript.push_block(Block {
-        source: msg.source(),
-        lane: msg.lane(),
-        fill: msg.fill(),
-        status: None,
-    });
+    state
+        .transcript
+        .push_entry(TranscriptEntry::Message(MessageEntry {
+            role: MessageRole::Assistant,
+            markdown: "response".to_string(),
+        }));
     state.transcript.assistant_stream_start = Some(3);
 
     // -- Exec
     finalize_turn(&mut state);
 
-    // -- Check: the last block stays content, the cycle finalizes, input
+    // -- Check: the last entry stays content, the cycle finalizes, input
     // unlocks, and the streaming cursor resets.
     let last = state
         .transcript
-        .blocks()
+        .entries()
         .last()
-        .ok_or("should have last transcript block")?;
-    assert!(matches!(last.source, BlockSource::Markdown { .. }));
+        .ok_or("should have last transcript entry")?;
+    assert!(matches!(last, TranscriptEntry::Message(_)));
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
     assert!(!state.abort.pending);
@@ -70,29 +69,31 @@ fn finalize_cycle_effects() -> Result<()> {
 
 #[test]
 fn turn_started_and_task_outcomes_are_render_noops() {
-    let mut state = AppState::default();
+    let mut state = AppState {
+        input_locked: true,
+        ..Default::default()
+    };
+    state.transcript.assistant_stream_start = Some(0);
 
-    assert!(!crate::state::dispatch_turn_event(
+    // `SystemEvent` carries only `TurnCompleted`: a turn start and an A2A task
+    // outcome have no event, so they cannot reach the reducer at all. The
+    // completed turn is the one turn fact that changes state.
+    assert!(reduce(
         &mut state,
-        TurnEvent::Started {
-            prompt: "p".to_string(),
-            task_id: None,
+        SystemEvent::TurnCompleted {
+            tool_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
         },
+        None,
     ));
-    assert!(!crate::state::dispatch_turn_event(
-        &mut state,
-        TurnEvent::TaskCompleted {
-            output: "out".to_string(),
-            task_id: "t".to_string(),
-        },
-    ));
-    assert!(!crate::state::dispatch_turn_event(
-        &mut state,
-        TurnEvent::TaskFailed {
-            task_id: "t".to_string(),
-            error: "boom".to_string(),
-        },
-    ));
+    assert_eq!(state.phase, UiPhase::Idle);
+    assert!(!state.input_locked);
+    assert!(state.transcript.assistant_stream_start.is_none());
 }
 
 /// Fix 1 (deterministic): `finalize` clears only Neutral-kind status messages.
@@ -140,7 +141,7 @@ fn finalize_preserves_warning_and_clears_neutral_status() -> Result<()> {
 }
 
 /// A `Notice`-kind status message survives turn finalize. The stop marker is
-/// set by `LlmEvent::Stopped` and `TurnEvent::Completed` arrives right after,
+/// set by `SystemEvent::InferenceStopped` and `SystemEvent::TurnCompleted` arrives right after,
 /// so finalize must not wipe the marker before it renders.
 #[test]
 fn finalize_preserves_notice_status() -> Result<()> {

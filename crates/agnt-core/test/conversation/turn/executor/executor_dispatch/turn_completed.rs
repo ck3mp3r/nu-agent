@@ -1,15 +1,13 @@
-//! `TurnEvent::Completed` emission: both turn-end paths publish the turn's
+//! `SystemEvent::TurnCompleted` emission: both turn-end paths publish the turn's
 //! tool-call count, its accumulated LLM usage, and its wall-clock span.
 //!
-//! The turn channel is the control plane the hook runner subscribes to. The
-//! TUI keeps reconstructing `TurnEvent::Completed` from `UiEvent::Completed`,
-//! so both events ride their own channels.
+//! The turn-completion fact rides the ui-event channel the TUI and the hook
+//! runner subscribe to; the turn channel carries only the lifecycle start.
 
 use super::*;
-use crate::bus::TurnEvent;
 
-/// Drain every event currently buffered on the turn channel.
-fn drain_turn_events(rx: &mut crate::bus::TurnRx) -> Vec<TurnEvent> {
+/// Drain every event currently buffered on the ui-event channel.
+fn drain_turn_events(rx: &mut crate::bus::UiEventRx) -> Vec<SystemEvent> {
     let mut events = Vec::new();
     loop {
         match rx.try_recv() {
@@ -24,10 +22,10 @@ fn drain_turn_events(rx: &mut crate::bus::TurnRx) -> Vec<TurnEvent> {
 /// The fields the turn-completed event carries, in declaration order.
 type CompletedFields = (usize, u64, u64, Option<u64>, Option<f64>, bool, u64);
 
-/// The first `TurnEvent::Completed` in `events`, as its fields.
-fn completed_fields(events: &[TurnEvent]) -> Option<CompletedFields> {
+/// The first `SystemEvent::TurnCompleted` in `events`, as its fields.
+fn completed_fields(events: &[SystemEvent]) -> Option<CompletedFields> {
     events.iter().find_map(|event| match event {
-        TurnEvent::Completed {
+        SystemEvent::TurnCompleted {
             tool_calls,
             input_tokens,
             output_tokens,
@@ -58,7 +56,7 @@ async fn dispatch_completed_turn_publishes_turn_completed_with_the_tool_call_cou
     let session_id = "test-dispatch-turn-completed";
     let mut memory_state = make_memory_state(&temp_dir);
     let bus = crate::bus::create_bus();
-    let mut turn_rx = bus.turn().subscribe();
+    let mut turn_rx = bus.ui_event().subscribe();
     let mut executor = make_executor(
         &config,
         &mut memory_state,
@@ -106,7 +104,7 @@ async fn dispatch_cancelled_turn_publishes_turn_completed_with_the_tool_call_cou
     let temp_dir = tempfile::tempdir()?;
     let mut memory_state = make_memory_state(&temp_dir);
     let bus = crate::bus::create_bus();
-    let mut turn_rx = bus.turn().subscribe();
+    let mut turn_rx = bus.ui_event().subscribe();
     let mut executor = make_executor(
         &config,
         &mut memory_state,
@@ -132,9 +130,9 @@ async fn dispatch_cancelled_turn_publishes_turn_completed_with_the_tool_call_cou
     assert!(matches!(outcome, TurnOutcome::EarlyReturn(_)));
     let events = drain_turn_events(&mut turn_rx);
     assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, TurnEvent::Completed { tool_calls, .. } if *tool_calls == 2)),
+        events.iter().any(
+            |e| matches!(e, SystemEvent::TurnCompleted { tool_calls, .. } if *tool_calls == 2)
+        ),
         "the early-return path must publish TurnEvent::Completed with the tool-call count; got: {events:?}"
     );
     Ok(())
@@ -150,7 +148,7 @@ async fn dispatch_completed_turn_publishes_the_accumulated_usage_and_duration() 
     let session_id = "test-dispatch-turn-usage";
     let mut memory_state = make_memory_state(&temp_dir);
     let bus = crate::bus::create_bus();
-    let mut turn_rx = bus.turn().subscribe();
+    let mut turn_rx = bus.ui_event().subscribe();
     let infra = default_tool_infra(bus);
     // Two calls. The first's wire omitted its total, so the chain passed input
     // + output; the second reported one and an incomplete cost.

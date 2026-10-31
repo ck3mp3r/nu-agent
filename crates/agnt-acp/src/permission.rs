@@ -1,7 +1,7 @@
 //! Permission bridge between nu-agent's permission flow and ACP
 //! `session/request_permission`.
 //!
-//! nu-agent publishes `UiEvent::PermissionRequested` on the session bus and
+//! nu-agent publishes `SystemEvent::PermissionRequested` on the session bus and
 //! awaits the decision on a oneshot registered in `PendingPermissions`. In ACP
 //! mode the editor is the permission UI: the bridge forwards the request to the
 //! client as `session/request_permission`, maps the client's outcome to a
@@ -19,7 +19,8 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::{Client, ConnectionTo};
 use agnt_core::bus::UiEventTx;
 use agnt_core::conversation::runtime::PendingPermissions;
-use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
+use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
+use agnt_core::protocol::events::{RequestId, SystemEvent};
 
 use crate::error::Result;
 use crate::translator::content_from_display;
@@ -152,8 +153,8 @@ impl<S: PermissionRequestSink> AcpPermissionBridge<S> {
             // observable. The payload carries no decision: correlate with the
             // earlier `permission_requested` event by `request_id`.
             let _ = ui_events
-                .send(UiEvent::PermissionDecisionIgnored {
-                    request_id: request_id.to_string(),
+                .send(SystemEvent::PermissionDecisionIgnored {
+                    request_id: RequestId::new(request_id),
                     reason: REASON_REQUEST_NOT_PENDING.to_string(),
                 })
                 .await;

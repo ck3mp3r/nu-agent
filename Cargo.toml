@@ -26,6 +26,7 @@ agnt-a2a = { path = "crates/agnt-a2a" }
 agnt-acp = { path = "crates/agnt-acp" }
 agnt-cli = { path = "crates/agnt-cli" }
 agnt-core = { path = "crates/agnt-core" }
+agnt-render = { path = "crates/agnt-render" }
 agnt-testkit = { path = "crates/agnt-testkit" }
 agnt-tui = { path = "crates/agnt-tui" }
 agnt-tty = { path = "crates/agnt-tty" }

@@ -15,8 +15,9 @@ fn warning_requires_very_verbose() {
         false,
     );
 
-    renderer.emit(&UiEvent::Warning {
-        message: "test warning".to_string(),
+    renderer.emit(&SystemEvent::SystemMessage {
+        kind: SystemKind::Warning,
+        text: "test warning".to_string(),
     });
     renderer.flush();
 
@@ -34,8 +35,9 @@ fn warning_requires_very_verbose() {
         false,
     );
 
-    renderer.emit(&UiEvent::Warning {
-        message: "test warning".to_string(),
+    renderer.emit(&SystemEvent::SystemMessage {
+        kind: SystemKind::Warning,
+        text: "test warning".to_string(),
     });
     renderer.flush();
 
@@ -55,15 +57,16 @@ fn very_verbose_shows_both_warnings_and_streaming() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStarted);
-    renderer.emit(&UiEvent::AssistantMessage {
+    renderer.emit(&SystemEvent::InferenceStarted);
+    renderer.emit(&SystemEvent::InferenceChunk {
         delta: "response text".to_string(),
-        text: "response text".to_string(),
+        aggregated: "response text".to_string(),
     });
-    renderer.emit(&UiEvent::Warning {
-        message: "test warning".to_string(),
+    renderer.emit(&SystemEvent::SystemMessage {
+        kind: SystemKind::Warning,
+        text: "test warning".to_string(),
     });
-    renderer.emit(&UiEvent::Completed {
+    renderer.emit(&SystemEvent::TurnCompleted {
         tool_calls: 0,
         input_tokens: 0,
         output_tokens: 0,
@@ -91,12 +94,12 @@ fn trace_mode_shows_streaming() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStarted);
-    renderer.emit(&UiEvent::AssistantMessage {
+    renderer.emit(&SystemEvent::InferenceStarted);
+    renderer.emit(&SystemEvent::InferenceChunk {
         delta: "trace output".to_string(),
-        text: "trace output".to_string(),
+        aggregated: "trace output".to_string(),
     });
-    renderer.emit(&UiEvent::Completed {
+    renderer.emit(&SystemEvent::TurnCompleted {
         tool_calls: 0,
         input_tokens: 0,
         output_tokens: 0,

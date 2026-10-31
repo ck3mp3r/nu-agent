@@ -2,9 +2,10 @@ use ratatui::text::{Line, Span};
 
 use agnt_core::transcript::ir::ContentLine;
 
-use crate::rendering::theme::{TuiTheme, hint_to_style};
+use crate::rendering::theme::TuiTheme;
 use crate::runtime::panels::wrap_panel_lines;
 use crate::state::{AppState, PickerPayload, PickerRenderKind};
+use crate::widgets::text::hint_style;
 
 use super::content::build_status_lines;
 
@@ -18,15 +19,17 @@ pub(crate) fn help_panel_lines(theme: &TuiTheme, width: u16) -> (&'static str, V
 }
 
 fn content_line_to_ratatui_line(line: ContentLine, theme: &TuiTheme) -> Line<'static> {
+    // The help panel is role-free prose: subtle_meta is the text style for
+    // Normal/Emphasis hints here. Hints resolve through the same vocabulary the
+    // transcript widgets paint with.
+    let neutral = agnt_render::Theme::from(theme);
     Line::from(
         line.spans
             .into_iter()
             .map(|span| {
                 ratatui::text::Span::styled(
                     span.text,
-                    // The help panel is role-free prose: subtle_meta is the
-                    // text style for Normal/Emphasis hints here.
-                    hint_to_style(&span.hint, theme.subtle_meta, theme),
+                    hint_style(&span.hint, theme.subtle_meta, &neutral),
                 )
             })
             .collect::<Vec<_>>(),

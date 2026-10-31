@@ -111,25 +111,9 @@ fn status_lines_tokens_and_llm_end() -> Result<()> {
 
     // -- Setup & Fixtures: a coordinator with two LLM completions.
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 10,
-        tool_calls: 0,
-        input_tokens: 11,
-        output_tokens: 9,
-        total_tokens: Some(20),
-        cost: None,
-        cost_complete: false,
-    });
+    coordinator.enqueue_event(llm_completed(10, 0, 11, 9, Some(20), None, false));
     coordinator.drain_transport();
-    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 12,
-        tool_calls: 0,
-        input_tokens: 3,
-        output_tokens: 4,
-        total_tokens: Some(7),
-        cost: None,
-        cost_complete: false,
-    });
+    coordinator.enqueue_event(llm_completed(12, 0, 3, 4, Some(7), None, false));
     coordinator.drain_transport();
 
     // -- Check
@@ -159,25 +143,25 @@ fn status_line_shows_cumulative_session_cost() -> Result<()> {
         .status
         .tokens
         .set_context_window_max_tokens(Some(128_000));
-    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 40,
-        tool_calls: 0,
-        input_tokens: 2_500,
-        output_tokens: 500,
-        total_tokens: Some(3_000),
-        cost: Some(0.001),
-        cost_complete: true,
-    });
+    coordinator.enqueue_event(llm_completed(
+        40,
+        0,
+        2_500,
+        500,
+        Some(3_000),
+        Some(0.001),
+        true,
+    ));
     coordinator.drain_transport();
-    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 40,
-        tool_calls: 0,
-        input_tokens: 2_500,
-        output_tokens: 500,
-        total_tokens: Some(3_000),
-        cost: Some(0.002),
-        cost_complete: true,
-    });
+    coordinator.enqueue_event(llm_completed(
+        40,
+        0,
+        2_500,
+        500,
+        Some(3_000),
+        Some(0.002),
+        true,
+    ));
     coordinator.drain_transport();
 
     // -- Exec
@@ -205,15 +189,7 @@ fn status_line_shows_tokens_only_when_unpriced() -> Result<()> {
         .status
         .tokens
         .set_context_window_max_tokens(Some(128_000));
-    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 40,
-        tool_calls: 0,
-        input_tokens: 2_500,
-        output_tokens: 500,
-        total_tokens: Some(3_000),
-        cost: None,
-        cost_complete: false,
-    });
+    coordinator.enqueue_event(llm_completed(40, 0, 2_500, 500, Some(3_000), None, false));
     coordinator.drain_transport();
 
     // -- Exec
@@ -242,25 +218,17 @@ fn status_line_marks_mixed_pricing_with_plus() -> Result<()> {
         .status
         .tokens
         .set_context_window_max_tokens(Some(128_000));
-    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 40,
-        tool_calls: 0,
-        input_tokens: 2_500,
-        output_tokens: 500,
-        total_tokens: Some(3_000),
-        cost: Some(0.001),
-        cost_complete: true,
-    });
+    coordinator.enqueue_event(llm_completed(
+        40,
+        0,
+        2_500,
+        500,
+        Some(3_000),
+        Some(0.001),
+        true,
+    ));
     coordinator.drain_transport();
-    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 40,
-        tool_calls: 0,
-        input_tokens: 2_500,
-        output_tokens: 500,
-        total_tokens: Some(3_000),
-        cost: None,
-        cost_complete: false,
-    });
+    coordinator.enqueue_event(llm_completed(40, 0, 2_500, 500, Some(3_000), None, false));
     coordinator.drain_transport();
 
     // -- Exec
@@ -283,15 +251,15 @@ fn status_line_marks_mixed_pricing_with_plus() -> Result<()> {
 fn status_line_shows_cost_without_percentage_when_max_unknown() -> Result<()> {
     // -- Setup & Fixtures: a priced call and no context window.
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 40,
-        tool_calls: 0,
-        input_tokens: 2_500,
-        output_tokens: 500,
-        total_tokens: Some(3_000),
-        cost: Some(0.001),
-        cost_complete: true,
-    });
+    coordinator.enqueue_event(llm_completed(
+        40,
+        0,
+        2_500,
+        500,
+        Some(3_000),
+        Some(0.001),
+        true,
+    ));
     coordinator.drain_transport();
 
     // -- Exec
@@ -328,15 +296,7 @@ fn test_token_usage_total_less_completion_preserves_hydrated_count() -> Result<(
         .set_context_window_max_tokens(Some(128_000));
 
     // -- Exec: a completion whose wire omitted the total.
-    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 20,
-        tool_calls: 0,
-        input_tokens: 11,
-        output_tokens: 9,
-        total_tokens: None,
-        cost: None,
-        cost_complete: false,
-    });
+    coordinator.enqueue_event(llm_completed(20, 0, 11, 9, None, None, false));
     coordinator.drain_transport();
 
     // -- Check: the hydrated count and percentage survive.

@@ -19,12 +19,7 @@ fn compaction_artifact_renders_summary_without_metadata_or_copy() -> Result<()> 
     );
 
     // -- Check
-    let raw_texts: Vec<String> = state
-        .transcript
-        .blocks()
-        .iter()
-        .map(|line| line.source.plain_text())
-        .collect();
+    let raw_texts: Vec<String> = state.transcript.entries().iter().map(entry_text).collect();
     assert!(raw_texts.contains(&"Compaction".to_string()));
     assert!(raw_texts.contains(&"full summary body".to_string()));
     assert!(!raw_texts.iter().any(|line| line.contains("source=")));
@@ -49,18 +44,18 @@ fn compaction_artifact_renders_summary_without_metadata_or_copy() -> Result<()> 
     // -- Check: the heading renders as "Summary" and no raw source leaks.
     let projected_texts: Vec<String> = markdown
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&entry_text(line), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert!(projected_texts.iter().any(|l| l.contains("Summary")));
     assert!(
         !markdown
             .transcript
-            .blocks()
+            .entries()
             .iter()
-            .any(|line| line.source.plain_text().starts_with("[compaction source="))
+            .any(|line| entry_text(line).starts_with("[compaction source="))
     );
 
     // -- Setup & Fixtures: explanatory copy must be absent.
@@ -71,17 +66,12 @@ fn compaction_artifact_renders_summary_without_metadata_or_copy() -> Result<()> 
     );
 
     // -- Check
-    let raw_texts: Vec<String> = copy
-        .transcript
-        .blocks()
-        .iter()
-        .map(|line| line.source.plain_text())
-        .collect();
+    let raw_texts: Vec<String> = copy.transcript.entries().iter().map(entry_text).collect();
     let projected_texts: Vec<String> = copy
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&entry_text(line), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert!(raw_texts.contains(&"Compaction".to_string()));
@@ -105,9 +95,9 @@ fn compaction_artifact_does_not_duplicate_summary_content() -> Result<()> {
     // -- Check: the heading appears exactly once.
     let summary_count = heading
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&entry_text(line), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .filter(|projected| projected.trim() == "Summary")
         .count();
@@ -123,9 +113,9 @@ fn compaction_artifact_does_not_duplicate_summary_content() -> Result<()> {
     // -- Check: each bullet appears exactly once, no doubled markers.
     let projected_texts: Vec<String> = bullets
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&entry_text(line), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert_eq!(
@@ -155,9 +145,9 @@ fn compaction_artifact_does_not_duplicate_summary_content() -> Result<()> {
     // -- Check
     let projected_texts: Vec<String> = lifecycle
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&entry_text(line), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert_eq!(
@@ -197,9 +187,9 @@ fn compaction_block_header_is_concise_without_artifact_label() -> Result<()> {
     // -- Check
     let lines = state
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|line| line.source.plain_text())
+        .map(entry_text)
         .collect::<Vec<_>>();
     assert!(lines.contains(&"Compaction".to_string()));
     assert!(!lines.contains(&"Compaction artifact".to_string()));

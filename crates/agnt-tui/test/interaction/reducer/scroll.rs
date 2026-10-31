@@ -13,7 +13,6 @@ fn scroll_line_cursor_and_viewport_table() -> Result<()> {
             pane_focus: PaneFocus::Transcript,
             viewport_height: 10,
             cursor_visual_row: 5,
-            entry_indices: (0..20).collect(),
             total_visual_rows: 20,
             ..Default::default()
         },
@@ -22,9 +21,11 @@ fn scroll_line_cursor_and_viewport_table() -> Result<()> {
     for i in 0..20 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::ScrollLineDown),
+        SystemEvent::KeyPressed {
+            key: Key::Char('j'),
+        },
         None,
     );
     assert_eq!(state.scroll.cursor_visual_row, 6);
@@ -38,7 +39,6 @@ fn scroll_line_cursor_and_viewport_table() -> Result<()> {
             pane_focus: PaneFocus::Transcript,
             viewport_height: 10,
             cursor_visual_row: 6,
-            entry_indices: (0..20).collect(),
             total_visual_rows: 20,
             ..Default::default()
         },
@@ -47,9 +47,11 @@ fn scroll_line_cursor_and_viewport_table() -> Result<()> {
     for i in 0..20 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::ScrollLineDown),
+        SystemEvent::KeyPressed {
+            key: Key::Char('j'),
+        },
         None,
     );
     assert_eq!(state.scroll.cursor_visual_row, 7);
@@ -64,7 +66,6 @@ fn scroll_line_cursor_and_viewport_table() -> Result<()> {
             viewport_height: 10,
             scroll_offset: 0,
             selection: Some(TranscriptSelection::new(0)),
-            entry_indices: (0..20).collect(),
             total_visual_rows: 20,
             ..Default::default()
         },
@@ -74,9 +75,11 @@ fn scroll_line_cursor_and_viewport_table() -> Result<()> {
         push_user_line(&mut state, format!("line {i}"));
     }
     for _ in 0..7 {
-        reduce_with_cancel_controller(
+        reduce(
             &mut state,
-            ReducerInput::User(UserAction::ScrollLineDown),
+            SystemEvent::KeyPressed {
+                key: Key::Char('j'),
+            },
             None,
         );
     }
@@ -95,7 +98,6 @@ fn scroll_line_cursor_and_viewport_table() -> Result<()> {
             scroll_offset: 0,
             cursor_visual_row: 55,
             selection: Some(TranscriptSelection::new(55)),
-            entry_indices: (0..60).collect(),
             total_visual_rows: 60,
             ..Default::default()
         },
@@ -104,9 +106,11 @@ fn scroll_line_cursor_and_viewport_table() -> Result<()> {
     for i in 0..60 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::ScrollLineUp),
+        SystemEvent::KeyPressed {
+            key: Key::Char('k'),
+        },
         None,
     );
     assert_eq!(state.scroll.cursor_visual_row, 54);
@@ -127,7 +131,6 @@ fn scroll_page_and_selection_table() -> Result<()> {
             total_visual_rows: 30,
             scroll_offset: 5,
             following_tail: false,
-            entry_indices: (0..30).collect(),
             ..Default::default()
         },
         ..Default::default()
@@ -135,9 +138,9 @@ fn scroll_page_and_selection_table() -> Result<()> {
     for i in 0..30 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::ScrollPageUp),
+        SystemEvent::KeyPressed { key: Key::PageUp },
         None,
     );
     assert_eq!(state.scroll.cursor_visual_row, 2);
@@ -154,7 +157,6 @@ fn scroll_page_and_selection_table() -> Result<()> {
             total_visual_rows: 30,
             scroll_offset: 0,
             following_tail: false,
-            entry_indices: (0..30).collect(),
             ..Default::default()
         },
         ..Default::default()
@@ -162,9 +164,9 @@ fn scroll_page_and_selection_table() -> Result<()> {
     for i in 0..30 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::ScrollPageDown),
+        SystemEvent::KeyPressed { key: Key::PageDown },
         None,
     );
     assert_eq!(state.scroll.cursor_visual_row, 8);
@@ -182,7 +184,6 @@ fn scroll_page_and_selection_table() -> Result<()> {
             viewport_height: 10,
             scroll_offset: 5,
             following_tail: false,
-            entry_indices: (0..30).collect(),
             ..Default::default()
         },
         ..Default::default()
@@ -190,9 +191,9 @@ fn scroll_page_and_selection_table() -> Result<()> {
     for i in 0..30 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::ScrollPageUp),
+        SystemEvent::KeyPressed { key: Key::PageUp },
         None,
     );
     let sel = state.scroll.selection.ok_or("selection should exist")?;
@@ -210,7 +211,6 @@ fn scroll_page_and_selection_table() -> Result<()> {
             viewport_height: 10,
             scroll_offset: 0,
             following_tail: false,
-            entry_indices: (0..30).collect(),
             ..Default::default()
         },
         ..Default::default()
@@ -218,9 +218,9 @@ fn scroll_page_and_selection_table() -> Result<()> {
     for i in 0..30 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::ScrollPageDown),
+        SystemEvent::KeyPressed { key: Key::PageDown },
         None,
     );
     let sel = state.scroll.selection.ok_or("selection should exist")?;
@@ -241,7 +241,6 @@ fn test_wheel_scroll_three_lines_per_notch_and_tail_resume() -> Result<()> {
             total_visual_rows: 30,
             scroll_offset: 0,
             following_tail: false,
-            entry_indices: (0..30).collect(),
             transcript_area: Rect::new(0, 0, 80, 20),
             ..Default::default()
         },
@@ -252,9 +251,13 @@ fn test_wheel_scroll_three_lines_per_notch_and_tail_resume() -> Result<()> {
     }
 
     // -- Exec
-    let changed = reduce_with_cancel_controller(
+    let changed = reduce(
         &mut state,
-        ReducerInput::User(UserAction::WheelDown { column: 5, row: 5 }),
+        SystemEvent::WheelScrolled {
+            up: false,
+            column: 5,
+            row: 5,
+        },
         None,
     );
 
@@ -265,9 +268,13 @@ fn test_wheel_scroll_three_lines_per_notch_and_tail_resume() -> Result<()> {
     assert!(!state.scroll.following_tail);
 
     // -- Exec
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::WheelUp { column: 5, row: 5 }),
+        SystemEvent::WheelScrolled {
+            up: true,
+            column: 5,
+            row: 5,
+        },
         None,
     );
 
@@ -283,9 +290,13 @@ fn test_wheel_scroll_three_lines_per_notch_and_tail_resume() -> Result<()> {
     state.scroll.following_tail = false;
 
     // -- Exec
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::WheelDown { column: 5, row: 5 }),
+        SystemEvent::WheelScrolled {
+            up: false,
+            column: 5,
+            row: 5,
+        },
         None,
     );
 
@@ -305,7 +316,6 @@ fn test_wheel_scroll_hit_test_rejects_outside_transcript_area() -> Result<()> {
             viewport_height: 10,
             cursor_visual_row: 5,
             total_visual_rows: 30,
-            entry_indices: (0..30).collect(),
             ..Default::default()
         },
         ..Default::default()
@@ -315,9 +325,13 @@ fn test_wheel_scroll_hit_test_rejects_outside_transcript_area() -> Result<()> {
     }
 
     // -- Exec
-    let changed = reduce_with_cancel_controller(
+    let changed = reduce(
         &mut state,
-        ReducerInput::User(UserAction::WheelDown { column: 5, row: 5 }),
+        SystemEvent::WheelScrolled {
+            up: false,
+            column: 5,
+            row: 5,
+        },
         None,
     );
 
@@ -330,9 +344,13 @@ fn test_wheel_scroll_hit_test_rejects_outside_transcript_area() -> Result<()> {
     state.scroll.transcript_area = Rect::new(10, 2, 40, 10);
 
     // -- Exec: a point left of the area.
-    let changed = reduce_with_cancel_controller(
+    let changed = reduce(
         &mut state,
-        ReducerInput::User(UserAction::WheelDown { column: 9, row: 5 }),
+        SystemEvent::WheelScrolled {
+            up: false,
+            column: 9,
+            row: 5,
+        },
         None,
     );
 
@@ -341,9 +359,13 @@ fn test_wheel_scroll_hit_test_rejects_outside_transcript_area() -> Result<()> {
     assert_eq!(state.scroll.cursor_visual_row, 5);
 
     // -- Exec: the area's top-left cell.
-    let changed = reduce_with_cancel_controller(
+    let changed = reduce(
         &mut state,
-        ReducerInput::User(UserAction::WheelDown { column: 10, row: 2 }),
+        SystemEvent::WheelScrolled {
+            up: false,
+            column: 10,
+            row: 2,
+        },
         None,
     );
 
@@ -366,7 +388,6 @@ fn test_wheel_scroll_extends_visual_selection() -> Result<()> {
             scroll_offset: 5,
             following_tail: false,
             selection: Some(TranscriptSelection::new(10)),
-            entry_indices: (0..30).collect(),
             transcript_area: Rect::new(0, 0, 80, 20),
             ..Default::default()
         },
@@ -377,9 +398,13 @@ fn test_wheel_scroll_extends_visual_selection() -> Result<()> {
     }
 
     // -- Exec
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::WheelDown { column: 5, row: 5 }),
+        SystemEvent::WheelScrolled {
+            up: false,
+            column: 5,
+            row: 5,
+        },
         None,
     );
 
@@ -389,9 +414,13 @@ fn test_wheel_scroll_extends_visual_selection() -> Result<()> {
     assert_eq!(sel.cursor(), 13);
 
     // -- Exec
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::WheelUp { column: 5, row: 5 }),
+        SystemEvent::WheelScrolled {
+            up: true,
+            column: 5,
+            row: 5,
+        },
         None,
     );
 
@@ -408,9 +437,13 @@ fn test_wheel_scroll_insert_mode_noop_reports_mode_change() -> Result<()> {
     let mut state = wheel_noop_state(InputMode::Insert);
 
     // -- Exec
-    let changed = reduce_with_cancel_controller(
+    let changed = reduce(
         &mut state,
-        ReducerInput::User(UserAction::WheelUp { column: 5, row: 5 }),
+        SystemEvent::WheelScrolled {
+            up: true,
+            column: 5,
+            row: 5,
+        },
         None,
     );
 
@@ -430,9 +463,13 @@ fn test_wheel_scroll_normal_mode_noop_reports_no_change() -> Result<()> {
     let mut state = wheel_noop_state(InputMode::Normal);
 
     // -- Exec
-    let changed = reduce_with_cancel_controller(
+    let changed = reduce(
         &mut state,
-        ReducerInput::User(UserAction::WheelUp { column: 5, row: 5 }),
+        SystemEvent::WheelScrolled {
+            up: true,
+            column: 5,
+            row: 5,
+        },
         None,
     );
 
@@ -453,9 +490,13 @@ fn test_wheel_scroll_insert_mode_scroll_change_reports_change() -> Result<()> {
     state.scroll.max_scroll = 20;
 
     // -- Exec
-    let changed = reduce_with_cancel_controller(
+    let changed = reduce(
         &mut state,
-        ReducerInput::User(UserAction::WheelUp { column: 5, row: 5 }),
+        SystemEvent::WheelScrolled {
+            up: true,
+            column: 5,
+            row: 5,
+        },
         None,
     );
 

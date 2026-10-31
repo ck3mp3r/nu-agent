@@ -28,6 +28,11 @@ pub enum ToolErrorKind {
     Runtime,
     Transport,
     Unknown,
+    /// The call never produced a result: the turn's wall clock or its cancel
+    /// stopped it first. Maps to rig's `cancelled` kind, the kind name the
+    /// transcript's not-run class reads, so the live row finishes ⊘ exactly as
+    /// the rehydrated row does.
+    NotRun,
 }
 
 impl ToolErrorKind {
@@ -39,6 +44,7 @@ impl ToolErrorKind {
             Self::Runtime => "runtime",
             Self::Transport => "transport",
             Self::Unknown => "unknown",
+            Self::NotRun => "not_run",
         }
     }
 }
@@ -65,6 +71,14 @@ impl ToolHandlerError {
             details: None,
         }
     }
+    /// A call the turn stopped before it produced a result.
+    pub fn not_run(message: impl Into<String>) -> Self {
+        Self {
+            kind: ToolErrorKind::NotRun,
+            message: message.into(),
+            details: None,
+        }
+    }
     pub fn with_details(mut self, details: serde_json::Value) -> Self {
         self.details = Some(details);
         self
@@ -83,6 +97,10 @@ pub(crate) fn execution_error_for_kind(kind: ToolErrorKind, message: String) -> 
         ToolErrorKind::Authorization => ToolExecutionError::permission_denied(message),
         ToolErrorKind::Transport => ToolExecutionError::network(message),
         ToolErrorKind::Runtime | ToolErrorKind::Unknown => ToolExecutionError::other(message),
+        // rig carries no not-run kind: `cancelled` is its kind for a run that
+        // stopped before producing a result, and the one the transcript's
+        // not-run class reads.
+        ToolErrorKind::NotRun => ToolExecutionError::cancelled(message),
     }
 }
 

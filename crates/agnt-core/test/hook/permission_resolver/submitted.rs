@@ -28,7 +28,7 @@ async fn test_hook_permission_resolver_submitted_publishes_decision_and_rule() -
         .map_err(|_| "timed out waiting for PermissionRequested")?
         .map_err(|_| "expected a PermissionRequested event")?;
     let (request_id, prompted_rule) = match event {
-        UiEvent::PermissionRequested {
+        SystemEvent::PermissionRequested {
             request_id,
             context,
         } => (request_id, context.matched_rule_identity),
@@ -38,7 +38,7 @@ async fn test_hook_permission_resolver_submitted_publishes_decision_and_rule() -
     // -- Exec
     submit_decision(
         &resolver,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
     let decision = tokio::time::timeout(Duration::from_secs(2), resolve_task)
@@ -53,7 +53,7 @@ async fn test_hook_permission_resolver_submitted_publishes_decision_and_rule() -
         .map_err(|_| "timed out waiting for PermissionDecisionSubmitted")?
         .map_err(|_| "expected a PermissionDecisionSubmitted event")?;
     match event {
-        UiEvent::PermissionDecisionSubmitted {
+        SystemEvent::PermissionDecisionSubmitted {
             request_id: submitted_id,
             decision: submitted_decision,
             matched_rule_identity,
@@ -96,12 +96,16 @@ async fn test_hook_permission_resolver_submitted_publishes_deny() -> Result<()> 
         .map_err(|_| "timed out waiting for PermissionRequested")?
         .map_err(|_| "expected a PermissionRequested event")?;
     let request_id = match event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id,
+        SystemEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("expected PermissionRequested, got {other:?}"),
     };
 
     // -- Exec
-    submit_decision(&resolver, &request_id, ProtocolPermissionDecision::Deny);
+    submit_decision(
+        &resolver,
+        request_id.as_str(),
+        ProtocolPermissionDecision::Deny,
+    );
     let decision = tokio::time::timeout(Duration::from_secs(2), resolve_task)
         .await
         .map_err(|_| "resolve never returned after the decision")?
@@ -117,7 +121,7 @@ async fn test_hook_permission_resolver_submitted_publishes_deny() -> Result<()> 
         .map_err(|_| "timed out waiting for PermissionDecisionSubmitted")?
         .map_err(|_| "expected a PermissionDecisionSubmitted event")?;
     match event {
-        UiEvent::PermissionDecisionSubmitted {
+        SystemEvent::PermissionDecisionSubmitted {
             decision: submitted_decision,
             ..
         } => assert_eq!(
@@ -152,7 +156,7 @@ async fn test_hook_permission_resolver_submitted_absent_on_timeout() -> Result<(
         .map_err(|_| "timed out waiting for PermissionRequested")?
         .map_err(|_| "expected a PermissionRequested event")?;
     assert!(
-        matches!(event, UiEvent::PermissionRequested { .. }),
+        matches!(event, SystemEvent::PermissionRequested { .. }),
         "expected PermissionRequested, got {event:?}"
     );
 
@@ -171,13 +175,13 @@ async fn test_hook_permission_resolver_submitted_absent_on_timeout() -> Result<(
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionDecisionTimedOut { .. })),
+            .any(|event| matches!(event, SystemEvent::PermissionDecisionTimedOut { .. })),
         "the timeout must still publish its own event: {events:?}"
     );
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionDecisionSubmitted { .. })),
+            .any(|event| matches!(event, SystemEvent::PermissionDecisionSubmitted { .. })),
         "a timed-out request submitted no decision: {events:?}"
     );
     Ok(())
@@ -202,7 +206,7 @@ async fn test_hook_permission_resolver_submitted_absent_on_cancel() -> Result<()
         .map_err(|_| "timed out waiting for PermissionRequested")?
         .map_err(|_| "expected a PermissionRequested event")?;
     assert!(
-        matches!(event, UiEvent::PermissionRequested { .. }),
+        matches!(event, SystemEvent::PermissionRequested { .. }),
         "expected PermissionRequested, got {event:?}"
     );
 
@@ -225,7 +229,7 @@ async fn test_hook_permission_resolver_submitted_absent_on_cancel() -> Result<()
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionDecisionSubmitted { .. })),
+            .any(|event| matches!(event, SystemEvent::PermissionDecisionSubmitted { .. })),
         "a cancelled request submitted no decision: {events:?}"
     );
     Ok(())
@@ -234,7 +238,7 @@ async fn test_hook_permission_resolver_submitted_absent_on_cancel() -> Result<()
 // region:    --- Test Support
 
 /// Every event already queued on `rx`.
-fn drain(rx: &mut crate::bus::UiEventRx) -> Vec<UiEvent> {
+fn drain(rx: &mut crate::bus::UiEventRx) -> Vec<SystemEvent> {
     let mut events = Vec::new();
     while let Ok(event) = rx.try_recv() {
         events.push(event);

@@ -24,14 +24,14 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id,
+        SystemEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected PermissionRequested, got {:?}", other),
     };
 
     // Submit AllowAlways decision — this should write a grant into session_grants
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowAlways,
     );
 
@@ -66,7 +66,7 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionRequested { .. })),
+            .any(|event| matches!(event, SystemEvent::PermissionRequested { .. })),
         "Expected no PermissionRequested event for second call after AllowAlways grant: {events:?}"
     );
     Ok(())
@@ -194,7 +194,7 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
 // ---------------------------------------------------------------------------
 
 /// Regression test: two `InteractivePermissionResolver` clones sharing the same
-/// `bus` and `pending` map observe the same `PermissionEvent::Requested` ordering,
+/// `bus` and `pending` map observe the same `SystemEvent::PermissionRequested` ordering,
 /// and a decision submitted through one clone unblocks the matching `resolve()`
 /// future owned by the other clone.
 ///
@@ -228,7 +228,7 @@ async fn shared_bus_resolver_clones_observe_ordering_and_submit_unblocks_other_f
         .await
         .map_err(|_| "first PermissionRequested event")?
     {
-        UiEvent::PermissionRequested { request_id, .. } => request_id,
+        SystemEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected Requested, got {other:?}"),
     };
     let id2 = match permission_rx
@@ -236,15 +236,19 @@ async fn shared_bus_resolver_clones_observe_ordering_and_submit_unblocks_other_f
         .await
         .map_err(|_| "second PermissionRequested event")?
     {
-        UiEvent::PermissionRequested { request_id, .. } => request_id,
+        SystemEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected Requested, got {other:?}"),
     };
     assert_ne!(id1, id2, "each request must have a unique request_id");
 
     // Submitting through resolver_b must unblock the matching resolve() futures
     // held by resolver_a, because both clones share the `pending` map.
-    submit_decision(&resolver_b, &id1, ProtocolPermissionDecision::AllowOnce);
-    submit_decision(&resolver_b, &id2, ProtocolPermissionDecision::Deny);
+    submit_decision(
+        &resolver_b,
+        id1.as_str(),
+        ProtocolPermissionDecision::AllowOnce,
+    );
+    submit_decision(&resolver_b, id2.as_str(), ProtocolPermissionDecision::Deny);
 
     assert_eq!(
         fut1.await

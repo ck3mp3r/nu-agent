@@ -79,9 +79,7 @@ fn test_turn_tools_record_result_fills_the_matching_record() -> Result<()> {
         call_id("call_2"),
         tool_name("read")?,
         "{}",
-        "contents",
-        true,
-        None,
+        SettledToolCall::new("contents", true, ToolStatus::Success),
     );
     let records = log.records();
 
@@ -98,6 +96,11 @@ fn test_turn_tools_record_result_fills_the_matching_record() -> Result<()> {
     assert_eq!(records[1].result.as_deref(), Some("contents"));
     assert_eq!(records[1].success, Some(true));
     assert_eq!(records[1].error_kind, None);
+    assert_eq!(
+        records[1].status,
+        Some(ToolStatus::Success),
+        "the settled status rides the record as its variant"
+    );
     Ok(())
 }
 
@@ -111,9 +114,8 @@ fn test_turn_tools_record_result_appends_when_no_call_recorded() -> Result<()> {
         call_id("call_9"),
         tool_name("nu")?,
         r#"{"cmd":"exit 1"}"#,
-        "boom",
-        false,
-        Some("other".to_string()),
+        SettledToolCall::new("boom", false, ToolStatus::Failed)
+            .with_error_kind(Some("other".to_string())),
     );
     let records = log.records();
 

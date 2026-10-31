@@ -51,20 +51,14 @@ type ToolEventSummary = (String, Option<bool>, Option<String>, Option<String>);
 
 /// The tool-event shape the flush assertions compare: `(name, success,
 /// error_kind, message)`, with the last three `None` for a `ToolStarted`.
-fn tool_event_summary(event: &UiEvent) -> Option<ToolEventSummary> {
+fn tool_event_summary(event: &SystemEvent) -> Option<ToolEventSummary> {
     match event {
-        UiEvent::ToolStarted { name, .. } => Some((name.clone(), None, None, None)),
-        UiEvent::ToolCompleted {
-            name,
-            success,
-            error_kind,
-            message,
-            ..
-        } => Some((
-            name.clone(),
-            Some(*success),
-            error_kind.clone(),
-            message.clone(),
+        SystemEvent::ToolStarted { call } => Some((call.name.0.clone(), None, None, None)),
+        SystemEvent::ToolCompleted { call, outcome } => Some((
+            call.name.0.clone(),
+            Some(outcome.success),
+            outcome.error_kind.clone(),
+            outcome.message.clone(),
         )),
         _ => None,
     }
@@ -126,30 +120,25 @@ enum FlushEvent {
 
 /// Project a UI event onto the sequence shape; `None` for events the sequence
 /// does not assert.
-fn flush_event(event: &UiEvent) -> Option<FlushEvent> {
+fn flush_event(event: &SystemEvent) -> Option<FlushEvent> {
     match event {
-        UiEvent::ToolStarted { name, .. } => Some(FlushEvent::Started(name.clone())),
-        UiEvent::ToolPreview { tool_key, display } => {
+        SystemEvent::ToolStarted { call } => Some(FlushEvent::Started(call.name.0.clone())),
+        SystemEvent::PreviewRequested { call, display } => {
             let section = display.sections.first()?;
             let language = match &section.kind {
                 crate::transcript::ir::ContentKind::Code { language } => language.clone(),
                 _ => String::new(),
             };
             Some(FlushEvent::Preview {
-                tool_key: tool_key.clone(),
+                tool_key: call.id.as_str().to_string(),
                 content: section.content.clone(),
                 language,
             })
         }
-        UiEvent::ToolCompleted {
-            name,
-            success,
-            error_kind,
-            ..
-        } => Some(FlushEvent::Completed {
-            name: name.clone(),
-            success: *success,
-            error_kind: error_kind.clone(),
+        SystemEvent::ToolCompleted { call, outcome } => Some(FlushEvent::Completed {
+            name: call.name.0.clone(),
+            success: outcome.success,
+            error_kind: outcome.error_kind.clone(),
         }),
         _ => None,
     }

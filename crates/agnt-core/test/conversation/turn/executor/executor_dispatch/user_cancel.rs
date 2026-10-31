@@ -1,29 +1,35 @@
 //! User-cancel dispatch: the generic stop notice.
 //!
 //! A user cancel carries no doom/repetition stop prefix, so `dispatch_result`
-//! surfaces it as the generic notice on `UiEvent::Stopped` before
-//! `UiEvent::Completed`. The TUI renders that notice through its existing
-//! `LlmEvent::Stopped` path.
+//! surfaces it as the generic notice on `SystemEvent::InferenceStopped` before
+//! `SystemEvent::TurnCompleted`. The TUI renders that notice through its existing
+//! `SystemEvent::InferenceStopped` path.
 
 use super::*;
 
 /// Assert the generic stop notice rides `Stopped` before `Completed`, and that
 /// no `Warning` accompanies it.
-fn assert_stopped_notice_before_completed(events: &[UiEvent]) -> Result<()> {
+fn assert_stopped_notice_before_completed(events: &[SystemEvent]) -> Result<()> {
     let stopped = events
         .iter()
-        .position(|e| matches!(e, UiEvent::Stopped { reason } if reason == TURN_STOPPED_NOTICE))
+        .position(|e| matches!(e, SystemEvent::InferenceStopped { reason } if reason == TURN_STOPPED_NOTICE))
         .ok_or_else(|| format!("the stop notice must ride Stopped; got: {events:?}"))?;
     let completed = events
         .iter()
-        .position(|e| matches!(e, UiEvent::Completed { .. }))
+        .position(|e| matches!(e, SystemEvent::TurnCompleted { .. }))
         .ok_or_else(|| format!("the turn must still complete; got: {events:?}"))?;
     assert!(
         stopped < completed,
         "the notice must precede Completed; got: {events:?}"
     );
     assert!(
-        !events.iter().any(|e| matches!(e, UiEvent::Warning { .. })),
+        !events.iter().any(|e| matches!(
+            e,
+            SystemEvent::SystemMessage {
+                kind: SystemKind::Warning,
+                ..
+            }
+        )),
         "a user cancel must not warn; got: {events:?}"
     );
     Ok(())
@@ -31,7 +37,7 @@ fn assert_stopped_notice_before_completed(events: &[UiEvent]) -> Result<()> {
 
 /// A bus cancel that never reaches rig's `Cancelled` arm carries no stop
 /// reason. The turn must still tell the user it stopped: the generic notice
-/// rides `UiEvent::Stopped` before `Completed`, and the response text stays
+/// rides `SystemEvent::InferenceStopped` before `Completed`, and the response text stays
 /// empty.
 #[tokio::test]
 async fn dispatch_user_cancel_without_a_reason_sends_the_notice_before_completed() -> Result<()> {

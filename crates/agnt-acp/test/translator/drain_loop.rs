@@ -1,8 +1,7 @@
 //! Drain-loop behaviour: streaming, flushing, and transport failure.
 
 use agent_client_protocol::schema::v1::SessionUpdate;
-use agnt_core::bus::CompactionEvent;
-use agnt_core::protocol::event::UiEvent;
+use agnt_core::protocol::events::SystemEvent;
 
 use super::support::*;
 use crate::translator::{
@@ -32,15 +31,15 @@ async fn test_translator_run_turn_streams_events_and_returns_turn_output() -> Re
         async move {
             publisher
                 .ui_event()
-                .send(UiEvent::AssistantMessage {
+                .send(SystemEvent::InferenceChunk {
                     delta: "streamed".to_string(),
-                    text: "streamed".to_string(),
+                    aggregated: "streamed".to_string(),
                 })
                 .await
                 .map_err(|e| format!("should publish: {e:?}"))?;
             publisher
                 .ui_event()
-                .send(UiEvent::Tick)
+                .send(SystemEvent::Tick)
                 .await
                 .map_err(|e| format!("should publish: {e:?}"))?;
             Ok::<&str, String>("turn-done")
@@ -74,9 +73,9 @@ async fn test_translator_run_turn_flushes_events_published_before_completion() -
         &mut bridge,
         async {
             bus.ui_event()
-                .send(UiEvent::AssistantMessage {
+                .send(SystemEvent::InferenceChunk {
                     delta: "final".to_string(),
-                    text: "final".to_string(),
+                    aggregated: "final".to_string(),
                 })
                 .await
                 .ok();
@@ -115,9 +114,9 @@ async fn test_translator_run_turn_stops_draining_when_sink_fails() -> Result<()>
         async move {
             publisher
                 .ui_event()
-                .send(UiEvent::AssistantMessage {
+                .send(SystemEvent::InferenceChunk {
                     delta: "dropped".to_string(),
-                    text: "dropped".to_string(),
+                    aggregated: "dropped".to_string(),
                 })
                 .await
                 .ok();
@@ -194,7 +193,7 @@ async fn test_translator_run_turn_reports_a_compaction_request() -> Result<()> {
         async move {
             publisher
                 .compaction()
-                .send(CompactionEvent::Requested {
+                .send(SystemEvent::CompactionRequested {
                     source: "auto".to_string(),
                 })
                 .await
@@ -256,9 +255,9 @@ async fn test_translator_drain_receiver_stops_on_closed_bus() -> Result<()> {
     let mut translator = translator();
     let mut bridge = permission_bridge(selected("allow-once"), empty_pending());
     bus.ui_event()
-        .send(UiEvent::AssistantMessage {
+        .send(SystemEvent::InferenceChunk {
             delta: "one".to_string(),
-            text: "one".to_string(),
+            aggregated: "one".to_string(),
         })
         .await
         .map_err(|e| format!("should publish: {e:?}"))?;
@@ -293,9 +292,9 @@ async fn test_translator_drain_bus_subscribes_and_forwards_events() -> Result<()
     // -- Exec
     // The drain subscribes on its first poll. A broadcast send succeeds only
     // once a receiver is subscribed, so retry until the drain is listening.
-    let event = UiEvent::AssistantMessage {
+    let event = SystemEvent::InferenceChunk {
         delta: "live".to_string(),
-        text: "live".to_string(),
+        aggregated: "live".to_string(),
     };
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {

@@ -110,7 +110,7 @@ where
     ///
     /// Set to `None` in TTY mode (default from `build_runtime`).
     pub interactive_pending: Option<PendingPermissions>,
-    /// Whether the UI renders pre-authorize previews (`UiEvent::ToolPreview`).
+    /// Whether the UI renders pre-authorize previews (`SystemEvent::PreviewRequested`).
     ///
     /// The TUI renders them and relies on the completion display being
     /// suppressed to avoid a duplicate. ACP has no preview phase — its
@@ -259,7 +259,7 @@ where
 
             let outcome = if let Some(pending) = self.interactive_pending.as_ref() {
                 // TUI mode: construct InteractivePermissionResolver. The resolver owns
-                // a clone of the shared bus and publishes `UiEvent::PermissionRequested`
+                // a clone of the shared bus and publishes `SystemEvent::PermissionRequested`
                 // on `bus.ui_event()` directly. No UI channel is threaded through the
                 // executor; the turn's drain loop creates its own channel internally
                 // and terminates when the prompt resolves.
@@ -752,8 +752,9 @@ where
         // session the runtime is attached to, not the one it left.
         self.session_usage.reset();
 
+        let statuses = rig_tool_statuses(&memory, &matched_id);
         Ok(crate::session::resolver::hydrate_transcript_messages(
-            &messages, &self.cwd,
+            &messages, &self.cwd, &statuses,
         ))
     }
 
@@ -817,8 +818,9 @@ where
         // session the runtime is attached to, not the one it left.
         self.session_usage.reset();
 
+        let statuses = rig_tool_statuses(&memory, session_id);
         Ok(crate::session::resolver::hydrate_transcript_messages(
-            &messages, &self.cwd,
+            &messages, &self.cwd, &statuses,
         ))
     }
 }
@@ -845,6 +847,22 @@ fn rig_messages(
         .iter()
         .map(|message| (**message).clone())
         .collect())
+}
+
+/// The structural tool statuses of `session_id`, read from the rig-memory
+/// store. A session whose statuses cannot be read hydrates as one that carries
+/// none: its rows read their stored verdict.
+fn rig_tool_statuses(
+    memory: &crate::session::CachedMemory,
+    session_id: &str,
+) -> crate::session::tool_status::ToolStatusMap {
+    match memory.rig_store(session_id) {
+        Ok(store) => crate::session::tool_status::read_statuses(&*store),
+        Err(error) => {
+            log::warn!("failed to open the session store for '{session_id}': {error}");
+            crate::session::tool_status::ToolStatusMap::new()
+        }
+    }
 }
 
 impl<Prov, Tools, Sess, Persona, Multi> AgentRuntime<Prov, Tools, Sess, Persona, Multi>

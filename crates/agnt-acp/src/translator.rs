@@ -1,12 +1,13 @@
-//! Translation of nu-agent `UiEvent`s into ACP `session/update` notifications.
+//! Translation of nu-agent `SystemEvent`s into ACP `session/update` notifications.
 //!
 //! The ACP prompt handler drains the session bus while `execute_turn()` runs and
 //! forwards every translated event to the client as a `session/update`
 //! notification. Events without an ACP equivalent are dropped.
 //!
-//! Translation is stateful: `ToolStarted` and `ToolCompleted` carry no call id,
-//! so the translator allocates one per started call and matches the completion
-//! back to it. One [`EventTranslator`] therefore serves one session.
+//! Translation is stateful: the translator allocates its own ACP tool-call id
+//! per started call and matches the completion back to it, so the ids a client
+//! sees keep their `{name}-{seq}` shape regardless of the call key the event
+//! carries. One [`EventTranslator`] therefore serves one session.
 
 // region:    --- Modules
 
@@ -19,9 +20,10 @@ use agent_client_protocol::schema::v1::{
     ToolCallUpdate, ToolCallUpdateFields, ToolKind, UsageUpdate,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::bus::{Bus, ChannelError, CompactionEvent, CompactionRx, TryRecvError, UiEventRx};
+use agnt_core::bus::{Bus, ChannelError, CompactionRx, TryRecvError, UiEventRx};
 use agnt_core::config::defaults;
-use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection, UiEvent};
+use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
+use agnt_core::protocol::events::{SystemEvent, SystemKind};
 use agnt_core::transcript::ir::ContentKind;
 
 use crate::error::AcpError;
@@ -55,7 +57,7 @@ impl SessionUpdateSink for ConnectionTo<Client> {
     }
 }
 
-/// Translates the `UiEvent` stream of one session into ACP `SessionUpdate`s.
+/// Translates the `SystemEvent` stream of one session into ACP `SessionUpdate`s.
 ///
 /// Holds the per-session tool-call counter and the queue of started calls that
 /// have not completed yet. Both are required: `ToolStarted` and `ToolCompleted`
@@ -106,19 +108,15 @@ impl EventTranslator {
     /// Translate one bus event into an ACP `SessionUpdate`.
     ///
     /// Returns `None` for events that have no ACP equivalent.
-    pub fn translate(&mut self, event: UiEvent) -> Option<SessionUpdate> {
+    pub fn translate(&mut self, event: SystemEvent) -> Option<SessionUpdate> {
         match event {
-            UiEvent::AssistantMessage { delta, .. } => Some(SessionUpdate::AgentMessageChunk(
+            SystemEvent::InferenceChunk { delta, .. } => Some(SessionUpdate::AgentMessageChunk(
                 ContentChunk::new(ContentBlock::Text(TextContent::new(delta))),
             )),
-            UiEvent::ToolStarted {
-                name,
-                arguments,
-                call_line,
-                ..
-            } => {
-                let id = self.allocate_call_id(&name, &arguments);
-                let summary = call_line.to_plain_text();
+            SystemEvent::ToolStarted { call } => {
+                let name = call.name.0.clone();
+                let id = self.allocate_call_id(&name, &call.arguments);
+                let summary = call.call_line.to_plain_text();
                 let title = if summary.is_empty() {
                     name.clone()
                 } else {
@@ -131,26 +129,20 @@ impl EventTranslator {
                         .status(ToolCallStatus::Pending),
                 ))
             }
-            UiEvent::ToolCompleted {
-                name,
-                arguments,
-                success,
-                display,
-                message,
-                ..
-            } => {
-                let id = self.take_call_id(&name, &arguments);
-                let status = if success {
+            SystemEvent::ToolCompleted { call, outcome } => {
+                let id = self.take_call_id(&call.name.0, &call.arguments);
+                let status = if outcome.success {
                     ToolCallStatus::Completed
                 } else {
                     ToolCallStatus::Failed
                 };
-                let mut content = display
+                let mut content = outcome
+                    .display
                     .as_ref()
                     .map(content_from_display)
                     .unwrap_or_default();
                 if content.is_empty()
-                    && let Some(message) = message
+                    && let Some(message) = outcome.message
                 {
                     content.push(ToolCallContent::Content(Content::new(message)));
                 }
@@ -162,15 +154,15 @@ impl EventTranslator {
                     id, fields,
                 )))
             }
-            UiEvent::LlmCompleted { total_tokens, .. } => Some(SessionUpdate::UsageUpdate(
+            SystemEvent::InferenceCompleted { usage } => Some(SessionUpdate::UsageUpdate(
                 // `UsageUpdate` takes a plain count, so a wire that omits the
                 // total still reports 0 to ACP clients — unchanged behavior.
-                UsageUpdate::new(total_tokens.unwrap_or(0), self.max_context_tokens),
+                UsageUpdate::new(usage.total_tokens.unwrap_or(0), self.max_context_tokens),
             )),
-            UiEvent::CompactionStarted { source } => {
+            SystemEvent::CompactionStarted { source } => {
                 Some(compaction_update("started", &source, None))
             }
-            UiEvent::CompactionCompleted {
+            SystemEvent::CompactionCompleted {
                 source,
                 summary_preview,
                 ..
@@ -179,15 +171,20 @@ impl EventTranslator {
                 &source,
                 Some(summary_preview),
             )),
-            UiEvent::CompactionFailed { source, message } => {
+            SystemEvent::CompactionFailed { source, message } => {
                 Some(compaction_update("failed", &source, Some(message)))
             }
             // Mid-turn notices (context-window pressure, repetition steering)
             // reach the client as assistant text. The texts are self-describing,
-            // so no prefix is added.
-            UiEvent::Warning { message } => Some(SessionUpdate::AgentMessageChunk(
-                ContentChunk::new(ContentBlock::Text(TextContent::new(message))),
-            )),
+            // so no prefix is added. A turn error is not a client-facing fact in
+            // ACP mode: the turn's failure reaches the client as the prompt
+            // response.
+            SystemEvent::SystemMessage {
+                kind: SystemKind::Warning,
+                text,
+            } => Some(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                ContentBlock::Text(TextContent::new(text)),
+            ))),
             // No ACP equivalent: streaming compaction deltas, turn lifecycle
             // markers, and permission events (the permission bridge owns
             // `PermissionRequested`).
@@ -331,9 +328,9 @@ pub fn flush_receiver_to_notifications<S: SessionUpdateSink>(
 /// `compaction_rx` carries the session's compaction channel. Compaction events
 /// ride `bus.compaction()`, not `bus.ui_event()`, so a drain that subscribed
 /// only the ui channel would never see them. Each compaction event converts to
-/// its `UiEvent` form exactly once and takes the same send path as a ui event.
+/// its `SystemEvent` form exactly once and takes the same send path as a ui event.
 ///
-/// The returned flag reports whether a `CompactionEvent::Requested` arrived.
+/// The returned flag reports whether a `SystemEvent::CompactionRequested` arrived.
 /// The request is not a client-facing event: it is the chain's auto-compaction
 /// decision, and the caller dispatches it. The flag is a `bool` because one
 /// compaction runs per turn — a turn can trip the threshold on several
@@ -385,11 +382,9 @@ where
             event = recv_compaction(compaction_rx), if draining => match event {
                 // The chain's auto-compaction decision: not a client-facing
                 // event, so it is recorded rather than converted.
-                Some(CompactionEvent::Requested { .. }) => compaction_requested = true,
+                Some(SystemEvent::CompactionRequested { .. }) => compaction_requested = true,
                 Some(event) => {
-                    if let Some(ui) = Option::<UiEvent>::from(event)
-                        && !handle_event(sink, translator, bridge, ui).await
-                    {
+                    if !handle_event(sink, translator, bridge, event).await {
                         draining = false;
                     }
                 }
@@ -419,9 +414,10 @@ where
 /// compaction event published just before the turn completes is still buffered
 /// when the drain loop breaks, so it is flushed here rather than lost.
 ///
-/// Returns whether a `CompactionEvent::Requested` was among them. The chain's
-/// auto decision usually lands in this window — the turn's last completion
-/// publishes it — so the flush is where the request is most often seen.
+/// Returns whether a `SystemEvent::CompactionRequested` was among them. The
+/// chain's auto decision usually lands in this window — the turn's last
+/// completion publishes it — so the flush is where the request is most often
+/// seen.
 fn flush_compaction_to_notifications<S: SessionUpdateSink>(
     rx: &mut Option<CompactionRx>,
     sink: &S,
@@ -433,11 +429,9 @@ fn flush_compaction_to_notifications<S: SessionUpdateSink>(
     let mut requested = false;
     loop {
         match rx.try_recv() {
-            Ok(CompactionEvent::Requested { .. }) => requested = true,
+            Ok(SystemEvent::CompactionRequested { .. }) => requested = true,
             Ok(event) => {
-                if let Some(ui) = Option::<UiEvent>::from(event) {
-                    send_event(sink, translator, ui);
-                }
+                send_event(sink, translator, event);
             }
             Err(TryRecvError::Lagged(dropped)) => {
                 log::warn!(
@@ -455,7 +449,7 @@ fn flush_compaction_to_notifications<S: SessionUpdateSink>(
 /// compaction subscription.
 ///
 /// `None` means the channel closed; the caller keeps draining the ui channel.
-async fn recv_compaction(rx: &mut Option<CompactionRx>) -> Option<CompactionEvent> {
+async fn recv_compaction(rx: &mut Option<CompactionRx>) -> Option<SystemEvent> {
     let Some(rx) = rx else {
         return std::future::pending().await;
     };
@@ -480,18 +474,21 @@ async fn handle_event<S, P>(
     sink: &S,
     translator: &mut EventTranslator,
     bridge: &mut AcpPermissionBridge<P>,
-    event: UiEvent,
+    event: SystemEvent,
 ) -> bool
 where
     S: SessionUpdateSink,
     P: PermissionRequestSink,
 {
-    if let UiEvent::PermissionRequested {
+    if let SystemEvent::PermissionRequested {
         request_id,
         context,
     } = event
     {
-        if let Err(err) = bridge.handle_permission_request(&request_id, context).await {
+        if let Err(err) = bridge
+            .handle_permission_request(request_id.as_str(), context)
+            .await
+        {
             log::warn!(
                 "session {}: failed to handle permission request: {err}",
                 translator.session_id()
@@ -506,7 +503,7 @@ where
 fn send_event<S: SessionUpdateSink>(
     sink: &S,
     translator: &mut EventTranslator,
-    event: UiEvent,
+    event: SystemEvent,
 ) -> bool {
     let Some(update) = translator.translate(event) else {
         return true;

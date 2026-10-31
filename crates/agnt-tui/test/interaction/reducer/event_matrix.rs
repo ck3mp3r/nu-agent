@@ -1,10 +1,14 @@
 use super::*;
 
+use agnt_core::protocol::events::{RequestId, SystemKind, ToolCall, ToolOutcome, Usage};
+use agnt_core::session::tool_status::ToolStatus;
+use agnt_core::transcript::ir::ToolName;
+
 #[test]
 fn table_driven_ui_event_matrix_covers_all_variants() {
     struct Case {
         name: &'static str,
-        event: UiEvent,
+        event: SystemEvent,
         pre: fn() -> AppState,
     }
 
@@ -26,15 +30,16 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
 
     fn busy_with_running_tool_line() -> AppState {
         let mut state = busy_state_with_clean_transcript();
-        reduce_with_cancel_controller(
+        reduce_ui(
             &mut state,
-            event_input(UiEvent::ToolStarted {
-                name: "k8s__list_pods".to_string(),
-                source: "mcp".to_string(),
-                arguments: r#"{"namespace":"prod"}"#.to_string(),
-                call_line: CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
-            }),
-            None,
+            SystemEvent::ToolStarted {
+                call: ToolCall::new(
+                    ToolName("k8s__list_pods".to_string()),
+                    "mcp",
+                    r#"{"namespace":"prod"}"#,
+                    CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
+                ),
+            },
         );
         state
     }
@@ -42,79 +47,90 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
     let cases = vec![
         Case {
             name: "llm_start_from_idle_moves_busy",
-            event: UiEvent::LlmStarted,
+            event: SystemEvent::InferenceStarted,
             pre: idle,
         },
         Case {
             name: "llm_start_when_busy_is_noop",
-            event: UiEvent::LlmStarted,
+            event: SystemEvent::InferenceStarted,
             pre: busy_with_status,
         },
         Case {
             name: "tick_leaves_empty_status_empty",
-            event: UiEvent::Tick,
+            event: SystemEvent::Tick,
             pre: busy_empty_status,
         },
         Case {
             name: "tick_preserves_existing_status",
-            event: UiEvent::Tick,
+            event: SystemEvent::Tick,
             pre: busy_with_status,
         },
         Case {
             name: "tool_start_leaves_status_empty",
-            event: UiEvent::ToolStarted {
-                name: "k8s__list_pods".to_string(),
-                source: "mcp".to_string(),
-                arguments: "{}".to_string(),
-                call_line: CallLine::from_json_summary("{}"),
+            event: SystemEvent::ToolStarted {
+                call: ToolCall::new(
+                    ToolName("k8s__list_pods".to_string()),
+                    "mcp",
+                    "{}",
+                    CallLine::from_json_summary("{}"),
+                ),
             },
             pre: busy_empty_status,
         },
         Case {
             name: "tool_end_updates_tool_line_without_status",
-            event: UiEvent::ToolCompleted {
-                name: "k8s__list_pods".to_string(),
-                source: "mcp".to_string(),
-                arguments: r#"{"namespace":"prod"}"#.to_string(),
-                success: true,
-                result: "[]".to_string(),
-                display: None,
-                error_kind: None,
-                message: None,
+            event: SystemEvent::ToolCompleted {
+                call: ToolCall::new(
+                    ToolName("k8s__list_pods".to_string()),
+                    "mcp",
+                    r#"{"namespace":"prod"}"#,
+                    CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
+                ),
+                outcome: ToolOutcome {
+                    success: true,
+                    status: ToolStatus::Success,
+                    result: "[]".to_string(),
+                    display: None,
+                    error_kind: None,
+                    message: None,
+                },
             },
             pre: busy_with_running_tool_line,
         },
         Case {
             name: "llm_end_records_tokens_without_status_message",
-            event: UiEvent::LlmCompleted {
-                response_chars: 12,
-                tool_calls: 0,
-                input_tokens: 4,
-                output_tokens: 8,
-                total_tokens: Some(12),
-                cost: None,
-                cost_complete: false,
+            event: SystemEvent::InferenceCompleted {
+                usage: Usage {
+                    response_chars: 12,
+                    tool_calls: 0,
+                    input_tokens: 4,
+                    output_tokens: 8,
+                    total_tokens: Some(12),
+                    cost: None,
+                    cost_complete: false,
+                },
             },
             pre: busy_empty_status,
         },
         Case {
             name: "warning_sets_status_line",
-            event: UiEvent::Warning {
-                message: "warned".to_string(),
+            event: SystemEvent::SystemMessage {
+                kind: SystemKind::Warning,
+                text: "warned".to_string(),
             },
             pre: busy_empty_status,
         },
         Case {
             name: "assistant_message_trims_and_appends",
-            event: UiEvent::AssistantMessage {
+            event: SystemEvent::InferenceChunk {
                 delta: "\nline 1\nline 2\n".to_string(),
-                text: "\nline 1\nline 2\n".to_string(),
+                aggregated: "\nline 1\nline 2\n".to_string(),
             },
             pre: busy_empty_status,
         },
         Case {
             name: "completed_finalizes_cycle",
-            event: UiEvent::Completed {
+            event: SystemEvent::TurnCompleted {
                 tool_calls: 1,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -129,7 +145,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
 
     for case in cases {
         let mut state = (case.pre)();
-        reduce_with_cancel_controller(&mut state, event_input(case.event), None);
+        reduce_ui(&mut state, case.event);
 
         match case.name {
             "llm_start_from_idle_moves_busy" => {
@@ -154,8 +170,8 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 // [Tool] — no leading spacer under the unified spacer rule
                 assert_eq!(state.transcript.len(), 1);
                 assert!(matches!(
-                    state.transcript.blocks()[0].source,
-                    BlockSource::Tool { .. }
+                    &state.transcript.entries()[0],
+                    TranscriptEntry::Tool(_)
                 ));
                 assert!(state.status.message.status_line().is_empty());
             }
@@ -167,30 +183,28 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                 assert!(state.status.message.status_line().is_empty());
             }
             "warning_sets_status_line" => {
-                // Warning is now handled by the UiEvent dispatch, which routes
+                // Warning is now handled by the SystemEvent dispatch, which routes
                 // to StatusState::reduce_warning_event and sets the status line.
                 assert_eq!(state.status.message.status_line(), "warned");
             }
             "assistant_message_trims_and_appends" => {
                 // After the raw-markdown refactor, a single AssistantMessage
-                // produces one markdown block. The raw text is trimmed before
+                // produces one message entry. The raw text is trimmed before
                 // storage, so leading/trailing whitespace is dropped.
-                let assistant_entries: Vec<_> = state
+                let assistant_entries: Vec<String> = state
                     .transcript
-                    .blocks()
+                    .entries()
                     .iter()
-                    .filter(|b| {
+                    .filter(|entry| {
                         matches!(
-                            b.source,
-                            BlockSource::Markdown {
-                                role: agnt_core::transcript::ir::MessageRole::Assistant,
-                                ..
-                            }
+                            entry,
+                            TranscriptEntry::Message(message)
+                                if message.role == MessageRole::Assistant
                         )
                     })
-                    .map(|block| block.source.plain_text())
+                    .map(entry_text)
                     .collect();
-                assert_eq!(assistant_entries.len(), 1, "one assistant block");
+                assert_eq!(assistant_entries.len(), 1, "one assistant entry");
                 let text = &assistant_entries[0];
                 assert!(text.contains("line 1"), "raw md should contain 'line 1'");
                 assert!(text.contains("line 2"), "raw md should contain 'line 2'");
@@ -226,12 +240,13 @@ fn permission_request_table() -> Result<()> {
         summary: "→ {...}".to_string(),
         pre_authorize_display: None,
     };
-    state
-        .permission
-        .reduce_permission_event(agnt_core::bus::PermissionEvent::Requested {
-            request_id: "ask-0000000000000001".to_string(),
-            context: Box::new(context),
-        });
+    reduce_ui(
+        &mut state,
+        SystemEvent::PermissionRequested {
+            request_id: RequestId::new("ask-0000000000000001"),
+            context,
+        },
+    );
 
     assert_eq!(state.scroll.pane_focus, crate::state::PaneFocus::Input);
     assert!(state.permission.has_prompt());
@@ -240,19 +255,21 @@ fn permission_request_table() -> Result<()> {
     let mut state = AppState::default();
     state.scroll.following_tail = false;
 
-    dispatch_ui_event(
+    reduce_ui(
         &mut state,
-        UiEvent::ToolStarted {
-            name: "edit".to_string(),
-            source: "builtin".to_string(),
-            arguments: "{}".to_string(),
-            call_line: CallLine::from_json_summary("{}"),
+        SystemEvent::ToolStarted {
+            call: ToolCall::new(
+                ToolName("edit".to_string()),
+                "builtin",
+                "{}",
+                CallLine::from_json_summary("{}"),
+            ),
         },
     );
-    dispatch_ui_event(
+    reduce_ui(
         &mut state,
-        UiEvent::PermissionRequested {
-            request_id: "perm-1".to_string(),
+        SystemEvent::PermissionRequested {
+            request_id: RequestId::new("perm-1"),
             context: PermissionRequestContext {
                 tool: "edit".to_string(),
                 tool_key: "edit\n{}".to_string(),
@@ -279,30 +296,24 @@ fn permission_request_table() -> Result<()> {
         },
     );
 
-    // The preview is its own ToolDisplay block pushed directly after the
-    // pending Tool block, so there are exactly two blocks.
+    // The preview lands on the pending tool entry in place, so there is
+    // exactly one entry.
     assert_eq!(
         state.transcript.len(),
-        2,
-        "preview must push its own ToolDisplay block"
+        1,
+        "the preview must live on the tool entry"
     );
-    let tool_block = state
+    let entry = state
         .transcript
-        .blocks()
+        .entries()
         .first()
-        .ok_or("tool block should exist")?;
+        .ok_or("tool entry should exist")?;
+    let TranscriptEntry::Tool(tool) = entry else {
+        return Err("expected Tool entry".into());
+    };
     assert!(
-        matches!(tool_block.source, BlockSource::Tool { preview: None, .. }),
-        "the Tool block must keep preview None"
-    );
-    let preview_block = state
-        .transcript
-        .blocks()
-        .get(1)
-        .ok_or("preview block should exist")?;
-    assert!(
-        matches!(preview_block.source, BlockSource::ToolDisplay { .. }),
-        "the preview must be a ToolDisplay block"
+        tool.preview.is_some(),
+        "the permission request display must land on the entry's preview"
     );
     assert!(
         state.permission.has_prompt(),
@@ -321,10 +332,11 @@ fn warning_dispatch_sets_status_line() -> Result<()> {
     let mut state = AppState::default();
 
     // -- Exec
-    dispatch_ui_event(
+    reduce_ui(
         &mut state,
-        UiEvent::Warning {
-            message: "test warning".to_string(),
+        SystemEvent::SystemMessage {
+            kind: SystemKind::Warning,
+            text: "test warning".to_string(),
         },
     );
 

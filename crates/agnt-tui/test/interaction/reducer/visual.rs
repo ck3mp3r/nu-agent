@@ -5,6 +5,7 @@ use crate::state::selection::TranscriptSelection;
 fn visual_mode_entry_table() -> Result<()> {
     // Selects the first visible entry, not the scroll offset.
     let mut state = AppState {
+        input: InputState::default().with_mode(InputMode::Normal),
         scroll: ScrollState {
             pane_focus: PaneFocus::Transcript,
             ..Default::default()
@@ -15,11 +16,12 @@ fn visual_mode_entry_table() -> Result<()> {
     push_user_line(&mut state, "line 1\nextra");
     state.scroll.scroll_offset = 2;
     state.scroll.cursor_visual_row = 3;
-    state.scroll.entry_indices = vec![0, 0, 0, 1, 1];
     state.scroll.total_visual_rows = 5;
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::EnterVisualMode),
+        SystemEvent::KeyPressed {
+            key: Key::Char('v'),
+        },
         None,
     );
     let sel = state.scroll.selection.ok_or("selection should be set")?;
@@ -29,18 +31,20 @@ fn visual_mode_entry_table() -> Result<()> {
 
     // Sets the selection at the scroll offset.
     let mut state = AppState {
+        input: InputState::default().with_mode(InputMode::Normal),
         scroll: ScrollState {
             pane_focus: PaneFocus::Transcript,
             cursor_visual_row: 5,
-            entry_indices: (0..10).collect(),
             total_visual_rows: 10,
             ..Default::default()
         },
         ..Default::default()
     };
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::EnterVisualMode),
+        SystemEvent::KeyPressed {
+            key: Key::Char('v'),
+        },
         None,
     );
     let sel = state.scroll.selection.ok_or("selection should be set")?;
@@ -51,15 +55,18 @@ fn visual_mode_entry_table() -> Result<()> {
 
     // Requires transcript focus.
     let mut state = AppState {
+        input: InputState::default().with_mode(InputMode::Normal),
         scroll: ScrollState {
             pane_focus: PaneFocus::Input,
             ..Default::default()
         },
         ..Default::default()
     };
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::EnterVisualMode),
+        SystemEvent::KeyPressed {
+            key: Key::Char('v'),
+        },
         None,
     );
     assert_eq!(
@@ -70,12 +77,15 @@ fn visual_mode_entry_table() -> Result<()> {
 
     // No-op when busy.
     let mut state = AppState {
+        input: InputState::default().with_mode(InputMode::Normal),
         phase: UiPhase::Busy,
         ..Default::default()
     };
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::EnterVisualMode),
+        SystemEvent::KeyPressed {
+            key: Key::Char('v'),
+        },
         None,
     );
     assert!(state.scroll.selection.is_none());
@@ -89,7 +99,6 @@ fn visual_mode_extension_table() -> Result<()> {
         input: InputState::default().with_mode(InputMode::Visual),
         scroll: ScrollState {
             selection: Some(TranscriptSelection::new(0)),
-            entry_indices: (0..5).collect(),
             total_visual_rows: 5,
             ..Default::default()
         },
@@ -98,9 +107,11 @@ fn visual_mode_extension_table() -> Result<()> {
     for i in 0..5 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::ScrollLineDown),
+        SystemEvent::KeyPressed {
+            key: Key::Char('j'),
+        },
         None,
     );
     let sel = state.scroll.selection.ok_or("selection should exist")?;
@@ -115,15 +126,16 @@ fn visual_mode_extension_table() -> Result<()> {
         scroll: ScrollState {
             selection: Some(TranscriptSelection::new(2)),
             cursor_visual_row: 2,
-            entry_indices: (0..3).collect(),
             total_visual_rows: 3,
             ..Default::default()
         },
         ..Default::default()
     };
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::ScrollLineUp),
+        SystemEvent::KeyPressed {
+            key: Key::Char('k'),
+        },
         None,
     );
     let sel = state.scroll.selection.ok_or("selection should exist")?;
@@ -152,9 +164,11 @@ fn visual_yank_table() {
     }
     state.transcript.rebuild_height_index(78);
     state.scroll.selection = Some(TranscriptSelection::new(0));
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::YankSelection),
+        SystemEvent::KeyPressed {
+            key: Key::Char('y'),
+        },
         None,
     );
     let clipboard = state.input.take_clipboard_request();
@@ -176,9 +190,11 @@ fn visual_yank_table() {
     }
     state.transcript.rebuild_height_index(78);
     state.scroll.selection = Some(TranscriptSelection::new(3));
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::YankSelection),
+        SystemEvent::KeyPressed {
+            key: Key::Char('y'),
+        },
         None,
     );
     let clipboard = state.input.take_clipboard_request();
@@ -206,9 +222,11 @@ fn visual_yank_table() {
     let mut sel = TranscriptSelection::new(3);
     sel.set_cursor(4);
     state.scroll.selection = Some(sel);
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::YankSelection),
+        SystemEvent::KeyPressed {
+            key: Key::Char('y'),
+        },
         None,
     );
     let clipboard = state.input.take_clipboard_request();
@@ -228,9 +246,11 @@ fn visual_yank_table() {
         },
         ..Default::default()
     };
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::YankSelection),
+        SystemEvent::KeyPressed {
+            key: Key::Char('y'),
+        },
         None,
     );
     assert!(state.input.take_clipboard_request().is_none());
@@ -240,9 +260,11 @@ fn visual_yank_table() {
 
     // An empty selection is a no-op.
     let mut state = AppState::default();
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::YankSelection),
+        SystemEvent::KeyPressed {
+            key: Key::Char('y'),
+        },
         None,
     );
     assert!(state.input.take_clipboard_request().is_none());
@@ -259,7 +281,7 @@ fn visual_mode_exit_and_jump_table() -> Result<()> {
         },
         ..Default::default()
     };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
+    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
     assert!(state.scroll.selection.is_none());
     assert_eq!(state.input.mode, InputMode::Normal);
 
@@ -272,11 +294,15 @@ fn visual_mode_exit_and_jump_table() -> Result<()> {
         },
         ..Default::default()
     };
-    reduce_with_cancel_controller(
-        &mut state,
-        ReducerInput::User(UserAction::ScrollToTop),
-        None,
-    );
+    for _ in 0..2 {
+        reduce(
+            &mut state,
+            SystemEvent::KeyPressed {
+                key: Key::Char('g'),
+            },
+            None,
+        );
+    }
     let sel = state.scroll.selection.ok_or("selection should exist")?;
     assert_eq!(sel.cursor(), 0);
     assert_eq!(state.scroll.scroll_offset, 0);
@@ -295,9 +321,11 @@ fn visual_mode_exit_and_jump_table() -> Result<()> {
     for i in 0..5 {
         push_user_line(&mut state, format!("line {i}"));
     }
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::ScrollToBottom),
+        SystemEvent::KeyPressed {
+            key: Key::Char('G'),
+        },
         None,
     );
     let sel = state.scroll.selection.ok_or("selection should exist")?;

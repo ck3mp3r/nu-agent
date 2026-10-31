@@ -1,270 +1,199 @@
-use super::support::{frame_ctx, leading_spaces, span_containing};
-use crate::rendering::theme::{TuiTheme, hint_to_style};
-use crate::tui_renderer::{lane_prefix_width, layout};
-use agnt_core::transcript::ir::*;
-use agnt_core::transcript::items::Banner;
-use agnt_core::transcript::renderer::Renderable;
+//! Lane styling: which semantic surface each lane's text and marker paint.
+//!
+//! The lane decides the styling, and the entry family decides the lane, so every
+//! assertion here names one lane and one semantic color.
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+use super::support::*;
+use agnt_core::transcript::ir::{MessageRole, NoticeKind};
+use agnt_core::transcript::renderer::ItemStatus;
 
-// ========== Lane ownership of styling (task 46ca79fe) ==========
+// region:    --- Text surfaces
 
-/// The lane decides styling, not the source: a Banner source on the assistant
-/// `Lane::Blank` gets assistant styling. This pins the SRP fix —
-/// `LaneContext::from` no longer inspects `block.source` to special-case
-/// banners.
+/// WHEN a banner renders, THE text SHALL paint the banner color, not the body
+/// color.
 #[test]
-fn layout_blank_lane_banner_uses_assistant_style_proving_lane_decides() -> Result<()> {
+fn test_renderer_lane_styling_banner_text_paints_the_banner_color() -> Result<()> {
     // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let block = Block {
-        source: BlockSource::Banner {
-            text: "NOTALOGO".to_string(),
-        },
-        lane: Lane::Blank,
-        fill: Fill::None,
-        status: None,
-    };
+    let theme = test_theme();
+    let entry = banner_entry("NUAGENT");
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let (backend, _) = render_at(&entry, 0)?;
+    let column = u16::try_from(
+        row_text(&backend, 0)
+            .find("NUAGENT")
+            .ok_or("the banner must render")?,
+    )?;
 
     // -- Check
-    let span = span_containing(&lines, "NOTALOGO").ok_or("banner content span must exist")?;
     assert_eq!(
-        span.style.fg, theme.role_assistant.fg,
-        "Lane::Blank must apply assistant styling regardless of the source; got {:?}",
-        span.style.fg
+        cell_fg(&backend, column, 0),
+        Some(terminal(theme.banner)),
+        "the banner paints the banner color"
+    );
+    assert_ne!(
+        cell_fg(&backend, column, 0),
+        Some(terminal(theme.text)),
+        "the banner must not paint the body color"
     );
     Ok(())
 }
 
-/// `Lane::SystemBlank` applies system styling to its content: the banner
-/// lane. `Banner::lane()` returns this variant, so the renderer needs no
-/// source inspection to style a banner.
+/// WHEN a system notice renders, THE text SHALL paint the notice color.
 #[test]
-fn layout_system_blank_lane_uses_role_system() -> Result<()> {
+fn test_renderer_lane_styling_system_notice_paints_the_notice_color() -> Result<()> {
     // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let block = Block {
-        source: BlockSource::Banner {
-            text: "LOGOART".to_string(),
-        },
-        lane: Lane::SystemBlank,
-        fill: Fill::None,
-        status: None,
-    };
+    let theme = test_theme();
+    let entry = notice_entry(NoticeKind::System, "system notice text");
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let (backend, _) = render_at(&entry, 0)?;
 
     // -- Check
-    let span = span_containing(&lines, "LOGOART").ok_or("banner content span must exist")?;
     assert_eq!(
-        span.style.fg, theme.role_system.fg,
-        "Lane::SystemBlank must use role_system fg, got {:?}",
-        span.style.fg
+        cell_fg(&backend, 4, 0),
+        Some(terminal(theme.notice)),
+        "a system notice paints the notice color"
     );
-    assert_eq!(
-        span.style.bg, theme.row_system.bg,
-        "Lane::SystemBlank row background must match row_system"
+    assert_ne!(
+        cell_fg(&backend, 4, 0),
+        Some(terminal(theme.muted)),
+        "a system notice must not paint the muted color"
     );
     Ok(())
 }
 
-/// Every system-blank row carries the system row background, including all
-/// banner lines.
+/// WHEN a compaction notice renders, THE text SHALL paint the muted color.
 #[test]
-fn layout_system_blank_multi_line_banner_rows_use_row_system() -> Result<()> {
+fn test_renderer_lane_styling_compaction_notice_paints_the_muted_color() -> Result<()> {
     // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let banner = Banner {
-        text: "line1\nline2".to_string(),
-    };
-    let block = Block {
-        source: banner.source(),
-        lane: banner.lane(),
-        fill: banner.fill(),
-        status: None,
-    };
-    assert_eq!(
-        banner.lane(),
-        Lane::SystemBlank,
-        "banner lane is SystemBlank"
-    );
+    let theme = test_theme();
+    let entry = notice_entry(NoticeKind::Compaction, "compaction notice text");
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let (backend, _) = render_at(&entry, 0)?;
 
     // -- Check
-    for (idx, span) in lines.iter().flat_map(|l| &l.spans).enumerate() {
+    assert_eq!(
+        cell_fg(&backend, 4, 0),
+        Some(terminal(theme.muted)),
+        "a compaction notice paints the muted color"
+    );
+    assert_ne!(
+        cell_fg(&backend, 4, 0),
+        Some(terminal(theme.notice)),
+        "a compaction notice must not paint the notice color"
+    );
+    Ok(())
+}
+
+/// WHEN assistant prose renders, THE text SHALL paint the body color and no
+/// surface.
+#[test]
+fn test_renderer_lane_styling_assistant_prose_paints_the_body_color() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = test_theme();
+    let entry = message_entry(MessageRole::Assistant, "hello world");
+
+    // -- Exec
+    let (backend, _) = render_at(&entry, 0)?;
+
+    // -- Check
+    assert_eq!(
+        cell_fg(&backend, 2, 0),
+        Some(terminal(theme.text)),
+        "assistant prose paints the body color"
+    );
+    assert!(
+        is_untinted(cell_bg(&backend, 2, 0)),
+        "assistant prose carries no surface"
+    );
+    Ok(())
+}
+
+/// WHEN user prose renders, THE text SHALL paint the body color over the user
+/// surface.
+#[test]
+fn test_renderer_lane_styling_user_prose_paints_body_on_the_user_surface() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = test_theme();
+    let entry = message_entry(MessageRole::User, "hi");
+
+    // -- Exec
+    let (backend, _) = render_at(&entry, 0)?;
+
+    // -- Check
+    assert_eq!(
+        cell_fg(&backend, 2, 0),
+        Some(terminal(theme.text)),
+        "user prose paints the body color"
+    );
+    assert_eq!(
+        cell_bg(&backend, 2, 0),
+        Some(terminal(theme.user_surface)),
+        "user prose paints the user surface"
+    );
+    Ok(())
+}
+
+// endregion: --- Text surfaces
+
+// region:    --- Marker surfaces
+
+/// WHEN the marker lanes render, EACH marker SHALL paint its lane accent: the
+/// tool marker the tool accent, the user marker the user lane accent, the
+/// compaction and assistant markers the muted color, the notice markers the
+/// notice color.
+#[test]
+fn test_renderer_lane_styling_markers_paint_their_lane_accent() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = test_theme();
+    let cases = [
+        (bare_tool(ItemStatus::Done), 2u16, theme.accent),
+        (message_entry(MessageRole::User, "hi"), 0, theme.user_accent),
+        (notice_entry(NoticeKind::Compaction, "c"), 2, theme.muted),
+        (notice_entry(NoticeKind::System, "s"), 2, theme.notice),
+    ];
+
+    // -- Exec & Check
+    for (entry, column, expected) in cases {
+        let (backend, _) = render_at(&entry, 0)?;
         assert_eq!(
-            span.style.bg, theme.row_system.bg,
-            "banner row {idx} span '{}' must use row_system bg, got {:?}",
-            span.content, span.style.bg
+            cell_fg(&backend, column, 0),
+            Some(terminal(expected)),
+            "the marker at column {column} must paint its lane accent"
         );
     }
     Ok(())
 }
 
-/// Centering follows the lane, not the source: a non-banner source on
-/// `Lane::SystemBlank` is centered exactly like a banner. Proves the centering
-/// decision reads `block.lane` and never inspects `block.source`.
+// endregion: --- Marker surfaces
+
+// region:    --- Centering
+
+/// WHEN a banner renders next to a prose entry, THE banner SHALL center while the
+/// prose SHALL start at its gutter — centering follows the lane, not the payload.
 #[test]
-fn layout_non_banner_source_on_system_blank_lane_is_centered() -> Result<()> {
-    // -- Setup & Fixtures: a notice (never centered by source) on the banner
-    // lane.
-    let block = Block {
-        source: BlockSource::Notice {
-            kind: NoticeKind::System,
-            text: "CENTERME".to_string(),
-        },
-        lane: Lane::SystemBlank,
-        fill: Fill::None,
-        status: None,
-    };
-
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
-
-    // -- Check: centering prepends left padding, so row 0 carries more leading
-    // whitespace than the bare lane prefix.
-    let leading = leading_spaces(lines.first().ok_or("row 0 must exist")?);
-    assert!(
-        leading > lane_prefix_width(&Lane::SystemBlank),
-        "Lane::SystemBlank must center regardless of source; leading={leading}, prefix={}",
-        lane_prefix_width(&Lane::SystemBlank)
-    );
-    Ok(())
-}
-
-/// Centering follows the lane, not the source: a banner source on the
-/// assistant `Lane::Blank` is NOT centered. The lane already encodes "this is
-/// a banner block" via `Lane::SystemBlank`.
-#[test]
-fn layout_banner_source_on_blank_lane_is_not_centered() -> Result<()> {
+fn test_renderer_lane_styling_centering_follows_the_lane() -> Result<()> {
     // -- Setup & Fixtures
-    let block = Block {
-        source: BlockSource::Banner {
-            text: "NOTCENTERED".to_string(),
-        },
-        lane: Lane::Blank,
-        fill: Fill::None,
-        status: None,
-    };
+    let centered = render(&banner_entry("CENTERME"))?;
+    let flush = render(&message_entry(MessageRole::Assistant, "CENTERME"))?;
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
-
-    // -- Check: no centering padding is inserted, so the only leading
-    // whitespace is the lane prefix itself.
-    let leading = leading_spaces(lines.first().ok_or("row 0 must exist")?);
-    assert_eq!(
-        leading,
-        lane_prefix_width(&Lane::Blank),
-        "a Banner source on Lane::Blank must not be centered; leading={leading}"
-    );
-    Ok(())
-}
-
-/// A real banner block (source and lane from `Banner`) keeps its centering.
-#[test]
-fn layout_banner_on_system_blank_lane_is_centered() -> Result<()> {
-    // -- Setup & Fixtures
-    let banner = Banner {
-        text: "LOGOLINE".to_string(),
-    };
-    let block = Block {
-        source: banner.source(),
-        lane: banner.lane(),
-        fill: banner.fill(),
-        status: None,
-    };
-
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let centered_column = row_text(&centered, 0)
+        .find("CENTERME")
+        .ok_or("the banner must render")?;
+    let flush_column = row_text(&flush, 0)
+        .find("CENTERME")
+        .ok_or("the prose must render")?;
 
     // -- Check
-    let leading = leading_spaces(lines.first().ok_or("row 0 must exist")?);
     assert!(
-        leading > lane_prefix_width(&Lane::SystemBlank),
-        "a banner block must stay centered; leading={leading}, prefix={}",
-        lane_prefix_width(&Lane::SystemBlank)
+        centered_column > flush_column,
+        "the banner centers ({centered_column}) while the prose stays flush ({flush_column})"
     );
+    assert_eq!(flush_column, 2, "the prose starts at its two-column gutter");
     Ok(())
 }
 
-/// Notice content is styled from the lane role style with `StyleHint::Normal`
-/// (the pre-refactor `SystemMessage` styling), not `StyleHint::Meta`.
-#[test]
-fn layout_system_notice_content_uses_normal_hint_with_lane_role_style() -> Result<()> {
-    // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let block = Block {
-        source: BlockSource::Notice {
-            kind: NoticeKind::System,
-            text: "system notice text".to_string(),
-        },
-        lane: Lane::Marker("\u{00b7}"),
-        fill: Fill::None,
-        status: None,
-    };
-    let expected = hint_to_style(&StyleHint::Normal, theme.role_system, &theme);
-
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
-
-    // -- Check: the full style (fg + modifiers), not just the fg — `Meta`
-    // shares a fg with some role styles but adds DIM.
-    let span =
-        span_containing(&lines, "system notice text").ok_or("notice content span must exist")?;
-    assert_eq!(
-        span.style, expected,
-        "system notice content must use the Normal hint with role_system; got {:?}",
-        span.style
-    );
-    assert_ne!(
-        span.style,
-        hint_to_style(&StyleHint::Meta, theme.role_system, &theme),
-        "system notice content must not use the Meta hint"
-    );
-    Ok(())
-}
-
-/// Compaction notice content is styled from the compaction role style with
-/// `StyleHint::Normal`.
-#[test]
-fn layout_compaction_notice_content_uses_normal_hint_with_lane_role_style() -> Result<()> {
-    // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let block = Block {
-        source: BlockSource::Notice {
-            kind: NoticeKind::Compaction,
-            text: "compaction notice text".to_string(),
-        },
-        lane: Lane::Marker("~"),
-        fill: Fill::None,
-        status: None,
-    };
-    let expected = hint_to_style(&StyleHint::Normal, theme.role_compaction, &theme);
-
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
-
-    // -- Check: full-style equality. `role_compaction` and `tool_meta` share
-    // the same fg but differ by the DIM modifier, so only the full style
-    // catches a Meta regression here.
-    let span = span_containing(&lines, "compaction notice text")
-        .ok_or("notice content span must exist")?;
-    assert_eq!(
-        span.style, expected,
-        "compaction notice content must use the Normal hint with role_compaction; got {:?}",
-        span.style
-    );
-    assert_ne!(
-        span.style,
-        hint_to_style(&StyleHint::Meta, theme.role_compaction, &theme),
-        "compaction notice content must not use the Meta hint"
-    );
-    Ok(())
-}
+// endregion: --- Centering

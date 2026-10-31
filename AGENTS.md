@@ -224,6 +224,7 @@ cargo llvm-cov --workspace --html --output-dir coverage/
 
 - Write tests before implementation
 - Keep functions small and focused
+- **Source file size limit:** No production source file shall exceed 500 lines. When a source file reaches this limit, split it into topical submodules in a subdirectory of the same name (e.g. `src/session.rs` → `src/session/lifecycle.rs`, `src/session/cancel.rs`, etc.). Shared support code stays in a `src/session/support.rs` file. The `mod` declarations and reexports live in the parent `src/session/mod.rs`. The limit applies going forward — it is not retroactively enforced on existing modules
 - Use meaningful names for tests (describe what they verify)
 - Each test should verify one behavior
 - Refactor only when tests are green

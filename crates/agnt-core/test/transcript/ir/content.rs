@@ -1,25 +1,18 @@
 use super::*;
 
-// ── Content / Span / ContentLine ────────────────────────────────────────────
+// ── Span / ContentLine ──────────────────────────────────────────────────────
 
-/// Constructors: `Content` wraps lines, `Span` constructors set the hint,
-/// `ContentLine` constructors build spans, and every constructor defaults
-/// `diff_tint` to `None` and `hang_indent` to 0.
+/// Constructors: `Span` constructors set the hint, `ContentLine` constructors
+/// build spans, and every constructor defaults `diff_tint` to `None` and
+/// `hang_indent` to 0.
 #[test]
 fn content_line_constructors_and_tint_table() {
     // -- Setup & Fixtures
-    let content = Content {
-        lines: vec![ContentLine::single("x".to_string(), StyleHint::Normal)],
-    };
     let spans = vec![
         Span::normal("a".to_string()),
         Span::meta("b".to_string()),
         Span::muted("c".to_string()),
     ];
-
-    // -- Exec & Check: Content wraps its lines.
-    assert_eq!(content.lines.len(), 1);
-    assert_eq!(content.lines[0].spans[0].text, "x");
 
     // -- Check: Span constructors set the hint.
     assert_eq!(

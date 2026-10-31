@@ -2,17 +2,17 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 
-use agnt_core::protocol::event::UiEvent;
+use agnt_core::protocol::events::SystemEvent;
 use agnt_core::renderer::UiRenderer;
 
 #[derive(Default)]
 pub(crate) struct FakeRenderer {
-    emitted: Vec<UiEvent>,
+    emitted: Vec<SystemEvent>,
     flushed: usize,
 }
 
 impl UiRenderer for FakeRenderer {
-    fn emit(&mut self, event: &UiEvent) {
+    fn emit(&mut self, event: &SystemEvent) {
         self.emitted.push(event.clone());
     }
 
@@ -22,17 +22,17 @@ impl UiRenderer for FakeRenderer {
 }
 
 pub(crate) struct CapturingRenderer {
-    events: Arc<Mutex<Vec<UiEvent>>>,
+    events: Arc<Mutex<Vec<SystemEvent>>>,
 }
 
 impl CapturingRenderer {
-    pub(crate) fn new(events: Arc<Mutex<Vec<UiEvent>>>) -> Self {
+    pub(crate) fn new(events: Arc<Mutex<Vec<SystemEvent>>>) -> Self {
         Self { events }
     }
 }
 
 impl UiRenderer for CapturingRenderer {
-    fn emit(&mut self, event: &UiEvent) {
+    fn emit(&mut self, event: &SystemEvent) {
         self.events.lock().expect("events").push(event.clone());
     }
 

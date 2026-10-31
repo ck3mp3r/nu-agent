@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::{Line, Text},
-    widgets::{Paragraph, Wrap},
+    widgets::Paragraph,
 };
 
 use crate::rendering::{
@@ -68,67 +68,29 @@ pub(super) fn render_empty_state(frame: &mut Frame, rect: Rect, message: &str, t
     );
 }
 
-/// The user rail's gutter row: the `╎` marker slot plus its trailing blank, in
-/// the user lane's prefix style — the same span `layout()` renders on every row
-/// of a user block. The user background box is taller than the block: the
-/// separator rows that bleed `row_user_bg` and the queued stack's padding rows
-/// sit inside the box, so they paint this line to keep the rail continuous down
-/// the whole box (task 4d99956c).
-pub(crate) fn user_rail_line(theme: &TuiTheme) -> Line<'static> {
-    Line::from(ratatui::text::Span::styled(
-        "╎ ".to_string(),
+/// Paint the user rail's gutter cells on one buffer row: the `╎` marker slot
+/// plus its trailing blank, in the user lane's prefix style — the same span the
+/// message widget renders on every row of a user turn. The user background box
+/// is taller than the turn: the gap rows that bleed `row_user_bg` and the
+/// queued stack's padding rows sit inside the box, so they paint this slot to
+/// keep the rail continuous down the whole box (task 4d99956c).
+pub(crate) fn paint_user_rail_row(
+    buf: &mut ratatui::buffer::Buffer,
+    y: u16,
+    width: usize,
+    theme: &TuiTheme,
+) {
+    if y >= buf.area.bottom() {
+        return;
+    }
+    let width = u16::try_from(width).unwrap_or(u16::MAX).min(buf.area.width);
+    buf.set_stringn(
+        buf.area.left(),
+        y,
+        "╎ ",
+        usize::from(width),
         theme.lane_prefix_user,
-    ))
-}
-
-/// Expand entry_indices from pre-wrap line count to post-wrap visual row count.
-/// Each pre-wrap line may wrap into multiple visual rows; the entry index is
-/// replicated for each resulting visual row.
-pub(super) fn expand_to_visual_rows(
-    entry_indices: Vec<usize>,
-    lines: &[Line<'static>],
-    width: usize,
-) -> Vec<usize> {
-    let mut expanded = Vec::with_capacity(lines.len().max(entry_indices.len()));
-    for (i, line) in lines.iter().enumerate() {
-        let entry_idx = *entry_indices.get(i).unwrap_or(&0);
-        let visual_rows = single_line_visual_row_count(line, width);
-        for _ in 0..visual_rows {
-            expanded.push(entry_idx);
-        }
-    }
-    expanded
-}
-
-/// Expand a per-line background override vector to visual rows, mirroring
-/// [`expand_to_visual_rows`]: each pre-wrap line replicates its background
-/// for every visual row the line wraps into. Used so a pinned separator-row
-/// background survives wrapping.
-pub(super) fn expand_bgs_to_visual_rows(
-    line_bgs: &[Option<ratatui::style::Color>],
-    lines: &[Line<'static>],
-    width: usize,
-) -> Vec<Option<ratatui::style::Color>> {
-    let mut expanded = Vec::with_capacity(lines.len());
-    for (i, line) in lines.iter().enumerate() {
-        let bg = line_bgs.get(i).copied().flatten();
-        let visual_rows = single_line_visual_row_count(line, width);
-        for _ in 0..visual_rows {
-            expanded.push(bg);
-        }
-    }
-    expanded
-}
-
-/// Count how many visual rows a single Line will occupy after wrapping at `width`.
-pub(crate) fn single_line_visual_row_count(line: &Line<'_>, width: usize) -> usize {
-    if width < 1 {
-        return 1;
-    }
-    Paragraph::new(line.clone())
-        .wrap(Wrap::default())
-        .line_count(width as u16)
-        .max(1)
+    );
 }
 
 pub(crate) mod bottom_box;
@@ -136,7 +98,10 @@ pub(super) mod frame;
 mod modals;
 mod picker_footer;
 mod picker_table;
+
+pub(crate) use frame::current_time_millis;
 pub(crate) use picker_footer::PickerFooter;
+pub(super) use picker_table::section_head_count;
 pub(crate) mod transcript;
 
 #[cfg(test)]

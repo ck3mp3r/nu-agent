@@ -16,6 +16,7 @@ pub use coordinator::*;
 pub use layout::*;
 use panels::*;
 pub use renderer::TuiRuntimeRenderer;
+pub(crate) use status::format::SPINNER_CADENCE_MS;
 use status::help::*;
 #[cfg(test)]
 pub use terminal::CrosstermTerminalEvents;

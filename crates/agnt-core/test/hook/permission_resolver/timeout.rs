@@ -24,7 +24,7 @@ async fn test_hook_permission_resolver_timeout_while_awaiting_denies() -> Result
         .map_err(|_| "timed out waiting for PermissionRequested")?
         .map_err(|_| "expected a PermissionRequested event")?;
     let request_id = match event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id,
+        SystemEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("expected PermissionRequested, got {other:?}"),
     };
     assert!(
@@ -32,7 +32,7 @@ async fn test_hook_permission_resolver_timeout_while_awaiting_denies() -> Result
             .pending
             .lock()
             .map_err(|_| "pending lock poisoned")?
-            .contains_key(&request_id),
+            .contains_key(request_id.as_str()),
         "the request must be pending before the timeout"
     );
 
@@ -64,7 +64,7 @@ async fn test_hook_permission_resolver_timeout_while_awaiting_denies() -> Result
         .map_err(|_| "timed out waiting for PermissionDecisionTimedOut")?
         .map_err(|_| "expected a PermissionDecisionTimedOut event")?;
     match event {
-        UiEvent::PermissionDecisionTimedOut {
+        SystemEvent::PermissionDecisionTimedOut {
             request_id: timed_out_id,
         } => assert_eq!(
             timed_out_id, request_id,
@@ -95,7 +95,7 @@ async fn test_hook_permission_resolver_timeout_disabled_waits() -> Result<()> {
         .map_err(|_| "timed out waiting for PermissionRequested")?
         .map_err(|_| "expected a PermissionRequested event")?;
     let request_id = match event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id,
+        SystemEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("expected PermissionRequested, got {other:?}"),
     };
 
@@ -112,7 +112,7 @@ async fn test_hook_permission_resolver_timeout_disabled_waits() -> Result<()> {
             .pending
             .lock()
             .map_err(|_| "pending lock poisoned")?
-            .contains_key(&request_id),
+            .contains_key(request_id.as_str()),
         "the request must still be pending while the timeout is disabled"
     );
     resolve_task.abort();

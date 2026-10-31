@@ -1,106 +1,77 @@
 use super::*;
 
 // ---------------------------------------------------------------------------
-// In-place tool block mutation (task 7ab65c6a)
+// In-place tool entry mutation (task 7ab65c6a)
 // ---------------------------------------------------------------------------
 
-/// `start_tool_call` creates exactly one Tool block; `finish_tool_call` mutates
-/// that block's status in place without pushing a new one.
+/// The arguments of the edit calls these tests drive.
+const EDIT_ARGUMENTS: &str = r#"{"path":"a.rs"}"#;
+
+/// `start_tool_call` creates exactly one tool entry; `finish_tool_call` and
+/// `set_tool_preview` mutate that entry in place without pushing a new one.
 #[test]
-fn start_and_finish_tool_call_mutate_one_block_in_place() -> Result<()> {
+fn start_finish_and_preview_mutate_one_entry_in_place() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    let mut evicted = 0usize;
-
-    // -- Exec
-    state.tool.start_tool_call(
-        &mut state.transcript,
-        "read",
-        "{}",
-        CallLine::from_json_summary("{}"),
-        &mut evicted,
-    );
-
-    // -- Check: one Block only — no separate spacer, no separate display entry.
-    assert_eq!(state.transcript.len(), 1);
-    assert!(matches!(
-        state.transcript.blocks()[0].source,
-        BlockSource::Tool { .. }
-    ));
 
     // -- Exec
     state
         .tool
-        .finish_tool_call(&mut state.transcript, "read", "{}", Some(true), None);
+        .start_tool_call(&mut state.transcript, &tool_call("read", "{}"));
 
-    // -- Check: finish must not push a new block.
+    // -- Check: one entry only — no separate spacer, no separate display entry.
     assert_eq!(state.transcript.len(), 1);
-    assert_eq!(state.transcript.blocks()[0].status, Some(ItemStatus::Done));
+    assert_eq!(tool_entry_at(&state, 0)?.status, ItemStatus::InProgress);
 
-    // -- Setup & Fixtures: a preview push with a valid height index.
+    // -- Exec
+    state.tool.finish_tool_call(
+        &mut state.transcript,
+        &ToolCallId::of("read", "{}"),
+        Some(ToolStatus::Success),
+    );
+
+    // -- Check: finish must not push a new entry.
+    assert_eq!(state.transcript.len(), 1);
+    assert_eq!(tool_entry_at(&state, 0)?.status, ItemStatus::Done);
+
+    // -- Setup & Fixtures: a preview set with a valid height index.
     let mut preview_state = AppState::default();
     let width = 80usize;
-    let mut evicted = 0usize;
     preview_state.tool.start_tool_call(
         &mut preview_state.transcript,
-        "edit",
-        r#"{"path":"a.rs"}"#,
-        CallLine::from_json_summary(r#"{"path":"a.rs"}"#),
-        &mut evicted,
+        &tool_call("edit", EDIT_ARGUMENTS),
     );
     preview_state.transcript.rebuild_height_index(width);
+    let rows_before = preview_state.transcript.total_visual_rows();
     assert!(
         preview_state.transcript.height_index_valid_for(width),
-        "precondition: index must be valid before the preview push"
+        "precondition: index must be valid before the preview is set"
     );
 
     // -- Exec
-    let preview = Display {
-        title: Some("edit a.rs".to_string()),
-        sections: vec![DisplaySection {
-            label: Some("changes".to_string()),
-            kind: ContentKind::Diff {
-                language: "diff".to_string(),
-                path: "test.rs".to_string(),
-            },
-            content: "--- a\n+++ b\n".to_string(),
-            stats: None,
-        }],
-    };
-    let mut preview_evicted = 0usize;
+    let preview = edit_preview();
     preview_state.tool.set_tool_preview(
         &mut preview_state.transcript,
-        "edit",
-        r#"{"path":"a.rs"}"#,
-        preview,
-        &mut preview_evicted,
+        &ToolCallId::of("edit", EDIT_ARGUMENTS),
+        &preview,
     );
 
-    // -- Check: the Tool block keeps no preview and no fill; the preview is a
-    // separate ToolDisplay block pushed directly after it.
-    assert_eq!(preview_state.transcript.len(), 2);
-    let tool_block = preview_state
-        .transcript
-        .blocks()
-        .first()
-        .ok_or("should have tool block")?;
-    assert!(matches!(
-        tool_block.source,
-        BlockSource::Tool { preview: None, .. }
-    ));
-    assert_eq!(tool_block.fill, Fill::None);
+    // -- Check: the preview lands on the entry and pushes nothing.
+    assert_eq!(preview_state.transcript.len(), 1);
+    let entry = tool_entry_at(&preview_state, 0)?;
+    assert_eq!(entry.preview.as_ref(), Some(&preview));
 
-    let preview_block = preview_state
-        .transcript
-        .blocks()
-        .get(1)
-        .ok_or("should have preview block")?;
-    assert!(matches!(
-        preview_block.source,
-        BlockSource::ToolDisplay { .. }
-    ));
-    assert_eq!(preview_block.fill, Fill::Code);
-    assert!(tool_display_lines(preview_block).contains("+++ b"));
+    // -- Check: the in-place mutation marks the index stale; the rebuild
+    // accounts for the preview rows.
+    assert!(
+        !preview_state.transcript.height_index_valid_for(width),
+        "an in-place preview mutation must invalidate the height index"
+    );
+    preview_state.transcript.rebuild_height_index(width);
+    assert!(
+        preview_state.transcript.total_visual_rows() > rows_before,
+        "the preview content must add visual rows after the rebuild"
+    );
     Ok(())
 }
 
@@ -108,97 +79,71 @@ fn start_and_finish_tool_call_mutate_one_block_in_place() -> Result<()> {
 // Preview-path height index (task 69706655)
 // ---------------------------------------------------------------------------
 
-/// `set_tool_preview` inserts its ToolDisplay block through `insert_block_at`,
-/// which maintains the height index incrementally. The index must therefore
-/// stay valid — and equal to a wholesale rebuild — after the preview insert,
-/// both when the preview lands at the tail and when it lands mid-list.
+/// `set_tool_preview` mutates the tool entry in place and marks the height
+/// index stale. A rebuild must therefore agree with a wholesale rebuild, both
+/// when the tool entry is last and when another entry follows it.
 #[test]
-fn set_tool_preview_keeps_height_index_valid() -> Result<()> {
+fn set_tool_preview_invalidates_and_rebuilds_to_a_wholesale_index() -> Result<()> {
     // -- Setup & Fixtures: a tool call with a valid index at width 80.
     let width = 80usize;
     let mut state = AppState::default();
-    let mut evicted = 0usize;
-    state.tool.start_tool_call(
-        &mut state.transcript,
-        "edit",
-        r#"{"path":"a.rs"}"#,
-        CallLine::from_json_summary(r#"{"path":"a.rs"}"#),
-        &mut evicted,
-    );
+    state
+        .tool
+        .start_tool_call(&mut state.transcript, &tool_call("edit", EDIT_ARGUMENTS));
     state.transcript.rebuild_height_index(width);
     assert!(
         state.transcript.height_index_valid_for(width),
-        "precondition: index must be valid before the preview insert"
+        "precondition: index must be valid before the preview is set"
     );
 
-    // -- Exec: the preview lands at the tail (block 0, insert at 1).
-    let mut preview_evicted = 0usize;
+    // -- Exec: the preview lands on the tail entry.
     state.tool.set_tool_preview(
         &mut state.transcript,
-        "edit",
-        r#"{"path":"a.rs"}"#,
-        edit_preview(),
-        &mut preview_evicted,
+        &ToolCallId::of("edit", EDIT_ARGUMENTS),
+        &edit_preview(),
     );
 
-    // -- Check: the index is still valid and matches a wholesale rebuild.
-    assert_eq!(state.transcript.len(), 2);
-    assert!(
-        state.transcript.height_index_valid_for(width),
-        "a tail preview insert must leave the height index valid"
-    );
+    // -- Check: one entry, stale index, rebuild matches a wholesale rebuild.
+    assert_eq!(state.transcript.len(), 1);
+    assert!(!state.transcript.height_index_valid_for(width));
+    state.transcript.rebuild_height_index(width);
     assert_eq!(
         state.transcript.total_visual_rows(),
         wholesale_total_rows(&state, width),
-        "the incremental index must match a wholesale rebuild after a tail preview insert"
+        "the rebuilt index must match a wholesale rebuild after a tail preview"
     );
 
-    // -- Setup & Fixtures: a mid-list insert — a user block after the tool call.
+    // -- Setup & Fixtures: a user entry after the tool entry.
     let mut mid = AppState::default();
-    let mut evicted = 0usize;
-    mid.tool.start_tool_call(
-        &mut mid.transcript,
-        "edit",
-        r#"{"path":"a.rs"}"#,
-        CallLine::from_json_summary(r#"{"path":"a.rs"}"#),
-        &mut evicted,
-    );
-    mid.transcript.push_block(Block {
-        source: BlockSource::Markdown {
+    mid.tool
+        .start_tool_call(&mut mid.transcript, &tool_call("edit", EDIT_ARGUMENTS));
+    mid.transcript
+        .push_entry(TranscriptEntry::Message(MessageEntry {
             role: MessageRole::User,
             markdown: "later turn".to_string(),
-        },
-        lane: Lane::Marker("\u{258f}"),
-        fill: Fill::Full,
-        status: None,
-    });
+        }));
     mid.transcript.rebuild_height_index(width);
     assert!(
         mid.transcript.height_index_valid_for(width),
-        "precondition: index must be valid before the mid-list preview insert"
+        "precondition: index must be valid before the preview is set"
     );
 
-    // -- Exec: the preview lands at index 1, before the user block.
-    let mut preview_evicted = 0usize;
+    // -- Exec: the preview lands on the first entry, before the user entry.
     mid.tool.set_tool_preview(
         &mut mid.transcript,
-        "edit",
-        r#"{"path":"a.rs"}"#,
-        edit_preview(),
-        &mut preview_evicted,
+        &ToolCallId::of("edit", EDIT_ARGUMENTS),
+        &edit_preview(),
     );
 
-    // -- Check: the mid-list insert keeps the index valid and equal to a
-    // wholesale rebuild.
-    assert_eq!(mid.transcript.len(), 3);
-    assert!(
-        mid.transcript.height_index_valid_for(width),
-        "a mid-list preview insert must leave the height index valid"
-    );
+    // -- Check: the mutation keeps the entry count, invalidates the index, and
+    // the rebuild matches a wholesale rebuild.
+    assert_eq!(mid.transcript.len(), 2);
+    assert!(!mid.transcript.height_index_valid_for(width));
+    mid.transcript.rebuild_height_index(width);
     assert_eq!(
         mid.transcript.total_visual_rows(),
         wholesale_total_rows(&mid, width),
-        "the incremental index must match a wholesale rebuild after a mid-list preview insert"
+        "the rebuilt index must match a wholesale rebuild after a mid-list preview"
     );
     Ok(())
 }

@@ -16,7 +16,7 @@ pub(super) use agent_client_protocol::schema::v1::{
 };
 pub(super) use agent_client_protocol::{Agent, Channel, Client, ConnectionTo};
 pub(super) use agnt_core::bus::{
-    Bus, CancelEvent, CompactionEvent, OneshotTx, SessionEvent, TurnEvent, TurnRx, create_bus,
+    Bus, CancelEvent, OneshotTx, SessionEvent, TurnEvent, TurnRx, create_bus,
 };
 pub(super) use agnt_core::compaction::CompactionParams;
 pub(super) use agnt_core::config::{AgentsConfig, Config, ModelsCache, defaults};
@@ -30,6 +30,7 @@ pub(super) use agnt_core::conversation::state::{
 pub(super) use agnt_core::hook::DoomLoopState;
 pub(super) use agnt_core::hook::output_repetition::RepetitionState;
 pub(super) use agnt_core::protocol::event::PermissionDecision;
+pub(super) use agnt_core::protocol::events::SystemEvent;
 pub(super) use agnt_core::session::{RigStoreConfig, StoreType};
 pub(super) use agnt_core::tools::authz::{PermissionsConfig, SessionGrantCache};
 pub(super) use agnt_core::tools::closure::ClosureRegistry;

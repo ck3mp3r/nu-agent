@@ -1,9 +1,9 @@
 use agnt_core::protocol::contracts::SharedUiAction;
+use agnt_core::protocol::events::Key;
 use agnt_core::protocol::picker::{AgentPickerOption, ModelPickerOption};
 use agnt_core::protocol::slash::SlashCommand;
 
 use super::*;
-use crate::interaction::reducer::UserAction;
 use crate::state::CommandPaletteAction;
 
 // region:    --- Types
@@ -41,6 +41,10 @@ pub struct PickerOption {
     pub id: String,
     pub display: String,
     pub search_text: String,
+    /// The group this option belongs to; `None` renders the picker flat. The
+    /// picker table derives one section-head row per contiguous run of the same
+    /// key from the FILTERED options, so the heads are never stored as items.
+    pub section: Option<String>,
     pub payload: PickerPayload,
     /// Sort key attached at the conversion boundary; empty = keep insertion order.
     pub sort_key: Vec<PickerSortKeyPart>,
@@ -100,6 +104,19 @@ pub enum SubmitAction {
     Launch(ActivePicker),
     Command(CommandPaletteAction),
     SlashAccept,
+}
+
+/// What the active picker did with a key. `Pass` hands the key to the lenses
+/// below the picker (the permission card, the agent chord, the keymap).
+pub enum PickerKeyOutcome {
+    /// The picker owns the key; the payload reports whether state changed.
+    Consumed(bool),
+    /// The picker resolved a submit action for the reducer to apply.
+    Submit(SubmitAction),
+    /// The command palette resolves Ctrl-C to a quit.
+    Quit,
+    /// Not the picker's key.
+    Pass,
 }
 
 #[derive(Debug, Clone)]
@@ -366,99 +383,97 @@ impl PickerContainer {
         }
     }
 
-    pub fn handle_action(&mut self, action: UserAction) -> (UserAction, bool) {
+    /// The label of the selected inline-slash option, when the active picker has
+    /// one. The accept path submits this text, so the picker owns the lookup.
+    pub fn selected_slash_label(&self) -> Option<String> {
+        let opt = self.active_state()?.selected()?;
+        match &opt.payload {
+            PickerPayload::Slash(command) => Some(command.label().to_string()),
+            _ => None,
+        }
+    }
+
+    pub fn handle_key(&mut self, key: Key) -> PickerKeyOutcome {
         let Some(entry) = self.active_entry_mut() else {
-            return (action, false);
+            return PickerKeyOutcome::Pass;
         };
         match entry.kind {
-            ActivePicker::CommandPalette => match action {
-                UserAction::Quit => (UserAction::Quit, true),
+            ActivePicker::CommandPalette => match key {
+                Key::CtrlC => PickerKeyOutcome::Quit,
                 other => Self::query_picker(entry, other, true),
             },
             ActivePicker::Model
             | ActivePicker::Agent
             | ActivePicker::Session
-            | ActivePicker::Theme => Self::query_picker(entry, action, true),
-            ActivePicker::InlineSlash => match action {
-                UserAction::Submit | UserAction::CompleteForward => {
-                    (UserAction::PickerSubmit(SubmitAction::SlashAccept), true)
-                }
-                UserAction::Esc => {
+            | ActivePicker::Theme => Self::query_picker(entry, key, true),
+            ActivePicker::InlineSlash => match key {
+                Key::Enter | Key::Tab => PickerKeyOutcome::Submit(SubmitAction::SlashAccept),
+                Key::Esc => {
                     entry.state.close();
-                    (UserAction::Noop, true)
+                    PickerKeyOutcome::Consumed(true)
                 }
-                UserAction::ScrollLineUp
-                | UserAction::HistoryUp
-                | UserAction::ToggleCommandPalette
-                | UserAction::QueryPrev => {
+                Key::Up | Key::CtrlP | Key::CtrlK => {
                     entry.state.move_up();
-                    (UserAction::Noop, true)
+                    PickerKeyOutcome::Consumed(true)
                 }
-                UserAction::ScrollLineDown | UserAction::HistoryDown | UserAction::QueryNext => {
+                Key::Down | Key::CtrlN | Key::CtrlJ => {
                     entry.state.move_down();
-                    (UserAction::Noop, true)
+                    PickerKeyOutcome::Consumed(true)
                 }
-                UserAction::ScrollPageUp => {
+                Key::PageUp | Key::CtrlU => {
                     entry.state.move_page_up();
-                    (UserAction::Noop, true)
+                    PickerKeyOutcome::Consumed(true)
                 }
-                UserAction::ScrollPageDown => {
+                Key::PageDown | Key::CtrlD => {
                     entry.state.move_page_down();
-                    (UserAction::Noop, true)
+                    PickerKeyOutcome::Consumed(true)
                 }
-                other => (other, false),
+                _ => PickerKeyOutcome::Pass,
             },
-            ActivePicker::None => (action, false),
+            ActivePicker::None => PickerKeyOutcome::Pass,
         }
     }
 
-    fn query_picker(
-        entry: &mut PickerEntry,
-        action: UserAction,
-        edit_query: bool,
-    ) -> (UserAction, bool) {
-        match action {
-            UserAction::Esc => {
+    fn query_picker(entry: &mut PickerEntry, key: Key, edit_query: bool) -> PickerKeyOutcome {
+        match key {
+            Key::Esc => {
                 entry.state.close();
-                (UserAction::Noop, true)
+                PickerKeyOutcome::Consumed(true)
             }
-            UserAction::Submit => {
+            Key::Enter => {
                 let Some(resolved) = Self::resolve_submit(entry) else {
                     // No selection: Enter dismisses the picker without dispatching
                     // the entry's placeholder submit action.
                     entry.state.close();
-                    return (UserAction::Noop, true);
+                    return PickerKeyOutcome::Consumed(true);
                 };
-                (UserAction::PickerSubmit(resolved), true)
+                PickerKeyOutcome::Submit(resolved)
             }
-            UserAction::ScrollLineUp
-            | UserAction::HistoryUp
-            | UserAction::ToggleCommandPalette
-            | UserAction::QueryPrev => {
+            Key::Up | Key::CtrlP | Key::CtrlK => {
                 entry.state.move_up();
-                (UserAction::Noop, true)
+                PickerKeyOutcome::Consumed(true)
             }
-            UserAction::ScrollLineDown | UserAction::HistoryDown | UserAction::QueryNext => {
+            Key::Down | Key::CtrlN | Key::CtrlJ => {
                 entry.state.move_down();
-                (UserAction::Noop, true)
+                PickerKeyOutcome::Consumed(true)
             }
-            UserAction::ScrollPageUp => {
+            Key::PageUp | Key::CtrlU => {
                 entry.state.move_page_up();
-                (UserAction::Noop, true)
+                PickerKeyOutcome::Consumed(true)
             }
-            UserAction::ScrollPageDown => {
+            Key::PageDown | Key::CtrlD => {
                 entry.state.move_page_down();
-                (UserAction::Noop, true)
+                PickerKeyOutcome::Consumed(true)
             }
-            UserAction::Backspace if edit_query => {
+            Key::Backspace if edit_query => {
                 entry.state.backspace_query_char();
-                (UserAction::Noop, true)
+                PickerKeyOutcome::Consumed(true)
             }
-            UserAction::InsertChar(ch) if edit_query => {
+            Key::Char(ch) if edit_query => {
                 entry.state.append_query_char(ch);
-                (UserAction::Noop, true)
+                PickerKeyOutcome::Consumed(true)
             }
-            _ => (UserAction::Noop, true),
+            _ => PickerKeyOutcome::Consumed(true),
         }
     }
 
@@ -510,6 +525,7 @@ impl From<ModelPickerOption> for PickerOption {
             id: opt.identity.clone(),
             display: opt.display.clone(),
             search_text,
+            section: Some(opt.provider.clone()),
             sort_key: vec![
                 PickerSortKeyPart::Asc(opt.provider.to_ascii_lowercase()),
                 PickerSortKeyPart::First(!opt.configured),
@@ -534,6 +550,7 @@ impl From<AgentPickerOption> for PickerOption {
             id: opt.name.clone(),
             display: opt.display.clone(),
             search_text,
+            section: None,
             sort_key: vec![PickerSortKeyPart::Asc(opt.name.to_ascii_lowercase())],
             payload: PickerPayload::Agent {
                 name: opt.name,
@@ -551,6 +568,7 @@ impl From<agnt_core::session::SessionInfo> for PickerOption {
             id: info.id.clone(),
             display: display.clone(),
             search_text: display.clone(),
+            section: Some(session_day(info.last_active).to_string()),
             sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(
                 info.last_active,
             ))],
@@ -665,6 +683,13 @@ impl AppState {
 
 fn sort_picker_options(options: &mut [PickerOption]) {
     options.sort_by(|a, b| a.sort_key.cmp(&b.sort_key));
+}
+
+/// The local calendar day a timestamp falls on. The session options carry it
+/// as their section key and the session picker labels its day heads from it, so
+/// both agree.
+pub(crate) fn session_day(timestamp: chrono::DateTime<chrono::Utc>) -> chrono::NaiveDate {
+    timestamp.with_timezone(&chrono::Local).date_naive()
 }
 
 /// Subsequence match: every char of `query` appears in `candidate` in order.

@@ -1,44 +1,36 @@
 use super::*;
 
-/// Pushing blocks grows the store by one content block each (no auto-inserted
+/// Pushing entries grows the store by one content entry each (no auto-inserted
 /// spacers), and a user prompt queued during an external prompt is delivered
 /// exactly once after the external prompt completes.
 #[test]
-fn push_block_and_external_prompt_delivery() -> Result<()> {
+fn push_entry_and_external_prompt_delivery() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    let msg = Message {
-        role: MessageRole::User,
-        markdown: "hi".to_string(),
-    };
 
     // -- Exec
-    state.transcript.push_block(Block {
-        source: msg.source(),
-        lane: msg.lane(),
-        fill: msg.fill(),
-        status: None,
-    });
-    let msg2 = Message {
-        role: MessageRole::Assistant,
-        markdown: "reply".to_string(),
-    };
-    state.transcript.push_block(Block {
-        source: msg2.source(),
-        lane: msg2.lane(),
-        fill: msg2.fill(),
-        status: None,
-    });
+    state
+        .transcript
+        .push_entry(TranscriptEntry::Message(MessageEntry {
+            role: MessageRole::User,
+            markdown: "hi".to_string(),
+        }));
+    state
+        .transcript
+        .push_entry(TranscriptEntry::Message(MessageEntry {
+            role: MessageRole::Assistant,
+            markdown: "reply".to_string(),
+        }));
 
-    // -- Check: two content blocks, no spacers.
+    // -- Check: two content entries, no spacers.
     assert_eq!(state.transcript.len(), 2);
     assert!(matches!(
-        state.transcript.blocks()[0].source,
-        BlockSource::Markdown { .. }
+        state.transcript.entries()[0],
+        TranscriptEntry::Message(_)
     ));
     assert!(matches!(
-        state.transcript.blocks()[1].source,
-        BlockSource::Markdown { .. }
+        state.transcript.entries()[1],
+        TranscriptEntry::Message(_)
     ));
 
     // -- Setup & Fixtures: an external prompt is active.

@@ -17,7 +17,7 @@ use super::test_utils::{MockResolver, message_text, test_compaction_config, test
 use super::*;
 use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
 use crate::hook::output_repetition::{OUTPUT_REPETITION_BACKOFF_MESSAGE, RepetitionState};
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;

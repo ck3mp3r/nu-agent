@@ -90,7 +90,7 @@ fn coordinator_input_error_and_watchdog_fail_fast() -> Result<()> {
     let mut runtime_renderer = TuiRuntimeRenderer::new(inner, ErrorEventSource, 120, 30);
 
     // -- Exec
-    runtime_renderer.emit(&UiEvent::Tick);
+    runtime_renderer.emit(&SystemEvent::Tick);
 
     // -- Check: the failure is surfaced.
     assert!(runtime_renderer.quit_requested());
@@ -392,9 +392,9 @@ fn coordinator_drain_transport_empty_leaves_render_unchanged() -> Result<()> {
 /// that reports no change does not.
 #[test]
 fn coordinator_drain_transport_changed_item_marks_render() -> Result<()> {
-    // -- Setup & Fixtures: a UiEvent that reduces to true.
+    // -- Setup & Fixtures: a SystemEvent that reduces to true.
     let mut changed = RuntimeCoordinator::new(120, 30, Some(true));
-    changed.enqueue_ui_event(UiEvent::Tick);
+    changed.enqueue_event(SystemEvent::Tick);
     changed.set_render_needed(false);
 
     // -- Exec
@@ -403,10 +403,10 @@ fn coordinator_drain_transport_changed_item_marks_render() -> Result<()> {
     // -- Check
     assert!(changed.render_needed());
 
-    // -- Setup & Fixtures: a UiEvent that reduces to false.
+    // -- Setup & Fixtures: a SystemEvent that reduces to false.
     let mut unchanged = RuntimeCoordinator::new(120, 30, Some(true));
-    unchanged.enqueue_ui_event(UiEvent::PermissionDecisionSubmitted {
-        request_id: "ask-0000000000000001".to_string(),
+    unchanged.enqueue_event(SystemEvent::PermissionDecisionSubmitted {
+        request_id: RequestId::new("ask-0000000000000001"),
         decision: PermissionDecision::AllowOnce,
         matched_rule_identity: "nested:nu.command:*".to_string(),
     });

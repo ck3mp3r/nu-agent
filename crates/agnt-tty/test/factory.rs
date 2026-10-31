@@ -1,4 +1,4 @@
-use agnt_core::protocol::event::UiEvent;
+use agnt_core::protocol::events::SystemEvent;
 use agnt_core::renderer::UiRenderer;
 
 use crate::factory::{StderrUiFactory, UiRendererFactory};
@@ -12,8 +12,8 @@ fn factory_creates_renderer_without_core_loop_changes() {
         verbosity: Verbosity::Normal,
     });
 
-    renderer.emit(&UiEvent::Tick);
-    renderer.emit(&UiEvent::Completed {
+    renderer.emit(&SystemEvent::Tick);
+    renderer.emit(&SystemEvent::TurnCompleted {
         tool_calls: 0,
         input_tokens: 0,
         output_tokens: 0,

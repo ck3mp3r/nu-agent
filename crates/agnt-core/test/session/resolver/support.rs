@@ -4,6 +4,7 @@
 //! Sub-files pull them in with `use super::*;`.
 
 pub(super) use crate::protocol::contracts::UiMessageSnapshot;
+pub(super) use crate::session::tool_status::{ToolStatus, ToolStatusMap};
 pub(super) use crate::types::{
     AssistantContent, AssistantMessage, CallId, Message, Text, ToolCall, ToolFunction, ToolName,
     ToolResult, ToolResultContent, UserContent,
@@ -17,7 +18,7 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 pub(super) fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnapshot> {
     let tool_success_map = std::collections::HashMap::new();
     let tool_displays = std::collections::HashMap::new();
-    let tool_not_run = std::collections::HashSet::new();
+    let call_statuses = ToolStatusMap::new();
     messages
         .iter()
         .flat_map(|m| {
@@ -25,7 +26,7 @@ pub(super) fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiM
                 m,
                 &tool_success_map,
                 &tool_displays,
-                &tool_not_run,
+                &call_statuses,
             )
         })
         .collect()
@@ -33,9 +34,19 @@ pub(super) fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiM
 
 // -- Test Support
 
-/// Hydrate `messages` into transcript snapshots, as the resolver does.
+/// Hydrate `messages` into transcript snapshots, as a session with no recorded
+/// statuses hydrates them: every row reads its stored verdict.
 pub(super) fn hydrate(messages: &[Message], cwd: &std::path::Path) -> Vec<UiMessageSnapshot> {
-    super::resolver::hydrate_transcript_messages(messages, cwd)
+    hydrate_with_statuses(messages, cwd, &ToolStatusMap::new())
+}
+
+/// Hydrate `messages` with the structural statuses `statuses` carries.
+pub(super) fn hydrate_with_statuses(
+    messages: &[Message],
+    cwd: &std::path::Path,
+    statuses: &ToolStatusMap,
+) -> Vec<UiMessageSnapshot> {
+    super::resolver::hydrate_transcript_messages(messages, cwd, statuses)
 }
 
 /// Build [assistant ToolCall, user ToolResult] messages for one call whose

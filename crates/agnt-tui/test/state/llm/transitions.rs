@@ -8,7 +8,7 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
     let mut idle = AppState::default();
 
     // -- Exec
-    reduce_llm(&mut idle, LlmEvent::Started);
+    reduce_llm(&mut idle, SystemEvent::InferenceStarted);
 
     // -- Check
     assert_eq!(idle.phase, UiPhase::Busy);
@@ -19,7 +19,7 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
     busy.status.message.set_message("Tool: prior");
 
     // -- Exec
-    reduce_llm(&mut busy, LlmEvent::Started);
+    reduce_llm(&mut busy, SystemEvent::InferenceStarted);
 
     // -- Check
     assert_eq!(busy.phase, UiPhase::Busy);
@@ -32,14 +32,16 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
     // -- Exec
     reduce_llm(
         &mut state,
-        LlmEvent::Completed {
-            response_chars: 6,
-            tool_calls: 0,
-            input_tokens: 20,
-            output_tokens: 10,
-            total_tokens: Some(30),
-            cost: Some(0.001),
-            cost_complete: true,
+        SystemEvent::InferenceCompleted {
+            usage: Usage {
+                response_chars: 6,
+                tool_calls: 0,
+                input_tokens: 20,
+                output_tokens: 10,
+                total_tokens: Some(30),
+                cost: Some(0.001),
+                cost_complete: true,
+            },
         },
     );
 
@@ -52,14 +54,16 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
     // -- Exec: a second completion accumulates the session total.
     reduce_llm(
         &mut state,
-        LlmEvent::Completed {
-            response_chars: 4,
-            tool_calls: 0,
-            input_tokens: 5,
-            output_tokens: 7,
-            total_tokens: Some(12),
-            cost: Some(0.002),
-            cost_complete: true,
+        SystemEvent::InferenceCompleted {
+            usage: Usage {
+                response_chars: 4,
+                tool_calls: 0,
+                input_tokens: 5,
+                output_tokens: 7,
+                total_tokens: Some(12),
+                cost: Some(0.002),
+                cost_complete: true,
+            },
         },
     );
 
@@ -75,14 +79,16 @@ fn llm_start_transitions_phase_and_locks_input() -> Result<()> {
     // -- Exec
     reduce_llm(
         &mut busy,
-        LlmEvent::Completed {
-            response_chars: 12,
-            tool_calls: 0,
-            input_tokens: 4,
-            output_tokens: 8,
-            total_tokens: Some(12),
-            cost: None,
-            cost_complete: false,
+        SystemEvent::InferenceCompleted {
+            usage: Usage {
+                response_chars: 12,
+                tool_calls: 0,
+                input_tokens: 4,
+                output_tokens: 8,
+                total_tokens: Some(12),
+                cost: None,
+                cost_complete: false,
+            },
         },
     );
 

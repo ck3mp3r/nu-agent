@@ -13,8 +13,8 @@ async fn test_hooks_runner_permission_requested_invokes_with_payload() -> Result
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionRequested {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionRequested {
+            request_id: RequestId::new("req-1"),
             context: permission_context(),
         })
         .await;
@@ -55,8 +55,8 @@ async fn test_hooks_runner_permission_requested_payload_omits_pre_authorize_disp
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionRequested {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionRequested {
+            request_id: RequestId::new("req-1"),
             context: permission_context(),
         })
         .await;
@@ -92,8 +92,8 @@ async fn test_hooks_runner_permission_requested_stamps_session_id() -> Result<()
         .await;
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionRequested {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionRequested {
+            request_id: RequestId::new("req-1"),
             context: permission_context(),
         })
         .await;
@@ -126,8 +126,13 @@ async fn test_hooks_runner_permission_requested_ignores_tool_preview() -> Result
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::ToolPreview {
-            tool_key: "nu\n{\"command\":\"ls\"}".to_string(),
+        .send(SystemEvent::PreviewRequested {
+            call: ToolCall::new(
+                ToolName("nu".to_string()),
+                "builtin",
+                "{\"command\":\"ls\"}",
+                crate::protocol::tool_args::CallLine::from_json_summary("{}"),
+            ),
             display: ToolDisplay {
                 title: Some("preview".to_string()),
                 sections: Vec::new(),

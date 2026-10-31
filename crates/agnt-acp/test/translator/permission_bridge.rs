@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use agnt_core::protocol::event::{PermissionDecision, UiEvent};
+use agnt_core::protocol::event::PermissionDecision;
+use agnt_core::protocol::events::SystemEvent;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;
@@ -56,7 +57,7 @@ async fn test_translator_drain_resolves_pending_permission_with_client_decision(
         .request_permission(permission_context())
         .await
         .map_err(|e| format!("should publish: {e:?}"))?;
-    let decision_rx = register_pending(&pending, &request_id);
+    let decision_rx = register_pending(&pending, request_id.as_str());
     drop(bus);
 
     // -- Exec
@@ -100,9 +101,9 @@ async fn test_translator_drain_denies_pending_permission_when_sink_fails() -> Re
     let mut bridge = permission_bridge(selected("allow-once"), Arc::clone(&pending));
     let decision_rx = register_pending(&pending, "perm-never-answered");
     bus.ui_event()
-        .send(UiEvent::AssistantMessage {
+        .send(SystemEvent::InferenceChunk {
             delta: "dropped".to_string(),
-            text: "dropped".to_string(),
+            aggregated: "dropped".to_string(),
         })
         .await
         .map_err(|e| format!("should publish: {e:?}"))?;

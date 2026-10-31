@@ -1,13 +1,11 @@
 use super::*;
 
-use crate::rendering::theme::ThemeName;
-
 // ---------------------------------------------------------------------------
 // Height index — measure()-based (task 53012ecc)
 // ---------------------------------------------------------------------------
 
 /// The height index totals the measured rows plus the separator rows the
-/// SpacerStateMachine decides, exposes a viewport-covering block range, and
+/// planner's gap rules decide, exposes a viewport-covering block range, and
 /// matches the layout row count for wrapping prose.
 #[test]
 fn height_index_totals_windows_and_matches_layout() -> Result<()> {
@@ -22,16 +20,17 @@ fn height_index_totals_windows_and_matches_layout() -> Result<()> {
 
     // -- Check: total = measure sum + separator rows (0 before the first block,
     // 2 between the two prose blocks).
+    let probe = crate::widgets::RatatuiBackend::new(80, 0);
     let measured: usize = state
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|block| crate::tui_renderer::measure(block, width, &TuiTheme::default()))
+        .map(|entry| agnt_render::RenderBackend::measure(&probe, entry, width))
         .sum();
     assert_eq!(
         state.transcript.total_visual_rows(),
         measured + 2,
-        "total_rows must equal measure sum plus SM separator rows"
+        "total_rows must equal measure sum plus planner separator rows"
     );
 
     // -- Setup & Fixtures: five user blocks.
@@ -93,14 +92,10 @@ fn height_index_incremental_matches_wholesale_rebuild() -> Result<()> {
     push_assistant(&mut state, "streamed delta one");
     assert_incremental_matches(&state, width, "after a markdown push")?;
 
-    // -- Exec & Check: a pre-projected ToolDisplay push (code fill, so the
-    // block carries margin rows).
-    state.transcript.push_block(tool_display_block());
-    assert_incremental_matches(&state, width, "after a ToolDisplay push")?;
-
-    // -- Exec & Check: an insert in the middle of the list.
-    state.transcript.insert_block_at(1, tool_display_block());
-    assert_incremental_matches(&state, width, "after a mid-list insert")?;
+    // -- Exec & Check: a tool push whose diff display takes the code fill (so
+    // the entry carries margin rows).
+    state.transcript.push_entry(diff_tool_entry());
+    assert_incremental_matches(&state, width, "after a tool push")?;
 
     // -- Exec & Check: a truncate drops the tail.
     state.transcript.truncate(2);
@@ -122,101 +117,58 @@ fn height_index_incremental_survives_cap_eviction() -> Result<()> {
     push_user(&mut state, "seed");
     state.transcript.rebuild_height_index(width);
 
-    // -- Exec: push past the cap so the oldest blocks are evicted.
-    for i in 0..MAX_TRANSCRIPT_BLOCKS {
+    // -- Exec: push past the cap so the oldest entries are evicted.
+    for i in 0..MAX_TRANSCRIPT_ENTRIES {
         push_assistant(&mut state, &format!("line {i}"));
     }
 
     // -- Check: the store holds exactly the cap, and the index still matches a
     // wholesale rebuild of the survivors.
-    assert_eq!(state.transcript.blocks().len(), MAX_TRANSCRIPT_BLOCKS);
+    assert_eq!(state.transcript.entries().len(), MAX_TRANSCRIPT_ENTRIES);
     assert_incremental_matches(&state, width, "after cap eviction")?;
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Height index — theme-blind measure invariant (task 4e532fb9)
+// Height index — geometry against the backend measure
 // ---------------------------------------------------------------------------
 
-/// Measurement reads zero theme data, so every block measures to the same row
-/// count under any theme, and the store's index — built with
-/// `TuiTheme::default()` — agrees with a measure under either theme. Pins the
-/// invariant declared on [`crate::tui_renderer::measure`]: if measurement ever
-/// reads theme data, the Latte assertions diverge from the Mocha-built index.
+/// Every entry's rows come from the backend the pane paints with, so the index
+/// is a pure function of the entries and the width: the total is the measure
+/// sum plus the planner's gap rows, and block 1 starts after block 0's
+/// measured rows. The measure reads no theme data by construction — the
+/// backend's `measure` takes no theme.
 #[test]
-fn height_index_measure_is_theme_independent() -> Result<()> {
+fn height_index_rows_match_backend_measure() -> Result<()> {
     // -- Setup & Fixtures
-    let mocha = ThemeName::CatppuccinMocha.resolve();
-    let latte = ThemeName::CatppuccinLatte.resolve();
-    assert_ne!(
-        mocha, latte,
-        "the two themes must differ, or the equality checks below are vacuous"
-    );
-
     let width = 40;
     let long_prose = vec!["abc"; 60].join(" ");
-    let mut state = AppState::default();
-    push_user(&mut state, &long_prose);
-    push_assistant(&mut state, "plain **bold** and `inline code` spans");
-    state.transcript.push_block(tool_display_block());
-    let mut in_progress = tool_display_block();
-    in_progress.status = Some(ItemStatus::InProgress);
-    state.transcript.push_block(in_progress);
-    state.transcript.rebuild_height_index(width);
-
-    // -- Exec & Check: the markdown fixture really projects multiple spans, so
-    // the multi-span measure path is exercised.
-    let blocks = state.transcript.blocks();
-    let markdown_block = blocks.get(1).ok_or("should have the markdown block")?;
-    let multi_span = markdown_block
-        .source
-        .project(width)
-        .iter()
-        .any(|line| line.spans.len() > 1);
-    assert!(
-        multi_span,
-        "the markdown fixture must project a multi-span ContentLine"
-    );
-
-    // -- Exec & Check: every block measures to the same row count under both
-    // themes.
-    for (index, block) in blocks.iter().enumerate() {
-        let mocha_rows = crate::tui_renderer::measure(block, width, &mocha);
-        let latte_rows = crate::tui_renderer::measure(block, width, &latte);
-        assert_eq!(
-            mocha_rows, latte_rows,
-            "block {index} must measure identically under both themes"
-        );
-    }
-
-    // -- Setup & Fixtures: a user+assistant prose sequence, so the separator
-    // rows between the two blocks are exactly 2.
     let mut prose = AppState::default();
     push_user(&mut prose, &long_prose);
     push_assistant(&mut prose, "reply");
     prose.transcript.rebuild_height_index(width);
-    let prose_blocks = prose.transcript.blocks();
-    let first_prose_block = prose_blocks.first().ok_or("should have block 0")?;
+    let probe = crate::widgets::RatatuiBackend::new(40, 0);
+    let entries = prose.transcript.entries();
+    let first = entries.first().ok_or("should have entry 0")?;
 
-    // -- Exec & Check: the index agrees with a per-block measure under either
-    // theme — the total is the measure sum plus the 2 separator rows, and block
-    // 1 starts after block 0's measured rows.
-    for (name, theme) in [("mocha", &mocha), ("latte", &latte)] {
-        let measured: usize = prose_blocks
-            .iter()
-            .map(|block| crate::tui_renderer::measure(block, width, theme))
-            .sum();
-        assert_eq!(
-            prose.transcript.total_visual_rows(),
-            measured + 2,
-            "total rows must equal the {name} measure sum plus separator rows"
-        );
-        assert_eq!(
-            prose.transcript.start_row_of(1),
-            crate::tui_renderer::measure(first_prose_block, width, theme),
-            "block 1 must start after block 0's {name} measured rows"
-        );
-    }
+    // -- Exec & Check: the total is the measure sum plus the 2 separator rows
+    // (user → assistant base 2, of which the assistant's kept top padding row
+    // takes 1), and entry 1's cumulative start is the end of entry 0's measured
+    // rows — the gap before entry 1 belongs to entry 1's own span.
+    let measured: usize = entries
+        .iter()
+        .map(|entry| agnt_render::RenderBackend::measure(&probe, entry, width))
+        .sum();
+    assert_eq!(
+        prose.transcript.total_visual_rows(),
+        measured + 2,
+        "total rows must equal the measure sum plus separator rows"
+    );
+    assert_eq!(
+        prose.transcript.start_row_of(1),
+        agnt_render::RenderBackend::measure(&probe, first, width),
+        "entry 1 must start after entry 0's measured rows"
+    );
     Ok(())
 }
 
@@ -238,7 +190,7 @@ fn assert_incremental_matches(state: &AppState, width: usize, context: &str) -> 
         wholesale.total_visual_rows(),
         "incremental total must equal a wholesale rebuild {context}"
     );
-    for index in 0..state.transcript.blocks().len() {
+    for index in 0..state.transcript.entries().len() {
         assert_eq!(
             state.transcript.start_row_of(index),
             wholesale.start_row_of(index),
@@ -248,9 +200,9 @@ fn assert_incremental_matches(state: &AppState, width: usize, context: &str) -> 
     Ok(())
 }
 
-/// A pre-projected ToolDisplay block carrying a diff section, so the block
-/// takes the code fill and its margin rows.
-fn tool_display_block() -> Block {
+/// A tool entry whose result is a diff display, so the entry takes the code
+/// fill and its margin rows.
+fn diff_tool_entry() -> TranscriptEntry {
     let display = Display {
         title: Some("edit".to_string()),
         sections: vec![DisplaySection {
@@ -263,12 +215,18 @@ fn tool_display_block() -> Block {
             stats: None,
         }],
     };
-    Block {
-        source: BlockSource::ToolDisplay {
-            lines: display.project_lines(),
-        },
-        lane: Lane::Blank,
-        fill: Fill::from_preview(&Some(display)),
-        status: None,
-    }
+    TranscriptEntry::Tool(ToolEntry {
+        kind: ToolKind::Edit,
+        call: ToolCall::new(
+            ToolName("edit".to_string()),
+            "",
+            r#"{"path":"src/main.rs"}"#,
+            CallLine {
+                summary: "→ src/main.rs".to_string(),
+            },
+        ),
+        preview: None,
+        result: Some(display),
+        status: ItemStatus::Done,
+    })
 }

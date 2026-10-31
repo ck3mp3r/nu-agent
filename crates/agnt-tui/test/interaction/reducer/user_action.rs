@@ -1,10 +1,10 @@
 use super::*;
 
 #[test]
-fn table_driven_user_action_noop_and_contract_matrix() {
+fn table_driven_key_noop_and_contract_matrix() {
     struct Case {
         name: &'static str,
-        action: UserAction,
+        event: SystemEvent,
         pre: fn() -> AppState,
     }
 
@@ -23,74 +23,72 @@ fn table_driven_user_action_noop_and_contract_matrix() {
         busy_state_with_clean_transcript()
     }
 
-    fn busy_with_resize_applied() -> AppState {
-        busy_state_with_clean_transcript()
-    }
-
     let cases = vec![
         Case {
             name: "history_up_noop",
-            action: UserAction::HistoryUp,
+            event: SystemEvent::KeyPressed { key: Key::Up },
             pre: busy,
         },
         Case {
             name: "history_down_noop",
-            action: UserAction::HistoryDown,
+            event: SystemEvent::KeyPressed { key: Key::Down },
             pre: busy,
         },
         Case {
             name: "query_prev_noop",
-            action: UserAction::QueryPrev,
+            event: SystemEvent::KeyPressed { key: Key::CtrlK },
             pre: busy,
         },
         Case {
             name: "complete_forward_noop",
-            action: UserAction::CompleteForward,
+            event: SystemEvent::KeyPressed { key: Key::Tab },
             pre: busy,
         },
         Case {
             name: "complete_backward_noop",
-            action: UserAction::CompleteBackward,
+            event: SystemEvent::KeyPressed { key: Key::BackTab },
             pre: busy,
         },
         Case {
             name: "resize_noop",
-            action: UserAction::Resize {
-                columns: 120,
-                rows: 40,
+            event: SystemEvent::Resized {
+                width: 120,
+                height: 40,
             },
-            pre: busy_with_resize_applied,
+            pre: busy,
         },
         Case {
             name: "quit_idle_empty_sets_flag",
-            action: UserAction::Quit,
+            event: SystemEvent::KeyPressed { key: Key::CtrlC },
             pre: idle,
         },
         Case {
             name: "quit_idle_with_text_is_noop",
-            action: UserAction::Quit,
+            event: SystemEvent::KeyPressed { key: Key::CtrlC },
             pre: idle_with_text,
         },
         Case {
             name: "quit_busy_cancels_and_quits",
-            action: UserAction::Quit,
+            event: SystemEvent::KeyPressed { key: Key::CtrlC },
             pre: busy,
         },
         Case {
             name: "esc_idle_enters_normal_mode",
-            action: UserAction::Esc,
+            event: SystemEvent::KeyPressed { key: Key::Esc },
             pre: idle,
         },
         Case {
             name: "insert_q_is_text_not_quit",
-            action: UserAction::InsertChar('q'),
+            event: SystemEvent::KeyPressed {
+                key: Key::Char('q'),
+            },
             pre: idle,
         },
     ];
 
     for case in cases {
         let mut state = (case.pre)();
-        reduce_with_cancel_controller(&mut state, ReducerInput::User(case.action), None);
+        reduce(&mut state, case.event, None);
 
         match case.name {
             "history_up_noop"
@@ -137,15 +135,19 @@ fn esc_esc_restores_and_clears_state_table() {
         input: InputState::default().with_pending_submit_text("first".to_string()),
         ..Default::default()
     };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    reduce(
+        &mut state,
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
     let _ = state.activate_next_prompt();
     state.enqueue_prompt("second".to_string());
     state.enqueue_prompt("third".to_string());
 
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
+    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
     assert_eq!(state.phase, UiPhase::AbortPending);
 
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
+    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(pending_prompt_ids(&state).is_empty());
@@ -156,11 +158,15 @@ fn esc_esc_restores_and_clears_state_table() {
         input: InputState::default().with_pending_submit_text("do work".to_string()),
         ..Default::default()
     };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    reduce(
+        &mut state,
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
     let _ = state.activate_next_prompt();
 
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
+    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
+    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(pending_prompt_ids(&state).is_empty());

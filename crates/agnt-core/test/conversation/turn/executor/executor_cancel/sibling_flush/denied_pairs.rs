@@ -265,16 +265,11 @@ async fn completed_turn_emits_no_cancelled_dispatch_pair() -> Result<()> {
 
     let mut flushed = Vec::new();
     while let Ok(event) = ui_event_rx.try_recv() {
-        if let UiEvent::ToolCompleted {
-            name,
-            error_kind,
-            message,
-            ..
-        } = &event
-            && (error_kind.as_deref() == Some("cancelled")
-                || message.as_deref() == Some(CANCELLED_DISPATCH_MESSAGE))
+        if let SystemEvent::ToolCompleted { call, outcome } = &event
+            && (outcome.error_kind.as_deref() == Some("cancelled")
+                || outcome.message.as_deref() == Some(CANCELLED_DISPATCH_MESSAGE))
         {
-            flushed.push(name.clone());
+            flushed.push(call.name.0.clone());
         }
     }
     assert!(

@@ -3,13 +3,14 @@ use std::time::Duration;
 use agnt_core::bus::Bus;
 use agnt_core::orchestrator::OrchestratorEvent;
 use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::protocol::event::UiEvent;
+use agnt_core::protocol::events::SystemEvent;
 use agnt_core::renderer::UiRenderer;
 use tokio::sync::mpsc;
 
 use crate::interaction::cancel::CancelController;
 use crate::interaction::input::{TerminalEvent, TerminalKey};
 use crate::runtime::{HybridTerminalEvents, RuntimeCoordinator};
+use crate::test_support::entry_text;
 
 use super::{TuiInteractiveUi, run_render_loop};
 
@@ -18,7 +19,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 struct FakeRenderer;
 
 impl UiRenderer for FakeRenderer {
-    fn emit(&mut self, _event: &UiEvent) {}
+    fn emit(&mut self, _event: &SystemEvent) {}
     fn flush(&mut self) {}
 }
 
@@ -117,14 +118,14 @@ fn hydrate_transcript_restores_the_persisted_messages_and_tokens_once() {
         Some(1234),
     );
 
-    let blocks = ui.renderer.coordinator.state.transcript.blocks();
+    let entries = ui.renderer.coordinator.state.transcript.entries();
     assert_eq!(
-        blocks.len(),
+        entries.len(),
         2,
         "each restored message renders exactly once"
     );
-    assert_eq!(blocks[0].source.plain_text(), "restored question");
-    assert_eq!(blocks[1].source.plain_text(), "restored answer");
+    assert_eq!(entry_text(&entries[0]), "restored question");
+    assert_eq!(entry_text(&entries[1]), "restored answer");
     assert_eq!(
         ui.renderer
             .coordinator
@@ -142,7 +143,14 @@ fn hydrate_transcript_with_no_messages_leaves_the_transcript_empty() {
 
     ui.hydrate_transcript(Vec::new(), None);
 
-    assert!(ui.renderer.coordinator.state.transcript.blocks().is_empty());
+    assert!(
+        ui.renderer
+            .coordinator
+            .state
+            .transcript
+            .entries()
+            .is_empty()
+    );
     assert_eq!(
         ui.renderer
             .coordinator
@@ -157,9 +165,9 @@ fn hydrate_transcript_with_no_messages_leaves_the_transcript_empty() {
 #[test]
 fn permission_event_requested_opens_permission_prompt() -> Result<()> {
     let mut ui = make_ui();
-    let event = agnt_core::bus::PermissionEvent::Requested {
-        request_id: "ask-0000000000000001".to_string(),
-        context: Box::new(agnt_core::protocol::event::PermissionRequestContext {
+    let event = SystemEvent::PermissionRequested {
+        request_id: agnt_core::protocol::events::RequestId::new("ask-0000000000000001"),
+        context: agnt_core::protocol::event::PermissionRequestContext {
             tool: "nu(command=echo hi)".to_string(),
             tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
             source: "closure".to_string(),
@@ -170,15 +178,9 @@ fn permission_event_requested_opens_permission_prompt() -> Result<()> {
             pattern: "*".to_string(),
             summary: "→ {\"command\":\"echo hi\"}".to_string(),
             pre_authorize_display: None,
-        }),
+        },
     };
-    assert!(
-        ui.renderer
-            .coordinator
-            .state
-            .permission
-            .reduce_permission_event(event)
-    );
+    assert!(ui.renderer.coordinator.reduce_system_event(event));
     assert!(ui.renderer.coordinator.state.permission.has_prompt());
     Ok(())
 }
@@ -256,7 +258,7 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
     // Complete the turn. The turn-completion branch must drain the stacked
     // prompt into a PromptSubmitted event without any further terminal input.
     bus.ui_event()
-        .send(UiEvent::Completed {
+        .send(SystemEvent::TurnCompleted {
             tool_calls: 0,
             input_tokens: 0,
             output_tokens: 0,
@@ -266,7 +268,7 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
             duration_ms: 0,
         })
         .await
-        .map_err(|_| "should publish UiEvent::Completed")?;
+        .map_err(|_| "should publish SystemEvent::TurnCompleted")?;
     let second = tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
         .await
         .map_err(|_| "should receive second PromptSubmitted before timeout")?

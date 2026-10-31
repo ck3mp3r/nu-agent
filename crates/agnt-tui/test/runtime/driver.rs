@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use agnt_core::bus::Bus;
 use agnt_core::orchestrator::OrchestratorEvent;
-use agnt_core::protocol::event::UiEvent;
+use agnt_core::protocol::events::SystemEvent;
 use agnt_core::protocol::tool_args::CallLine;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -27,6 +27,8 @@ use crate::interaction::input::TerminalEvent;
 use crate::interactive::run_render_loop;
 use crate::runtime::RuntimeCoordinator;
 use crate::state::AppState;
+use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_core::transcript::renderer::ItemStatus;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -38,9 +40,9 @@ pub(crate) enum DriveEvent {
     Key(TerminalEvent),
     /// Published on the bus ui_event channel like a production stage does.
     ///
-    /// Boxed because `UiEvent` is much larger than `TerminalEvent`; clippy's
+    /// Boxed because `SystemEvent` is much larger than `TerminalEvent`; clippy's
     /// `large_enum_variant` requires the indirection.
-    UiEvent(Box<UiEvent>),
+    SystemEvent(Box<SystemEvent>),
 }
 
 /// A cell from the last rendered frame: where it sits, its glyph, and its
@@ -64,14 +66,15 @@ pub(crate) struct RenderLoopDriver {
 // endregion: --- Types
 
 impl RenderLoopDriver {
-    /// The render loop flushes a frame on its 80 ms interval tick.
-    const RENDER_TICK: Duration = Duration::from_millis(80);
+    /// The render loop's own timer cadence, taken from production so the driver
+    /// settles in lockstep with the loop it drives.
+    const RENDER_TICK: Duration = crate::interactive::RENDER_TICK;
 
     /// Bounded budget for `advance_with_frame` to await the loop's render tick.
     /// The loop's own timer starts before the driver's, so two tick periods
     /// guarantee its tick fires and the frame is flushed before the terminal
     /// channel closes.
-    const FRAME_BUDGET: Duration = Duration::from_millis(250);
+    const FRAME_BUDGET: Duration = Duration::from_millis(500);
 
     // region: Constructors
 
@@ -264,7 +267,7 @@ impl RenderLoopDriver {
         for event in events {
             let delivered = match event {
                 DriveEvent::Key(key) => terminal_tx.send(key.clone()).await.is_ok(),
-                DriveEvent::UiEvent(event) => {
+                DriveEvent::SystemEvent(event) => {
                     self.bus.ui_event().send((**event).clone()).await.is_ok()
                 }
             };
@@ -279,7 +282,7 @@ impl RenderLoopDriver {
         }
 
         if let Some(budget) = settle {
-            // The loop flushes a frame on its 80 ms interval tick. The driver
+            // The loop flushes a pending frame on its render tick. The driver
             // cannot observe a frame while the loop owns the terminal, so await
             // two of the loop's ticks with a bounded budget: the loop's timer
             // starts first, so its tick fires within the first period and the
@@ -366,26 +369,30 @@ async fn render_loop_driver_routes_tool_event_through_bus_ui_event_arm() -> Resu
     // -- Setup & Fixtures
     let mut driver = RenderLoopDriver::new(120, 30);
 
-    // -- Exec: publish a UiEvent on the bus like production stages do.
+    // -- Exec: publish a SystemEvent on the bus like production stages do.
     driver
-        .advance(&[DriveEvent::UiEvent(Box::new(UiEvent::ToolStarted {
-            name: "sentinel_tool".to_string(),
-            source: "mcp".to_string(),
-            arguments: "{}".to_string(),
-            call_line: CallLine::from_json_summary("{}"),
-        }))])
+        .advance(&[DriveEvent::SystemEvent(Box::new(
+            SystemEvent::ToolStarted {
+                call: agnt_core::protocol::events::ToolCall::new(
+                    agnt_core::transcript::ir::ToolName("sentinel_tool".to_string()),
+                    "mcp",
+                    "{}",
+                    CallLine::from_json_summary("{}"),
+                ),
+            },
+        ))])
         .await?;
 
     // -- Check: the loop's ui_event arm reduced the event (the transcript
-    // records the tool). The Block model carries the call summary, not the
-    // tool name, so assert a Tool block materialized with in-progress status.
+    // records the tool entry). The entry carries the call line, not the tool
+    // name, so assert a Tool entry materialized with in-progress status.
     assert!(
-        driver.state().transcript.blocks().iter().any(|block| {
-            matches!(
-                block.source,
-                agnt_core::transcript::ir::BlockSource::Tool { .. }
-            ) && block.status == Some(agnt_core::transcript::renderer::ItemStatus::InProgress)
-        }),
+        driver
+            .state()
+            .transcript
+            .entries()
+            .iter()
+            .any(|entry| matches!(entry, TranscriptEntry::Tool(tool) if tool.status == ItemStatus::InProgress)),
         "tool event must reach the coordinator through the real bus arm"
     );
     Ok(())

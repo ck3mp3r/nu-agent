@@ -94,15 +94,7 @@ fn lane_2_context_line_two_lane_and_updates() -> Result<()> {
         .status
         .tokens
         .set_context_window_max_tokens(Some(128_000));
-    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 40,
-        tool_calls: 0,
-        input_tokens: 2_500,
-        output_tokens: 500,
-        total_tokens: Some(3_000),
-        cost: None,
-        cost_complete: false,
-    });
+    coordinator.enqueue_event(llm_completed(40, 0, 2_500, 500, Some(3_000), None, false));
     coordinator.drain_transport();
 
     // -- Exec & Check: the configured path resolves the max without a fallback.
@@ -118,15 +110,7 @@ fn lane_2_context_line_two_lane_and_updates() -> Result<()> {
         .status
         .tokens
         .set_context_window_max_tokens(Some(100));
-    updating.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 12,
-        tool_calls: 0,
-        input_tokens: 2,
-        output_tokens: 8,
-        total_tokens: Some(10),
-        cost: None,
-        cost_complete: false,
-    });
+    updating.enqueue_event(llm_completed(12, 0, 2, 8, Some(10), None, false));
     updating.drain_transport();
 
     // -- Exec & Check: the first turn.
@@ -135,15 +119,7 @@ fn lane_2_context_line_two_lane_and_updates() -> Result<()> {
     assert!(first_text.ends_with("10 (10%)"));
 
     // -- Exec & Check: the second turn does not stale.
-    updating.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 20,
-        tool_calls: 0,
-        input_tokens: 8,
-        output_tokens: 32,
-        total_tokens: Some(40),
-        cost: None,
-        cost_complete: false,
-    });
+    updating.enqueue_event(llm_completed(20, 0, 8, 32, Some(40), None, false));
     updating.drain_transport();
     let second = crate::runtime::lane_2_status_line_for_test(updating.state(), 120);
     let second_text: String = second.spans.iter().map(|s| s.content.as_ref()).collect();

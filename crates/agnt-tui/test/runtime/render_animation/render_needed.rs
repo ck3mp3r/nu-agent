@@ -10,7 +10,7 @@ fn render_needed_gating() -> Result<()> {
     assert!(!coord.render_needed());
 
     // -- Exec
-    coord.enqueue_ui_event(UiEvent::Tick);
+    coord.enqueue_event(SystemEvent::Tick);
     coord.drain_transport();
 
     // -- Check: drain_transport marks the frame dirty.

@@ -37,10 +37,10 @@ fn enqueue_and_activate_prompt_transcript_bookkeeping() -> Result<()> {
     assert_eq!(activating.transcript.len(), before + 1);
     let last = activating
         .transcript
-        .blocks()
+        .entries()
         .last()
-        .ok_or("should have last transcript block")?;
-    assert!(matches!(last.source, BlockSource::Markdown { .. }));
+        .ok_or("should have last transcript entry")?;
+    assert!(matches!(last, TranscriptEntry::Message(_)));
 
     // -- Setup & Fixtures: token usage recording.
     let mut state = AppState::default();

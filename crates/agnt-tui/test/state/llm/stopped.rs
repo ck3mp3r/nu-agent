@@ -4,10 +4,10 @@ use crate::state::StatusMessageKind;
 use agnt_core::conversation::turn::executor::TURN_STOPPED_NOTICE;
 
 // ---------------------------------------------------------------------------
-// LlmEvent::Stopped — hook-stop notice (Fix 2)
+// SystemEvent::InferenceStopped — hook-stop notice (Fix 2)
 // ---------------------------------------------------------------------------
 
-/// `LlmEvent::Stopped` APPENDS the reason as a new transcript entry without
+/// `SystemEvent::InferenceStopped` APPENDS the reason as a new transcript entry without
 /// truncating the streamed assistant block (Fix 2 of the repetition stop UX):
 /// the streamed repeated text stays visible, the reason is added after it,
 /// and `assistant_stream_start` resets so nothing later truncates the block.
@@ -24,17 +24,16 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     assert!(
         state
             .transcript
-            .blocks()
+            .entries()
             .iter()
-            .any(|b| is_assistant_block(b)
-                && b.source.plain_text().contains("repeated text continues")),
+            .any(|b| is_assistant_entry(b) && entry_text(b).contains("repeated text continues")),
         "the streamed block must exist before the stop"
     );
 
     // -- Exec
     let changed = reduce_llm(
         &mut state,
-        LlmEvent::Stopped {
+        SystemEvent::InferenceStopped {
             reason: "Output repetition stopped: the run was stopped.".to_string(),
         },
     );
@@ -45,22 +44,17 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     assert!(
         state
             .transcript
-            .blocks()
+            .entries()
             .iter()
-            .any(|b| is_assistant_block(b)
-                && b.source.plain_text().contains("repeated text continues")),
+            .any(|b| is_assistant_entry(b) && entry_text(b).contains("repeated text continues")),
         "the streamed block must survive the stop notice"
     );
     // The reason is appended as a NEW entry after the streamed block.
-    let last = state
-        .transcript
-        .blocks()
+    let stop_entries = state.transcript.entries();
+    let last = stop_entries
         .last()
-        .ok_or("should have transcript blocks")?;
-    let reason_appended = last
-        .source
-        .plain_text()
-        .contains("Output repetition stopped");
+        .ok_or("should have transcript entries")?;
+    let reason_appended = entry_text(last).contains("Output repetition stopped");
     assert!(
         reason_appended,
         "the stop reason must be appended as a new entry, got {last:?}"
@@ -81,14 +75,14 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     // -- Exec
     let changed = reduce_llm(
         &mut state,
-        LlmEvent::Stopped {
+        SystemEvent::InferenceStopped {
             reason: "  ".to_string(),
         },
     );
 
     // -- Check: nothing renders and the provisional block is discarded.
     assert!(!changed, "an empty reason renders nothing");
-    assert!(!state.transcript.blocks().iter().any(is_assistant_block));
+    assert!(!state.transcript.entries().iter().any(is_assistant_entry));
     assert!(state.transcript.assistant_stream_start.is_none());
 
     // -- Setup & Fixtures: truncation back to the start index.
@@ -101,15 +95,15 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     assert!(
         truncating
             .transcript
-            .blocks()
+            .entries()
             .iter()
-            .any(|b| is_assistant_block(b) && b.source.plain_text().contains("provisional text"))
+            .any(|b| is_assistant_entry(b) && entry_text(b).contains("provisional text"))
     );
 
     // -- Exec
     let changed = reduce_llm(
         &mut truncating,
-        LlmEvent::Stopped {
+        SystemEvent::InferenceStopped {
             reason: String::new(),
         },
     );
@@ -120,31 +114,31 @@ fn stopped_event_appends_reason_without_truncating_stream() -> Result<()> {
     assert!(
         !truncating
             .transcript
-            .blocks()
+            .entries()
             .iter()
-            .any(is_assistant_block)
+            .any(is_assistant_entry)
     );
     assert!(truncating.transcript.assistant_stream_start.is_none());
 
     // -- Setup & Fixtures: an empty transcript.
     let mut empty = busy_state_with_clean_transcript();
-    assert!(empty.transcript.blocks().is_empty());
+    assert!(empty.transcript.entries().is_empty());
 
     // -- Exec
     let changed = reduce_llm(
         &mut empty,
-        LlmEvent::Stopped {
+        SystemEvent::InferenceStopped {
             reason: String::new(),
         },
     );
 
     // -- Check: no spacer or notice is pushed.
     assert!(!changed, "a silent discard renders nothing");
-    assert!(empty.transcript.blocks().is_empty());
+    assert!(empty.transcript.entries().is_empty());
     Ok(())
 }
 
-/// `LlmEvent::Stopped` carrying `TURN_STOPPED_NOTICE` renders a status-bar
+/// `SystemEvent::InferenceStopped` carrying `TURN_STOPPED_NOTICE` renders a status-bar
 /// marker instead of a transcript block: the streamed blocks stay, the
 /// streaming cursor resets, and the status message holds the marker with
 /// `Notice` kind.
@@ -159,7 +153,7 @@ fn stopped_event_with_turn_stopped_notice_sets_status_marker() -> Result<()> {
     // -- Exec
     let changed = reduce_llm(
         &mut state,
-        LlmEvent::Stopped {
+        SystemEvent::InferenceStopped {
             reason: TURN_STOPPED_NOTICE.to_string(),
         },
     );
@@ -176,9 +170,9 @@ fn stopped_event_with_turn_stopped_notice_sets_status_marker() -> Result<()> {
     assert!(
         state
             .transcript
-            .blocks()
+            .entries()
             .iter()
-            .any(|b| is_assistant_block(b) && b.source.plain_text().contains("partial answer")),
+            .any(|b| is_assistant_entry(b) && entry_text(b).contains("partial answer")),
         "the streamed block must survive the stop marker"
     );
     assert!(
@@ -197,14 +191,14 @@ fn turn_stopped_notice_marker_clears_on_next_turn_start() -> Result<()> {
     let mut state = busy_state_with_clean_transcript();
     reduce_llm(
         &mut state,
-        LlmEvent::Stopped {
+        SystemEvent::InferenceStopped {
             reason: TURN_STOPPED_NOTICE.to_string(),
         },
     );
     assert_eq!(state.status.message.kind(), StatusMessageKind::Notice);
 
     // -- Exec: the next turn starts streaming.
-    reduce_llm(&mut state, LlmEvent::Started);
+    reduce_llm(&mut state, SystemEvent::InferenceStarted);
 
     // -- Check: the marker is gone.
     assert!(
@@ -224,8 +218,8 @@ fn turn_stopped_notice_marker_clears_on_next_turn_start() -> Result<()> {
     neutral.status.message.set_message("Tool: prior");
 
     // -- Exec
-    reduce_llm(&mut warning, LlmEvent::Started);
-    reduce_llm(&mut neutral, LlmEvent::Started);
+    reduce_llm(&mut warning, SystemEvent::InferenceStarted);
+    reduce_llm(&mut neutral, SystemEvent::InferenceStarted);
 
     // -- Check: turn start leaves the other kinds alone.
     assert_eq!(

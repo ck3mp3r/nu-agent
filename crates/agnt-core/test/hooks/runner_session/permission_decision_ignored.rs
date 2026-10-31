@@ -13,8 +13,8 @@ async fn test_hooks_runner_permission_decision_ignored_invokes_with_payload() ->
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionIgnored {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionIgnored {
+            request_id: RequestId::new("req-1"),
             reason: "request_not_pending".to_string(),
         })
         .await;
@@ -58,8 +58,8 @@ async fn test_hooks_runner_permission_decision_ignored_stamps_session_id() -> Re
         .await;
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionIgnored {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionIgnored {
+            request_id: RequestId::new("req-1"),
             reason: "request_not_pending".to_string(),
         })
         .await;
@@ -92,14 +92,14 @@ async fn test_hooks_runner_permission_decision_ignored_ignores_other_decisions()
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionTimedOut {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionTimedOut {
+            request_id: RequestId::new("req-1"),
         })
         .await;
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionSubmitted {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionSubmitted {
+            request_id: RequestId::new("req-1"),
             decision: PermissionDecision::AllowOnce,
             matched_rule_identity: "permissions.nu".to_string(),
         })

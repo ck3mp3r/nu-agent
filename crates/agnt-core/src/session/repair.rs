@@ -3,7 +3,8 @@
 //! rig 0.45 shapes the request history itself (`pairing::pair`) and repairs the
 //! store on read, so the host keeps two repair concerns: closing the tool calls
 //! a cancelled or failed turn never answered, and replacing rig's placeholder
-//! result with the outcome the turn settled.
+//! result with the outcome the turn settled. Both write the model's content; a
+//! call's status is not theirs to decide — the persisted status record carries it.
 
 use rig::conversation::pairing::NO_RESULT_PROVIDED;
 
@@ -12,21 +13,10 @@ use crate::types::{
 };
 
 /// The content a closed call carries when the turn never settled it.
-pub(crate) const INTERRUPTED_RESULT: &str = "[interrupted]";
-
-/// The prefix every permission-denial result text carries.
-const DENIED_RESULT_PREFIX: &str = "Permission denied";
-
-/// Whether `result_text` is a persisted not-run row: a call the turn never
-/// ran, as opposed to a settled success or failure.
 ///
-/// Three shapes qualify: rig's placeholder for a call nothing answered, the
-/// host's marker for a call killed mid-run, and a permission denial.
-pub(crate) fn is_did_not_run_result(result_text: &str) -> bool {
-    result_text == NO_RESULT_PROVIDED
-        || result_text == INTERRUPTED_RESULT
-        || result_text.starts_with(DENIED_RESULT_PREFIX)
-}
+/// It is the model's content, never a classification input: the call's status
+/// rides the session's status record, not this text.
+pub(crate) const UNANSWERED_RESULT_TEXT: &str = "[interrupted]";
 
 /// Closes every `Assistant(ToolCall)` in `messages` that no `User(ToolResult)`
 /// answers: one synthetic `User` message holding one `ToolResult` per unpaired
@@ -35,7 +25,7 @@ pub(crate) fn is_did_not_run_result(result_text: &str) -> bool {
 /// `results` holds `(call id, result text, is_error)` for the calls whose
 /// outcome the turn observed. A call answered by `results` closes with that
 /// text and error flag; every other unpaired call closes with
-/// [`INTERRUPTED_RESULT`].
+/// [`UNANSWERED_RESULT_TEXT`].
 ///
 /// The delta a cancelled or failed turn leaves behind is rig-committed history:
 /// structurally sound except for the calls the turn never answered. This closes
@@ -92,7 +82,7 @@ pub(crate) fn close_unanswered_tool_calls_with(
                 let settled = results.iter().find(|(id, ..)| *id == call);
                 let (text, is_error) = match settled {
                     Some((_, text, is_error)) => (text.as_str(), *is_error),
-                    None => (INTERRUPTED_RESULT, false),
+                    None => (UNANSWERED_RESULT_TEXT, false),
                 };
                 UserContent::ToolResult(ToolResult {
                     call,

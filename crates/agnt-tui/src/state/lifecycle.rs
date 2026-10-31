@@ -4,9 +4,8 @@ use super::*;
 
 use std::time::Instant;
 
-use agnt_core::transcript::ir::{Block, MessageRole};
-use agnt_core::transcript::items::Message;
-use agnt_core::transcript::renderer::Renderable;
+use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_core::transcript::ir::MessageRole;
 
 pub(crate) const CTRL_C_QUIT_CONFIRM_STATUS: &str = "Ctrl-C again to quit";
 
@@ -78,16 +77,11 @@ impl AppState {
             .find(|p| p.id == active_id)
             .map(|p| p.prompt_text.clone())
             .unwrap_or_default();
-        let msg = Message {
+        let msg = MessageEntry {
             role: MessageRole::User,
             markdown: prompt_text.clone(),
         };
-        let evicted = self.transcript.push_block(Block {
-            source: msg.source(),
-            lane: msg.lane(),
-            fill: msg.fill(),
-            status: None,
-        });
+        let evicted = self.transcript.push_entry(TranscriptEntry::Message(msg));
         self.shift_bookkeeping_after_eviction(evicted);
 
         self.phase = UiPhase::Busy;
@@ -121,16 +115,11 @@ impl AppState {
         // queued message — the stack's rhythm, with no blank row between them
         // (pinned by `layout_coalesced_user_block_renders_one_row_per_message`).
         let combined = texts.join("\n");
-        let msg = Message {
+        let msg = MessageEntry {
             role: MessageRole::User,
             markdown: combined.clone(),
         };
-        let evicted = self.transcript.push_block(Block {
-            source: msg.source(),
-            lane: msg.lane(),
-            fill: msg.fill(),
-            status: None,
-        });
+        let evicted = self.transcript.push_entry(TranscriptEntry::Message(msg));
         self.shift_bookkeeping_after_eviction(evicted);
 
         self.phase = UiPhase::Busy;
@@ -257,6 +246,7 @@ impl AppState {
                 id: c.label().to_string(),
                 display: c.label().to_string(),
                 search_text: c.label().to_string(),
+                section: None,
                 sort_key: Vec::new(),
                 payload: PickerPayload::Slash(c),
             })

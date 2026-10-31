@@ -1,419 +1,253 @@
-use super::support::{frame_ctx, lines_text, markdown_block};
-use crate::rendering::theme::{TuiTheme, hint_to_style};
-use crate::tui_renderer::layout;
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::ir::*;
-use agnt_core::transcript::items::Banner;
-use agnt_core::transcript::renderer::{ItemStatus, Renderable};
+//! Family-level rendering: what each entry family paints on its lane.
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+use super::support::*;
+use agnt_core::transcript::ir::{MessageRole, NoticeKind};
+use agnt_core::transcript::renderer::ItemStatus;
 
-// ========== layout() tests (task 6a7a3916) ==========
+// region:    --- Prose
 
+/// WHEN the assistant prose renders, THE rows SHALL carry no background: prose
+/// is untinted, and the pane supplies the surface underneath it.
 #[test]
-fn layout_markdown_fill_none_has_no_background() {
+fn test_renderer_layout_assistant_prose_is_untinted() -> Result<()> {
     // -- Setup & Fixtures
-    let block = markdown_block(MessageRole::Assistant, "hello", Fill::None);
+    let entry = message_entry(MessageRole::Assistant, "hello there");
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let (backend, rows) = render_at(&entry, 0)?;
 
     // -- Check
-    assert!(!lines.is_empty(), "must produce lines");
-    let all_text = lines_text(&lines);
-    assert!(
-        all_text.contains("hello"),
-        "must contain content: {all_text:?}"
-    );
-    for span in lines.iter().flat_map(|l| &l.spans) {
-        assert_eq!(
-            span.style.bg, None,
-            "Fill::None must produce no background fill; span '{}' has {:?}",
-            span.content, span.style.bg
+    assert_eq!(rows, 1);
+    for x in 0..WIDTH {
+        assert!(
+            is_untinted(cell_bg(&backend, x, 0)),
+            "column {x} must carry no background"
         );
     }
+    assert!(row_trimmed(&backend, 0).contains("hello there"));
+    Ok(())
 }
 
+/// WHEN the user prose renders, EVERY row SHALL paint the user surface across
+/// the pane's width, wrapped rows included.
 #[test]
-fn layout_markdown_fill_full_sets_user_bg_on_all_rows() {
+fn test_renderer_layout_user_prose_paints_the_user_surface() -> Result<()> {
     // -- Setup & Fixtures
-    let long_text = "aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd"; // wraps at width 24
-    let block = markdown_block(MessageRole::User, long_text, Fill::Full);
+    let theme = test_theme();
+    let entry = message_entry(MessageRole::User, &long_prose());
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(24), &TuiTheme::default());
+    let (backend, rows) = render_at(&entry, 0)?;
 
     // -- Check
-    assert!(
-        lines.len() >= 2,
-        "prose must wrap at width 24; got {}",
-        lines.len()
-    );
-    let bg = TuiTheme::default().row_user_bg;
-    for (row_idx, span) in lines.iter().flat_map(|l| &l.spans).enumerate() {
-        assert_eq!(
-            span.style.bg,
-            Some(bg),
-            "Fill::Full row {row_idx} span '{}' must have user bg, got {:?}",
-            span.content,
-            span.style.bg
-        );
+    assert!(rows >= 2, "the prose must wrap; got {rows}");
+    for y in 0..u16::try_from(rows)? {
+        for x in [0u16, 1, WIDTH / 2, WIDTH - 1] {
+            assert_eq!(
+                cell_bg(&backend, x, y),
+                Some(terminal(theme.user_surface)),
+                "row {y} column {x} must paint the user surface"
+            );
+        }
     }
+    Ok(())
 }
 
+/// WHEN a coalesced user turn holds several prompts, THE widget SHALL paint them
+/// as one turn: the soft-break join SHALL cost fewer rows than the paragraph form
+/// — no separator row per prompt.
 #[test]
-fn layout_tool_without_preview_renders_call_summary_only() {
-    // -- Setup & Fixtures
-    let block = Block {
-        source: BlockSource::Tool {
-            name: ToolName("tool".to_string()),
-            call: CallLine {
-                summary: "→ {\"path\":\"a.rs\"}".to_string(),
-            },
-            preview: None,
-        },
-        lane: Lane::Marker("⚙"),
-        fill: Fill::None,
-        status: None,
-    };
+fn test_renderer_layout_coalesced_user_turn_paints_one_row_per_prompt() -> Result<()> {
+    // -- Setup & Fixtures: three single-line prompts, joined the way the drain
+    // joins them.
+    let messages = ["first message", "second message", "third message"];
+    let coalesced = message_entry(MessageRole::User, &messages.join("\n"));
+    let paragraph_separated = message_entry(MessageRole::User, &messages.join("\n\n"));
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let (joined, joined_rows) = render_at(&coalesced, 0)?;
+    let (_, separated_rows) = render_at(&paragraph_separated, 0)?;
 
-    // -- Check
-    let text = lines_text(&lines);
-    assert!(
-        text.contains("→ {\"path\":\"a.rs\"}"),
-        "call summary must be on the rows; got {text:?}"
+    // -- Check: every prompt renders, in order, and the join costs no separator
+    // row per prompt.
+    let text: String = (0..u16::try_from(joined_rows)?)
+        .map(|y| row_text(&joined, y))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let mut cursor = 0usize;
+    for message in messages {
+        let found = text[cursor..]
+            .find(message)
+            .ok_or("every coalesced prompt must render, in order")?;
+        cursor += found + message.len();
+    }
+    assert_eq!(
+        joined_rows,
+        messages.len(),
+        "the soft-break join paints exactly one row per prompt"
     );
+    assert!(
+        joined_rows < separated_rows,
+        "the soft-break join ({joined_rows} rows) must cost fewer rows than the paragraph form ({separated_rows})"
+    );
+    assert_eq!(
+        separated_rows,
+        messages.len() * 2 - 1,
+        "the paragraph join inserts a separator row between prompts"
+    );
+    Ok(())
 }
 
-// ========== tool call line spans (task 6a10ca2b) ==========
+// endregion: --- Prose
 
-/// The tool call row carries the tool name in emphasis followed by the
-/// summary in muted — the pre-Block model's styled call line. Two content
-/// spans with different styles, after the 2-span lane prefix and with no
-/// status indicator.
+// region:    --- Tool call line
+
+/// WHEN a tool call has no display body, THE widget SHALL paint the call line
+/// alone: the marker, the summary, and no body row.
 #[test]
-fn layout_tool_call_line_has_emphasis_name_and_muted_summary() -> Result<()> {
+fn test_renderer_layout_tool_without_display_paints_call_line_only() -> Result<()> {
     // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let block = Block {
-        source: BlockSource::Tool {
-            name: ToolName("edit".to_string()),
-            call: CallLine {
-                summary: "→ foo.rs".to_string(),
-            },
-            preview: None,
-        },
-        lane: Lane::Marker("⚙"),
-        fill: Fill::None,
-        status: None,
-    };
+    let entry = tool_entry(
+        "read",
+        "→ {\"path\":\"a.rs\"}",
+        None,
+        None,
+        ItemStatus::Done,
+    );
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let (backend, rows) = render_at(&entry, 0)?;
 
     // -- Check
-    let row0 = lines.first().ok_or("row 0 must exist")?;
-    // Spans 0 and 1 are the lane prefix (cursor slot + marker); the call line
-    // spans follow, with no status indicator on this block.
-    let content_spans = row0.spans.get(2..).ok_or("call line spans must exist")?;
+    assert_eq!(rows, 1, "a bare call is one row");
     assert!(
-        content_spans.len() >= 2,
-        "call line must have at least 2 spans, got {content_spans:?}"
+        row_trimmed(&backend, 0).contains("→ {\"path\":\"a.rs\"}"),
+        "the call summary must render; got {:?}",
+        row_trimmed(&backend, 0)
+    );
+    Ok(())
+}
+
+/// WHEN a tool call paints its line, THE name SHALL carry the body text style
+/// and the summary the muted style — two distinguishable spans after the gutter.
+#[test]
+fn test_renderer_layout_tool_call_line_paints_name_and_muted_summary() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = test_theme();
+    let entry = tool_entry("edit", "→ foo.rs", None, None, ItemStatus::Done);
+
+    // -- Exec
+    let backend = render_at(&entry, 0)?.0;
+
+    // -- Check: the gutter is four columns, then the name, then a space and the
+    // summary.
+    let row = row_text(&backend, 0);
+    assert!(
+        row.starts_with("  \u{2699} \u{2713} edit → foo.rs"),
+        "got {row:?}"
     );
     assert_eq!(
-        content_spans[0].content.as_ref(),
-        "edit",
-        "first call-line span must be the tool name"
+        cell_fg(&backend, 6, 0),
+        Some(terminal(theme.text)),
+        "the tool name paints the body text style"
     );
     assert_eq!(
-        content_spans[0].style,
-        hint_to_style(&StyleHint::Emphasis, theme.role_tool, &theme),
-        "tool name must use the Emphasis style"
-    );
-    let summary_text: String = content_spans[1..]
-        .iter()
-        .map(|s| s.content.as_ref())
-        .collect();
-    assert_eq!(summary_text.trim(), "→ foo.rs");
-    assert_eq!(
-        content_spans[1].style,
-        hint_to_style(&StyleHint::Muted, theme.role_tool, &theme),
-        "summary must use the Muted style"
+        cell_fg(&backend, 11, 0),
+        Some(terminal(theme.muted)),
+        "the summary paints the muted style"
     );
     assert_ne!(
-        content_spans[0].style, content_spans[1].style,
-        "name and summary spans must have different styles"
+        cell_fg(&backend, 6, 0),
+        cell_fg(&backend, 11, 0),
+        "name and summary must not share one style"
     );
     Ok(())
 }
 
-/// A nameless tool block renders the summary alone — no empty emphasis span.
+/// WHEN a tool call has no name, THE widget SHALL paint the summary alone — no
+/// empty emphasis span and no gap after the indicator.
 #[test]
-fn layout_nameless_tool_call_line_renders_summary_span_only() -> Result<()> {
+fn test_renderer_layout_nameless_tool_paints_summary_only() -> Result<()> {
     // -- Setup & Fixtures
-    let block = Block {
-        source: BlockSource::Tool {
-            name: ToolName(String::new()),
-            call: CallLine {
-                summary: "→ foo.rs".to_string(),
-            },
-            preview: None,
-        },
-        lane: Lane::Marker("⚙"),
-        fill: Fill::None,
-        status: None,
-    };
+    let theme = test_theme();
+    let entry = tool_entry("", "→ foo.rs", None, None, ItemStatus::Done);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let backend = render_at(&entry, 0)?.0;
 
     // -- Check
-    let row0 = lines.first().ok_or("row 0 must exist")?;
-    let content_spans = row0.spans.get(2..).ok_or("call line spans must exist")?;
     assert_eq!(
-        content_spans.len(),
-        1,
-        "nameless tool must render one summary span, got {content_spans:?}"
+        row_trimmed(&backend, 0),
+        "  \u{2699} \u{2713} → foo.rs",
+        "the summary follows the indicator directly"
     );
-    assert_eq!(content_spans[0].content.as_ref(), "→ foo.rs");
+    assert_eq!(
+        cell_fg(&backend, 6, 0),
+        Some(terminal(theme.muted)),
+        "the summary keeps the muted style"
+    );
     Ok(())
 }
 
+/// WHEN an in-progress tool call renders, THE widget SHALL paint content (the
+/// gutter, the spinner and the summary).
 #[test]
-fn layout_notice_renders_single_meta_line() {
+fn test_renderer_layout_tool_in_progress_paints_content() -> Result<()> {
     // -- Setup & Fixtures
-    let block = Block {
-        source: BlockSource::Notice {
-            kind: NoticeKind::Compaction,
-            text: "compacted 5 blocks".to_string(),
-        },
-        lane: Lane::Marker("~"),
-        fill: Fill::None,
-        status: None,
-    };
+    let entry = tool_entry("read", "→ x", None, None, ItemStatus::InProgress);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let backend = render(&entry)?;
 
     // -- Check
-    let text = lines_text(&lines);
-    assert!(text.contains("compacted 5 blocks"), "got {text:?}");
-}
-
-#[test]
-fn layout_spacer_renders_single_blank_line() {
-    // -- Setup & Fixtures
-    let block = Block {
-        source: BlockSource::Spacer,
-        lane: Lane::Blank,
-        fill: Fill::None,
-        status: None,
-    };
-
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(40), &TuiTheme::default());
-
-    // -- Check
-    assert_eq!(
-        lines.len(),
-        1,
-        "spacer must be one row; got {}",
-        lines.len()
+    let row = row_trimmed(&backend, 0);
+    assert!(
+        row.contains("\u{280b}") && row.contains("→ x"),
+        "the in-progress call must paint the spinner and the summary; got {row:?}"
     );
-    let text = lines_text(&lines);
-    assert!(text.trim().is_empty(), "spacer must be blank; got {text:?}");
+    Ok(())
 }
 
+// endregion: --- Tool call line
+
+// region:    --- Notices and banners
+
+/// WHEN a notice renders, THE widget SHALL paint one meta row per source line.
 #[test]
-fn layout_banner_renders_every_line() {
+fn test_renderer_layout_notice_paints_one_row() -> Result<()> {
     // -- Setup & Fixtures
-    let banner = Banner {
-        text: "line1\nline2".to_string(),
-    };
-    let block = Block {
-        source: banner.source(),
-        lane: banner.lane(),
-        fill: banner.fill(),
-        status: None,
-    };
+    let entry = notice_entry(NoticeKind::Compaction, "compacted 5 entries");
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let (backend, rows) = render_at(&entry, 0)?;
 
     // -- Check
-    let text = lines_text(&lines);
+    assert_eq!(rows, 1);
+    assert!(
+        row_trimmed(&backend, 0).contains("compacted 5 entries"),
+        "got {:?}",
+        row_trimmed(&backend, 0)
+    );
+    Ok(())
+}
+
+/// WHEN a banner renders, THE widget SHALL paint one row per source line.
+#[test]
+fn test_renderer_layout_banner_paints_every_line() -> Result<()> {
+    // -- Setup & Fixtures
+    let entry = banner_entry("line1\nline2");
+
+    // -- Exec
+    let (backend, rows) = render_at(&entry, 0)?;
+
+    // -- Check
+    assert_eq!(rows, 2);
+    let text: String = (0..2).map(|y| row_text(&backend, y)).collect();
     assert!(
         text.contains("line1") && text.contains("line2"),
         "got {text:?}"
     );
-}
-
-#[test]
-fn layout_tool_in_progress_renders_content() {
-    // -- Setup & Fixtures
-    let block = Block {
-        source: BlockSource::Tool {
-            name: ToolName("tool".to_string()),
-            call: CallLine {
-                summary: "→ x".to_string(),
-            },
-            preview: None,
-        },
-        lane: Lane::Marker("⚙"),
-        fill: Fill::None,
-        status: Some(ItemStatus::InProgress),
-    };
-
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
-
-    // -- Check
-    let text = lines_text(&lines);
-    assert!(
-        !text.trim().is_empty(),
-        "in-progress tool must render; got {text:?}"
-    );
-}
-
-#[test]
-fn layout_notice_with_status_shows_indicator() {
-    // -- Setup & Fixtures
-    let block = Block {
-        source: BlockSource::Notice {
-            kind: NoticeKind::System,
-            text: "note".to_string(),
-        },
-        lane: Lane::Marker("·"),
-        fill: Fill::None,
-        status: Some(ItemStatus::Done),
-    };
-
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
-
-    // -- Check
-    let text = lines_text(&lines);
-    assert!(
-        text.contains("✓"),
-        "done status must show checkmark; got {text:?}"
-    );
-    assert!(text.contains("note"), "got {text:?}");
-}
-
-// ========== BlockSource::project integration (task 62e03e23) ==========
-
-/// The renderer consumes `BlockSource::project()`: the content rendered after
-/// the 2-span lane prefix is exactly the projected source's spans. Pins the
-/// refactor (free function `project_source` → inherent `project`).
-#[test]
-fn layout_consumes_block_source_project_output() -> Result<()> {
-    // -- Setup & Fixtures
-    let block = Block {
-        source: BlockSource::Tool {
-            name: ToolName("edit".to_string()),
-            call: CallLine {
-                summary: "→ foo.rs".to_string(),
-            },
-            preview: None,
-        },
-        lane: Lane::Marker("⚙"),
-        fill: Fill::None,
-        status: None,
-    };
-
-    // -- Exec
-    let projected = block.source.project(80);
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
-
-    // -- Check: the projection is the renderer's content source.
-    let proj_row0 = projected.first().ok_or("projection row 0 must exist")?;
-    let proj_text: String = proj_row0.spans.iter().map(|s| s.text.as_str()).collect();
-    let row0 = lines.first().ok_or("row 0 must exist")?;
-    // Spans 0 and 1 are the lane prefix; the content spans follow.
-    let rendered_text: String = row0
-        .spans
-        .iter()
-        .skip(2)
-        .map(|s| s.content.as_ref())
-        .collect();
-    assert_eq!(
-        rendered_text, proj_text,
-        "renderer content must be the projected source's spans"
-    );
     Ok(())
 }
 
-/// The projection is reachable through the public method on a Markdown block
-/// and produces the shared pipeline's text, which the renderer then displays.
-#[test]
-fn layout_markdown_content_is_project_output() -> Result<()> {
-    // -- Setup & Fixtures
-    let block = markdown_block(MessageRole::Assistant, "hello project", Fill::None);
-
-    // -- Exec
-    let projected = block.source.project(80);
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
-
-    // -- Check
-    let proj_text: String = projected
-        .iter()
-        .flat_map(|l| l.spans.iter())
-        .map(|s| s.text.as_str())
-        .collect();
-    assert!(
-        proj_text.contains("hello project"),
-        "projection must contain the markdown text; got {proj_text:?}"
-    );
-    let rendered = lines_text(&lines);
-    assert!(
-        rendered.contains("hello project"),
-        "rendered content must include the projected markdown; got {rendered:?}"
-    );
-    Ok(())
-}
-
-/// WHEN the queue drain coalesces several prompts into one user block, THE
-/// renderer SHALL produce one row per message with no blank row between them.
-/// A single `\n` is a markdown soft break, which the projector flushes as a row
-/// break; the `\n\n` paragraph form would cost a separator row per message —
-/// the double break this join avoids.
-#[test]
-fn layout_coalesced_user_block_renders_one_row_per_message() -> Result<()> {
-    // -- Setup & Fixtures: three single-line prompts, joined the way the drain
-    // joins them.
-    let theme = TuiTheme::default();
-    let messages = ["first message", "second message", "third message"];
-    let coalesced = markdown_block(MessageRole::User, &messages.join("\n"), Fill::Full);
-    let paragraph_separated = markdown_block(MessageRole::User, &messages.join("\n\n"), Fill::Full);
-
-    // -- Exec
-    let lines = layout(&coalesced, &frame_ctx(80), &theme);
-    let separated_lines = layout(&paragraph_separated, &frame_ctx(80), &theme);
-
-    // -- Check: exactly one row per message, in order, each carrying its text.
-    assert_eq!(
-        lines.len(),
-        messages.len(),
-        "a soft-break join must render one row per message; got {}",
-        lines.len()
-    );
-    for (row, message) in lines.iter().zip(messages) {
-        let text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(
-            text.ends_with(message),
-            "row must carry `{message}`; got {text:?}"
-        );
-    }
-
-    // -- Check: the paragraph form is the double break this join avoids.
-    assert_eq!(
-        separated_lines.len(),
-        messages.len() * 2 - 1,
-        "a paragraph-break join must insert a separator row between messages; got {}",
-        separated_lines.len()
-    );
-    Ok(())
-}
+// endregion: --- Notices and banners

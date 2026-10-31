@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::entry_text;
 
 #[test]
 fn submit_path_appends_prompt_and_keeps_input_editable() {
@@ -16,7 +17,7 @@ fn submit_path_appends_prompt_and_keeps_input_editable() {
     let _ = state.take_next_prompt_for_execution();
     // [User] — no leading or trailing spacer under the unified spacer rule
     assert_eq!(state.transcript.len(), 1);
-    assert_eq!(state.transcript.blocks()[0].source.plain_text(), "s");
+    assert_eq!(entry_text(&state.transcript.entries()[0]), "s");
 }
 
 #[test]
@@ -39,7 +40,7 @@ fn dispatch_edit_actions_are_noops() {
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::AltEnter), None);
     assert!(!changed);
     assert_eq!(state.phase, UiPhase::Idle);
-    assert!(state.transcript.blocks().is_empty());
+    assert!(state.transcript.entries().is_empty());
 
     // Enter still submits via pending_submit_text
     state.input.pending_submit_text = Some("h".to_string());
@@ -50,5 +51,5 @@ fn dispatch_edit_actions_are_noops() {
     let _ = state.take_next_prompt_for_execution();
     // [User] — no leading or trailing spacer under the unified spacer rule
     assert_eq!(state.transcript.len(), 1);
-    assert_eq!(state.transcript.blocks()[0].source.plain_text().trim(), "h");
+    assert_eq!(entry_text(&state.transcript.entries()[0]).trim(), "h");
 }

@@ -13,11 +13,10 @@ fn has_active_animation_matrix() -> Result<()> {
     aborting.state.phase = UiPhase::AbortPending;
 
     let mut compacting = RuntimeCoordinator::new(80, 24, None);
-    let mut evicted = 0usize;
     compacting
         .state
         .compaction
-        .start_block(&mut compacting.state.transcript, "test", &mut evicted);
+        .start_block(&mut compacting.state.transcript, "test");
 
     let mut in_progress = RuntimeCoordinator::new(80, 24, None);
     push_entry(&mut in_progress, Some(ItemStatus::InProgress));

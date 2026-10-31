@@ -1,8 +1,9 @@
 use super::*;
+use agnt_core::transcript::entry::TranscriptEntry;
 
-/// Coordinator hydration skips blank lines, maps unknown roles to system,
-/// reconstructs tool rows matching the live shape, uses the tool's tailored
-/// call line, and parses persisted tool status lines.
+/// Coordinator hydration skips blank lines, shows a role outside the persisted
+/// vocabulary as a system notice, reconstructs tool rows matching the live
+/// shape, and uses the tool's tailored call line.
 #[test]
 fn coordinator_hydration_and_tool_rows() -> Result<()> {
     // -- Setup & Fixtures
@@ -19,12 +20,13 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
         None,
     );
 
-    // -- Check: blank lines are preserved; unknown roles map to system.
-    let lines = coordinator.state().transcript.blocks().to_vec();
+    // -- Check: blank lines are preserved; a line outside the closed role set
+    // replays as a system notice.
+    let lines = coordinator.state().transcript.entries().to_vec();
     assert_eq!(
         lines
             .iter()
-            .map(|block| (block_to_role(block), block.source.plain_text()))
+            .map(|entry| (entry_to_role(entry), entry_text(entry)))
             .collect::<Vec<_>>(),
         vec![
             (TranscriptRole::User, "line1\n\nline2".to_string()),
@@ -39,24 +41,27 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
     // -- Exec
     tool.hydrate_transcript_from_messages(
         vec![
-            UiMessageSnapshot::new("tool", "tool[k8s__list_pods] → {} · done").with_tool_details(
-                Some("{\"namespace\":\"prod\"}".to_string()),
-                Some("[{\"name\":\"api-0\"}]".to_string()),
-                Some(true),
-            ),
+            UiMessageSnapshot::new("tool", "→ {\"namespace\":\"prod\"}")
+                .with_tool_name("k8s__list_pods".to_string())
+                .with_tool_details(
+                    Some("{\"namespace\":\"prod\"}".to_string()),
+                    Some("[{\"name\":\"api-0\"}]".to_string()),
+                    Some(true),
+                ),
         ],
         None,
     );
 
-    // -- Check: one Tool block matching the live shape.
+    // -- Check: one Tool entry matching the live shape.
     assert_eq!(tool.state().transcript.len(), 1);
-    let tool_block = &tool.state().transcript.blocks()[0];
-    assert!(matches!(tool_block.source, BlockSource::Tool { .. }));
-    let BlockSource::Tool { call, .. } = &tool_block.source else {
+    let tool_entries = tool.state().transcript.entries();
+    let tool_entry = tool_entries.first().ok_or("should have tool entry")?;
+    assert!(matches!(tool_entry, TranscriptEntry::Tool(_)));
+    let TranscriptEntry::Tool(tool) = tool_entry else {
         return Err("expected Tool variant".into());
     };
-    assert!(call.summary.contains("namespace"));
-    assert_eq!(tool_block.status, Some(ItemStatus::Done));
+    assert!(tool.call.call_line.summary.contains("namespace"));
+    assert_eq!(tool_status_of(tool_entry), Some(ItemStatus::Done));
 
     // -- Setup & Fixtures: a nu tool call.
     let mut nu = RuntimeCoordinator::new(120, 30, Some(true));
@@ -64,21 +69,24 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
     // -- Exec
     nu.hydrate_transcript_from_messages(
         vec![
-            UiMessageSnapshot::new("tool", "tool[nu] → \"ls\" · done").with_tool_details(
-                Some(r#"{"command":"ls | select name type size"}"#.to_string()),
-                None,
-                Some(true),
-            ),
+            UiMessageSnapshot::new("tool", "→ \"ls\"")
+                .with_tool_name("nu".to_string())
+                .with_tool_details(
+                    Some(r#"{"command":"ls | select name type size"}"#.to_string()),
+                    None,
+                    Some(true),
+                ),
         ],
         None,
     );
 
     // -- Check: the nu tool's tailored call line.
-    let block = &nu.state().transcript.blocks()[0];
-    let BlockSource::Tool { call, .. } = &block.source else {
+    let nu_entries = nu.state().transcript.entries();
+    let entry = nu_entries.first().ok_or("should have tool entry")?;
+    let TranscriptEntry::Tool(tool) = entry else {
         return Err("expected Tool variant".into());
     };
-    assert_eq!(call.summary, "⏱ 120s");
+    assert_eq!(tool.call.call_line.summary, "⏱ 120s");
 
     // -- Setup & Fixtures: an edit tool call.
     let mut edit = RuntimeCoordinator::new(120, 30, Some(true));
@@ -86,37 +94,28 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
     // -- Exec
     edit.hydrate_transcript_from_messages(
         vec![
-            UiMessageSnapshot::new("tool", "tool[edit] → \"a.rs\" · done").with_tool_details(
-                Some(r#"{"path":"a.rs","operation":{"type":"create","content":"x"}}"#.to_string()),
-                None,
-                Some(true),
-            ),
+            UiMessageSnapshot::new("tool", "→ \"a.rs\" (diff)")
+                .with_tool_name("edit".to_string())
+                .with_tool_details(
+                    Some(
+                        r#"{"path":"a.rs","operation":{"type":"create","content":"x"}}"#
+                            .to_string(),
+                    ),
+                    None,
+                    Some(true),
+                ),
         ],
         None,
     );
 
     // -- Check: the edit tool's tailored inline call line.
-    let block = &edit.state().transcript.blocks()[0];
-    let BlockSource::Tool { call, .. } = &block.source else {
+    let edit_entries = edit.state().transcript.entries();
+    let entry = edit_entries.first().ok_or("should have tool entry")?;
+    let TranscriptEntry::Tool(tool) = entry else {
         return Err("expected Tool variant".into());
     };
-    assert_eq!(call.summary, "→ a.rs (diff)");
+    assert_eq!(tool.call.call_line.summary, "→ a.rs (diff)");
 
-    // -- Exec & Check: the persisted tool status line parser.
-    assert_eq!(
-        crate::state::parse_persisted_tool_status_line(
-            "tool[k8s__list_pods] → {\"namespace\":\"prod\"} · done"
-        ),
-        Some(("k8s__list_pods", "{\"namespace\":\"prod\"}", true))
-    );
-    assert_eq!(
-        crate::state::parse_persisted_tool_status_line("tool[gh__run] → {} · failed"),
-        Some(("gh__run", "{}", false))
-    );
-    assert_eq!(
-        crate::state::parse_persisted_tool_status_line("tool[gh__run] → {}"),
-        None
-    );
     Ok(())
 }
 
@@ -141,9 +140,9 @@ async fn coordinator_hydration_markdown_projection() -> Result<()> {
     let raw_lines: Vec<(TranscriptRole, String)> = coordinator
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|block| (block_to_role(block), block.source.plain_text()))
+        .map(|entry| (entry_to_role(entry), entry_text(entry)))
         .collect();
     assert!(
         raw_lines
@@ -178,18 +177,15 @@ async fn coordinator_hydration_markdown_projection() -> Result<()> {
     let projected_lines: Vec<String> = unsupported
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
         .filter(|b| {
             matches!(
-                b.source,
-                BlockSource::Markdown {
-                    role: MessageRole::Assistant,
-                    ..
-                }
+                b,
+                TranscriptEntry::Message(message) if message.role == MessageRole::Assistant
             )
         })
-        .flat_map(|b| crate::markdown::render_markdown_lines(&b.source.plain_text(), None))
+        .flat_map(|b| crate::markdown::render_markdown_lines(&entry_text(b), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert!(
@@ -220,25 +216,20 @@ async fn coordinator_hydration_markdown_projection() -> Result<()> {
     );
 
     // -- Check: the message is not dropped.
-    let assistant_entries = malformed
-        .state()
-        .transcript
-        .blocks()
+    let malformed_blocks = malformed.state().transcript.entries();
+    let assistant_entries = malformed_blocks
         .iter()
         .filter(|b| {
             matches!(
-                b.source,
-                BlockSource::Markdown {
-                    role: MessageRole::Assistant,
-                    ..
-                }
+                b,
+                TranscriptEntry::Message(message) if message.role == MessageRole::Assistant
             )
         })
         .collect::<Vec<_>>();
     assert!(!assistant_entries.is_empty());
     let projected_text: String = assistant_entries
         .iter()
-        .flat_map(|b| crate::markdown::render_markdown_lines(&b.source.plain_text(), None))
+        .flat_map(|b| crate::markdown::render_markdown_lines(&entry_text(b), None))
         .flat_map(|l| l.spans.into_iter())
         .map(|s| s.text)
         .collect();
@@ -249,14 +240,14 @@ async fn coordinator_hydration_markdown_projection() -> Result<()> {
     let markdown = markdown_fixture("fenced_code_blocks.md");
 
     // -- Exec
-    memoized.enqueue_ui_event(UiEvent::AssistantMessage {
+    memoized.enqueue_event(SystemEvent::InferenceChunk {
         delta: markdown.clone(),
-        text: markdown.clone(),
+        aggregated: markdown.clone(),
     });
     memoized.drain_transport();
-    memoized.enqueue_ui_event(UiEvent::AssistantMessage {
+    memoized.enqueue_event(SystemEvent::InferenceChunk {
         delta: markdown.clone(),
-        text: markdown,
+        aggregated: markdown,
     });
     memoized.drain_transport();
 
@@ -265,14 +256,11 @@ async fn coordinator_hydration_markdown_projection() -> Result<()> {
         memoized
             .state()
             .transcript
-            .blocks()
+            .entries()
             .iter()
             .filter(|b| matches!(
-                b.source,
-                BlockSource::Markdown {
-                    role: MessageRole::Assistant,
-                    ..
-                }
+                b,
+                TranscriptEntry::Message(message) if message.role == MessageRole::Assistant
             ))
             .count(),
         1
@@ -283,9 +271,9 @@ async fn coordinator_hydration_markdown_projection() -> Result<()> {
     let markdown = markdown_fixture("fenced_code_blocks.md");
     driver
         .coordinator_mut()
-        .enqueue_ui_event(UiEvent::AssistantMessage {
+        .enqueue_event(SystemEvent::InferenceChunk {
             delta: markdown.clone(),
-            text: markdown,
+            aggregated: markdown,
         });
     driver.coordinator_mut().drain_transport();
 
@@ -311,9 +299,9 @@ fn assistant_message_event_sanitizes_pseudo_and_control_tags() -> Result<()> {
     let text = "prefix\n[code:json]\n{\"ok\":true}\n[/code]\n<system-reminder>hidden</system-reminder>\nsuffix";
 
     // -- Exec
-    coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
+    coordinator.enqueue_event(SystemEvent::InferenceChunk {
         delta: text.to_string(),
-        text: text.to_string(),
+        aggregated: text.to_string(),
     });
     coordinator.drain_transport();
 
@@ -321,18 +309,15 @@ fn assistant_message_event_sanitizes_pseudo_and_control_tags() -> Result<()> {
     let projected_lines: Vec<String> = coordinator
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
         .filter(|b| {
             matches!(
-                b.source,
-                BlockSource::Markdown {
-                    role: MessageRole::Assistant,
-                    ..
-                }
+                b,
+                TranscriptEntry::Message(message) if message.role == MessageRole::Assistant
             )
         })
-        .flat_map(|b| crate::markdown::render_markdown_lines(&b.source.plain_text(), None))
+        .flat_map(|b| crate::markdown::render_markdown_lines(&entry_text(b), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
     assert!(projected_lines.iter().any(|l| l.contains("prefix")));
@@ -353,8 +338,8 @@ fn assistant_message_event_sanitizes_pseudo_and_control_tags() -> Result<()> {
     Ok(())
 }
 
-/// A tool display snapshot that directly follows its owning tool call hydrates
-/// as a ToolDisplay block between the two Tool blocks.
+/// A tool display snapshot that directly follows its owning tool call lands in
+/// that call's gate-preview slot — no companion display entry is pushed.
 #[test]
 fn hydration_pairs_tool_display_with_owning_call() -> Result<()> {
     // -- Setup & Fixtures
@@ -374,33 +359,38 @@ fn hydration_pairs_tool_display_with_owning_call() -> Result<()> {
     // -- Exec
     coordinator.hydrate_transcript_from_messages(
         vec![
-            UiMessageSnapshot::new("tool", "tool[nu] → \"ls\" · done")
+            UiMessageSnapshot::new("tool", "→ \"ls\"")
                 .with_tool_name("nu".to_string())
                 .with_tool_details(Some(r#"{"command":"ls"}"#.to_string()), None, Some(true)),
             UiMessageSnapshot::new("tool_display", String::new()).with_tool_display(display),
-            UiMessageSnapshot::new("tool", "tool[read_file] → \"a.txt\" · done")
+            UiMessageSnapshot::new("tool", "→ \"a.txt\"")
                 .with_tool_name("read_file".to_string())
                 .with_tool_details(Some(r#"{"path":"a.txt"}"#.to_string()), None, Some(true)),
         ],
         None,
     );
 
-    // -- Check
-    let sources: Vec<&str> = coordinator
-        .state()
-        .transcript
-        .blocks()
-        .iter()
-        .map(|block| match &block.source {
-            BlockSource::Tool { .. } => "tool",
-            BlockSource::ToolDisplay { .. } => "tool_display",
-            _ => "other",
-        })
-        .collect();
-    assert_eq!(
-        sources,
-        vec!["tool", "tool_display", "tool"],
-        "the display block must sit between its owning call and the next call"
+    // -- Check: two tool entries; the display lands in the FIRST call's
+    // gate-preview slot, and the second call keeps no display.
+    let entries = coordinator.state().transcript.entries();
+    assert_eq!(entries.len(), 2, "the display pushes no companion entry");
+    let TranscriptEntry::Tool(first) = &entries[0] else {
+        return Err("expected Tool entry".into());
+    };
+    let TranscriptEntry::Tool(second) = &entries[1] else {
+        return Err("expected Tool entry".into());
+    };
+    assert!(
+        first.preview.is_some(),
+        "the display must attach to its owning call's preview slot"
+    );
+    assert!(
+        first.result.is_none(),
+        "a hydrated completion carries no display of its own"
+    );
+    assert!(
+        second.preview.is_none(),
+        "the next call must not receive the display"
     );
     Ok(())
 }
@@ -425,16 +415,16 @@ fn coordinator_hydration_regression() -> Result<()> {
     let user_count = coordinator
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .filter(|b| b.source.plain_text() == "dup-check")
+        .filter(|entry| entry_text(entry) == "dup-check")
         .count();
     let assistant_count = coordinator
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .filter(|b| b.source.plain_text() == "dup-check-reply")
+        .filter(|entry| entry_text(entry) == "dup-check-reply")
         .count();
     assert_eq!(user_count, 1);
     assert_eq!(assistant_count, 1);
@@ -447,7 +437,7 @@ fn coordinator_hydration_regression() -> Result<()> {
 
     // -- Check: the empty-session behavior is unchanged.
     let state = empty.state();
-    assert!(state.transcript.blocks().is_empty());
+    assert!(state.transcript.entries().is_empty());
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
     Ok(())

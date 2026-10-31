@@ -1,4 +1,4 @@
-use crate::interaction::reducer::UserAction;
+use agnt_core::protocol::events::{Key, SystemEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalKey {
@@ -49,56 +49,53 @@ pub enum TerminalEvent {
     Mouse(TerminalMouse),
 }
 
-pub fn map_terminal_event(event: &TerminalEvent, locked: bool) -> Option<UserAction> {
+/// Translate one terminal event into the system vocabulary. The terminal layer
+/// reports keys, wheel notches, and resizes; what a key means (the keymap, the
+/// input lock, the open card) belongs to the reducer.
+pub fn map_terminal_event(event: &TerminalEvent) -> Option<SystemEvent> {
     match event {
-        TerminalEvent::Resize(TerminalResize { columns, rows }) => Some(UserAction::Resize {
-            columns: *columns,
-            rows: *rows,
+        TerminalEvent::Resize(TerminalResize { columns, rows }) => Some(SystemEvent::Resized {
+            width: *columns,
+            height: *rows,
         }),
-        TerminalEvent::Key(key) => map_key(*key, locked),
+        TerminalEvent::Key(key) => Some(SystemEvent::KeyPressed { key: key.to_core() }),
         TerminalEvent::Paste(_) => None,
-        TerminalEvent::Mouse(mouse) if mouse.up => Some(UserAction::WheelUp {
-            column: mouse.column,
-            row: mouse.row,
-        }),
-        TerminalEvent::Mouse(mouse) => Some(UserAction::WheelDown {
+        TerminalEvent::Mouse(mouse) => Some(SystemEvent::WheelScrolled {
+            up: mouse.up,
             column: mouse.column,
             row: mouse.row,
         }),
     }
 }
 
-fn map_key(key: TerminalKey, locked: bool) -> Option<UserAction> {
-    match key {
-        TerminalKey::Char(_) if locked => None,
-        TerminalKey::Char(ch) => Some(UserAction::InsertChar(ch)),
-        TerminalKey::Enter if locked => None,
-        TerminalKey::Enter => Some(UserAction::Submit),
-        TerminalKey::AltEnter if locked => None,
-        TerminalKey::AltEnter => Some(UserAction::InsertNewline),
-        TerminalKey::ShiftEnter if locked => None,
-        TerminalKey::ShiftEnter => Some(UserAction::InsertNewline),
-        TerminalKey::Backspace if locked => None,
-        TerminalKey::Backspace => Some(UserAction::Backspace),
-        TerminalKey::Delete if locked => None,
-        TerminalKey::Delete => Some(UserAction::Delete),
-        TerminalKey::Left => Some(UserAction::MoveCursorLeft),
-        TerminalKey::Right => Some(UserAction::MoveCursorRight),
-        TerminalKey::Home => Some(UserAction::MoveCursorHome),
-        TerminalKey::End => Some(UserAction::MoveCursorEnd),
-        TerminalKey::Up => Some(UserAction::HistoryUp),
-        TerminalKey::Down => Some(UserAction::HistoryDown),
-        TerminalKey::PageUp => Some(UserAction::ScrollPageUp),
-        TerminalKey::PageDown => Some(UserAction::ScrollPageDown),
-        TerminalKey::CtrlU => Some(UserAction::ScrollPageUp),
-        TerminalKey::CtrlD => Some(UserAction::ScrollPageDown),
-        TerminalKey::CtrlP => Some(UserAction::ToggleCommandPalette),
-        TerminalKey::CtrlN => Some(UserAction::QueryNext),
-        TerminalKey::CtrlJ => Some(UserAction::QueryNext),
-        TerminalKey::CtrlK => Some(UserAction::QueryPrev),
-        TerminalKey::Tab => Some(UserAction::CompleteForward),
-        TerminalKey::BackTab => Some(UserAction::CompleteBackward),
-        TerminalKey::Esc => Some(UserAction::Esc),
-        TerminalKey::CtrlC => Some(UserAction::Quit),
+impl TerminalKey {
+    /// The core key this terminal key stands for.
+    pub(crate) fn to_core(self) -> Key {
+        match self {
+            TerminalKey::Char(ch) => Key::Char(ch),
+            TerminalKey::Enter => Key::Enter,
+            TerminalKey::AltEnter => Key::AltEnter,
+            TerminalKey::ShiftEnter => Key::ShiftEnter,
+            TerminalKey::Backspace => Key::Backspace,
+            TerminalKey::Delete => Key::Delete,
+            TerminalKey::Left => Key::Left,
+            TerminalKey::Right => Key::Right,
+            TerminalKey::Home => Key::Home,
+            TerminalKey::End => Key::End,
+            TerminalKey::Up => Key::Up,
+            TerminalKey::Down => Key::Down,
+            TerminalKey::PageUp => Key::PageUp,
+            TerminalKey::PageDown => Key::PageDown,
+            TerminalKey::CtrlU => Key::CtrlU,
+            TerminalKey::CtrlD => Key::CtrlD,
+            TerminalKey::CtrlP => Key::CtrlP,
+            TerminalKey::CtrlN => Key::CtrlN,
+            TerminalKey::CtrlJ => Key::CtrlJ,
+            TerminalKey::CtrlK => Key::CtrlK,
+            TerminalKey::Tab => Key::Tab,
+            TerminalKey::BackTab => Key::BackTab,
+            TerminalKey::Esc => Key::Esc,
+            TerminalKey::CtrlC => Key::CtrlC,
+        }
     }
 }

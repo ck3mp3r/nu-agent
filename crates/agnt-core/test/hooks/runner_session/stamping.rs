@@ -12,8 +12,8 @@ async fn test_hooks_runner_stamps_the_agent_context_on_every_envelope() -> Resul
 
     // -- Exec
     let _ = bus
-        .turn()
-        .send(TurnEvent::Completed {
+        .ui_event()
+        .send(SystemEvent::TurnCompleted {
             tool_calls: 1,
             input_tokens: 0,
             output_tokens: 0,
@@ -52,8 +52,8 @@ async fn test_hooks_runner_stamps_session_id_from_started() -> Result<()> {
         })
         .await;
     let _ = bus
-        .turn()
-        .send(TurnEvent::Completed {
+        .ui_event()
+        .send(SystemEvent::TurnCompleted {
             tool_calls: 1,
             input_tokens: 0,
             output_tokens: 0,
@@ -94,8 +94,8 @@ async fn test_hooks_runner_stamps_session_id_from_switched() -> Result<()> {
         })
         .await;
     let _ = bus
-        .turn()
-        .send(TurnEvent::Completed {
+        .ui_event()
+        .send(SystemEvent::TurnCompleted {
             tool_calls: 1,
             input_tokens: 0,
             output_tokens: 0,

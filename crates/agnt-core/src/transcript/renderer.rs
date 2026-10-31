@@ -1,5 +1,3 @@
-use super::ir::{BlockSource, Fill, Lane};
-
 /// Spinner animation frames for [`ItemStatus::InProgress`]. The indicator is
 /// the status type's own rendering concern, so the frames live with
 /// `ItemStatus` rather than with any particular renderer.
@@ -32,28 +30,4 @@ impl ItemStatus {
             ItemStatus::Unknown => "?",
         }
     }
-}
-
-/// Per-frame data the renderer needs at render time. The block's
-/// source/lane/fill are construction-time; FrameContext is per-frame.
-#[derive(Debug, Clone)]
-pub struct FrameContext {
-    /// Terminal width for projection/wrapping.
-    pub width: usize,
-    /// Wall-clock milliseconds, for spinner animation frames.
-    pub now_millis: u128,
-    /// Whether this block holds the input cursor.
-    pub cursor: bool,
-    /// Whether this block is the selected row.
-    pub selected: bool,
-}
-
-/// Implemented by concrete transcript item types (Message, Tool, Notice,
-/// Spacer, Banner). Answers three questions that are frozen into a flat
-/// `Block` at construction time. The renderer never sees the concrete type —
-/// only the `Block`.
-pub trait Renderable {
-    fn source(&self) -> BlockSource;
-    fn lane(&self) -> Lane;
-    fn fill(&self) -> Fill;
 }

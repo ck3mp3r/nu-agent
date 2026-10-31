@@ -50,7 +50,7 @@ use crate::rendering::theme::TuiTheme;
 use crate::runtime::renderer_test::{CapturingRenderer, FakeRenderer};
 use crate::runtime::status::test::{init_repo_with_branch, run_git};
 use crate::runtime::test_driver::{DriveEvent, RenderLoopDriver};
-use crate::test_support::{markdown_fixture, open_command_palette_for_test};
+use crate::test_support::{entry_text, markdown_fixture, open_command_palette_for_test};
 use crate::{
     interaction::input::{TerminalEvent, TerminalKey},
     platform::safety::RestoreRunError,
@@ -73,11 +73,12 @@ use crate::{
 };
 use agnt_core::orchestrator::{OrchestratorEvent, UiStateEvent};
 use agnt_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
-use agnt_core::protocol::event::{
-    PermissionDecision, PermissionRequestContext, ToolDisplay, UiEvent,
-};
+use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay};
+use agnt_core::protocol::events::{RequestId, SystemEvent, SystemKind, ToolCall, ToolOutcome};
+use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::renderer::UiRenderer;
-use agnt_core::transcript::ir::{BlockSource, MessageRole};
+use agnt_core::transcript::ir::MessageRole;
+use agnt_core::transcript::ir::ToolName;
 use agnt_core::transcript::renderer::ItemStatus;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 

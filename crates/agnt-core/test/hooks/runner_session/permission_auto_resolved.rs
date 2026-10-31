@@ -13,9 +13,9 @@ async fn test_hooks_runner_permission_auto_resolved_invokes_with_payload() -> Re
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionAutoResolved {
+        .send(SystemEvent::PermissionAutoResolved {
             matched_rule_identity: "tool:read".to_string(),
-            action: "allow".to_string(),
+            action: AutoResolutionAction::Allow,
             reason: None,
         })
         .await;
@@ -57,9 +57,9 @@ async fn test_hooks_runner_permission_auto_resolved_carries_deny_reason() -> Res
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionAutoResolved {
+        .send(SystemEvent::PermissionAutoResolved {
             matched_rule_identity: "global:*".to_string(),
-            action: "deny".to_string(),
+            action: AutoResolutionAction::Deny,
             reason: Some("Permission denied by rule 'global:*' (scope: global)".to_string()),
         })
         .await;
@@ -96,9 +96,9 @@ async fn test_hooks_runner_permission_auto_resolved_stamps_session_id() -> Resul
         .await;
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionAutoResolved {
+        .send(SystemEvent::PermissionAutoResolved {
             matched_rule_identity: "tool:read".to_string(),
-            action: "allow".to_string(),
+            action: AutoResolutionAction::Allow,
             reason: None,
         })
         .await;
@@ -131,8 +131,8 @@ async fn test_hooks_runner_permission_auto_resolved_ignores_prompt_events() -> R
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionRequested {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionRequested {
+            request_id: RequestId::new("req-1"),
             context: PermissionRequestContext {
                 tool: "nu".to_string(),
                 tool_key: "nu\n{}".to_string(),
@@ -149,8 +149,8 @@ async fn test_hooks_runner_permission_auto_resolved_ignores_prompt_events() -> R
         .await;
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionSubmitted {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionSubmitted {
+            request_id: RequestId::new("req-1"),
             decision: PermissionDecision::AllowOnce,
             matched_rule_identity: "global:*".to_string(),
         })

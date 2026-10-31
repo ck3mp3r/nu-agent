@@ -23,7 +23,7 @@ pub(crate) use std::sync::{
 };
 pub(crate) use std::time::Duration;
 
-pub(crate) use crate::bus::{CompactionEvent, ExternalEvent, create_bus};
+pub(crate) use crate::bus::{ExternalEvent, create_bus};
 pub(crate) use crate::orchestrator::{
     InteractiveLoopConfig, OrchestratorEvent, UiRequest, UiStateEvent, run_interactive_loop_impl,
     run_single_turn,
@@ -33,7 +33,8 @@ pub(crate) use crate::protocol::{
         CoreRuntime, McpToggleRequest, McpUsabilityState, SharedUiAction, UiMessageSnapshot,
         UiMessageUsageSnapshot, UserInputUi,
     },
-    event::{PermissionDecision, ToolDisplay, ToolDisplaySection, UiEvent},
+    event::{PermissionDecision, ToolDisplay, ToolDisplaySection},
+    events::SystemEvent,
     mcp_management::McpManagement,
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},

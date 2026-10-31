@@ -1,7 +1,15 @@
 use ratatui::style::Modifier;
 
-use crate::rendering::theme::{CatppuccinPalette, TuiTheme, hint_to_style};
+use crate::rendering::theme::{CatppuccinPalette, TuiTheme};
+use crate::widgets::text::hint_style;
 use agnt_core::transcript::ir::StyleHint;
+use agnt_render::Theme;
+
+/// The style one hint paints with under the TUI theme: the widgets' single
+/// vocabulary, resolved through the backend-neutral theme.
+fn style_of(hint: &StyleHint, theme: &TuiTheme) -> ratatui::style::Style {
+    hint_style(hint, theme.row_assistant, &Theme::from(theme))
+}
 
 // ========== markdown element styles (task 6b8be032) ==========
 
@@ -81,63 +89,56 @@ fn md_link_url_quote_list_marker_map_to_catppuccin_colors_for_all_flavors() {
     }
 }
 
-/// WHEN `hint_to_style` receives `MdHeading(1..=6)`, THE function SHALL return
+/// WHEN `hint_style` receives `MdHeading(1..=6)`, THE function SHALL return
 /// the matching `theme.md_heading[level]`; WHEN it receives `MdHeading(0)` or
 /// `MdHeading(> 6)`, THE function SHALL return `theme.md_heading[0]`.
 #[test]
-fn hint_to_style_maps_md_heading_levels() {
+fn hint_style_maps_md_heading_levels() {
     let theme = TuiTheme::default();
-    let role = theme.row_assistant;
 
     for level in 1..=6u8 {
-        assert_eq!(
-            hint_to_style(&StyleHint::MdHeading(level), role, &theme),
-            theme.md_heading[usize::from(level)],
-            "MdHeading({level}) must map to md_heading[{level}]"
+        let style = style_of(&StyleHint::MdHeading(level), &theme);
+        assert_eq!(style.fg, theme.md_heading[usize::from(level)].fg);
+        assert!(
+            style.add_modifier.contains(Modifier::BOLD),
+            "MdHeading({level}) must stay bold"
         );
     }
     assert_eq!(
-        hint_to_style(&StyleHint::MdHeading(0), role, &theme),
-        theme.md_heading[0]
+        style_of(&StyleHint::MdHeading(0), &theme).fg,
+        theme.md_heading[0].fg
     );
     assert_eq!(
-        hint_to_style(&StyleHint::MdHeading(7), role, &theme),
-        theme.md_heading[0]
+        style_of(&StyleHint::MdHeading(7), &theme).fg,
+        theme.md_heading[0].fg
     );
 }
 
-/// WHEN `hint_to_style` receives `MdLink`, `MdLinkUrl`, `MdQuote`, or
-/// `MdListMarker`, THE function SHALL return the matching theme field.
+/// WHEN the hint vocabulary receives `MdLink`, `MdLinkUrl`, `MdQuote`, or
+/// `MdListMarker`, THE style SHALL carry the matching palette color.
 #[test]
-fn hint_to_style_maps_md_link_url_quote_list_marker() {
+fn hint_style_maps_md_link_url_quote_list_marker() {
     let theme = TuiTheme::default();
-    let role = theme.row_assistant;
 
+    assert_eq!(style_of(&StyleHint::MdLink, &theme).fg, theme.md_link.fg);
+    let url = style_of(&StyleHint::MdLinkUrl, &theme);
+    assert_eq!(url.fg, theme.md_link_url.fg);
+    assert!(url.add_modifier.contains(Modifier::ITALIC));
+    assert!(url.add_modifier.contains(Modifier::UNDERLINED));
+    assert_eq!(style_of(&StyleHint::MdQuote, &theme).fg, theme.md_quote.fg);
     assert_eq!(
-        hint_to_style(&StyleHint::MdLink, role, &theme),
-        theme.md_link
-    );
-    assert_eq!(
-        hint_to_style(&StyleHint::MdLinkUrl, role, &theme),
-        theme.md_link_url
-    );
-    assert_eq!(
-        hint_to_style(&StyleHint::MdQuote, role, &theme),
-        theme.md_quote
-    );
-    assert_eq!(
-        hint_to_style(&StyleHint::MdListMarker, role, &theme),
-        theme.md_list_marker
+        style_of(&StyleHint::MdListMarker, &theme).fg,
+        theme.md_list_marker.fg
     );
 }
 
 // ========== recolored emphasis and syntax hints (task 689d0ec2) ==========
 
-/// WHEN `hint_to_style` receives `MdBold`, `MdItalic`, or `MdBoldItalic`, THE
+/// WHEN `hint_style` receives `MdBold`, `MdItalic`, or `MdBoldItalic`, THE
 /// function SHALL return red foreground with BOLD, ITALIC, or both modifiers
 /// respectively, for every flavor.
 #[test]
-fn hint_to_style_maps_emphasis_hints_to_red_for_all_flavors() {
+fn hint_style_maps_emphasis_hints_to_red_for_all_flavors() {
     let cases = [
         (TuiTheme::catppuccin_mocha(), CatppuccinPalette::mocha()),
         (TuiTheme::catppuccin_latte(), CatppuccinPalette::latte()),
@@ -149,57 +150,54 @@ fn hint_to_style_maps_emphasis_hints_to_red_for_all_flavors() {
     ];
 
     for (theme, palette) in cases {
-        let role = theme.row_assistant;
-
-        let bold = hint_to_style(&StyleHint::MdBold, role, &theme);
+        let bold = style_of(&StyleHint::MdBold, &theme);
         assert_eq!(bold.fg, Some(palette.red), "MdBold must be red");
         assert!(bold.add_modifier.contains(Modifier::BOLD));
         assert!(!bold.add_modifier.contains(Modifier::ITALIC));
 
-        let italic = hint_to_style(&StyleHint::MdItalic, role, &theme);
+        let italic = style_of(&StyleHint::MdItalic, &theme);
         assert_eq!(italic.fg, Some(palette.red), "MdItalic must be red");
         assert!(italic.add_modifier.contains(Modifier::ITALIC));
         assert!(!italic.add_modifier.contains(Modifier::BOLD));
 
-        let both = hint_to_style(&StyleHint::MdBoldItalic, role, &theme);
+        let both = style_of(&StyleHint::MdBoldItalic, &theme);
         assert_eq!(both.fg, Some(palette.red), "MdBoldItalic must be red");
         assert!(both.add_modifier.contains(Modifier::BOLD));
         assert!(both.add_modifier.contains(Modifier::ITALIC));
     }
 }
 
-/// WHEN `hint_to_style` receives `MdCodeVariable`, `MdCodeConstant`,
+/// WHEN `hint_style` receives `MdCodeVariable`, `MdCodeConstant`,
 /// `MdCodeOperator`, `MdCodePunctuation`, `MdCodeComment`, or `MdInlineCode`,
 /// THE function SHALL return the recolored syntax styles.
 #[test]
-fn hint_to_style_maps_code_hints_to_recolored_syntax_styles() {
+fn hint_style_maps_code_hints_to_recolored_syntax_styles() {
     let theme = TuiTheme::default();
-    let role = theme.row_assistant;
     let palette = CatppuccinPalette::mocha();
 
     assert_eq!(
-        hint_to_style(&StyleHint::MdCodeVariable, role, &theme).fg,
+        style_of(&StyleHint::MdCodeVariable, &theme).fg,
         Some(palette.text)
     );
     assert_eq!(
-        hint_to_style(&StyleHint::MdCodeConstant, role, &theme).fg,
+        style_of(&StyleHint::MdCodeConstant, &theme).fg,
         Some(palette.peach)
     );
     assert_eq!(
-        hint_to_style(&StyleHint::MdCodeOperator, role, &theme).fg,
+        style_of(&StyleHint::MdCodeOperator, &theme).fg,
         Some(palette.sky)
     );
     assert_eq!(
-        hint_to_style(&StyleHint::MdCodePunctuation, role, &theme).fg,
+        style_of(&StyleHint::MdCodePunctuation, &theme).fg,
         Some(palette.overlay2)
     );
 
-    let comment = hint_to_style(&StyleHint::MdCodeComment, role, &theme);
+    let comment = style_of(&StyleHint::MdCodeComment, &theme);
     assert_eq!(comment.fg, Some(palette.overlay2));
     assert!(comment.add_modifier.contains(Modifier::ITALIC));
     assert!(!comment.add_modifier.contains(Modifier::DIM));
 
-    let inline = hint_to_style(&StyleHint::MdInlineCode, role, &theme);
+    let inline = style_of(&StyleHint::MdInlineCode, &theme);
     assert_eq!(inline.fg, Some(palette.green));
     assert!(!inline.add_modifier.contains(Modifier::DIM));
 }

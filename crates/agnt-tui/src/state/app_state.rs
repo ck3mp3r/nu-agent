@@ -5,15 +5,12 @@ use std::time::{Duration, Instant};
 
 use agnt_core::orchestrator::{OrchestratorEvent, UiRequest, UiStateEvent};
 use agnt_core::protocol::contracts::SharedUiAction;
-use agnt_core::transcript::ir::Block;
-use agnt_core::transcript::items::Banner;
-use agnt_core::transcript::renderer::Renderable;
+use agnt_core::transcript::entry::{BannerEntry, TranscriptEntry};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::text::Text;
-use ratatui::widgets::{Paragraph, Widget, Wrap};
 
 use super::compaction::CompactionState;
+use super::hydration::hydrate_by_replay;
 use super::input::InputState;
 use super::llm::LlmState;
 use super::permission::PermissionState;
@@ -24,12 +21,9 @@ use super::tool::ToolState;
 use super::transcript_store::TranscriptStore;
 use super::turn::TurnState;
 use crate::interaction::cancel::CancelController;
-use crate::interaction::dispatch::rewrite_action;
 use crate::interaction::input::{TerminalEvent, map_terminal_event};
-use crate::interaction::reducer::{ReducerInput, reduce_with_cancel_controller};
 use crate::rendering::theme::{ThemeName, TuiTheme};
-use crate::runtime::render::single_line_visual_row_count;
-use crate::runtime::render::transcript::build_transcript_lines;
+use crate::runtime::render::transcript::{PaintWindow, paint_transcript_rows};
 
 const STARTUP_LOGOS: &[&str] = &[include_str!("../logos/00.txt")];
 
@@ -51,7 +45,6 @@ pub enum TranscriptRole {
     System,
     Compaction,
     Tool,
-    ToolDisplay,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,7 +208,7 @@ pub struct QueuedPrompt {
 pub struct ToolCallLine {
     pub id: u64,
     pub status: ToolCallStatus,
-    pub key: String,
+    pub key: agnt_core::protocol::events::ToolCallId,
     pub block_index: Option<usize>,
 }
 
@@ -386,18 +379,13 @@ impl AppState {
         event: &TerminalEvent,
         cancel_controller: Option<&CancelController>,
     ) -> bool {
-        // The permission card owns its keys while it is up: suspend the input
-        // lock so 'a'/'A'/'d' reach the card arm of `rewrite_action`. Every
-        // other Char key rewrites to Noop there, so nothing leaks into the
-        // textarea and no decision fires.
-        let locked = self.input_locked && !self.permission.has_prompt();
-        let Some(mapped_action) = map_terminal_event(event, locked) else {
+        // The terminal layer reports keys, wheel notches, and resizes; the
+        // reducer owns what they mean (the input lock, the open card, the
+        // keymap).
+        let Some(event) = map_terminal_event(event) else {
             return false;
         };
-        let (action, force_changed) = rewrite_action(self, mapped_action);
-        let changed =
-            reduce_with_cancel_controller(self, ReducerInput::User(action), cancel_controller);
-        force_changed || changed
+        crate::interaction::reducer::reduce(self, event, cancel_controller)
     }
 
     pub fn reduce_ui_state_event(&mut self, event: UiStateEvent) {
@@ -413,15 +401,7 @@ impl AppState {
             UiStateEvent::HydrateTranscript {
                 messages,
                 last_total_tokens,
-            } => {
-                self.transcript.hydrate_from_messages(
-                    messages,
-                    last_total_tokens,
-                    &mut self.status,
-                    &mut self.tool,
-                    &mut self.compaction,
-                );
-            }
+            } => hydrate_by_replay(self, messages, last_total_tokens),
             UiStateEvent::SetSessionPickerOptions(sessions) => {
                 let tui_options: Vec<PickerOption> =
                     sessions.into_iter().map(PickerOption::from).collect();
@@ -499,6 +479,7 @@ impl AppState {
                             id: format!("{name:?}"),
                             display: display_name.clone(),
                             search_text: display_name.clone(),
+                            section: None,
                             sort_key: Vec::new(),
                             payload: PickerPayload::Theme,
                         }
@@ -524,15 +505,10 @@ impl AppState {
         use rand::RngExt;
         let idx = rand::rng().random_range(0..STARTUP_LOGOS.len());
         let logo = STARTUP_LOGOS[idx];
-        let banner = Banner {
+        let entry = TranscriptEntry::Banner(BannerEntry {
             text: logo.to_string(),
-        };
-        let evicted = self.transcript.push_block(Block {
-            source: banner.source(),
-            lane: banner.lane(),
-            fill: banner.fill(),
-            status: None,
         });
+        let evicted = self.transcript.push_entry(entry);
         self.shift_bookkeeping_after_eviction(evicted);
     }
 
@@ -545,7 +521,6 @@ impl AppState {
         self.status.tokens.latest_input_tokens = None;
         self.status.tokens.latest_output_tokens = None;
         self.status.tokens.latest_total_tokens = None;
-        self.scroll.entry_indices.clear();
     }
 
     /// Builds the yank payload for the active visual-mode selection and clears
@@ -575,54 +550,45 @@ impl AppState {
         if !self.transcript.height_index_valid_for(width) {
             self.transcript.rebuild_height_index(width);
         }
-        let (first, last) = self
-            .transcript
-            .visible_window(start_row, end_row - start_row + 1);
-        if first >= last {
+        let total_rows = self.transcript.total_visual_rows();
+        if start_row >= total_rows {
             return String::new();
         }
-        let built =
-            build_transcript_lines(self.transcript.blocks(), first, last, width, &self.theme);
-        let visual_rows: usize = built
-            .lines
-            .iter()
-            .map(|line| single_line_visual_row_count(line, width))
-            .sum();
-        if visual_rows == 0 {
-            return String::new();
-        }
+        let end_row = end_row.min(total_rows.saturating_sub(1));
+        let rows = end_row - start_row + 1;
         let area = Rect::new(
             0,
             0,
             width.min(u16::MAX as usize) as u16,
-            visual_rows.min(u16::MAX as usize) as u16,
+            rows.min(u16::MAX as usize) as u16,
         );
         let mut buffer = Buffer::empty(area);
-        Paragraph::new(Text::from(built.lines))
-            .wrap(Wrap::default())
-            .render(area, &mut buffer);
-        // The rendered range starts at the first block's absolute start row.
-        let base = self.transcript.start_row_of(first);
-        let from = start_row.saturating_sub(base);
-        let to = end_row.saturating_sub(base).min(visual_rows - 1);
-        let mut rows: Vec<String> = Vec::new();
-        for y in from..=to {
+        let window = PaintWindow {
+            theme: &self.theme,
+            width,
+            first_row: start_row,
+            height: rows,
+            top: 0,
+        };
+        paint_transcript_rows(&self.transcript, &window, &mut buffer);
+        let mut text_rows: Vec<String> = Vec::with_capacity(rows);
+        for y in 0..area.height {
             let mut text = String::new();
             for x in 0..area.width {
-                if let Some(cell) = buffer.cell((x, y as u16)) {
+                if let Some(cell) = buffer.cell((x, y)) {
                     text.push(cell.symbol().chars().next().unwrap_or(' '));
                 }
             }
-            rows.push(text.trim_end().to_string());
+            text_rows.push(text.trim_end().to_string());
         }
-        rows.join("\n")
+        text_rows.join("\n")
     }
 
     /// Shift tool-call `block_index` bookkeeping after transcript-cap
-    /// eviction: tool calls store indices into [`TranscriptStore::blocks`],
-    /// and eviction moves every surviving block down by the evicted count. An
-    /// index below the evicted range points at a removed block and becomes
-    /// `None`. Streaming cursors are shifted by the store itself.
+    /// eviction: tool calls store indices into the transcript entry list, and
+    /// eviction moves every surviving entry down by the evicted count. An index
+    /// below the evicted range points at a removed entry and becomes `None`.
+    /// Streaming cursors are shifted by the store itself.
     pub fn shift_bookkeeping_after_eviction(&mut self, evicted_count: usize) {
         if evicted_count == 0 {
             return;

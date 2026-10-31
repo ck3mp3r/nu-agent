@@ -65,7 +65,7 @@ impl CoreRuntime for CancellableBlockingRuntime {
                         let _ = self
                             .bus
                             .ui_event()
-                            .send(UiEvent::Completed { tool_calls: 0, input_tokens: 0, output_tokens: 0, total_tokens: None, cost: None, cost_complete: true, duration_ms: 0 })
+                            .send(SystemEvent::TurnCompleted { tool_calls: 0, input_tokens: 0, output_tokens: 0, total_tokens: None, cost: None, cost_complete: true, duration_ms: 0 })
                             .await;
                         return Err(LabeledError::new("LLM call cancelled"));
                     }
@@ -80,7 +80,7 @@ impl CoreRuntime for CancellableBlockingRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,

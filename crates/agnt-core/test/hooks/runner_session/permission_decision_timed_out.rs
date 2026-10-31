@@ -13,8 +13,8 @@ async fn test_hooks_runner_permission_decision_timed_out_invokes_with_payload() 
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionTimedOut {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionTimedOut {
+            request_id: RequestId::new("req-1"),
         })
         .await;
     drop(bus);
@@ -56,8 +56,8 @@ async fn test_hooks_runner_permission_decision_timed_out_stamps_session_id() -> 
         .await;
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionTimedOut {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionTimedOut {
+            request_id: RequestId::new("req-1"),
         })
         .await;
     drop(bus);
@@ -89,8 +89,8 @@ async fn test_hooks_runner_permission_decision_timed_out_ignores_other_decisions
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionIgnored {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionIgnored {
+            request_id: RequestId::new("req-1"),
             reason: "turn cancelled".to_string(),
         })
         .await;

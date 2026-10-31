@@ -197,6 +197,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agnt-render"
+version = "0.1.0"
+dependencies = [
+ "agnt-core",
+ "textwrap",
+]
+
+[[package]]
 name = "agnt-testkit"
 version = "0.1.0"
 dependencies = [
@@ -209,8 +217,10 @@ name = "agnt-tty"
 version = "0.1.0"
 dependencies = [
  "agnt-core",
+ "agnt-render",
  "log",
  "nu-protocol",
+ "textwrap",
 ]
 
 [[package]]
@@ -218,6 +228,7 @@ name = "agnt-tui"
 version = "0.1.0"
 dependencies = [
  "agnt-core",
+ "agnt-render",
  "arboard",
  "chrono",
  "crossterm",

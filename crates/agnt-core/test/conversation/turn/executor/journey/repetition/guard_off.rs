@@ -37,9 +37,9 @@ async fn journey_repetition_guard_off_intra_stream_never_trips() -> Result<()> {
         "guard-off intra-stream repetition must not stop the run"
     );
     assert!(
-        !events
-            .iter()
-            .any(|e| matches!(e, UiEvent::Warning { message } if message.contains("repetition"))),
+        !events.iter().any(
+            |e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text.contains("repetition"))
+        ),
         "guard-off must not emit repetition warnings; got: {events:?}"
     );
 
@@ -70,7 +70,7 @@ async fn journey_repetition_guard_off_cross_turn_never_trips() -> Result<()> {
         );
         assert!(
             !events.iter().any(
-                |e| matches!(e, UiEvent::Warning { message } if message.contains("repetition"))
+                |e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text.contains("repetition"))
             ),
             "guard-off must not emit repetition warnings"
         );
@@ -117,9 +117,9 @@ async fn journey_repetition_guard_off_doom_loop_never_trips() -> Result<()> {
         "guard-off doom loop must not stop the run, got: {outcome:?}"
     );
     assert!(
-        !events
-            .iter()
-            .any(|e| matches!(e, UiEvent::Warning { message } if message.contains("Doom loop"))),
+        !events.iter().any(
+            |e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text.contains("Doom loop"))
+        ),
         "guard-off must not emit doom-loop warnings; got: {events:?}"
     );
 

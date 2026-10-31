@@ -1,252 +1,207 @@
-//! Transcript column alignment: the lane prefix pins every lane to a fixed
-//! gutter, and the wrap budget keeps the list area's last two columns clear
-//! (task 45b99a84).
+//! Transcript column alignment: every lane pins a fixed gutter, and the wrap
+//! budget keeps the pane's last two columns clear.
 //!
-//! Coordinates are LIST-LOCAL: 0 is the transcript list area's first column.
-//! The tool, compaction, and system lanes render `[cursor slot][marker]` with
-//! text at 4; the user lane renders the dotted rail at 0 with text at 2; the
-//! assistant lane renders a blank 2-column prefix with text at 2. The banner
-//! lane is centered within the pane separately and keeps its own rendering.
+//! Coordinates are pane-local: 0 is the pane's first column. The tool,
+//! compaction and system lanes paint `[cursor slot][marker]` with text at 4; the
+//! user lane paints the dotted rail at 0 with text at 2; the assistant lane
+//! paints a blank two-column prefix with text at 2; the banner centers its row.
 
-use super::support::{frame_ctx, markdown_block};
-use crate::rendering::theme::TuiTheme;
-use crate::tui_renderer::layout;
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::ir::*;
-use unicode_width::UnicodeWidthStr;
+use super::support::*;
+use agnt_core::transcript::ir::{MessageRole, NoticeKind};
+use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::catalog::LaneKind;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+// region:    --- Lane gutters
 
-const WIDTH: usize = 80;
-
-// ========== lane gutters ==========
-
-/// WHEN `layout()` renders a tool, compaction, or system block that wraps, THE
-/// marker glyph SHALL sit at list-local 2 with text at list-local 4 on row 0,
-/// and every continuation row SHALL keep the blank marker slot with text at
-/// list-local 4 — unchanged by the gutter task.
+/// WHEN a tool, compaction or system entry wraps, THE marker SHALL sit at column
+/// 2 with text at 4 on row 0, and every continuation row SHALL keep the blank
+/// marker slot with text at 4.
 #[test]
-fn layout_tool_lanes_keep_marker_at_two_and_text_at_four() -> Result<()> {
+fn test_renderer_alignment_marker_lanes_keep_marker_at_two_and_text_at_four() -> Result<()> {
     // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let tool = Block {
-        source: BlockSource::Tool {
-            name: ToolName("tool".to_string()),
-            call: CallLine {
-                summary: long_prose(),
-            },
-            preview: None,
-        },
-        lane: Lane::Marker("\u{2699}"),
-        fill: Fill::None,
-        status: None,
-    };
-    let compaction = Block {
-        source: BlockSource::Notice {
-            kind: NoticeKind::Compaction,
-            text: long_prose(),
-        },
-        lane: Lane::Marker("~"),
-        fill: Fill::None,
-        status: None,
-    };
-    let system = Block {
-        source: BlockSource::Notice {
-            kind: NoticeKind::System,
-            text: long_prose(),
-        },
-        lane: Lane::Marker("\u{00b7}"),
-        fill: Fill::None,
-        status: None,
-    };
+    let cases = [
+        (
+            tool_entry("read", &long_prose(), None, None, ItemStatus::Done),
+            '\u{2699}',
+            LaneKind::Tool,
+        ),
+        (
+            notice_entry(NoticeKind::Compaction, &long_prose()),
+            '~',
+            LaneKind::Compaction,
+        ),
+        (
+            notice_entry(NoticeKind::System, &long_prose()),
+            '\u{00b7}',
+            LaneKind::System,
+        ),
+    ];
 
     // -- Exec & Check
-    for (block, row_zero_prefix) in [
-        (&tool, "  \u{2699} "),
-        (&compaction, "  ~ "),
-        (&system, "  \u{00b7} "),
-    ] {
-        let lines = layout(block, &frame_ctx(WIDTH), &theme);
-        assert!(
-            lines.len() >= 2,
-            "fixture must wrap at width {WIDTH}; got {}",
-            lines.len()
-        );
-        let row0 = lines.first().ok_or("row 0 must exist")?;
-        assert!(
-            line_text(row0).starts_with(row_zero_prefix),
-            "row 0 of lane {:?} must render the marker at 2 and text at 4; got {:?}",
-            block.lane,
-            line_text(row0)
-        );
-        for (idx, line) in lines.iter().enumerate().skip(1) {
-            assert!(
-                line_text(line).starts_with("    "),
-                "continuation row {idx} of lane {:?} must keep the blank marker slot (text at 4); got {:?}",
-                block.lane,
-                line_text(line)
-            );
-        }
-    }
-    Ok(())
-}
-
-/// WHEN `layout()` renders a user block that wraps, THE dotted rail `╎` SHALL
-/// sit at list-local 0 on row 0 and on every continuation row, THE text SHALL
-/// start at list-local 2, and no row SHALL contain the legacy rail.
-#[test]
-fn layout_user_rows_carry_dotted_rail_at_zero_and_text_at_two() -> Result<()> {
-    // -- Setup & Fixtures
-    let block = markdown_block(MessageRole::User, &long_prose(), Fill::Full);
-
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(WIDTH), &TuiTheme::default());
-
-    // -- Check
-    assert!(
-        lines.len() >= 2,
-        "fixture must wrap at width {WIDTH}; got {}",
-        lines.len()
-    );
-    for (idx, line) in lines.iter().enumerate() {
-        let text = line_text(line);
-        assert!(
-            text.starts_with("\u{254e} "),
-            "user row {idx} must carry the dotted rail at 0; got {text:?}"
-        );
-        assert!(
-            text.chars().count() > 2,
-            "user row {idx} must start its text at 2; got {text:?}"
-        );
-        assert!(
-            !text.contains('\u{258f}'),
-            "user row {idx} must not carry the legacy rail; got {text:?}"
-        );
-    }
-    Ok(())
-}
-
-/// WHEN `layout()` renders an assistant block that wraps, THE text SHALL start
-/// at list-local 2 (the cog column) on row 0 and on every continuation row.
-#[test]
-fn layout_assistant_rows_start_text_at_two() -> Result<()> {
-    // -- Setup & Fixtures
-    let block = markdown_block(MessageRole::Assistant, &long_prose(), Fill::None);
-
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(WIDTH), &TuiTheme::default());
-
-    // -- Check
-    assert!(
-        lines.len() >= 2,
-        "fixture must wrap at width {WIDTH}; got {}",
-        lines.len()
-    );
-    for (idx, line) in lines.iter().enumerate() {
-        let text = line_text(line);
-        assert!(
-            text.starts_with("  ") && !text.starts_with("    "),
-            "assistant row {idx} must start its text at 2; got {text:?}"
-        );
-    }
-    Ok(())
-}
-
-// ========== right margin ==========
-
-/// WHEN any entry lane renders a wrapped block, THE last text column SHALL be
-/// at most `WIDTH - 3`: the wrap budget keeps the list area's last two columns
-/// clear in every lane.
-#[test]
-fn layout_every_entry_lane_keeps_the_right_margin_clear() -> Result<()> {
-    // -- Setup & Fixtures: one wrapping block per entry lane.
-    let theme = TuiTheme::default();
-    let user = markdown_block(MessageRole::User, &long_prose(), Fill::Full);
-    let assistant = markdown_block(MessageRole::Assistant, &long_prose(), Fill::None);
-    let tool = Block {
-        source: BlockSource::Tool {
-            name: ToolName("tool".to_string()),
-            call: CallLine {
-                summary: long_prose(),
-            },
-            preview: None,
-        },
-        lane: Lane::Marker("\u{2699}"),
-        fill: Fill::None,
-        status: None,
-    };
-    let system = Block {
-        source: BlockSource::Notice {
-            kind: NoticeKind::System,
-            text: long_prose(),
-        },
-        lane: Lane::Marker("\u{00b7}"),
-        fill: Fill::None,
-        status: None,
-    };
-
-    // -- Exec & Check
-    for block in [&user, &assistant, &tool, &system] {
-        let lines = layout(block, &frame_ctx(WIDTH), &theme);
-        assert!(
-            lines.len() >= 2,
-            "fixture must wrap at width {WIDTH}; got {}",
-            lines.len()
-        );
-        for (idx, line) in lines.iter().enumerate() {
-            let width = line_width(line);
-            assert!(
-                width <= WIDTH - 2,
-                "row {idx} of lane {:?} must leave the last two columns clear (max width {}); got width {width}: {:?}",
-                block.lane,
-                WIDTH - 2,
-                line_text(line)
-            );
-        }
-    }
-    Ok(())
-}
-
-/// WHEN `measure()` and `layout()` process the same wrapped block, THE visual
-/// row counts SHALL stay identical for every lane — the lane prefix feeds both
-/// budgets from one source.
-#[test]
-fn measure_matches_layout_rows_for_every_lane() -> Result<()> {
-    // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let user = markdown_block(MessageRole::User, &long_prose(), Fill::Full);
-    let assistant = markdown_block(MessageRole::Assistant, &long_prose(), Fill::None);
-
-    // -- Exec & Check
-    for block in [&user, &assistant] {
-        let measured = crate::tui_renderer::measure(block, WIDTH, &theme);
-        let laid_out = layout(block, &frame_ctx(WIDTH), &theme).len();
+    for (entry, marker, lane) in cases {
+        let backend = render(&entry)?;
+        let rows = measured_rows(&entry)?;
+        assert!(rows >= 2, "lane {lane:?} must wrap; got {rows}");
+        let row0 = row_text(&backend, 0);
         assert_eq!(
-            measured, laid_out,
-            "measure() must equal layout().len() for lane {:?}",
-            block.lane
+            row0.chars().nth(2),
+            Some(marker),
+            "lane {lane:?} must paint its marker at column 2; got {row0:?}"
+        );
+        assert_ne!(
+            row0.chars().nth(4),
+            Some(' '),
+            "lane {lane:?} must start its text at column 4; got {row0:?}"
+        );
+        for y in 1..u16::try_from(rows)? {
+            let row = row_text(&backend, y);
+            assert!(
+                row.starts_with("    ") && row.chars().nth(4) != Some(' '),
+                "lane {lane:?} continuation row {y} must keep the blank marker slot; got {row:?}"
+            );
+            assert!(
+                !row.contains(marker),
+                "lane {lane:?} continuation row {y} must blank the marker; got {row:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// WHEN a user message wraps, THE dotted rail SHALL sit at column 0 on the row
+/// and on every continuation row, with text at 2.
+#[test]
+fn test_renderer_alignment_user_rows_carry_rail_at_zero_and_text_at_two() -> Result<()> {
+    // -- Setup & Fixtures
+    let entry = message_entry(MessageRole::User, &long_prose());
+
+    // -- Exec
+    let backend = render(&entry)?;
+
+    // -- Check
+    let rows = measured_rows(&entry)?;
+    assert!(rows >= 2, "the fixture must wrap; got {rows}");
+    for y in 0..u16::try_from(rows)? {
+        let row = row_text(&backend, y);
+        assert!(
+            row.starts_with("\u{254e} "),
+            "user row {y} must carry the rail at column 0; got {row:?}"
+        );
+        assert_ne!(
+            row.chars().nth(2),
+            Some(' '),
+            "user row {y} must start its text at column 2; got {row:?}"
         );
     }
     Ok(())
 }
 
-// -- Test Support
+/// WHEN an assistant message wraps, THE text SHALL start at column 2 on the row
+/// and on every continuation row.
+#[test]
+fn test_renderer_alignment_assistant_rows_start_text_at_two() -> Result<()> {
+    // -- Setup & Fixtures
+    let entry = message_entry(MessageRole::Assistant, &long_prose());
 
-/// Prose long enough to wrap at [`WIDTH`]: 12 nine-character words.
-fn long_prose() -> String {
-    (0..12)
-        .map(|index| format!("word{index:05}"))
-        .collect::<Vec<String>>()
-        .join(" ")
+    // -- Exec
+    let backend = render(&entry)?;
+
+    // -- Check
+    let rows = measured_rows(&entry)?;
+    assert!(rows >= 2, "the fixture must wrap; got {rows}");
+    for y in 0..u16::try_from(rows)? {
+        let row = row_text(&backend, y);
+        assert!(
+            row.starts_with("  ") && row.chars().nth(2) != Some(' '),
+            "assistant row {y} must start its text at column 2; got {row:?}"
+        );
+    }
+    Ok(())
 }
 
-fn line_text(line: &ratatui::text::Line<'static>) -> String {
-    line.spans.iter().map(|s| s.content.as_ref()).collect()
+/// WHEN a banner renders, THE text SHALL be centered: the gutter plus the text
+/// is centered as one row, with the odd column left of the glyphs.
+#[test]
+fn test_renderer_alignment_banner_is_centered() -> Result<()> {
+    // -- Setup & Fixtures
+    let entry = banner_entry("NUAGENT");
+
+    // -- Exec
+    let backend = render(&entry)?;
+
+    // -- Check: the banner lane reserves a four-column gutter, so seven glyphs
+    // centered in eighty columns start at 34 + 4 = 38 and leave 35 columns right.
+    let row = row_text(&backend, 0);
+    let glyph_at = row.find("NUAGENT").ok_or("the banner must render")?;
+    let trailing = row.chars().rev().take_while(|c| *c == ' ').count();
+    assert_eq!(glyph_at, 38, "the banner must center; got {row:?}");
+    assert_eq!(
+        trailing, 35,
+        "the right padding must mirror the left; got {row:?}"
+    );
+    assert_eq!(glyph_at + 7 + trailing, usize::from(WIDTH));
+    Ok(())
 }
 
-fn line_width(line: &ratatui::text::Line<'static>) -> usize {
-    line.spans
-        .iter()
-        .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
-        .sum()
+// endregion: --- Lane gutters
+
+// region:    --- Right margin
+
+/// WHEN any entry lane wraps, THE last painted column SHALL stay inside
+/// `WIDTH - 2`: the wrap budget keeps the pane's last two columns clear.
+#[test]
+fn test_renderer_alignment_every_lane_keeps_the_right_margin_clear() -> Result<()> {
+    // -- Setup & Fixtures: one wrapping entry per lane.
+    let cases = [
+        message_entry(MessageRole::User, &long_prose()),
+        message_entry(MessageRole::Assistant, &long_prose()),
+        tool_entry("read", &long_prose(), None, None, ItemStatus::Done),
+        notice_entry(NoticeKind::System, &long_prose()),
+        notice_entry(NoticeKind::Compaction, &long_prose()),
+    ];
+
+    // -- Exec & Check
+    for entry in cases {
+        let backend = render(&entry)?;
+        let rows = measured_rows(&entry)?;
+        assert!(rows >= 2, "the fixture must wrap; got {rows}");
+        for y in 0..u16::try_from(rows)? {
+            let width = row_trimmed(&backend, y).chars().count();
+            assert!(
+                width <= usize::from(WIDTH) - 2,
+                "row {y} must leave the last two columns clear; got width {width}: {:?}",
+                row_trimmed(&backend, y)
+            );
+        }
+    }
+    Ok(())
 }
+
+/// WHEN the backend measures an entry and paints it, THE painted row count SHALL
+/// equal the measured one for every lane — the planner and the pane share one
+/// row budget.
+#[test]
+fn test_renderer_alignment_measured_rows_match_painted_rows() -> Result<()> {
+    // -- Setup & Fixtures
+    let cases = [
+        message_entry(MessageRole::User, &long_prose()),
+        message_entry(MessageRole::Assistant, &long_prose()),
+        tool_entry("read", &long_prose(), None, None, ItemStatus::Done),
+        notice_entry(NoticeKind::System, &long_prose()),
+        banner_entry("NUAGENT\nline2"),
+    ];
+
+    // -- Exec & Check
+    for entry in cases {
+        let (backend, rows) = render_at(&entry, 0)?;
+        assert_eq!(
+            painted_rows(&backend),
+            rows,
+            "the measured rows must equal the painted rows; painted {:?}",
+            row_trimmed(&backend, 0)
+        );
+    }
+    Ok(())
+}
+
+// endregion: --- Right margin

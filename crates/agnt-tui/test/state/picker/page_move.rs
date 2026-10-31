@@ -1,5 +1,5 @@
 use super::*;
-use crate::interaction::reducer::UserAction;
+use agnt_core::protocol::events::Key;
 
 /// PgUp/PgDn page the selection 8 rows in every picker kind, clamped to the
 /// first and last row instead of wrapping; single-row moves stay one row.
@@ -27,35 +27,37 @@ fn picker_page_moves_clamp_in_every_kind() -> Result<()> {
         state.picker.open(kind);
 
         // -- Exec & Check: pages step eight rows down from the top.
-        let (rewritten, changed) = state.picker.handle_action(UserAction::ScrollPageDown);
-        assert_eq!(rewritten, UserAction::Noop, "{kind:?}");
-        assert!(changed, "{kind:?}");
+        let outcome = state.picker.handle_key(Key::PageDown);
+        assert!(
+            matches!(outcome, PickerKeyOutcome::Consumed(true)),
+            "{kind:?}"
+        );
         assert_eq!(picker_selection(&state)?, 8, "{kind:?}");
 
-        state.picker.handle_action(UserAction::ScrollPageDown);
+        state.picker.handle_key(Key::PageDown);
         assert_eq!(picker_selection(&state)?, 16, "{kind:?}");
 
         // -- Exec & Check: the last page clamps to the last row, never past it.
-        state.picker.handle_action(UserAction::ScrollPageDown);
+        state.picker.handle_key(Key::PageDown);
         assert_eq!(picker_selection(&state)?, 19, "{kind:?}");
-        state.picker.handle_action(UserAction::ScrollPageDown);
+        state.picker.handle_key(Key::PageDown);
         assert_eq!(picker_selection(&state)?, 19, "{kind:?}");
 
         // -- Exec & Check: pages walk back up and clamp at the first row.
-        state.picker.handle_action(UserAction::ScrollPageUp);
+        state.picker.handle_key(Key::PageUp);
         assert_eq!(picker_selection(&state)?, 11, "{kind:?}");
-        state.picker.handle_action(UserAction::ScrollPageUp);
+        state.picker.handle_key(Key::PageUp);
         assert_eq!(picker_selection(&state)?, 3, "{kind:?}");
-        state.picker.handle_action(UserAction::ScrollPageUp);
+        state.picker.handle_key(Key::PageUp);
         assert_eq!(picker_selection(&state)?, 0, "{kind:?}");
-        state.picker.handle_action(UserAction::ScrollPageUp);
+        state.picker.handle_key(Key::PageUp);
         assert_eq!(picker_selection(&state)?, 0, "{kind:?}");
 
         // -- Exec & Check: a line move still moves exactly one row. The inline
         // slash popup routes arrows through its own History* arms, so the check
         // stays on the query-picker kinds.
         if kind != ActivePicker::InlineSlash {
-            state.picker.handle_action(UserAction::ScrollLineDown);
+            state.picker.handle_key(Key::Down);
             assert_eq!(picker_selection(&state)?, 1, "{kind:?}");
         }
     }
@@ -77,13 +79,13 @@ fn picker_page_moves_clamp_on_short_and_filtered_lists() -> Result<()> {
     state.picker.open(ActivePicker::Model);
 
     // -- Exec & Check: fewer than eight rows clamps to the last row.
-    state.picker.handle_action(UserAction::ScrollPageDown);
+    state.picker.handle_key(Key::PageDown);
     assert_eq!(picker_selection(&state)?, 2);
-    state.picker.handle_action(UserAction::ScrollPageDown);
+    state.picker.handle_key(Key::PageDown);
     assert_eq!(picker_selection(&state)?, 2);
-    state.picker.handle_action(UserAction::ScrollPageUp);
+    state.picker.handle_key(Key::PageUp);
     assert_eq!(picker_selection(&state)?, 0);
-    state.picker.handle_action(UserAction::ScrollPageUp);
+    state.picker.handle_key(Key::PageUp);
     assert_eq!(picker_selection(&state)?, 0);
 
     // -- Setup & Fixtures: an empty list.
@@ -92,7 +94,7 @@ fn picker_page_moves_clamp_on_short_and_filtered_lists() -> Result<()> {
     empty.picker.open(ActivePicker::Agent);
 
     // -- Exec & Check: pages stay at the top of an empty list.
-    empty.picker.handle_action(UserAction::ScrollPageDown);
+    empty.picker.handle_key(Key::PageDown);
     assert_eq!(picker_selection(&empty)?, 0);
 
     // -- Setup & Fixtures: twenty rows narrowed to one by a query.
@@ -107,7 +109,7 @@ fn picker_page_moves_clamp_on_short_and_filtered_lists() -> Result<()> {
     type_query(&mut filtered, "opt-19")?;
 
     // -- Exec & Check: the page clamps to the single filtered row.
-    filtered.picker.handle_action(UserAction::ScrollPageDown);
+    filtered.picker.handle_key(Key::PageDown);
     assert_eq!(picker_selection(&filtered)?, 0);
 
     // -- Exec & Check: widening the query restores the full page step.
@@ -118,16 +120,16 @@ fn picker_page_moves_clamp_on_short_and_filtered_lists() -> Result<()> {
             .ok_or("picker should be open")?
             .backspace_query_char();
     }
-    filtered.picker.handle_action(UserAction::ScrollPageDown);
+    filtered.picker.handle_key(Key::PageDown);
     assert_eq!(picker_selection(&filtered)?, 8);
     Ok(())
 }
 
-/// The inline-slash popup moves its selection on the same line-move action set as
-/// every other picker: `ScrollLineUp`/`ToggleCommandPalette` up,
-/// `ScrollLineDown`/`QueryNext` down. None of them leak to the transcript.
+/// The inline-slash popup moves its selection on the same line-move key set as
+/// every other picker: `Up`/`CtrlP`/`CtrlK` up, `Down`/`CtrlN`/`CtrlJ` down.
+/// None of them leak to the transcript.
 #[test]
-fn inline_slash_line_moves_share_the_picker_action_set() -> Result<()> {
+fn inline_slash_line_moves_share_the_picker_key_set() -> Result<()> {
     // -- Setup & Fixtures: the canonical slash list (`/compact` … `/skills`).
     let mut state = AppState::default();
     state.check_inline_slash("/");
@@ -142,26 +144,28 @@ fn inline_slash_line_moves_share_the_picker_action_set() -> Result<()> {
         "the canonical slash list"
     );
 
-    // -- Exec & Check: each line-move action moves one row and is consumed.
-    for (action, expected) in [
-        (UserAction::ScrollLineDown, 1),
-        (UserAction::QueryNext, 2),
-        (UserAction::ScrollLineUp, 1),
-        (UserAction::ToggleCommandPalette, 0),
-        (UserAction::HistoryDown, 1),
-        (UserAction::HistoryUp, 0),
+    // -- Exec & Check: each line-move key moves one row and is consumed.
+    for (key, expected) in [
+        (Key::Down, 1),
+        (Key::CtrlJ, 2),
+        (Key::Up, 1),
+        (Key::CtrlP, 0),
+        (Key::CtrlN, 1),
+        (Key::CtrlK, 0),
     ] {
-        let (rewritten, changed) = state.picker.handle_action(action.clone());
-        assert_eq!(rewritten, UserAction::Noop, "{action:?} must not leak");
-        assert!(changed, "{action:?} must repaint");
-        assert_eq!(picker_selection(&state)?, expected, "{action:?}");
+        let outcome = state.picker.handle_key(key);
+        assert!(
+            matches!(outcome, PickerKeyOutcome::Consumed(true)),
+            "{key:?} must not leak and must repaint"
+        );
+        assert_eq!(picker_selection(&state)?, expected, "{key:?}");
     }
 
     // -- Check: the page moves the page-scroll task pinned still work.
-    let (rewritten, _) = state.picker.handle_action(UserAction::ScrollPageDown);
-    assert_eq!(rewritten, UserAction::Noop);
+    let outcome = state.picker.handle_key(Key::PageDown);
+    assert!(matches!(outcome, PickerKeyOutcome::Consumed(true)));
     assert_eq!(picker_selection(&state)?, 8, "eight rows down");
-    state.picker.handle_action(UserAction::ScrollPageUp);
+    state.picker.handle_key(Key::PageUp);
     assert_eq!(picker_selection(&state)?, 0, "eight rows back up");
     Ok(())
 }

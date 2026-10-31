@@ -1,17 +1,18 @@
-use crate::{
-    interaction::reducer::UserAction,
-    platform::transport::{TransportItem, TuiTransport},
-};
-use agnt_core::protocol::event::UiEvent;
+use crate::platform::transport::{Source, TransportItem, TuiTransport};
+use agnt_core::protocol::events::{Key, SystemEvent, SystemKind};
 
 #[derive(Clone)]
 enum Enqueue {
-    User(UserAction),
-    Event(Box<UiEvent>),
+    Input(SystemEvent),
+    Event(SystemEvent),
 }
 
-fn completed(tool_calls: usize) -> UiEvent {
-    UiEvent::Completed {
+fn key(ch: char) -> SystemEvent {
+    SystemEvent::KeyPressed { key: Key::Char(ch) }
+}
+
+fn completed(tool_calls: usize) -> SystemEvent {
+    SystemEvent::TurnCompleted {
         tool_calls,
         input_tokens: 0,
         output_tokens: 0,
@@ -22,9 +23,10 @@ fn completed(tool_calls: usize) -> UiEvent {
     }
 }
 
-fn warning(msg: &str) -> UiEvent {
-    UiEvent::Warning {
-        message: msg.to_string(),
+fn warning(msg: &str) -> SystemEvent {
+    SystemEvent::SystemMessage {
+        kind: SystemKind::Warning,
+        text: msg.to_string(),
     }
 }
 
@@ -45,7 +47,7 @@ fn poll_next_returns_none_when_empty_non_blocking() {
 }
 
 #[test]
-fn table_driven_fifo_and_deterministic_merge_policy_round_robin_user_first() {
+fn table_driven_fifo_and_deterministic_merge_policy_round_robin_input_first() {
     struct Case {
         name: &'static str,
         enqueue: Vec<Enqueue>,
@@ -54,57 +56,96 @@ fn table_driven_fifo_and_deterministic_merge_policy_round_robin_user_first() {
 
     let cases = vec![
         Case {
-            name: "fifo for user source only",
+            name: "fifo for input source only",
             enqueue: vec![
-                Enqueue::User(UserAction::InsertChar('a')),
-                Enqueue::User(UserAction::Submit),
-                Enqueue::User(UserAction::Esc),
+                Enqueue::Input(key('a')),
+                Enqueue::Input(key('b')),
+                Enqueue::Input(key('c')),
             ],
             expected: vec![
-                TransportItem::User(UserAction::InsertChar('a')),
-                TransportItem::User(UserAction::Submit),
-                TransportItem::User(UserAction::Esc),
+                TransportItem {
+                    source: Source::Input,
+                    event: key('a'),
+                },
+                TransportItem {
+                    source: Source::Input,
+                    event: key('b'),
+                },
+                TransportItem {
+                    source: Source::Input,
+                    event: key('c'),
+                },
             ],
         },
         Case {
-            name: "fifo for ui-event source only",
+            name: "fifo for event source only",
             enqueue: vec![
-                Enqueue::Event(Box::new(completed(1))),
-                Enqueue::Event(Box::new(warning("warn-1"))),
-                Enqueue::Event(Box::new(completed(2))),
+                Enqueue::Event(completed(1)),
+                Enqueue::Event(warning("warn-1")),
+                Enqueue::Event(completed(2)),
             ],
             expected: vec![
-                TransportItem::Event(Box::new(completed(1))),
-                TransportItem::Event(Box::new(warning("warn-1"))),
-                TransportItem::Event(Box::new(completed(2))),
+                TransportItem {
+                    source: Source::Event,
+                    event: completed(1),
+                },
+                TransportItem {
+                    source: Source::Event,
+                    event: warning("warn-1"),
+                },
+                TransportItem {
+                    source: Source::Event,
+                    event: completed(2),
+                },
             ],
         },
         Case {
-            name: "both non-empty alternates by source, starts with user",
+            name: "both non-empty alternates by source, starts with input",
             enqueue: vec![
-                Enqueue::User(UserAction::InsertChar('u')),
-                Enqueue::User(UserAction::InsertChar('v')),
-                Enqueue::Event(Box::new(warning("e1"))),
-                Enqueue::Event(Box::new(completed(9))),
+                Enqueue::Input(key('u')),
+                Enqueue::Input(key('v')),
+                Enqueue::Event(warning("e1")),
+                Enqueue::Event(completed(9)),
             ],
             expected: vec![
-                TransportItem::User(UserAction::InsertChar('u')),
-                TransportItem::Event(Box::new(warning("e1"))),
-                TransportItem::User(UserAction::InsertChar('v')),
-                TransportItem::Event(Box::new(completed(9))),
+                TransportItem {
+                    source: Source::Input,
+                    event: key('u'),
+                },
+                TransportItem {
+                    source: Source::Event,
+                    event: warning("e1"),
+                },
+                TransportItem {
+                    source: Source::Input,
+                    event: key('v'),
+                },
+                TransportItem {
+                    source: Source::Event,
+                    event: completed(9),
+                },
             ],
         },
         Case {
             name: "when one side empties, remaining side drains in fifo",
             enqueue: vec![
-                Enqueue::User(UserAction::Submit),
-                Enqueue::Event(Box::new(warning("e1"))),
-                Enqueue::Event(Box::new(completed(3))),
+                Enqueue::Input(key('a')),
+                Enqueue::Event(warning("e1")),
+                Enqueue::Event(completed(3)),
             ],
             expected: vec![
-                TransportItem::User(UserAction::Submit),
-                TransportItem::Event(Box::new(warning("e1"))),
-                TransportItem::Event(Box::new(completed(3))),
+                TransportItem {
+                    source: Source::Input,
+                    event: key('a'),
+                },
+                TransportItem {
+                    source: Source::Event,
+                    event: warning("e1"),
+                },
+                TransportItem {
+                    source: Source::Event,
+                    event: completed(3),
+                },
             ],
         },
     ];
@@ -114,8 +155,8 @@ fn table_driven_fifo_and_deterministic_merge_policy_round_robin_user_first() {
 
         for item in case.enqueue {
             match item {
-                Enqueue::User(action) => transport.enqueue_user_action(action),
-                Enqueue::Event(event) => transport.enqueue_ui_event(*event),
+                Enqueue::Input(event) => transport.enqueue_input(event),
+                Enqueue::Event(event) => transport.enqueue_event(event),
             }
         }
 
@@ -135,17 +176,23 @@ fn explicit_unbounded_policy_accepts_large_burst_without_drops() {
     let total = 10_000usize;
 
     for _ in 0..total {
-        transport.enqueue_user_action(UserAction::InsertChar('u'));
+        transport.enqueue_input(key('u'));
     }
 
     let drained = drain(&mut transport);
     assert_eq!(drained.len(), total);
     assert_eq!(
         drained.first(),
-        Some(&TransportItem::User(UserAction::InsertChar('u')))
+        Some(&TransportItem {
+            source: Source::Input,
+            event: key('u')
+        })
     );
     assert_eq!(
         drained.last(),
-        Some(&TransportItem::User(UserAction::InsertChar('u')))
+        Some(&TransportItem {
+            source: Source::Input,
+            event: key('u')
+        })
     );
 }

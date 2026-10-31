@@ -2,24 +2,26 @@ use super::*;
 
 use agnt_core::protocol::contracts::UiMessageSnapshot;
 
-/// A rehydrated transcript whose block 0 is a user message bottom-aligns with
-/// padding rows. Those padding rows must stay on the base background — they
-/// must not resolve a full-width fill from block 0.
+/// A rehydrated transcript whose first entry is a user message bottom-aligns
+/// with padding rows. Those padding rows must stay on the base background —
+/// they must not inherit the user turn's surface.
 #[test]
-fn test_padding_rows_do_not_inherit_block_zero_fill() -> Result<()> {
+fn test_padding_rows_do_not_inherit_entry_zero_surface() -> Result<()> {
     // -- Setup & Fixtures
     let mut coord = RuntimeCoordinator::new(40, 20, None);
     let columns = 40u16;
     let rows = 20u16;
     let viewport = rows as usize;
-    // Hydration without a leading logo leaves the user message as block 0,
-    // which is `Fill::Full`.
+    // Hydration without a leading logo leaves the user message as entry 0, the
+    // entry whose turn paints the user surface.
     coord.hydrate_transcript_from_messages(vec![UiMessageSnapshot::new("user", "hi")], None);
-    assert_eq!(coord.state.transcript.len(), 1, "one hydrated block");
-    assert_eq!(
-        coord.state.transcript.blocks()[0].fill,
-        Fill::Full,
-        "block 0 must be a full-fill user block"
+    assert_eq!(coord.state.transcript.len(), 1, "one hydrated entry");
+    assert!(
+        matches!(
+            coord.state.transcript.entries().first(),
+            Some(TranscriptEntry::Message(message)) if message.role == MessageRole::User
+        ),
+        "entry 0 must be a user message"
     );
     // One content row plus the user turn's trailing separator row.
     let content_rows = 2usize;

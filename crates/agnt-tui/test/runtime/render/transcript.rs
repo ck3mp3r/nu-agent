@@ -5,11 +5,14 @@
 
 // region:    --- Modules
 
-#[path = "transcript/bg_tint.rs"]
-mod bg_tint;
-
 #[path = "transcript/layout.rs"]
 mod layout;
+
+#[path = "transcript/cursor.rs"]
+mod cursor;
+
+#[path = "transcript/display.rs"]
+mod display;
 
 #[path = "transcript/padding.rs"]
 mod padding;

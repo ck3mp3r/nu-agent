@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::protocol::events::SystemEvent;
+
 // ---------------------------------------------------------------------------
 // Compaction dispatch
 // ---------------------------------------------------------------------------
@@ -31,7 +33,7 @@ async fn run_compaction_dispatches_when_worker_idle() -> Result<()> {
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
 
     bus.compaction()
-        .send(CompactionEvent::Requested {
+        .send(SystemEvent::CompactionRequested {
             source: "auto".to_string(),
         })
         .await
@@ -101,7 +103,7 @@ async fn run_compaction_queued_when_worker_busy_then_dispatched_on_idle() -> Res
     let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
 
     bus.compaction()
-        .send(CompactionEvent::Requested {
+        .send(SystemEvent::CompactionRequested {
             source: "auto".to_string(),
         })
         .await
@@ -171,28 +173,28 @@ async fn run_compaction_queued_replaces_previous_when_busy() -> Result<()> {
 
     // First request dispatches immediately and marks a compaction active.
     bus.compaction()
-        .send(CompactionEvent::Requested {
+        .send(SystemEvent::CompactionRequested {
             source: "auto".to_string(),
         })
         .await
         .unwrap();
     // Second request queued while a compaction is active.
     bus.compaction()
-        .send(CompactionEvent::Requested {
+        .send(SystemEvent::CompactionRequested {
             source: "slash".to_string(),
         })
         .await
         .unwrap();
     // Third request replaces the queued one.
     bus.compaction()
-        .send(CompactionEvent::Requested {
+        .send(SystemEvent::CompactionRequested {
             source: "manual".to_string(),
         })
         .await
         .unwrap();
     // The active compaction completes; the newest queued request is dispatched.
     bus.compaction()
-        .send(CompactionEvent::Completed {
+        .send(SystemEvent::CompactionCompleted {
             source: "auto".to_string(),
             summary_preview: String::new(),
             summary_body: String::new(),
@@ -201,7 +203,7 @@ async fn run_compaction_queued_replaces_previous_when_busy() -> Result<()> {
         .unwrap();
     // The dispatched queued compaction completes too, so the loop can exit.
     bus.compaction()
-        .send(CompactionEvent::Completed {
+        .send(SystemEvent::CompactionCompleted {
             source: "manual".to_string(),
             summary_preview: String::new(),
             summary_body: String::new(),
@@ -273,7 +275,7 @@ async fn compaction_requested_while_active_is_queued() -> Result<()> {
 
     // First request dispatches immediately (worker idle, no compaction active).
     bus.compaction()
-        .send(CompactionEvent::Requested {
+        .send(SystemEvent::CompactionRequested {
             source: "auto".to_string(),
         })
         .await
@@ -281,14 +283,14 @@ async fn compaction_requested_while_active_is_queued() -> Result<()> {
     // Second request arrives while a compaction is active — it must be queued,
     // not dispatched.
     bus.compaction()
-        .send(CompactionEvent::Requested {
+        .send(SystemEvent::CompactionRequested {
             source: "slash".to_string(),
         })
         .await
         .unwrap();
     // The active compaction completes; the queued request is dispatched.
     bus.compaction()
-        .send(CompactionEvent::Completed {
+        .send(SystemEvent::CompactionCompleted {
             source: "auto".to_string(),
             summary_preview: String::new(),
             summary_body: String::new(),
@@ -297,7 +299,7 @@ async fn compaction_requested_while_active_is_queued() -> Result<()> {
         .unwrap();
     // The dispatched queued compaction completes too, so the loop can exit.
     bus.compaction()
-        .send(CompactionEvent::Completed {
+        .send(SystemEvent::CompactionCompleted {
             source: "slash".to_string(),
             summary_preview: String::new(),
             summary_body: String::new(),

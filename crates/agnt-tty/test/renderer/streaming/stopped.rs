@@ -15,12 +15,12 @@ fn stopped_with_empty_reason_prints_no_notice() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStarted);
-    renderer.emit(&UiEvent::AssistantMessage {
+    renderer.emit(&SystemEvent::InferenceStarted);
+    renderer.emit(&SystemEvent::InferenceChunk {
         delta: "provisional".to_string(),
-        text: "provisional".to_string(),
+        aggregated: "provisional".to_string(),
     });
-    renderer.emit(&UiEvent::Stopped {
+    renderer.emit(&SystemEvent::InferenceStopped {
         reason: String::new(),
     });
     renderer.flush();
@@ -41,21 +41,40 @@ fn stopped_with_empty_reason_resets_streaming_for_retry() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStarted);
-    renderer.emit(&UiEvent::AssistantMessage {
+    renderer.emit(&SystemEvent::InferenceStarted);
+    renderer.emit(&SystemEvent::InferenceChunk {
         delta: "provisional".to_string(),
-        text: "provisional".to_string(),
+        aggregated: "provisional".to_string(),
     });
-    renderer.emit(&UiEvent::Stopped {
+    assert_eq!(
+        renderer.streaming_printed_len,
+        "provisional".len(),
+        "the provisional chunk advanced the printed length"
+    );
+
+    renderer.emit(&SystemEvent::InferenceStopped {
         reason: String::new(),
     });
+
+    // The stop resets the streaming state, so the retry is not sliced against
+    // the discarded provisional length.
+    assert_eq!(
+        renderer.streaming_printed_len, 0,
+        "the stop must reset the printed length"
+    );
+
     // The retry's text is shorter than the discarded provisional text; without
     // the streaming reset it would be sliced away entirely.
-    renderer.emit(&UiEvent::AssistantMessage {
+    renderer.emit(&SystemEvent::InferenceChunk {
         delta: "retry".to_string(),
-        text: "retry".to_string(),
+        aggregated: "retry".to_string(),
     });
-    renderer.emit(&UiEvent::Completed {
+    assert_eq!(
+        renderer.streaming_printed_len,
+        "retry".len(),
+        "the retry prints from its first byte"
+    );
+    renderer.emit(&SystemEvent::TurnCompleted {
         tool_calls: 0,
         input_tokens: 0,
         output_tokens: 0,

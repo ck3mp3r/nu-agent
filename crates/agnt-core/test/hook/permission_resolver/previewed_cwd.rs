@@ -17,7 +17,7 @@ async fn interactive_resolver_allowed_tool_emits_no_permission_event_with_displa
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionRequested { .. })),
+            .any(|event| matches!(event, SystemEvent::PermissionRequested { .. })),
         "allowed tool must not emit a PermissionRequested event: {events:?}"
     );
 }
@@ -58,12 +58,12 @@ async fn interactive_resolver_take_previewed_is_true_once_after_edit_preview() -
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
     resolve_fut
@@ -106,12 +106,12 @@ async fn interactive_resolver_take_previewed_is_true_once_after_nu_preview() -> 
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
     resolve_fut
@@ -149,12 +149,12 @@ async fn interactive_resolver_take_previewed_is_false_without_a_nu_preview() -> 
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
     resolve_fut
@@ -196,7 +196,7 @@ async fn interactive_resolver_without_preview_rendering_keeps_completion_display
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::ToolPreview { .. })),
+            .any(|event| matches!(event, SystemEvent::PreviewRequested { .. })),
         "a UI that does not render previews must publish no ToolPreview: {events:?}"
     );
     assert!(
@@ -229,12 +229,12 @@ async fn interactive_resolver_without_preview_rendering_keeps_completion_display
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
     resolve_fut
@@ -302,12 +302,12 @@ async fn interactive_resolver_uses_passed_cwd_not_process_cwd() -> Result<()> {
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::Deny,
     );
     let _decision = resolve_fut
@@ -315,7 +315,7 @@ async fn interactive_resolver_uses_passed_cwd_not_process_cwd() -> Result<()> {
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
 
     // -- Check
-    let UiEvent::PermissionRequested { context, .. } = &event else {
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
     let display = context

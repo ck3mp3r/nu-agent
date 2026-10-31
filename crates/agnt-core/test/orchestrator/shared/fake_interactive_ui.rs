@@ -120,14 +120,14 @@ impl FakeInteractiveUi {
                     Ok(event) = ui_event_rx.recv() => {
                         let events = bus_event_count.fetch_add(1, Ordering::SeqCst) + 1;
                         match event {
-                            UiEvent::Completed { .. } => {
+                            SystemEvent::TurnCompleted { .. } => {
                                 // The turn ended. Clear the flag here rather than
                                 // relying on the spawner, which consumes the same
                                 // broadcast event and may run after this arm.
                                 turn_active.store(false, Ordering::SeqCst);
                             }
-                            UiEvent::Warning { message } | UiEvent::TurnError { message } => {
-                                warnings.lock().expect("warnings lock").push(message);
+                            SystemEvent::SystemMessage { text, .. } => {
+                                warnings.lock().expect("warnings lock").push(text);
                             }
                             _ => {}
                         }
@@ -327,7 +327,7 @@ impl FakeInteractiveUi {
                     }
                     if turn_pending {
                         while let Ok(event) = ui_event_rx.recv().await {
-                            if matches!(event, UiEvent::Completed { .. }) {
+                            if matches!(event, SystemEvent::TurnCompleted { .. }) {
                                 turn_pending = false;
                                 turn_active.store(false, Ordering::SeqCst);
                                 break;

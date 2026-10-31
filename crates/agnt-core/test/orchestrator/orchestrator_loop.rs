@@ -29,7 +29,7 @@ use agnt_a2a::{
 use nu_protocol::{LabeledError, Span, Value};
 use tokio::sync::mpsc;
 
-use crate::bus::{CompactionEvent, ExternalEvent};
+use crate::bus::ExternalEvent;
 use crate::orchestrator::stages::slash::SlashStage;
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{

@@ -54,12 +54,12 @@ async fn interactive_resolver_ask_deny_reason_carries_rule_identity() -> Result<
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id,
+        SystemEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::Deny,
     );
 

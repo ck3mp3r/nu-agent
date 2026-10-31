@@ -88,20 +88,22 @@ impl BuiltinTool for NuTool {
                 let status = result.0.map_err(|e| ToolHandlerError::runtime(format!("Failed to wait for nu process: {e}")))?;
                 (status, result.1, result.2)
             }
-            // Timeout: kill child, return error
+            // Timeout: kill child, return the not-run error. The wall clock
+            // stopped the call before it produced a result, so the kind is
+            // not-run (the message is the LLM-facing text either way).
             _ = tokio::time::sleep(timeout) => {
                 let _ = child.kill().await;
                 let _ = child.wait().await;
-                return Err(ToolHandlerError::runtime(format!(
+                return Err(ToolHandlerError::not_run(format!(
                     "command timed out after {} seconds",
                     timeout.as_secs()
                 )));
             }
-            // Cancellation: kill child, return error
+            // Cancellation: kill child, return the not-run error.
             Ok(_) = cancel_rx.recv() => {
                 let _ = child.kill().await;
                 let _ = child.wait().await;
-                return Err(ToolHandlerError::runtime("nu command cancelled by user"));
+                return Err(ToolHandlerError::not_run("nu command cancelled by user"));
             }
         };
 

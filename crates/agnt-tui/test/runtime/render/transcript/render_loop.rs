@@ -7,40 +7,23 @@ fn render_loop_full_fill_user_rows_and_adjacent_separator_bleed_user_bg() -> Res
     let columns = 40u16;
     let rows = 20u16;
     let viewport = rows as usize;
-    // Three content blocks: banner, assistant prose, user prompt. SM separators:
-    //   banner → assistant = 2; assistant → user = 2. Total visual rows:
-    //   1 (banner) + 2 + 1 (assistant) + 2 + 1 (user) = 7.
-    coord.state.transcript.push_block(Block {
-        source: BlockSource::Banner {
-            text: "N".to_string(),
-        },
-        lane: L::SystemBlank,
-        fill: Fill::None,
-        status: None,
-    });
-    coord.state.transcript.push_block(Block {
-        source: BlockSource::Markdown {
-            role: MessageRole::Assistant,
-            markdown: "assistant reply".to_string(),
-        },
-        lane: L::Blank,
-        fill: Fill::None,
-        status: None,
-    });
-    coord.state.transcript.push_block(Block {
-        source: BlockSource::Markdown {
-            role: MessageRole::User,
-            markdown: "hi".to_string(),
-        },
-        lane: L::Marker("╎"),
-        fill: Fill::Full,
-        status: None,
-    });
+    // Three content entries: banner, assistant prose, user prompt. The
+    // assistant owns its (1,1) padding, so the pair gaps are the base table
+    // minus those padding rows: banner → assistant = 2 - 1 = 1 (its top row is
+    // clipped, the bottom kept) and assistant → user = 2 - 1 = 1. Total visual
+    // rows: 1 (banner) + 1 + 3 (padding, content, padding) + 1 + 1 (user) = 7 —
+    // the landed total.
+    coord.state.transcript.push_entry(banner_entry("N"));
+    coord
+        .state
+        .transcript
+        .push_entry(assistant_entry("assistant reply"));
+    coord.state.transcript.push_entry(user_entry("hi"));
 
-    // Layout rows: [banner(0)] [sep(1,2)] [assistant(3)] [sep(4,5)] [user(6)].
-    // Content (7 rows) is shorter than the 20-row viewport, so it bottom-aligns
-    // with padding/2 = 6 rows above. Absolute rows: banner 6, separators 7-8,
-    // assistant 9, separators 10-11, user 12.
+    // Layout rows: [banner(0)] [gap(1)] [assistant pad(2), content(3), pad(4)]
+    // [gap(5)] [user(6)]. Content (7 rows) is shorter than the 20-row viewport,
+    // so it bottom-aligns with padding/2 = 6 rows above. Absolute rows: banner
+    // 6, gap 7, assistant 8-10, gap 11, user 12.
     let padding = viewport - 7;
     let top_padding = padding / 2;
     let banner_row = top_padding;
@@ -105,37 +88,15 @@ fn render_loop_full_fill_user_rows_and_adjacent_separator_bleed_user_bg() -> Res
 /// run SHALL stay blank on the base background (task 4d99956c).
 #[test]
 fn render_loop_bleed_rows_above_and_below_user_block_carry_rail() -> Result<()> {
-    // -- Setup & Fixtures: assistant, user, assistant. Each separator run is two
-    // rows, so the user box (one text row plus two bleed rows) has exactly one
-    // rail row above and one below.
+    // -- Setup & Fixtures: assistant, user, assistant. Each assistant keeps a
+    // (1,1) padding, so each pair still spans two blank rows: the assistant's own
+    // padding row plus one bleed separator row. The user box (one text row, one
+    // bleed row above, one below) therefore keeps exactly one rail row on each
+    // side, with the assistant's padding row beyond it.
     let mut coord = RuntimeCoordinator::new(40, 20, None);
-    coord.state.transcript.push_block(Block {
-        source: BlockSource::Markdown {
-            role: MessageRole::Assistant,
-            markdown: "above".to_string(),
-        },
-        lane: L::Blank,
-        fill: Fill::None,
-        status: None,
-    });
-    coord.state.transcript.push_block(Block {
-        source: BlockSource::Markdown {
-            role: MessageRole::User,
-            markdown: "rail-user".to_string(),
-        },
-        lane: L::Marker("╎"),
-        fill: Fill::Full,
-        status: None,
-    });
-    coord.state.transcript.push_block(Block {
-        source: BlockSource::Markdown {
-            role: MessageRole::Assistant,
-            markdown: "below".to_string(),
-        },
-        lane: L::Blank,
-        fill: Fill::None,
-        status: None,
-    });
+    coord.state.transcript.push_entry(assistant_entry("above"));
+    coord.state.transcript.push_entry(user_entry("rail-user"));
+    coord.state.transcript.push_entry(assistant_entry("below"));
 
     // -- Exec
     let terminal = render_transcript_pane_to_backend(&mut coord, 40, 20, true, 0);
@@ -187,20 +148,15 @@ fn render_loop_visible_window_follows_visual_scroll_offset() -> Result<()> {
     // -- Setup & Fixtures
     let mut coord = RuntimeCoordinator::new(40, 20, None);
     for i in 1..=6 {
-        coord.state.transcript.push_block(Block {
-            source: BlockSource::Markdown {
-                role: MessageRole::Assistant,
-                markdown: format!("assistant text {i}"),
-            },
-            lane: L::Blank,
-            fill: Fill::None,
-            status: None,
-        });
+        coord
+            .state
+            .transcript
+            .push_entry(assistant_entry(&format!("assistant text {i}")));
     }
-    // Six assistant blocks: the first has no separator, each later block
-    // carries 2 (assistant → assistant), so each block spans:
-    //   A1 rows 0; A2 rows 1..=3; A3 rows 4..=6; A4 rows 7..=9;
-    //   A5 rows 10..=12; A6 rows 13..=15. Total 16 visual rows.
+    // Six assistant blocks. The frame has no outer margin and prose carries no
+    // padding of its own: every block is one content row and every pair keeps
+    // the assistant→assistant base spacing of two rows — 16 visual rows.
+    //   A1 row 0; A2 row 3; A3 row 6; A4 row 9; A5 row 12; A6 row 15.
     coord.state.scroll.following_tail = false;
     coord.state.scroll.scroll_offset = 3;
 
@@ -208,17 +164,8 @@ fn render_loop_visible_window_follows_visual_scroll_offset() -> Result<()> {
     let terminal = render_transcript_pane_to_backend(&mut coord, 40, 4, false, 3);
 
     // -- Check
-    // Offset 3 with viewport 4 covers visual rows 3..7: A2's content row (3),
-    // A3's two separator rows (4,5), and A3's content row (6). The visible
-    // block window is (1, 3); the renderer emits A2's separators too, so the
-    // emitted lines map to block indices [1,1,1,2,2,2].
-    let indices = &coord.state.scroll.entry_indices;
-    assert_eq!(indices.len(), 6, "one index per emitted line");
-    assert_eq!(
-        indices.as_slice(),
-        [1usize, 1, 1, 2, 2, 2],
-        "entry indices must map emitted lines to block indices"
-    );
+    // Offset 3 with viewport 4 covers visual rows 3..7: A2's content row, the
+    // two separator rows, then A3's content row.
     let text: String = terminal
         .backend()
         .buffer()
@@ -251,36 +198,19 @@ fn render_loop_visible_window_follows_visual_scroll_offset() -> Result<()> {
 fn render_loop_renders_tool_blocks_via_layout_with_accounting() -> Result<()> {
     // -- Setup & Fixtures
     let mut coord = RuntimeCoordinator::new(40, 20, None);
-    coord.state.transcript.push_block(Block {
-        source: BlockSource::Tool {
-            name: ToolName("tool".to_string()),
-            call: CallLine {
-                summary: "→ alpha".to_string(),
-            },
-            preview: None,
-        },
-        lane: L::Marker("⚙"),
-        fill: Fill::None,
-        status: None,
-    });
-    coord.state.transcript.push_block(Block {
-        source: BlockSource::Tool {
-            name: ToolName("tool".to_string()),
-            call: CallLine {
-                summary: "→ beta".to_string(),
-            },
-            preview: None,
-        },
-        lane: L::Marker("⚙"),
-        fill: Fill::None,
-        status: None,
-    });
+    coord
+        .state
+        .transcript
+        .push_entry(tool_entry("tool", "→ alpha"));
+    coord
+        .state
+        .transcript
+        .push_entry(tool_entry("tool", "→ beta"));
 
     // -- Exec
     let terminal = render_transcript_pane_to_backend(&mut coord, 40, 6, true, 0);
 
     // -- Check
-    // Both tool blocks render through layout() — their call summaries appear.
     let text: String = terminal
         .backend()
         .buffer()
@@ -299,11 +229,6 @@ fn render_loop_renders_tool_blocks_via_layout_with_accounting() -> Result<()> {
     // Two tool blocks with no previews: the SM returns 0 separators between
     // them, so they render as 2 adjacent visual rows, bottom-aligned in the
     // 6-row viewport (padding 4 → 2 rows above, 2 below).
-    assert_eq!(
-        coord.state.scroll.entry_indices,
-        [0usize, 0, 0, 1, 0, 0],
-        "2 tool rows padded to the viewport with padding rows mapped to block 0"
-    );
     // The measure()-based height index drives scroll math: 2 tool rows, no
     // separator rows (tool → tool).
     assert_eq!(coord.state.scroll.total_visual_rows, 2);

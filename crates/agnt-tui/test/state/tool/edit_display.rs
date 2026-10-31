@@ -14,7 +14,7 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
 
     // -- Exec & Check: no title, no label → only the diff renders.
     let mut none = AppState::default();
-    reduce_tool(&mut none, started("edit", r#"{"path":"sample.txt"}"#));
+    reduce_ui(&mut none, started("edit", r#"{"path":"sample.txt"}"#));
     complete_with_display(
         &mut none,
         "edit",
@@ -26,7 +26,7 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
     );
     let lines: Vec<String> = none
         .transcript
-        .blocks()
+        .entries()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -36,7 +36,7 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
 
     // -- Exec & Check: no title, no label, non-edit tool → neither row.
     let mut neither = AppState::default();
-    reduce_tool(&mut neither, started("edit", r#"{"path":"notes/todo.md"}"#));
+    reduce_ui(&mut neither, started("edit", r#"{"path":"notes/todo.md"}"#));
     complete_with_display(
         &mut neither,
         "edit",
@@ -51,7 +51,7 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
     );
     let lines: Vec<String> = neither
         .transcript
-        .blocks()
+        .entries()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -64,7 +64,7 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
 
     // -- Exec & Check: title and label → both rows render.
     let mut both = AppState::default();
-    reduce_tool(&mut both, started("nu", r#"{"command":"ls"}"#));
+    reduce_ui(&mut both, started("nu", r#"{"command":"ls"}"#));
     complete_with_display(
         &mut both,
         "nu",
@@ -76,7 +76,7 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
     );
     let lines: Vec<String> = both
         .transcript
-        .blocks()
+        .entries()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -85,7 +85,7 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
 
     // -- Setup & Fixtures: two diff sections.
     let mut multi = AppState::default();
-    reduce_tool(&mut multi, started("edit", r#"{"path":"sample.txt"}"#));
+    reduce_ui(&mut multi, started("edit", r#"{"path":"sample.txt"}"#));
     complete_with_display(
         &mut multi,
         "edit",
@@ -108,7 +108,7 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
     // -- Check
     let lines: Vec<String> = multi
         .transcript
-        .blocks()
+        .entries()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -117,7 +117,7 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
 
     // -- Setup & Fixtures: non-diff single section.
     let mut code = AppState::default();
-    reduce_tool(&mut code, started("nu", r#"{"command":"ls"}"#));
+    reduce_ui(&mut code, started("nu", r#"{"command":"ls"}"#));
     complete_with_display(
         &mut code,
         "nu",
@@ -138,7 +138,7 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
     // -- Check
     let lines: Vec<String> = code
         .transcript
-        .blocks()
+        .entries()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -146,7 +146,7 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
 
     // -- Setup & Fixtures: stats row.
     let mut stats = AppState::default();
-    reduce_tool(&mut stats, started("edit", r#"{"path":"sample.txt"}"#));
+    reduce_ui(&mut stats, started("edit", r#"{"path":"sample.txt"}"#));
     complete_with_display(
         &mut stats,
         "edit",
@@ -174,12 +174,12 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
     );
 
     // -- Check
-    let lines = stats
+    let lines: Vec<String> = stats
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|block| block.source.plain_text())
-        .collect::<Vec<_>>();
+        .flat_map(extract_all_text_from_entry)
+        .collect();
     assert!(lines.iter().any(|line| line.contains("files=1")));
     Ok(())
 }

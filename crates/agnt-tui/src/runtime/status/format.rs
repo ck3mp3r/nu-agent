@@ -5,6 +5,12 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 const BUSY_SPINNER_FRAMES: &[&str] = &["◐", "◓", "◑", "◒"];
 const IDLE_INDICATOR: &str = "○";
 
+/// The busy spinner's own cadence: one glyph step every 150 ms. The render
+/// loop's timer ticks on this cadence and renders an animation frame only when
+/// the step index advanced, so the spinner — not a fixed high-rate timer —
+/// decides how often an idle-looking loop repaints.
+pub(crate) const SPINNER_CADENCE_MS: u128 = 150;
+
 /// Nerd Font / Powerline git glyph prepended before the branch label
 /// to denote that the displayed text is a git branch (or detached HEAD SHA).
 /// Width: 2 cells (glyph + space). When the available branch budget is too
@@ -111,7 +117,7 @@ pub(super) fn format_pwd(cwd: &Path) -> String {
 pub(super) fn status_indicator(now_millis: Option<u128>) -> &'static str {
     match now_millis {
         Some(ms) => {
-            let idx = ((ms / 150) % BUSY_SPINNER_FRAMES.len() as u128) as usize;
+            let idx = ((ms / SPINNER_CADENCE_MS) % BUSY_SPINNER_FRAMES.len() as u128) as usize;
             BUSY_SPINNER_FRAMES[idx]
         }
         None => IDLE_INDICATOR,

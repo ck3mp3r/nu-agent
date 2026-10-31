@@ -1,6 +1,7 @@
 mod app_state;
 pub(crate) mod code_block;
 mod compaction;
+mod hydration;
 mod input;
 mod input_history;
 mod lifecycle;
@@ -11,16 +12,15 @@ mod picker;
 mod prompt_queue;
 mod scroll;
 pub mod selection;
-pub(crate) mod spacer;
 mod status;
 mod tool;
 mod tool_calls;
-pub mod tool_parsing;
 mod transcript_store;
 mod turn;
 
 pub use app_state::*;
 pub use compaction::*;
+pub(crate) use hydration::*;
 pub use input::*;
 #[cfg(test)]
 pub(crate) use lifecycle::CTRL_C_QUIT_CONFIRM_STATUS;
@@ -31,8 +31,6 @@ pub use picker::*;
 pub use scroll::*;
 pub use status::*;
 pub use tool::*;
-#[cfg(test)]
-pub(crate) use tool_parsing::parse_persisted_tool_status_line;
 pub use transcript_store::*;
 pub use turn::*;
 
@@ -91,6 +89,10 @@ mod compaction_test;
 #[cfg(test)]
 #[path = "../../test/state/turn.rs"]
 mod turn_test;
+
+#[cfg(test)]
+#[path = "../../test/state/hydration.rs"]
+mod hydration_test;
 
 #[cfg(test)]
 #[path = "../../test/state/test.rs"]

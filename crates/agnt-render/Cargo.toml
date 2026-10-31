@@ -1,0 +1,8 @@
+[package]
+name = "agnt-render"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+agnt-core = { workspace = true }
+textwrap = { workspace = true }

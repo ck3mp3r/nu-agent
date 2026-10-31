@@ -22,6 +22,10 @@ fn test_tools_handler_types_execution_error_for_kind_maps_every_kind() -> Result
         (ToolErrorKind::Transport, rig::tool::ToolErrorKind::Network),
         (ToolErrorKind::Runtime, rig::tool::ToolErrorKind::Other),
         (ToolErrorKind::Unknown, rig::tool::ToolErrorKind::Other),
+        // A not-run call maps to rig's cancelled kind: the transcript's not-run
+        // class (`NOT_RUN_ERROR_KINDS`) reads this kind name, so the live row
+        // finishes ⊘ exactly as the replayed row does.
+        (ToolErrorKind::NotRun, rig::tool::ToolErrorKind::Cancelled),
     ];
 
     // -- Exec & Check

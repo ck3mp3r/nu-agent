@@ -26,7 +26,7 @@ use super::*;
 use crate::conversation::turn::error::TurnContext;
 use crate::conversation::turn::{TurnError, TurnResult};
 use crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::types::Message;
 
 /// A `TurnResult` for a completed, non-cancelled turn.
@@ -400,25 +400,31 @@ async fn dispatch_path_c_stop_reason_surfaces_warning_and_completed() -> Result<
     );
     let events = collector.drain();
     assert!(
-        events.iter().any(|e| matches!(e, UiEvent::Warning { .. })),
+        events.iter().any(|e| matches!(
+            e,
+            SystemEvent::SystemMessage {
+                kind: SystemKind::Warning,
+                ..
+            }
+        )),
         "path C must surface the stop as a warning; got: {events:?}"
     );
     assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, UiEvent::Stopped { reason: stopped } if stopped == &reason)),
+        events.iter().any(
+            |e| matches!(e, SystemEvent::InferenceStopped { reason: stopped } if stopped == &reason)
+        ),
         "path C must surface the stop reason as Stopped; got: {events:?}"
     );
     assert!(
         !events
             .iter()
-            .any(|e| matches!(e, UiEvent::Stopped { reason } if reason == TURN_STOPPED_NOTICE)),
+            .any(|e| matches!(e, SystemEvent::InferenceStopped { reason } if reason == TURN_STOPPED_NOTICE)),
         "a doom/repetition stop must not carry the generic user-cancel notice; got: {events:?}"
     );
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, UiEvent::Completed { .. })),
+            .any(|e| matches!(e, SystemEvent::TurnCompleted { .. })),
         "path C must still emit a completion; got: {events:?}"
     );
     Ok(())

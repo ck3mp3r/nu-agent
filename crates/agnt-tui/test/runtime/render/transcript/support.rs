@@ -3,100 +3,87 @@
 //! Holds the imports and the helpers every topical transcript test file needs.
 //! Sub-files pull them in with `use super::*;`.
 
-pub(super) use super::super::transcript::full_width_background;
+pub(super) use agnt_core::protocol::events::ToolCall;
 pub(super) use agnt_core::protocol::tool_args::CallLine;
-pub(super) use agnt_core::transcript::ir::{BlockSource, Fill, Lane, MessageRole, ToolName};
-pub(super) use agnt_core::transcript::renderer::FrameContext;
-
-pub(super) use crate::rendering::theme::TuiTheme;
+pub(super) use agnt_core::transcript::entry::{
+    BannerEntry, MessageEntry, ToolEntry, ToolKind, TranscriptEntry,
+};
+pub(super) use agnt_core::transcript::ir::{
+    ContentKind, Display, DisplaySection, MessageRole, ToolName,
+};
+pub(super) use agnt_core::transcript::renderer::ItemStatus;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-/// Theme colors used by `full_width_background`; values are opaque — tests
-/// assert identity, not specific colors.
-pub(super) const FULL_BG: ratatui::style::Color = ratatui::style::Color::Indexed(16);
-pub(super) const CODE_BG: ratatui::style::Color = ratatui::style::Color::Indexed(17);
+/// A banner entry (startup ASCII art).
+pub(super) fn banner_entry(text: &str) -> TranscriptEntry {
+    TranscriptEntry::Banner(BannerEntry {
+        text: text.to_string(),
+    })
+}
 
-pub(super) fn user_block() -> agnt_core::transcript::ir::Block {
-    agnt_core::transcript::ir::Block {
-        source: BlockSource::Markdown {
-            role: MessageRole::User,
-            markdown: "hi".to_string(),
+/// A user prose entry.
+pub(super) fn user_entry(text: &str) -> TranscriptEntry {
+    TranscriptEntry::Message(MessageEntry {
+        role: MessageRole::User,
+        markdown: text.to_string(),
+    })
+}
+
+/// An assistant prose entry.
+pub(super) fn assistant_entry(text: &str) -> TranscriptEntry {
+    TranscriptEntry::Message(MessageEntry {
+        role: MessageRole::Assistant,
+        markdown: text.to_string(),
+    })
+}
+
+/// A plain tool entry: a call line with no preview.
+pub(super) fn tool_entry(name: &str, summary: &str) -> TranscriptEntry {
+    let call = ToolCall::new(
+        ToolName(name.to_string()),
+        "",
+        "",
+        CallLine {
+            summary: summary.to_string(),
         },
-        lane: Lane::Marker("╎"),
-        fill: Fill::Full,
-        status: None,
-    }
+    );
+    TranscriptEntry::Tool(ToolEntry {
+        kind: ToolKind::from_name(&call.name),
+        call,
+        preview: None,
+        result: None,
+        status: ItemStatus::InProgress,
+    })
 }
 
-pub(super) fn assistant_block() -> agnt_core::transcript::ir::Block {
-    agnt_core::transcript::ir::Block {
-        source: BlockSource::Markdown {
-            role: MessageRole::Assistant,
-            markdown: "hi".to_string(),
+/// The nu tool entry: a code preview (and so the code fill).
+pub(super) fn nu_tool_entry(code: &str) -> TranscriptEntry {
+    let call = ToolCall::new(
+        ToolName("nu".to_string()),
+        "",
+        "",
+        CallLine {
+            summary: code.to_string(),
         },
-        lane: Lane::Blank,
-        fill: Fill::None,
-        status: None,
-    }
-}
-
-pub(super) fn spacer_block() -> agnt_core::transcript::ir::Block {
-    agnt_core::transcript::ir::Block {
-        source: BlockSource::Spacer,
-        lane: Lane::Blank,
-        fill: Fill::None,
-        status: None,
-    }
-}
-
-pub(super) fn tool_block(fill: Fill) -> agnt_core::transcript::ir::Block {
-    agnt_core::transcript::ir::Block {
-        source: BlockSource::Tool {
-            name: ToolName("tool".to_string()),
-            call: CallLine {
-                summary: "→ x".to_string(),
-            },
-            preview: None,
-        },
-        lane: Lane::Marker("⚙"),
-        fill,
-        status: None,
-    }
-}
-
-pub(super) fn nu_tool_block(code: &str) -> agnt_core::transcript::ir::Block {
-    agnt_core::transcript::ir::Block {
-        source: BlockSource::Tool {
-            name: ToolName("nu".to_string()),
-            call: CallLine {
-                summary: code.to_string(),
-            },
-            preview: Some(agnt_core::transcript::ir::Display {
-                title: Some("nu".to_string()),
-                sections: vec![agnt_core::transcript::ir::DisplaySection {
-                    label: Some("nu".to_string()),
-                    kind: agnt_core::transcript::ir::ContentKind::Code {
-                        language: "nu".to_string(),
-                    },
-                    content: code.to_string(),
-                    stats: None,
-                }],
-            }),
-        },
-        lane: Lane::Marker("⚙"),
-        fill: Fill::Code,
-        status: None,
-    }
-}
-
-pub(super) fn frame_ctx(width: usize) -> FrameContext {
-    FrameContext {
-        width,
-        now_millis: 0,
-        cursor: false,
-        selected: false,
-    }
+    );
+    TranscriptEntry::Tool(ToolEntry {
+        kind: ToolKind::from_name(&call.name),
+        call,
+        preview: Some(Display {
+            title: Some("nu".to_string()),
+            sections: vec![DisplaySection {
+                label: Some("nu".to_string()),
+                kind: ContentKind::Code {
+                    language: "nu".to_string(),
+                },
+                content: code.to_string(),
+                stats: None,
+            }],
+        }),
+        result: None,
+        status: ItemStatus::InProgress,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -104,8 +91,6 @@ pub(super) fn frame_ctx(width: usize) -> FrameContext {
 // ---------------------------------------------------------------------------
 
 pub(super) use crate::runtime::coordinator::RuntimeCoordinator;
-pub(super) use agnt_core::transcript::ir::Block;
-pub(super) use agnt_core::transcript::ir::Lane as L;
 pub(super) use ratatui::layout::Rect;
 
 /// Render the transcript pane through `render_transcript_pane` onto a

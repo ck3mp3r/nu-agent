@@ -15,7 +15,7 @@ pub(super) use crate::hook::doom_loop::DoomLoopState;
 pub(super) use crate::hook::output_repetition::RepetitionState;
 pub(super) use crate::hook::permission_resolver::PolicyPermissionResolver;
 pub(super) use crate::hook::{HookChain, HookState};
-pub(super) use crate::protocol::event::UiEvent;
+pub(super) use crate::protocol::events::{SystemEvent, SystemKind};
 pub(super) use crate::session::CachedMemory;
 
 pub(super) use futures::StreamExt;
@@ -267,8 +267,12 @@ impl RepetitionTurnFixture {
 pub(super) fn warnings(rx: &mut crate::bus::UiEventRx) -> Vec<String> {
     let mut out = Vec::new();
     while let Ok(event) = rx.try_recv() {
-        if let UiEvent::Warning { message } = event {
-            out.push(message);
+        if let SystemEvent::SystemMessage {
+            kind: SystemKind::Warning,
+            text,
+        } = event
+        {
+            out.push(text);
         }
     }
     out
@@ -279,6 +283,19 @@ pub(super) fn identical_text_turn(count: usize) -> Vec<MockStreamEvent> {
     let mut turn = vec![MockStreamEvent::Text("I will do the thing. ".to_string()); count];
     turn.push(MockStreamEvent::final_response_with_default_usage());
     turn
+}
+
+/// Drain the `InferenceChunk` events from an EXISTING subscriber, as
+/// `(delta, aggregated)` pairs in publish order. Subscribe before the turn
+/// runs: broadcast sends are not buffered for later subscribers.
+pub(super) fn inference_chunks(rx: &mut crate::bus::UiEventRx) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let SystemEvent::InferenceChunk { delta, aggregated } = event {
+            out.push((delta, aggregated));
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::protocol::event::UiEvent;
+use agnt_core::protocol::events::SystemEvent;
 use agnt_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use agnt_core::renderer::UiRenderer;
 use agnt_core::tools::mcp::runtime::McpServerLifecycle;
@@ -89,10 +89,10 @@ where
         self.coordinator.set_repo_branch_caller_cwd(caller_cwd);
     }
 
-    pub fn emit_batch(&mut self, events: &[UiEvent]) {
+    pub fn emit_batch(&mut self, events: &[SystemEvent]) {
         // Enqueue all events first
         for event in events {
-            self.coordinator.enqueue_ui_event(event.clone());
+            self.coordinator.enqueue_event(event.clone());
         }
         // Then do ONE poll + drain + render cycle
         self.coordinator.poll_terminal_event(&mut self.event_source);
@@ -129,9 +129,9 @@ where
     R: UiRenderer,
     E: TerminalEventSource,
 {
-    fn emit(&mut self, event: &UiEvent) {
+    fn emit(&mut self, event: &SystemEvent) {
         self.coordinator.poll_terminal_event(&mut self.event_source);
-        self.coordinator.enqueue_ui_event(event.clone());
+        self.coordinator.enqueue_event(event.clone());
         self.coordinator.drain_transport();
         let mut live = self.live_terminal.as_mut().map(|l| &mut l.terminal);
         if let Err(error) = self.coordinator.render_if_needed(&mut live) {

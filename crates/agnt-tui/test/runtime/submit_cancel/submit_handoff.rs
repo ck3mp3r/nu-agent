@@ -1,5 +1,7 @@
 use super::*;
 
+use agnt_core::transcript::entry::TranscriptEntry;
+
 /// Idle startup does not show a spinner; a submit handoff keeps input editable
 /// and preserves the transcript preview.
 #[tokio::test]
@@ -44,16 +46,10 @@ async fn idle_startup_and_submit_handoff() -> Result<()> {
     );
     assert_eq!(driver.state().transcript.len(), 1);
     assert!(matches!(
-        driver.state().transcript.blocks()[0].source,
-        BlockSource::Markdown {
-            role: MessageRole::User,
-            ..
-        }
+        &driver.state().transcript.entries()[0],
+        TranscriptEntry::Message(message) if message.role == MessageRole::User
     ));
-    assert_eq!(
-        driver.state().transcript.blocks()[0].source.plain_text(),
-        "x"
-    );
+    assert_eq!(entry_text(&driver.state().transcript.entries()[0]), "x");
     Ok(())
 }
 
@@ -83,7 +79,7 @@ async fn slash_commands_handoff() -> Result<()> {
     assert_eq!(driver.state().phase, UiPhase::Idle);
     assert_eq!(driver.state().pending_prompt_count(), 0);
     assert!(driver.state().prompt_items().is_empty());
-    assert!(driver.state().transcript.blocks().is_empty());
+    assert!(driver.state().transcript.entries().is_empty());
 
     // -- Setup & Fixtures: /compact.
     let mut compact = RenderLoopDriver::new(120, 30);
@@ -107,18 +103,18 @@ async fn slash_commands_handoff() -> Result<()> {
             .take_next_prompt_for_execution(),
         None
     );
-    assert!(compact.state().transcript.blocks().is_empty());
+    assert!(compact.state().transcript.entries().is_empty());
 
     // -- Exec: the compaction artifact.
     compact
         .coordinator_mut()
-        .enqueue_ui_event(UiEvent::CompactionStarted {
+        .enqueue_event(SystemEvent::CompactionStarted {
             source: "slash_compact".to_string(),
         });
     compact.coordinator_mut().drain_transport();
     compact
         .coordinator_mut()
-        .enqueue_ui_event(UiEvent::CompactionCompleted {
+        .enqueue_event(SystemEvent::CompactionCompleted {
             source: "slash_compact".to_string(),
             summary_preview: "preview".to_string(),
             summary_body: "summary body".to_string(),
@@ -129,9 +125,9 @@ async fn slash_commands_handoff() -> Result<()> {
     let lines = compact
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|block| block.source.plain_text())
+        .map(entry_text)
         .collect::<Vec<_>>();
     assert!(lines.contains(&"Compaction".to_string()));
     assert!(lines.contains(&"summary body".to_string()));

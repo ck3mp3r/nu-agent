@@ -4,7 +4,7 @@ use crate::bus::SessionEvent;
 use crate::orchestrator::stages::{OrchestrationContext, UiRequestHandler};
 use crate::orchestrator::{UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand};
 use crate::protocol::contracts::McpUsabilityState;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, SystemKind};
 
 /// Handles UI requests (model/agent/session switch, MCP toggle, session refresh)
 /// with a concurrency policy: blocking requests (model/agent/session) require an
@@ -48,7 +48,14 @@ impl UiRequestStage {
                 }
                 _ => "Worker channel closed".to_string(),
             };
-            let _ = ctx.bus.ui_event().send(UiEvent::Warning { message }).await;
+            let _ = ctx
+                .bus
+                .ui_event()
+                .send(SystemEvent::SystemMessage {
+                    kind: SystemKind::Warning,
+                    text: message,
+                })
+                .await;
         }
     }
 
@@ -86,8 +93,9 @@ impl UiRequestStage {
                     let _ = ctx
                         .bus
                         .ui_event()
-                        .send(UiEvent::Warning {
-                            message: "Worker channel closed".to_string(),
+                        .send(SystemEvent::SystemMessage {
+                            kind: SystemKind::Warning,
+                            text: "Worker channel closed".to_string(),
                         })
                         .await;
                 }
@@ -124,8 +132,9 @@ impl UiRequestHandler for UiRequestStage {
                     let _ = ctx
                         .bus
                         .ui_event()
-                        .send(UiEvent::Warning {
-                            message: "Cannot switch session while worker is active".to_string(),
+                        .send(SystemEvent::SystemMessage {
+                            kind: SystemKind::Warning,
+                            text: "Cannot switch session while worker is active".to_string(),
                         })
                         .await;
                 } else if self.pending_blocking.is_none() {
@@ -185,7 +194,10 @@ impl UiRequestHandler for UiRequestStage {
                 let _ = ctx
                     .bus
                     .ui_event()
-                    .send(UiEvent::Warning { message: msg })
+                    .send(SystemEvent::SystemMessage {
+                        kind: SystemKind::Warning,
+                        text: msg,
+                    })
                     .await;
             }
             UiRequestResponse::AgentSwitch(Ok((
@@ -219,7 +231,10 @@ impl UiRequestHandler for UiRequestStage {
                 let _ = ctx
                     .bus
                     .ui_event()
-                    .send(UiEvent::Warning { message: msg })
+                    .send(SystemEvent::SystemMessage {
+                        kind: SystemKind::Warning,
+                        text: msg,
+                    })
                     .await;
             }
             UiRequestResponse::SessionSwitch {
@@ -251,7 +266,10 @@ impl UiRequestHandler for UiRequestStage {
                 let _ = ctx
                     .bus
                     .ui_event()
-                    .send(UiEvent::Warning { message: msg })
+                    .send(SystemEvent::SystemMessage {
+                        kind: SystemKind::Warning,
+                        text: msg,
+                    })
                     .await;
             }
             _ => {}
@@ -350,7 +368,10 @@ impl UiRequestHandler for UiRequestStage {
                 let _ = ctx
                     .bus
                     .ui_event()
-                    .send(UiEvent::Warning { message: msg })
+                    .send(SystemEvent::SystemMessage {
+                        kind: SystemKind::Warning,
+                        text: msg,
+                    })
                     .await;
             }
             UiRequestResponse::AgentRefresh(Ok(summaries)) => {
@@ -364,7 +385,10 @@ impl UiRequestHandler for UiRequestStage {
                 let _ = ctx
                     .bus
                     .ui_event()
-                    .send(UiEvent::Warning { message: msg })
+                    .send(SystemEvent::SystemMessage {
+                        kind: SystemKind::Warning,
+                        text: msg,
+                    })
                     .await;
             }
             _ => {}

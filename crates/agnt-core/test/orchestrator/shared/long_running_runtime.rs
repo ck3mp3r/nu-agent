@@ -82,11 +82,11 @@ impl CoreRuntime for LongRunningRuntime {
         }
 
         // Publish TurnCompleted directly to the bus (worker bridge no longer
-        // converts UiEvent::Completed), matching production.
+        // converts SystemEvent::TurnCompleted), matching production.
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,

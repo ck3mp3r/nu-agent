@@ -42,6 +42,6 @@ use crate::hook::output_repetition::{
     OUTPUT_REPETITION_BACKOFF_MESSAGE, OUTPUT_REPETITION_MESSAGE, OUTPUT_REPETITION_STOP_PREFIX,
     OUTPUT_REPETITION_THRESHOLD,
 };
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::types::Message;
 use crate::utils::value_ext::extract_response_text_from_value;

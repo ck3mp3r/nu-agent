@@ -7,8 +7,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::bus::{Bus, CompactionEvent};
+use crate::bus::Bus;
 use crate::config::{Config, defaults};
+use crate::protocol::events::SystemEvent;
 use crate::session::MemoryError;
 use crate::types::Message;
 
@@ -94,7 +95,7 @@ pub fn resolve_model_spec_for(config: &Config) -> Option<ModelSpec> {
 ///
 /// A `None` spec means the configured provider resolved to no rig provider id:
 /// compaction is disabled for the session, and `compact()` emits
-/// `CompactionEvent::Failed` and returns `Err` rather than reporting a silent
+/// `SystemEvent::CompactionFailed` and returns `Err` rather than reporting a silent
 /// success.
 pub struct NuCompactor {
     model: Arc<Mutex<DynModel<Completion>>>,
@@ -189,7 +190,7 @@ impl NuCompactor {
     ///
     /// When compaction is disabled for the session, the store cannot be read or
     /// written, or the summary cannot be produced. Every failure is also emitted
-    /// as `CompactionEvent::Failed`.
+    /// as `SystemEvent::CompactionFailed`.
     pub async fn compact(
         &self,
         store: &dyn rig_memory::Store,
@@ -244,7 +245,7 @@ impl NuCompactor {
         let _ = self
             .bus
             .compaction()
-            .send(CompactionEvent::Started {
+            .send(SystemEvent::CompactionStarted {
                 source: source.to_string(),
             })
             .await;
@@ -310,7 +311,7 @@ impl NuCompactor {
                                 ..
                             }) => {
                                 aggregated.push_str(&text);
-                                let _ = self.bus.compaction().send(CompactionEvent::SummaryChunk {
+                                let _ = self.bus.compaction().send(SystemEvent::CompactionSummaryChunk {
                                     source: source.to_string(),
                                     delta: text,
                                     aggregated: aggregated.clone(),
@@ -400,13 +401,13 @@ impl NuCompactor {
         }
     }
 
-    /// Emit `CompactionEvent::Completed` for `summary`.
+    /// Emit `SystemEvent::CompactionCompleted` for `summary`.
     async fn emit_completed(&self, summary: &str, source: &str) {
         let preview: String = summary.chars().take(200).collect();
         let _ = self
             .bus
             .compaction()
-            .send(CompactionEvent::Completed {
+            .send(SystemEvent::CompactionCompleted {
                 source: source.to_string(),
                 summary_preview: preview,
                 summary_body: summary.to_string(),
@@ -414,12 +415,12 @@ impl NuCompactor {
             .await;
     }
 
-    /// Emit `CompactionEvent::Failed` carrying `message`.
+    /// Emit `SystemEvent::CompactionFailed` carrying `message`.
     async fn emit_failed(&self, source: &str, message: &str) {
         let _ = self
             .bus
             .compaction()
-            .send(CompactionEvent::Failed {
+            .send(SystemEvent::CompactionFailed {
                 source: source.to_string(),
                 message: message.to_string(),
             })

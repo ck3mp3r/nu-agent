@@ -16,16 +16,15 @@ use crate::runtime::{
     command_palette_table_model, command_palette_title, help_panel_lines, help_panel_max_scroll,
     help_panel_overflow_cue, mcp_details_height_for_inner_height, mcp_details_rows,
     mcp_panel_title, mcp_selected_details_lines, mcp_table_model, picker_action_keys,
-    picker_details_height_for_inner_height, popup_title, scroll_panel_title,
-    session_picker::SessionPickerRow, skills_panel_lines, status::format::ellipsize,
-    status_panel_lines,
+    picker_details_height_for_inner_height, popup_title, scroll_panel_title, skills_panel_lines,
+    status::format::ellipsize, status_panel_lines,
 };
 use crate::{
     runtime::{
         render::frame::{
             ModalPanelKind, modal_rect_for_panel, picker_column_budgets, popup_body_rows,
         },
-        render::picker_table::{PickerTableLayout, render_picker_table, section_header_row},
+        render::picker_table::{PickerTableLayout, render_picker_table, rows_with_sections},
         render::{PickerFooter, render_modal_frame, render_scroll_text_panel},
     },
     state::{InfoPanel, PickerPayload},
@@ -50,13 +49,15 @@ pub(super) const MODEL_PICKER_COLUMN_SPACING: u16 = 1;
 /// The column the models picker's identity text starts at, counted from the
 /// popup's inner edge: the two-cell selection gutter the table reserves for
 /// every row plus the two-space indent the identity cell carries. The footer
-/// text and the provider headers start on it too, so the popup has one left
-/// edge.
+/// text starts on it too, so the popup has one left edge for the selected row
+/// and its footer. The provider heads start one step left, flush on the
+/// selection gutter, which reads as the hierarchy step above the rows.
 const MODEL_PICKER_TEXT_INDENT: u16 = 4;
 
 /// The column the agent and session tables' first cell starts at, counted from
 /// the popup's inner edge: the two-cell selection gutter the table reserves for
-/// every row. The agent and session footers start on it too.
+/// every row. The agent and session footers start on it too. The session rows
+/// carry one further two-space step inside that column, under their day head.
 const LIST_TEXT_INDENT: u16 = 2;
 
 impl RuntimeCoordinator {
@@ -273,70 +274,62 @@ impl RuntimeCoordinator {
                 .copied()
                 .unwrap_or_default()
                 .saturating_sub(usize::from(MODEL_PICKER_TEXT_INDENT - LIST_TEXT_INDENT));
-            let mut table_rows: Vec<Row> = Vec::new();
-            let mut current_provider: Option<String> = None;
-            let mut selected_row = 0;
-            for (model_idx, opt) in options.iter().enumerate() {
-                let (provider, provider_display_name, identity, configured, context_window, cost) =
-                    match &opt.payload {
+            let sectioned = rows_with_sections(
+                &options,
+                picker_state.selection,
+                &self.theme,
+                |opt| {
+                    let (identity, configured, context_window, cost) = match &opt.payload {
                         PickerPayload::Model {
-                            provider,
-                            provider_display_name,
                             identity,
                             configured,
                             context_window,
                             cost,
-                        } => (
-                            provider,
-                            provider_display_name,
-                            identity,
-                            *configured,
-                            *context_window,
-                            cost,
-                        ),
+                            ..
+                        } => (identity, *configured, *context_window, cost),
                         _ => unreachable!(),
                     };
-                if current_provider.as_deref() != Some(provider.as_str()) {
-                    let label = format!("  {provider_display_name}");
-                    table_rows.push(section_header_row(&label, &self.theme));
-                    current_provider = Some(provider.clone());
-                }
-                let active = if opt.id == self.state.status.identity.active_model_identity {
-                    "*"
-                } else {
-                    ""
-                };
-                // A row is unavailable when the session's consumed tokens do not
-                // fit its context window. The active model is not a switch
-                // target, so it never dims.
-                let unavailable = active.is_empty()
-                    && self
-                        .state
-                        .status
-                        .tokens
-                        .latest_total_tokens
-                        .zip(context_window.map(u64::from))
-                        .is_some_and(|(consumed, window)| consumed >= window);
-                let configured_glyph = if configured { "◆" } else { "" };
-                let context_cell = context_window
-                    .map(|n| format!("{}k", n / 1000))
-                    .unwrap_or_default();
-                let cost_cell = cost.clone().unwrap_or_default();
-                let mut row = Row::new(vec![
-                    Cell::from(format!("  {}", ellipsize(identity, identity_budget))),
-                    Cell::from(Line::from(context_cell).right_aligned()),
-                    Cell::from(Line::from(cost_cell).right_aligned()),
-                    Cell::from(active),
-                    Cell::from(configured_glyph),
-                ]);
-                if unavailable {
-                    row = row.style(self.theme.picker_row_unavailable);
-                }
-                table_rows.push(row);
-                if model_idx == picker_state.selection {
-                    selected_row = table_rows.len() - 1;
-                }
-            }
+                    let active = if opt.id == self.state.status.identity.active_model_identity {
+                        "*"
+                    } else {
+                        ""
+                    };
+                    // A row is unavailable when the session's consumed tokens do
+                    // not fit its context window. The active model is not a
+                    // switch target, so it never dims.
+                    let unavailable = active.is_empty()
+                        && self
+                            .state
+                            .status
+                            .tokens
+                            .latest_total_tokens
+                            .zip(context_window.map(u64::from))
+                            .is_some_and(|(consumed, window)| consumed >= window);
+                    let configured_glyph = if configured { "◆" } else { "" };
+                    let context_cell = context_window
+                        .map(|n| format!("{}k", n / 1000))
+                        .unwrap_or_default();
+                    let cost_cell = cost.clone().unwrap_or_default();
+                    let mut row = Row::new(vec![
+                        Cell::from(format!("  {}", ellipsize(identity, identity_budget))),
+                        Cell::from(Line::from(context_cell).right_aligned()),
+                        Cell::from(Line::from(cost_cell).right_aligned()),
+                        Cell::from(active),
+                        Cell::from(configured_glyph),
+                    ]);
+                    if unavailable {
+                        row = row.style(self.theme.picker_row_unavailable);
+                    }
+                    row
+                },
+                |opt| match &opt.payload {
+                    PickerPayload::Model {
+                        provider_display_name,
+                        ..
+                    } => provider_display_name.clone(),
+                    _ => unreachable!(),
+                },
+            );
 
             let header = Row::new(vec![
                 Cell::from("MODEL"),
@@ -349,12 +342,12 @@ impl RuntimeCoordinator {
                 frame,
                 rows[1],
                 header,
-                table_rows,
+                sectioned.rows,
                 PickerTableLayout {
                     columns: &MODEL_PICKER_COLUMNS,
                     spacing: MODEL_PICKER_COLUMN_SPACING,
                 },
-                Some(selected_row),
+                sectioned.selected,
                 &self.theme,
             );
         }
@@ -508,7 +501,7 @@ impl RuntimeCoordinator {
         let rows = popup_body_rows(inner, footer.height());
         super::render_popup_hint_row(frame, rows[0], model.query_line.clone(), &self.theme);
 
-        if model.rows.is_empty() {
+        if model.options.is_empty() {
             super::render_empty_state(
                 frame,
                 rows[1],
@@ -516,22 +509,47 @@ impl RuntimeCoordinator {
                 &self.theme,
             );
         } else {
+            let sectioned = rows_with_sections(
+                &model.options,
+                model.selected.unwrap_or_default(),
+                &self.theme,
+                |opt| match &opt.payload {
+                    PickerPayload::Session {
+                        created_at,
+                        title,
+                        message_count,
+                        ..
+                    } => Row::new(vec![
+                        Cell::from(format!(
+                            "  {}",
+                            crate::runtime::session_picker::relative_timestamp(
+                                *created_at,
+                                model.now
+                            )
+                        )),
+                        Cell::from(ellipsize(
+                            title.as_deref().unwrap_or("(untitled)"),
+                            model.title_budget,
+                        )),
+                        Cell::from(message_count.to_string()),
+                    ]),
+                    _ => unreachable!(),
+                },
+                |opt| match &opt.payload {
+                    PickerPayload::Session { created_at, .. } => {
+                        crate::runtime::session_picker::day_header_label(
+                            crate::state::session_day(*created_at),
+                            model.today,
+                        )
+                    }
+                    _ => unreachable!(),
+                },
+            );
             let header = Row::new(vec!["When", "Title", "Msgs"]);
-            let table_rows = model.rows.iter().map(|row| match row {
-                SessionPickerRow::DayHeader(label) => section_header_row(label, &self.theme),
-                SessionPickerRow::Session {
-                    relative,
-                    title,
-                    message_count,
-                } => Row::new(vec![
-                    Cell::from(relative.clone()),
-                    Cell::from(title.clone()),
-                    Cell::from(message_count.to_string()),
-                ]),
-            });
             let columns = [
                 // Wide enough for the longest day header ("Sep 30, 2025", 12
-                // cells) on the When column.
+                // cells) on the When column; the session rows carry their
+                // two-space indent inside it.
                 Constraint::Length(13),
                 Constraint::Min(20),
                 Constraint::Length(6),
@@ -540,12 +558,12 @@ impl RuntimeCoordinator {
                 frame,
                 rows[1],
                 header,
-                table_rows,
+                sectioned.rows,
                 PickerTableLayout {
                     columns: &columns,
                     spacing: 1,
                 },
-                model.selected,
+                sectioned.selected,
                 &self.theme,
             );
         }

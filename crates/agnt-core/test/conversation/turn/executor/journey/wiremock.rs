@@ -142,9 +142,9 @@ async fn journey_context_warning_emitted_near_limit() -> Result<()> {
     let (r2, events) = h.turn_with_client("follow up", &client, no_tools()).await?;
 
     assert!(r2.is_ok(), "turn must succeed even with warning: {r2:?}");
-    let has_warning = events
-        .iter()
-        .any(|e| matches!(e, UiEvent::Warning { message } if message.contains("context window")));
+    let has_warning = events.iter().any(
+        |e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text.contains("context window")),
+    );
     assert!(
         has_warning,
         "expected context window warning, got events: {events:?}"
@@ -170,9 +170,9 @@ async fn journey_no_context_warning_when_not_configured() -> Result<()> {
     let (r, events) = h.turn_with_client("hello", &client, no_tools()).await?;
 
     assert!(r.is_ok());
-    let has_ctx_warning = events
-        .iter()
-        .any(|e| matches!(e, UiEvent::Warning { message } if message.contains("context window")));
+    let has_ctx_warning = events.iter().any(
+        |e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text.contains("context window")),
+    );
     assert!(
         !has_ctx_warning,
         "no context warning expected when model_context_tokens is None"

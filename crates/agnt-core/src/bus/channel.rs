@@ -13,11 +13,9 @@
 use std::future::Future;
 
 use crate::orchestrator::UiStateEvent;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::SystemEvent;
 
-use super::events::{
-    AgentEvent, CancelEvent, CompactionEvent, ExternalEvent, SessionEvent, TurnEvent,
-};
+use super::events::{AgentEvent, CancelEvent, ExternalEvent, SessionEvent, TurnEvent};
 
 // region:    --- Types
 
@@ -404,16 +402,20 @@ pub type ExternalTx = BroadcastTx<ExternalEvent>;
 /// External (A2A) channel receiver.
 pub type ExternalRx = BroadcastRx<ExternalEvent>;
 /// Compaction lifecycle channel.
-pub type CompactionTx = BroadcastTx<CompactionEvent>;
+///
+/// Carries the compaction facts of the one `SystemEvent` vocabulary; the
+/// channel stays separate from `ui_event` because only the orchestrator acts
+/// on the request.
+pub type CompactionTx = BroadcastTx<SystemEvent>;
 /// Compaction lifecycle channel receiver.
-pub type CompactionRx = BroadcastRx<CompactionEvent>;
+pub type CompactionRx = BroadcastRx<SystemEvent>;
 /// UI state channel.
 pub type UiStateTx = BroadcastTx<UiStateEvent>;
 /// UI state channel receiver.
 pub type UiStateRx = BroadcastRx<UiStateEvent>;
 /// Unified UI event channel.
-pub type UiEventTx = BroadcastTx<UiEvent>;
+pub type UiEventTx = BroadcastTx<SystemEvent>;
 /// Unified UI event channel receiver.
-pub type UiEventRx = BroadcastRx<UiEvent>;
+pub type UiEventRx = BroadcastRx<SystemEvent>;
 
 // endregion: --- Level 2 Aliases

@@ -1,24 +1,19 @@
 use super::*;
 use crate::state::selection::TranscriptSelection;
-use agnt_core::transcript::ir::{Block, MessageRole};
-use agnt_core::transcript::items::Message;
-use agnt_core::transcript::renderer::Renderable;
+use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_core::transcript::ir::MessageRole;
 
 // region:    --- Test Support
 
-/// Push `count` one-row assistant prose blocks into the transcript.
+/// Push `count` one-row assistant prose entries into the transcript.
 fn push_assistant_blocks(state: &mut AppState, count: usize) {
     for i in 1..=count {
-        let msg = Message {
-            role: MessageRole::Assistant,
-            markdown: format!("assistant text {i}"),
-        };
-        state.transcript.push_block(Block {
-            source: msg.source(),
-            lane: msg.lane(),
-            fill: msg.fill(),
-            status: None,
-        });
+        state
+            .transcript
+            .push_entry(TranscriptEntry::Message(MessageEntry {
+                role: MessageRole::Assistant,
+                markdown: format!("assistant text {i}"),
+            }));
     }
 }
 

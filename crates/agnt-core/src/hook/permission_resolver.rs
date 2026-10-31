@@ -1,10 +1,10 @@
 //! Async permission resolution trait and its two implementations.
 //!
 //! - [`PolicyPermissionResolver`]: TTY/non-interactive mode — pure policy evaluation, returns immediately.
-//! - [`InteractivePermissionResolver`]: TUI mode — publishes a `UiEvent::PermissionRequested` on
+//! - [`InteractivePermissionResolver`]: TUI mode — publishes a `SystemEvent::PermissionRequested` on
 //!   `bus.ui_event()` and awaits the user's decision via a oneshot channel.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -13,7 +13,10 @@ use serde_json::Value as JsonValue;
 use crate::bus::{CancelEvent, OneshotTx};
 
 use crate::protocol::event::{
-    PermissionDecision as ProtocolPermissionDecision, PermissionRequestContext, UiEvent,
+    PermissionDecision as ProtocolPermissionDecision, PermissionRequestContext,
+};
+use crate::protocol::events::{
+    AutoResolutionAction, RequestId, SystemEvent, ToolCall as EventToolCall, ToolCallId,
 };
 use crate::tools::authz::{
     AskApprovalHook, AskChoice, AskContext, PermissionsConfig, SessionGrantCache, apply_ask_choice,
@@ -24,6 +27,7 @@ use crate::tools::handler::{
     AuthorizationFlowContext, AuthzOutcome, McpToolRegistry, ToolSource,
     builtin_kinds::BuiltinKind, enforce_authorization_for_tool_call, pre_authorize_fs_tool,
 };
+use crate::transcript::ir;
 use crate::types::{CallId, ToolCall, ToolFunction, ToolName};
 
 pub(crate) fn resolve_tool_source(
@@ -116,21 +120,36 @@ fn summarize_ask_payload(args: &JsonValue) -> String {
     format!("→ {trimmed}")
 }
 
+/// Build the event-form call for a permission-path emission.
+///
+/// The resolver holds the name, the source, and the raw arguments but no
+/// render registry, so the call line comes from the built-in fallback. The TUI
+/// matches the preview to its pending call by `ToolCallId` only.
+fn event_call(tool_name: &str, source: &str, arguments: &str) -> EventToolCall {
+    let call_line = crate::tools::handler::builtin_tool::call_line_render_for(tool_name, arguments);
+    EventToolCall::new(
+        ir::ToolName(tool_name.to_string()),
+        source,
+        arguments,
+        call_line,
+    )
+}
+
 /// Publish the policy-resolved-without-prompting event for `outcome`.
 ///
-/// `action` is `"deny"` when the gate produced a denial reason, `"allow"`
+/// `action` is `Deny` when the gate produced a denial reason, `Allow`
 /// otherwise. `reason` carries the denial reason and is `None` on allow.
 async fn publish_auto_resolved(bus: &crate::bus::Bus, outcome: &AuthzOutcome) {
     let action = if outcome.deny_reason.is_some() {
-        "deny"
+        AutoResolutionAction::Deny
     } else {
-        "allow"
+        AutoResolutionAction::Allow
     };
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionAutoResolved {
+        .send(SystemEvent::PermissionAutoResolved {
             matched_rule_identity: outcome.decision.matched_rule.identity.clone(),
-            action: action.to_string(),
+            action,
             reason: outcome.deny_reason.clone(),
         })
         .await;
@@ -151,7 +170,7 @@ async fn wait_for_decision_timeout(deadline: Option<tokio::time::Instant>) {
 
 /// Resolves tool call permission decisions asynchronously.
 ///
-/// - TUI mode: sends a `UiEvent::PermissionRequested` on `bus.ui_event()` and
+/// - TUI mode: sends a `SystemEvent::PermissionRequested` on `bus.ui_event()` and
 ///   awaits the user's decision via a oneshot channel.
 /// - TTY mode: evaluates policy inline and returns immediately.
 pub trait AsyncPermissionResolver: Clone + Send + Sync + 'static {
@@ -282,9 +301,10 @@ impl AskApprovalHook for AskContextCapture {
         ask_context: &AskContext,
     ) -> AskChoice {
         self.was_called = true;
+        let call_id = ToolCallId::of(tool_name, &self.raw_arguments);
         self.captured_context = Some(PermissionRequestContext {
             tool: display_tool_name(tool_name, args),
-            tool_key: format!("{tool_name}\n{}", self.raw_arguments),
+            tool_key: call_id.as_str().to_string(),
             source: source.to_string(),
             mode: args
                 .get("mode")
@@ -307,13 +327,13 @@ impl AskApprovalHook for AskContextCapture {
 /// Interactive permission resolver for TUI mode.
 ///
 /// When the policy requires user confirmation ("Ask"), publishes a
-/// `UiEvent::PermissionRequested` on `bus.ui_event()` and awaits the user's
+/// `SystemEvent::PermissionRequested` on `bus.ui_event()` and awaits the user's
 /// decision. The orchestrator's `PermissionStage` and the ACP permission bridge
 /// unblock the waiting `resolve()` future by removing the request's oneshot
 /// sender from the shared pending map and sending the decision on it.
 ///
 /// **Design note (deadlock prevention):** This struct does NOT own a
-/// `mpsc::UnboundedSender<UiEvent>`. It publishes permission events on the
+/// `UiEventTx`. It publishes permission events on the
 /// `Bus` handed to [`AsyncPermissionResolver::resolve`] directly, so the
 /// executor's stack frame (which holds the resolver across the retry loop)
 /// never keeps a sender alive that would prevent the drain loop's channel from
@@ -330,12 +350,12 @@ pub struct InteractivePermissionResolver {
     /// `std::env::current_dir()` is the plugin process cwd, which is frozen at
     /// plugin spawn and diverges from the Nushell session cwd after a `cd`.
     cwd: std::path::PathBuf,
-    /// Keys (`"{tool_name}\n{arguments}"`) for which a pre-authorize preview
-    /// was published to the user during `resolve()`. Consumed (removed) by
-    /// [`AsyncPermissionResolver::take_previewed`] once `HookChain` checks
+    /// Keys (`ToolCallId::of(tool_name, arguments)`) for which a pre-authorize
+    /// preview was published to the user during `resolve()`. Consumed (removed)
+    /// by [`AsyncPermissionResolver::take_previewed`] once `HookChain` checks
     /// it, so `on_outcome` never attaches the same display twice.
-    previewed: Arc<StdMutex<std::collections::HashSet<String>>>,
-    /// Whether the UI renders pre-authorize previews (`UiEvent::ToolPreview`).
+    previewed: Arc<StdMutex<HashSet<ToolCallId>>>,
+    /// Whether the UI renders pre-authorize previews (`SystemEvent::PreviewRequested`).
     ///
     /// The TUI renders them and relies on the completion display being
     /// suppressed to avoid showing the same diff twice. The ACP translator
@@ -376,14 +396,14 @@ impl InteractivePermissionResolver {
             closure_registry,
             mcp_registry,
             cwd,
-            previewed: Arc::new(StdMutex::new(std::collections::HashSet::new())),
+            previewed: Arc::new(StdMutex::new(HashSet::new())),
             renders_tool_previews: true,
         }
     }
 
     /// Set whether the UI renders pre-authorize previews.
     ///
-    /// Pass `false` for UIs that never consume `UiEvent::ToolPreview` (the ACP
+    /// Pass `false` for UIs that never consume `SystemEvent::PreviewRequested` (the ACP
     /// translator drops it). The resolver then records no preview, so
     /// `take_previewed` returns `false` and the completion display is preserved.
     pub fn with_renders_tool_previews(mut self, renders: bool) -> Self {
@@ -478,14 +498,16 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                         if renders_tool_previews
                             && let Some(display) = flow_context.ask_context.pre_authorize_display
                         {
-                            let tool_key = format!("{tool_name}\n{arguments}");
                             previewed
                                 .lock()
                                 .expect("previewed lock")
-                                .insert(tool_key.clone());
+                                .insert(ToolCallId::of(&tool_name, &arguments));
                             let _ = bus
                                 .ui_event()
-                                .send(UiEvent::ToolPreview { tool_key, display })
+                                .send(SystemEvent::PreviewRequested {
+                                    call: event_call(&tool_name, source.as_str(), &arguments),
+                                    display,
+                                })
                                 .await;
                         }
                         PermissionDecision::Allow
@@ -493,12 +515,15 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 }
             } else {
                 // Policy said Ask — publish event on the bus and await user decision.
+                // The request's key is the call id: the same typed value the
+                // previewed set keys on below.
+                let call_id = ToolCallId::of(&tool_name, &arguments);
                 let context =
                     capture_hook
                         .captured_context
                         .unwrap_or_else(|| PermissionRequestContext {
                             tool: tool_name.clone(),
-                            tool_key: format!("{tool_name}\n{arguments}"),
+                            tool_key: call_id.as_str().to_string(),
                             source: "unknown".to_string(),
                             mode: None,
                             matched_rule_identity: "unknown".to_string(),
@@ -516,10 +541,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 // ordering involved. A UI that drops `ToolPreview` (ACP) records
                 // nothing, so the completion display is preserved.
                 if renders_tool_previews && context.pre_authorize_display.is_some() {
-                    previewed
-                        .lock()
-                        .expect("previewed lock")
-                        .insert(format!("{tool_name}\n{arguments}"));
+                    previewed.lock().expect("previewed lock").insert(call_id);
                 }
 
                 let (tx, mut rx) = OneshotTx::<ProtocolPermissionDecision>::channel("permission");
@@ -531,8 +553,11 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                     .ui_event()
                     .request_permission(context)
                     .await
-                    .unwrap_or_else(|_| next_request_id());
-                pending.lock().unwrap().insert(request_id.clone(), tx);
+                    .unwrap_or_else(|_| RequestId::new(next_request_id()));
+                pending
+                    .lock()
+                    .unwrap()
+                    .insert(request_id.as_str().to_string(), tx);
 
                 // Await the TUI's decision, but stop waiting the moment the
                 // turn is cancelled or the decision timeout elapses: neither a
@@ -547,7 +572,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                         }
                         event = cancel_rx.recv() => {
                             if matches!(event, Ok(CancelEvent::Requested)) {
-                                pending.lock().unwrap().remove(&request_id);
+                                pending.lock().unwrap().remove(request_id.as_str());
                                 let matched_rule_identity = capture_hook
                                     .captured_auth_decision
                                     .as_ref()
@@ -555,7 +580,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                                     .unwrap_or_default();
                                 let _ = bus
                                     .ui_event()
-                                    .send(UiEvent::PermissionRequestCancelled {
+                                    .send(SystemEvent::PermissionRequestCancelled {
                                         request_id: request_id.clone(),
                                         matched_rule_identity,
                                     })
@@ -566,10 +591,10 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                             }
                         }
                         () = wait_for_decision_timeout(timeout_deadline) => {
-                            pending.lock().unwrap().remove(&request_id);
+                            pending.lock().unwrap().remove(request_id.as_str());
                             let _ = bus
                                 .ui_event()
-                                .send(UiEvent::PermissionDecisionTimedOut {
+                                .send(SystemEvent::PermissionDecisionTimedOut {
                                     request_id: request_id.clone(),
                                 })
                                 .await;
@@ -597,7 +622,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                     .unwrap_or_default();
                 let _ = bus
                     .ui_event()
-                    .send(UiEvent::PermissionDecisionSubmitted {
+                    .send(SystemEvent::PermissionDecisionSubmitted {
                         request_id: request_id.clone(),
                         decision: protocol_decision,
                         matched_rule_identity,
@@ -646,7 +671,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
         self.previewed
             .lock()
             .expect("previewed lock")
-            .remove(&format!("{tool_name}\n{arguments}"))
+            .remove(&ToolCallId::of(tool_name, arguments))
     }
 }
 

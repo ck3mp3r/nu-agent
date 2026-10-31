@@ -13,7 +13,7 @@ pub(super) use crate::orchestrator::stages::ui_request::UiRequestStage;
 pub(super) use crate::orchestrator::stages::{OrchestrationContext, UiRequestHandler};
 pub(super) use crate::orchestrator::{UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand};
 pub(super) use crate::protocol::contracts::{McpUsabilityState, UiMessageSnapshot};
-pub(super) use crate::protocol::event::UiEvent;
+pub(super) use crate::protocol::events::SystemEvent;
 pub(super) use crate::session::SessionInfo;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -139,10 +139,8 @@ pub(super) fn recv_command(
 pub(super) fn take_warnings(ui_event_rx: &mut UiEventRx) -> Vec<String> {
     let mut out = Vec::new();
     while let Ok(event) = ui_event_rx.try_recv() {
-        match event {
-            UiEvent::Warning { message } => out.push(message),
-            UiEvent::TurnError { message } => out.push(message),
-            _ => {}
+        if let SystemEvent::SystemMessage { text, .. } = event {
+            out.push(text);
         }
     }
     out

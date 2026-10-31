@@ -2,6 +2,8 @@
 
 use super::*;
 
+use crate::session::tool_status::ToolStatus;
+
 #[tokio::test]
 async fn test_hooks_runner_turn_started_invokes_with_payload() -> Result<()> {
     // -- Setup & Fixtures
@@ -44,8 +46,8 @@ async fn test_hooks_runner_turn_completed_invokes_with_tool_calls() -> Result<()
 
     // -- Exec
     let _ = bus
-        .turn()
-        .send(TurnEvent::Completed {
+        .ui_event()
+        .send(SystemEvent::TurnCompleted {
             tool_calls: 4,
             input_tokens: 30,
             output_tokens: 12,
@@ -84,11 +86,13 @@ async fn test_hooks_runner_tool_started_invokes_with_payload() -> Result<()> {
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::ToolStarted {
-            name: "read".to_string(),
-            source: "builtin".to_string(),
-            arguments: "{\"path\":\"a.txt\"}".to_string(),
-            call_line: crate::protocol::tool_args::CallLine::from_json_summary("{}"),
+        .send(SystemEvent::ToolStarted {
+            call: ToolCall::new(
+                ToolName("read".to_string()),
+                "builtin",
+                "{\"path\":\"a.txt\"}",
+                crate::protocol::tool_args::CallLine::from_json_summary("{}"),
+            ),
         })
         .await;
     drop(bus);
@@ -116,15 +120,21 @@ async fn test_hooks_runner_tool_completed_invokes_with_payload() -> Result<()> {
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::ToolCompleted {
-            name: "read".to_string(),
-            source: "builtin".to_string(),
-            arguments: "{}".to_string(),
-            success: false,
-            result: "denied".to_string(),
-            display: None,
-            error_kind: Some("permission".to_string()),
-            message: Some("not allowed".to_string()),
+        .send(SystemEvent::ToolCompleted {
+            call: ToolCall::new(
+                ToolName("read".to_string()),
+                "builtin",
+                "{}",
+                crate::protocol::tool_args::CallLine::from_json_summary("{}"),
+            ),
+            outcome: ToolOutcome {
+                success: false,
+                status: ToolStatus::Failed,
+                result: "denied".to_string(),
+                display: None,
+                error_kind: Some("permission".to_string()),
+                message: Some("not allowed".to_string()),
+            },
         })
         .await;
     drop(bus);
@@ -161,8 +171,8 @@ async fn test_hooks_runner_skips_unsubscribed_events() -> Result<()> {
         })
         .await;
     let _ = bus
-        .turn()
-        .send(TurnEvent::Completed {
+        .ui_event()
+        .send(SystemEvent::TurnCompleted {
             tool_calls: 1,
             input_tokens: 0,
             output_tokens: 0,
@@ -206,8 +216,8 @@ async fn test_hooks_runner_invokes_in_arrival_order() -> Result<()> {
         })
         .await;
     let _ = bus
-        .turn()
-        .send(TurnEvent::Completed {
+        .ui_event()
+        .send(SystemEvent::TurnCompleted {
             tool_calls: 2,
             input_tokens: 0,
             output_tokens: 0,
@@ -238,8 +248,8 @@ async fn test_hooks_runner_continues_after_a_timeout() -> Result<()> {
 
     // -- Exec
     let _ = bus
-        .turn()
-        .send(TurnEvent::Completed {
+        .ui_event()
+        .send(SystemEvent::TurnCompleted {
             tool_calls: 1,
             input_tokens: 0,
             output_tokens: 0,
@@ -250,8 +260,8 @@ async fn test_hooks_runner_continues_after_a_timeout() -> Result<()> {
         })
         .await;
     let _ = bus
-        .turn()
-        .send(TurnEvent::Completed {
+        .ui_event()
+        .send(SystemEvent::TurnCompleted {
             tool_calls: 2,
             input_tokens: 0,
             output_tokens: 0,
@@ -284,8 +294,8 @@ async fn test_hooks_runner_continues_after_a_failure() -> Result<()> {
 
     // -- Exec
     let _ = bus
-        .turn()
-        .send(TurnEvent::Completed {
+        .ui_event()
+        .send(SystemEvent::TurnCompleted {
             tool_calls: 1,
             input_tokens: 0,
             output_tokens: 0,
@@ -296,8 +306,8 @@ async fn test_hooks_runner_continues_after_a_failure() -> Result<()> {
         })
         .await;
     let _ = bus
-        .turn()
-        .send(TurnEvent::Completed {
+        .ui_event()
+        .send(SystemEvent::TurnCompleted {
             tool_calls: 2,
             input_tokens: 0,
             output_tokens: 0,

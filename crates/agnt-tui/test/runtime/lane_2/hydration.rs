@@ -1,5 +1,7 @@
 use super::*;
 
+use agnt_core::transcript::entry::TranscriptEntry;
+
 /// Lane 1 reports only the model identity: no agent name, no pipe separator.
 #[test]
 fn lane_1_reports_model_only() -> Result<()> {
@@ -65,13 +67,12 @@ fn hydrate_transcript_tokens_and_markdown() -> Result<()> {
     let has_bold = bold
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .filter_map(|b| match &b.source {
-            BlockSource::Markdown {
-                role: MessageRole::Assistant,
-                markdown,
-            } => Some(markdown.as_str()),
+        .filter_map(|entry| match entry {
+            TranscriptEntry::Message(message) if message.role == MessageRole::Assistant => {
+                Some(message.markdown.as_str())
+            }
             _ => None,
         })
         .flat_map(|md| crate::markdown::render_markdown_lines(md, None))
@@ -94,13 +95,12 @@ fn hydrate_transcript_tokens_and_markdown() -> Result<()> {
     let has_italic = italic
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .filter_map(|b| match &b.source {
-            BlockSource::Markdown {
-                role: MessageRole::Assistant,
-                markdown,
-            } => Some(markdown.as_str()),
+        .filter_map(|entry| match entry {
+            TranscriptEntry::Message(message) if message.role == MessageRole::Assistant => {
+                Some(message.markdown.as_str())
+            }
             _ => None,
         })
         .flat_map(|md| crate::markdown::render_markdown_lines(md, None))

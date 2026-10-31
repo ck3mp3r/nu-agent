@@ -114,7 +114,7 @@ async fn cost_computed_when_the_usage_reports_no_total_tokens() -> Result<()> {
     // total absent. The row lists 3.00 input and 15.00 output per million.
     let model = catalog_turn(
         "copilot/claude-sonnet-4.6",
-        Usage::new().input_tokens(1_000).output_tokens(500),
+        ModelUsage::new().input_tokens(1_000).output_tokens(500),
     )?;
 
     // -- Exec

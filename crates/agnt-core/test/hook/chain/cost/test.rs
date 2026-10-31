@@ -20,12 +20,12 @@ mod turn_usage;
 use super::*;
 
 use rig::catalog::Catalog;
-use rig::completion::Usage;
+use rig::completion::Usage as ModelUsage;
 use rig::test_utils::MockTurn;
 
 /// A usage that reports both counters, so the catalog can price it.
-fn usage() -> Usage {
-    Usage::new()
+fn usage() -> ModelUsage {
+    ModelUsage::new()
         .input_tokens(1_000)
         .output_tokens(500)
         .total_tokens(1_500)
@@ -41,7 +41,7 @@ fn catalog_spec(reference: &str) -> Result<std::sync::Arc<rig::catalog::ModelSpe
 
 /// A scripted streaming model answering as the catalog's `reference`, with
 /// `usage` on its final response.
-fn catalog_turn(reference: &str, usage: Usage) -> Result<MockCompletionModel> {
+fn catalog_turn(reference: &str, usage: ModelUsage) -> Result<MockCompletionModel> {
     Ok(MockCompletionModel::from_stream_turns([[
         MockStreamEvent::Text("done".to_string()),
         MockStreamEvent::final_response(usage),
@@ -51,7 +51,7 @@ fn catalog_turn(reference: &str, usage: Usage) -> Result<MockCompletionModel> {
 
 /// A scripted unary model answering as the catalog's `reference`, with `usage`
 /// on its response.
-fn catalog_call(reference: &str, usage: Usage) -> Result<MockCompletionModel> {
+fn catalog_call(reference: &str, usage: ModelUsage) -> Result<MockCompletionModel> {
     Ok(
         MockCompletionModel::from_turns([MockTurn::text("done").with_usage(usage)])
             .priced_as(catalog_spec(reference)?),
@@ -143,7 +143,7 @@ async fn drive_turn(
     hook: HookChain<PolicyPermissionResolver>,
     bus: &Bus,
     model: MockCompletionModel,
-) -> Result<Option<UiEvent>> {
+) -> Result<Option<SystemEvent>> {
     let mut rx = bus.ui_event().subscribe();
     let agent = rig::agent::AgentBuilder::new(model.erase())
         .add_hook(hook)
@@ -152,7 +152,7 @@ async fn drive_turn(
     while stream.next().await.is_some() {}
 
     while let Ok(event) = rx.try_recv() {
-        if matches!(event, UiEvent::LlmCompleted { .. }) {
+        if matches!(event, SystemEvent::InferenceCompleted { .. }) {
             return Ok(Some(event));
         }
     }
@@ -161,7 +161,7 @@ async fn drive_turn(
 
 /// Run one turn against `model` and return the `LlmCompleted` event the hook
 /// emitted, if any.
-async fn emitted_completion(model: MockCompletionModel) -> Result<Option<UiEvent>> {
+async fn emitted_completion(model: MockCompletionModel) -> Result<Option<SystemEvent>> {
     emitted_completion_with(model.clone(), model).await
 }
 
@@ -170,14 +170,14 @@ async fn emitted_completion(model: MockCompletionModel) -> Result<Option<UiEvent
 async fn emitted_completion_with(
     model: MockCompletionModel,
     compactor_model: MockCompletionModel,
-) -> Result<Option<UiEvent>> {
+) -> Result<Option<SystemEvent>> {
     let TurnHook { hook, bus, .. } = turn_hook(&model, compactor_model)?;
     drive_turn(hook, &bus, model).await
 }
 
 /// Run one turn against `model` and return the `LlmCompleted` event the hook
 /// emitted.
-async fn completed_event(model: MockCompletionModel) -> Result<UiEvent> {
+async fn completed_event(model: MockCompletionModel) -> Result<SystemEvent> {
     emitted_completion(model)
         .await?
         .ok_or_else(|| "the turn must emit LlmCompleted".into())
@@ -188,28 +188,24 @@ async fn completed_event(model: MockCompletionModel) -> Result<UiEvent> {
 async fn completed_event_with(
     model: MockCompletionModel,
     compactor_model: MockCompletionModel,
-) -> Result<UiEvent> {
+) -> Result<SystemEvent> {
     emitted_completion_with(model, compactor_model)
         .await?
         .ok_or_else(|| "the turn must emit LlmCompleted".into())
 }
 
 /// The cost and completeness the hook emitted.
-fn emitted_cost(event: UiEvent) -> Result<(Option<f64>, bool)> {
+fn emitted_cost(event: SystemEvent) -> Result<(Option<f64>, bool)> {
     match event {
-        UiEvent::LlmCompleted {
-            cost,
-            cost_complete,
-            ..
-        } => Ok((cost, cost_complete)),
+        SystemEvent::InferenceCompleted { usage, .. } => Ok((usage.cost, usage.cost_complete)),
         other => Err(format!("the turn must emit LlmCompleted, got {other:?}").into()),
     }
 }
 
 /// The total the hook emitted, or `None` when the wire reported none.
-fn emitted_total_tokens(event: UiEvent) -> Result<Option<u64>> {
+fn emitted_total_tokens(event: SystemEvent) -> Result<Option<u64>> {
     match event {
-        UiEvent::LlmCompleted { total_tokens, .. } => Ok(total_tokens),
+        SystemEvent::InferenceCompleted { usage, .. } => Ok(usage.total_tokens),
         other => Err(format!("the turn must emit LlmCompleted, got {other:?}").into()),
     }
 }

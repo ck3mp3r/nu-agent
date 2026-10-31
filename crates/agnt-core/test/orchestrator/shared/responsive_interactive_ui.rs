@@ -71,7 +71,7 @@ impl ResponsiveInteractiveUi {
                 tokio::select! {
                     Ok(event) = ui_event_rx.recv() => {
                         match event {
-                            UiEvent::Completed { .. } => {
+                            SystemEvent::TurnCompleted { .. } => {
                                 if active.load(Ordering::SeqCst) {
                                     active_pump_count.fetch_add(1, Ordering::SeqCst);
                                 }
@@ -80,8 +80,8 @@ impl ResponsiveInteractiveUi {
                                     quit.store(true, Ordering::SeqCst);
                                 }
                             }
-                            UiEvent::Warning { message } | UiEvent::TurnError { message } => {
-                                warnings.lock().expect("warnings lock").push(message);
+                            SystemEvent::SystemMessage { text, .. } => {
+                                warnings.lock().expect("warnings lock").push(text);
                             }
                             _ => {}
                         }

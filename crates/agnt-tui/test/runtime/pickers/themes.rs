@@ -169,6 +169,7 @@ fn theme_option(display: &str) -> PickerOption {
         id: display.to_string(),
         display: display.to_string(),
         search_text: display.to_string(),
+        section: None,
         sort_key: Vec::new(),
         payload: PickerPayload::Theme,
     }

@@ -5,9 +5,8 @@
 
 pub(super) use crate::state::*;
 pub(super) use agnt_core::orchestrator::UiStateEvent;
-pub(super) use agnt_core::transcript::ir::{Block, BlockSource, MessageRole};
-pub(super) use agnt_core::transcript::items::Message;
-pub(super) use agnt_core::transcript::renderer::Renderable;
+pub(super) use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
+pub(super) use agnt_core::transcript::ir::MessageRole;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

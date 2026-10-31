@@ -86,6 +86,7 @@ pub(super) fn test_session_options() -> Vec<PickerOption> {
             id: "old".to_string(),
             display: "old".to_string(),
             search_text: "old".to_string(),
+            section: Some(crate::state::session_day(now - chrono::Duration::days(1)).to_string()),
             sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(
                 now - chrono::Duration::days(1),
             ))],
@@ -100,6 +101,7 @@ pub(super) fn test_session_options() -> Vec<PickerOption> {
             id: "new".to_string(),
             display: "new".to_string(),
             search_text: "new".to_string(),
+            section: Some(crate::state::session_day(now).to_string()),
             sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(now))],
             payload: PickerPayload::Session {
                 session_id: "new".to_string(),
@@ -127,6 +129,7 @@ pub(super) fn picker_option(id: &str) -> PickerOption {
         id: id.to_string(),
         display: id.to_string(),
         search_text: id.to_string(),
+        section: None,
         sort_key: Vec::new(),
         payload: PickerPayload::Theme,
     }

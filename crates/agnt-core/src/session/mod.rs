@@ -9,6 +9,7 @@ pub mod resolver;
 mod rig_dir_store;
 mod rig_sqlite_store;
 pub mod rig_state;
+pub mod tool_status;
 
 #[cfg(test)]
 #[path = "../../test/session/prefix.rs"]
@@ -41,6 +42,10 @@ mod rig_dir_store_test;
 #[cfg(test)]
 #[path = "../../test/session/rig_factory.rs"]
 mod rig_factory_test;
+
+#[cfg(test)]
+#[path = "../../test/session/tool_status.rs"]
+mod tool_status_test;
 
 #[cfg(all(test, feature = "integration"))]
 #[path = "../../test/session/rig_sqlite_store.rs"]

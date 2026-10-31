@@ -18,12 +18,6 @@ pub struct ModelPickerOption {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModelPickerRow {
-    ProviderHeader { name: String, display_name: String },
-    Model { option: ModelPickerOption },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentPickerOption {
     pub name: String,
     pub description: Option<String>,

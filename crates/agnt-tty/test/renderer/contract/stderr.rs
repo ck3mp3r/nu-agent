@@ -1,8 +1,14 @@
 //! Behavior tests for the stderr renderer.
 
 use super::super::StderrUiRenderer;
-use agnt_core::protocol::event::UiEvent;
+use super::tool_call;
+use agnt_core::protocol::events::{
+    RequestId, SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage,
+};
+use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::renderer::UiRenderer;
+use agnt_core::session::tool_status::ToolStatus;
+use agnt_core::transcript::ir::ToolName;
 
 use crate::policy::{UiPolicy, Verbosity};
 
@@ -21,16 +27,18 @@ fn stderr_renderer_writes_only_to_stderr_sink() {
         false,
     );
 
-    renderer.emit(&UiEvent::LlmStarted);
-    renderer.emit(&UiEvent::Tick);
-    renderer.emit(&UiEvent::LlmCompleted {
-        response_chars: 5,
-        tool_calls: 0,
-        input_tokens: 3,
-        output_tokens: 2,
-        total_tokens: Some(5),
-        cost: None,
-        cost_complete: false,
+    renderer.emit(&SystemEvent::InferenceStarted);
+    renderer.emit(&SystemEvent::Tick);
+    renderer.emit(&SystemEvent::InferenceCompleted {
+        usage: Usage {
+            response_chars: 5,
+            tool_calls: 0,
+            input_tokens: 3,
+            output_tokens: 2,
+            total_tokens: Some(5),
+            cost: None,
+            cost_complete: false,
+        },
     });
     renderer.flush();
 
@@ -50,9 +58,9 @@ fn quiet_mode_suppresses_non_essential_progress_and_warnings() {
         true,
     );
 
-    renderer.emit(&UiEvent::LlmStarted);
-    renderer.emit(&UiEvent::Tick);
-    renderer.emit(&UiEvent::Completed {
+    renderer.emit(&SystemEvent::InferenceStarted);
+    renderer.emit(&SystemEvent::Tick);
+    renderer.emit(&SystemEvent::TurnCompleted {
         tool_calls: 0,
         input_tokens: 0,
         output_tokens: 0,
@@ -61,8 +69,9 @@ fn quiet_mode_suppresses_non_essential_progress_and_warnings() {
         cost_complete: true,
         duration_ms: 0,
     });
-    renderer.emit(&UiEvent::Warning {
-        message: "essential warning".to_string(),
+    renderer.emit(&SystemEvent::SystemMessage {
+        kind: SystemKind::Warning,
+        text: "essential warning".to_string(),
     });
     renderer.flush();
 
@@ -84,8 +93,9 @@ fn verbose_mode_shows_warnings() {
         true,
     );
 
-    renderer.emit(&UiEvent::Warning {
-        message: "important warning".to_string(),
+    renderer.emit(&SystemEvent::SystemMessage {
+        kind: SystemKind::Warning,
+        text: "important warning".to_string(),
     });
     renderer.flush();
 
@@ -105,16 +115,18 @@ fn default_busy_flow_uses_spinner_without_redundant_persistent_busy_lines() {
         true,
     );
 
-    renderer.emit(&UiEvent::LlmStarted);
-    renderer.emit(&UiEvent::Tick);
-    renderer.emit(&UiEvent::LlmCompleted {
-        response_chars: 42,
-        tool_calls: 0,
-        input_tokens: 30,
-        output_tokens: 12,
-        total_tokens: Some(42),
-        cost: None,
-        cost_complete: false,
+    renderer.emit(&SystemEvent::InferenceStarted);
+    renderer.emit(&SystemEvent::Tick);
+    renderer.emit(&SystemEvent::InferenceCompleted {
+        usage: Usage {
+            response_chars: 42,
+            tool_calls: 0,
+            input_tokens: 30,
+            output_tokens: 12,
+            total_tokens: Some(42),
+            cost: None,
+            cost_complete: false,
+        },
     });
     renderer.flush();
 
@@ -136,7 +148,7 @@ fn spinner_is_disabled_on_non_tty_or_quiet_and_enabled_on_interactive_tty() {
             },
             false,
         );
-        renderer_non_tty.emit(&UiEvent::LlmStarted);
+        renderer_non_tty.emit(&SystemEvent::InferenceStarted);
         renderer_non_tty.flush();
     }
     assert!(
@@ -154,7 +166,7 @@ fn spinner_is_disabled_on_non_tty_or_quiet_and_enabled_on_interactive_tty() {
             },
             true,
         );
-        renderer_quiet.emit(&UiEvent::LlmStarted);
+        renderer_quiet.emit(&SystemEvent::InferenceStarted);
         renderer_quiet.flush();
     }
     assert!(quiet_bytes.is_empty(), "quiet should not render spinner");
@@ -169,7 +181,7 @@ fn spinner_is_disabled_on_non_tty_or_quiet_and_enabled_on_interactive_tty() {
             },
             true,
         );
-        renderer_tty.emit(&UiEvent::LlmStarted);
+        renderer_tty.emit(&SystemEvent::InferenceStarted);
         renderer_tty.flush();
     }
     assert!(!tty_bytes.is_empty(), "tty should render spinner");
@@ -188,18 +200,15 @@ fn spinner_pauses_for_persistent_lines_and_stops_on_completion() {
             true,
         );
 
-        renderer.emit(&UiEvent::LlmStarted);
+        renderer.emit(&SystemEvent::InferenceStarted);
 
-        renderer.emit(&UiEvent::Tick);
+        renderer.emit(&SystemEvent::Tick);
 
-        renderer.emit(&UiEvent::ToolStarted {
-            name: "t".to_string(),
-            source: "closure".to_string(),
-            arguments: "{}".to_string(),
-            call_line: agnt_core::protocol::tool_args::CallLine::from_json_summary("{}"),
+        renderer.emit(&SystemEvent::ToolStarted {
+            call: tool_call("t"),
         });
 
-        renderer.emit(&UiEvent::Completed {
+        renderer.emit(&SystemEvent::TurnCompleted {
             tool_calls: 0,
             input_tokens: 0,
             output_tokens: 0,
@@ -229,17 +238,19 @@ fn spinner_omits_arrow_when_call_line_summary_is_empty() {
             true,
         );
 
-        renderer.emit(&UiEvent::LlmStarted);
+        renderer.emit(&SystemEvent::InferenceStarted);
 
-        renderer.emit(&UiEvent::Tick);
+        renderer.emit(&SystemEvent::Tick);
 
-        renderer.emit(&UiEvent::ToolStarted {
-            name: "nu".to_string(),
-            source: "builtin".to_string(),
-            arguments: r#"{"command":"ls"}"#.to_string(),
-            call_line: agnt_core::protocol::tool_args::CallLine {
-                summary: String::new(),
-            },
+        renderer.emit(&SystemEvent::ToolStarted {
+            call: ToolCall::new(
+                ToolName("nu".to_string()),
+                "builtin",
+                r#"{"command":"ls"}"#,
+                CallLine {
+                    summary: String::new(),
+                },
+            ),
         });
 
         renderer.flush();
@@ -268,22 +279,30 @@ fn default_tool_lifecycle_is_single_completion_line_with_result_block() {
         true,
     );
 
-    renderer.emit(&UiEvent::LlmStarted);
-    renderer.emit(&UiEvent::ToolStarted {
-        name: "gh__list_prs".to_string(),
-        source: "mcp".to_string(),
-        arguments: "{}".to_string(),
-        call_line: agnt_core::protocol::tool_args::CallLine::from_json_summary("{}"),
+    renderer.emit(&SystemEvent::InferenceStarted);
+    renderer.emit(&SystemEvent::ToolStarted {
+        call: ToolCall::new(
+            ToolName("gh__list_prs".to_string()),
+            "mcp",
+            "{}",
+            CallLine::from_json_summary("{}"),
+        ),
     });
-    renderer.emit(&UiEvent::ToolCompleted {
-        name: "gh__list_prs".to_string(),
-        source: "mcp".to_string(),
-        arguments: "{}".to_string(),
-        success: true,
-        result: "[]".to_string(),
-        display: None,
-        error_kind: None,
-        message: None,
+    renderer.emit(&SystemEvent::ToolCompleted {
+        call: ToolCall::new(
+            ToolName("gh__list_prs".to_string()),
+            "mcp",
+            "{}",
+            CallLine::from_json_summary("{}"),
+        ),
+        outcome: ToolOutcome {
+            success: true,
+            status: ToolStatus::Success,
+            result: "[]".to_string(),
+            display: None,
+            error_kind: None,
+            message: None,
+        },
     });
     renderer.flush();
 
@@ -306,21 +325,29 @@ fn default_tool_lifecycle_prints_non_empty_payloads() {
             true,
         );
 
-        renderer.emit(&UiEvent::ToolStarted {
-            name: "gh__list_prs".to_string(),
-            source: "mcp".to_string(),
-            arguments: "{}".to_string(),
-            call_line: agnt_core::protocol::tool_args::CallLine::from_json_summary("{}"),
+        renderer.emit(&SystemEvent::ToolStarted {
+            call: ToolCall::new(
+                ToolName("gh__list_prs".to_string()),
+                "mcp",
+                "{}",
+                CallLine::from_json_summary("{}"),
+            ),
         });
-        renderer.emit(&UiEvent::ToolCompleted {
-            name: "gh__list_prs".to_string(),
-            source: "mcp".to_string(),
-            arguments: "{}".to_string(),
-            success: true,
-            result: payload.to_string(),
-            display: None,
-            error_kind: None,
-            message: None,
+        renderer.emit(&SystemEvent::ToolCompleted {
+            call: ToolCall::new(
+                ToolName("gh__list_prs".to_string()),
+                "mcp",
+                "{}",
+                CallLine::from_json_summary("{}"),
+            ),
+            outcome: ToolOutcome {
+                success: true,
+                status: ToolStatus::Success,
+                result: payload.to_string(),
+                display: None,
+                error_kind: None,
+                message: None,
+            },
         });
         renderer.flush();
 
@@ -349,7 +376,7 @@ fn spinner_tick_advances_frame_on_tty_only() {
             },
             true,
         );
-        renderer.emit(&UiEvent::LlmStarted);
+        renderer.emit(&SystemEvent::InferenceStarted);
         renderer.flush();
     }
 
@@ -364,8 +391,8 @@ fn spinner_tick_advances_frame_on_tty_only() {
             },
             true,
         );
-        renderer.emit(&UiEvent::LlmStarted);
-        renderer.emit(&UiEvent::Tick);
+        renderer.emit(&SystemEvent::InferenceStarted);
+        renderer.emit(&SystemEvent::Tick);
         renderer.flush();
     }
 
@@ -384,8 +411,8 @@ fn spinner_tick_advances_frame_on_tty_only() {
             },
             false,
         );
-        non_tty_renderer.emit(&UiEvent::LlmStarted);
-        non_tty_renderer.emit(&UiEvent::Tick);
+        non_tty_renderer.emit(&SystemEvent::InferenceStarted);
+        non_tty_renderer.emit(&SystemEvent::Tick);
         non_tty_renderer.flush();
     }
     assert!(
@@ -407,12 +434,13 @@ fn turn_error_visible_at_default_verbosity_and_stops_spinner() {
     );
 
     // Start spinner
-    renderer.emit(&UiEvent::LlmStarted);
-    renderer.emit(&UiEvent::Tick);
+    renderer.emit(&SystemEvent::InferenceStarted);
+    renderer.emit(&SystemEvent::Tick);
 
     // Emit TurnError
-    renderer.emit(&UiEvent::TurnError {
-        message: "Turn failed: Not authenticated. Run `agent auth login`.".to_string(),
+    renderer.emit(&SystemEvent::SystemMessage {
+        kind: SystemKind::TurnError,
+        text: "Turn failed: Not authenticated. Run `agent auth login`.".to_string(),
     });
     renderer.flush();
 
@@ -426,8 +454,8 @@ fn turn_error_visible_at_default_verbosity_and_stops_spinner() {
 #[test]
 fn permission_request_cancelled_renders_line_and_quiet_suppresses() {
     // -- Setup & Fixtures
-    let event = UiEvent::PermissionRequestCancelled {
-        request_id: "perm-0000000000000001".to_string(),
+    let event = SystemEvent::PermissionRequestCancelled {
+        request_id: RequestId::new("perm-0000000000000001"),
         matched_rule_identity: "global:*".to_string(),
     };
 

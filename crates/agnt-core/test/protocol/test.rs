@@ -51,8 +51,9 @@ use super::slash::{
 };
 use super::tool_args;
 
-use crate::bus::PermissionEvent;
 use crate::compaction::CompactionStrategy;
-use crate::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
+use crate::protocol::event::{PermissionDecision, PermissionRequestContext};
+use crate::protocol::events::{RequestId, SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
+use crate::transcript::ir::ToolName;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

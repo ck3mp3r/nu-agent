@@ -17,7 +17,7 @@ fn tool_display_section_hints_matrix() -> Result<()> {
 
     // -- Exec & Check: diff section hints and tints.
     let mut state = AppState::default();
-    reduce_tool(&mut state, started("edit", r#"{"path":"sample.txt"}"#));
+    reduce_ui(&mut state, started("edit", r#"{"path":"sample.txt"}"#));
     complete_with_display(
         &mut state,
         "edit",
@@ -47,7 +47,7 @@ fn tool_display_section_hints_matrix() -> Result<()> {
 
     // -- Exec & Check: line-number prefixes survive projection.
     let mut prefixed = AppState::default();
-    reduce_tool(&mut prefixed, started("edit", r#"{"path":"sample.txt"}"#));
+    reduce_ui(&mut prefixed, started("edit", r#"{"path":"sample.txt"}"#));
     complete_with_display(
         &mut prefixed,
         "edit",
@@ -59,7 +59,7 @@ fn tool_display_section_hints_matrix() -> Result<()> {
     );
     let lines: Vec<String> = prefixed
         .transcript
-        .blocks()
+        .entries()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -72,7 +72,7 @@ fn tool_display_section_hints_matrix() -> Result<()> {
 
     // -- Exec & Check: non-diff code sections keep MdCode* hints.
     let mut code = AppState::default();
-    reduce_tool(&mut code, started("nu", r#"{"command":"ls"}"#));
+    reduce_ui(&mut code, started("nu", r#"{"command":"ls"}"#));
     complete_with_display(
         &mut code,
         "nu",
@@ -105,89 +105,79 @@ fn tool_display_section_hints_matrix() -> Result<()> {
 /// rows in the transcript.
 #[test]
 fn edit_display_renders_one_visual_row_per_line_without_blank_rows() -> Result<()> {
-    use crate::tui_renderer::layout;
-    use agnt_core::transcript::renderer::FrameContext;
-
     let content = "--- a/README.md\n+++ b/README.md\n@@ -1,4 +1,6 @@\n # Title\n \n+```rust\n fn a() {}\n+```\n tail\n";
     let mut state = AppState::default();
-    reduce_tool(&mut state, started("edit", r#"{"path":"README.md"}"#));
-    reduce_tool(
+    reduce_ui(&mut state, started("edit", r#"{"path":"README.md"}"#));
+    reduce_ui(
         &mut state,
-        ToolEvent::Completed {
-            name: "edit".to_string(),
-            source: "closure".to_string(),
-            arguments: r#"{"path":"README.md"}"#.to_string(),
-            success: true,
-            result: "{}".to_string(),
-            display: Some(ToolDisplay {
-                title: Some("edit README.md".to_string()),
-                sections: vec![ToolDisplaySection {
-                    label: Some("README.md".to_string()),
-                    kind: ContentKind::Diff {
-                        language: "diff".to_string(),
-                        path: "test.rs".to_string(),
-                    },
-                    content: content.to_string(),
-                    stats: None,
-                }],
-            }),
-            error_kind: None,
-            message: None,
-        },
+        completed_with(
+            "edit",
+            "closure",
+            r#"{"path":"README.md"}"#,
+            ToolOutcome {
+                success: true,
+                status: ToolStatus::Success,
+                result: "{}".to_string(),
+                display: Some(ToolDisplay {
+                    title: Some("edit README.md".to_string()),
+                    sections: vec![ToolDisplaySection {
+                        label: Some("README.md".to_string()),
+                        kind: ContentKind::Diff {
+                            language: "diff".to_string(),
+                            path: "test.rs".to_string(),
+                        },
+                        content: content.to_string(),
+                        stats: None,
+                    }],
+                }),
+                error_kind: None,
+                message: None,
+            },
+        ),
     );
 
-    let diff_rows: Vec<_> = state
-        .transcript
-        .blocks()
-        .iter()
-        .filter(|b| matches!(b.source, BlockSource::ToolDisplay { .. }))
-        .cloned()
-        .collect();
-    let display_line_count: usize = diff_rows
-        .iter()
-        .map(|b| extract_all_text_from_entry(b).len())
-        .sum();
+    let tool = tool_entry_at(&state, 0)?;
+    let display = tool.result.as_ref().ok_or("should have result display")?;
+    let display_lines = display.project_lines();
     assert!(
-        display_line_count >= 8,
-        "edit display must push every diff line; got {display_line_count}"
+        display_lines.len() >= 8,
+        "the entry must carry every diff line; got {}",
+        display_lines.len()
     );
 
-    let ctx = FrameContext {
-        width: 120,
-        now_millis: 0,
-        cursor: false,
-        selected: false,
-    };
-    let mut rendered_rows = 0usize;
-    for block in &diff_rows {
-        rendered_rows += layout(block, &ctx, &TuiTheme::default()).len();
-    }
+    let entry = state
+        .transcript
+        .entries()
+        .first()
+        .ok_or("should have tool entry")?;
+    let probe = crate::widgets::RatatuiBackend::new(120, 0);
+    let rendered_rows = agnt_render::RenderBackend::measure(&probe, entry, 120);
     assert_eq!(
-        rendered_rows, display_line_count,
-        "each display line must render as exactly one visual row (no blank rows from trailing newlines)"
+        rendered_rows,
+        display_lines.len() + 1,
+        "one call row, then exactly one row per display line: a completion display renders bare, with no surface margins"
     );
 
-    // No stored display line may carry a raw trailing newline.
-    for block in &diff_rows {
-        for text in extract_all_text_from_entry(block) {
-            assert!(
-                !text.ends_with('\n'),
-                "display line text must not embed a trailing newline; got {text:?}"
-            );
-        }
+    // No projected display line may carry a raw trailing newline.
+    for line in &display_lines {
+        let text: String = line.spans.iter().map(|span| span.text.as_str()).collect();
+        assert!(
+            !text.ends_with('\n'),
+            "display line text must not embed a trailing newline; got {text:?}"
+        );
     }
     Ok(())
 }
 
-/// A diff display renders as dedicated ToolDisplay blocks: the Tool call row
-/// stays a Tool block, the body lines live in ToolDisplay blocks, and the diff
-/// highlighting survives the prefix-hygiene fix.
+/// One tool entry carries its diff display: the call row and the body live on
+/// the same entry, the transcript gains no companion display entries, and the
+/// diff highlighting survives the prefix-hygiene fix.
 #[test]
-fn tool_display_renders_diff_sections_as_dedicated_blocks() -> Result<()> {
+fn tool_entry_carries_its_diff_display_once() -> Result<()> {
     // -- Setup & Fixtures
     let content = "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n";
     let mut state = AppState::default();
-    reduce_tool(&mut state, started("edit", r#"{"path":"sample.txt"}"#));
+    reduce_ui(&mut state, started("edit", r#"{"path":"sample.txt"}"#));
     complete_with_display(
         &mut state,
         "edit",
@@ -198,10 +188,17 @@ fn tool_display_renders_diff_sections_as_dedicated_blocks() -> Result<()> {
         }),
     );
 
+    // -- Check: one entry, carrying the result; no companion display entries.
+    let entries = state.transcript.entries();
+    assert_eq!(entries.len(), 1, "one entry per call");
+    assert!(
+        matches!(entries[0], TranscriptEntry::Tool(_)),
+        "the call row and the body share the tool entry"
+    );
+    assert!(tool_entry_at(&state, 0)?.result.is_some());
+
     // -- Check: None title/label render no rows; the diff body renders.
-    let lines: Vec<String> = state
-        .transcript
-        .blocks()
+    let lines: Vec<String> = entries
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -210,43 +207,10 @@ fn tool_display_renders_diff_sections_as_dedicated_blocks() -> Result<()> {
     assert!(lines.iter().any(|line| line.contains("--- a/sample.txt")));
     assert!(lines.iter().any(|line| line.contains("+++ b/sample.txt")));
 
-    // -- Check: the Tool call row stays a Tool block; the diff body lives in
-    // ToolDisplay blocks.
-    let call_row = state
-        .transcript
-        .blocks()
-        .iter()
-        .find(|b| matches!(&b.source, BlockSource::Tool { .. }))
-        .ok_or("should have tool call row")?;
-    assert!(matches!(call_row.source, BlockSource::Tool { .. }));
-    let display_rows: Vec<_> = state
-        .transcript
-        .blocks()
-        .iter()
-        .filter(|b| {
-            matches!(b.source, BlockSource::ToolDisplay { .. })
-                && tool_display_lines(b).contains("--- a/sample.txt")
-        })
-        .collect();
-    assert!(!display_rows.is_empty());
-    assert!(
-        display_rows
-            .iter()
-            .all(|b| matches!(b.source, BlockSource::ToolDisplay { .. }))
-    );
-
     // -- Check: highlighting survives the prefix-hygiene fix.
-    let diff_rows: Vec<_> = state
-        .transcript
-        .blocks()
-        .iter()
-        .filter(|b| {
-            matches!(b.source, BlockSource::ToolDisplay { .. })
-                && (tool_display_lines(b).contains("--- a/sample.txt")
-                    || tool_display_lines(b).contains("+++ b/sample.txt"))
-        })
-        .collect();
-    assert!(!diff_rows.is_empty());
+    let hints = diff_section_hints(&state);
+    assert!(hints.contains(&StyleHint::Meta), "got {hints:?}");
+    assert!(hints.contains(&StyleHint::DiffHunk), "got {hints:?}");
     Ok(())
 }
 
@@ -256,7 +220,7 @@ fn tool_display_renders_diff_sections_as_dedicated_blocks() -> Result<()> {
 fn diff_display_preserves_hunk_context_and_line_number_readability() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    reduce_tool(&mut state, started("edit", r#"{"path":"sample.txt"}"#));
+    reduce_ui(&mut state, started("edit", r#"{"path":"sample.txt"}"#));
     complete_with_display(
         &mut state,
         "edit",
@@ -274,14 +238,15 @@ fn diff_display_preserves_hunk_context_and_line_number_readability() -> Result<(
     assert!(
         state
             .transcript
-            .blocks()
+            .entries()
             .iter()
-            .any(|b| tool_display_lines(b).contains("@@ -10,3 +10,4 @@"))
+            .flat_map(extract_all_text_from_entry)
+            .any(|line| line.contains("@@ -10,3 +10,4 @@"))
     );
 
     // -- Setup & Fixtures: line-number readability case.
     let mut prefixed = AppState::default();
-    reduce_tool(&mut prefixed, started("edit", r#"{"path":"sample.txt"}"#));
+    reduce_ui(&mut prefixed, started("edit", r#"{"path":"sample.txt"}"#));
     complete_with_display(
         &mut prefixed,
         "edit",
@@ -296,18 +261,70 @@ fn diff_display_preserves_hunk_context_and_line_number_readability() -> Result<(
     );
 
     // -- Check: the line-number prefixes stay readable.
-    let diff_rows: Vec<_> = prefixed
+    let prefixed_lines: Vec<String> = prefixed
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .filter(|b| matches!(b.source, BlockSource::ToolDisplay { .. }))
+        .flat_map(extract_all_text_from_entry)
         .collect();
     assert!(
-        diff_rows
-            .iter()
-            .any(|b| tool_display_lines(b).contains("│alpha")
-                || tool_display_lines(b).contains("│beta")
-                || tool_display_lines(b).contains("│omega"))
+        prefixed_lines.iter().any(|line| line.contains("│alpha")
+            || line.contains("│beta")
+            || line.contains("│omega"))
     );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// A completion without a display
+// ---------------------------------------------------------------------------
+
+/// WHEN a tool completes without a display, THE entry SHALL keep `result: None`
+/// and THE transcript SHALL gain no extra entries — the pending preview, if
+/// any, is what stays on screen.
+#[test]
+fn completion_without_display_leaves_no_result_and_no_extra_entries() -> Result<()> {
+    // -- Setup & Fixtures: one completion with no display at all.
+    let mut bare = AppState::default();
+    reduce_ui(&mut bare, started("read", r#"{"path":"a.rs"}"#));
+    complete_with_display(&mut bare, "read", r#"{"path":"a.rs"}"#, None);
+
+    // -- Check: no result, no extra entries.
+    assert_eq!(bare.transcript.len(), 1, "one entry per call");
+    let tool = tool_entry_at(&bare, 0)?;
+    assert!(
+        tool.result.is_none(),
+        "a display-less completion sets no result"
+    );
+    assert!(tool.preview.is_none(), "nothing was ever previewed");
+
+    // -- Setup & Fixtures: a previewed call that completes with no display.
+    let mut previewed = AppState::default();
+    reduce_ui(&mut previewed, started("nu", r#"{"command":"ls"}"#));
+    reduce_ui(
+        &mut previewed,
+        SystemEvent::PreviewRequested {
+            call: tool_call("nu", r#"{"command":"ls"}"#),
+            display: ToolDisplay {
+                title: None,
+                sections: vec![ToolDisplaySection {
+                    label: None,
+                    kind: ContentKind::Code {
+                        language: "nu".to_string(),
+                    },
+                    content: "ls".to_string(),
+                    stats: None,
+                }],
+            },
+        },
+    );
+    complete_with_display(&mut previewed, "nu", r#"{"command":"ls"}"#, None);
+
+    // -- Check: the preview persists, no result is recorded, no entry is added.
+    assert_eq!(previewed.transcript.len(), 1, "one entry per call");
+    let tool = tool_entry_at(&previewed, 0)?;
+    assert!(tool.result.is_none());
+    let preview = tool.preview.as_ref().ok_or("should keep the preview")?;
+    assert!(display_lines(preview).contains("ls"));
     Ok(())
 }

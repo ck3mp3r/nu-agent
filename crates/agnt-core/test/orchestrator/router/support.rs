@@ -18,7 +18,7 @@ pub(super) use crate::orchestrator::{
 };
 pub(super) use crate::protocol::{
     contracts::{CoreRuntime, McpUsabilityState, UiMessageSnapshot, UserInputUi},
-    event::UiEvent,
+    events::SystemEvent,
     mcp_management::McpManagement,
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
@@ -57,7 +57,7 @@ impl CoreRuntime for AgentSwitchRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -167,7 +167,7 @@ impl AgentSwitchUi {
                 tokio::select! {
                     Ok(event) = ui_event_rx.recv() => {
                         match event {
-                            UiEvent::Completed { .. } => {
+                            SystemEvent::TurnCompleted { .. } => {
                                 if agent_switch_requests
                                     .lock()
                                     .expect("agent switch requests lock")
@@ -176,8 +176,8 @@ impl AgentSwitchUi {
                                     quit.store(true, Ordering::SeqCst);
                                 }
                             }
-                            UiEvent::Warning { message } | UiEvent::TurnError { message } => {
-                                warnings.lock().expect("warnings lock").push(message);
+                            SystemEvent::SystemMessage { text, .. } => {
+                                warnings.lock().expect("warnings lock").push(text);
                             }
                             _ => {}
                         }
@@ -260,7 +260,7 @@ impl CoreRuntime for SwitchSessionRuntime {
     ) -> Result<Value, LabeledError> {
         let _ = bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,

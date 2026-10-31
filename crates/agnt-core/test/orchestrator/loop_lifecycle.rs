@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::session::tool_status::ToolStatus;
+
 // ── ToolDisplayOnlyRuntime ──────────────────────────────────────────────
 
 #[derive(Default)]
@@ -18,43 +20,51 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::ToolStarted {
-                name: "edit".to_string(),
-                source: "closure".to_string(),
-                arguments: "{}".to_string(),
-                call_line: CallLine::from_json_summary("{}"),
+            .send(SystemEvent::ToolStarted {
+                call: ToolCall::new(
+                    ToolName("edit".to_string()),
+                    "closure",
+                    "{}",
+                    CallLine::from_json_summary("{}"),
+                ),
             })
             .await;
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::ToolCompleted {
-                name: "edit".to_string(),
-                source: "closure".to_string(),
-                arguments: "{}".to_string(),
-                success: true,
-                result: r#"{"path":"file.txt","diff":"--- a/file.txt\n+++ b/file.txt\n"}"#
-                    .to_string(),
-                display: Some(ToolDisplay {
-                    title: Some("edit file.txt".to_string()),
-                    sections: vec![ToolDisplaySection {
-                        label: Some("file.txt".to_string()),
-                        kind: ContentKind::Diff {
-                            language: "diff".to_string(),
-                            path: "test.rs".to_string(),
-                        },
-                        content: "--- a/file.txt\n+++ b/file.txt\n".to_string(),
-                        stats: None,
-                    }],
-                }),
-                error_kind: None,
-                message: None,
+            .send(SystemEvent::ToolCompleted {
+                call: ToolCall::new(
+                    ToolName("edit".to_string()),
+                    "closure",
+                    "{}",
+                    CallLine::from_json_summary("{}"),
+                ),
+                outcome: ToolOutcome {
+                    success: true,
+                    status: ToolStatus::Success,
+                    result: r#"{"path":"file.txt","diff":"--- a/file.txt\n+++ b/file.txt\n"}"#
+                        .to_string(),
+                    display: Some(ToolDisplay {
+                        title: Some("edit file.txt".to_string()),
+                        sections: vec![ToolDisplaySection {
+                            label: Some("file.txt".to_string()),
+                            kind: ContentKind::Diff {
+                                language: "diff".to_string(),
+                                path: "test.rs".to_string(),
+                            },
+                            content: "--- a/file.txt\n+++ b/file.txt\n".to_string(),
+                            stats: None,
+                        }],
+                    }),
+                    error_kind: None,
+                    message: None,
+                },
             })
             .await;
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 1,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -106,7 +116,7 @@ impl CoreRuntime for CancelFirstRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -164,7 +174,7 @@ impl CoreRuntime for ErrorFirstRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -233,15 +243,18 @@ async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() -> 
 
     assert!(events.iter().any(|event| matches!(
         event,
-        UiEvent::ToolCompleted {
-            display: Some(_),
+        SystemEvent::ToolCompleted {
+            outcome: ToolOutcome {
+                display: Some(_),
+                ..
+            },
             ..
         }
     )));
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::AssistantMessage { .. }))
+            .any(|event| matches!(event, SystemEvent::InferenceChunk { .. }))
     );
     Ok(())
 }

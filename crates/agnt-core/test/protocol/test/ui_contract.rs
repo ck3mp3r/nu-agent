@@ -1,46 +1,63 @@
 use super::*;
 
+use crate::session::tool_status::ToolStatus;
+
 // === Tests: event_contract ===
 
 #[test]
-fn ui_event_and_permission_contracts() {
+fn system_event_contract() {
     let events = [
-        UiEvent::LlmStarted,
-        UiEvent::Tick,
-        UiEvent::LlmCompleted {
-            response_chars: 12,
-            tool_calls: 1,
-            input_tokens: 7,
-            output_tokens: 5,
-            total_tokens: Some(12),
-            cost: Some(0.001),
-            cost_complete: true,
+        SystemEvent::InferenceStarted,
+        SystemEvent::Tick,
+        SystemEvent::InferenceCompleted {
+            usage: Usage {
+                response_chars: 12,
+                tool_calls: 1,
+                input_tokens: 7,
+                output_tokens: 5,
+                total_tokens: Some(12),
+                cost: Some(0.001),
+                cost_complete: true,
+            },
         },
-        UiEvent::ToolStarted {
-            name: "k8s__list_pods".to_string(),
-            source: "mcp".to_string(),
-            arguments: "{}".to_string(),
-            call_line: super::tool_args::CallLine::from_json_summary("{}"),
+        SystemEvent::ToolStarted {
+            call: ToolCall::new(
+                ToolName("k8s__list_pods".to_string()),
+                "mcp",
+                "{}",
+                super::tool_args::CallLine::from_json_summary("{}"),
+            ),
         },
-        UiEvent::ToolCompleted {
-            name: "k8s__list_pods".to_string(),
-            source: "mcp".to_string(),
-            arguments: "{}".to_string(),
-            success: true,
-            result: "[]".to_string(),
-            display: None,
-            error_kind: None,
-            message: None,
+        SystemEvent::ToolCompleted {
+            call: ToolCall::new(
+                ToolName("k8s__list_pods".to_string()),
+                "mcp",
+                "{}",
+                super::tool_args::CallLine::from_json_summary("{}"),
+            ),
+            outcome: ToolOutcome {
+                success: true,
+                status: ToolStatus::Success,
+                result: "[]".to_string(),
+                display: None,
+                error_kind: None,
+                message: None,
+            },
         },
-        UiEvent::ToolPreview {
-            tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
+        SystemEvent::PreviewRequested {
+            call: ToolCall::new(
+                ToolName("nu".to_string()),
+                "closure",
+                "{\"command\":\"echo hi\"}",
+                super::tool_args::CallLine::from_json_summary("{}"),
+            ),
             display: crate::protocol::event::ToolDisplay {
                 title: Some("nu".to_string()),
                 sections: vec![],
             },
         },
-        UiEvent::PermissionRequested {
-            request_id: "ask-0000000000000001".to_string(),
+        SystemEvent::PermissionRequested {
+            request_id: RequestId::new("ask-0000000000000001"),
             context: PermissionRequestContext {
                 tool: "nu(command=echo hi)".to_string(),
                 tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
@@ -54,43 +71,44 @@ fn ui_event_and_permission_contracts() {
                 pre_authorize_display: None,
             },
         },
-        UiEvent::PermissionDecisionSubmitted {
-            request_id: "ask-0000000000000001".to_string(),
+        SystemEvent::PermissionDecisionSubmitted {
+            request_id: RequestId::new("ask-0000000000000001"),
             decision: PermissionDecision::AllowOnce,
             matched_rule_identity: "nested:nu.command:*".to_string(),
         },
-        UiEvent::PermissionDecisionTimedOut {
-            request_id: "ask-0000000000000002".to_string(),
+        SystemEvent::PermissionDecisionTimedOut {
+            request_id: RequestId::new("ask-0000000000000002"),
         },
-        UiEvent::PermissionDecisionIgnored {
-            request_id: "ask-0000000000000003".to_string(),
+        SystemEvent::PermissionDecisionIgnored {
+            request_id: RequestId::new("ask-0000000000000003"),
             reason: "stale_or_unknown_request".to_string(),
         },
-        UiEvent::Warning {
-            message: "compaction failed".to_string(),
+        SystemEvent::SystemMessage {
+            kind: SystemKind::Warning,
+            text: "compaction failed".to_string(),
         },
-        UiEvent::CompactionStarted {
+        SystemEvent::CompactionStarted {
             source: "auto_threshold".to_string(),
         },
-        UiEvent::CompactionSummaryChunk {
+        SystemEvent::CompactionSummaryChunk {
             source: "auto_threshold".to_string(),
             delta: "chunk".to_string(),
             aggregated: "chunk".to_string(),
         },
-        UiEvent::CompactionCompleted {
+        SystemEvent::CompactionCompleted {
             source: "auto_threshold".to_string(),
             summary_preview: "summary preview".to_string(),
             summary_body: "summary body".to_string(),
         },
-        UiEvent::CompactionFailed {
+        SystemEvent::CompactionFailed {
             source: "auto_threshold".to_string(),
             message: "failed".to_string(),
         },
-        UiEvent::AssistantMessage {
+        SystemEvent::InferenceChunk {
             delta: "done".to_string(),
-            text: "done".to_string(),
+            aggregated: "done".to_string(),
         },
-        UiEvent::Completed {
+        SystemEvent::TurnCompleted {
             tool_calls: 1,
             input_tokens: 0,
             output_tokens: 0,
@@ -102,79 +120,4 @@ fn ui_event_and_permission_contracts() {
     ];
 
     assert_eq!(events.len(), 17);
-
-    // The permission event field shape is explicit and stable.
-    let requested = PermissionEvent::Requested {
-        request_id: "ask-0000000000000001".to_string(),
-        context: Box::new(PermissionRequestContext {
-            tool: "nu(command=echo hi)".to_string(),
-            tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
-            source: "closure".to_string(),
-            mode: Some("apply".to_string()),
-            matched_rule_identity: "nested:nu.command:*".to_string(),
-            scope: "nested".to_string(),
-            target_field: Some("command".to_string()),
-            pattern: "*".to_string(),
-            summary: "→ {\"command\":\"echo hi\"}".to_string(),
-            pre_authorize_display: None,
-        }),
-    };
-    match requested {
-        PermissionEvent::Requested {
-            request_id,
-            context,
-        } => {
-            assert_eq!(request_id, "ask-0000000000000001");
-            assert_eq!(context.tool, "nu(command=echo hi)");
-            assert_eq!(context.source, "closure");
-            assert_eq!(context.mode.as_deref(), Some("apply"));
-            assert_eq!(context.matched_rule_identity, "nested:nu.command:*");
-            assert_eq!(context.scope, "nested");
-            assert_eq!(context.target_field.as_deref(), Some("command"));
-            assert_eq!(context.pattern, "*");
-            assert!(context.summary.starts_with("→ "));
-            assert!(context.pre_authorize_display.is_none());
-        }
-        other => panic!("unexpected variant: {other:?}"),
-    }
-
-    let submitted = PermissionEvent::DecisionSubmitted {
-        request_id: "ask-0000000000000001".to_string(),
-        decision: PermissionDecision::AllowAlways,
-        matched_rule_identity: "nested:nu.command:*".to_string(),
-    };
-    match submitted {
-        PermissionEvent::DecisionSubmitted {
-            request_id,
-            decision,
-            matched_rule_identity,
-        } => {
-            assert_eq!(request_id, "ask-0000000000000001");
-            assert_eq!(decision.as_str(), "allow_always");
-            assert_eq!(matched_rule_identity, "nested:nu.command:*");
-        }
-        other => panic!("unexpected variant: {other:?}"),
-    }
-
-    let timed_out = PermissionEvent::DecisionTimedOut {
-        request_id: "ask-0000000000000002".to_string(),
-    };
-    match timed_out {
-        PermissionEvent::DecisionTimedOut { request_id } => {
-            assert_eq!(request_id, "ask-0000000000000002");
-        }
-        other => panic!("unexpected variant: {other:?}"),
-    }
-
-    let ignored = PermissionEvent::DecisionIgnored {
-        request_id: "ask-0000000000000003".to_string(),
-        reason: "rule_identity_mismatch".to_string(),
-    };
-    match ignored {
-        PermissionEvent::DecisionIgnored { request_id, reason } => {
-            assert_eq!(request_id, "ask-0000000000000003");
-            assert_eq!(reason, "rule_identity_mismatch");
-        }
-        other => panic!("unexpected variant: {other:?}"),
-    }
 }

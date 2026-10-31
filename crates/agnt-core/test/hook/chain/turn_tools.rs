@@ -145,8 +145,16 @@ async fn turn_tools_records_a_dispatched_call_and_its_result() -> Result<()> {
         Some("3"),
         "the record must carry the rendered result"
     );
-    assert_eq!(records[0].success, Some(true));
-    assert_eq!(records[0].error_kind, None);
+    assert_eq!(
+        records[0].error_kind.as_deref(),
+        None,
+        "a successful call carries no error kind"
+    );
+    assert_eq!(
+        records[0].status,
+        Some(ToolStatus::Success),
+        "the structural status is the success variant"
+    );
     Ok(())
 }
 
@@ -177,6 +185,11 @@ async fn turn_tools_records_a_failed_result_with_its_error_kind() -> Result<()> 
         records[0].error_kind.as_deref(),
         Some("timeout"),
         "the record must carry the result's error kind"
+    );
+    assert_eq!(
+        records[0].status,
+        Some(ToolStatus::Failed),
+        "a timeout keeps the failure class, not the cancellation one"
     );
     Ok(())
 }

@@ -224,7 +224,7 @@ async fn last_total_tokens_updated_on_completed_turn() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// When the conversation exceeds the sliding window, the hook must fire a
-/// `CompactionEvent::Requested { source: "auto" }` on the bus. The current turn
+/// `SystemEvent::CompactionRequested { source: "auto" }` on the bus. The current turn
 /// proceeds with the full history (the orchestrator runs compaction
 /// asynchronously; the summary is applied on the next turn via the marker).
 #[tokio::test]
@@ -342,13 +342,13 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
     let outcome = result.map_err(|e| format!("turn must be Ok: {e:?}"))?;
     assert!(matches!(outcome, TurnOutcome::Completed));
 
-    // 1. `CompactionEvent::Requested { source: "auto" }` must have been emitted
+    // 1. `SystemEvent::CompactionRequested { source: "auto" }` must have been emitted
     //    on the bus when the conversation exceeds the window.
     let mut saw_requested = false;
     while let Ok(ev) = compaction_rx.try_recv() {
         if matches!(
             ev,
-            crate::bus::CompactionEvent::Requested { source } if source == "auto"
+            crate::protocol::events::SystemEvent::CompactionRequested { source } if source == "auto"
         ) {
             saw_requested = true;
             break;
@@ -356,7 +356,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
     }
     assert!(
         saw_requested,
-        "CompactionEvent::Requested {{ source: \"auto\" }} must be emitted when the conversation exceeds the window"
+        "SystemEvent::CompactionRequested {{ source: \"auto\" }} must be emitted when the conversation exceeds the window"
     );
 
     // 2. The agent must have made exactly 1 request (the current turn proceeds

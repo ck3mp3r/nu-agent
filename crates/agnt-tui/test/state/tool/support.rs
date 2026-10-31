@@ -3,18 +3,18 @@
 //! Holds the imports and the helper functions every topical tool test file
 //! needs. Sub-files pull them in with `use super::*;`.
 
-pub(super) use crate::interaction::reducer::{apply_permission_request_display, dispatch_ui_event};
-pub(super) use crate::rendering::theme::TuiTheme;
-pub(super) use crate::state::AppState;
-pub(super) use agnt_core::bus::ToolEvent;
+pub(super) use crate::interaction::reducer::{apply_permission_request_display, reduce};
+pub(super) use crate::state::{AppState, PermissionPrompt};
+pub(super) use crate::test_support::entry_text;
 pub(super) use agnt_core::protocol::contracts::UiMessageSnapshot;
-pub(super) use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection, UiEvent};
+pub(super) use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
+pub(super) use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolCallId, ToolOutcome};
 pub(super) use agnt_core::protocol::tool_args::CallLine;
-pub(super) use agnt_core::transcript::ir::Fill;
+pub(super) use agnt_core::session::tool_status::ToolStatus;
+pub(super) use agnt_core::transcript::entry::{MessageEntry, ToolEntry, TranscriptEntry};
 pub(super) use agnt_core::transcript::ir::StyleHint;
-pub(super) use agnt_core::transcript::ir::{
-    Block, BlockSource, ContentKind, DiffTint, Lane, MessageRole,
-};
+pub(super) use agnt_core::transcript::ir::ToolName;
+pub(super) use agnt_core::transcript::ir::{ContentKind, DiffTint, MessageRole};
 pub(super) use agnt_core::transcript::ir::{Display, DisplaySection};
 pub(super) use agnt_core::transcript::renderer::ItemStatus;
 
@@ -22,112 +22,144 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // region:    --- Test Support
 
-/// Collect the StyleHints of all ToolDisplay blocks' stored ContentLines —
-/// one block per section, pushed with pre-projected spans.
+/// The unified display of a tool entry: `result.or(preview)`, the one slot the
+/// backends render.
+fn unified_display(tool: &ToolEntry) -> Option<&Display> {
+    tool.result.as_ref().or(tool.preview.as_ref())
+}
+
+/// The tool display content of one entry: a tool entry's unified display
+/// (`result.or(preview)`); every other family contributes nothing.
+fn entry_display_lines(entry: &TranscriptEntry) -> Vec<agnt_core::transcript::ir::ContentLine> {
+    match entry {
+        TranscriptEntry::Tool(tool) => unified_display(tool)
+            .map(Display::project_lines)
+            .unwrap_or_default(),
+        TranscriptEntry::Message(_) | TranscriptEntry::Notice(_) | TranscriptEntry::Banner(_) => {
+            Vec::new()
+        }
+    }
+}
+
+/// Collect the StyleHints of every tool display line the store holds.
 pub(super) fn diff_section_hints(state: &AppState) -> Vec<StyleHint> {
     state
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .filter_map(|b| match &b.source {
-            BlockSource::ToolDisplay { lines } => Some(lines.clone()),
-            _ => None,
-        })
-        .flat_map(|lines| {
-            lines
+        .flat_map(entry_display_lines)
+        .flat_map(|line| {
+            line.spans
                 .iter()
-                .flat_map(|line| line.spans.iter().map(|s| s.hint.clone()))
+                .map(|span| span.hint.clone())
                 .collect::<Vec<_>>()
         })
         .collect()
 }
 
-/// Collect the line-level diff tints of all ToolDisplay blocks' stored
-/// ContentLines.
+/// Collect the line-level diff tints of every tool display line the store
+/// holds.
 pub(super) fn diff_section_tints(state: &AppState) -> Vec<DiffTint> {
     state
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .filter_map(|b| match &b.source {
-            BlockSource::ToolDisplay { lines } => Some(lines.clone()),
-            _ => None,
-        })
-        .flat_map(|lines| {
-            lines
-                .iter()
-                .filter_map(|line| line.diff_tint.clone())
-                .collect::<Vec<_>>()
-        })
+        .flat_map(entry_display_lines)
+        .filter_map(|line| line.diff_tint.clone())
         .collect()
 }
 
-pub(super) fn tool_display_lines(block: &agnt_core::transcript::ir::Block) -> String {
-    match &block.source {
-        BlockSource::ToolDisplay { lines } => lines
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|s| s.text.as_str())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => String::new(),
+/// Project a display into one newline-joined text block.
+pub(super) fn display_lines(display: &Display) -> String {
+    display
+        .project_lines()
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Flatten one entry's text for assertions. A tool entry contributes its call
+/// summary and its unified display (`result.or(preview)`) — the one slot the
+/// backends render.
+pub(super) fn extract_all_text_from_entry(entry: &TranscriptEntry) -> Vec<String> {
+    match entry {
+        TranscriptEntry::Tool(tool) => {
+            let mut lines = vec![tool.call.call_line.summary.clone()];
+            if let Some(display) = unified_display(tool) {
+                lines.extend(display_lines(display).lines().map(str::to_string));
+            }
+            lines
+        }
+        TranscriptEntry::Message(message) => vec![message.markdown.clone()],
+        TranscriptEntry::Notice(notice) => vec![notice.text.clone()],
+        TranscriptEntry::Banner(banner) => vec![banner.text.clone()],
     }
 }
 
-/// Flatten a block's source text for assertions. A Tool block contributes its
-/// call summary only — previews are their own ToolDisplay blocks.
-pub(super) fn extract_all_text_from_entry(block: &agnt_core::transcript::ir::Block) -> Vec<String> {
-    match &block.source {
-        BlockSource::Tool { call, .. } => vec![call.summary.clone()],
-        BlockSource::ToolDisplay { lines } => lines
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|s| s.text.as_str())
-                    .collect::<String>()
-            })
-            .collect(),
-        BlockSource::Notice { text, .. } => vec![text.clone()],
-        BlockSource::Markdown { markdown, .. } => vec![markdown.clone()],
-        BlockSource::Banner { text } => vec![text.clone()],
-        BlockSource::Spacer => vec![String::new()],
-    }
+/// The tool entry at `index`.
+pub(super) fn tool_entry_at(state: &AppState, index: usize) -> Result<&ToolEntry> {
+    let entry = state
+        .transcript
+        .entries()
+        .get(index)
+        .ok_or("should have entry")?;
+    let TranscriptEntry::Tool(tool) = entry else {
+        return Err("expected Tool entry".into());
+    };
+    Ok(tool)
 }
 
-pub(super) fn reduce_tool(state: &mut AppState, event: ToolEvent) -> bool {
-    let mut evicted = 0usize;
-    let changed = state
-        .tool
-        .reduce_tool_event(&mut state.transcript, event, &mut evicted);
-    state.shift_bookkeeping_after_eviction(evicted);
-    changed
-}
-
-pub(super) fn started(name: &str, arguments: &str) -> ToolEvent {
-    ToolEvent::Started {
-        name: name.to_string(),
-        source: "mcp".to_string(),
-        arguments: arguments.to_string(),
-        call_line: CallLine::from_json_summary(arguments),
-    }
+pub(super) fn started(name: &str, arguments: &str) -> SystemEvent {
+    started_with_call_line(name, arguments, CallLine::from_json_summary(arguments))
 }
 
 pub(super) fn started_with_call_line(
     name: &str,
     arguments: &str,
     call_line: CallLine,
-) -> ToolEvent {
-    ToolEvent::Started {
-        name: name.to_string(),
-        source: "mcp".to_string(),
-        arguments: arguments.to_string(),
-        call_line,
+) -> SystemEvent {
+    SystemEvent::ToolStarted {
+        call: ToolCall::new(ToolName(name.to_string()), "mcp", arguments, call_line),
     }
+}
+
+/// A `ToolCompleted` event with an explicit source and outcome.
+pub(super) fn completed_with(
+    name: &str,
+    source: &str,
+    arguments: &str,
+    outcome: ToolOutcome,
+) -> SystemEvent {
+    SystemEvent::ToolCompleted {
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            source,
+            arguments,
+            CallLine::from_json_summary(arguments),
+        ),
+        outcome,
+    }
+}
+
+/// Fold one `SystemEvent` through the reducer.
+pub(super) fn reduce_ui(state: &mut AppState, event: SystemEvent) -> bool {
+    reduce(state, event, None)
+}
+
+/// A tool call for `name`/`arguments` with the shared test source.
+pub(super) fn tool_call(name: &str, arguments: &str) -> ToolCall {
+    ToolCall::new(
+        ToolName(name.to_string()),
+        "mcp",
+        arguments,
+        CallLine::from_json_summary(arguments),
+    )
 }
 
 /// Reduce a `Completed` event carrying an optional display.
@@ -137,18 +169,21 @@ pub(super) fn complete_with_display(
     arguments: &str,
     display: Option<ToolDisplay>,
 ) {
-    reduce_tool(
+    reduce_ui(
         state,
-        ToolEvent::Completed {
-            name: name.to_string(),
-            source: "closure".to_string(),
-            arguments: arguments.to_string(),
-            success: true,
-            result: "{}".to_string(),
-            display,
-            error_kind: None,
-            message: None,
-        },
+        completed_with(
+            name,
+            "closure",
+            arguments,
+            ToolOutcome {
+                success: true,
+                status: ToolStatus::Success,
+                result: "{}".to_string(),
+                display,
+                error_kind: None,
+                message: None,
+            },
+        ),
     );
 }
 

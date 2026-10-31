@@ -1,41 +1,4 @@
-use super::renderer::ItemStatus;
 use crate::protocol::event::ToolDisplayStats;
-use crate::protocol::tool_args::CallLine;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Block {
-    pub source: BlockSource,
-    pub lane: Lane,
-    pub fill: Fill,
-    pub status: Option<ItemStatus>,
-}
-
-/// Source data the renderer projects at render time. Carries enough for the
-/// renderer to produce lines without knowing the concrete type.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlockSource {
-    /// User or assistant prose — raw markdown, projected at render width.
-    Markdown { role: MessageRole, markdown: String },
-    /// Tool call — the tool name, its summary line, and an optional
-    /// pre-execution preview display. The result is NOT here — it is raw
-    /// JSON for the LLM, never rendered.
-    Tool {
-        name: ToolName,
-        call: CallLine,
-        preview: Option<Display>,
-    },
-    /// Compaction or system notice.
-    Notice { kind: NoticeKind, text: String },
-    /// Tool display content rendered as pre-projected styled lines (diff
-    /// annotations, syntax-highlighted code). The lines are produced by the
-    /// projection helpers and stored verbatim; the renderer emits them
-    /// without re-projection.
-    ToolDisplay { lines: Vec<ContentLine> },
-    /// Empty spacer row between blocks.
-    Spacer,
-    /// Centered banner text (e.g. startup ASCII art).
-    Banner { text: String },
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageRole {
@@ -43,99 +6,10 @@ pub enum MessageRole {
     Assistant,
 }
 
-/// Self-classification of a [`BlockSource`] for peer-aware separator
-/// decisions. A block does not know its neighbours; it only reports which
-/// family it belongs to, so a separator state machine can decide the gap
-/// between two adjacent blocks without inspecting their content.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlockFamily {
-    Tool,
-    ToolDisplay,
-    User,
-    Assistant,
-    Notice,
-    Banner,
-}
-
-impl BlockFamily {
-    /// Whether this family is part of the tool group (`Tool` or
-    /// `ToolDisplay`). The family owns its own classification, so the
-    /// separator state machine never re-derives it from a source match.
-    pub fn is_tool_family(&self) -> bool {
-        matches!(self, BlockFamily::Tool | BlockFamily::ToolDisplay)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeKind {
     Compaction,
     System,
-}
-
-/// Lane prefix style. Applied to row 0; continuation rows are blank.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Lane {
-    /// Fixed marker glyph: "╎" User (dotted rail), "⚙" Tool, "~" Compaction,
-    /// "·" System.
-    Marker(&'static str),
-    /// Assistant prose and Spacer — blank prefix, assistant/neutral styling.
-    Blank,
-    /// Blank prefix with system styling — the banner (startup logo).
-    /// Distinct from [`Lane::Blank`] so the lane itself carries the styling:
-    /// the renderer reads the variant and never inspects the block source.
-    SystemBlank,
-}
-
-/// Background fill behavior, decided at construction time from the concrete
-/// type's data — never by sniffing rendered strings at render time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Fill {
-    /// Full-width user background — bleeds into adjacent Spacer blocks.
-    Full,
-    /// Code/diff background — margin rows inserted above and below.
-    Code,
-    /// No background.
-    None,
-}
-
-impl Fill {
-    /// Fill decision from a tool preview: a preview carrying diff or code
-    /// content gets the code background, everything else none.
-    pub fn from_preview(preview: &Option<Display>) -> Self {
-        match preview {
-            Some(display) if display.has_code_or_diff() => Self::Code,
-            _ => Self::None,
-        }
-    }
-
-    /// Number of margin rows this fill inserts inside the block (one above and
-    /// one below the content). `Fill::Code` inserts two so the code surface has
-    /// internal padding; every other fill inserts none. The renderer owns
-    /// *where* those rows go and what colour they take.
-    pub fn margin_row_count(&self) -> usize {
-        match self {
-            Self::Code => 2,
-            Self::Full | Self::None => 0,
-        }
-    }
-}
-
-/// Projected, wrappable text. Produced by the renderer at render time.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Content {
-    pub lines: Vec<ContentLine>,
-}
-
-/// A tool call in the transcript. Lifecycle: created at tool start with
-/// status `InProgress`, `preview` is set by the permission Ask path, and
-/// `result` stores the raw JSON returned to the LLM — never rendered.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Tool {
-    pub name: ToolName,
-    pub call: CallLine,
-    pub preview: Option<Display>,
-    pub result: Option<String>,
-    pub status: ItemStatus,
 }
 
 /// A tool's name. Newtype so tool identity stays typed at the block level.
@@ -183,10 +57,9 @@ pub type DisplayStats = ToolDisplayStats;
 
 impl DisplayStats {
     /// Format these stats into one row, or `None` when no field carries a
-    /// value. Mirrors the pre-refactor `append_direct_tool_display_section`
-    /// stat formatting so the restored preview rows match the live completion
-    /// path. The stats type owns its own formatting — the caller only decides
-    /// whether to render the row.
+    /// value. The stats row renders from this one formatting, so the restored
+    /// preview rows match the live completion path. The stats type owns its
+    /// own formatting — the caller only decides whether to render the row.
     pub fn format_stats_line(&self) -> Option<String> {
         let mut parts = Vec::new();
         if let Some(files_changed) = self.files_changed {
@@ -213,11 +86,21 @@ impl DisplayStats {
 
 impl Display {
     /// Returns true when any section carries diff or code content — the
-    /// signal the tool block uses to pick `Fill::Code`.
+    /// signal the planner reads to decide whether an entry is filled.
     pub fn has_code_or_diff(&self) -> bool {
         self.sections
             .iter()
             .any(|section| !matches!(section.kind, ContentKind::Plain))
+    }
+
+    /// Returns true when any section carries diff content. A diff body paints
+    /// its row tints on whatever surface it sits on, and it closes with one
+    /// blank row before the next tool call — the row the pre-wave pane put
+    /// between a diff display and its neighbour.
+    pub fn has_diff(&self) -> bool {
+        self.sections
+            .iter()
+            .any(|section| matches!(section.kind, ContentKind::Diff { .. }))
     }
 
     /// Project this display into content lines: the title row (when the
@@ -270,171 +153,6 @@ impl Display {
         lines
     }
 }
-
-impl BlockSource {
-    /// Classify this source into a [`BlockFamily`] for peer-aware separator
-    /// decisions. The block reports its own family; it never inspects a
-    /// neighbour. A `Spacer` is not a content family — it reports `Notice`
-    /// only as a neutral fallback; the store no longer inserts Spacer blocks.
-    pub fn family(&self) -> BlockFamily {
-        match self {
-            Self::Tool { .. } => BlockFamily::Tool,
-            Self::ToolDisplay { .. } => BlockFamily::ToolDisplay,
-            Self::Markdown {
-                role: MessageRole::User,
-                ..
-            } => BlockFamily::User,
-            Self::Markdown {
-                role: MessageRole::Assistant,
-                ..
-            } => BlockFamily::Assistant,
-            Self::Notice { .. } | Self::Spacer => BlockFamily::Notice,
-            Self::Banner { .. } => BlockFamily::Banner,
-        }
-    }
-
-    /// Whether this source carries diff content. True only for a `ToolDisplay`
-    /// whose lines include a span tagged `DiffAdd`, `DiffRemove`, or
-    /// `DiffHunk`; every other variant is false. The separator state machine
-    /// (in the render layer) uses this to keep a filled diff region visually
-    /// separate from the next tool call.
-    pub fn has_diff_content(&self) -> bool {
-        let Self::ToolDisplay { lines } = self else {
-            return false;
-        };
-        lines.iter().any(|line| {
-            line.spans.iter().any(|span| {
-                matches!(
-                    span.hint,
-                    StyleHint::DiffAdd | StyleHint::DiffRemove | StyleHint::DiffHunk
-                )
-            })
-        })
-    }
-
-    /// Flatten the source to plain text: the markdown body, the tool call
-    /// summary, the tool display lines joined with "\n", the notice or
-    /// banner text, or an empty string for a spacer. The single flattening
-    /// used for comparisons and dedup assertions.
-    pub fn plain_text(&self) -> String {
-        match self {
-            Self::Markdown { markdown, .. } => markdown.clone(),
-            Self::Tool { call, .. } => call.summary.clone(),
-            Self::ToolDisplay { lines } => lines
-                .iter()
-                .map(|line| {
-                    line.spans
-                        .iter()
-                        .map(|span| span.text.as_str())
-                        .collect::<String>()
-                })
-                .collect::<Vec<String>>()
-                .join("\n"),
-            Self::Notice { text, .. } => text.clone(),
-            Self::Banner { text } => text.clone(),
-            Self::Spacer => String::new(),
-        }
-    }
-
-    /// Project this source into renderable [`ContentLine`]s at `width`
-    /// display columns. Each variant owns its projection through a private
-    /// method, so adding a variant or changing one variant's projection is a
-    /// local edit — the renderer never grows a match over every source type
-    /// (OCP). Defined here because the projection helpers
-    /// (`crate::transcript::markdown`) and the [`ContentLine`] IR both live in
-    /// this crate; the renderer calls this method, it does not own the logic.
-    pub fn project(&self, width: usize) -> Vec<ContentLine> {
-        match self {
-            Self::Markdown { markdown, .. } => Self::project_markdown(markdown, width),
-            Self::Tool {
-                name,
-                call,
-                preview,
-            } => Self::project_tool(name, call, preview),
-            Self::Notice { text, .. } => Self::project_notice(text),
-            Self::ToolDisplay { lines } => lines.clone(),
-            Self::Spacer => vec![ContentLine::empty()],
-            Self::Banner { text } => Self::project_banner(text),
-        }
-    }
-
-    /// Markdown projection at the canvas width. Delegates to the shared
-    /// pulldown-cmark pipeline.
-    fn project_markdown(markdown: &str, width: usize) -> Vec<ContentLine> {
-        let canvas_width = u16::try_from(width).unwrap_or(u16::MAX);
-        crate::transcript::markdown::render_markdown_lines(markdown, Some(canvas_width))
-    }
-
-    /// Tool call line — the tool name in emphasis and the summary in muted,
-    /// the call line the pre-Block model rendered (`Span::emphasis(name)`
-    /// followed by `Span::muted(" {summary}")`). An empty summary renders the
-    /// name alone with no trailing space. The preview display then
-    /// contributes its title (when set), and each section its
-    /// `label (language)` row (when set), its projection per [`ContentKind`],
-    /// and its stats row. A nameless block (the legacy `push_transcript_line`
-    /// path) renders the summary alone.
-    ///
-    /// The producer decides which rows are redundant: a display with
-    /// `title: None` or `label: None` simply omits those rows.
-    fn project_tool(
-        name: &ToolName,
-        call: &CallLine,
-        preview: &Option<Display>,
-    ) -> Vec<ContentLine> {
-        let mut lines = Vec::new();
-        let name_text = name.0.as_str();
-        let mut spans = Vec::new();
-        if !name_text.is_empty() {
-            spans.push(Span::emphasis(name_text.to_string()));
-            if !call.summary.is_empty() {
-                spans.push(Span::muted(format!(" {}", call.summary)));
-            }
-        } else {
-            spans.push(Span::muted(call.summary.clone()));
-        }
-        lines.push(ContentLine::from_spans(spans));
-
-        let Some(display) = preview else {
-            return lines;
-        };
-        // The display owns its own projection; the producer sets `None` for
-        // rows it considers redundant. The IR layer never names a concrete
-        // tool kind, and the TUI's preview block calls the same method, so the
-        // two paths cannot drift apart.
-        lines.extend(display.project_lines());
-        lines
-    }
-
-    /// Compaction/system notice — a single line in the lane role style. The
-    /// `Normal` hint resolves to the lane's `role_style`
-    /// (`role_compaction` / `role_system`), matching the pre-refactor
-    /// `SystemMessage` styling. `Meta` would override that with the muted
-    /// tool-meta color (task 46ca79fe).
-    fn project_notice(text: &str) -> Vec<ContentLine> {
-        vec![ContentLine::single(text.to_string(), StyleHint::Normal)]
-    }
-
-    /// Centered banner text — one normal line per source line.
-    fn project_banner(text: &str) -> Vec<ContentLine> {
-        text.lines()
-            .map(|line| ContentLine::single(line.to_string(), StyleHint::Normal))
-            .collect()
-    }
-}
-
-impl Block {
-    /// Whether this block renders a filled region — a background surface that
-    /// needs visual separation from the next tool call. True when the block
-    /// carries the code fill, or when its source carries diff content (the
-    /// completion-path diff display keeps `Fill::None` with `Diff*` lines).
-    /// Title, label, and stats text blocks carry neither, so they stay
-    /// unfilled and get no separator inside one display region.
-    pub fn has_filled_content(&self) -> bool {
-        self.fill == Fill::Code || self.source.has_diff_content()
-    }
-}
-
-// endregion: --- Froms
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StyleHint {
@@ -564,4 +282,27 @@ impl ContentLine {
             diff_tint: None,
         }
     }
+}
+
+/// Classify one raw diff line into the [`StyleHint`] that paints it: hunk
+/// headers, file headers, the no-newline marker, added lines, and removed
+/// lines each take their own hint; every other line is `Normal`.
+pub fn annotate_diff_hint(text: &str) -> StyleHint {
+    let trimmed = text.trim_start();
+    if trimmed.starts_with("@@ ") {
+        return StyleHint::DiffHunk;
+    }
+    if trimmed.starts_with("--- ") || trimmed.starts_with("+++ ") {
+        return StyleHint::Meta;
+    }
+    if trimmed.starts_with('+') {
+        return StyleHint::DiffAdd;
+    }
+    if trimmed.starts_with('-') {
+        return StyleHint::DiffRemove;
+    }
+    if trimmed.starts_with("\\ ") {
+        return StyleHint::Meta;
+    }
+    StyleHint::Normal
 }

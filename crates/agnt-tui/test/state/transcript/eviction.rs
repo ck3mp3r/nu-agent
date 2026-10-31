@@ -1,8 +1,63 @@
 use super::*;
 
+use agnt_core::session::tool_status::ToolStatus;
+
 // ---------------------------------------------------------------------------
 // Eviction shifts domain block_index bookkeeping (task 7f67b85b)
 // ---------------------------------------------------------------------------
+
+use crate::interaction::reducer::reduce;
+use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolCallId, ToolOutcome};
+
+/// A `ToolStarted` event for `name`/`arguments`.
+fn started(name: &str, arguments: &str) -> SystemEvent {
+    SystemEvent::ToolStarted {
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            "mcp",
+            arguments,
+            CallLine::from_json_summary(arguments),
+        ),
+    }
+}
+
+/// A successful `ToolCompleted` event for `name`/`arguments`.
+fn completed(name: &str, arguments: &str) -> SystemEvent {
+    SystemEvent::ToolCompleted {
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            "closure",
+            arguments,
+            CallLine::from_json_summary(arguments),
+        ),
+        outcome: ToolOutcome {
+            success: true,
+            status: ToolStatus::Success,
+            result: "{}".to_string(),
+            display: None,
+            error_kind: None,
+            message: None,
+        },
+    }
+}
+
+/// Push one entry and shift the bookkeeping by the eviction it caused — the
+/// same accounting `reduce` performs once per event.
+fn push_and_shift(state: &mut AppState, entry: TranscriptEntry) -> usize {
+    let before = state.transcript.evicted_total();
+    state.transcript.push_entry(entry);
+    let evicted = state.transcript.evicted_total() - before;
+    state.shift_bookkeeping_after_eviction(evicted);
+    evicted
+}
+
+/// Assistant prose entry used as cap filler.
+fn assistant_filler(text: &str) -> TranscriptEntry {
+    TranscriptEntry::Message(MessageEntry {
+        role: MessageRole::Assistant,
+        markdown: text.to_string(),
+    })
+}
 
 /// The shift method must move every surviving tool-call `block_index` down
 /// by the evicted count, and drop indices that fall below the eviction.
@@ -22,7 +77,7 @@ fn shift_bookkeeping_after_eviction_shifts_or_drops_tool_call_block_index() -> R
         state.tool.calls.push(ToolCallLine {
             id: 1,
             status: ToolCallStatus::InProgress,
-            key: "edit\n{}".to_string(),
+            key: ToolCallId::of("edit", "{}"),
             block_index: initial,
         });
 
@@ -35,25 +90,25 @@ fn shift_bookkeeping_after_eviction_shifts_or_drops_tool_call_block_index() -> R
 }
 
 #[test]
-fn push_block_and_enforce_cap_report_evicted_counts() -> Result<()> {
+fn push_entry_and_enforce_cap_report_evicted_counts() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
 
     // -- Exec & Check
     // Below the cap: no eviction.
-    assert_eq!(state.transcript.push_block(simple_tool_block()), 0);
-    assert_eq!(state.transcript.push_block(simple_tool_block()), 0);
+    assert_eq!(state.transcript.push_entry(simple_tool_entry()), 0);
+    assert_eq!(state.transcript.push_entry(simple_tool_entry()), 0);
 
     // Empty transcript: enforce is a no-op returning zero.
     let mut empty = AppState::default();
     assert_eq!(empty.transcript.enforce_transcript_cap(), 0);
 
-    // Fill to the cap, then one more push evicts exactly the oldest block.
-    for _ in 0..MAX_TRANSCRIPT_BLOCKS {
-        state.transcript.push_block(simple_tool_block());
+    // Fill to the cap, then one more push evicts exactly the oldest entry.
+    for _ in 0..MAX_TRANSCRIPT_ENTRIES {
+        state.transcript.push_entry(simple_tool_entry());
     }
-    let evicted = state.transcript.push_block(simple_tool_block());
-    assert_eq!(state.transcript.len(), MAX_TRANSCRIPT_BLOCKS);
+    let evicted = state.transcript.push_entry(simple_tool_entry());
+    assert_eq!(state.transcript.len(), MAX_TRANSCRIPT_ENTRIES);
     assert_eq!(evicted, 1);
     Ok(())
 }
@@ -68,19 +123,13 @@ fn eviction_then_finish_tool_call_updates_block_at_shifted_index() -> Result<()>
     let mut state = AppState::default();
 
     // Push to exactly the cap so the next tool-start evicts.
-    for _ in 0..MAX_TRANSCRIPT_BLOCKS {
-        state.transcript.push_block(simple_tool_block());
+    for _ in 0..MAX_TRANSCRIPT_ENTRIES {
+        state.transcript.push_entry(simple_tool_entry());
     }
-    // Start a tool call: one block pushed, one evicted (the oldest); the tool
-    // block lands at the final index (cap - 1).
-    let mut start_evicted = 0usize;
-    state.tool.start_tool_call(
-        &mut state.transcript,
-        "read",
-        "{}",
-        CallLine::from_json_summary("{}"),
-        &mut start_evicted,
-    );
+    // Start a tool call: one entry pushed, one evicted (the oldest); the tool
+    // entry lands at the final index (cap - 1) and `reduce` shifts the fresh
+    // bookkeeping entry to that true position in the same event.
+    assert!(reduce(&mut state, started("read", "{}"), None));
     let tool_block_index = state
         .tool
         .calls
@@ -89,95 +138,67 @@ fn eviction_then_finish_tool_call_updates_block_at_shifted_index() -> Result<()>
         .block_index
         .ok_or("should have block index")?;
     assert_eq!(
-        tool_block_index, MAX_TRANSCRIPT_BLOCKS,
-        "fresh bookkeeping index is pre-compensated: store len 2000 minus 1, plus the 1 block evicted by this push"
-    );
-    // The dispatch seam shifts after every event in production; the test
-    // replicates it because it drives the low-level methods. This shift
-    // cancels the +1 pre-compensation above.
-    state.shift_bookkeeping_after_eviction(start_evicted);
-    assert_eq!(
-        state
-            .tool
-            .calls
-            .last()
-            .ok_or("should have recorded call")?
-            .block_index,
-        Some(MAX_TRANSCRIPT_BLOCKS - 1),
-        "after the seam shift the index is the tool block's true position"
+        tool_block_index,
+        MAX_TRANSCRIPT_ENTRIES - 1,
+        "the event's bookkeeping shift leaves the index at the tool entry's true position"
     );
 
-    // Push enough assistant blocks after it to evict the tool block itself.
-    // Each push adds one block; each overflow evicts one.
-    let assistant = block_from_item(&Message {
-        role: MessageRole::Assistant,
-        markdown: "filler".to_string(),
-    });
+    // Push enough assistant entries after it to evict the tool entry itself.
+    // Each push adds one entry; each overflow evicts one.
+    let assistant = assistant_filler("filler");
     let mut total_evicted = 0usize;
     for _ in 0..3 {
-        let push_evicted = state.transcript.push_block(assistant.clone());
-        total_evicted += push_evicted;
-        // The seam shift after each event, mirroring production.
-        state.shift_bookkeeping_after_eviction(push_evicted);
+        total_evicted += push_and_shift(&mut state, assistant.clone());
     }
 
     // -- Exec
-    state
-        .tool
-        .finish_tool_call(&mut state.transcript, "read", "{}", Some(true), None);
+    assert!(reduce(&mut state, completed("read", "{}"), None));
 
     // -- Check
-    // The bookkeeping entry must have been shifted to the tool block's new
-    // position; the finish must have landed on THAT block.
+    // The bookkeeping entry must have been shifted to the tool entry's new
+    // position; the finish must have landed on THAT entry.
     let call = state.tool.calls.last().ok_or("should have recorded call")?;
     // The per-push seam shifts already tracked every eviction, so the
-    // bookkeeping index equals the tool block's true position: the record
+    // bookkeeping index equals the tool entry's true position: the record
     // time position (cap - 1) minus the total evicted count.
-    let expected_index = (MAX_TRANSCRIPT_BLOCKS - 1)
+    let expected_index = (MAX_TRANSCRIPT_ENTRIES - 1)
         .checked_sub(total_evicted)
-        .filter(|_| (MAX_TRANSCRIPT_BLOCKS - 1) >= total_evicted);
+        .filter(|_| (MAX_TRANSCRIPT_ENTRIES - 1) >= total_evicted);
     assert_eq!(
         call.block_index, expected_index,
         "bookkeeping index must be shifted by the evicted count"
     );
     if let Some(expected_index) = expected_index {
-        let block = state
+        let entry = state
             .transcript
-            .blocks()
+            .entries()
             .get(expected_index)
-            .ok_or("expected tool block must exist")?;
-        assert!(
-            matches!(block.source, BlockSource::Tool { .. }),
-            "shifted index must still point at the tool block"
-        );
+            .ok_or("expected tool entry must exist")?;
+        let TranscriptEntry::Tool(tool) = entry else {
+            return Err("shifted index must still point at the tool entry".into());
+        };
         assert_eq!(
-            block.status,
-            Some(ItemStatus::Done),
-            "finish must land on the shifted-index tool block"
+            tool.status,
+            ItemStatus::Done,
+            "finish must land on the shifted-index tool entry"
         );
     }
     Ok(())
 }
 
 /// END-TO-END for the preview path: after eviction, `set_tool_preview` must
-/// push the preview block directly after the Tool block at the SHIFTED index,
-/// not at a stale one.
+/// land on the tool entry at the SHIFTED index and must not push a companion
+/// entry.
 #[test]
-fn eviction_then_set_tool_preview_pushes_preview_after_shifted_tool_block() -> Result<()> {
+fn eviction_then_set_tool_preview_lands_on_shifted_tool_entry() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
 
-    for _ in 0..MAX_TRANSCRIPT_BLOCKS {
-        state.transcript.push_block(simple_tool_block());
+    for _ in 0..MAX_TRANSCRIPT_ENTRIES {
+        state.transcript.push_entry(simple_tool_entry());
     }
-    let mut start_evicted = 0usize;
-    state.tool.start_tool_call(
-        &mut state.transcript,
-        "edit",
-        r#"{"path":"a.rs"}"#,
-        CallLine::from_json_summary(r#"{"path":"a.rs"}"#),
-        &mut start_evicted,
-    );
+    let edit_arguments = r#"{"path":"a.rs"}"#;
+    assert!(reduce(&mut state, started("edit", edit_arguments), None));
     let tool_block_index = state
         .tool
         .calls
@@ -186,27 +207,18 @@ fn eviction_then_set_tool_preview_pushes_preview_after_shifted_tool_block() -> R
         .block_index
         .ok_or("should have block index")?;
     assert_eq!(
-        tool_block_index, MAX_TRANSCRIPT_BLOCKS,
-        "fresh bookkeeping index is pre-compensated: store len 2000 minus 1, plus the 1 block evicted by this push"
+        tool_block_index,
+        MAX_TRANSCRIPT_ENTRIES - 1,
+        "the event's bookkeeping shift leaves the index at the tool entry's true position"
     );
-    // The dispatch seam shifts after every event in production; the test
-    // replicates it because it drives the low-level methods. This shift
-    // cancels the +1 pre-compensation above.
-    state.shift_bookkeeping_after_eviction(start_evicted);
 
-    // Evict blocks in front of the tool block with assistant pushes (each
-    // adds one block and evicts one overflow block). The tool block survives
+    // Evict entries in front of the tool entry with assistant pushes (each
+    // adds one entry and evicts one overflow entry). The tool entry survives
     // and its index shifts down by the total evicted count.
-    let filler = block_from_item(&Message {
-        role: MessageRole::Assistant,
-        markdown: "filler".to_string(),
-    });
+    let filler = assistant_filler("filler");
     let mut total_evicted = 0usize;
     for _ in 0..3 {
-        let push_evicted = state.transcript.push_block(filler.clone());
-        total_evicted += push_evicted;
-        // The seam shift after each event, mirroring production.
-        state.shift_bookkeeping_after_eviction(push_evicted);
+        total_evicted += push_and_shift(&mut state, filler.clone());
     }
     assert!(total_evicted > 0, "eviction must have occurred");
 
@@ -223,39 +235,32 @@ fn eviction_then_set_tool_preview_pushes_preview_after_shifted_tool_block() -> R
             stats: None,
         }],
     };
-    let mut preview_evicted = 0usize;
-    state.tool.set_tool_preview(
+    let len_before = state.transcript.len();
+    assert!(state.tool.set_tool_preview(
         &mut state.transcript,
-        "edit",
-        r#"{"path":"a.rs"}"#,
-        preview,
-        &mut preview_evicted,
-    );
-    state.shift_bookkeeping_after_eviction(preview_evicted);
+        &ToolCallId::of("edit", edit_arguments),
+        &preview,
+    ));
 
-    // -- Check
-    // The per-push seam shifts already tracked every eviction, so the
-    // bookkeeping index equals the tool block's true position: the record
-    // time position (cap - 1) minus the total evicted count, minus the one
-    // block the preview insert itself evicted (the store was already at cap).
-    let shifted_index = (MAX_TRANSCRIPT_BLOCKS - 1) - total_evicted - preview_evicted;
-    let block = state
-        .transcript
-        .blocks()
-        .get(shifted_index)
-        .ok_or("shifted-index tool block must exist")?;
-    assert!(
-        matches!(block.source, BlockSource::Tool { .. }),
-        "the Tool block must stay at the shifted index"
+    // -- Check: the preview lands in place — no companion entry.
+    assert_eq!(
+        state.transcript.len(),
+        len_before,
+        "setting a preview pushes no entry"
     );
-    let preview_block = state
+    let shifted_index = (MAX_TRANSCRIPT_ENTRIES - 1) - total_evicted;
+    let entry = state
         .transcript
-        .blocks()
-        .get(shifted_index + 1)
-        .ok_or("preview block must follow the tool block")?;
-    assert!(
-        matches!(preview_block.source, BlockSource::ToolDisplay { .. }),
-        "the preview block must land directly after the shifted-index tool block"
+        .entries()
+        .get(shifted_index)
+        .ok_or("shifted-index tool entry must exist")?;
+    let TranscriptEntry::Tool(tool) = entry else {
+        return Err("the Tool entry must stay at the shifted index".into());
+    };
+    assert_eq!(
+        tool.preview.as_ref(),
+        Some(&preview),
+        "the preview must land on the shifted-index tool entry"
     );
     Ok(())
 }

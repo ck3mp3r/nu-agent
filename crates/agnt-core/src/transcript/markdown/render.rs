@@ -1,4 +1,4 @@
-use crate::transcript::ir::{ContentLine, DiffTint, Span, StyleHint};
+use crate::transcript::ir::{ContentLine, DiffTint, Span, StyleHint, annotate_diff_hint};
 
 use super::{
     code_blocks::{CodeBlockState, highlighted_code_lines},
@@ -146,7 +146,7 @@ pub fn project_diff_lines(source: &str, language_hint: &str) -> Vec<ContentLine>
             _ => {
                 lines.push(ContentLine::single(
                     raw.to_string(),
-                    crate::transcript::items::annotate_diff_hint(raw),
+                    annotate_diff_hint(raw),
                 ));
                 continue;
             }

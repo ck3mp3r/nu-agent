@@ -45,12 +45,24 @@ async fn dispatch_completed_turn_emits_the_assistant_message_when_no_deltas() ->
         "a completed turn leaves persistence to rig; got {persisted:?}"
     );
     let events = collector.drain();
+    // Producer B's invariant: the non-streaming fallback emits ONE chunk whose
+    // delta and aggregated are both the full text, so the TTY and TUI render
+    // it whole and the ACP translator forwards it whole.
     assert!(
         events.iter().any(|e| matches!(
             e,
-            UiEvent::AssistantMessage { text, .. } if text == "final answer"
+            SystemEvent::InferenceChunk { delta, aggregated }
+                if delta == "final answer" && aggregated == "final answer"
         )),
-        "a non-streamed turn must emit the assistant message; got: {events:?}"
+        "a non-streamed turn must emit one chunk with both fields = the full text; got: {events:?}"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, SystemEvent::InferenceChunk { .. }))
+            .count(),
+        1,
+        "the non-streaming fallback emits exactly one chunk; got: {events:?}"
     );
     Ok(())
 }
@@ -90,13 +102,13 @@ async fn dispatch_completed_turn_skips_the_assistant_message_when_deltas_were_em
     assert!(
         !events
             .iter()
-            .any(|e| matches!(e, UiEvent::AssistantMessage { .. })),
+            .any(|e| matches!(e, SystemEvent::InferenceChunk { .. })),
         "a streamed turn must not re-emit the assistant message; got: {events:?}"
     );
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, UiEvent::Completed { .. })),
+            .any(|e| matches!(e, SystemEvent::TurnCompleted { .. })),
         "a completed turn must emit a completion; got: {events:?}"
     );
     Ok(())

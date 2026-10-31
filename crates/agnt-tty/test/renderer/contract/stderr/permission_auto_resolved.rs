@@ -1,7 +1,7 @@
 //! The stderr renderer's `permission_auto_resolved` line.
 
 use super::super::super::StderrUiRenderer;
-use agnt_core::protocol::event::UiEvent;
+use agnt_core::protocol::events::{AutoResolutionAction, SystemEvent};
 use agnt_core::renderer::UiRenderer;
 
 use crate::policy::{UiPolicy, Verbosity};
@@ -9,14 +9,14 @@ use crate::policy::{UiPolicy, Verbosity};
 #[test]
 fn permission_auto_resolved_renders_line_and_quiet_suppresses() {
     // -- Setup & Fixtures
-    let allow = UiEvent::PermissionAutoResolved {
+    let allow = SystemEvent::PermissionAutoResolved {
         matched_rule_identity: "tool:read".to_string(),
-        action: "allow".to_string(),
+        action: AutoResolutionAction::Allow,
         reason: None,
     };
-    let deny = UiEvent::PermissionAutoResolved {
+    let deny = SystemEvent::PermissionAutoResolved {
         matched_rule_identity: "global:*".to_string(),
-        action: "deny".to_string(),
+        action: AutoResolutionAction::Deny,
         reason: Some("Permission denied by rule 'global:*' (scope: global)".to_string()),
     };
 

@@ -1,6 +1,7 @@
 use crate::orchestrator::{
     OnAgentSwitch, UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome,
 };
+use crate::protocol::events::SystemEvent;
 use crate::protocol::{
     contracts::CoreRuntime,
     mcp_management::McpManagement,
@@ -73,7 +74,7 @@ impl CommandRouter {
                 if let Err(e) = runtime.run_compaction(&source).await {
                     let _ = bus
                         .compaction()
-                        .send(crate::bus::CompactionEvent::Failed { source, message: e })
+                        .send(SystemEvent::CompactionFailed { source, message: e })
                         .await;
                 }
                 true
@@ -112,9 +113,10 @@ impl CommandRouter {
                             })
                             .await;
                         // Clear first, then push the startup logo, then hydrate
-                        // the stored transcript. hydrate_from_messages does not
-                        // clear, so the clear must precede it, and the logo must
-                        // precede the hydration so it is the first block.
+                        // the stored transcript. Hydration replays the stored
+                        // messages and does not clear, so the clear must precede
+                        // it, and the logo must precede the hydration so it is
+                        // the first entry.
                         let _ = bus
                             .ui_state()
                             .send(crate::orchestrator::UiStateEvent::ClearTranscript)

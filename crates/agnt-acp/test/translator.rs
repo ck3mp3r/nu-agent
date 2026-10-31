@@ -1,4 +1,4 @@
-//! Unit tests for the `UiEvent` → ACP `SessionUpdate` translation layer.
+//! Unit tests for the `SystemEvent` → ACP `SessionUpdate` translation layer.
 //!
 //! The suite is split into topical sub-files. Shared fixtures live in
 //! [`support`]; every sub-file declares its own imports and `Result` alias.

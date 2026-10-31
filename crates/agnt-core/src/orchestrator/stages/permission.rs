@@ -1,5 +1,6 @@
 use crate::orchestrator::stages::{OrchestrationContext, PermissionHandler};
-use crate::protocol::event::{PermissionDecisionSubmission, UiEvent};
+use crate::protocol::event::PermissionDecisionSubmission;
+use crate::protocol::events::{RequestId, SystemEvent};
 
 /// The only reason a submitted decision is ignored in v1.
 ///
@@ -39,8 +40,8 @@ impl PermissionHandler for PermissionStage {
                 let _ = ctx
                     .bus
                     .ui_event()
-                    .send(UiEvent::PermissionDecisionIgnored {
-                        request_id: submission.request_id,
+                    .send(SystemEvent::PermissionDecisionIgnored {
+                        request_id: RequestId::new(submission.request_id),
                         reason: REASON_REQUEST_NOT_PENDING.to_string(),
                     })
                     .await;

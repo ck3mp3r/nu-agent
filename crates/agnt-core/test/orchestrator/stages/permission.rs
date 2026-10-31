@@ -2,7 +2,7 @@
 //!
 //! The stage forwards a submitted decision to the pending map. A submission
 //! for a request that is no longer pending is dropped, so the stage publishes
-//! `UiEvent::PermissionDecisionIgnored` to make the drop observable.
+//! `SystemEvent::PermissionDecisionIgnored` to make the drop observable.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -15,7 +15,8 @@ use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::permission::PermissionStage;
 use crate::orchestrator::stages::{OrchestrationContext, PermissionHandler};
 use crate::orchestrator::{UiRequestResponse, WorkerCommand};
-use crate::protocol::event::{PermissionDecision, PermissionDecisionSubmission, UiEvent};
+use crate::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
+use crate::protocol::events::SystemEvent;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -84,8 +85,8 @@ impl Fixture {
     fn take_ignored(&mut self) -> Vec<(String, String)> {
         let mut out = Vec::new();
         while let Ok(event) = self.ui_event_rx.try_recv() {
-            if let UiEvent::PermissionDecisionIgnored { request_id, reason } = event {
-                out.push((request_id, reason));
+            if let SystemEvent::PermissionDecisionIgnored { request_id, reason } = event {
+                out.push((request_id.as_str().to_string(), reason));
             }
         }
         out

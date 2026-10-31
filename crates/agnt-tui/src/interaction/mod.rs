@@ -18,3 +18,7 @@ mod input_test;
 #[cfg(test)]
 #[path = "../../test/interaction/reducer.rs"]
 mod reducer_test;
+
+#[cfg(test)]
+#[path = "../../test/interaction/event_log.rs"]
+mod event_log_test;

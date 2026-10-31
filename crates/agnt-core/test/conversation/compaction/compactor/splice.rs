@@ -140,18 +140,18 @@ async fn compact_emits_started_chunks_and_completed() -> Result<()> {
         events.push(event);
     }
     assert!(
-        matches!(events.first(), Some(CompactionEvent::Started { source }) if source == "auto"),
+        matches!(events.first(), Some(SystemEvent::CompactionStarted { source }) if source == "auto"),
         "compaction must announce Started first, got {events:?}"
     );
     let chunks = events
         .iter()
-        .filter(|event| matches!(event, CompactionEvent::SummaryChunk { .. }))
+        .filter(|event| matches!(event, SystemEvent::CompactionSummaryChunk { .. }))
         .count();
     assert_eq!(chunks, 2, "one SummaryChunk per text delta, got {events:?}");
     assert!(
         matches!(
             events.last(),
-            Some(CompactionEvent::Completed { summary_body, .. })
+            Some(SystemEvent::CompactionCompleted { summary_body, .. })
                 if summary_body == "first second"
         ),
         "compaction must end with Completed carrying the summary, got {events:?}"

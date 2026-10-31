@@ -106,7 +106,7 @@ fn test_interaction_permission_prompt_locked_other_char_noop() -> Result<()> {
         None,
     );
 
-    // -- Check: the card arm rewrites the key to Noop, so the card stays up and
+    // -- Check: the card arm consumes a non-card key, so the card stays up and
     // no decision is submitted.
     assert!(state.permission.has_prompt());
     assert!(

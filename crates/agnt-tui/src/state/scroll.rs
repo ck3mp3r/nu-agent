@@ -1,6 +1,6 @@
 //! Scroll/viewport/pane-focus domain state: transcript scroll offset,
-//! tail-follow, cursor row, viewport metrics, transcript selection, entry index
-//! mapping, and pane focus.
+//! tail-follow, cursor row, viewport metrics, transcript selection, and pane
+//! focus.
 
 use super::StatusState;
 use super::selection::TranscriptSelection;
@@ -29,7 +29,6 @@ pub struct ScrollState {
     pub cursor_visual_row: usize,
     pub viewport_height: usize,
     pub max_scroll: usize,
-    pub entry_indices: Vec<usize>,
     pub total_visual_rows: usize,
     pub selection: Option<TranscriptSelection>,
     pub pane_focus: PaneFocus,
@@ -44,7 +43,6 @@ impl Default for ScrollState {
             cursor_visual_row: 0,
             viewport_height: 0,
             max_scroll: 0,
-            entry_indices: Vec::new(),
             total_visual_rows: 0,
             selection: None,
             pane_focus: PaneFocus::Input,

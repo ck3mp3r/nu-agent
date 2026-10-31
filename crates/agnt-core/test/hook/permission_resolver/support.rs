@@ -12,7 +12,7 @@ pub(super) use crate::hook::permission_resolver::{
     AsyncPermissionResolver, InteractivePermissionResolver, PolicyPermissionResolver,
 };
 pub(super) use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
-pub(super) use crate::protocol::event::UiEvent;
+pub(super) use crate::protocol::events::SystemEvent;
 pub(super) use crate::tools::authz::{
     PermissionAction, PermissionDecision as AuthzPermissionDecision, PermissionRuleMatch,
     PermissionsConfig, SessionGrantCache,
@@ -124,7 +124,7 @@ pub(super) fn deny_all_toml_config() -> PermissionsConfig {
 }
 
 /// Every event already queued on `rx`.
-pub(super) fn drain(rx: &mut crate::bus::UiEventRx) -> Vec<UiEvent> {
+pub(super) fn drain(rx: &mut crate::bus::UiEventRx) -> Vec<SystemEvent> {
     let mut events = Vec::new();
     while let Ok(event) = rx.try_recv() {
         events.push(event);

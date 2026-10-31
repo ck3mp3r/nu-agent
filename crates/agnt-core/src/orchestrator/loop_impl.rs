@@ -8,9 +8,7 @@ use agnt_a2a::{A2aCompletionEvent, IncomingTask};
 use nu_protocol::{LabeledError, Value};
 use tokio::sync::mpsc;
 
-use crate::bus::{
-    Bus, ChannelError, CompactionEvent, CompactionRx, ExternalEvent, ExternalRx, SessionEvent,
-};
+use crate::bus::{Bus, ChannelError, CompactionRx, ExternalEvent, ExternalRx, SessionEvent};
 use crate::orchestrator::router::CommandRouter;
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
@@ -23,6 +21,7 @@ use crate::orchestrator::{
     WorkerCommand, dispatch_compaction, handle_external_cancel, handle_worker_result,
     recv_or_pending, reject_busy_task, reject_superseded_task, submit_deferred_prompt,
 };
+use crate::protocol::events::SystemEvent;
 use crate::protocol::{
     contracts::CoreRuntime,
     mcp_management::McpManagement,
@@ -523,10 +522,10 @@ where
 
             recv = sources.compaction_rx.recv() => {
                 match recv {
-                    Ok(CompactionEvent::Requested { source }) => {
+                    Ok(SystemEvent::CompactionRequested { source }) => {
                         dispatch_compaction(source, ctx, &mut pending_compaction, &mut compaction_active).await;
                     }
-                    Ok(CompactionEvent::Completed { .. } | CompactionEvent::Failed { .. }) => {
+                    Ok(SystemEvent::CompactionCompleted { .. } | SystemEvent::CompactionFailed { .. }) => {
                         compaction_active = false;
                         // Drain a queued compaction, if any.
                         if let Some(source) = pending_compaction.take() {

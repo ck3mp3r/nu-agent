@@ -63,41 +63,27 @@ fn push_transcript_item_tail_follow() -> Result<()> {
 /// User and assistant prose project identically; bold spans carry MdBold and a
 /// fenced code block projects to multiple lines.
 #[test]
-fn push_transcript_line_markdown_projection() -> Result<()> {
+fn push_transcript_item_markdown_projection() -> Result<()> {
     // -- Setup & Fixtures
     let mut user = AppState::default();
     push_user(&mut user, "hello **world**");
 
-    // -- Check: the user block's raw markdown projects to MdBold.
-    let last = user
-        .transcript
-        .blocks()
-        .last()
-        .ok_or("should have last transcript block")?;
-    let BlockSource::Markdown { markdown, .. } = &last.source else {
-        return Err("expected User markdown block".into());
-    };
-    let bold = crate::markdown::render_markdown_lines(markdown, None)
+    // -- Check: the user entry's raw markdown projects to MdBold.
+    let markdown = last_message_markdown(&user)?;
+    let bold = crate::markdown::render_markdown_lines(&markdown, None)
         .into_iter()
         .flat_map(|l| l.spans.into_iter())
         .find(|s| matches!(s.hint, agnt_core::transcript::ir::StyleHint::MdBold))
         .ok_or("should have MdBold span")?;
     assert_eq!(bold.text, "world");
 
-    // -- Setup & Fixtures: an assistant block.
+    // -- Setup & Fixtures: an assistant entry.
     let mut assistant = AppState::default();
     push_assistant(&mut assistant, "hello **world**");
 
     // -- Check
-    let last = assistant
-        .transcript
-        .blocks()
-        .last()
-        .ok_or("should have last transcript block")?;
-    let BlockSource::Markdown { markdown, .. } = &last.source else {
-        return Err("expected Assistant markdown block".into());
-    };
-    let bold = crate::markdown::render_markdown_lines(markdown, None)
+    let markdown = last_message_markdown(&assistant)?;
+    let bold = crate::markdown::render_markdown_lines(&markdown, None)
         .into_iter()
         .flat_map(|l| l.spans.into_iter())
         .find(|s| matches!(s.hint, agnt_core::transcript::ir::StyleHint::MdBold))
@@ -112,22 +98,8 @@ fn push_transcript_line_markdown_projection() -> Result<()> {
     push_assistant(&mut s2, &text);
 
     // -- Check: user and assistant prose must be byte-identical.
-    let last1 = s1
-        .transcript
-        .blocks()
-        .last()
-        .ok_or("should have last transcript block")?;
-    let last2 = s2
-        .transcript
-        .blocks()
-        .last()
-        .ok_or("should have last transcript block")?;
-    let BlockSource::Markdown { markdown: u, .. } = &last1.source else {
-        return Err("expected User markdown block".into());
-    };
-    let BlockSource::Markdown { markdown: a, .. } = &last2.source else {
-        return Err("expected Assistant markdown block".into());
-    };
+    let u = last_message_markdown(&s1)?;
+    let a = last_message_markdown(&s2)?;
     assert_eq!(u, a, "user and assistant prose must be byte-identical");
 
     // -- Setup & Fixtures: a fenced code block.
@@ -135,15 +107,21 @@ fn push_transcript_line_markdown_projection() -> Result<()> {
     push_user(&mut fenced, "```rust\nfn a() {}\nfn b() {}\n```");
 
     // -- Check: projection yields multiple lines.
-    let last = fenced
-        .transcript
-        .blocks()
-        .last()
-        .ok_or("should have last transcript block")?;
-    let BlockSource::Markdown { markdown, .. } = &last.source else {
-        return Err("expected User markdown block".into());
-    };
-    let projected = crate::markdown::render_markdown_lines(markdown, None);
+    let markdown = last_message_markdown(&fenced)?;
+    let projected = crate::markdown::render_markdown_lines(&markdown, None);
     assert!(projected.len() >= 2);
     Ok(())
+}
+
+/// The raw markdown of the last stored message entry.
+fn last_message_markdown(state: &AppState) -> Result<String> {
+    let last = state
+        .transcript
+        .entries()
+        .last()
+        .ok_or("should have last transcript entry")?;
+    let TranscriptEntry::Message(message) = last else {
+        return Err("expected message entry".into());
+    };
+    Ok(message.markdown.clone())
 }

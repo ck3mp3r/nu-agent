@@ -19,8 +19,8 @@ use super::*;
 /// Expected behaviour after the fix:
 ///   1. result == Ok(TurnOutcome::EarlyReturn(_))
 ///   2. conversation store was appended with the cancelled messages
-///   3. UiEvent::Completed was emitted
-///   4. UiEvent::AssistantMessage was NOT emitted
+///   3. SystemEvent::TurnCompleted was emitted
+///   4. SystemEvent::AssistantMessage was NOT emitted
 #[tokio::test]
 async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_completed() -> Result<()>
 {
@@ -126,25 +126,25 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
         "the committed tool result is persisted; got {persisted:?}"
     );
 
-    // 3. UiEvent::Completed must have been published on the bus ui_event channel
+    // 3. SystemEvent::TurnCompleted must have been published on the bus ui_event channel
     let mut saw_completed = false;
     while let Ok(event) = ui_event_rx.try_recv() {
-        if matches!(event, UiEvent::Completed { .. }) {
+        if matches!(event, SystemEvent::TurnCompleted { .. }) {
             saw_completed = true;
         }
     }
     assert!(
         saw_completed,
-        "UiEvent::Completed must be published for a cancelled turn (path C)"
+        "SystemEvent::TurnCompleted must be published for a cancelled turn (path C)"
     );
 
-    // 4. UiEvent::AssistantMessage must NOT have been emitted
+    // 4. SystemEvent::AssistantMessage must NOT have been emitted
     let events = event_collector.drain();
     assert!(
         !events
             .iter()
-            .any(|e| matches!(e, UiEvent::AssistantMessage { .. })),
-        "UiEvent::AssistantMessage must NOT be emitted for a cancelled turn (path C)"
+            .any(|e| matches!(e, SystemEvent::InferenceChunk { .. })),
+        "SystemEvent::AssistantMessage must NOT be emitted for a cancelled turn (path C)"
     );
 
     Ok(())

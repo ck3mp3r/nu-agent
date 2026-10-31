@@ -1,5 +1,9 @@
 use super::*;
 
+use agnt_core::protocol::events::{RequestId, SystemKind, ToolCall, ToolOutcome, Usage};
+use agnt_core::session::tool_status::ToolStatus;
+use agnt_core::transcript::ir::ToolName;
+
 #[test]
 fn submit_and_lock_table() {
     // Submit transition is deterministic and keeps the input editable.
@@ -7,37 +11,43 @@ fn submit_and_lock_table() {
         input: InputState::default().with_pending_submit_text("status pods".to_string()),
         ..Default::default()
     };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    reduce(
+        &mut state,
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
 
     assert_eq!(state.phase, UiPhase::Busy);
     assert!(!state.input_locked);
     let _ = state.take_next_prompt_for_execution();
     // [User] — no leading or trailing spacer under the unified spacer rule
     assert_eq!(state.transcript.len(), 1);
-    assert_eq!(
-        state.transcript.blocks()[0].source.plain_text(),
-        "status pods"
-    );
+    assert_eq!(entry_text(&state.transcript.entries()[0]), "status pods");
 
     // Locked input prevents typing and submission.
     let mut state = AppState {
         input: InputState::default().with_pending_submit_text("first".to_string()),
         ..Default::default()
     };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    reduce(
+        &mut state,
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
 
     state.input.pending_submit_text = Some("second".to_string());
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    reduce(
+        &mut state,
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
 
     // Activate both prompts coalesced
     let result = state.take_next_prompt_for_execution();
     assert_eq!(result, Some("first\nsecond".to_string()));
     // [User] — no leading or trailing spacer under the unified spacer rule
     assert_eq!(state.transcript.len(), 1);
-    assert_eq!(
-        state.transcript.blocks()[0].source.plain_text(),
-        "first\nsecond"
-    );
+    assert_eq!(entry_text(&state.transcript.entries()[0]), "first\nsecond");
     // Complete first (active) prompt — other prompt is already Done
     state.complete_active_prompt();
     let result = state.take_next_prompt_for_execution();
@@ -49,11 +59,15 @@ fn submit_and_lock_table() {
         ..Default::default()
     };
 
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    reduce(
+        &mut state,
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
 
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.input_locked);
-    assert!(state.transcript.blocks().is_empty());
+    assert!(state.transcript.entries().is_empty());
 }
 
 #[test]
@@ -63,16 +77,20 @@ fn abort_flow_table() {
         input: InputState::default().with_pending_submit_text("do work".to_string()),
         ..Default::default()
     };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    reduce(
+        &mut state,
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
     let _ = state.activate_next_prompt();
 
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
+    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
     assert_eq!(state.phase, UiPhase::AbortPending);
     assert!(state.abort.pending);
     assert_eq!(state.status.message.status_line(), ESC_ABORT_CONFIRM_STATUS);
 
     let before_markers = state.transcript.len();
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
+    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
     assert_eq!(state.input.mode, InputMode::Insert);
@@ -86,15 +104,19 @@ fn abort_flow_table() {
         input: InputState::default().with_pending_submit_text("race".to_string()),
         ..Default::default()
     };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    reduce(
+        &mut state,
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
     let _ = state.activate_next_prompt();
 
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
+    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
     assert_eq!(state.phase, UiPhase::AbortPending);
 
-    reduce_with_cancel_controller(
+    reduce_ui(
         &mut state,
-        event_input(UiEvent::Completed {
+        SystemEvent::TurnCompleted {
             tool_calls: 0,
             input_tokens: 0,
             output_tokens: 0,
@@ -102,17 +124,16 @@ fn abort_flow_table() {
             cost: None,
             cost_complete: true,
             duration_ms: 0,
-        }),
-        None,
+        },
     );
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
 
-    let transcript_before = state.transcript.blocks().to_vec();
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::EscConfirm), None);
+    let transcript_before = state.transcript.entries().to_vec();
+    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
     assert_eq!(state.phase, UiPhase::Idle);
     assert!(!state.abort.pending);
-    assert_eq!(state.transcript.blocks(), transcript_before);
+    assert_eq!(state.transcript.entries(), transcript_before);
 }
 
 #[test]
@@ -123,9 +144,9 @@ fn test_interaction_reducer_turn_end_closes_permission_card() -> Result<()> {
     assert!(state.permission.has_prompt());
 
     // -- Exec: the turn completes.
-    reduce_with_cancel_controller(
+    reduce_ui(
         &mut state,
-        event_input(UiEvent::Completed {
+        SystemEvent::TurnCompleted {
             tool_calls: 0,
             input_tokens: 0,
             output_tokens: 0,
@@ -133,8 +154,7 @@ fn test_interaction_reducer_turn_end_closes_permission_card() -> Result<()> {
             cost: None,
             cost_complete: true,
             duration_ms: 0,
-        }),
-        None,
+        },
     );
 
     // -- Check
@@ -152,12 +172,12 @@ fn test_interaction_reducer_turn_end_closes_permission_card() -> Result<()> {
     open_permission_card(&mut state);
 
     // -- Exec
-    reduce_with_cancel_controller(
+    reduce_ui(
         &mut state,
-        event_input(UiEvent::TurnError {
-            message: "boom".to_string(),
-        }),
-        None,
+        SystemEvent::SystemMessage {
+            kind: SystemKind::TurnError,
+            text: "boom".to_string(),
+        },
     );
 
     // -- Check
@@ -177,15 +197,14 @@ fn test_interaction_reducer_permission_timed_out_closes_matching_card() -> Resul
     // -- Setup & Fixtures: a busy turn with a permission card up.
     let mut state = busy_state_with_clean_transcript();
     open_permission_card(&mut state);
-    let open_request_id = "ask-0000000000000001".to_string();
+    let open_request_id = RequestId::new("ask-0000000000000001");
 
     // -- Exec: a timeout for a different request.
-    reduce_with_cancel_controller(
+    reduce_ui(
         &mut state,
-        event_input(UiEvent::PermissionDecisionTimedOut {
-            request_id: "ask-0000000000000002".to_string(),
-        }),
-        None,
+        SystemEvent::PermissionDecisionTimedOut {
+            request_id: RequestId::new("ask-0000000000000002"),
+        },
     );
 
     // -- Check: the card stays up and no status message is set.
@@ -199,12 +218,11 @@ fn test_interaction_reducer_permission_timed_out_closes_matching_card() -> Resul
     );
 
     // -- Exec: the timeout for the open card.
-    reduce_with_cancel_controller(
+    reduce_ui(
         &mut state,
-        event_input(UiEvent::PermissionDecisionTimedOut {
+        SystemEvent::PermissionDecisionTimedOut {
             request_id: open_request_id,
-        }),
-        None,
+        },
     );
 
     // -- Check
@@ -231,51 +249,66 @@ fn completion_finalize_table() {
         input: InputState::default().with_pending_submit_text("prompt".to_string()),
         ..Default::default()
     };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    reduce(
+        &mut state,
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
     let _ = state.activate_next_prompt();
 
     let cases = vec![
-        UiEvent::LlmStarted,
-        UiEvent::Tick,
-        UiEvent::ToolStarted {
-            name: "k8s__list_pods".to_string(),
-            source: "mcp".to_string(),
-            arguments: "{}".to_string(),
-            call_line: CallLine::from_json_summary("{}"),
+        SystemEvent::InferenceStarted,
+        SystemEvent::Tick,
+        SystemEvent::ToolStarted {
+            call: ToolCall::new(
+                ToolName("k8s__list_pods".to_string()),
+                "mcp",
+                "{}",
+                CallLine::from_json_summary("{}"),
+            ),
         },
-        UiEvent::ToolCompleted {
-            name: "k8s__list_pods".to_string(),
-            source: "mcp".to_string(),
-            arguments: "{}".to_string(),
-            success: true,
-            result: "[]".to_string(),
-            display: None,
-            error_kind: None,
-            message: None,
+        SystemEvent::ToolCompleted {
+            call: ToolCall::new(
+                ToolName("k8s__list_pods".to_string()),
+                "mcp",
+                "{}",
+                CallLine::from_json_summary("{}"),
+            ),
+            outcome: ToolOutcome {
+                success: true,
+                status: ToolStatus::Success,
+                result: "[]".to_string(),
+                display: None,
+                error_kind: None,
+                message: None,
+            },
         },
-        UiEvent::LlmCompleted {
-            response_chars: 12,
-            tool_calls: 1,
-            input_tokens: 4,
-            output_tokens: 8,
-            total_tokens: Some(12),
-            cost: None,
-            cost_complete: false,
+        SystemEvent::InferenceCompleted {
+            usage: Usage {
+                response_chars: 12,
+                tool_calls: 1,
+                input_tokens: 4,
+                output_tokens: 8,
+                total_tokens: Some(12),
+                cost: None,
+                cost_complete: false,
+            },
         },
-        UiEvent::Warning {
-            message: "warned".to_string(),
+        SystemEvent::SystemMessage {
+            kind: SystemKind::Warning,
+            text: "warned".to_string(),
         },
     ];
 
     for event in cases {
-        reduce_with_cancel_controller(&mut state, event_input(event), None);
+        reduce_ui(&mut state, event);
         assert_eq!(state.phase, UiPhase::Busy);
         assert!(!state.input_locked);
     }
 
-    reduce_with_cancel_controller(
+    reduce_ui(
         &mut state,
-        event_input(UiEvent::Completed {
+        SystemEvent::TurnCompleted {
             tool_calls: 1,
             input_tokens: 0,
             output_tokens: 0,
@@ -283,8 +316,7 @@ fn completion_finalize_table() {
             cost: None,
             cost_complete: true,
             duration_ms: 0,
-        }),
-        None,
+        },
     );
 
     assert_eq!(state.phase, UiPhase::Idle);
@@ -296,13 +328,17 @@ fn completion_finalize_table() {
         input: InputState::default().with_pending_submit_text("do work".to_string()),
         ..Default::default()
     };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
-    let _ = state.activate_next_prompt();
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
-
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        event_input(UiEvent::Completed {
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
+    let _ = state.activate_next_prompt();
+    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
+
+    reduce_ui(
+        &mut state,
+        SystemEvent::TurnCompleted {
             tool_calls: 0,
             input_tokens: 0,
             output_tokens: 0,
@@ -310,8 +346,7 @@ fn completion_finalize_table() {
             cost: None,
             cost_complete: true,
             duration_ms: 0,
-        }),
-        None,
+        },
     );
 
     assert_eq!(state.phase, UiPhase::Idle);
@@ -324,13 +359,17 @@ fn completion_finalize_table() {
         input: InputState::default().with_pending_submit_text("finalize".to_string()),
         ..Default::default()
     };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
-    let _ = state.activate_next_prompt();
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Esc), None);
-
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        event_input(UiEvent::Completed {
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
+    let _ = state.activate_next_prompt();
+    reduce(&mut state, SystemEvent::KeyPressed { key: Key::Esc }, None);
+
+    reduce_ui(
+        &mut state,
+        SystemEvent::TurnCompleted {
             tool_calls: 0,
             input_tokens: 0,
             output_tokens: 0,
@@ -338,8 +377,7 @@ fn completion_finalize_table() {
             cost: None,
             cost_complete: true,
             duration_ms: 0,
-        }),
-        None,
+        },
     );
 
     assert_eq!(state.phase, UiPhase::Idle);
@@ -354,12 +392,12 @@ fn completion_finalize_table() {
     assert!(active_prompt_id(&state).is_some());
     assert!(state.is_active_cycle());
 
-    reduce_with_cancel_controller(
+    reduce_ui(
         &mut state,
-        event_input(UiEvent::TurnError {
-            message: "test error".to_string(),
-        }),
-        None,
+        SystemEvent::SystemMessage {
+            kind: SystemKind::TurnError,
+            text: "test error".to_string(),
+        },
     );
 
     assert_eq!(active_prompt_id(&state), None);
@@ -369,25 +407,29 @@ fn completion_finalize_table() {
 
     let has_error_in_transcript = state
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .any(|line| line.source.plain_text().contains("test error"));
+        .any(|entry| entry_text(entry).contains("test error"));
     assert!(
         has_error_in_transcript,
         "Expected error message in transcript"
     );
 
     state.input.pending_submit_text = Some("retry".to_string());
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    reduce(
+        &mut state,
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
     assert_eq!(state.phase, UiPhase::Busy);
     state.input_locked = true;
     let _ = state.take_next_prompt_for_execution();
     assert!(
         state
             .transcript
-            .blocks()
+            .entries()
             .iter()
-            .any(|line| line.source.plain_text() == "retry"),
+            .any(|entry| entry_text(entry) == "retry"),
         "Second prompt should appear in transcript"
     );
 

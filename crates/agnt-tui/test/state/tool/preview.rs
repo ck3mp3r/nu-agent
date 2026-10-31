@@ -4,28 +4,25 @@ use super::*;
 // Tool preview dispatch
 // ---------------------------------------------------------------------------
 
-/// `ToolPreview` pushes one ToolDisplay block after the matching Tool block and
-/// reports handled; an unmatched key pushes nothing.
+/// `ToolPreview` sets the matching tool entry's preview in place and reports
+/// handled; an unmatched key leaves the entry untouched.
 #[test]
-fn tool_preview_dispatch_pushes_matching_block_and_ignores_unmatched_key() -> Result<()> {
+fn tool_preview_dispatch_sets_preview_in_place_and_ignores_unmatched_key() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
     let arguments = r#"{"command":"ls"}"#;
-    dispatch_ui_event(
+    reduce_ui(
         &mut state,
-        UiEvent::ToolStarted {
-            name: "nu".to_string(),
-            source: "builtin".to_string(),
-            arguments: arguments.to_string(),
-            call_line: CallLine::from_json_summary(arguments),
+        SystemEvent::ToolStarted {
+            call: tool_call("nu", arguments),
         },
     );
 
     // -- Exec
-    let handled = dispatch_ui_event(
+    let handled = reduce_ui(
         &mut state,
-        UiEvent::ToolPreview {
-            tool_key: format!("nu\n{arguments}"),
+        SystemEvent::PreviewRequested {
+            call: tool_call("nu", arguments),
             display: ToolDisplay {
                 title: Some("nu".to_string()),
                 sections: vec![ToolDisplaySection {
@@ -42,33 +39,24 @@ fn tool_preview_dispatch_pushes_matching_block_and_ignores_unmatched_key() -> Re
 
     // -- Check
     assert!(handled, "ToolPreview must report a handled event");
-    assert_eq!(state.transcript.len(), 2);
-    let tool_block = state
+    assert_eq!(state.transcript.len(), 1, "the preview lives on the entry");
+    let entry = state
         .transcript
-        .blocks()
+        .entries()
         .first()
-        .ok_or("should have tool block")?;
-    assert!(matches!(
-        tool_block.source,
-        BlockSource::Tool { preview: None, .. }
-    ));
-    let preview_block = state
-        .transcript
-        .blocks()
-        .get(1)
-        .ok_or("should have preview block")?;
-    assert!(matches!(
-        preview_block.source,
-        BlockSource::ToolDisplay { .. }
-    ));
-    assert!(tool_display_lines(preview_block).contains("ls"));
+        .ok_or("should have tool entry")?;
+    let TranscriptEntry::Tool(tool) = entry else {
+        return Err("expected Tool entry".into());
+    };
+    let preview = tool.preview.as_ref().ok_or("should have preview")?;
+    assert!(display_lines(preview).contains("ls"));
 
-    // -- Exec & Check: an unmatched tool_key pushes no block.
+    // -- Exec & Check: an unmatched tool_key leaves the entry unchanged.
     let len_before = state.transcript.len();
-    dispatch_ui_event(
+    reduce_ui(
         &mut state,
-        UiEvent::ToolPreview {
-            tool_key: "nu\n{\"command\":\"other\"}".to_string(),
+        SystemEvent::PreviewRequested {
+            call: tool_call("nu", "{\"command\":\"other\"}"),
             display: ToolDisplay {
                 title: Some("nu".to_string()),
                 sections: vec![],
@@ -80,29 +68,25 @@ fn tool_preview_dispatch_pushes_matching_block_and_ignores_unmatched_key() -> Re
 }
 
 /// A cancelled call's live sequence — Started, ToolPreview, Completed with the
-/// cancelled error kind — leaves the tool block (status Cancelled) followed by
-/// its preview block. The preview anchors to the call while it is still
-/// `InProgress`, so the two-block shape matches rehydration.
+/// cancelled error kind — leaves ONE tool entry carrying its preview and the
+/// Cancelled status.
 #[test]
-fn tool_preview_between_started_and_cancelled_completed_keeps_two_block_shape() -> Result<()> {
+fn tool_preview_between_started_and_cancelled_completed_keeps_one_entry() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
     let arguments = r#"{"command":"ls"}"#;
-    dispatch_ui_event(
+    reduce_ui(
         &mut state,
-        UiEvent::ToolStarted {
-            name: "nu".to_string(),
-            source: "builtin".to_string(),
-            arguments: arguments.to_string(),
-            call_line: CallLine::from_json_summary(arguments),
+        SystemEvent::ToolStarted {
+            call: tool_call("nu", arguments),
         },
     );
 
     // -- Exec
-    dispatch_ui_event(
+    reduce_ui(
         &mut state,
-        UiEvent::ToolPreview {
-            tool_key: format!("nu\n{arguments}"),
+        SystemEvent::PreviewRequested {
+            call: tool_call("nu", arguments),
             display: ToolDisplay {
                 title: None,
                 sections: vec![ToolDisplaySection {
@@ -116,41 +100,33 @@ fn tool_preview_between_started_and_cancelled_completed_keeps_two_block_shape() 
             },
         },
     );
-    dispatch_ui_event(
+    reduce_ui(
         &mut state,
-        UiEvent::ToolCompleted {
-            name: "nu".to_string(),
-            source: "builtin".to_string(),
-            arguments: arguments.to_string(),
-            success: false,
-            result: String::new(),
-            display: None,
-            error_kind: Some("cancelled".to_string()),
-            message: Some(agnt_core::hook::chain::CANCELLED_DISPATCH_MESSAGE.to_string()),
+        SystemEvent::ToolCompleted {
+            call: tool_call("nu", arguments),
+            outcome: ToolOutcome {
+                success: false,
+                status: ToolStatus::Cancelled,
+                result: String::new(),
+                display: None,
+                error_kind: Some("cancelled".to_string()),
+                message: Some(agnt_core::hook::chain::CANCELLED_DISPATCH_MESSAGE.to_string()),
+            },
         },
     );
 
     // -- Check
-    assert_eq!(state.transcript.len(), 2);
-    let tool_block = state
+    assert_eq!(state.transcript.len(), 1);
+    let entry = state
         .transcript
-        .blocks()
+        .entries()
         .first()
-        .ok_or("should have tool block")?;
-    assert!(matches!(
-        tool_block.source,
-        BlockSource::Tool { preview: None, .. }
-    ));
-    assert_eq!(tool_block.status, Some(ItemStatus::Cancelled));
-    let preview_block = state
-        .transcript
-        .blocks()
-        .get(1)
-        .ok_or("should have preview block")?;
-    assert!(matches!(
-        preview_block.source,
-        BlockSource::ToolDisplay { .. }
-    ));
-    assert!(tool_display_lines(preview_block).contains("ls"));
+        .ok_or("should have tool entry")?;
+    let TranscriptEntry::Tool(tool) = entry else {
+        return Err("expected Tool entry".into());
+    };
+    assert_eq!(tool.status, ItemStatus::Cancelled);
+    let preview = tool.preview.as_ref().ok_or("should have preview")?;
+    assert!(display_lines(preview).contains("ls"));
     Ok(())
 }

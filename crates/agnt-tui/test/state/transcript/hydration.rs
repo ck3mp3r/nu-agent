@@ -1,52 +1,46 @@
 use super::*;
 
 // ---------------------------------------------------------------------------
-// Hydration reconstructs Tool blocks (task 53012ecc)
+// Hydration replay rebuilds tool entries
 // ---------------------------------------------------------------------------
 
-/// Hydration reconstructs one Tool block per call with its terminal status, and
-/// attaches a persisted result display as its own ToolDisplay block.
+/// Replay rebuilds one tool entry per call with its terminal status, and lands
+/// a persisted display in the entry's gate-preview slot — main's hydrated shape.
 #[test]
-fn hydration_reconstructs_tool_blocks_and_display() -> Result<()> {
+fn hydration_reconstructs_tool_entries_and_display() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
-    let mut status = crate::state::StatusState::default();
-    let mut tool = crate::state::ToolState::default();
-    let mut compaction = crate::state::CompactionState::default();
 
     // -- Exec: a single finished tool call.
-    state.transcript.hydrate_from_messages(
+    hydrate_by_replay(
+        &mut state,
         vec![
-            UiMessageSnapshot::new("tool", "tool[k8s__list_pods] → {} · done").with_tool_details(
-                Some(r#"{"namespace":"prod"}"#.to_string()),
-                Some("[]".to_string()),
-                Some(true),
-            ),
+            UiMessageSnapshot::new("tool", "→ {\"namespace\":\"prod\"}")
+                .with_tool_name("k8s__list_pods".to_string())
+                .with_tool_details(
+                    Some(r#"{"namespace":"prod"}"#.to_string()),
+                    Some("[]".to_string()),
+                    Some(true),
+                ),
         ],
         None,
-        &mut status,
-        &mut tool,
-        &mut compaction,
     );
 
-    // -- Check: one Tool block, not a start block plus separate finish entries.
+    // -- Check: one Tool entry, not a start entry plus separate finish entries.
     assert_eq!(state.transcript.len(), 1);
-    let block = state
+    let entry = state
         .transcript
-        .blocks()
+        .entries()
         .first()
-        .ok_or("should have tool block")?;
-    let BlockSource::Tool { call, .. } = &block.source else {
-        return Err("expected Tool block".into());
+        .ok_or("should have tool entry")?;
+    let TranscriptEntry::Tool(tool_entry) = entry else {
+        return Err("expected Tool entry".into());
     };
-    assert!(call.summary.contains("namespace"));
-    assert_eq!(block.status, Some(ItemStatus::Done));
+    assert!(tool_entry.call.call_line.summary.contains("namespace"));
+    assert_eq!(tool_entry.status, ItemStatus::Done);
 
     // -- Setup & Fixtures: a tool call plus a standalone persisted display.
     let mut with_display = AppState::default();
-    let mut status = crate::state::StatusState::default();
-    let mut tool = crate::state::ToolState::default();
-    let mut compaction = crate::state::CompactionState::default();
     let snapshots = vec![
         UiMessageSnapshot::new("tool", "→ {\"path\":\"a.rs\"}")
             .with_tool_name("edit".to_string())
@@ -66,104 +60,93 @@ fn hydration_reconstructs_tool_blocks_and_display() -> Result<()> {
     ];
 
     // -- Exec
-    with_display.transcript.hydrate_from_messages(
-        snapshots,
-        None,
-        &mut status,
-        &mut tool,
-        &mut compaction,
-    );
+    hydrate_by_replay(&mut with_display, snapshots, None);
 
-    // -- Check: the Tool block keeps its terminal status and no preview; the
-    // display hydrates as its own ToolDisplay block with Fill::Code.
+    // -- Check: the display lands in the tool entry's gate-preview slot.
     assert_eq!(
         with_display.transcript.len(),
-        2,
-        "preview must add one block"
+        1,
+        "the display must not add a companion entry"
     );
-    let tool_block = with_display
+    let entry = with_display
         .transcript
-        .blocks()
+        .entries()
         .first()
-        .ok_or("should have tool block")?;
-    assert!(matches!(
-        tool_block.source,
-        BlockSource::Tool { preview: None, .. }
-    ));
-    assert_eq!(tool_block.status, Some(ItemStatus::Done));
-    assert_eq!(tool_block.fill, agnt_core::transcript::ir::Fill::None);
-
-    let preview_block = with_display
-        .transcript
-        .blocks()
-        .get(1)
-        .ok_or("should have preview block")?;
-    assert!(matches!(
-        preview_block.source,
-        BlockSource::ToolDisplay { .. }
-    ));
-    assert_eq!(preview_block.fill, agnt_core::transcript::ir::Fill::Code);
-    assert!(preview_block.source.plain_text().contains("+++ b"));
+        .ok_or("should have tool entry")?;
+    let TranscriptEntry::Tool(tool_entry) = entry else {
+        return Err("expected Tool entry".into());
+    };
+    assert_eq!(tool_entry.status, ItemStatus::Done);
+    assert!(
+        tool_entry.preview.is_some(),
+        "the persisted display docks in the preview slot"
+    );
+    assert!(
+        tool_entry.result.is_none(),
+        "a hydrated completion carries no display of its own"
+    );
+    let preview = tool_entry.preview.as_ref().ok_or("should have preview")?;
+    let result_text: String = preview
+        .project_lines()
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(result_text.contains("+++ b"));
 
     // -- Setup & Fixtures: one role-"user" snapshot with multi-line content.
     let mut user = AppState::default();
-    let mut status = crate::state::StatusState::default();
-    let mut tool = crate::state::ToolState::default();
-    let mut compaction = crate::state::CompactionState::default();
 
     // -- Exec
-    user.transcript.hydrate_from_messages(
+    hydrate_by_replay(
+        &mut user,
         vec![UiMessageSnapshot::new("user", "line1\n\nline2")],
         None,
-        &mut status,
-        &mut tool,
-        &mut compaction,
     );
 
-    // -- Check: one User block whose rail is contiguous on every rendered row.
+    // -- Check: one User entry whose rail is contiguous on every rendered row.
     assert_eq!(
         user.transcript.len(),
         1,
-        "a multi-line user message must hydrate as one block"
+        "a multi-line user message must hydrate as one entry"
     );
-    let block = user
+    let entry = user
         .transcript
-        .blocks()
+        .entries()
         .first()
-        .ok_or("should have user block")?;
-    assert!(
-        matches!(
-            block.source,
-            BlockSource::Markdown {
-                role: MessageRole::User,
-                ..
-            }
-        ),
-        "expected one User markdown block, got {:?}",
-        block.source
-    );
-    assert_eq!(block.lane, agnt_core::transcript::ir::Lane::Marker("╎"));
-    assert_eq!(block.fill, agnt_core::transcript::ir::Fill::Full);
-    assert_eq!(block.source.plain_text(), "line1\n\nline2");
-
-    let ctx = FrameContext {
-        width: 80,
-        now_millis: 0,
-        cursor: false,
-        selected: false,
+        .ok_or("should have user entry")?;
+    let TranscriptEntry::Message(message) = entry else {
+        return Err("expected User message entry".into());
     };
-    let lines = crate::tui_renderer::layout(block, &ctx, &TuiTheme::default());
-    assert!(
-        lines.len() >= 2,
-        "fixture must render more than one row; got {}",
-        lines.len()
+    assert_eq!(message.role, MessageRole::User);
+    assert_eq!(message.markdown, "line1\n\nline2");
+
+    // -- Exec: the entry renders through the message widget at the pane width.
+    let width = 80usize;
+    let mut backend = crate::widgets::RatatuiBackend::new(80, 8);
+    let rows = agnt_render::RenderBackend::measure(&backend, entry, width);
+    agnt_render::RenderBackend::render(
+        &mut backend,
+        entry,
+        agnt_render::RowRect::new(0, width, rows),
+        &agnt_render::Theme::from(&TuiTheme::default()),
     );
-    for (idx, line) in lines.iter().enumerate() {
-        let rail = line.spans.first().ok_or("rail span must exist")?;
+
+    // -- Check: every rendered row carries the user rail at list-local 0.
+    assert!(
+        rows >= 2,
+        "fixture must render more than one row; got {rows}"
+    );
+    for y in 0..u16::try_from(rows).unwrap_or(u16::MAX) {
         assert_eq!(
-            rail.content.as_ref(),
-            "╎ ",
-            "row {idx} must carry the user rail at list-local 0"
+            backend.buffer()[(0, y)].symbol(),
+            "╎",
+            "row {y} must carry the user rail at list-local 0"
         );
     }
     Ok(())

@@ -21,7 +21,7 @@ impl CoreRuntime for McpToggleRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -97,7 +97,7 @@ impl CoreRuntime for FailingMcpToggleRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -177,7 +177,7 @@ impl CoreRuntime for SequencedMcpToggleRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,

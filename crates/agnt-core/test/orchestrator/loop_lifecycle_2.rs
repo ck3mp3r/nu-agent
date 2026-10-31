@@ -18,7 +18,7 @@ impl CoreRuntime for StartupHydrationRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -243,7 +243,7 @@ fn emit_batch_delivers_all_events() {
     // RED phase: write test that verifies emit_batch delivers all events
     struct BatchTestUi {
         event_tx: mpsc::Sender<OrchestratorEvent>,
-        events: Vec<UiEvent>,
+        events: Vec<SystemEvent>,
         emit_calls: usize,
         emit_batch_calls: usize,
     }
@@ -261,7 +261,7 @@ fn emit_batch_delivers_all_events() {
     }
 
     impl ProgressUi for BatchTestUi {
-        fn emit(&mut self, event: &UiEvent) {
+        fn emit(&mut self, event: &SystemEvent) {
             self.events.push(event.clone());
             self.emit_calls += 1;
         }
@@ -272,7 +272,7 @@ fn emit_batch_delivers_all_events() {
             false
         }
 
-        fn emit_batch(&mut self, events: &[UiEvent]) {
+        fn emit_batch(&mut self, events: &[SystemEvent]) {
             self.emit_batch_calls += 1;
             for event in events {
                 self.events.push(event.clone());
@@ -290,17 +290,17 @@ fn emit_batch_delivers_all_events() {
 
     // Create 5 test events
     let events = vec![
-        UiEvent::Tick,
-        UiEvent::LlmStarted,
-        UiEvent::AssistantMessage {
+        SystemEvent::Tick,
+        SystemEvent::InferenceStarted,
+        SystemEvent::InferenceChunk {
             delta: "hello".to_string(),
-            text: "hello".to_string(),
+            aggregated: "hello".to_string(),
         },
-        UiEvent::AssistantMessage {
-            delta: "world".to_string(),
-            text: "world".to_string(),
+        SystemEvent::InferenceChunk {
+            delta: " world".to_string(),
+            aggregated: "hello world".to_string(),
         },
-        UiEvent::Completed {
+        SystemEvent::TurnCompleted {
             tool_calls: 0,
             input_tokens: 0,
             output_tokens: 0,

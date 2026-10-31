@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::channel::{CancelTx, ChannelResult, UiEventTx};
 use super::events::CancelEvent;
-use crate::protocol::event::{PermissionRequestContext, UiEvent};
+use crate::protocol::event::PermissionRequestContext;
+use crate::protocol::events::{RequestId, SystemEvent};
 
 // region:    --- Support
 
@@ -27,7 +28,8 @@ fn next_request_id() -> String {
 // region:    --- Domain Methods
 
 impl UiEventTx {
-    /// Publish a `UiEvent::PermissionRequested` and return the generated request ID.
+    /// Publish a `SystemEvent::PermissionRequested` and return the generated
+    /// request ID.
     ///
     /// Generates a fresh request ID, sends the event with the unboxed context,
     /// and returns the ID on success. On a send failure the error is returned
@@ -35,9 +37,9 @@ impl UiEventTx {
     pub async fn request_permission(
         &self,
         context: PermissionRequestContext,
-    ) -> ChannelResult<String> {
-        let request_id = next_request_id();
-        self.send(UiEvent::PermissionRequested {
+    ) -> ChannelResult<RequestId> {
+        let request_id = RequestId::new(next_request_id());
+        self.send(SystemEvent::PermissionRequested {
             request_id: request_id.clone(),
             context,
         })

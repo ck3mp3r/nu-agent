@@ -17,6 +17,9 @@ mod cost;
 #[path = "chain/deny_dispatch.rs"]
 mod deny_dispatch;
 
+#[path = "chain/inference_chunks.rs"]
+mod inference_chunks;
+
 #[path = "chain/output_repetition.rs"]
 mod output_repetition;
 
@@ -47,9 +50,11 @@ use crate::hook::doom_loop::DoomLoopState;
 use crate::hook::output_repetition::RepetitionState;
 use crate::hook::permission_resolver::{InteractivePermissionResolver, PolicyPermissionResolver};
 use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
 use crate::session::CachedMemory;
+use crate::session::tool_status::ToolStatus;
 use crate::tools::handler::builtin_tool::BuiltinTool;
+use crate::transcript::ir;
 use crate::types::{Message, ToolName};
 use futures::StreamExt;
 use rig::test_utils::{MockCompletionModel, MockStreamEvent};

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use agnt_core::protocol::contracts::ProgressUi;
-use agnt_core::protocol::event::UiEvent;
+use agnt_core::protocol::events::SystemEvent;
 use agnt_core::renderer::UiRenderer;
 
 pub struct StderrProgressUi<R>
@@ -29,7 +29,7 @@ impl<R> ProgressUi for StderrProgressUi<R>
 where
     R: UiRenderer,
 {
-    fn emit(&mut self, event: &UiEvent) {
+    fn emit(&mut self, event: &SystemEvent) {
         self.renderer.emit(event);
     }
 

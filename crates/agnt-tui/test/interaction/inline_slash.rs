@@ -36,7 +36,7 @@ fn inline_slash_command_routing_table() {
     let changed =
         dispatch_terminal_event(&mut state, &TerminalEvent::Key(TerminalKey::Enter), None);
     assert!(changed);
-    assert!(state.transcript.blocks().is_empty());
+    assert!(state.transcript.entries().is_empty());
     assert_eq!(
         state.take_next_prompt_for_execution(),
         Some("/compact".to_string())

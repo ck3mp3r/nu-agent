@@ -1,9 +1,10 @@
 use std::time::{Duration, Instant};
 
+use crate::interaction::reducer::reduce;
 use crate::state::*;
-use agnt_core::bus::WarningEvent;
 use agnt_core::orchestrator::UiStateEvent;
 use agnt_core::protocol::contracts::McpUsabilityState;
+use agnt_core::protocol::events::{SystemEvent, SystemKind};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -108,10 +109,15 @@ fn status_message_kind_and_warning_events() -> Result<()> {
     // -- Setup & Fixtures
     let mut state = AppState::default();
 
-    // -- Exec & Check: a warning event sets the status line and warning kind.
-    assert!(state.status.reduce_warning_event(WarningEvent::Message {
-        message: "hello".to_string()
-    }));
+    // -- Exec & Check: a warning system message sets the line and warning kind.
+    assert!(reduce(
+        &mut state,
+        SystemEvent::SystemMessage {
+            kind: SystemKind::Warning,
+            text: "hello".to_string(),
+        },
+        None,
+    ));
     assert_eq!(state.status.message.status_line(), "hello");
     assert_eq!(state.status.message.kind(), StatusMessageKind::Warning);
 
@@ -124,11 +130,6 @@ fn status_message_kind_and_warning_events() -> Result<()> {
     state.status.message.clear();
     assert!(state.status.message.status_line().is_empty());
     assert_eq!(state.status.message.kind(), StatusMessageKind::Neutral);
-
-    // -- Exec & Check: a turn-error warning event reports false.
-    assert!(!state.status.reduce_warning_event(WarningEvent::TurnError {
-        message: "boom".to_string()
-    }));
     Ok(())
 }
 

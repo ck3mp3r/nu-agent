@@ -1,12 +1,9 @@
-//! Wrap-budget and margin-row utilities shared by the transcript renderer and
-//! the visual-row accounting in [`TranscriptStore`].
+//! Wrap-budget utilities shared by the transcript widgets and the visual-row
+//! accounting in [`TranscriptStore`].
 //!
-//! The renderer decides fills from the Block's own `fill` field; the
-//! row-accounting path ([`crate::tui_renderer::measure`]) counts the same
-//! margin rows so `total_visual_rows` matches the rendered output. The margin
-//! row *count* is owned by [`agnt_core::transcript::ir::Fill`]
-//! (`margin_row_count`); this module owns the shared wrap-width budget so the
-//! renderer and the accounting derive it identically.
+//! The widgets derive their wrap budget from
+//! [`content_wrap_width`], and the height index measures those same widgets, so
+//! the measured row count and the painted row count agree by construction.
 
 /// Right margin kept clear inside every transcript entry: the wrap budget
 /// stops this many columns short of the list area's right edge, so no rendered

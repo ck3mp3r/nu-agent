@@ -7,21 +7,21 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::bus::{Bus, CompactionRx, UiEventRx};
+use crate::bus::{BroadcastRx, Bus, CompactionRx, UiEventRx};
 use crate::compaction::CompactionParams;
 use crate::config::Config;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::SystemEvent;
 use rig::DynModel;
 use rig::operation::Completion;
 use rig::test_utils::MockCompletionModel;
 
 // ---------------------------------------------------------------------------
-// BusEventCollector — collects UiEvents from the shared bus during a turn
+// BusEventCollector — collects SystemEvents from the shared bus during a turn
 // ---------------------------------------------------------------------------
 
 /// Collects lifecycle events published on a `Bus` during a turn and converts
-/// them to `UiEvent` at the boundary. Since core no longer threads a
+/// them to `SystemEvent` at the boundary. Since core no longer threads a
 /// `ProgressUi` through the turn, tests observe events by subscribing to the
 /// same channels the TUI/TTY renderers subscribe to.
 pub(super) struct BusEventCollector {
@@ -37,18 +37,10 @@ impl BusEventCollector {
         }
     }
 
-    fn drain_channel<T>(rx: &mut crate::bus::BroadcastRx<T>, events: &mut Vec<UiEvent>)
-    where
-        Option<UiEvent>: From<T>,
-        T: Clone + Send + 'static,
-    {
+    fn drain_channel(rx: &mut BroadcastRx<SystemEvent>, events: &mut Vec<SystemEvent>) {
         loop {
             match rx.try_recv() {
-                Ok(event) => {
-                    if let Some(e) = Option::<UiEvent>::from(event) {
-                        events.push(e);
-                    }
-                }
+                Ok(event) => events.push(event),
                 Err(crate::bus::TryRecvError::Empty) => break,
                 Err(crate::bus::TryRecvError::Lagged(_)) => continue,
                 Err(crate::bus::TryRecvError::Closed) => break,
@@ -56,9 +48,9 @@ impl BusEventCollector {
         }
     }
 
-    /// Drain all subscribed channels, converting events to `UiEvent` in
+    /// Drain all subscribed channels, converting events to `SystemEvent` in
     /// insertion order (ui_event, compaction).
-    pub(super) fn drain(&mut self) -> Vec<UiEvent> {
+    pub(super) fn drain(&mut self) -> Vec<SystemEvent> {
         let mut events = Vec::new();
         Self::drain_channel(&mut self.ui_event_rx, &mut events);
         Self::drain_channel(&mut self.compaction_rx, &mut events);

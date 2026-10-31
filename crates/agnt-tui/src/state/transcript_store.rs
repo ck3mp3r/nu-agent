@@ -1,103 +1,140 @@
-//! Transcript domain store: the block list, the streaming cursors, the
-//! measure()-based height index, and hydration.
+//! Transcript domain store: the entry list, the streaming cursors, and the
+//! measure()-based height index.
 //!
 //! The streaming cursors ([`TranscriptStore::assistant_stream_start`] and
 //! [`TranscriptStore::summary_stream_start`]) are indices into
-//! [`TranscriptStore::blocks`], so they live here: every block push can
+//! [`TranscriptStore::entries`], so they live here: every entry push can
 //! trigger cap eviction, and eviction shifts both cursors in one place
 //! (see [`TranscriptStore::shift_indices_after_eviction`]). The LLM,
 //! compaction, and turn domain reducers decide when the cursors are set,
 //! truncated, and cleared; the store owns their storage and the eviction
 //! bookkeeping.
+//!
+//! `push_entry` is the store's sole push API. The render loop reads entries
+//! directly: the height index measures each entry through the TUI backend, and
+//! [`TranscriptStore::frame_plan`] hands the render layer the entry rows it
+//! paints.
 
-use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::transcript::ir::{Block, BlockSource, Fill, MessageRole, NoticeKind, ToolName};
-use agnt_core::transcript::items::{Message, Notice, Tool};
-use agnt_core::transcript::renderer::{ItemStatus, Renderable};
+use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_core::transcript::ir::Display;
+use agnt_render::RenderBackend;
+use agnt_render::backend::RowRect;
+use agnt_render::planner::{EntryFamily, FramePlan, LayoutPlanner, PlannedEntry};
 
-use super::{CompactionState, CompactionStatus, StatusState, ToolState};
-use crate::rendering::theme::TuiTheme;
-use crate::state::tool_parsing::{extract_tool_name, parse_persisted_tool_status_line};
+use crate::widgets::RatatuiBackend;
 
-const MAX_TRANSCRIPT_BLOCKS: usize = 2000;
+const MAX_TRANSCRIPT_ENTRIES: usize = 2000;
 
-/// Per-block row count, rebuilt from `measure(block, width)`.
+/// One entry's rows in the frame: the separator rows before it and the total
+/// rows it spans at the indexed width.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HeightEntry {
-    /// Number of visual rows the block renders to at the indexed width.
+    /// Separator rows between the previous entry and this one.
+    gap: usize,
+    /// Total rows this entry spans at the indexed width: `gap` plus the rows
+    /// its own content renders to plus the padding rows the frame keeps inside
+    /// its rect.
     rows: usize,
+    /// Realized top padding: blank rows between the rect's first row and the
+    /// entry's first content row.
+    padding_top: usize,
 }
 
-/// Cumulative row offsets over the block list, for O(log n) viewport-window
-/// queries. Maintained incrementally: `content_rows` caches each block's
-/// measured row count at the indexed width, and [`HeightIndex::derive`] walks
-/// the block list through the separator state machine to refresh the offsets.
-/// A mutation measures only the block it touches — never the whole list.
+/// Cached per-entry inputs to the gap walk: the measured content rows, the
+/// entry family, and the entry's own padding. Derived from the entry's data
+/// once per measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EntryMetrics {
+    content_rows: usize,
+    family: EntryFamily,
+    padding: (usize, usize),
+}
+
+/// Cumulative row offsets over the entry list, for O(log n) viewport-window
+/// queries. Maintained incrementally: `metrics` caches each entry's measured
+/// row count at the indexed width, and [`HeightIndex::derive`] walks the entry
+/// list through the planner's gap rules to refresh the offsets. A mutation
+/// measures only the entry it touches — never the whole list.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct HeightIndex {
-    /// Cumulative start row for block i is `starts[i]`; block i spans
+    /// Cumulative start row for entry i is `starts[i]`; entry i spans
     /// `starts[i]..starts[i] + entries[i].rows`.
     starts: Vec<usize>,
     entries: Vec<HeightEntry>,
     total_rows: usize,
-    /// Per-block content rows at the indexed width, parallel to the block
-    /// list. Holds `measure(block, width)` only — separator rows depend on the
+    /// Per-entry measurement inputs at the indexed width, parallel to the
+    /// entry list. Holds content rows only — separator rows depend on the
     /// neighbour pair, so [`HeightIndex::derive`] re-applies them on every
     /// walk.
-    content_rows: Vec<usize>,
+    metrics: Vec<EntryMetrics>,
 }
 
 impl HeightIndex {
-    /// Wholesale rebuild: measure every block at `width`, then derive the
-    /// offsets from the fresh cache. One theme serves the whole walk.
+    /// Wholesale rebuild: measure every entry at `width`, then derive the
+    /// offsets from the fresh cache.
     ///
-    /// The `TuiTheme::default()` argument is inert under the theme-blind
-    /// measure contract ([`crate::tui_renderer::measure`]): measurement reads
-    /// zero theme data, so any theme yields the same row counts. It must stay
-    /// inert — a theme-dependent measure would make this index wrong for every
-    /// theme but the default.
-    fn rebuild(blocks: &[Block], width: usize) -> Self {
-        let theme = TuiTheme::default();
+    /// Measurement goes through the backend the render loop paints with, so a
+    /// measured row count and a painted row count cannot drift apart. The
+    /// backend's measure reads no theme data by construction, so any theme
+    /// yields the same row counts.
+    fn rebuild(entries: &[TranscriptEntry], width: usize) -> Self {
         let mut index = Self {
-            content_rows: blocks
+            metrics: entries
                 .iter()
-                .map(|block| crate::tui_renderer::measure(block, width, &theme))
+                .map(|entry| entry_metrics(entry, width))
                 .collect(),
             ..Self::default()
         };
-        index.derive(blocks);
+        index.derive();
         index
     }
 
-    /// Refresh `starts`, `entries`, and `total_rows` from the cached content
-    /// rows by walking the block list through the separator state machine.
+    /// Refresh `starts`, `entries`, and `total_rows` from the cached entry
+    /// metrics by walking the entry list through the planner's gap rules.
     /// O(n) enum-match walk — no markdown projection, no measurement.
     ///
     /// Separator rows are a rendering concern (see
-    /// [`crate::state::spacer::SpacerStateMachine`]); the store holds content
-    /// blocks only. Each block's row count therefore includes the separator
-    /// rows the renderer emits *before* it, so `total_visual_rows` and
-    /// `visible_window` stay in lockstep with the rendered output. The leading
-    /// separator rows belong to the incoming block's span, matching the render
-    /// loop's emission order. After the last block, the trailing separator rows
-    /// (a user turn closes with one) are added to `total_rows` so the total
-    /// still matches the rendered output (task 670e0292).
-    fn derive(&mut self, blocks: &[Block]) {
+    /// [`agnt_render::LayoutPlanner`]); the store holds content entries only.
+    /// Each entry's span therefore includes the separator rows the renderer
+    /// emits *before* it and the padding rows its own rect carries, so
+    /// `total_visual_rows` and `visible_window` stay in lockstep with the
+    /// rendered output. The leading separator rows belong to the incoming
+    /// entry's span, matching the render loop's emission order. After the last
+    /// entry, the trailing separator rows (a user turn closes with one) are
+    /// added to `total_rows` so the total still matches the rendered output
+    /// (task 670e0292).
+    ///
+    /// Padding is clipped at the frame edges exactly as the planner clips it:
+    /// the first entry keeps no top padding and the last keeps no bottom
+    /// padding, so no outer margin appears and every neighbouring pair totals
+    /// the landed base spacing.
+    fn derive(&mut self) {
         self.starts.clear();
         self.entries.clear();
         self.total_rows = 0;
-        let mut sm = crate::state::spacer::SpacerStateMachine::default();
-        for (block, &content_rows) in blocks.iter().zip(&self.content_rows) {
+        let last_index = self.metrics.len().saturating_sub(1);
+        let mut prev: Option<(EntryFamily, usize)> = None;
+        for (index, metrics) in self.metrics.iter().enumerate() {
             self.starts.push(self.total_rows);
-            let separators = sm.separators_for(block.source.family(), block.has_filled_content());
-            let rows = separators + content_rows;
-            self.entries.push(HeightEntry { rows });
+            let (top, bottom) = metrics.padding;
+            let padding_top = if prev.is_some() { top } else { 0 };
+            let padding_bottom = if index == last_index { 0 } else { bottom };
+            let separators = prev.map_or(0, |(prev_family, prev_bottom)| {
+                LayoutPlanner::gap_between(prev_family, metrics.family, prev_bottom, padding_top)
+            });
+            let rows = separators + metrics.content_rows + padding_top + padding_bottom;
+            self.entries.push(HeightEntry {
+                gap: separators,
+                rows,
+                padding_top,
+            });
             self.total_rows += rows;
+            prev = Some((metrics.family, padding_bottom));
         }
-        self.total_rows += sm.trailing_separators();
+        self.total_rows += prev.map_or(0, |(family, _)| LayoutPlanner::trailing_gap(family));
     }
 
-    /// Binary-search the block index range covering visual rows
+    /// Binary-search the entry index range covering visual rows
     /// `offset..offset + viewport_height`. Returns `(first, last)` as an
     /// exclusive-end range; both are 0 when nothing is visible.
     fn visible_window(&self, offset: usize, viewport_height: usize) -> (usize, usize) {
@@ -105,110 +142,101 @@ impl HeightIndex {
             return (0, 0);
         }
         let end_row = offset.saturating_add(viewport_height);
-        // First block whose end row extends past `offset` — earlier blocks
+        // First entry whose end row extends past `offset` — earlier entries
         // end at or above the viewport top and are scrolled out.
         let first = self
             .starts
             .partition_point(|&start| start <= offset)
             .saturating_sub(1);
-        // First block that starts at or past `end_row` — it and everything
+        // First entry that starts at or past `end_row` — it and everything
         // after are below the viewport.
         let last = self.starts.partition_point(|&start| start < end_row);
         (first, last)
     }
 }
 
-/// Transcript block storage shared by every domain reducer. Every mutation
-/// keeps the height index in lockstep (measuring only the block it touches);
+/// Transcript entry storage shared by every domain reducer. Every mutation
+/// keeps the height index in lockstep (measuring only the entry it touches);
 /// eviction shifts the streaming cursors.
 ///
-/// The height index agrees with the rendered output by construction because
-/// measurement reads zero theme data ([`crate::tui_renderer::measure`]): the
-/// index is built with `TuiTheme::default()` and still matches what any theme
-/// renders, so a live theme switch cannot desynchronise scroll math.
+/// The height index agrees with the rendered output by construction because it
+/// measures through the same backend the pane paints with, and that measure
+/// reads no theme data: a live theme switch cannot desynchronise scroll math.
 #[derive(Debug, Clone, Default)]
 pub struct TranscriptStore {
-    pub(crate) blocks: Vec<Block>,
+    pub(crate) entries: Vec<TranscriptEntry>,
     pub(crate) height_index: HeightIndex,
     pub(crate) height_index_width: Option<usize>,
     pub(crate) assistant_stream_start: Option<usize>,
     pub(crate) summary_stream_start: Option<usize>,
+    /// Lifetime count of entries dropped by the transcript cap. The reducer
+    /// takes the delta across one event to shift the domain `block_index`
+    /// bookkeeping, so no push site has to thread an evicted out-param.
+    evicted_total: usize,
 }
 
 impl TranscriptStore {
-    /// Push a content block. The store holds content only — separator rows
-    /// are a rendering concern decided by
-    /// [`crate::state::spacer::SpacerStateMachine`] at render time, not
-    /// insertion time. Returns the number of blocks evicted by the cap
-    /// enforcement (0 when nothing was evicted) so the caller can shift its
-    /// `block_index` bookkeeping by that amount.
-    pub fn push_block(&mut self, block: Block) -> usize {
-        self.blocks.push(block);
-        self.cache_pushed_block();
-        self.enforce_transcript_cap()
-    }
-
-    /// Insert a content block at `index`, shifting every later block up by
-    /// one. Used when a block must land adjacent to an existing one (a tool
-    /// preview block directly after its Tool block) rather than at the tail.
-    /// Returns the number of blocks evicted by the cap enforcement (0 when
+    /// Push one entry. This is the store's sole push API. The store holds
+    /// content only — separator rows are a rendering concern decided by
+    /// [`agnt_render::LayoutPlanner`] at render time, not insertion time.
+    /// Returns the number of entries evicted by the cap enforcement (0 when
     /// nothing was evicted) so the caller can shift its `block_index`
     /// bookkeeping by that amount.
-    pub fn insert_block_at(&mut self, index: usize, block: Block) -> usize {
-        let index = index.min(self.blocks.len());
-        self.blocks.insert(index, block);
-        self.cache_inserted_block(index);
+    pub fn push_entry(&mut self, entry: TranscriptEntry) -> usize {
+        self.entries.push(entry);
+        self.cache_pushed_entry();
         self.enforce_transcript_cap()
     }
 
-    /// Measure the block just pushed and append its content rows to the cache,
-    /// then re-derive the offsets. No-op when the index is stale — the next
+    /// Set the preview on the tool entry at `index` in place. The entry keeps
+    /// its identity, so no companion entry is pushed. Returns whether the
+    /// entry is a tool entry.
+    pub(crate) fn set_tool_preview_at(&mut self, index: usize, preview: Display) -> bool {
+        let Some(TranscriptEntry::Tool(tool)) = self.entries.get_mut(index) else {
+            return false;
+        };
+        tool.preview = Some(preview);
+        self.invalidate_height_index();
+        true
+    }
+
+    /// Set the completion display on the tool entry at `index` in place. The
+    /// entry keeps its identity, so no companion entry is pushed; the in-place
+    /// mutation invalidates the cached rows, exactly as the preview path does.
+    /// Returns whether the entry is a tool entry.
+    pub(crate) fn set_tool_result_at(&mut self, index: usize, result: Display) -> bool {
+        let Some(TranscriptEntry::Tool(tool)) = self.entries.get_mut(index) else {
+            return false;
+        };
+        tool.result = Some(result);
+        self.invalidate_height_index();
+        true
+    }
+
+    /// Measure the entry just pushed, append its metrics to the cache, then
+    /// re-derive the offsets. No-op when the index is stale — the next
     /// `rebuild_height_index` re-measures everything.
-    ///
-    /// The `TuiTheme::default()` argument is inert under the theme-blind
-    /// measure contract ([`crate::tui_renderer::measure`]) and must remain so:
-    /// the cached rows are shared by every theme.
-    fn cache_pushed_block(&mut self) {
+    fn cache_pushed_entry(&mut self) {
         let Some(width) = self.height_index_width else {
             return;
         };
-        let Some(block) = self.blocks.last() else {
+        let Some(entry) = self.entries.last() else {
             return;
         };
-        let rows = crate::tui_renderer::measure(block, width, &TuiTheme::default());
-        self.height_index.content_rows.push(rows);
-        self.height_index.derive(&self.blocks);
+        self.height_index.metrics.push(entry_metrics(entry, width));
+        self.height_index.derive();
     }
 
-    /// Measure the block just inserted at `index` and splice its content rows
-    /// into the cache, then re-derive the offsets. No-op when the index is
-    /// stale.
-    ///
-    /// The `TuiTheme::default()` argument is inert under the theme-blind
-    /// measure contract ([`crate::tui_renderer::measure`]) and must remain so:
-    /// the cached rows are shared by every theme.
-    fn cache_inserted_block(&mut self, index: usize) {
-        let Some(width) = self.height_index_width else {
-            return;
-        };
-        let Some(block) = self.blocks.get(index) else {
-            return;
-        };
-        let rows = crate::tui_renderer::measure(block, width, &TuiTheme::default());
-        let index = index.min(self.height_index.content_rows.len());
-        self.height_index.content_rows.insert(index, rows);
-        self.height_index.derive(&self.blocks);
-    }
-
-    /// Rebuild the height index from `measure(block, width)` for every block.
+    /// Rebuild the height index from the backend's `measure(entry, width)` for
+    /// every entry.
     pub(crate) fn rebuild_height_index(&mut self, width: usize) {
-        self.height_index = HeightIndex::rebuild(&self.blocks, width);
+        self.height_index = HeightIndex::rebuild(&self.entries, width);
         self.height_index_width = Some(width);
     }
 
     /// Mark the height index stale — the next `rebuild_height_index` must
-    /// re-measure. Called when the width changes or content mutates outside
-    /// `push_block`/`truncate` (resize).
+    /// re-measure. Called when the width changes or an entry mutates in place
+    /// (preview) or the list changes outside `push_entry`/`truncate` (resize).
     pub(crate) fn invalidate_height_index(&mut self) {
         self.height_index_width = None;
     }
@@ -216,36 +244,81 @@ impl TranscriptStore {
     /// Whether the index is valid for `width`.
     pub(crate) fn height_index_valid_for(&self, width: usize) -> bool {
         self.height_index_width == Some(width)
-            && self.height_index.entries.len() == self.blocks.len()
+            && self.height_index.entries.len() == self.entries.len()
     }
 
-    /// Cumulative start row of block `index` in the height index.
+    /// Cumulative start row of entry `index` in the height index. The row
+    /// includes the separator rows the entry's own span carries.
     pub(crate) fn start_row_of(&self, index: usize) -> usize {
         self.height_index.starts.get(index).copied().unwrap_or(0)
     }
 
-    /// Total visual rows across all blocks at the indexed width.
+    /// Total visual rows across all entries at the indexed width.
     pub(crate) fn total_visual_rows(&self) -> usize {
         self.height_index.total_rows
     }
 
-    /// Block index range covering visual rows `offset..offset + viewport`
+    /// Entry index range covering visual rows `offset..offset + viewport`
     /// (exclusive end), via binary search over the height index.
     pub(crate) fn visible_window(&self, offset: usize, viewport: usize) -> (usize, usize) {
         self.height_index.visible_window(offset, viewport)
     }
 
-    /// Enforce the transcript block cap: drain the oldest overflow blocks and
+    /// The frame plan for entries `first..last`: each entry's family, the gap
+    /// rows before it, and its absolute row rect, from the cached
+    /// measurements. `total_rows` is the whole transcript's row count — every
+    /// rect is an absolute frame row, so a window's plan and the scroll math
+    /// cannot disagree.
+    pub(crate) fn frame_plan(&self, first: usize, last: usize, width: usize) -> FramePlan {
+        let end = last.min(self.entries.len());
+        let start = first.min(end);
+        let mut planned = Vec::with_capacity(end - start);
+        for index in start..end {
+            let Some(height) = self.height_index.entries.get(index) else {
+                break;
+            };
+            let Some(metrics) = self.height_index.metrics.get(index) else {
+                break;
+            };
+            planned.push(PlannedEntry {
+                index,
+                family: metrics.family,
+                gap_before: height.gap,
+                rect: RowRect::new(
+                    self.start_row_of(index) + height.gap,
+                    width,
+                    height.rows.saturating_sub(height.gap),
+                )
+                .with_content_offset(height.padding_top),
+            });
+        }
+        let trailing_gap = if end == self.entries.len() {
+            self.height_index
+                .metrics
+                .last()
+                .map_or(0, |metrics| LayoutPlanner::trailing_gap(metrics.family))
+        } else {
+            0
+        };
+        FramePlan {
+            entries: planned,
+            trailing_gap,
+            total_rows: self.height_index.total_rows,
+        }
+    }
+
+    /// Enforce the transcript entry cap: drain the oldest overflow entries and
     /// shift the streaming cursors. Returns the evicted count.
     pub(crate) fn enforce_transcript_cap(&mut self) -> usize {
-        let overflow = self.blocks.len().saturating_sub(MAX_TRANSCRIPT_BLOCKS);
+        let overflow = self.entries.len().saturating_sub(MAX_TRANSCRIPT_ENTRIES);
         if overflow > 0 {
-            self.blocks.drain(..overflow);
+            self.entries.drain(..overflow);
+            self.evicted_total = self.evicted_total.saturating_add(overflow);
             self.shift_indices_after_eviction(overflow);
             if self.height_index_width.is_some() {
-                let drained = overflow.min(self.height_index.content_rows.len());
-                self.height_index.content_rows.drain(..drained);
-                self.height_index.derive(&self.blocks);
+                let drained = overflow.min(self.height_index.metrics.len());
+                self.height_index.metrics.drain(..drained);
+                self.height_index.derive();
             }
         }
         overflow
@@ -274,220 +347,52 @@ impl TranscriptStore {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.blocks.clear();
+        self.entries.clear();
         self.height_index = HeightIndex::default();
         self.height_index_width = None;
     }
 
     // region:    --- Accessors
 
-    pub(crate) fn blocks(&self) -> &[Block] {
-        &self.blocks
+    pub(crate) fn entries(&self) -> &[TranscriptEntry] {
+        &self.entries
     }
 
-    pub(crate) fn blocks_mut(&mut self) -> &mut [Block] {
-        &mut self.blocks
+    pub(crate) fn entries_mut(&mut self) -> &mut [TranscriptEntry] {
+        &mut self.entries
+    }
+
+    /// Lifetime count of entries dropped by the transcript cap.
+    pub(crate) fn evicted_total(&self) -> usize {
+        self.evicted_total
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.blocks.len()
+        self.entries.len()
     }
 
     pub(crate) fn truncate(&mut self, len: usize) {
-        self.blocks.truncate(len);
+        self.entries.truncate(len);
         if self.height_index_width.is_some() {
-            self.height_index.content_rows.truncate(len);
-            self.height_index.derive(&self.blocks);
+            self.height_index.metrics.truncate(len);
+            self.height_index.derive();
         }
     }
 
     // endregion: --- Accessors
-
-    // region:    --- Hydration
-
-    pub(crate) fn hydrate_from_messages(
-        &mut self,
-        messages: impl IntoIterator<Item = UiMessageSnapshot>,
-        last_total_tokens: Option<u64>,
-        status: &mut StatusState,
-        tool: &mut ToolState,
-        compaction: &mut CompactionState,
-    ) {
-        for message in messages {
-            if let Some(usage) = message.usage() {
-                status.tokens.hydrate_usage(
-                    usage.input_tokens(),
-                    usage.output_tokens(),
-                    usage.total_tokens(),
-                );
-            }
-            // The resolver emits a persisted result display as a STANDALONE
-            // "tool_display" snapshot (empty content, no tool fields) that
-            // follows the tool call's own snapshot; attach it to the most
-            // recent Tool block as its preview. Read immutably so the
-            // content borrow below stays live.
-            let preview_display = message.tool_display().cloned();
-            let message_role = match message.role() {
-                "user" => Some(MessageRole::User),
-                "assistant" => Some(MessageRole::Assistant),
-                _ => None,
-            };
-            let message_content = message.content();
-
-            if message.role() == "compaction" {
-                let mut hydration_evicted = 0usize;
-                compaction.start_block(self, "history", &mut hydration_evicted);
-                compaction.finish_block("history", CompactionStatus::Done);
-
-                if !message_content.trim().is_empty() {
-                    let msg = Message {
-                        role: MessageRole::Assistant,
-                        markdown: crate::markdown::unwrap_single_fenced_block(message_content),
-                    };
-                    // Hydration rebuilds domain state from scratch; the
-                    // evicted count carries no information for it.
-                    let _ = self.push_block(Block {
-                        source: msg.source(),
-                        lane: msg.lane(),
-                        fill: msg.fill(),
-                        status: None,
-                    });
-                }
-                continue;
-            }
-
-            // A standalone "tool_display" snapshot (empty content, no tool
-            // fields) hydrates as its own ToolDisplay block directly after the
-            // most recent Tool block — the same two-block shape the live
-            // preview path produces. The empty-content guard below would
-            // otherwise drop it.
-            if message.role() == "tool_display" {
-                if let Some(display) = preview_display {
-                    let display = crate::state::tool::preview_to_display(&display);
-                    let tool_index = self
-                        .blocks
-                        .iter()
-                        .rposition(|block| matches!(block.source, BlockSource::Tool { .. }));
-                    let lines = display.project_lines();
-                    let fill = Fill::from_preview(&Some(display));
-                    let insert_at = tool_index
-                        .map(|index| index + 1)
-                        .unwrap_or(self.blocks.len());
-                    // Hydration rebuilds domain state from scratch; the
-                    // evicted count carries no information for it.
-                    let _ = self.insert_block_at(
-                        insert_at,
-                        Block {
-                            source: BlockSource::ToolDisplay { lines },
-                            lane: agnt_core::transcript::ir::Lane::Blank,
-                            fill,
-                            status: None,
-                        },
-                    );
-                }
-                continue;
-            }
-
-            if message_content.trim().is_empty() {
-                continue;
-            }
-            if let Some(role) = message_role {
-                // Prose hydrates as one whole block so multi-line markdown
-                // (tables, lists) projects intact and the user rail stays
-                // contiguous on every row.
-                let msg = Message {
-                    role,
-                    markdown: message_content.trim().to_string(),
-                };
-                let _ = self.push_block(Block {
-                    source: msg.source(),
-                    lane: msg.lane(),
-                    fill: msg.fill(),
-                    status: None,
-                });
-                continue;
-            }
-
-            if message.role() == "tool" {
-                let persisted = message_content.trim();
-                // Resolve the (name, arguments, success) triple for the tool
-                // call: explicit tool fields first, then the persisted
-                // status-line format `tool[name] → args · done`.
-                let resolved = message
-                    .tool_arguments()
-                    .map(|arguments| {
-                        (
-                            message
-                                .tool_name()
-                                .unwrap_or_else(|| extract_tool_name(persisted))
-                                .to_string(),
-                            arguments.to_string(),
-                            message.tool_success(),
-                        )
-                    })
-                    .or_else(|| {
-                        parse_persisted_tool_status_line(persisted).map(
-                            |(name, arguments, success)| {
-                                (name.to_string(), arguments.to_string(), Some(success))
-                            },
-                        )
-                    });
-                let Some((name, arguments, success)) = resolved else {
-                    continue;
-                };
-                let status = if message.tool_not_run() {
-                    // A call the turn never ran renders the ⊘ class, whatever
-                    // the persisted verdict flag says.
-                    ItemStatus::Cancelled
-                } else {
-                    match success {
-                        Some(true) => ItemStatus::Done,
-                        Some(false) => ItemStatus::Failed,
-                        None => ItemStatus::Unknown,
-                    }
-                };
-                let item = Tool {
-                    name: ToolName(name.clone()),
-                    call: agnt_core::tools::handler::builtin_tool::call_line_render_for(
-                        &name, &arguments,
-                    ),
-                    preview: None,
-                    result: None,
-                    status,
-                };
-                // Hydration rebuilds domain state from scratch; this push's
-                // eviction already happened before the fresh index below is
-                // recorded, so the count needs no propagation.
-                let _ = self.push_block(Block {
-                    source: item.source(),
-                    lane: item.lane(),
-                    fill: item.fill(),
-                    status: Some(status),
-                });
-                // The fresh hydrated index is relative to the CURRENT store
-                // (post-eviction); no shift is needed for it.
-                tool.record_hydrated_call(&name, &arguments, self.len().saturating_sub(1), success);
-                continue;
-            }
-
-            // Fallback: the old store mapped unknown roles to a system line
-            // per message line; preserve that via a System notice.
-            let notice = Notice {
-                kind: NoticeKind::System,
-                text: message_content.trim().to_string(),
-            };
-            let _ = self.push_block(Block {
-                source: notice.source(),
-                lane: notice.lane(),
-                fill: notice.fill(),
-                status: None,
-            });
-        }
-
-        if let Some(tokens) = last_total_tokens {
-            status.tokens.hydrate_latest_total_tokens(tokens);
-        }
-    }
-
-    // endregion: --- Hydration
 }
+
+// region:    --- Support
+
+/// Measure one entry through the backend the render loop paints with, and
+/// cache the separator-walk inputs.
+fn entry_metrics(entry: &TranscriptEntry, width: usize) -> EntryMetrics {
+    let probe = RatatuiBackend::new(u16::try_from(width).unwrap_or(u16::MAX), 0);
+    EntryMetrics {
+        content_rows: probe.measure(entry, width),
+        family: EntryFamily::of(entry),
+        padding: entry.padding(),
+    }
+}
+
+// endregion: --- Support

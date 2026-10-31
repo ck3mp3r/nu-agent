@@ -25,17 +25,19 @@ use rig::message::Message;
 use rig::wasm_compat::WasmCompatSend;
 use rig_memory::CompactReason;
 
-use crate::bus::{Bus, CancelEvent, CancelRx, CompactionEvent, TryRecvError};
+use crate::bus::{Bus, CancelEvent, CancelRx, TryRecvError};
 use crate::config::defaults;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::turn::token_estimate::estimate_token_count;
 use crate::llm::{PricedOutcome, PricingSkip, computed_cost};
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
 use crate::protocol::tool_args::CallLine;
+use crate::session::tool_status::{ToolStatus, status_of_result};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::tools::handler::tool_display_from_arguments;
+use crate::transcript::ir;
 use crate::types::ToolName;
 
 use super::agent_hook::HookState;
@@ -83,13 +85,17 @@ pub(crate) enum NotRunOutcome<'a> {
 }
 
 /// How the not-run emitter publishes `ToolStarted`.
+///
+/// Both variants carry the call line: the events after `ToolStarted` are
+/// `SystemEvent`s that name the full call, and the caller's line is the only
+/// value the emitter cannot derive.
 pub(crate) enum NotRunStart {
     /// Publish `ToolStarted` with this call line.
     Publish(CallLine),
     /// The caller already published `ToolStarted` — the deny arm sends it
     /// before permission resolution so the permission card anchors to the
     /// call.
-    AlreadyPublished,
+    AlreadyPublished(CallLine),
 }
 
 /// The call a not-run emission publishes.
@@ -133,22 +139,27 @@ pub(crate) async fn emit_not_run_dispatch(
         arguments,
         start,
     } = call;
-    if let NotRunStart::Publish(call_line) = start {
+    let (publish_start, call_line) = match start {
+        NotRunStart::Publish(call_line) => (true, call_line),
+        NotRunStart::AlreadyPublished(call_line) => (false, call_line),
+    };
+    let call = ToolCall::new(
+        ir::ToolName(tool_name.to_string()),
+        source,
+        arguments,
+        call_line,
+    );
+    if publish_start {
         let _ = bus
             .ui_event()
-            .send(UiEvent::ToolStarted {
-                name: tool_name.to_string(),
-                source: source.to_string(),
-                arguments: arguments.to_string(),
-                call_line,
-            })
+            .send(SystemEvent::ToolStarted { call: call.clone() })
             .await;
     }
     if preview && let Some(display) = tool_display_from_arguments(tool_name, arguments, cwd) {
         let _ = bus
             .ui_event()
-            .send(UiEvent::ToolPreview {
-                tool_key: format!("{tool_name}\n{arguments}"),
+            .send(SystemEvent::PreviewRequested {
+                call: call.clone(),
                 display,
             })
             .await;
@@ -159,15 +170,18 @@ pub(crate) async fn emit_not_run_dispatch(
     };
     let _ = bus
         .ui_event()
-        .send(UiEvent::ToolCompleted {
-            name: tool_name.to_string(),
-            source: source.to_string(),
-            arguments: arguments.to_string(),
-            success: false,
-            result: String::new(),
-            display: None,
-            error_kind: Some(error_kind.to_string()),
-            message: Some(message.to_string()),
+        .send(SystemEvent::ToolCompleted {
+            call,
+            outcome: ToolOutcome {
+                success: false,
+                // Both arms are the one non-completed class: the call never
+                // reached a result. The kind and the message stay content.
+                status: ToolStatus::Cancelled,
+                result: String::new(),
+                display: None,
+                error_kind: Some(error_kind.to_string()),
+                message: Some(message.to_string()),
+            },
         })
         .await;
 }
@@ -422,7 +436,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             if cancelled {
                 return CompletionCallAction::stop("Cancelled by user");
             }
-            let _ = bus.ui_event().send(UiEvent::LlmStarted).await;
+            let _ = bus.ui_event().send(SystemEvent::InferenceStarted).await;
 
             // Compaction decision: schedule a compaction when the session's
             // current conversation is over the threshold. The hook never patches
@@ -449,7 +463,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         let cancelled = self.is_cancelled();
         let bus = self.bus.clone();
         let delta = event.delta.to_string();
-        let text = event.aggregated.to_string();
+        let aggregated = event.aggregated.to_string();
         // Intra-stream repetition detection: check the full aggregated stream
         // text (not individual deltas — streaming servers tokenize differently
         // each pass, so delta chunks are never reliably identical, but the
@@ -484,7 +498,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             }
             let _ = bus
                 .ui_event()
-                .send(UiEvent::AssistantMessage { delta, text })
+                .send(SystemEvent::InferenceChunk { delta, aggregated })
                 .await;
             ObservationAction::continue_run()
         }
@@ -566,16 +580,23 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 return action;
             }
 
+            // The call line comes from the render registry. A tool without a
+            // registered render fn — a dynamic or MCP tool, or a builtin whose
+            // fn was never registered — takes the documented fallback
+            // [`call_line_render_for`](crate::tools::handler::builtin_tool::call_line_render_for):
+            // the builtin's tailored render when the name parses as a builtin
+            // kind, otherwise the generic JSON summary
+            // [`CallLine::from_json_summary`](crate::protocol::tool_args::CallLine::from_json_summary)
+            // of the raw arguments. The fallback is display-only: the TUI
+            // matches the pending call by `ToolCallId`, never by this text.
             let call_line = self.render_registry.render(&tool_name, &args);
-            let _ = bus
-                .ui_event()
-                .send(UiEvent::ToolStarted {
-                    name: tool_name.clone(),
-                    source: source.clone(),
-                    arguments: args.clone(),
-                    call_line,
-                })
-                .await;
+            let call = ToolCall::new(
+                ir::ToolName(tool_name.clone()),
+                source.clone(),
+                args.clone(),
+                call_line.clone(),
+            );
+            let _ = bus.ui_event().send(SystemEvent::ToolStarted { call }).await;
 
             let decision = permission
                 .resolve(&tool_name, &args, tool_call_id, &bus)
@@ -604,7 +625,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                             tool_name: tool_name.as_str(),
                             source: source.as_str(),
                             arguments: args.as_str(),
-                            start: NotRunStart::AlreadyPublished,
+                            start: NotRunStart::AlreadyPublished(call_line),
                         },
                         NotRunOutcome::Denied { reason: &reason },
                         preview,
@@ -682,9 +703,14 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
 
                 // 3. Classify error kind from raw result
                 let error_kind = result.error().map(|e| e.kind().as_str().to_string());
+                // The structural status, built once from the disposition and
+                // carried by both the record and the transcript event.
+                let status = status_of_result(result);
 
                 // 4. Record the settled result on the call's record, so a stop
-                // that drops the stream still keeps the result.
+                // that drops the stream still keeps the result. The status is a
+                // variant built here, from the structured disposition — never
+                // from the result text.
                 if let Some(call_id) = event.call_id
                     && let Ok(name) = ToolName::new(tool_name)
                 {
@@ -692,24 +718,31 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                         call_id.clone(),
                         name,
                         args,
-                        result_text.clone(),
-                        success,
-                        error_kind.clone(),
+                        crate::hook::turn_tools::SettledToolCall::new(
+                            result_text.clone(),
+                            success,
+                            status,
+                        )
+                        .with_error_kind(error_kind.clone()),
                     );
                 }
 
                 // 5. Emit ToolCompleted (success was computed structurally above)
+                let call_line = self.render_registry.render(tool_name, args);
+                let call =
+                    ToolCall::new(ir::ToolName(tool_name.to_string()), source, args, call_line);
                 let _ = bus
                     .ui_event()
-                    .send(UiEvent::ToolCompleted {
-                        name: tool_name.to_string(),
-                        source,
-                        arguments: args.to_string(),
-                        success,
-                        result: result_text,
-                        display,
-                        error_kind,
-                        message: None,
+                    .send(SystemEvent::ToolCompleted {
+                        call,
+                        outcome: ToolOutcome {
+                            success,
+                            status,
+                            result: result_text,
+                            display,
+                            error_kind,
+                            message: None,
+                        },
                     })
                     .await;
 
@@ -787,14 +820,16 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                     );
                     let _ = bus
                         .ui_event()
-                        .send(UiEvent::LlmCompleted {
-                            response_chars,
-                            tool_calls,
-                            input_tokens: usage.input_tokens.unwrap_or(0),
-                            output_tokens: usage.output_tokens.unwrap_or(0),
-                            total_tokens: usage.total_tokens,
-                            cost,
-                            cost_complete,
+                        .send(SystemEvent::InferenceCompleted {
+                            usage: Usage {
+                                response_chars,
+                                tool_calls,
+                                input_tokens: usage.input_tokens.unwrap_or(0),
+                                output_tokens: usage.output_tokens.unwrap_or(0),
+                                total_tokens: usage.total_tokens,
+                                cost,
+                                cost_complete,
+                            },
                         })
                         .await;
                 }
@@ -827,8 +862,9 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                     RepetitionDetection::First(message) | RepetitionDetection::Backoff(message) => {
                         let _ = bus
                             .ui_event()
-                            .send(UiEvent::Warning {
-                                message: message.clone(),
+                            .send(SystemEvent::SystemMessage {
+                                kind: SystemKind::Warning,
+                                text: message.clone(),
                             })
                             .await;
                         return ModelTurnAction::retry_with_feedback(message);
@@ -859,8 +895,9 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         async move {
             let _ = bus
                 .ui_event()
-                .send(UiEvent::Warning {
-                    message: feedback.clone(),
+                .send(SystemEvent::SystemMessage {
+                    kind: SystemKind::Warning,
+                    text: feedback.clone(),
                 })
                 .await;
             Some(InvalidToolCallAction::retry(feedback))
@@ -921,12 +958,12 @@ async fn decide_compaction(
         return;
     }
 
-    // Compaction is needed. Fire a `CompactionEvent::Requested` on the bus so the
-    // orchestrator schedules the compaction on the worker; the splice it makes is
-    // what the next run loads.
+    // Compaction is needed. Fire a `SystemEvent::CompactionRequested` on the bus
+    // so the orchestrator schedules the compaction on the worker; the splice it
+    // makes is what the next run loads.
     let _ = bus
         .compaction()
-        .send(CompactionEvent::Requested {
+        .send(SystemEvent::CompactionRequested {
             source: "auto".to_string(),
         })
         .await;
@@ -934,7 +971,7 @@ async fn decide_compaction(
 
 /// The conversation the session's rig-memory store holds right now.
 ///
-/// Store errors are surfaced as a `CompactionEvent::Failed` on `bus` and yield
+/// Store errors are surfaced as a `SystemEvent::CompactionFailed` on `bus` and yield
 /// `None` so the turn proceeds without a compaction decision.
 async fn current_conversation(
     memory: &crate::session::CachedMemory,
@@ -946,7 +983,7 @@ async fn current_conversation(
         Err(e) => {
             let _ = bus
                 .compaction()
-                .send(CompactionEvent::Failed {
+                .send(SystemEvent::CompactionFailed {
                     source: "auto".to_string(),
                     message: format!("Failed to open the session store: {e}"),
                 })
@@ -965,7 +1002,7 @@ async fn current_conversation(
         Err(e) => {
             let _ = bus
                 .compaction()
-                .send(CompactionEvent::Failed {
+                .send(SystemEvent::CompactionFailed {
                     source: "auto".to_string(),
                     message: format!("Failed to load the session: {e}"),
                 })
@@ -1000,7 +1037,7 @@ pub(crate) async fn run_compaction(
         Err(e) => {
             let _ = bus
                 .compaction()
-                .send(CompactionEvent::Failed {
+                .send(SystemEvent::CompactionFailed {
                     source: source.to_string(),
                     message: format!("Failed to open the session store: {e}"),
                 })
@@ -1027,7 +1064,7 @@ pub(crate) async fn run_compaction(
         Ok(None) => {
             let _ = bus
                 .compaction()
-                .send(CompactionEvent::Completed {
+                .send(SystemEvent::CompactionCompleted {
                     source: source.to_string(),
                     summary_preview: String::new(),
                     summary_body: String::new(),

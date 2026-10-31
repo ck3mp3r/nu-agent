@@ -4,49 +4,46 @@ use crate::interaction::input::{TerminalEvent, TerminalKey};
 use crate::runtime::test_driver::{CellProbe, DriveEvent, RenderLoopDriver};
 use crate::runtime::{InputSourceDiagnostics, RuntimeCoordinator, TerminalEventSource};
 use crate::state::{AppState, PickerRenderKind, TranscriptRole};
-use agnt_core::transcript::ir::{Block, MessageRole, NoticeKind};
-use agnt_core::transcript::items::Message;
-use agnt_core::transcript::renderer::{ItemStatus, Renderable};
+use agnt_core::protocol::events::ToolCall;
+use agnt_core::protocol::tool_args::CallLine;
+use agnt_core::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
+use agnt_core::transcript::ir::{MessageRole, NoticeKind, ToolName};
+use agnt_core::transcript::renderer::ItemStatus;
 
-/// Push one Message block via the store's sole push API.
+/// Push one message entry via the store's sole push API.
 pub(super) fn push_message_line(
     state: &mut crate::state::AppState,
     role: MessageRole,
     text: impl Into<String>,
 ) {
-    let msg = Message {
+    let entry = TranscriptEntry::Message(MessageEntry {
         role,
         markdown: text.into(),
-    };
-    state.transcript.push_block(Block {
-        source: msg.source(),
-        lane: msg.lane(),
-        fill: msg.fill(),
-        status: None,
     });
+    state.transcript.push_entry(entry);
 }
 
-/// Map a block to the transcript role its source corresponds to.
-pub(super) fn block_to_role(block: &agnt_core::transcript::ir::Block) -> TranscriptRole {
-    use agnt_core::transcript::ir::BlockSource as Bs;
-    match &block.source {
-        Bs::Markdown {
-            role: MessageRole::User,
-            ..
-        } => TranscriptRole::User,
-        Bs::Markdown {
-            role: MessageRole::Assistant,
-            ..
-        } => TranscriptRole::Assistant,
-        Bs::Tool { .. } => TranscriptRole::Tool,
-        Bs::ToolDisplay { .. } => TranscriptRole::ToolDisplay,
-        Bs::Notice {
-            kind: NoticeKind::Compaction,
-            ..
-        } => TranscriptRole::Compaction,
-        Bs::Notice { .. } => TranscriptRole::System,
-        Bs::Banner { .. } => TranscriptRole::System,
-        Bs::Spacer => TranscriptRole::System,
+/// The status a tool entry carries; `None` for every non-tool family.
+pub(super) fn tool_status_of(entry: &TranscriptEntry) -> Option<ItemStatus> {
+    match entry {
+        TranscriptEntry::Tool(tool) => Some(tool.status),
+        _ => None,
+    }
+}
+
+/// Map an entry to the transcript role its family corresponds to.
+pub(super) fn entry_to_role(entry: &TranscriptEntry) -> TranscriptRole {
+    match entry {
+        TranscriptEntry::Message(message) => match message.role {
+            MessageRole::User => TranscriptRole::User,
+            MessageRole::Assistant => TranscriptRole::Assistant,
+        },
+        TranscriptEntry::Tool(_) => TranscriptRole::Tool,
+        TranscriptEntry::Notice(notice) => match notice.kind {
+            NoticeKind::Compaction => TranscriptRole::Compaction,
+            NoticeKind::System => TranscriptRole::System,
+        },
+        TranscriptEntry::Banner(_) => TranscriptRole::System,
     }
 }
 
@@ -112,6 +109,29 @@ pub(crate) fn input_pane_content_width_for_test(inner_width: u16) -> usize {
 
 // region:    --- Test Support
 
+/// An `InferenceCompleted` event carrying the given usage totals.
+pub(super) fn llm_completed(
+    response_chars: usize,
+    tool_calls: usize,
+    input_tokens: u64,
+    output_tokens: u64,
+    total_tokens: Option<u64>,
+    cost: Option<f64>,
+    cost_complete: bool,
+) -> agnt_core::protocol::events::SystemEvent {
+    agnt_core::protocol::events::SystemEvent::InferenceCompleted {
+        usage: agnt_core::protocol::events::Usage {
+            response_chars,
+            tool_calls,
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            cost,
+            cost_complete,
+        },
+    }
+}
+
 /// The bar glyph the insert-mode caret paints as a buffer cell.
 pub(super) const CARET_BAR: &str = "▏";
 
@@ -153,22 +173,22 @@ pub(super) fn key(key: TerminalKey) -> DriveEvent {
 }
 
 pub(super) fn push_entry(coord: &mut RuntimeCoordinator, status: Option<ItemStatus>) {
-    use agnt_core::transcript::items::Message;
-    use agnt_core::transcript::renderer::Renderable;
-
-    let msg = Message {
-        role: MessageRole::Assistant,
-        markdown: "hi".to_string(),
-    };
-    coord
-        .state
-        .transcript
-        .push_block(agnt_core::transcript::ir::Block {
-            source: msg.source(),
-            lane: msg.lane(),
-            fill: msg.fill(),
-            status,
-        });
+    let call = ToolCall::new(
+        ToolName("read".to_string()),
+        "",
+        "{}",
+        CallLine {
+            summary: "hi".to_string(),
+        },
+    );
+    let entry = TranscriptEntry::Tool(ToolEntry {
+        kind: ToolKind::from_name(&call.name),
+        call,
+        preview: None,
+        result: None,
+        status: status.unwrap_or(ItemStatus::Unknown),
+    });
+    coord.state.transcript.push_entry(entry);
 }
 
 // endregion: --- Test Support

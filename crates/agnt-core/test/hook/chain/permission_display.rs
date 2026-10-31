@@ -55,8 +55,8 @@ fn suppress_previewed_display_none_input_stays_none_either_way() {
 
 /// Regression test for the producer-side FIFO invariant that the unified UI
 /// event loop depends on: `HookChain::on_dispatch` publishes
-/// `UiEvent::ToolStarted` BEFORE the permission resolver publishes
-/// `UiEvent::PermissionRequested`. Both travel on the single `bus.ui_event()`
+/// `SystemEvent::ToolStarted` BEFORE the permission resolver publishes
+/// `SystemEvent::PermissionRequested`. Both travel on the single `bus.ui_event()`
 /// channel, so arrival order equals send order.
 ///
 /// If a future edit moves `permission.resolve()` above the `ToolStarted` send
@@ -157,8 +157,8 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
             .map_err(|_| "should receive a ui_event within timeout")?
             .map_err(|_| "ui_event channel should stay open")?;
         match event {
-            UiEvent::ToolStarted { .. } => order.push("ToolStarted"),
-            UiEvent::PermissionRequested { request_id, .. } => {
+            SystemEvent::ToolStarted { .. } => order.push("ToolStarted"),
+            SystemEvent::PermissionRequested { request_id, .. } => {
                 order.push("PermissionRequested");
                 break request_id;
             }
@@ -167,7 +167,7 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
     turn.await.map_err(|_| "turn task should not panic")?;
@@ -186,8 +186,112 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
 // registry rather than passing raw arguments through.
 // ---------------------------------------------------------------------------
 
+/// `HookChain::on_dispatch` falls back to the documented call line when the
+/// registry holds no render fn for the tool: the builtin dispatch (a tailored
+/// render for a builtin name) or, for a name that is not a builtin, the
+/// generic JSON summary of the raw arguments. The summary is display-only —
+/// the TUI matches the pending call by id, never by this text.
+#[tokio::test]
+async fn on_dispatch_publishes_the_fallback_call_line_for_an_unregistered_tool() -> Result<()> {
+    // -- Setup & Fixtures: an empty render registry, so `add` takes the miss path.
+    let memory = Arc::new(CachedMemory::new(
+        crate::session::RigStoreConfig::in_memory(),
+    ));
+    let bus = Bus::default();
+    let shared_model = Arc::new(Mutex::new(
+        MockCompletionModel::from_stream_turns([
+            vec![
+                MockStreamEvent::tool_call("tc1", "add", serde_json::json!({"x": 1, "y": 2})),
+                MockStreamEvent::final_response_with_default_usage(),
+            ],
+            vec![
+                MockStreamEvent::Text("done".to_string()),
+                MockStreamEvent::final_response_with_default_usage(),
+            ],
+        ])
+        .erase(),
+    ));
+    let hook = HookChain::new(
+        HookEnv {
+            bus: bus.clone(),
+            cwd: std::path::PathBuf::from("/tmp"),
+        },
+        PolicyPermissionResolver {
+            permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
+            session_grants: Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),
+            closure_registry: Arc::new(crate::tools::closure::ClosureRegistry::default()),
+            mcp_registry: Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        },
+        Arc::new(crate::tools::closure::ClosureRegistry::default()),
+        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        crate::tools::handler::builtin_tool::ToolRenderRegistry::default(),
+        None,
+        HookState {
+            circuit_breaker: Arc::new(Mutex::new(
+                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
+            )),
+            doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
+            output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
+            repetition_guard: true,
+            memory,
+            conversation_id: "fallback-call-line-conv".to_string(),
+            compaction: CompactionConfig {
+                compactor: NuCompactor::new(
+                    MockCompletionModel::text("summary").erase(),
+                    Bus::default(),
+                    rig_memory::CompactionPolicy::default(),
+                    test_model_spec(),
+                ),
+                params: CompactionParams::default(),
+                threshold_tokens: None,
+                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+            },
+            model: shared_model.lock().expect("model mutex poisoned").clone(),
+            last_total_tokens: Arc::new(Mutex::new(None)),
+            turn_usage: crate::hook::TurnUsage::default(),
+            session_usage: crate::hook::TurnUsage::default(),
+        },
+    );
+    let agent =
+        rig::agent::AgentBuilder::new(shared_model.lock().expect("model mutex poisoned").clone())
+            .add_hook(hook)
+            .tool(rig::test_utils::MockAddTool)
+            .build();
+    // Subscribe BEFORE driving the stream — broadcast sends are not buffered
+    // for later subscribers.
+    let mut ui_rx = bus.ui_event().subscribe();
+
+    // -- Exec: drive the turn and capture the first ToolStarted event.
+    let turn = tokio::spawn(async move {
+        let mut stream = agent.prompt("run").max_turns(16).stream();
+        while stream.next().await.is_some() {}
+    });
+    let call = loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), ui_rx.recv())
+            .await
+            .map_err(|_| "should receive a ui_event within timeout")?
+            .map_err(|_| "ui_event channel should stay open")?;
+        if let SystemEvent::ToolStarted { call } = event {
+            break call;
+        }
+    };
+    turn.await.map_err(|_| "turn task should not panic")?;
+
+    // -- Check: the generic JSON summary of the raw arguments.
+    assert_eq!(
+        call.call_line,
+        crate::protocol::tool_args::CallLine::from_json_summary(&call.arguments),
+        "an unregistered tool must carry the documented fallback call line"
+    );
+    assert_eq!(
+        call.call_line.summary, "→ {\"x\":1, \"y\":2}",
+        "the fallback is the arrow-prefixed JSON summary of the raw arguments"
+    );
+    Ok(())
+}
+
 /// `HookChain::on_dispatch` consults its `ToolRenderRegistry` and publishes
-/// the tailored `CallLine` on `UiEvent::ToolStarted`. A registered
+/// the tailored `CallLine` on `SystemEvent::ToolStarted`. A registered
 /// `read` tool renders `→ /tmp/f`; the raw JSON arguments never reach the
 /// event.
 #[tokio::test]
@@ -280,8 +384,8 @@ async fn on_dispatch_publishes_registry_rendered_call_line() -> Result<()> {
             .await
             .map_err(|_| "should receive a ui_event within timeout")?
             .map_err(|_| "ui_event channel should stay open")?;
-        if let UiEvent::ToolStarted { call_line, .. } = event {
-            break call_line;
+        if let SystemEvent::ToolStarted { call } = event {
+            break call.call_line;
         }
     };
     turn.await.map_err(|_| "turn task should not panic")?;

@@ -15,9 +15,9 @@ fn hydration_compaction_creates_block_structure() {
     let has_compaction_header = coordinator
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .any(|b| b.source.plain_text() == "Compaction");
+        .any(|b| entry_text(b) == "Compaction");
     assert!(
         has_compaction_header,
         "expected compaction block header in transcript"
@@ -41,9 +41,9 @@ fn hydration_compaction_renders_markdown_body() {
     let projected_texts: Vec<String> = coordinator
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&entry_text(line), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -81,9 +81,9 @@ fn hydration_compaction_fenced_body_renders_markdown_not_raw() {
     let projected_texts: Vec<String> = coordinator
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .flat_map(|line| crate::markdown::render_markdown_lines(&line.source.plain_text(), None))
+        .flat_map(|line| crate::markdown::render_markdown_lines(&entry_text(line), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
 
@@ -110,9 +110,9 @@ fn hydration_compaction_empty_summary_shows_block_only() {
     let texts: Vec<String> = coordinator
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|block| block.source.plain_text())
+        .map(entry_text)
         .collect();
 
     // The compaction header should exist
@@ -124,12 +124,10 @@ fn hydration_compaction_empty_summary_shows_block_only() {
     // Only the header should be present — no body content: the Notice header
     // block is the only Compaction-role block and it carries just the header
     // text.
-    let compaction_blocks: Vec<_> = coordinator
-        .state()
-        .transcript
-        .blocks()
+    let blocks = coordinator.state().transcript.entries();
+    let compaction_blocks: Vec<_> = blocks
         .iter()
-        .filter(|b| block_to_role(b) == TranscriptRole::Compaction)
+        .filter(|b| entry_to_role(b) == TranscriptRole::Compaction)
         .collect();
     assert_eq!(
         compaction_blocks.len(),
@@ -137,7 +135,7 @@ fn hydration_compaction_empty_summary_shows_block_only() {
         "empty summary should produce the header block only: {compaction_blocks:?}"
     );
     assert_eq!(
-        compaction_blocks[0].source.plain_text(),
+        entry_text(compaction_blocks[0]),
         "Compaction",
         "the compaction header block must carry only the header text"
     );
@@ -149,11 +147,11 @@ fn hydration_compaction_matches_live_rendering() {
 
     // Live path: CompactionStarted + CompactionCompleted via reducer
     let mut live = RuntimeCoordinator::new(120, 30, Some(true));
-    live.enqueue_ui_event(UiEvent::CompactionStarted {
+    live.enqueue_event(SystemEvent::CompactionStarted {
         source: "history".to_string(),
     });
     live.drain_transport();
-    live.enqueue_ui_event(UiEvent::CompactionCompleted {
+    live.enqueue_event(SystemEvent::CompactionCompleted {
         source: "history".to_string(),
         summary_preview: "preview".to_string(),
         summary_body: summary_body.to_string(),
@@ -170,16 +168,16 @@ fn hydration_compaction_matches_live_rendering() {
     let live_texts: Vec<String> = live
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|block| block.source.plain_text())
+        .map(entry_text)
         .collect();
     let hydrated_texts: Vec<String> = hydrated
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|block| block.source.plain_text())
+        .map(entry_text)
         .collect();
 
     assert_eq!(
@@ -190,16 +188,16 @@ fn hydration_compaction_matches_live_rendering() {
     let live_roles: Vec<TranscriptRole> = live
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(block_to_role)
+        .map(entry_to_role)
         .collect();
     let hydrated_roles: Vec<TranscriptRole> = hydrated
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(block_to_role)
+        .map(entry_to_role)
         .collect();
 
     assert_eq!(

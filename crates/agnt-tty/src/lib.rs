@@ -10,7 +10,7 @@ pub mod spinner;
 pub use factory::{StderrUiFactory, UiRendererFactory};
 pub use policy::{UiPolicy, Verbosity};
 pub use progress::StderrProgressUi;
-pub use renderer::tty::layout;
+pub use renderer::backend::TtyBackend;
 
 #[cfg(test)]
 #[path = "../test/factory.rs"]

@@ -75,11 +75,11 @@ impl CoreRuntime for LongRunningAgentRuntime {
         }
 
         // Publish TurnCompleted directly to the bus (worker bridge no longer
-        // converts UiEvent::Completed), matching production.
+        // converts SystemEvent::TurnCompleted), matching production.
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -209,7 +209,7 @@ impl ResponsiveAgentSwitchUi {
                 tokio::select! {
                     Ok(event) = ui_event_rx.recv() => {
                         match event {
-                            UiEvent::Completed { .. } => {
+                            SystemEvent::TurnCompleted { .. } => {
                                 let count = {
                                     let mut count = completed_count.lock().expect("completed count lock");
                                     *count += 1;
@@ -219,8 +219,8 @@ impl ResponsiveAgentSwitchUi {
                                     quit.store(true, Ordering::SeqCst);
                                 }
                             }
-                            UiEvent::Warning { message } | UiEvent::TurnError { message } => {
-                                warnings.lock().expect("warnings lock").push(message);
+                            SystemEvent::SystemMessage { text, .. } => {
+                                warnings.lock().expect("warnings lock").push(text);
                             }
                             _ => {}
                         }

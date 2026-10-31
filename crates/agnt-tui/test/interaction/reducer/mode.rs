@@ -3,29 +3,47 @@ use ratatui::layout::Rect;
 
 #[test]
 fn mode_transition_table() {
-    // Enter insert and normal mode actions toggle mode only in idle.
-    let mut state = AppState::default();
-    assert_eq!(state.input.mode, InputMode::Insert);
-
-    state.enter_normal_mode();
+    // `i` enters insert mode in normal mode.
+    let mut state = AppState {
+        input: InputState::default().with_mode(InputMode::Normal),
+        ..Default::default()
+    };
     assert_eq!(state.input.mode, InputMode::Normal);
 
-    reduce_with_cancel_controller(
+    let changed = reduce(
         &mut state,
-        ReducerInput::User(UserAction::EnterInsertMode),
+        SystemEvent::KeyPressed {
+            key: Key::Char('i'),
+        },
         None,
     );
+    assert!(changed);
     assert_eq!(state.input.mode, InputMode::Insert);
 
-    // Enter normal mode from chord switches mode.
+    // The insert-exit chord leaves insert mode for normal mode.
     let mut state = AppState::default();
+    assert_eq!(state.input.mode, InputMode::Insert);
 
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::EnterNormalModeFromChord),
+        SystemEvent::KeyPressed {
+            key: Key::Char('j'),
+        },
         None,
     );
+    assert_eq!(
+        state.input.mode,
+        InputMode::Insert,
+        "the chord is only armed"
+    );
 
+    reduce(
+        &mut state,
+        SystemEvent::KeyPressed {
+            key: Key::Char('j'),
+        },
+        None,
+    );
     assert_eq!(state.input.mode, InputMode::Normal);
 }
 
@@ -38,7 +56,6 @@ fn test_wheel_in_insert_mode_activates_normal() -> Result<()> {
             viewport_height: 10,
             cursor_visual_row: 0,
             total_visual_rows: 30,
-            entry_indices: (0..30).collect(),
             transcript_area: Rect::new(0, 0, 80, 20),
             ..Default::default()
         },
@@ -51,9 +68,13 @@ fn test_wheel_in_insert_mode_activates_normal() -> Result<()> {
     assert_eq!(state.scroll.pane_focus, PaneFocus::Input);
 
     // -- Exec
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::WheelDown { column: 5, row: 5 }),
+        SystemEvent::WheelScrolled {
+            up: false,
+            column: 5,
+            row: 5,
+        },
         None,
     );
 
@@ -67,15 +88,18 @@ fn test_wheel_in_insert_mode_activates_normal() -> Result<()> {
     let mut busy = busy_state_with_clean_transcript();
     busy.scroll.viewport_height = 10;
     busy.scroll.total_visual_rows = 30;
-    busy.scroll.entry_indices = (0..30).collect();
     busy.scroll.transcript_area = Rect::new(0, 0, 80, 20);
     assert_eq!(busy.input.mode, InputMode::Insert);
     assert_eq!(busy.phase, UiPhase::Busy);
 
     // -- Exec
-    reduce_with_cancel_controller(
+    reduce(
         &mut busy,
-        ReducerInput::User(UserAction::WheelUp { column: 5, row: 5 }),
+        SystemEvent::WheelScrolled {
+            up: true,
+            column: 5,
+            row: 5,
+        },
         None,
     );
 

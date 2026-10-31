@@ -6,11 +6,11 @@ use super::*;
 
 #[test]
 fn render_loop_trailing_separator_after_final_user_block() -> Result<()> {
-    // -- Setup & Fixtures: one user block, and it is the final block.
+    // -- Setup & Fixtures: one user entry, and it is the final entry.
     let mut coord = RuntimeCoordinator::new(40, 2, None);
     let columns = 40u16;
     let rows = 2u16;
-    coord.state.transcript.push_block(user_block());
+    coord.state.transcript.push_entry(user_entry("hi"));
 
     // -- Exec
     let terminal = render_transcript_pane_to_backend(&mut coord, columns, rows, true, 0);
@@ -19,11 +19,6 @@ fn render_loop_trailing_separator_after_final_user_block() -> Result<()> {
     assert_eq!(
         coord.state.scroll.total_visual_rows, 2,
         "a final user block adds one trailing separator row to the total"
-    );
-    assert_eq!(
-        coord.state.scroll.entry_indices,
-        [0usize, 0],
-        "the trailing separator row maps to the user block"
     );
     let full_bg = coord.theme.row_user_bg;
     assert_eq!(
@@ -46,9 +41,9 @@ fn render_loop_trailing_separator_after_final_user_block() -> Result<()> {
 
 #[test]
 fn render_loop_no_trailing_separator_after_final_assistant_block() -> Result<()> {
-    // -- Setup & Fixtures: one assistant block as the final block.
+    // -- Setup & Fixtures: one assistant entry as the final entry.
     let mut coord = RuntimeCoordinator::new(40, 1, None);
-    coord.state.transcript.push_block(assistant_block());
+    coord.state.transcript.push_entry(assistant_entry("hi"));
 
     // -- Exec
     let terminal = render_transcript_pane_to_backend(&mut coord, 40, 1, true, 0);
@@ -57,11 +52,6 @@ fn render_loop_no_trailing_separator_after_final_assistant_block() -> Result<()>
     assert_eq!(
         coord.state.scroll.total_visual_rows, 1,
         "a non-user final block adds no trailing separator row"
-    );
-    assert_eq!(
-        coord.state.scroll.entry_indices,
-        [0usize],
-        "only the assistant content row is rendered"
     );
     let base = coord.theme.base;
     assert_eq!(
@@ -79,8 +69,8 @@ fn render_loop_user_followed_by_block_has_no_trailing_double_count() -> Result<(
     // 2 separator rows (user → assistant); no trailing row is added after the
     // user block itself.
     let mut coord = RuntimeCoordinator::new(40, 20, None);
-    coord.state.transcript.push_block(user_block());
-    coord.state.transcript.push_block(assistant_block());
+    coord.state.transcript.push_entry(user_entry("hi"));
+    coord.state.transcript.push_entry(assistant_entry("hi"));
 
     // -- Exec
     render_transcript_pane_to_backend(&mut coord, 40, 20, true, 0);

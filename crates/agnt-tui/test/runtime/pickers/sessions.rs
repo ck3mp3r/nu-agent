@@ -122,8 +122,8 @@ async fn test_session_picker_footer_leaves_a_gap_row_above_the_text() -> Result<
     Ok(())
 }
 
-/// The sessions day header carries no background band: it renders bold subtext0
-/// text on the popup base, with its label on the When column.
+/// The day head carries no background band: it renders bold subtext0 text on
+/// the popup base, with its label on the When column.
 #[tokio::test]
 async fn test_session_picker_day_header_is_fg_only_on_the_when_column() -> Result<()> {
     // -- Setup & Fixtures
@@ -181,12 +181,17 @@ async fn test_session_picker_day_header_is_fg_only_on_the_when_column() -> Resul
         .position(|c| !matches!(c, '│' | ' ' | '❯'))
         .ok_or("the session row should carry text")?;
     assert_eq!(
-        header_col, session_col,
-        "the day header must sit on the When column; header: {header_col}, session: {session_col}\n{popup_text}"
+        header_col, 3,
+        "the day head must sit flush-left on the When column; column: {header_col}\n{popup_text}"
     );
     assert_eq!(
-        header_col, 3,
-        "the When column is the border, the inner edge, and the two-cell gutter; column: {header_col}\n{popup_text}"
+        session_col, 5,
+        "the session rows must indent two cells under their head; column: {session_col}\n{popup_text}"
+    );
+    assert_eq!(
+        session_row,
+        header_row + 1,
+        "no blank separator row may sit between a head and its rows; head: {header_row}, session: {session_row}\n{popup_text}"
     );
     let header_x = popup.x + u16::try_from(header_col)?;
     let header_style = driver.cell_style_at(header_x, y);
@@ -200,6 +205,56 @@ async fn test_session_picker_day_header_is_fg_only_on_the_when_column() -> Resul
             .add_modifier
             .contains(ratatui::style::Modifier::BOLD),
         "the day header text must render bold\n{popup_text}"
+    );
+    Ok(())
+}
+
+/// The session rows ellipsize their title to the table's Title column, and the
+/// day head above them keeps its full label.
+#[tokio::test]
+async fn test_session_picker_ellipsizes_a_long_title_under_its_head() -> Result<()> {
+    // -- Setup & Fixtures
+    let title = "t".repeat(60);
+    let now = chrono::Utc::now();
+    let options = vec![session_option("id0", &title, now, 1)];
+    let mut driver = RenderLoopDriver::new(58, 24);
+    driver
+        .coordinator_mut()
+        .state
+        .set_picker_options(ActivePicker::Session, options);
+    driver
+        .coordinator_mut()
+        .state
+        .picker
+        .open(ActivePicker::Session);
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check: the table width is 56, so the Title column takes 31 cells and the
+    // row keeps 30 of them plus the ellipsis marker.
+    let popup = super::render::frame::modal_rect_for_panel(
+        driver.state().scroll.transcript_area,
+        super::render::frame::ModalPanelKind::Sessions,
+    );
+    let popup_text = driver.buffer_text_in_rect(popup);
+    let clipped = format!("{}…", "t".repeat(30));
+    assert!(
+        popup_text.contains(&clipped),
+        "the table row must carry the ellipsized title; expected {clipped:?}\n{popup_text}"
+    );
+    let head_row = popup_text
+        .lines()
+        .position(|line| line.contains("Today"))
+        .ok_or("should render the day head")?;
+    let row = popup_text
+        .lines()
+        .position(|line| line.contains(&clipped))
+        .ok_or("should render the ellipsized session row")?;
+    assert_eq!(
+        row,
+        head_row + 1,
+        "the session row must sit directly under its head; head: {head_row}, row: {row}\n{popup_text}"
     );
     Ok(())
 }
@@ -288,6 +343,7 @@ fn session_option(
         id: id.to_string(),
         display: display.clone(),
         search_text: display,
+        section: Some(crate::state::session_day(created_at).to_string()),
         sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(created_at))],
         payload: PickerPayload::Session {
             session_id: id.to_string(),

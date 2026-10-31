@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicBool;
 use agnt_core::bus::CancelEvent;
 use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::orchestrator::run_single_turn;
-use agnt_core::protocol::event::UiEvent;
+use agnt_core::protocol::events::SystemEvent;
 use agnt_tty::policy::UiPolicy;
 use agnt_tty::{StderrUiFactory, UiRendererFactory};
 use nu_protocol::{Span, Value};
@@ -164,9 +164,9 @@ async fn run_stderr_turn<R: agnt_core::renderer::UiRenderer + Send + 'static>(
     });
 
     // Drain task: subscribe to the bus channels the turn publishes on and forward
-    // each event to the shared renderer. UI events arrive as `UiEvent` already;
-    // compaction events convert at the boundary. Runs concurrently with the turn
-    // so events stream in real time.
+    // each event to the shared renderer. Both channels carry `SystemEvent`, so
+    // the drain passes each event straight to the emit call. Runs concurrently
+    // with the turn so events stream in real time.
     let drain_shared = Arc::clone(&shared);
     let drain_stop = Arc::clone(&stop);
     let drain_bus = bus.clone();
@@ -188,15 +188,14 @@ async fn run_stderr_turn<R: agnt_core::renderer::UiRenderer + Send + 'static>(
                 }
                 ok = compaction_rx.recv() => {
                     if let Ok(event) = ok
-                        && let Some(ui) = Option::<UiEvent>::from(event)
                         && let Ok(mut guard) = drain_shared.lock()
                     {
-                        guard.emit(&ui);
+                        guard.emit(&event);
                     }
                 }
                 _ = tick.tick() => {
                     if let Ok(mut guard) = drain_shared.lock() {
-                        guard.emit(&UiEvent::Tick);
+                        guard.emit(&SystemEvent::Tick);
                     }
                 }
             }

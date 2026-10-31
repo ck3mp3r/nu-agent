@@ -47,7 +47,7 @@ async fn turn_usage_accumulates_the_call_the_hook_observed() -> Result<()> {
 #[tokio::test]
 async fn turn_usage_total_uses_the_chain_fallback_when_the_wire_omits_it() -> Result<()> {
     // -- Setup & Fixtures: no `total_tokens` on the wire's usage.
-    let usage = Usage::new().input_tokens(40).output_tokens(2);
+    let usage = ModelUsage::new().input_tokens(40).output_tokens(2);
     let model = catalog_turn("copilot/claude-sonnet-4.6", usage)?;
     let TurnHook {
         hook,

@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 
-use agnt_core::bus::PermissionEvent;
-use agnt_core::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
+use agnt_core::protocol::event::{
+    PermissionDecision, PermissionDecisionSubmission, PermissionRequestContext,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionPrompt {
@@ -14,6 +15,23 @@ pub struct PermissionPrompt {
     pub pattern: String,
     pub target_field: Option<String>,
     pub summary: String,
+}
+
+impl PermissionPrompt {
+    /// Build the prompt the card renders from one request.
+    pub fn from_context(request_id: &str, context: &PermissionRequestContext) -> Self {
+        Self {
+            request_id: request_id.to_string(),
+            matched_rule_identity: context.matched_rule_identity.clone(),
+            tool: context.tool.clone(),
+            source: context.source.clone(),
+            mode: context.mode.clone(),
+            scope: context.scope.clone(),
+            pattern: context.pattern.clone(),
+            target_field: context.target_field.clone(),
+            summary: context.summary.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -71,31 +89,5 @@ impl PermissionState {
 
     pub fn take_next_submission(&mut self) -> Option<PermissionDecisionSubmission> {
         self.pending_decisions.pop_front()
-    }
-
-    pub fn reduce_permission_event(&mut self, event: PermissionEvent) -> bool {
-        match event {
-            PermissionEvent::Requested {
-                request_id,
-                context,
-            } => {
-                self.open_prompt(PermissionPrompt {
-                    request_id,
-                    matched_rule_identity: context.matched_rule_identity.clone(),
-                    tool: context.tool.clone(),
-                    source: context.source.clone(),
-                    mode: context.mode.clone(),
-                    scope: context.scope.clone(),
-                    pattern: context.pattern.clone(),
-                    target_field: context.target_field.clone(),
-                    summary: context.summary.clone(),
-                });
-                true
-            }
-            PermissionEvent::DecisionTimedOut { request_id } => self.close_prompt_if(&request_id),
-            PermissionEvent::DecisionSubmitted { .. } | PermissionEvent::DecisionIgnored { .. } => {
-                false
-            }
-        }
     }
 }

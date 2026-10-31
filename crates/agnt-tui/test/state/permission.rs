@@ -1,55 +1,45 @@
 use crate::state::*;
 use agnt_core::protocol::event::PermissionDecision;
+use agnt_core::protocol::events::ToolCall;
 use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::ir::Block;
-use agnt_core::transcript::ir::MessageRole;
-use agnt_core::transcript::items::{Message, Tool};
-use agnt_core::transcript::renderer::Renderable;
+use agnt_core::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
+use agnt_core::transcript::ir::{MessageRole, ToolName};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 fn push_user(state: &mut AppState, text: &str) {
-    let msg = Message {
+    let entry = TranscriptEntry::Message(MessageEntry {
         role: MessageRole::User,
         markdown: text.to_string(),
-    };
-    state.transcript.push_block(Block {
-        source: msg.source(),
-        lane: msg.lane(),
-        fill: msg.fill(),
-        status: None,
     });
+    state.transcript.push_entry(entry);
 }
 
 fn push_assistant(state: &mut AppState, text: &str) {
-    let msg = Message {
+    let entry = TranscriptEntry::Message(MessageEntry {
         role: MessageRole::Assistant,
         markdown: text.to_string(),
-    };
-    state.transcript.push_block(Block {
-        source: msg.source(),
-        lane: msg.lane(),
-        fill: msg.fill(),
-        status: None,
     });
+    state.transcript.push_entry(entry);
 }
 
 fn push_tool_summary(state: &mut AppState, summary: &str) {
-    let tool = Tool {
-        name: agnt_core::transcript::ir::ToolName("read".to_string()),
-        call: CallLine {
+    let call = ToolCall::new(
+        ToolName("read".to_string()),
+        "",
+        "",
+        CallLine {
             summary: summary.to_string(),
         },
+    );
+    let entry = TranscriptEntry::Tool(ToolEntry {
+        kind: ToolKind::from_name(&call.name),
+        call,
         preview: None,
         result: None,
         status: agnt_core::transcript::renderer::ItemStatus::Done,
-    };
-    state.transcript.push_block(Block {
-        source: tool.source(),
-        lane: tool.lane(),
-        fill: tool.fill(),
-        status: Some(tool.status),
     });
+    state.transcript.push_entry(entry);
 }
 
 #[test]

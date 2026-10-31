@@ -15,7 +15,7 @@ use crate::hook::agent_hook::HookState;
 use crate::hook::chain::{HookChain, HookEnv};
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::hook::turn_tools::TurnToolRecord;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::types::{Message, Text, ToolCall, ToolDefinition, UserContent};
 use rig::tool::DynamicTool;
 
@@ -238,8 +238,9 @@ where
         if estimated >= threshold {
             let _ = bus
                 .ui_event()
-                .send(UiEvent::Warning {
-                    message: format!(
+                .send(SystemEvent::SystemMessage {
+                    kind: SystemKind::Warning,
+                    text: format!(
                         "Conversation is using ~{estimated} estimated tokens \
                      (~{}% of the {limit}-token context window). \
                      Consider running 'agent session compact' before the next turn.",
@@ -597,7 +598,7 @@ where
                     text.clear();
                     let _ = bus
                         .ui_event()
-                        .send(UiEvent::Stopped {
+                        .send(SystemEvent::InferenceStopped {
                             reason: String::new(),
                         })
                         .await;

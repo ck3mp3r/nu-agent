@@ -1,7 +1,8 @@
 //! The ignored-decision event: a decision for a request that is not pending.
 
 use agnt_core::bus::create_bus;
-use agnt_core::protocol::event::{PermissionDecision, UiEvent};
+use agnt_core::protocol::event::PermissionDecision;
+use agnt_core::protocol::events::SystemEvent;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;
@@ -25,8 +26,8 @@ async fn test_permission_bridge_unknown_request_publishes_ignored() -> Result<()
     // -- Check
     assert_eq!(decision, PermissionDecision::AllowOnce);
     match rx.try_recv() {
-        Ok(UiEvent::PermissionDecisionIgnored { request_id, reason }) => {
-            assert_eq!(request_id, "unregistered");
+        Ok(SystemEvent::PermissionDecisionIgnored { request_id, reason }) => {
+            assert_eq!(request_id.as_str(), "unregistered");
             assert_eq!(reason, "request_not_pending");
         }
         other => {

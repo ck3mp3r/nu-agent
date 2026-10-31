@@ -30,7 +30,7 @@ use super::error_kind::CompletionErrorKind;
 use super::response::extract_retry_after_ms;
 use crate::conversation::turn::TurnError;
 use crate::conversation::turn::TurnResult;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, SystemKind};
 
 impl<'a, S> TurnExecutor<'a, S>
 where
@@ -396,8 +396,9 @@ where
                             .tool_infra
                             .bus
                             .ui_event()
-                            .send(UiEvent::Warning {
-                                message: super::core::REPETITION_STEERING_NOTICE.to_string(),
+                            .send(SystemEvent::SystemMessage {
+                                kind: SystemKind::Warning,
+                                text: super::core::REPETITION_STEERING_NOTICE.to_string(),
                             })
                             .await;
                         steering = Some(OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string());

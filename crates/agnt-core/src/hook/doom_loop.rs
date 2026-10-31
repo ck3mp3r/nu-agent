@@ -9,7 +9,7 @@ use rig::agent::DispatchAction;
 use serde_json::Value;
 
 use crate::bus::Bus;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, SystemKind};
 
 pub const DOOM_LOOP_THRESHOLD: usize = 5;
 pub const DOOM_LOOP_BACKOFF_LIMIT: usize = 2;
@@ -157,8 +157,9 @@ impl DoomLoopDetector {
                 );
                 let _ = bus
                     .ui_event()
-                    .send(UiEvent::Warning {
-                        message: message.clone(),
+                    .send(SystemEvent::SystemMessage {
+                        kind: SystemKind::Warning,
+                        text: message.clone(),
                     })
                     .await;
                 Some(DispatchAction::skip(message))
@@ -172,8 +173,9 @@ impl DoomLoopDetector {
                 );
                 let _ = bus
                     .ui_event()
-                    .send(UiEvent::Warning {
-                        message: message.clone(),
+                    .send(SystemEvent::SystemMessage {
+                        kind: SystemKind::Warning,
+                        text: message.clone(),
                     })
                     .await;
                 Some(DispatchAction::skip(message))

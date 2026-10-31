@@ -4,8 +4,9 @@
 //! functions every topical compactor test file needs. Sub-files pull them in
 //! with `use super::*;`.
 
-pub(super) use crate::bus::{Bus, CompactionEvent, CompactionRx};
+pub(super) use crate::bus::{Bus, CompactionRx};
 pub(super) use crate::conversation::compaction::compactor::{NuCompactor, resolve_model_spec};
+pub(super) use crate::protocol::events::SystemEvent;
 pub(super) use crate::session::{MemoryError, RigStoreConfig, StoreType};
 pub(super) use crate::types::{Message, UserContent};
 
@@ -141,7 +142,7 @@ pub(super) fn last_request_prompt(model: &MockCompletionModel) -> Result<String>
     }
 }
 
-/// Drain compaction bus events until a `CompactionEvent::Failed` is received,
+/// Drain compaction bus events until a `SystemEvent::CompactionFailed` is received,
 /// returning its message. Asserts the stream terminates with a `Failed`.
 pub(super) async fn recv_until_failed(rx: &mut CompactionRx) -> Result<String> {
     loop {
@@ -149,7 +150,7 @@ pub(super) async fn recv_until_failed(rx: &mut CompactionRx) -> Result<String> {
             .recv()
             .await
             .map_err(|_| "should receive a Failed event")?;
-        if let CompactionEvent::Failed { message, .. } = event {
+        if let SystemEvent::CompactionFailed { message, .. } = event {
             return Ok(message);
         }
     }

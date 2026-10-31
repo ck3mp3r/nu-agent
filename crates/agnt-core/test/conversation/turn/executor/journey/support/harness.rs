@@ -93,7 +93,7 @@ impl JourneyHarness {
     }
 
     /// Execute one turn. Returns the outcome plus the bus events published during
-    /// the turn (as `UiEvent`s converted at the boundary).
+    /// the turn (as `SystemEvent`s converted at the boundary).
     pub(crate) async fn turn(
         &mut self,
         prompt: &str,
@@ -101,7 +101,7 @@ impl JourneyHarness {
         tool_infra: ToolInfra,
     ) -> (
         std::result::Result<TurnOutcome, LabeledError>,
-        Vec<crate::protocol::event::UiEvent>,
+        Vec<crate::protocol::events::SystemEvent>,
     ) {
         // Swap the scripted mock model into the shared slot so the agent
         // (built from the model) routes to this model.
@@ -188,7 +188,7 @@ impl JourneyHarness {
         tool_infra: ToolInfra,
     ) -> Result<(
         std::result::Result<TurnOutcome, LabeledError>,
-        Vec<crate::protocol::event::UiEvent>,
+        Vec<crate::protocol::events::SystemEvent>,
     )> {
         // Swap the mock client's model into the shared slot so the agent
         // (built from the model) routes to this client's model.

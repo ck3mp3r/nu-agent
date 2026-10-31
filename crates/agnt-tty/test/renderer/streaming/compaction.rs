@@ -13,7 +13,7 @@ fn compaction_completed_uses_success_color() {
         },
         true,
     );
-    renderer.emit(&UiEvent::CompactionCompleted {
+    renderer.emit(&SystemEvent::CompactionCompleted {
         source: "auto".to_string(),
         summary_preview: "s".to_string(),
         summary_body: "s".to_string(),
@@ -34,7 +34,7 @@ fn no_color_renders_compaction_plain() {
         },
         false,
     );
-    renderer.emit(&UiEvent::CompactionCompleted {
+    renderer.emit(&SystemEvent::CompactionCompleted {
         source: "auto".to_string(),
         summary_preview: "s".to_string(),
         summary_body: "s".to_string(),

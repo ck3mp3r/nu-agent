@@ -30,7 +30,7 @@ async fn test_hook_permission_resolver_permission_request_cancelled_publishes_on
         .map_err(|_| "timed out waiting for PermissionRequested")?
         .map_err(|_| "expected a PermissionRequested event")?;
     let (request_id, prompted_rule) = match event {
-        UiEvent::PermissionRequested {
+        SystemEvent::PermissionRequested {
             request_id,
             context,
         } => (request_id, context.matched_rule_identity),
@@ -60,7 +60,7 @@ async fn test_hook_permission_resolver_permission_request_cancelled_publishes_on
         .map_err(|_| "timed out waiting for PermissionRequestCancelled")?
         .map_err(|_| "expected a PermissionRequestCancelled event")?;
     match event {
-        UiEvent::PermissionRequestCancelled {
+        SystemEvent::PermissionRequestCancelled {
             request_id: cancelled_id,
             matched_rule_identity,
         } => {
@@ -98,14 +98,14 @@ async fn test_hook_permission_resolver_permission_request_cancelled_absent_witho
         .map_err(|_| "timed out waiting for PermissionRequested")?
         .map_err(|_| "expected a PermissionRequested event")?;
     let request_id = match event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id,
+        SystemEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("expected PermissionRequested, got {other:?}"),
     };
 
     // -- Exec
     submit_decision(
         &resolver,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
     let decision = tokio::time::timeout(Duration::from_secs(2), resolve_task)
@@ -119,7 +119,7 @@ async fn test_hook_permission_resolver_permission_request_cancelled_absent_witho
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionRequestCancelled { .. })),
+            .any(|event| matches!(event, SystemEvent::PermissionRequestCancelled { .. })),
         "an answered request publishes no cancelled event: {events:?}"
     );
     Ok(())

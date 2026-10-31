@@ -24,7 +24,7 @@ async fn test_hook_permission_resolver_permission_auto_resolved_policy_allow() -
     let events = drain(&mut ui_rx);
     let resolved = auto_resolved(&events)?;
     assert_eq!(resolved.matched_rule_identity, "tool:read");
-    assert_eq!(resolved.action, "allow");
+    assert_eq!(resolved.action.as_str(), "allow");
     assert_eq!(
         resolved.reason, None,
         "an allow carries no reason: {events:?}"
@@ -52,7 +52,7 @@ async fn test_hook_permission_resolver_permission_auto_resolved_policy_deny() ->
     let events = drain(&mut ui_rx);
     let resolved = auto_resolved(&events)?;
     assert_eq!(resolved.matched_rule_identity, "global:*");
-    assert_eq!(resolved.action, "deny");
+    assert_eq!(resolved.action.as_str(), "deny");
     assert_eq!(
         resolved.reason.as_deref(),
         Some(deny_reason.as_str()),
@@ -79,12 +79,12 @@ async fn test_hook_permission_resolver_permission_auto_resolved_interactive_auto
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionRequested { .. })),
+            .any(|event| matches!(event, SystemEvent::PermissionRequested { .. })),
         "an auto-allowed call must not prompt: {events:?}"
     );
     let resolved = auto_resolved(&events)?;
     assert_eq!(resolved.matched_rule_identity, "tool:read");
-    assert_eq!(resolved.action, "allow");
+    assert_eq!(resolved.action.as_str(), "allow");
     assert_eq!(
         resolved.reason, None,
         "an allow carries no reason: {events:?}"
@@ -113,12 +113,12 @@ async fn test_hook_permission_resolver_permission_auto_resolved_interactive_auto
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionRequested { .. })),
+            .any(|event| matches!(event, SystemEvent::PermissionRequested { .. })),
         "an auto-denied call must not prompt: {events:?}"
     );
     let resolved = auto_resolved(&events)?;
     assert_eq!(resolved.matched_rule_identity, "global:*");
-    assert_eq!(resolved.action, "deny");
+    assert_eq!(resolved.action.as_str(), "deny");
     assert_eq!(
         resolved.reason.as_deref(),
         Some(deny_reason.as_str()),
@@ -146,14 +146,14 @@ async fn test_hook_permission_resolver_permission_auto_resolved_absent_on_ask() 
         .map_err(|_| "timed out waiting for PermissionRequested")?
         .map_err(|_| "expected a PermissionRequested event")?;
     let request_id = match event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id,
+        SystemEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("expected PermissionRequested, got {other:?}"),
     };
 
     // -- Exec
     submit_decision(
         &resolver,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
     let decision = tokio::time::timeout(std::time::Duration::from_secs(2), resolve_task)
@@ -167,7 +167,7 @@ async fn test_hook_permission_resolver_permission_auto_resolved_absent_on_ask() 
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionAutoResolved { .. })),
+            .any(|event| matches!(event, SystemEvent::PermissionAutoResolved { .. })),
         "the Ask path owns its own events and must not publish auto-resolved: {events:?}"
     );
     Ok(())
@@ -176,15 +176,15 @@ async fn test_hook_permission_resolver_permission_auto_resolved_absent_on_ask() 
 // region:    --- Test Support
 
 /// The single auto-resolved event on `events`.
-fn auto_resolved(events: &[UiEvent]) -> Result<AutoResolved> {
+fn auto_resolved(events: &[SystemEvent]) -> Result<AutoResolved> {
     let mut found = events.iter().filter_map(|event| match event {
-        UiEvent::PermissionAutoResolved {
+        SystemEvent::PermissionAutoResolved {
             matched_rule_identity,
             action,
             reason,
         } => Some(AutoResolved {
             matched_rule_identity: matched_rule_identity.clone(),
-            action: action.clone(),
+            action: *action,
             reason: reason.clone(),
         }),
         _ => None,
@@ -202,7 +202,7 @@ fn auto_resolved(events: &[UiEvent]) -> Result<AutoResolved> {
 /// The three payload fields of one auto-resolved event.
 struct AutoResolved {
     matched_rule_identity: String,
-    action: String,
+    action: AutoResolutionAction,
     reason: Option<String>,
 }
 

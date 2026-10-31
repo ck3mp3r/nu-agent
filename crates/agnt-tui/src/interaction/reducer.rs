@@ -1,17 +1,16 @@
 use crate::{
-    interaction::cancel::CancelController,
+    interaction::{cancel::CancelController, dispatch::KeyLens},
     state::{
-        ActivePicker, AppState, CommandPaletteAction, InputMode, PickerOption, PickerPayload,
-        PickerRenderKind, ScrollAction, SubmitAction, SwitchRequest, UiPhase,
+        ActivePicker, AppState, CommandPaletteAction, InputMode, PermissionPrompt, PickerOption,
+        PickerPayload, PickerRenderKind, ScrollAction, SubmitAction, SwitchRequest, UiPhase,
     },
 };
 use agnt_core::protocol::contracts::SharedUiAction;
-use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext, UiEvent};
+use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
+use agnt_core::protocol::events::{Key, SystemEvent, SystemKind};
 use agnt_core::protocol::slash::{SlashParseResult, extract_session_id, parse_slash_command};
-use agnt_core::transcript::ir::Block;
+use agnt_core::transcript::entry::{NoticeEntry, TranscriptEntry};
 use agnt_core::transcript::ir::NoticeKind;
-use agnt_core::transcript::items::Notice;
-use agnt_core::transcript::renderer::Renderable;
 
 pub(crate) const ESC_ABORT_CONFIRM_STATUS: &str = "Esc again to cancel";
 
@@ -20,164 +19,563 @@ pub(crate) const PERMISSION_TIMEOUT_STATUS: &str = "permission request timed out
 pub(crate) const VISUAL_REQUIRES_TRANSCRIPT_FOCUS_STATUS: &str =
     "Visual mode requires transcript focus (Tab/h/l).";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UserAction {
-    InsertChar(char),
-    InsertNewline,
-    Submit,
-    Backspace,
-    Delete,
-    MoveCursorLeft,
-    MoveCursorRight,
-    MoveCursorHome,
-    MoveCursorEnd,
-    HistoryUp,
-    HistoryDown,
-    ScrollPageUp,
-    ScrollPageDown,
-    WheelUp { column: u16, row: u16 },
-    WheelDown { column: u16, row: u16 },
-    CompleteForward,
-    CompleteBackward,
-    QueryNext,
-    QueryPrev,
-    ToggleCommandPalette,
-    PickerSubmit(SubmitAction),
-    Resize { columns: u16, rows: u16 },
-    Quit,
-    Esc,
-    EscConfirm,
-    EnterInsertMode,
-    EnterNormalModeFromChord,
-    ScrollLineUp,
-    ScrollLineDown,
-    ScrollToTop,
-    ScrollToBottom,
-    FocusPaneLeft,
-    FocusPaneRight,
-    EnterVisualMode,
-    YankSelection,
-    PermissionAllowOnce,
-    PermissionAllowAlways,
-    PermissionDeny,
-    Noop,
-}
-
-#[derive(Debug, Clone)]
-pub enum ReducerInput {
-    User(UserAction),
-    Event(Box<UiEvent>),
-}
-
-pub fn reduce_with_cancel_controller(
+pub fn reduce(
     state: &mut AppState,
-    input: ReducerInput,
+    event: SystemEvent,
     cancel_controller: Option<&CancelController>,
 ) -> bool {
-    match input {
-        ReducerInput::User(action) => reduce_user_action(state, action, cancel_controller),
-        ReducerInput::Event(event) => dispatch_ui_event(state, *event),
+    // One bookkeeping shift per event: the store counts the blocks it dropped,
+    // so every push inside `event` is accounted for without threading an
+    // evicted out-param through the domain reducers.
+    let evicted_before = state.transcript.evicted_total();
+    let changed = reduce_event(state, event, cancel_controller);
+    let evicted = state
+        .transcript
+        .evicted_total()
+        .saturating_sub(evicted_before);
+    state.shift_bookkeeping_after_eviction(evicted);
+    changed
+}
+
+fn reduce_event(
+    state: &mut AppState,
+    event: SystemEvent,
+    cancel_controller: Option<&CancelController>,
+) -> bool {
+    match event {
+        SystemEvent::KeyPressed { key } => reduce_key(state, key, cancel_controller),
+        // A resize performs no state mutation; the coordinator owns the layout.
+        SystemEvent::WheelScrolled { up, column, row } => {
+            reduce_wheel_event(state, up, column, row)
+        }
+        SystemEvent::Resized { .. } => false,
+        // The card is the only writer of a decision: the reducer resolves the
+        // request id from the open prompt, so the event carries no id.
+        SystemEvent::PermissionDecided { decision } => reduce_permission_decided(state, decision),
+        SystemEvent::PromptSubmitted { text } => handle_submit(state, text),
+        SystemEvent::InferenceStarted => {
+            state.llm.started(
+                &mut state.transcript,
+                &mut state.status,
+                &mut state.phase,
+                &mut state.input_locked,
+            );
+            state.ensure_invariants();
+            true
+        }
+        SystemEvent::InferenceChunk { aggregated, .. } => {
+            state
+                .llm
+                .chunk(&mut state.transcript, &mut state.scroll, &aggregated)
+        }
+        SystemEvent::InferenceCompleted { usage } => state.llm.completed(&mut state.status, &usage),
+        SystemEvent::InferenceStopped { reason } => state.llm.stopped(
+            &mut state.transcript,
+            &mut state.status,
+            &mut state.scroll,
+            &reason,
+        ),
+        SystemEvent::ToolStarted { call } => state.tool.start_call(&mut state.transcript, &call),
+        SystemEvent::PreviewRequested { call, display } => {
+            let display = crate::state::preview_to_display(&display);
+            state
+                .tool
+                .set_tool_preview(&mut state.transcript, &call.id, &display)
+        }
+        SystemEvent::ToolCompleted { call, outcome } => {
+            state
+                .tool
+                .complete_call(&mut state.transcript, &call, &outcome)
+        }
+        SystemEvent::PermissionRequested {
+            request_id,
+            context,
+        } => {
+            apply_permission_request_display(state, &context);
+            state.permission.open_prompt(PermissionPrompt::from_context(
+                request_id.as_str(),
+                &context,
+            ));
+            state.scroll.scroll_transcript_to_bottom();
+            state.ensure_invariants();
+            true
+        }
+        SystemEvent::PermissionDecisionTimedOut { request_id } => {
+            let changed = state.permission.close_prompt_if(request_id.as_str());
+            if changed {
+                state.status.message.set_message(PERMISSION_TIMEOUT_STATUS);
+            }
+            changed
+        }
+        // The echo events of the permission lifecycle are not rendered by the
+        // TUI: the card is the only surface, and it closes on submission.
+        SystemEvent::PermissionDecisionSubmitted { .. }
+        | SystemEvent::PermissionDecisionIgnored { .. }
+        | SystemEvent::PermissionRequestCancelled { .. }
+        | SystemEvent::PermissionAutoResolved { .. } => false,
+        SystemEvent::SystemMessage { kind, text } => match kind {
+            SystemKind::Warning => {
+                state.status.message.set_warning(text);
+                true
+            }
+            SystemKind::TurnError => handle_turn_error(state, &text),
+        },
+        SystemEvent::CompactionRequested { .. } => false,
+        SystemEvent::CompactionStarted { source } => {
+            state.compaction.started(&mut state.transcript, &source)
+        }
+        SystemEvent::CompactionSummaryChunk {
+            source, aggregated, ..
+        } => state.compaction.summary_chunk(
+            &mut state.transcript,
+            &mut state.scroll,
+            &source,
+            &aggregated,
+        ),
+        SystemEvent::CompactionCompleted {
+            source,
+            summary_body,
+            ..
+        } => state.compaction.completed(
+            &mut state.transcript,
+            &mut state.status,
+            &source,
+            &summary_body,
+        ),
+        SystemEvent::CompactionFailed { source, message } => {
+            state
+                .compaction
+                .failed(&mut state.transcript, &mut state.status, &source, &message)
+        }
+        SystemEvent::TurnCompleted { .. } => {
+            state.finalize_cycle();
+            // A cancel can end the turn while a card is still up (A2A task
+            // cancel, Ctrl-C quit+cancel). The request is gone by then, so the
+            // card must not outlive the turn.
+            state.permission.close_prompt();
+            state.turn.finalize(
+                &mut state.transcript,
+                &mut state.status,
+                &mut state.input_locked,
+            )
+        }
+        SystemEvent::Tick => true,
     }
 }
 
-fn reduce_user_action(
+// region:    --- Key arms
+
+/// Fold one key: the input-boundary lens runs first (open panel, open picker,
+/// the permission card, the agent chord); what it leaves behind is the vim
+/// keymap, the insert-exit chords, and the pending `gg` key.
+fn reduce_key(
     state: &mut AppState,
-    action: UserAction,
+    key: Key,
     cancel_controller: Option<&CancelController>,
 ) -> bool {
-    // Selection-extension flag for scroll actions: derived from the input mode
-    // (input domain) and carried into the scroll action.
+    // The input lock drops editing keys while a turn runs. The card's own keys
+    // stay reachable, so a decision can be taken while the input is locked.
+    let locked = state.input_locked && !state.permission.has_prompt();
+    if locked && edits_input(key) {
+        return false;
+    }
+
+    match crate::interaction::dispatch::rewrite_action(state, key) {
+        KeyLens::Consumed(changed) => changed,
+        KeyLens::Scroll(action) => state.scroll.reduce_scroll_action(action),
+        KeyLens::PickerSubmit(submit) => handle_picker_submit(state, submit),
+        KeyLens::Event(event) => reduce_key_event(state, *event, cancel_controller),
+        KeyLens::Quit => handle_quit(state, cancel_controller),
+        KeyLens::Escape => handle_escape(state),
+        KeyLens::Pass => {
+            // Busy-mode Esc escalation: AbortPending escalates Esc to the
+            // cancel confirmation. It couples the orchestrator phase/abort
+            // state with the reducer, so it sits above the keymap and below
+            // the lens (an open panel or picker keeps its own Esc).
+            if state.phase != UiPhase::Idle
+                && key == Key::Esc
+                && state.input.mode != InputMode::Insert
+            {
+                return reduce_busy_escape(state, cancel_controller);
+            }
+            reduce_keymap(state, key, cancel_controller)
+        }
+    }
+}
+
+fn reduce_key_event(
+    state: &mut AppState,
+    event: SystemEvent,
+    cancel_controller: Option<&CancelController>,
+) -> bool {
+    match event {
+        SystemEvent::PermissionDecided { decision } => reduce_permission_decided(state, decision),
+        other => reduce_event(state, other, cancel_controller),
+    }
+}
+
+fn reduce_permission_decided(state: &mut AppState, decision: PermissionDecision) -> bool {
+    if state.permission.submit_decision(decision) {
+        state.ensure_invariants();
+    }
+    true
+}
+
+/// The keys the input lock drops: everything that would edit the draft or
+/// submit it. Every other key stays live (navigation, pickers, quit).
+fn edits_input(key: Key) -> bool {
+    matches!(
+        key,
+        Key::Char(_) | Key::Enter | Key::AltEnter | Key::ShiftEnter | Key::Backspace | Key::Delete
+    )
+}
+
+fn reduce_keymap(
+    state: &mut AppState,
+    key: Key,
+    cancel_controller: Option<&CancelController>,
+) -> bool {
+    let idle = state.phase == UiPhase::Idle;
+    match state.input.mode {
+        InputMode::Insert => reduce_insert_key(state, key, idle, cancel_controller),
+        InputMode::Normal => reduce_normal_key(state, key, idle, cancel_controller),
+        InputMode::Visual => reduce_visual_key(state, key, idle, cancel_controller),
+    }
+}
+
+/// Insert mode: j/k exit chords (the second key within the window leaves insert
+/// mode), Esc leaves insert mode, everything else falls through.
+fn reduce_insert_key(
+    state: &mut AppState,
+    key: Key,
+    idle: bool,
+    cancel_controller: Option<&CancelController>,
+) -> bool {
+    match key {
+        Key::Esc => reduce_insert_escape(state, idle),
+        Key::Char('j') | Key::Char('k') => reduce_insert_chord(state, key, idle),
+        other => {
+            state.input.clear_insert_exit_pending_j();
+            state.input.clear_normal_pending_key();
+            reduce_common_key(state, other, cancel_controller)
+        }
+    }
+}
+
+fn reduce_insert_escape(state: &mut AppState, idle: bool) -> bool {
+    state.input.clear_insert_exit_pending_j();
+    state.input.clear_normal_pending_key();
+    if idle {
+        return handle_escape(state);
+    }
+    // Busy: Esc drops to normal mode first, then the abort-confirmation
+    // coupling arms the cancel confirmation.
+    state.enter_normal_mode();
+    let _ = handle_escape(state);
+    true
+}
+
+/// The insert-exit chord. Arming it is an input-state change, so a busy turn
+/// repaints; while idle the armed key reports no change, exactly as the lens
+/// did.
+fn reduce_insert_chord(state: &mut AppState, key: Key, idle: bool) -> bool {
+    let Key::Char(ch) = key else {
+        return false;
+    };
+    if state.input.insert_exit_pending_j() {
+        state.input.clear_insert_exit_pending_j();
+        if idle {
+            return handle_enter_normal_mode_from_chord(state);
+        }
+        state.enter_normal_mode();
+        return true;
+    }
+    if ch == 'j' {
+        state.input.set_insert_exit_pending_j();
+    } else {
+        state.input.clear_insert_exit_pending_j();
+    }
+    !idle
+}
+
+/// Normal mode: the vim navigation keymap, the pending `gg` key, and the mode
+/// transitions. While busy the keymap still applies, but `i` re-enters insert
+/// mode directly instead of through the idle gate.
+fn reduce_normal_key(
+    state: &mut AppState,
+    key: Key,
+    idle: bool,
+    cancel_controller: Option<&CancelController>,
+) -> bool {
+    state.input.clear_insert_exit_pending_j();
+    let select = false;
+    match key {
+        Key::Esc => {
+            state.input.clear_normal_pending_key();
+            handle_escape(state)
+        }
+        Key::Char('i') => {
+            state.input.clear_normal_pending_key();
+            if idle {
+                handle_enter_insert_mode(state)
+            } else {
+                state.enter_insert_mode();
+                true
+            }
+        }
+        Key::Char('v') => {
+            state.input.clear_normal_pending_key();
+            handle_enter_visual_mode(state)
+        }
+        Key::Char('j') => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::LineDown { select })
+        }
+        Key::Char('k') => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::LineUp { select })
+        }
+        Key::Char('h') => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::FocusPaneLeft)
+        }
+        Key::Char('l') => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::FocusPaneRight)
+        }
+        Key::Tab => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::FocusPaneRight)
+        }
+        Key::BackTab => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::FocusPaneLeft)
+        }
+        Key::Char('g') => reduce_pending_g(state),
+        Key::Char('G') => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::ToBottom { select })
+        }
+        Key::PageUp | Key::CtrlU => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::PageUp { select })
+        }
+        Key::PageDown | Key::CtrlD => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::PageDown { select })
+        }
+        Key::Char(_) | Key::AltEnter | Key::ShiftEnter => {
+            state.input.clear_normal_pending_key();
+            false
+        }
+        other => {
+            state.input.clear_normal_pending_key();
+            reduce_common_key(state, other, cancel_controller)
+        }
+    }
+}
+
+/// Visual mode selects as it moves. While idle it owns a closed keymap — a key
+/// it does not name does nothing; while busy the keys pass through to the
+/// common arm, exactly as the lens did.
+fn reduce_visual_key(
+    state: &mut AppState,
+    key: Key,
+    idle: bool,
+    cancel_controller: Option<&CancelController>,
+) -> bool {
+    if !idle {
+        state.input.clear_insert_exit_pending_j();
+        state.input.clear_normal_pending_key();
+        return reduce_common_key(state, key, cancel_controller);
+    }
+    let select = true;
+    match key {
+        Key::CtrlP => {
+            state.input.clear_normal_pending_key();
+            handle_toggle_command_palette(state)
+        }
+        Key::Char('j') => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::LineDown { select })
+        }
+        Key::Char('k') => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::LineUp { select })
+        }
+        Key::Char('g') => reduce_pending_g(state),
+        Key::Char('G') => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::ToBottom { select })
+        }
+        Key::Char('y') => {
+            state.input.clear_normal_pending_key();
+            handle_yank_selection(state)
+        }
+        Key::Esc => {
+            state.input.clear_normal_pending_key();
+            handle_escape(state)
+        }
+        Key::PageUp | Key::CtrlU => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::PageUp { select })
+        }
+        Key::PageDown | Key::CtrlD => {
+            state.input.clear_normal_pending_key();
+            state
+                .scroll
+                .reduce_scroll_action(ScrollAction::PageDown { select })
+        }
+        _ => {
+            state.input.clear_normal_pending_key();
+            false
+        }
+    }
+}
+
+/// The pending `gg` key: the first `g` arms it, the second one jumps to the top
+/// of the transcript.
+fn reduce_pending_g(state: &mut AppState) -> bool {
     let select = state.input.mode == InputMode::Visual;
-    match action {
-        UserAction::InsertNewline => handle_insert_newline(state),
-        UserAction::Submit => handle_submit(state),
-        // Input editing is handled by the coordinator's TextArea; these
-        // actions are no-ops at the reducer boundary.
-        UserAction::InsertChar(_) | UserAction::Backspace | UserAction::Delete => false,
-        UserAction::MoveCursorLeft
-        | UserAction::MoveCursorRight
-        | UserAction::MoveCursorHome
-        | UserAction::MoveCursorEnd => false,
-        UserAction::Noop => false,
-        UserAction::EnterInsertMode => handle_enter_insert_mode(state),
-        UserAction::EnterVisualMode => handle_enter_visual_mode(state),
-        UserAction::EnterNormalModeFromChord => handle_enter_normal_mode_from_chord(state),
-        UserAction::ScrollLineUp => state
+    if state.input.take_normal_pending_key_if('g') {
+        state
             .scroll
-            .reduce_scroll_action(ScrollAction::LineUp { select }),
-        UserAction::ScrollLineDown => state
-            .scroll
-            .reduce_scroll_action(ScrollAction::LineDown { select }),
-        UserAction::ScrollToTop => state
-            .scroll
-            .reduce_scroll_action(ScrollAction::ToTop { select }),
-        UserAction::ScrollToBottom => state
-            .scroll
-            .reduce_scroll_action(ScrollAction::ToBottom { select }),
-        UserAction::FocusPaneLeft => state
-            .scroll
-            .reduce_scroll_action(ScrollAction::FocusPaneLeft),
-        UserAction::FocusPaneRight => state
-            .scroll
-            .reduce_scroll_action(ScrollAction::FocusPaneRight),
-        UserAction::YankSelection => handle_yank_selection(state),
-        UserAction::PermissionAllowOnce => {
-            if state
-                .permission
-                .submit_decision(PermissionDecision::AllowOnce)
-            {
-                state.ensure_invariants();
-            }
-            true
+            .reduce_scroll_action(ScrollAction::ToTop { select })
+    } else {
+        state.input.arm_normal_pending_key('g');
+        false
+    }
+}
+
+/// The keys every mode shares: submit, quit, the palette, escape, and paging.
+fn reduce_common_key(
+    state: &mut AppState,
+    key: Key,
+    cancel_controller: Option<&CancelController>,
+) -> bool {
+    let select = state.input.mode == InputMode::Visual;
+    match key {
+        Key::Enter => {
+            let text = state.input.pending_submit_text.take().unwrap_or_default();
+            handle_submit(state, text)
         }
-        UserAction::PermissionAllowAlways => {
-            if state
-                .permission
-                .submit_decision(PermissionDecision::AllowAlways)
-            {
-                state.ensure_invariants();
-            }
-            true
-        }
-        UserAction::PermissionDeny => {
-            if state.permission.submit_decision(PermissionDecision::Deny) {
-                state.ensure_invariants();
-            }
-            true
-        }
-        UserAction::Resize { .. } => false,
-        UserAction::ToggleCommandPalette => handle_toggle_command_palette(state),
-        UserAction::PickerSubmit(submit) => handle_picker_submit(state, submit),
-        UserAction::HistoryUp => false,
-        UserAction::HistoryDown => false,
-        UserAction::QueryNext
-        | UserAction::QueryPrev
-        | UserAction::CompleteForward
-        | UserAction::CompleteBackward => false,
-        UserAction::ScrollPageUp => state
+        Key::CtrlC => handle_quit(state, cancel_controller),
+        Key::CtrlP => handle_toggle_command_palette(state),
+        Key::Esc => handle_escape(state),
+        Key::PageUp | Key::CtrlU => state
             .scroll
             .reduce_scroll_action(ScrollAction::PageUp { select }),
-        UserAction::ScrollPageDown => state
+        Key::PageDown | Key::CtrlD => state
             .scroll
             .reduce_scroll_action(ScrollAction::PageDown { select }),
-        UserAction::WheelUp { column, row } => handle_wheel(state, column, row, true, select),
-        UserAction::WheelDown { column, row } => handle_wheel(state, column, row, false, select),
-        UserAction::Quit => handle_quit(state, cancel_controller),
-        UserAction::Esc => handle_escape(state),
-        UserAction::EscConfirm => handle_escape_confirm(state, cancel_controller),
+        // Editing keys are the coordinator's TextArea; at the reducer boundary
+        // they are no-ops. History and query cycling are coordinator-side too.
+        _ => false,
     }
 }
 
-fn handle_insert_newline(state: &mut AppState) -> bool {
-    let _ = state;
-    false
+/// The busy-mode Esc escalation: AbortPending confirms, everything else arms.
+fn reduce_busy_escape(state: &mut AppState, cancel_controller: Option<&CancelController>) -> bool {
+    state.input.clear_normal_pending_key();
+    state.input.clear_insert_exit_pending_j();
+    if state.phase == UiPhase::AbortPending && state.abort.pending {
+        return handle_escape_confirm(state, cancel_controller);
+    }
+    handle_escape(state)
 }
 
-fn handle_submit(state: &mut AppState) -> bool {
-    // handle_submit is only called from non-insert-mode paths (normal mode, etc.)
-    // where there's no textarea. The caller must set pending_submit_text on
-    // state.input before dispatching Submit.
-    let submitted_text = state.input.pending_submit_text.take().unwrap_or_default();
+/// A wheel notch goes through the same modal gates as a key: an open info
+/// panel or picker owns the notch (the inline slash list passes it through), and
+/// the permission card swallows it. The gates report a repaint exactly as the
+/// lens tuples did.
+fn reduce_wheel_event(state: &mut AppState, up: bool, column: u16, row: u16) -> bool {
+    if state.info_panel.is_some() {
+        return false;
+    }
+    if state.picker.active().is_some() && state.picker.active() != Some(ActivePicker::InlineSlash) {
+        return true;
+    }
+    if state.permission.has_prompt() {
+        return true;
+    }
+    reduce_wheel(state, up, column, row)
+}
+
+/// A wheel notch over the transcript leaves insert mode and scrolls. The
+/// insert-to-normal transition mutates the rendered mode indicator and pane
+/// focus, so it is a visible change even when the scroll is a no-op.
+fn reduce_wheel(state: &mut AppState, up: bool, column: u16, row: u16) -> bool {
+    let select = state.input.mode == InputMode::Visual;
+    if !state.scroll.contains_transcript_point(column, row) {
+        return false;
+    }
+    let mode_changed = state.input.mode == InputMode::Insert;
+    if mode_changed {
+        state.enter_normal_mode();
+    }
+    let action = if up {
+        ScrollAction::WheelUp { select }
+    } else {
+        ScrollAction::WheelDown { select }
+    };
+    state.scroll.reduce_scroll_action(action) || mode_changed
+}
+
+// endregion: --- Key arms
+
+/// A turn-level error is shown as a system notice in the transcript and closes
+/// the turn, exactly as the former `TurnError` arm did.
+fn handle_turn_error(state: &mut AppState, message: &str) -> bool {
+    push_system_notice(state, format!("Error: {message}"));
+    state.finalize_cycle();
+    state.permission.close_prompt();
+    state.turn.finalize(
+        &mut state.transcript,
+        &mut state.status,
+        &mut state.input_locked,
+    )
+}
+
+/// Push a system line into the transcript. Both the live error path and the
+/// replayed snapshot path funnel through here, so a resumed session shows the
+/// same notice rows a live one does.
+pub(crate) fn push_system_notice(state: &mut AppState, text: String) {
+    state
+        .transcript
+        .push_entry(TranscriptEntry::Notice(NoticeEntry {
+            kind: NoticeKind::System,
+            text,
+        }));
+}
+
+fn handle_submit(state: &mut AppState, submitted_text: String) -> bool {
+    state.input.pending_submit_text = None;
     if submitted_text.trim().is_empty() {
         return false;
     }
@@ -243,25 +641,6 @@ fn handle_enter_normal_mode_from_chord(state: &mut AppState) -> bool {
     false
 }
 
-fn handle_wheel(state: &mut AppState, column: u16, row: u16, up: bool, select: bool) -> bool {
-    if !state.scroll.contains_transcript_point(column, row) {
-        return false;
-    }
-    // The insert→normal transition mutates the rendered mode indicator and
-    // pane focus, so it is a visible change even when the wheel scroll is a
-    // no-op.
-    let mode_changed = state.input.mode == InputMode::Insert;
-    if mode_changed {
-        state.enter_normal_mode();
-    }
-    let action = if up {
-        ScrollAction::WheelUp { select }
-    } else {
-        ScrollAction::WheelDown { select }
-    };
-    state.scroll.reduce_scroll_action(action) || mode_changed
-}
-
 fn handle_yank_selection(state: &mut AppState) -> bool {
     if state.input.mode != InputMode::Visual {
         return false;
@@ -287,6 +666,7 @@ fn handle_toggle_command_palette(state: &mut AppState) -> bool {
                 id: a.label().to_string(),
                 display: a.label().to_string(),
                 search_text: a.label().to_string(),
+                section: None,
                 sort_key: Vec::new(),
                 payload: PickerPayload::Command(*a),
             })
@@ -343,18 +723,11 @@ fn handle_picker_submit(state: &mut AppState, submit: SubmitAction) -> bool {
             true
         }
         SubmitAction::SlashAccept => {
-            let Some(opt) = state.picker.active_state().and_then(|s| s.selected()) else {
+            let Some(selected) = state.picker.selected_slash_label() else {
                 return false;
             };
-            let command = match &opt.payload {
-                PickerPayload::Slash(c) => *c,
-                _ => return false,
-            };
-            let selected = command.label().to_string();
-            state.input.pending_submit_text = Some(selected);
-            state.ensure_invariants();
-            handle_submit(state);
-            true
+            state.picker.close();
+            handle_submit(state, selected)
         }
     }
 }
@@ -412,202 +785,18 @@ fn handle_escape_confirm(
     false
 }
 
-/// Dispatch a protocol `UiEvent` to the domain reducers. This is the single
-/// `UiEvent` → domain mapping; both event paths (bus receivers via
-/// `RuntimeCoordinator::reduce_*_event` and the transport drain) converge
-/// here or on the same domain reducers.
-pub(crate) fn dispatch_ui_event(state: &mut AppState, event: UiEvent) -> bool {
-    use agnt_core::bus::{
-        CompactionEvent, LlmEvent, PermissionEvent, ToolEvent, TurnEvent, WarningEvent,
-    };
-
-    match event {
-        UiEvent::LlmStarted => crate::state::dispatch_llm_event(state, LlmEvent::Started),
-        UiEvent::LlmCompleted {
-            response_chars,
-            tool_calls,
-            input_tokens,
-            output_tokens,
-            total_tokens,
-            cost,
-            cost_complete,
-        } => crate::state::dispatch_llm_event(
-            state,
-            LlmEvent::Completed {
-                response_chars,
-                tool_calls,
-                input_tokens,
-                output_tokens,
-                total_tokens,
-                cost,
-                cost_complete,
-            },
-        ),
-        UiEvent::AssistantMessage { text, .. } => {
-            crate::state::dispatch_llm_event(state, LlmEvent::AssistantMessage { text })
-        }
-        UiEvent::Stopped { reason } => {
-            crate::state::dispatch_llm_event(state, LlmEvent::Stopped { reason })
-        }
-        UiEvent::ToolStarted {
-            name,
-            source,
-            arguments,
-            call_line,
-        } => crate::state::dispatch_tool_event(
-            state,
-            ToolEvent::Started {
-                name,
-                source,
-                arguments,
-                call_line,
-            },
-        ),
-        UiEvent::ToolCompleted {
-            name,
-            source,
-            arguments,
-            success,
-            result,
-            display,
-            error_kind,
-            message,
-        } => crate::state::dispatch_tool_event(
-            state,
-            ToolEvent::Completed {
-                name,
-                source,
-                arguments,
-                success,
-                result,
-                display,
-                error_kind,
-                message,
-            },
-        ),
-        UiEvent::CompactionStarted { source } => {
-            crate::state::dispatch_compaction_event(state, CompactionEvent::Started { source })
-        }
-        UiEvent::CompactionSummaryChunk {
-            source,
-            delta,
-            aggregated,
-        } => crate::state::dispatch_compaction_event(
-            state,
-            CompactionEvent::SummaryChunk {
-                source,
-                delta,
-                aggregated,
-            },
-        ),
-        UiEvent::CompactionCompleted {
-            source,
-            summary_preview,
-            summary_body,
-        } => crate::state::dispatch_compaction_event(
-            state,
-            CompactionEvent::Completed {
-                source,
-                summary_preview,
-                summary_body,
-            },
-        ),
-        UiEvent::CompactionFailed { source, message } => crate::state::dispatch_compaction_event(
-            state,
-            CompactionEvent::Failed { source, message },
-        ),
-        UiEvent::Completed {
-            tool_calls,
-            input_tokens,
-            output_tokens,
-            total_tokens,
-            cost,
-            cost_complete,
-            duration_ms,
-        } => crate::state::dispatch_turn_event(
-            state,
-            TurnEvent::Completed {
-                tool_calls,
-                input_tokens,
-                output_tokens,
-                total_tokens,
-                cost,
-                cost_complete,
-                duration_ms,
-            },
-        ),
-        UiEvent::Tick => true,
-        UiEvent::TurnError { message } => {
-            let error = Notice {
-                kind: NoticeKind::System,
-                text: format!("Error: {message}"),
-            };
-            let evicted = state.transcript.push_block(Block {
-                source: error.source(),
-                lane: error.lane(),
-                fill: error.fill(),
-                status: None,
-            });
-            state.shift_bookkeeping_after_eviction(evicted);
-            crate::state::dispatch_turn_event(
-                state,
-                TurnEvent::Completed {
-                    tool_calls: 0,
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    total_tokens: None,
-                    cost: None,
-                    cost_complete: true,
-                    duration_ms: 0,
-                },
-            );
-            true
-        }
-        UiEvent::PermissionRequested {
-            request_id,
-            context,
-        } => {
-            apply_permission_request_display(state, &context);
-            let changed = state
-                .permission
-                .reduce_permission_event(PermissionEvent::Requested {
-                    request_id,
-                    context: Box::new(context),
-                });
-            if changed {
-                state.scroll.scroll_transcript_to_bottom();
-                state.ensure_invariants();
-            }
-            true
-        }
-        UiEvent::ToolPreview { tool_key, display } => {
-            let evicted = crate::state::note_tool_preview(state, &tool_key, &display);
-            state.shift_bookkeeping_after_eviction(evicted);
-            true
-        }
-        UiEvent::Warning { message } => state
-            .status
-            .reduce_warning_event(WarningEvent::Message { message }),
-        UiEvent::PermissionDecisionTimedOut { request_id } => {
-            let changed = state
-                .permission
-                .reduce_permission_event(PermissionEvent::DecisionTimedOut { request_id });
-            if changed {
-                state.status.message.set_message(PERMISSION_TIMEOUT_STATUS);
-            }
-            changed
-        }
-        UiEvent::PermissionDecisionSubmitted { .. }
-        | UiEvent::PermissionDecisionIgnored { .. }
-        | UiEvent::PermissionRequestCancelled { .. }
-        | UiEvent::PermissionAutoResolved { .. } => false,
-    }
-}
-
+/// Attach a permission request's pre-authorize display to the pending call it
+/// refers to. The request carries the exact call key, so the pending call is
+/// matched byte-for-byte; a decorated display name never equals a key.
 pub(crate) fn apply_permission_request_display(
     state: &mut AppState,
     context: &PermissionRequestContext,
 ) {
-    let evicted = crate::state::note_permission_request_display(state, context);
-    state.shift_bookkeeping_after_eviction(evicted);
+    let Some(display) = &context.pre_authorize_display else {
+        return;
+    };
+    let display = crate::state::preview_to_display(display);
+    state
+        .tool
+        .set_preview_for_key(&mut state.transcript, &context.tool_key, &display);
 }

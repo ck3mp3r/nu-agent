@@ -18,6 +18,14 @@ impl CallLine {
             .unwrap_or(&self.summary)
             .to_string()
     }
+
+    /// Fallback call line for tools without a tailored summary: the
+    /// arrow-prefixed, truncated JSON arguments.
+    pub fn from_json_summary(arguments: &str) -> Self {
+        Self {
+            summary: format!("→ {}", summarize_tool_arguments(arguments)),
+        }
+    }
 }
 
 /// Parse `arguments` as JSON and return the named field as a string.

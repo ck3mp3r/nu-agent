@@ -140,7 +140,7 @@ async fn nu_handles_large_output_without_deadlock() -> Result<()> {
 
 #[tokio::test]
 #[ignore]
-async fn nu_timeout_kills_process_and_returns_error() {
+async fn nu_timeout_kills_process_and_returns_error() -> Result<()> {
     let bus = Bus::default();
     let start = std::time::Instant::now();
     let result = NuTool::execute(
@@ -152,12 +152,21 @@ async fn nu_timeout_kills_process_and_returns_error() {
     let elapsed = start.elapsed();
     assert!(elapsed < Duration::from_secs(5));
     assert!(result.is_err());
-    assert!(result.unwrap_err().message.contains("timed out"));
+    let err = result.err().ok_or("a timeout must return an error")?;
+    assert!(err.message.contains("timed out"));
+    // The wall clock stopped the call before it produced a result: the error
+    // carries the not-run kind, so the live row finishes ⊘ like the replayed.
+    assert_eq!(err.kind, ToolErrorKind::NotRun, "timeout kind: {err:?}");
+    assert!(
+        err.details.is_none(),
+        "a timeout carries no output payload: {err:?}"
+    );
+    Ok(())
 }
 
 #[tokio::test]
 #[ignore]
-async fn nu_cancellation_kills_process_quickly() {
+async fn nu_cancellation_kills_process_quickly() -> Result<()> {
     let bus = Bus::default();
     let bus2 = bus.clone();
     let handle = tokio::spawn(async move {
@@ -182,11 +191,15 @@ async fn nu_cancellation_kills_process_quickly() {
         &bus,
     )
     .await;
-    handle.await.unwrap();
+    handle.await?;
     let elapsed = start.elapsed();
     assert!(elapsed < Duration::from_secs(5));
-    assert!(result.is_err());
-    assert!(result.unwrap_err().message.contains("cancelled"));
+    let err = result.err().ok_or("a cancel must return an error")?;
+    assert!(err.message.contains("cancelled"));
+    // The turn's cancel stopped the call before it produced a result: the same
+    // not-run kind the timeout arm carries, so both rehydrate and render ⊘.
+    assert_eq!(err.kind, ToolErrorKind::NotRun, "cancel kind: {err:?}");
+    Ok(())
 }
 
 // === Previewable ===

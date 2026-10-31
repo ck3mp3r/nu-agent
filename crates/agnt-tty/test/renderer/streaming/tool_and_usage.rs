@@ -2,6 +2,8 @@
 
 use super::*;
 
+use agnt_core::session::tool_status::ToolStatus;
+
 #[test]
 fn tool_display_renders_diff_with_stats() {
     let mut stderr_bytes = Vec::<u8>::new();
@@ -30,15 +32,21 @@ fn tool_display_renders_diff_with_stats() {
             }),
         }],
     };
-    renderer.emit(&UiEvent::ToolCompleted {
-        name: "edit".to_string(),
-        source: "code".to_string(),
-        arguments: "{}".to_string(),
-        success: true,
-        result: "ok".to_string(),
-        display: Some(display),
-        error_kind: None,
-        message: None,
+    renderer.emit(&SystemEvent::ToolCompleted {
+        call: ToolCall::new(
+            ToolName("edit".to_string()),
+            "code",
+            "{}",
+            CallLine::from_json_summary("{}"),
+        ),
+        outcome: ToolOutcome {
+            success: true,
+            status: ToolStatus::Success,
+            result: "ok".to_string(),
+            display: Some(display),
+            error_kind: None,
+            message: None,
+        },
     });
     renderer.flush();
     let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");
@@ -56,19 +64,21 @@ fn llm_end_prints_token_usage() {
         },
         false,
     );
-    renderer.emit(&UiEvent::LlmStarted);
-    renderer.emit(&UiEvent::AssistantMessage {
+    renderer.emit(&SystemEvent::InferenceStarted);
+    renderer.emit(&SystemEvent::InferenceChunk {
         delta: "hi".to_string(),
-        text: "hi".to_string(),
+        aggregated: "hi".to_string(),
     });
-    renderer.emit(&UiEvent::LlmCompleted {
-        response_chars: 2,
-        tool_calls: 0,
-        input_tokens: 80,
-        output_tokens: 20,
-        total_tokens: Some(100),
-        cost: None,
-        cost_complete: false,
+    renderer.emit(&SystemEvent::InferenceCompleted {
+        usage: Usage {
+            response_chars: 2,
+            tool_calls: 0,
+            input_tokens: 80,
+            output_tokens: 20,
+            total_tokens: Some(100),
+            cost: None,
+            cost_complete: false,
+        },
     });
     renderer.flush();
     let stderr_out = String::from_utf8(stderr_bytes).expect("utf8");

@@ -21,8 +21,9 @@ mod slash_commands;
 
 use super::test_shared::*;
 use crate::protocol::contracts::ProgressUi;
-use crate::protocol::event::{PermissionDecisionSubmission, UiEvent};
+use crate::protocol::event::PermissionDecisionSubmission;
+use crate::protocol::events::{RequestId, SystemEvent, ToolCall, ToolOutcome};
 use crate::protocol::tool_args::CallLine;
-use crate::transcript::ir::ContentKind;
+use crate::transcript::ir::{ContentKind, ToolName};
 
 type TResult = core::result::Result<(), Box<dyn std::error::Error>>;

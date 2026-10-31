@@ -1,10 +1,8 @@
 use std::time::Instant;
 
 use agnt_core::orchestrator::OrchestratorEvent;
-use agnt_core::protocol::{
-    contracts::{ProgressUi, UserInputUi},
-    event::UiEvent,
-};
+use agnt_core::protocol::contracts::{ProgressUi, UserInputUi};
+use agnt_core::protocol::events::SystemEvent;
 use agnt_core::renderer::UiRenderer;
 use nu_protocol::LabeledError;
 use tokio::sync::mpsc;
@@ -12,6 +10,7 @@ use tokio::sync::mpsc;
 use crate::interaction::cancel::CancelController;
 use crate::interaction::input::TerminalEvent;
 use crate::runtime::map_crossterm_event;
+use crate::runtime::render::current_time_millis;
 use crate::runtime::{HybridTerminalEvents, RuntimeCoordinator, TuiRuntimeRenderer};
 use crate::state::{ActivePicker, PickerOption};
 
@@ -32,6 +31,13 @@ pub(crate) struct RenderLoopChannels {
     pub(crate) branch_rx: mpsc::Receiver<()>,
     pub(crate) theme_persist_tx: Option<mpsc::Sender<String>>,
 }
+
+/// The render loop's only timer: the busy spinner's own cadence. A tick
+/// services time-driven content alone — the status message's expiry and the
+/// spinner's cadence step — and renders only when one of them changed, so an
+/// unchanged frame emits zero bytes.
+pub(crate) const RENDER_TICK: std::time::Duration =
+    std::time::Duration::from_millis(crate::runtime::SPINNER_CADENCE_MS as u64);
 
 impl<R> TuiInteractiveUi<R>
 where
@@ -236,7 +242,7 @@ impl<R> ProgressUi for TuiInteractiveUi<R>
 where
     R: UiRenderer,
 {
-    fn emit(&mut self, event: &UiEvent) {
+    fn emit(&mut self, event: &SystemEvent) {
         self.renderer.emit(event);
     }
 
@@ -248,7 +254,7 @@ where
         self.renderer.take_cancel_requested()
     }
 
-    fn emit_batch(&mut self, events: &[UiEvent]) {
+    fn emit_batch(&mut self, events: &[SystemEvent]) {
         self.renderer.emit_batch(events);
     }
 }
@@ -328,7 +334,7 @@ pub(crate) async fn run_render_loop<
     let mut compaction_rx = bus.compaction().subscribe();
     let mut session_rx = bus.session().subscribe();
     let mut ui_state_rx = bus.ui_state().subscribe();
-    let mut render_timer = tokio::time::interval(std::time::Duration::from_millis(80));
+    let mut render_timer = tokio::time::interval(RENDER_TICK);
 
     loop {
         tokio::select! {
@@ -362,7 +368,7 @@ pub(crate) async fn run_render_loop<
             }
             ok = ui_event_rx.recv() => {
                 if let Ok(event) = ok
-                    && coordinator.reduce_ui_event(event)
+                    && coordinator.reduce_system_event(event)
                 {
                     // A turn completion (or failure) clears the active prompt. Drain
                     // any prompts stacked during the turn into PromptSubmitted events
@@ -384,7 +390,7 @@ pub(crate) async fn run_render_loop<
             }
             ok = compaction_rx.recv() => {
                 if let Ok(event) = ok
-                    && coordinator.reduce_compaction_event(event)
+                    && coordinator.reduce_system_event(event)
                 {
                     coordinator.mark_render_needed();
                     let _ = coordinator.render_if_needed(live_terminal);
@@ -426,7 +432,7 @@ pub(crate) async fn run_render_loop<
                 {
                     coordinator.mark_render_needed();
                 }
-                if coordinator.has_active_animation() {
+                if coordinator.spinner_cadence_advanced(current_time_millis()) {
                     coordinator.mark_render_needed();
                 }
                 let _ = coordinator.render_if_needed(live_terminal);

@@ -1,8 +1,10 @@
-use agnt_core::transcript::ir::{Block as IrBlock, MessageRole};
-use agnt_core::transcript::items::Message;
-use agnt_core::transcript::renderer::{FrameContext, Renderable};
+use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_core::transcript::ir::MessageRole;
+use agnt_render::backend::RowRect;
+use agnt_render::{RenderBackend, Theme};
 use ratatui::{
     Frame,
+    buffer::Buffer,
     layout::{Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
@@ -14,8 +16,9 @@ use crate::rendering::{
     theme::TuiTheme,
 };
 use crate::runtime::panels::{inline_slash_title, render_permission_controls};
-use crate::runtime::render::{render_modal_frame, user_rail_line};
-use crate::tui_renderer::{layout, measure};
+use crate::runtime::render::transcript::blit;
+use crate::runtime::render::{paint_user_rail_row, render_modal_frame};
+use crate::widgets::RatatuiBackend;
 use crate::{
     runtime::inline_slash_lines_for_render,
     state::{AppState, CaretGlyph, InputMode, PickerRenderKind, PromptStatus},
@@ -28,7 +31,7 @@ impl RuntimeCoordinator {
         &mut self,
         frame: &mut Frame,
         bottom_box_rect: Rect,
-        stack_blocks: &[IrBlock],
+        stack_entries: &[TranscriptEntry],
         stack_h: u16,
         input_h: u16,
         now_millis: u128,
@@ -70,20 +73,16 @@ impl RuntimeCoordinator {
                 Block::default().style(Style::default().bg(self.theme.row_user_bg)),
                 stack_rect,
             );
-            let ctx = FrameContext {
-                width: stack_width as usize,
-                now_millis,
-                cursor: false,
-                selected: false,
-            };
-            let mut lines: Vec<Line<'static>> = Vec::with_capacity(stack_h as usize);
-            lines.push(user_rail_line(&self.theme));
-            for block in stack_blocks {
-                lines.extend(layout(block, &ctx, &self.theme));
+            let mut canvas = Buffer::empty(Rect::new(0, 0, stack_width, stack_h));
+            paint_stack_rail_row(&mut canvas, 0, &self.theme);
+            let mut row = 1usize;
+            for entry in stack_entries {
+                row = paint_stack_entry(&mut canvas, row, entry, &self.theme, now_millis);
             }
-            lines.push(user_rail_line(&self.theme));
-            frame.render_widget(
-                Paragraph::new(Text::from(lines)),
+            paint_stack_rail_row(&mut canvas, row, &self.theme);
+            blit(
+                frame.buffer_mut(),
+                &canvas,
                 Rect {
                     width: stack_width,
                     ..stack_rect
@@ -311,6 +310,49 @@ impl RuntimeCoordinator {
 
 // region:    --- Support
 
+/// Paint one queued prompt's rows through the message widget, one buffer row
+/// below the stack's top padding. Returns the buffer row after the entry.
+fn paint_stack_entry(
+    canvas: &mut Buffer,
+    row: usize,
+    entry: &TranscriptEntry,
+    theme: &TuiTheme,
+    now_millis: u128,
+) -> usize {
+    let width = usize::from(canvas.area.width);
+    let probe = RatatuiBackend::new(canvas.area.width, 0);
+    let rows = probe.measure(entry, width);
+    if rows == 0 {
+        return row;
+    }
+    let Ok(height) = u16::try_from(rows) else {
+        return row;
+    };
+    let Ok(top) = u16::try_from(row) else {
+        return row;
+    };
+    let mut backend = RatatuiBackend::new(canvas.area.width, height);
+    backend.set_now_millis(now_millis);
+    backend.render(entry, RowRect::new(0, width, rows), &Theme::from(theme));
+    let rect = Rect {
+        x: 0,
+        y: top,
+        width: canvas.area.width,
+        height,
+    };
+    blit(canvas, backend.buffer(), rect);
+    row.saturating_add(rows)
+}
+
+/// Paint the stack's padding row: the user rail, so the box's top and bottom
+/// rows keep the gutter continuous down the whole block.
+fn paint_stack_rail_row(canvas: &mut Buffer, row: usize, theme: &TuiTheme) {
+    let Ok(y) = u16::try_from(row) else {
+        return;
+    };
+    paint_user_rail_row(canvas, y, usize::from(canvas.area.width), theme);
+}
+
 /// The buffer cell the input caret paints, or `None` when the caret's row falls
 /// outside the textarea rect (the widget is scrolled past that row).
 ///
@@ -333,42 +375,36 @@ pub(crate) fn caret_cell_position(
     textarea_rect.contains(position).then_some(position)
 }
 
-/// One user-lane block per queued prompt, in queue order. Each block is the
-/// same IR a completed user turn pushes into the transcript, so the stack
-/// renders through the transcript's user-message pipeline instead of a
-/// private style path.
-pub(crate) fn queued_prompt_blocks(state: &AppState) -> Vec<IrBlock> {
+/// One user-message entry per queued prompt, in queue order. Each entry is the
+/// same shape a completed user turn pushes into the transcript, so the stack
+/// renders through the message widget instead of a private style path.
+pub(crate) fn queued_prompt_entries(state: &AppState) -> Vec<TranscriptEntry> {
     state
         .prompt_items()
         .iter()
         .filter(|prompt| prompt.status == PromptStatus::Queued)
         .map(|prompt| {
-            let message = Message {
+            TranscriptEntry::Message(MessageEntry {
                 role: MessageRole::User,
                 markdown: prompt.prompt_text.clone(),
-            };
-            IrBlock {
-                source: message.source(),
-                lane: message.lane(),
-                fill: message.fill(),
-                status: None,
-            }
+            })
         })
         .collect()
 }
 
 /// Rows the stack occupies at `width`: the two tinted padding rows (one above
 /// the text, one below) plus every queued prompt's wrapped rows. `0` when
-/// nothing is queued, so an empty queue adds no stack row and no gap row.
-/// [`measure`] is the row-count twin of the [`layout`] call that paints the
-/// stack, so the reserved height and the rendered rows agree by construction.
-pub(crate) fn stacked_messages_height(blocks: &[IrBlock], width: usize, theme: &TuiTheme) -> u16 {
-    if blocks.is_empty() {
+/// nothing is queued, so an empty queue adds no stack row and no gap row. The
+/// backend measures, so the reserved height and the painted rows agree by
+/// construction.
+pub(crate) fn stacked_messages_height(entries: &[TranscriptEntry], width: usize) -> u16 {
+    if entries.is_empty() {
         return 0;
     }
-    let rows = blocks
+    let probe = RatatuiBackend::new(u16::try_from(width).unwrap_or(u16::MAX), 0);
+    let rows = entries
         .iter()
-        .map(|block| measure(block, width, theme))
+        .map(|entry| probe.measure(entry, width))
         .sum::<usize>()
         + 2;
     u16::try_from(rows).unwrap_or(u16::MAX)

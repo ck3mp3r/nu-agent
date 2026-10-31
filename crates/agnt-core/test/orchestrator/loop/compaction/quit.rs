@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::protocol::events::SystemEvent;
+
 // ---------------------------------------------------------------------------
 // Quit gating around compaction
 // ---------------------------------------------------------------------------
@@ -65,7 +67,7 @@ async fn quit_waits_while_compaction_active() -> Result<()> {
     // Start a compaction so it is active when Quit arrives.
     bus_driver
         .compaction()
-        .send(CompactionEvent::Requested {
+        .send(SystemEvent::CompactionRequested {
             source: "auto".to_string(),
         })
         .await
@@ -93,7 +95,7 @@ async fn quit_waits_while_compaction_active() -> Result<()> {
     // The compaction completes; the loop may now exit.
     bus_driver
         .compaction()
-        .send(CompactionEvent::Completed {
+        .send(SystemEvent::CompactionCompleted {
             source: "auto".to_string(),
             summary_preview: String::new(),
             summary_body: String::new(),
@@ -167,7 +169,7 @@ async fn quit_exits_after_compaction_completes() -> Result<()> {
     // Start a compaction so it is active when Quit arrives.
     bus_driver
         .compaction()
-        .send(CompactionEvent::Requested {
+        .send(SystemEvent::CompactionRequested {
             source: "auto".to_string(),
         })
         .await
@@ -187,7 +189,7 @@ async fn quit_exits_after_compaction_completes() -> Result<()> {
     event_tx.send(OrchestratorEvent::Quit).await.unwrap();
     bus_driver
         .compaction()
-        .send(CompactionEvent::Completed {
+        .send(SystemEvent::CompactionCompleted {
             source: "auto".to_string(),
             summary_preview: String::new(),
             summary_body: String::new(),

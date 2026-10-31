@@ -9,7 +9,7 @@ struct PermissionBridgeUi {
     event_tx: mpsc::Sender<OrchestratorEvent>,
     submitted: std::collections::VecDeque<String>,
     pending_decisions: Arc<Mutex<std::collections::VecDeque<PermissionDecisionSubmission>>>,
-    events: Arc<Mutex<Vec<UiEvent>>>,
+    events: Arc<Mutex<Vec<SystemEvent>>>,
     quit: Arc<AtomicBool>,
     decision: PermissionDecision,
     _bus_task: Option<tokio::task::JoinHandle<()>>,
@@ -43,14 +43,14 @@ impl PermissionBridgeUi {
                     Ok(event) = ui_event_rx.recv() => {
                         events.lock().expect("events lock").push(event.clone());
                         match event {
-                            UiEvent::PermissionRequested { request_id, context } => {
+                            SystemEvent::PermissionRequested { request_id, context } => {
                                 pending_decisions.lock().expect("pending decisions lock").push_back(PermissionDecisionSubmission {
-                                    request_id,
+                                    request_id: request_id.as_str().to_string(),
                                     decision,
                                     matched_rule_identity: context.matched_rule_identity.clone(),
                                 });
                             }
-                            UiEvent::Completed { .. } => {
+                            SystemEvent::TurnCompleted { .. } => {
                                 quit.store(true, Ordering::SeqCst);
                             }
                             _ => {}
@@ -127,8 +127,8 @@ async fn permission_flow_reaches_bus_through_worker_bridge() -> TResult {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionRequested { .. })),
-        "permission resolver must publish a UiEvent::PermissionRequested to the ui_event bus"
+            .any(|event| matches!(event, SystemEvent::PermissionRequested { .. })),
+        "permission resolver must publish a SystemEvent::PermissionRequested to the ui_event bus"
     );
     Ok(())
 }
@@ -151,24 +151,24 @@ impl CoreRuntime for PermissionTimeoutIgnoredRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::PermissionDecisionTimedOut {
-                request_id: self.request_id.clone(),
+            .send(SystemEvent::PermissionDecisionTimedOut {
+                request_id: RequestId::new(self.request_id.clone()),
             })
             .await;
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::PermissionDecisionIgnored {
-                request_id: self.request_id.clone(),
+            .send(SystemEvent::PermissionDecisionIgnored {
+                request_id: RequestId::new(self.request_id.clone()),
                 reason: "decision_channel_closed".to_string(),
             })
             .await;
         // Publish TurnCompleted directly to the bus (worker bridge no longer
-        // converts UiEvent::Completed), matching production.
+        // converts SystemEvent::Completed), matching production.
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -248,14 +248,14 @@ async fn permission_timeout_and_ignored_reach_bus_through_worker_bridge() -> TRe
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionDecisionTimedOut { .. })),
-        "worker bridge must forward UiEvent::PermissionDecisionTimedOut to the ui_event bus"
+            .any(|event| matches!(event, SystemEvent::PermissionDecisionTimedOut { .. })),
+        "worker bridge must forward SystemEvent::PermissionDecisionTimedOut to the ui_event bus"
     );
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionDecisionIgnored { .. })),
-        "worker bridge must forward UiEvent::PermissionDecisionIgnored to the ui_event bus"
+            .any(|event| matches!(event, SystemEvent::PermissionDecisionIgnored { .. })),
+        "worker bridge must forward SystemEvent::PermissionDecisionIgnored to the ui_event bus"
     );
     Ok(())
 }

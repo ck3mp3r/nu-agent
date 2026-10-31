@@ -3,23 +3,26 @@
 //! Holds the imports and the helpers every topical llm test file needs.
 //! Sub-files pull them in with `use super::*;`.
 
-pub(super) use crate::interaction::reducer::{
-    ReducerInput, UserAction, reduce_with_cancel_controller,
-};
-pub(super) use crate::state::{AppState, InputState, UiPhase};
-pub(super) use agnt_core::bus::LlmEvent;
+pub(super) use crate::interaction::reducer::reduce;
+pub(super) use crate::state::{AppState, UiPhase};
+pub(super) use crate::test_support::entry_text;
 pub(super) use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
+pub(super) use agnt_core::protocol::events::{SystemEvent, Usage};
 pub(super) use agnt_core::protocol::tool_args::CallLine;
-pub(super) use agnt_core::transcript::ir::BlockSource;
+pub(super) use agnt_core::transcript::entry::TranscriptEntry;
+pub(super) use agnt_core::transcript::ir::MessageRole;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 pub(super) fn busy_state_with_clean_transcript() -> AppState {
-    let mut state = AppState {
-        input: InputState::default().with_pending_submit_text("run".to_string()),
-        ..Default::default()
-    };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    let mut state = AppState::default();
+    reduce(
+        &mut state,
+        SystemEvent::PromptSubmitted {
+            text: "run".to_string(),
+        },
+        None,
+    );
     let _ = state.activate_next_prompt();
     state.transcript.clear();
     // Simulate handle_llm_start which sets the lock
@@ -27,46 +30,36 @@ pub(super) fn busy_state_with_clean_transcript() -> AppState {
     state
 }
 
-pub(super) fn is_assistant_block(block: &agnt_core::transcript::ir::Block) -> bool {
+pub(super) fn is_assistant_entry(entry: &TranscriptEntry) -> bool {
     matches!(
-        block.source,
-        BlockSource::Markdown {
-            role: agnt_core::transcript::ir::MessageRole::Assistant,
-            ..
-        }
+        entry,
+        TranscriptEntry::Message(message) if message.role == MessageRole::Assistant
     )
 }
 
-pub(super) fn reduce_llm(state: &mut AppState, event: LlmEvent) -> bool {
-    let (changed, evicted) = state.llm.reduce_llm_event(
-        &mut state.transcript,
-        &mut state.status,
-        &mut state.scroll,
-        &mut state.phase,
-        &mut state.input_locked,
-        event,
-    );
-    state.shift_bookkeeping_after_eviction(evicted);
-    changed
+pub(super) fn reduce_llm(state: &mut AppState, event: SystemEvent) -> bool {
+    reduce(state, event, None)
 }
 
-pub(super) fn assistant_message(text: &str) -> LlmEvent {
-    LlmEvent::AssistantMessage {
-        text: text.to_string(),
+/// The non-streaming producer's shape: one chunk whose delta and aggregated
+/// both carry the full text.
+pub(super) fn assistant_message(text: &str) -> SystemEvent {
+    SystemEvent::InferenceChunk {
+        delta: text.to_string(),
+        aggregated: text.to_string(),
     }
 }
 
-/// Return raw markdown strings stored in all assistant markdown blocks.
+/// Return raw markdown strings stored in all assistant markdown entries.
 pub(super) fn assistant_markdown_entries(state: &AppState) -> Vec<String> {
     state
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .filter_map(|b| match &b.source {
-            BlockSource::Markdown {
-                role: agnt_core::transcript::ir::MessageRole::Assistant,
-                markdown,
-            } => Some(markdown.clone()),
+        .filter_map(|entry| match entry {
+            TranscriptEntry::Message(message) if message.role == MessageRole::Assistant => {
+                Some(message.markdown.clone())
+            }
             _ => None,
         })
         .collect()

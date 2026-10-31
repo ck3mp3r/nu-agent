@@ -117,7 +117,7 @@ async fn repetition_stop_session_less_steers_via_prompt_and_terminal_on_cap() ->
     let steering_notices = events
         .iter()
         .filter(
-            |e| matches!(e, UiEvent::Warning { message } if message == REPETITION_STEERING_NOTICE),
+            |e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text == REPETITION_STEERING_NOTICE),
         )
         .count();
     assert_eq!(

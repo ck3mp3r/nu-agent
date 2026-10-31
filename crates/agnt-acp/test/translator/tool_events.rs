@@ -3,7 +3,10 @@
 use agent_client_protocol::schema::v1::{
     ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind,
 };
-use agnt_core::protocol::event::{ToolDisplay, UiEvent};
+use agnt_core::protocol::event::ToolDisplay;
+use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
+use agnt_core::session::tool_status::ToolStatus;
+use agnt_core::transcript::ir::ToolName;
 
 use super::support::*;
 
@@ -38,11 +41,8 @@ fn test_translator_tool_started_produces_pending_tool_call() -> Result<()> {
 #[test]
 fn test_translator_tool_started_falls_back_to_name_when_summary_empty() -> Result<()> {
     // -- Setup & Fixtures
-    let event = UiEvent::ToolStarted {
-        name: "glob".to_string(),
-        source: "builtin".to_string(),
-        arguments: "{}".to_string(),
-        call_line: call_line(""),
+    let event = SystemEvent::ToolStarted {
+        call: ToolCall::new(ToolName("glob".to_string()), "builtin", "{}", call_line("")),
     };
 
     // -- Exec
@@ -137,15 +137,21 @@ fn test_translator_tool_completed_failure_produces_failed_update() -> Result<()>
 #[test]
 fn test_translator_tool_completed_message_becomes_content_when_no_display() -> Result<()> {
     // -- Setup & Fixtures
-    let event = UiEvent::ToolCompleted {
-        name: "edit".to_string(),
-        source: "builtin".to_string(),
-        arguments: "{}".to_string(),
-        success: false,
-        result: String::new(),
-        display: None,
-        error_kind: None,
-        message: Some("Permission denied by user".to_string()),
+    let event = SystemEvent::ToolCompleted {
+        call: ToolCall::new(
+            ToolName("edit".to_string()),
+            "builtin",
+            "{}",
+            call_line("→ edit"),
+        ),
+        outcome: ToolOutcome {
+            success: false,
+            status: ToolStatus::Cancelled,
+            result: String::new(),
+            display: None,
+            error_kind: None,
+            message: Some("Permission denied by user".to_string()),
+        },
     };
 
     // -- Exec
@@ -172,18 +178,24 @@ fn test_translator_tool_completed_message_becomes_content_when_no_display() -> R
 #[test]
 fn test_translator_tool_completed_text_display_becomes_content() -> Result<()> {
     // -- Setup & Fixtures
-    let event = UiEvent::ToolCompleted {
-        name: "grep".to_string(),
-        source: "builtin".to_string(),
-        arguments: "{}".to_string(),
-        success: true,
-        result: "{}".to_string(),
-        display: Some(ToolDisplay {
-            title: Some("grep foo".to_string()),
-            sections: vec![text_section("matches", "src/lib.rs:1: foo")],
-        }),
-        error_kind: None,
-        message: None,
+    let event = SystemEvent::ToolCompleted {
+        call: ToolCall::new(
+            ToolName("grep".to_string()),
+            "builtin",
+            "{}",
+            call_line("→ grep foo"),
+        ),
+        outcome: ToolOutcome {
+            success: true,
+            status: ToolStatus::Success,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: Some("grep foo".to_string()),
+                sections: vec![text_section("matches", "src/lib.rs:1: foo")],
+            }),
+            error_kind: None,
+            message: None,
+        },
     };
 
     // -- Exec
@@ -212,18 +224,24 @@ fn test_translator_tool_completed_diff_display_becomes_diff_content() -> Result<
     // -- Setup & Fixtures
     let diff =
         "--- a/src/file.txt\n+++ b/src/file.txt\n@@ -1,3 +1,3 @@\n alpha\n-beta\n+omega\n gamma\n";
-    let event = UiEvent::ToolCompleted {
-        name: "edit".to_string(),
-        source: "builtin".to_string(),
-        arguments: "{}".to_string(),
-        success: true,
-        result: "{}".to_string(),
-        display: Some(ToolDisplay {
-            title: Some("edit src/file.txt".to_string()),
-            sections: vec![diff_section("src/file.txt", diff)],
-        }),
-        error_kind: None,
-        message: None,
+    let event = SystemEvent::ToolCompleted {
+        call: ToolCall::new(
+            ToolName("edit".to_string()),
+            "builtin",
+            "{}",
+            call_line("→ edit src/file.txt"),
+        ),
+        outcome: ToolOutcome {
+            success: true,
+            status: ToolStatus::Success,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: Some("edit src/file.txt".to_string()),
+                sections: vec![diff_section("src/file.txt", diff)],
+            }),
+            error_kind: None,
+            message: None,
+        },
     };
 
     // -- Exec
@@ -250,18 +268,24 @@ fn test_translator_tool_completed_diff_display_becomes_diff_content() -> Result<
 fn test_translator_tool_completed_diff_without_old_side_has_no_old_text() -> Result<()> {
     // -- Setup & Fixtures
     let diff = "--- a/src/new.txt\n+++ b/src/new.txt\n@@ -0,0 +1,1 @@\n+first line\n";
-    let event = UiEvent::ToolCompleted {
-        name: "edit".to_string(),
-        source: "builtin".to_string(),
-        arguments: "{}".to_string(),
-        success: true,
-        result: "{}".to_string(),
-        display: Some(ToolDisplay {
-            title: Some("edit src/new.txt".to_string()),
-            sections: vec![diff_section("src/new.txt", diff)],
-        }),
-        error_kind: None,
-        message: None,
+    let event = SystemEvent::ToolCompleted {
+        call: ToolCall::new(
+            ToolName("edit".to_string()),
+            "builtin",
+            "{}",
+            call_line("→ edit src/file.txt"),
+        ),
+        outcome: ToolOutcome {
+            success: true,
+            status: ToolStatus::Success,
+            result: "{}".to_string(),
+            display: Some(ToolDisplay {
+                title: Some("edit src/new.txt".to_string()),
+                sections: vec![diff_section("src/new.txt", diff)],
+            }),
+            error_kind: None,
+            message: None,
+        },
     };
 
     // -- Exec

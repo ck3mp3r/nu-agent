@@ -5,7 +5,8 @@ use tokio::time::timeout;
 use super::channel::CancelTx;
 use super::events::CancelEvent;
 use crate::bus::create_bus;
-use crate::protocol::event::{PermissionRequestContext, UiEvent};
+use crate::protocol::event::PermissionRequestContext;
+use crate::protocol::events::SystemEvent;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -38,7 +39,7 @@ async fn ui_event_request_permission() -> Result<()> {
     let request_id = bus.ui_event().request_permission(context.clone()).await?;
 
     assert!(
-        request_id.starts_with("perm-"),
+        request_id.as_str().starts_with("perm-"),
         "returned request_id must start with 'perm-'"
     );
     let event = timeout(Duration::from_millis(100), ui_event_rx.recv())
@@ -46,12 +47,13 @@ async fn ui_event_request_permission() -> Result<()> {
         .map_err(|_| "receive should not time out")?
         .map_err(|_| "receive should succeed")?;
     match event {
-        UiEvent::PermissionRequested {
+        SystemEvent::PermissionRequested {
             request_id: event_id,
             context: event_context,
         } => {
             assert_eq!(
-                event_id, request_id,
+                event_id.as_str(),
+                request_id.as_str(),
                 "event must carry the returned request_id"
             );
             assert_eq!(
@@ -59,7 +61,7 @@ async fn ui_event_request_permission() -> Result<()> {
                 "event must carry the unboxed context"
             );
         }
-        other => panic!("expected UiEvent::PermissionRequested, got {other:?}"),
+        other => panic!("expected SystemEvent::PermissionRequested, got {other:?}"),
     }
 
     // -- Case 2: no receiver fails with NoReceiver

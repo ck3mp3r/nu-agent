@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::entry_text;
 
 #[test]
 fn busy_escape_abort_table() -> Result<()> {
@@ -160,5 +161,5 @@ fn typing_remains_available_while_prompt_is_active() {
 
     assert!(!changed);
     assert_eq!(state.transcript.len(), 1);
-    assert_eq!(state.transcript.blocks()[0].source.plain_text(), "f");
+    assert_eq!(entry_text(&state.transcript.entries()[0]), "f");
 }

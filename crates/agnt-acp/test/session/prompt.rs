@@ -69,25 +69,37 @@ async fn test_session_manager_prompt_publishes_turn_started_before_completed() -
         .bus()
         .turn()
         .subscribe();
+    let mut ui_rx = manager
+        .get_session(&session_id)
+        .ok_or("session must exist")?
+        .bus()
+        .ui_event()
+        .subscribe();
 
     // -- Exec
     let _ = manager
         .prompt(&session_id, "hello".to_string(), &sink)
         .await?;
 
-    // -- Check
+    // -- Check: the turn's start and its completion are two channels — the
+    // turn channel carries `Started`, the ui-event channel the single
+    // `TurnCompleted` the executor publishes.
     let events = take_turn_events(&mut turn_rx);
-    let started_at = events
-        .iter()
-        .position(|event| matches!(event, TurnEvent::Started { .. }))
-        .ok_or(format!("the turn must publish Started; got: {events:?}"))?;
-    let completed_at = events
-        .iter()
-        .position(|event| matches!(event, TurnEvent::Completed { .. }))
-        .ok_or(format!("the turn must publish Completed; got: {events:?}"))?;
     assert!(
-        started_at < completed_at,
-        "Started must precede Completed; got: {events:?}"
+        events
+            .iter()
+            .any(|event| matches!(event, TurnEvent::Started { .. })),
+        "the turn must publish Started on the turn channel; got: {events:?}"
+    );
+    let mut completed = 0;
+    while let Ok(event) = ui_rx.try_recv() {
+        if matches!(event, SystemEvent::TurnCompleted { .. }) {
+            completed += 1;
+        }
+    }
+    assert_eq!(
+        completed, 1,
+        "the turn must publish exactly one TurnCompleted on ui_event"
     );
     Ok(())
 }

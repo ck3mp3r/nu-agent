@@ -73,7 +73,7 @@ async fn journey_output_repetition_intra_stream_trips() -> Result<()> {
     // that steering is happening instead of only a silent retry.
     assert!(
         events.iter().any(
-            |e| matches!(e, UiEvent::Warning { message } if message == REPETITION_STEERING_NOTICE)
+            |e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text == REPETITION_STEERING_NOTICE)
         ),
         "the conversion retry must emit the steering notice; got: {events:?}"
     );
@@ -149,7 +149,7 @@ async fn journey_output_repetition_intra_stream_fifth_is_first_continue() -> Res
     // that steering is happening instead of only a silent retry.
     assert!(
         events.iter().any(
-            |e| matches!(e, UiEvent::Warning { message } if message == REPETITION_STEERING_NOTICE)
+            |e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text == REPETITION_STEERING_NOTICE)
         ),
         "the conversion retry must emit the steering notice; got: {events:?}"
     );

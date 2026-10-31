@@ -67,13 +67,13 @@ async fn test_session_manager_prompt_delivers_compaction_events_to_the_client() 
     // -- Exec
     let _ = bus
         .compaction()
-        .send(CompactionEvent::Started {
+        .send(SystemEvent::CompactionStarted {
             source: "auto".to_string(),
         })
         .await;
     let _ = bus
         .compaction()
-        .send(CompactionEvent::Completed {
+        .send(SystemEvent::CompactionCompleted {
             source: "auto".to_string(),
             summary_preview: "the session covered the parser rewrite".to_string(),
             summary_body: "the session covered the parser rewrite in full detail".to_string(),
@@ -81,7 +81,7 @@ async fn test_session_manager_prompt_delivers_compaction_events_to_the_client() 
         .await;
     let _ = bus
         .compaction()
-        .send(CompactionEvent::Failed {
+        .send(SystemEvent::CompactionFailed {
             source: "auto".to_string(),
             message: "the summarizer returned nothing".to_string(),
         })

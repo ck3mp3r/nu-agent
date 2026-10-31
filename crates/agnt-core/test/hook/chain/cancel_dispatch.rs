@@ -142,13 +142,15 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
         .map_err(|_| "should receive ToolStarted first")?;
     assert_eq!(
         started,
-        UiEvent::ToolStarted {
-            name: "read".to_string(),
-            source: "builtin".to_string(),
-            arguments: "{\"path\":\"/tmp/f\"}".to_string(),
-            call_line: crate::protocol::tool_args::CallLine {
-                summary: "→ /tmp/f".to_string(),
-            },
+        SystemEvent::ToolStarted {
+            call: ToolCall::new(
+                ir::ToolName("read".to_string()),
+                "builtin",
+                "{\"path\":\"/tmp/f\"}",
+                crate::protocol::tool_args::CallLine {
+                    summary: "→ /tmp/f".to_string(),
+                },
+            ),
         },
         "the denied call must publish ToolStarted with the registry-rendered call line"
     );
@@ -158,15 +160,23 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
         .map_err(|_| "should receive ToolCompleted second")?;
     assert_eq!(
         completed,
-        UiEvent::ToolCompleted {
-            name: "read".to_string(),
-            source: "builtin".to_string(),
-            arguments: "{\"path\":\"/tmp/f\"}".to_string(),
-            success: false,
-            result: String::new(),
-            display: None,
-            error_kind: Some("cancelled".to_string()),
-            message: Some("Interrupted: the turn stopped before this call ran".to_string()),
+        SystemEvent::ToolCompleted {
+            call: ToolCall::new(
+                ir::ToolName("read".to_string()),
+                "builtin",
+                "{\"path\":\"/tmp/f\"}",
+                crate::protocol::tool_args::CallLine {
+                    summary: "→ /tmp/f".to_string(),
+                },
+            ),
+            outcome: ToolOutcome {
+                success: false,
+                status: ToolStatus::Cancelled,
+                result: String::new(),
+                display: None,
+                error_kind: Some("cancelled".to_string()),
+                message: Some("Interrupted: the turn stopped before this call ran".to_string()),
+            },
         },
         "the denied call must publish a failed ToolCompleted carrying the cancelled-dispatch message"
     );
@@ -175,15 +185,14 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
 
 /// The tool-event shape the wiring assertions compare: `(name, success,
 /// message)`, with `success` and `message` `None` for a `ToolStarted`.
-fn tool_event_summary(event: &UiEvent) -> Option<(String, Option<bool>, Option<String>)> {
+fn tool_event_summary(event: &SystemEvent) -> Option<(String, Option<bool>, Option<String>)> {
     match event {
-        UiEvent::ToolStarted { name, .. } => Some((name.clone(), None, None)),
-        UiEvent::ToolCompleted {
-            name,
-            success,
-            message,
-            ..
-        } => Some((name.clone(), Some(*success), message.clone())),
+        SystemEvent::ToolStarted { call } => Some((call.name.0.clone(), None, None)),
+        SystemEvent::ToolCompleted { call, outcome } => Some((
+            call.name.0.clone(),
+            Some(outcome.success),
+            outcome.message.clone(),
+        )),
         _ => None,
     }
 }

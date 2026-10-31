@@ -1,28 +1,8 @@
-use crate::types::{EmptyToolName, ToolDefinition, ToolName};
-use crate::{
-    protocol::{contracts::ProgressUi, event::UiEvent},
-    tools::mcp::{
-        client::McpToolDefinition,
-        config::{McpAuthConfig, McpServerConfig, McpTransportType},
-    },
+use crate::tools::mcp::{
+    client::McpToolDefinition,
+    config::{McpAuthConfig, McpServerConfig, McpTransportType},
 };
-
-#[derive(Default)]
-pub struct TestProgressUi {
-    pub events: Vec<UiEvent>,
-}
-
-impl ProgressUi for TestProgressUi {
-    fn emit(&mut self, event: &UiEvent) {
-        self.events.push(event.clone());
-    }
-
-    fn flush(&mut self) {}
-
-    fn take_cancel_requested(&self) -> bool {
-        false
-    }
-}
+use crate::types::{EmptyToolName, ToolDefinition, ToolName};
 
 pub fn mcp_tool(server: &str, name: &str, raw_name: &str) -> McpToolDefinition {
     McpToolDefinition {

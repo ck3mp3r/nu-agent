@@ -27,7 +27,7 @@ async fn disabled_compactor_emits_failed_and_returns_error() -> Result<()> {
     );
     let mut failed = Vec::new();
     while let Ok(event) = rx.try_recv() {
-        if let CompactionEvent::Failed { message, .. } = event {
+        if let SystemEvent::CompactionFailed { message, .. } = event {
             failed.push(message);
         }
     }

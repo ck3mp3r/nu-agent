@@ -1,277 +1,223 @@
-use super::support::{content_spans, diff_tint_block, frame_ctx, rows_containing};
-use crate::rendering::theme::TuiTheme;
-use crate::tui_renderer::layout;
-use agnt_core::transcript::ir::*;
+//! Diff line tints: the add/remove surfaces that override the code surface, and
+//! the foregrounds they keep on top.
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+use super::support::*;
+use agnt_core::transcript::renderer::ItemStatus;
 
-// ========== diff tint background (task 669b4dac) ==========
+// region:    --- Fixtures
 
-/// WHEN a `ContentLine` has `diff_tint: Some(DiffTint::Add)`, THE renderer
-/// SHALL apply `theme.diff_add_bg` as the background of every span in the
-/// line.
-#[test]
-fn layout_diff_add_line_carries_add_background() -> Result<()> {
-    // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n");
-
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
-
-    // -- Check: the added line's content row carries the add tint on every
-    // span, including the muted gutter span.
-    let added = rows_containing(&lines, "new");
-    assert_eq!(added.len(), 1, "exactly one row must carry the added body");
-    let added = added[0];
-    assert!(
-        content_spans(added).len() >= 2,
-        "a diff body row must carry a gutter span plus body spans; got {added:?}"
-    );
-    for span in content_spans(added) {
-        assert_eq!(
-            span.style.bg,
-            Some(theme.diff_add_bg),
-            "every span of an added line must carry the add tint; span '{}' has {:?}",
-            span.content,
-            span.style.bg
-        );
-    }
-    Ok(())
+/// A tool entry whose preview is the one-hunk diff.
+fn diff_entry() -> agnt_core::transcript::entry::TranscriptEntry {
+    tool_entry(
+        "edit",
+        "→ a.rs",
+        Some(diff_display(SIMPLE_DIFF)),
+        None,
+        ItemStatus::Done,
+    )
 }
 
-/// WHEN a `ContentLine` has `diff_tint: Some(DiffTint::Remove)`, THE renderer
-/// SHALL apply `theme.diff_remove_bg` as the background of every span in the
-/// line.
+// endregion: --- Fixtures
+
+/// WHEN a diff line carries `DiffTint::Add`, THE row SHALL paint the add surface
+/// across the pane, gutter included.
 #[test]
-fn layout_diff_remove_line_carries_remove_background() -> Result<()> {
+fn test_renderer_diff_tint_add_line_paints_the_add_surface() -> Result<()> {
     // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n");
+    let theme = test_theme();
+    let entry = diff_entry();
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let backend = render(&entry)?;
+    let added = row_index_containing(&backend, "new").ok_or("the added row must render")?;
 
     // -- Check
-    let removed = rows_containing(&lines, "old");
-    assert_eq!(
-        removed.len(),
-        1,
-        "exactly one row must carry the removed body"
-    );
-    for span in content_spans(removed[0]) {
+    for x in [0u16, 1, WIDTH / 2, WIDTH - 1] {
         assert_eq!(
-            span.style.bg,
-            Some(theme.diff_remove_bg),
-            "every span of a removed line must carry the remove tint; span '{}' has {:?}",
-            span.content,
-            span.style.bg
+            cell_bg(&backend, x, added),
+            Some(terminal(theme.diff_add_bg)),
+            "the added row paints its tint at column {x}"
+        );
+    }
+    assert!(
+        row_text(&backend, added).contains("\u{2502}new"),
+        "the added row keeps its line-number gutter; got {:?}",
+        row_trimmed(&backend, added)
+    );
+    Ok(())
+}
+
+/// WHEN a diff line carries `DiffTint::Remove`, THE row SHALL paint the remove
+/// surface across the pane.
+#[test]
+fn test_renderer_diff_tint_remove_line_paints_the_remove_surface() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = test_theme();
+    let entry = diff_entry();
+
+    // -- Exec
+    let backend = render(&entry)?;
+    let removed = row_index_containing(&backend, "old").ok_or("the removed row must render")?;
+
+    // -- Check
+    for x in [0u16, 1, WIDTH / 2, WIDTH - 1] {
+        assert_eq!(
+            cell_bg(&backend, x, removed),
+            Some(terminal(theme.diff_remove_bg)),
+            "the removed row paints its tint at column {x}"
         );
     }
     Ok(())
 }
 
-/// WHEN a `ContentLine` has `diff_tint: Some(DiffTint::Context)` and the theme
-/// leaves `diff_context_bg` as `None`, THE renderer SHALL apply no diff
-/// background to the line.
+/// WHEN a diff line carries `DiffTint::Context`, THE row SHALL paint the code
+/// surface it sits on, not a tint of its own.
 #[test]
-fn layout_diff_context_line_carries_no_background_by_default() -> Result<()> {
-    // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    assert_eq!(
-        theme.diff_context_bg, None,
-        "the default theme must leave context lines untinted"
+fn test_renderer_diff_tint_context_line_keeps_the_surface() -> Result<()> {
+    // -- Setup & Fixtures: a hunk with a context line between a removal and an
+    // addition.
+    let theme = test_theme();
+    let entry = tool_entry(
+        "edit",
+        "→ a.rs",
+        Some(diff_display(
+            "--- a/a.rs\n+++ b/a.rs\n@@ -1,2 +1,2 @@\n alpha\n-beta\n+omega\n",
+        )),
+        None,
+        ItemStatus::Done,
     );
-    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1,2 +1,2 @@\n alpha\n-beta\n+omega\n");
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let backend = render(&entry)?;
+    let context = row_index_containing(&backend, "alpha").ok_or("the context row must render")?;
 
-    // -- Check: the context row ('alpha') carries no background.
-    let context = rows_containing(&lines, "alpha");
+    // -- Check
     assert_eq!(
-        context.len(),
-        1,
-        "exactly one row must carry the context body"
+        cell_bg(&backend, 0, context),
+        Some(terminal(theme.code_surface)),
+        "a context row keeps the surrounding surface"
     );
-    for span in content_spans(context[0]) {
-        assert_eq!(
-            span.style.bg, None,
-            "a context line must carry no diff background; span '{}' has {:?}",
-            span.content, span.style.bg
-        );
-    }
     Ok(())
 }
 
-/// WHEN a `ContentLine` has `diff_tint: None`, THE renderer SHALL NOT apply
-/// any diff background (regression check: non-diff lines are unchanged).
+/// WHEN a diff's headers render, THE rows SHALL carry neither the add nor the
+/// remove tint.
 #[test]
-fn layout_non_diff_line_carries_no_diff_background() -> Result<()> {
+fn test_renderer_diff_tint_headers_carry_no_line_tint() -> Result<()> {
     // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n");
+    let theme = test_theme();
+    let entry = diff_entry();
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let backend = render(&entry)?;
 
-    // -- Check: the hunk header and the file headers carry no tint.
+    // -- Check
     for needle in ["@@", "--- a/a.rs", "+++ b/a.rs"] {
-        let rows = rows_containing(&lines, needle);
-        assert_eq!(rows.len(), 1, "exactly one row must carry {needle:?}");
-        for span in content_spans(rows[0]) {
+        let row = row_index_containing(&backend, needle).ok_or("the header row must render")?;
+        for x in [0u16, 1, WIDTH - 1] {
             assert_ne!(
-                span.style.bg,
-                Some(theme.diff_add_bg),
-                "non-diff row {needle:?} must not carry the add tint"
+                cell_bg(&backend, x, row),
+                Some(terminal(theme.diff_add_bg)),
+                "row {needle:?} must not carry the add tint"
             );
             assert_ne!(
-                span.style.bg,
-                Some(theme.diff_remove_bg),
-                "non-diff row {needle:?} must not carry the remove tint"
+                cell_bg(&backend, x, row),
+                Some(terminal(theme.diff_remove_bg)),
+                "row {needle:?} must not carry the remove tint"
             );
         }
     }
     Ok(())
 }
 
-/// WHEN a diff line has syntax-highlighted spans, THE renderer SHALL apply the
-/// syntax foreground colour on top of the diff background colour.
+/// WHEN a diff line carries syntax-highlighted spans, THE span foreground SHALL
+/// survive the row's tint underneath it.
 #[test]
-fn layout_diff_line_keeps_syntax_foreground_over_tint() -> Result<()> {
-    // -- Setup & Fixtures: a Rust diff body whose `let` keyword highlights.
-    let theme = TuiTheme::default();
-    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+let x = 1;\n");
+fn test_renderer_diff_tint_keeps_the_syntax_foreground() -> Result<()> {
+    // -- Setup & Fixtures: an added Rust line whose `let` keyword highlights.
+    let theme = test_theme();
+    let entry = tool_entry(
+        "edit",
+        "→ a.rs",
+        Some(diff_display(
+            "--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+let x = 1;\n",
+        )),
+        None,
+        ItemStatus::Done,
+    );
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
-
-    // -- Check: the added body carries a keyword span with the syntax keyword
-    // foreground AND the add tint background.
-    let added = rows_containing(&lines, "let");
-    assert_eq!(added.len(), 1, "exactly one row must carry the added body");
-    let keyword = added[0]
-        .spans
-        .iter()
-        .find(|span| span.content.as_ref() == "let")
-        .ok_or("the added body must carry a `let` keyword span")?;
-    assert_eq!(
-        keyword.style.fg,
-        Some(theme.syntax_keyword.fg.ok_or("keyword fg must be set")?),
-        "the keyword span must keep its syntax foreground"
-    );
-    assert_eq!(
-        keyword.style.bg,
-        Some(theme.diff_add_bg),
-        "the keyword span must carry the add tint background"
-    );
-    Ok(())
-}
-
-/// WHEN a diff line has a gutter span with `StyleHint::Muted`, THE renderer
-/// SHALL apply the muted foreground colour plus the diff background colour.
-#[test]
-fn layout_diff_gutter_span_keeps_muted_foreground_over_tint() -> Result<()> {
-    // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n");
-
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &TuiTheme::default());
-
-    // -- Check: the added row's first span is the muted gutter, carrying the
-    // muted foreground plus the add tint background.
-    let added = rows_containing(&lines, "new");
-    assert_eq!(added.len(), 1, "exactly one row must carry the added body");
-    let gutter = content_spans(added[0])
-        .first()
-        .ok_or("a diff body row must start with a gutter span")?;
-    assert!(
-        gutter.content.contains('│'),
-        "the first content span must be the line-number gutter; got {gutter:?}"
-    );
-    assert_eq!(
-        gutter.style.fg, theme.tool_meta.fg,
-        "the gutter span must keep the muted foreground"
-    );
-    assert_eq!(
-        gutter.style.bg,
-        Some(theme.diff_add_bg),
-        "the gutter span must carry the add tint background"
-    );
-    Ok(())
-}
-
-/// WHEN a single-span `ContentLine` carries a `DiffTint`, THE renderer SHALL
-/// apply the tint background on the single-span fast path too.
-#[test]
-fn layout_single_span_diff_tint_carries_background() -> Result<()> {
-    // -- Setup & Fixtures: a ToolDisplay block whose one line is a single
-    // tinted span (the fast path in `wrapped_row_spans`).
-    let theme = TuiTheme::default();
-    let lines = vec![ContentLine::single_with_tint(
-        "+added".to_string(),
-        StyleHint::MdCodePlain,
-        DiffTint::Add,
-    )];
-    let block = Block {
-        source: BlockSource::ToolDisplay { lines },
-        lane: Lane::Blank,
-        fill: Fill::None,
-        status: None,
-    };
-
-    // -- Exec
-    let rendered = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let backend = render(&entry)?;
+    let added = row_index_containing(&backend, "let").ok_or("the added row must render")?;
+    let row = row_text(&backend, added);
+    let column = row.find("let").ok_or("the row must carry the keyword")?;
+    let column = u16::try_from(column)?;
 
     // -- Check
-    let added = rows_containing(&rendered, "+added");
-    assert_eq!(added.len(), 1, "exactly one row must carry the tinted body");
-    for span in content_spans(added[0]) {
-        assert_eq!(
-            span.style.bg,
-            Some(theme.diff_add_bg),
-            "a single-span tinted line must carry the add tint; span '{}' has {:?}",
-            span.content,
-            span.style.bg
-        );
-    }
+    assert_eq!(
+        cell_fg(&backend, column, added),
+        Some(terminal(theme.markdown.code_keyword)),
+        "the keyword keeps its syntax foreground"
+    );
+    assert_eq!(
+        cell_bg(&backend, column, added),
+        Some(terminal(theme.diff_add_bg)),
+        "the keyword sits on the add tint"
+    );
     Ok(())
 }
 
-/// WHEN a diff line sits inside a `Fill::Code` preview block, THE renderer
-/// SHALL keep the diff tint background rather than the surface0 fill — the
-/// tint is more specific than the row fill.
+/// WHEN a diff row's gutter renders, THE gutter glyph SHALL keep the muted
+/// foreground over the row's tint.
 #[test]
-fn layout_diff_tint_wins_over_code_surface_fill() -> Result<()> {
-    // -- Setup & Fixtures: the production preview shape — a ToolDisplay block
-    // with Fill::Code whose lines are the projected diff.
-    let theme = TuiTheme::default();
-    let lines = agnt_core::transcript::markdown::project_diff_lines(
-        "--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n",
-        "diff",
-    );
-    let block = Block {
-        source: BlockSource::ToolDisplay { lines },
-        lane: Lane::Blank,
-        fill: Fill::Code,
-        status: None,
-    };
+fn test_renderer_diff_tint_gutter_keeps_the_muted_foreground() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = test_theme();
+    let entry = diff_entry();
 
     // -- Exec
-    let rendered = layout(&block, &frame_ctx(80), &TuiTheme::default());
+    let backend = render(&entry)?;
+    let added = row_index_containing(&backend, "new").ok_or("the added row must render")?;
+    let gutter = (0..WIDTH)
+        .find(|x| backend.buffer()[(*x, added)].symbol() == "\u{2502}")
+        .ok_or("the added row must carry its line-number gutter")?;
 
-    // -- Check: the added row keeps the add tint, not surface0.
-    let added = rows_containing(&rendered, "new");
-    assert_eq!(added.len(), 1, "exactly one row must carry the added body");
-    for span in content_spans(added[0]) {
-        assert_eq!(
-            span.style.bg,
-            Some(theme.diff_add_bg),
-            "the diff tint must win over the code surface fill; span '{}' has {:?}",
-            span.content,
-            span.style.bg
-        );
-    }
+    // -- Check
+    assert_eq!(
+        cell_fg(&backend, gutter, added),
+        Some(terminal(theme.muted)),
+        "the gutter glyph keeps the muted foreground"
+    );
+    assert_eq!(
+        cell_bg(&backend, gutter, added),
+        Some(terminal(theme.diff_add_bg)),
+        "the gutter glyph sits on the add tint"
+    );
+    Ok(())
+}
+
+/// WHEN a tinted line sits inside a code surface, THE tint SHALL win over the
+/// surface — the line-level tint is more specific.
+#[test]
+fn test_renderer_diff_tint_wins_over_the_code_surface() -> Result<()> {
+    // -- Setup & Fixtures
+    let theme = test_theme();
+    let entry = diff_entry();
+
+    // -- Exec
+    let backend = render(&entry)?;
+    let added = row_index_containing(&backend, "new").ok_or("the added row must render")?;
+
+    // -- Check
+    assert_ne!(
+        cell_bg(&backend, 0, added),
+        Some(terminal(theme.code_surface)),
+        "the surface must not clobber the tint"
+    );
+    assert_eq!(
+        cell_bg(&backend, 0, added),
+        Some(terminal(theme.diff_add_bg)),
+        "the add tint wins over the surface"
+    );
     Ok(())
 }

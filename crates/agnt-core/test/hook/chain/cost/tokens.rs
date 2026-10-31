@@ -12,7 +12,7 @@ async fn total_less_usage_emits_no_total_tokens() -> Result<()> {
     // absent.
     let model = catalog_turn(
         "copilot/claude-sonnet-4.6",
-        Usage::new().input_tokens(1_000).output_tokens(500),
+        ModelUsage::new().input_tokens(1_000).output_tokens(500),
     )?;
 
     // -- Exec
@@ -34,7 +34,7 @@ async fn total_tokens_stored_from_the_counters_when_the_usage_reports_no_total()
     // absent.
     let model = catalog_turn(
         "copilot/claude-sonnet-4.6",
-        Usage::new().input_tokens(1_000).output_tokens(500),
+        ModelUsage::new().input_tokens(1_000).output_tokens(500),
     )?;
     let TurnHook {
         hook,
@@ -61,7 +61,7 @@ async fn total_tokens_stored_from_the_counters_when_the_usage_reports_no_total()
 #[tokio::test]
 async fn no_event_when_the_usage_reports_no_counter() -> Result<()> {
     // -- Setup & Fixtures
-    let model = catalog_turn("copilot/claude-sonnet-4.6", Usage::default())?;
+    let model = catalog_turn("copilot/claude-sonnet-4.6", ModelUsage::default())?;
 
     // -- Exec
     let event = emitted_completion(model).await?;

@@ -11,13 +11,12 @@
 
 use nu_protocol::{LabeledError, Span};
 
-use crate::bus::TurnEvent;
 use crate::hook::chain::{NotRunCall, NotRunOutcome, NotRunStart, emit_not_run_dispatch};
 use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
 use crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
 use crate::hook::permission_resolver::resolve_tool_source;
 use crate::hook::turn_tools::undispatched_streamed_calls;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::types::Message;
 
 use super::TurnRecovery;
@@ -213,7 +212,7 @@ where
             }
             // Surface the stop reason if this cancellation was a doom or
             // repetition stop. Fix 1: the warning is sent BEFORE
-            // `TurnEvent::Completed` so the TUI reduces the warning ahead of
+            // `SystemEvent::TurnCompleted` so the TUI reduces the warning ahead of
             // turn finalize (the race with the separate bus channels is
             // bounded; the TUI-side finalize fix preserves warnings
             // deterministically). Fix 2: the reason rides `LlmEvent::Stopped`,
@@ -231,15 +230,16 @@ where
                         .tool_infra
                         .bus
                         .ui_event()
-                        .send(UiEvent::Warning {
-                            message: reason.clone(),
+                        .send(SystemEvent::SystemMessage {
+                            kind: SystemKind::Warning,
+                            text: reason.clone(),
                         })
                         .await;
                     let _ = self
                         .tool_infra
                         .bus
                         .ui_event()
-                        .send(UiEvent::Stopped {
+                        .send(SystemEvent::InferenceStopped {
                             reason: reason.clone(),
                         })
                         .await;
@@ -250,7 +250,7 @@ where
                         .tool_infra
                         .bus
                         .ui_event()
-                        .send(UiEvent::Stopped {
+                        .send(SystemEvent::InferenceStopped {
                             reason: TURN_STOPPED_NOTICE.to_string(),
                         })
                         .await;
@@ -261,21 +261,7 @@ where
                 .tool_infra
                 .bus
                 .ui_event()
-                .send(UiEvent::Completed {
-                    tool_calls: turn_result.tool_call_count,
-                    input_tokens: usage.input_tokens,
-                    output_tokens: usage.output_tokens,
-                    total_tokens: usage.total_tokens,
-                    cost: usage.cost,
-                    cost_complete: usage.cost_complete,
-                    duration_ms,
-                })
-                .await;
-            let _ = self
-                .tool_infra
-                .bus
-                .turn()
-                .send(TurnEvent::Completed {
+                .send(SystemEvent::TurnCompleted {
                     tool_calls: turn_result.tool_call_count,
                     input_tokens: usage.input_tokens,
                     output_tokens: usage.output_tokens,
@@ -305,8 +291,10 @@ where
         }
 
         // Completed turn: update last_total_tokens for compaction tracking.
-        // rig saved the conversation when the run succeeded, so nothing is
-        // persisted here.
+        // rig saved the conversation when the run succeeded, so the delta needs
+        // nothing here — but the calls' statuses ride the session's own file
+        // layer, which rig knows nothing about.
+        self.persist_tool_statuses(final_session_id, &turn_result.tool_records);
         if final_session_id.is_some() {
             *self.memory_state.last_total_tokens_mut() = Some(turn_result.last_total_tokens);
             log::debug!(
@@ -322,13 +310,14 @@ where
 
         // Emit UI events via bus
         if !turn_result.deltas_emitted {
+            let full_text = turn_result.text.clone();
             let _ = self
                 .tool_infra
                 .bus
                 .ui_event()
-                .send(UiEvent::AssistantMessage {
-                    delta: turn_result.text.clone(),
-                    text: turn_result.text.clone(),
+                .send(SystemEvent::InferenceChunk {
+                    delta: full_text.clone(),
+                    aggregated: full_text,
                 })
                 .await;
         }
@@ -340,21 +329,7 @@ where
             .tool_infra
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
-                tool_calls: turn_result.tool_call_count,
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                total_tokens: usage.total_tokens,
-                cost: usage.cost,
-                cost_complete: usage.cost_complete,
-                duration_ms,
-            })
-            .await;
-        let _ = self
-            .tool_infra
-            .bus
-            .turn()
-            .send(TurnEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: turn_result.tool_call_count,
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,

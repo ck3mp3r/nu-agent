@@ -1,4 +1,4 @@
-use agnt_core::transcript::ir::{DiffTint, StyleHint};
+use agnt_core::transcript::ir::DiffTint;
 use ratatui::style::{Color, Modifier, Style};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,7 +222,6 @@ pub struct TuiTheme {
     pub input_prompt: Style,
     pub input_text: Style,
     pub selection_bg: Style,
-    pub cancelled_modifier: Modifier,
     pub role_user: Style,
     pub role_assistant: Style,
     pub role_system: Style,
@@ -332,7 +331,6 @@ impl TuiTheme {
             input_prompt: fg(palette.blue),
             input_text: fg(palette.text),
             selection_bg: Style::default().bg(palette.surface1),
-            cancelled_modifier: Modifier::CROSSED_OUT,
             role_user: fg(palette.lavender),
             role_assistant: fg(palette.lavender),
             role_system: fg(palette.yellow),
@@ -410,46 +408,72 @@ pub fn diff_tint_to_bg(tint: &DiffTint, theme: &TuiTheme) -> Option<Color> {
     }
 }
 
-/// The single style mapping from a [`StyleHint`] to a ratatui [`Style`],
-/// shared by the transcript renderer and the status/help panel (task
-/// 7eb16881). `role_style` is the per-context lane text style: the
-/// transcript passes the block's lane style (`LaneContext::role_style`);
-/// theme-only callers (help panel) pass `theme.subtle_meta`.
-pub fn hint_to_style(hint: &StyleHint, role_style: Style, theme: &TuiTheme) -> Style {
-    match hint {
-        StyleHint::Normal | StyleHint::Emphasis => role_style,
-        StyleHint::Meta | StyleHint::Muted => theme.tool_meta,
-        StyleHint::Success => theme.status_done,
-        StyleHint::Error => theme.status_failed,
-        StyleHint::DiffAdd => theme.status_done,
-        StyleHint::DiffRemove => theme.status_failed,
-        StyleHint::DiffHunk => theme.role_system.add_modifier(Modifier::BOLD),
-        StyleHint::Cancelled => role_style.add_modifier(theme.cancelled_modifier),
-        StyleHint::MdBold => theme.md_emphasis.add_modifier(Modifier::BOLD),
-        StyleHint::MdItalic => theme.md_emphasis.add_modifier(Modifier::ITALIC),
-        StyleHint::MdBoldItalic => theme
-            .md_emphasis
-            .add_modifier(Modifier::BOLD)
-            .add_modifier(Modifier::ITALIC),
-        StyleHint::MdInlineCode => theme.inline_code,
-        StyleHint::MdCodeKeyword => theme.syntax_keyword,
-        StyleHint::MdCodeType => theme.syntax_type,
-        StyleHint::MdCodeFunction => theme.syntax_function,
-        StyleHint::MdCodeVariable => theme.syntax_variable,
-        StyleHint::MdCodeConstant => theme.syntax_constant,
-        StyleHint::MdCodeString => theme.syntax_string,
-        StyleHint::MdCodeNumber => theme.syntax_number,
-        StyleHint::MdCodeOperator => theme.syntax_operator,
-        StyleHint::MdCodePunctuation => theme.syntax_punctuation,
-        StyleHint::MdCodeComment => theme.syntax_comment,
-        StyleHint::MdCodePlain => theme.row_assistant,
-        StyleHint::MdHeading(level) => match level {
-            1..=6 => theme.md_heading[usize::from(*level)],
-            _ => theme.md_heading[0],
-        },
-        StyleHint::MdLink => theme.md_link,
-        StyleHint::MdLinkUrl => theme.md_link_url,
-        StyleHint::MdQuote => theme.md_quote,
-        StyleHint::MdListMarker => theme.md_list_marker,
+// region:    --- Conversions
+
+/// The backend-neutral theme the render widgets paint with, resolved from this
+/// backend's own theme.
+///
+/// Every surface resolves onto the TUI style that carries it in the pre-wave
+/// vocabulary: the bright status colors stay bright (the diff *backgrounds* are
+/// row surfaces, never foregrounds), and the markdown/syntax palette rides its
+/// own record. A style that carries no RGB foreground falls back to black.
+impl From<&TuiTheme> for agnt_render::Theme {
+    fn from(theme: &TuiTheme) -> Self {
+        let system = neutral_color(&theme.role_system);
+        Self {
+            base: neutral_color(&Style::default().fg(theme.base)),
+            text: neutral_color(&theme.row_assistant),
+            muted: neutral_color(&theme.tool_meta),
+            idle: neutral_color(&theme.status_queued),
+            accent: neutral_color(&theme.role_tool),
+            user_accent: neutral_color(&theme.lane_prefix_user),
+            running: neutral_color(&theme.status_running),
+            success: neutral_color(&theme.status_done),
+            error: neutral_color(&theme.status_failed),
+            user_surface: neutral_color(&Style::default().fg(theme.row_user_bg)),
+            code_surface: neutral_color(&Style::default().fg(theme.surface0)),
+            notice: system,
+            banner: system,
+            diff_add_bg: neutral_color(&Style::default().fg(theme.diff_add_bg)),
+            diff_remove_bg: neutral_color(&Style::default().fg(theme.diff_remove_bg)),
+            markdown: agnt_render::Markdown {
+                heading: [
+                    neutral_color(&theme.md_heading[0]),
+                    neutral_color(&theme.md_heading[1]),
+                    neutral_color(&theme.md_heading[2]),
+                    neutral_color(&theme.md_heading[3]),
+                    neutral_color(&theme.md_heading[4]),
+                    neutral_color(&theme.md_heading[5]),
+                    neutral_color(&theme.md_heading[6]),
+                ],
+                link: neutral_color(&theme.md_link),
+                link_url: neutral_color(&theme.md_link_url),
+                quote: neutral_color(&theme.md_quote),
+                list_marker: neutral_color(&theme.md_list_marker),
+                emphasis: neutral_color(&theme.md_emphasis),
+                inline_code: neutral_color(&theme.inline_code),
+                code_keyword: neutral_color(&theme.syntax_keyword),
+                code_type: neutral_color(&theme.syntax_type),
+                code_function: neutral_color(&theme.syntax_function),
+                code_variable: neutral_color(&theme.syntax_variable),
+                code_constant: neutral_color(&theme.syntax_constant),
+                code_string: neutral_color(&theme.syntax_string),
+                code_number: neutral_color(&theme.syntax_number),
+                code_operator: neutral_color(&theme.syntax_operator),
+                code_punctuation: neutral_color(&theme.syntax_punctuation),
+                code_comment: neutral_color(&theme.syntax_comment),
+            },
+        }
     }
 }
+
+/// One TUI style's foreground as a backend-neutral color. A style with no RGB
+/// foreground (only our palette supplies colors) resolves to black.
+fn neutral_color(style: &Style) -> agnt_render::Color {
+    match style.fg {
+        Some(Color::Rgb(r, g, b)) => agnt_render::Color::rgb(r, g, b),
+        _ => agnt_render::Color::default(),
+    }
+}
+
+// endregion: --- Conversions

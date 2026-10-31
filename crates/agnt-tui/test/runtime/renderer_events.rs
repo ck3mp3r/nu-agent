@@ -1,5 +1,8 @@
 use super::*;
 
+use agnt_core::session::tool_status::ToolStatus;
+use agnt_core::transcript::entry::TranscriptEntry;
+
 /// The runtime renderer forwards events to the inner renderer only in non-TUI
 /// mode; in TUI-active mode it swallows spinner progress and payload-like
 /// events.
@@ -12,9 +15,9 @@ fn runtime_renderer_forwarding_by_mode() -> Result<()> {
     let mut tui_active = TuiRuntimeRenderer::new_tui_active_for_test(inner, scripted, 120, 30);
 
     // -- Exec
-    tui_active.emit(&UiEvent::LlmStarted);
-    tui_active.emit(&UiEvent::Tick);
-    tui_active.emit(&UiEvent::Completed {
+    tui_active.emit(&SystemEvent::InferenceStarted);
+    tui_active.emit(&SystemEvent::Tick);
+    tui_active.emit(&SystemEvent::TurnCompleted {
         tool_calls: 0,
         input_tokens: 0,
         output_tokens: 0,
@@ -34,14 +37,21 @@ fn runtime_renderer_forwarding_by_mode() -> Result<()> {
     let mut non_tui = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
 
     // -- Exec
-    non_tui.emit(&UiEvent::Warning {
-        message: "warn".to_string(),
+    non_tui.emit(&SystemEvent::SystemMessage {
+        kind: SystemKind::Warning,
+        text: "warn".to_string(),
     });
 
     // -- Check: the warning is forwarded.
     let captured = events.lock().expect("events").clone();
     assert_eq!(captured.len(), 1);
-    assert!(matches!(captured[0], UiEvent::Warning { .. }));
+    assert!(matches!(
+        captured[0],
+        SystemEvent::SystemMessage {
+            kind: SystemKind::Warning,
+            ..
+        }
+    ));
 
     // -- Setup & Fixtures: TUI-active mode with payload-like events.
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -50,21 +60,27 @@ fn runtime_renderer_forwarding_by_mode() -> Result<()> {
     let mut payload = TuiRuntimeRenderer::new_tui_active_for_test(inner, scripted, 120, 30);
 
     // -- Exec
-    payload.emit(&UiEvent::ToolCompleted {
-        name: "k8s__list_pods".to_string(),
-        source: "mcp".to_string(),
-        arguments: r#"{"namespace":"prod"}"#.to_string(),
-        success: true,
-        result: r#"[{"name":"api-0"}]"#.to_string(),
-        display: None,
-        error_kind: None,
-        message: None,
+    payload.emit(&SystemEvent::ToolCompleted {
+        call: ToolCall::new(
+            ToolName("k8s__list_pods".to_string()),
+            "mcp",
+            r#"{"namespace":"prod"}"#,
+            CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
+        ),
+        outcome: ToolOutcome {
+            success: true,
+            status: ToolStatus::Success,
+            result: r#"[{"name":"api-0"}]"#.to_string(),
+            display: None,
+            error_kind: None,
+            message: None,
+        },
     });
-    payload.emit(&UiEvent::AssistantMessage {
+    payload.emit(&SystemEvent::InferenceChunk {
         delta: "response".to_string(),
-        text: "response".to_string(),
+        aggregated: "response".to_string(),
     });
-    payload.emit(&UiEvent::Completed {
+    payload.emit(&SystemEvent::TurnCompleted {
         tool_calls: 1,
         input_tokens: 0,
         output_tokens: 0,
@@ -87,40 +103,35 @@ async fn assistant_message_event_transcript_flow() -> Result<()> {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
 
     // -- Exec
-    coordinator.enqueue_ui_event(UiEvent::AssistantMessage {
+    coordinator.enqueue_event(SystemEvent::InferenceChunk {
         delta: "hello\nworld".to_string(),
-        text: "hello\nworld".to_string(),
+        aggregated: "hello\nworld".to_string(),
     });
     coordinator.drain_transport();
 
     // -- Check: one assistant block with the raw markdown.
-    let assistant_entries: Vec<_> = coordinator
-        .state()
-        .transcript
-        .blocks()
+    let blocks = coordinator.state().transcript.entries();
+    let assistant_entries: Vec<_> = blocks
         .iter()
         .filter(|b| {
             matches!(
-                b.source,
-                BlockSource::Markdown {
-                    role: MessageRole::Assistant,
-                    ..
-                }
+                b,
+                TranscriptEntry::Message(message) if message.role == MessageRole::Assistant
             )
         })
         .collect();
     assert_eq!(assistant_entries.len(), 1);
-    assert!(assistant_entries[0].source.plain_text().contains("hello"));
-    assert!(assistant_entries[0].source.plain_text().contains("world"));
+    assert!(entry_text(assistant_entries[0]).contains("hello"));
+    assert!(entry_text(assistant_entries[0]).contains("world"));
 
     // -- Setup & Fixtures: a markdown fixture.
     let mut markdown = RuntimeCoordinator::new(120, 30, Some(true));
     let fixture = markdown_fixture("lists_blockquote.md");
 
     // -- Exec
-    markdown.enqueue_ui_event(UiEvent::AssistantMessage {
+    markdown.enqueue_event(SystemEvent::InferenceChunk {
         delta: fixture.clone(),
-        text: fixture,
+        aggregated: fixture,
     });
     markdown.drain_transport();
 
@@ -128,9 +139,9 @@ async fn assistant_message_event_transcript_flow() -> Result<()> {
     let raw_texts: Vec<String> = markdown
         .state()
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|block| block.source.plain_text())
+        .map(entry_text)
         .collect();
     let projected: Vec<String> = raw_texts
         .iter()
@@ -162,9 +173,9 @@ async fn assistant_message_event_transcript_flow() -> Result<()> {
         .take_next_prompt_for_execution();
     driver
         .coordinator_mut()
-        .enqueue_ui_event(UiEvent::AssistantMessage {
+        .enqueue_event(SystemEvent::InferenceChunk {
             delta: "world".to_string(),
-            text: "world".to_string(),
+            aggregated: "world".to_string(),
         });
     driver.coordinator_mut().drain_transport();
 
@@ -173,9 +184,9 @@ async fn assistant_message_event_transcript_flow() -> Result<()> {
         driver
             .state()
             .transcript
-            .blocks()
+            .entries()
             .iter()
-            .map(|block| (block_to_role(block), block.source.plain_text()))
+            .map(|block| (entry_to_role(block), entry_text(block)))
             .collect::<Vec<_>>(),
         vec![
             (TranscriptRole::User, "h".to_string()),
@@ -207,7 +218,7 @@ async fn tick_and_completed_events_update_status_only() -> Result<()> {
 
     // -- Exec
     driver.advance(&[key(TerminalKey::Char('x'))]).await?;
-    driver.coordinator_mut().enqueue_ui_event(UiEvent::Tick);
+    driver.coordinator_mut().enqueue_event(SystemEvent::Tick);
     driver.coordinator_mut().drain_transport();
 
     // -- Check
@@ -216,7 +227,7 @@ async fn tick_and_completed_events_update_status_only() -> Result<()> {
     // -- Exec
     driver
         .coordinator_mut()
-        .enqueue_ui_event(UiEvent::Completed {
+        .enqueue_event(SystemEvent::TurnCompleted {
             tool_calls: 0,
             input_tokens: 0,
             output_tokens: 0,
@@ -237,7 +248,7 @@ async fn tick_and_completed_events_update_status_only() -> Result<()> {
     busy.advance(&[key(TerminalKey::Char('k')), key(TerminalKey::Char('9'))])
         .await?;
     busy.coordinator_mut().state.phase = UiPhase::Busy;
-    busy.coordinator_mut().enqueue_ui_event(UiEvent::Tick);
+    busy.coordinator_mut().enqueue_event(SystemEvent::Tick);
     busy.coordinator_mut().drain_transport();
 
     // -- Check: the status area reports busy.
@@ -246,15 +257,16 @@ async fn tick_and_completed_events_update_status_only() -> Result<()> {
     assert!(status_lines.join("\n").contains("(busy)"));
 
     // -- Exec
-    busy.coordinator_mut().enqueue_ui_event(UiEvent::Completed {
-        tool_calls: 0,
-        input_tokens: 0,
-        output_tokens: 0,
-        total_tokens: None,
-        cost: None,
-        cost_complete: true,
-        duration_ms: 0,
-    });
+    busy.coordinator_mut()
+        .enqueue_event(SystemEvent::TurnCompleted {
+            tool_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: None,
+            cost: None,
+            cost_complete: true,
+            duration_ms: 0,
+        });
     busy.coordinator_mut().drain_transport();
 
     // -- Check: the status area reports idle; the input line is not polluted.

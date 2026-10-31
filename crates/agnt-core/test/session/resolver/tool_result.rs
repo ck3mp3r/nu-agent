@@ -1,6 +1,5 @@
 use super::*;
 
-use crate::session::repair::INTERRUPTED_RESULT;
 use rig::conversation::pairing::NO_RESULT_PROVIDED;
 
 #[test]
@@ -282,18 +281,26 @@ fn test_tool_result_with_explicit_display_key() {
     assert_eq!(display.title, Some("custom output".to_string()));
 }
 
-/// A persisted not-run row rehydrates as the ⊘ class with the args preview
-/// under it — the same two-block shape the live view pushes. No reason text
-/// renders.
+/// A cancelled row rehydrates as the ⊘ class with the args preview under it —
+/// the same two-block shape the live view pushes, and the same shape for every
+/// non-completed call whatever its result text says. No text renders.
 #[test]
-fn test_tool_result_not_run_rows_rehydrate_as_cancelled() -> Result<()> {
-    // -- Setup & Fixtures
-    let denied = "Permission denied by rule 'global:*' (scope: global)";
-    // (name, result text, persisted is_error)
+fn test_tool_result_cancelled_rows_rehydrate_as_cancelled() -> Result<()> {
+    // -- Setup & Fixtures: the three non-completed shapes a session carries — a
+    // timeout kill, a user cancel, and a call that never ran. Their texts differ
+    // and are content only; the store's status is the same variant.
     let cases: Vec<(&str, &str, bool)> = vec![
-        ("rig placeholder", NO_RESULT_PROVIDED, true),
-        ("interrupted close", INTERRUPTED_RESULT, false),
-        ("permission denial", denied, true),
+        (
+            "nu timeout kill",
+            "command timed out after 120 seconds: no details",
+            true,
+        ),
+        (
+            "nu user cancel",
+            "nu command cancelled by user: no details",
+            true,
+        ),
+        ("never started", NO_RESULT_PROVIDED, true),
     ];
 
     // -- Exec & Check
@@ -301,7 +308,7 @@ fn test_tool_result_not_run_rows_rehydrate_as_cancelled() -> Result<()> {
         let entries = vec![
             Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
                 ToolCall::new(
-                    CallId::from_wire("call_not_run"),
+                    CallId::from_wire("call_cancelled"),
                     ToolFunction::new(
                         ToolName::new("nu").expect("should be non-empty"),
                         json!({"command": "ls | sort"}),
@@ -310,14 +317,15 @@ fn test_tool_result_not_run_rows_rehydrate_as_cancelled() -> Result<()> {
             )])),
             Message::User {
                 content: vec![UserContent::ToolResult(ToolResult {
-                    call: CallId::from_wire("call_not_run"),
+                    call: CallId::from_wire("call_cancelled"),
                     name: ToolName::new("nu").expect("non-empty tool name"),
                     content: vec![ToolResultContent::Text(Text::new(text))],
                     is_error,
                 })],
             },
         ];
-        let snapshots = hydrate(&entries, std::path::Path::new("."));
+        let statuses = cancelled_status("call_cancelled");
+        let snapshots = hydrate_with_statuses(&entries, std::path::Path::new("."), &statuses);
 
         assert_eq!(
             snapshots.len(),
@@ -325,9 +333,10 @@ fn test_tool_result_not_run_rows_rehydrate_as_cancelled() -> Result<()> {
             "{name}: the tool snapshot and its args preview are expected"
         );
         assert_eq!(snapshots[0].role(), "tool", "{name}");
-        assert!(
-            snapshots[0].tool_not_run(),
-            "{name}: the row must carry the not-run mark"
+        assert_eq!(
+            snapshots[0].tool_status(),
+            Some(ToolStatus::Cancelled),
+            "{name}: the row carries the store's variant"
         );
         assert_eq!(snapshots[1].role(), "tool_display", "{name}");
         let display = snapshots[1]
@@ -346,23 +355,25 @@ fn test_tool_result_not_run_rows_rehydrate_as_cancelled() -> Result<()> {
     }
 
     // A non-Previewable tool emits no display snapshot.
-    let entries = tool_call_entries("call_not_run_read", NO_RESULT_PROVIDED, true);
-    let snapshots = hydrate(&entries, std::path::Path::new("."));
+    let entries = tool_call_entries("call_cancelled_read", NO_RESULT_PROVIDED, true);
+    let statuses = cancelled_status("call_cancelled_read");
+    let snapshots = hydrate_with_statuses(&entries, std::path::Path::new("."), &statuses);
     assert_eq!(
         snapshots.len(),
         1,
         "read_file: only the tool snapshot is expected"
     );
     assert_eq!(snapshots[0].role(), "tool");
-    assert!(
-        snapshots[0].tool_not_run(),
-        "read_file: the row must carry the not-run mark"
+    assert_eq!(
+        snapshots[0].tool_status(),
+        Some(ToolStatus::Cancelled),
+        "read_file: the row carries the store's variant"
     );
     Ok(())
 }
 
-/// Rows outside the not-run shapes keep the persisted-verdict mapping and
-/// emit no reason block.
+/// Rows outside the cancelled class keep the stored verdict: the status the
+/// store carries when it has one, and the `is_error` verdict when it has none.
 #[test]
 fn test_tool_result_other_rows_keep_the_verdict_mapping() -> Result<()> {
     // -- Setup & Fixtures
@@ -388,11 +399,24 @@ fn test_tool_result_other_rows_keep_the_verdict_mapping() -> Result<()> {
             "{name}: only the tool snapshot is expected"
         );
         assert_eq!(snapshots[0].role(), "tool", "{name}");
-        assert!(
-            !snapshots[0].tool_not_run(),
-            "{name}: a settled row must not carry the not-run mark"
-        );
         assert_eq!(snapshots[0].tool_success(), expected_success, "{name}");
+        let expected_status = if is_error {
+            ToolStatus::Failed
+        } else {
+            ToolStatus::Success
+        };
+        assert_eq!(
+            snapshots[0].tool_status(),
+            Some(expected_status),
+            "{name}: a row with no recorded status reads its stored verdict"
+        );
     }
     Ok(())
+}
+
+/// The status the store carries for one call.
+fn cancelled_status(call: &str) -> ToolStatusMap {
+    let mut statuses = ToolStatusMap::new();
+    statuses.insert(CallId::from_wire(call), ToolStatus::Cancelled);
+    statuses
 }

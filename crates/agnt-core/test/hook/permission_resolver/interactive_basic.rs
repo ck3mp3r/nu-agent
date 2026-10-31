@@ -15,7 +15,7 @@ async fn interactive_resolver_explicit_allow_returns_allow_no_prompt() {
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionRequested { .. })),
+            .any(|event| matches!(event, SystemEvent::PermissionRequested { .. })),
         "an explicitly allowed tool must not prompt: {events:?}"
     );
 }
@@ -34,7 +34,7 @@ async fn interactive_resolver_explicit_deny_returns_deny_no_prompt() {
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionRequested { .. })),
+            .any(|event| matches!(event, SystemEvent::PermissionRequested { .. })),
         "an explicitly denied tool must not prompt: {events:?}"
     );
 }
@@ -60,7 +60,7 @@ async fn interactive_auto_approve_publishes_tool_preview() -> Result<()> {
         .map_err(|_| "timed out waiting for the auto-resolved event")?
         .map_err(|_| "expected an auto-resolved event")?;
     assert!(
-        matches!(first, UiEvent::PermissionAutoResolved { .. }),
+        matches!(first, SystemEvent::PermissionAutoResolved { .. }),
         "the auto-resolved event precedes the preview: {first:?}"
     );
     let event = tokio::time::timeout(std::time::Duration::from_secs(2), ui_rx.recv())
@@ -68,8 +68,8 @@ async fn interactive_auto_approve_publishes_tool_preview() -> Result<()> {
         .map_err(|_| "timed out waiting for a ToolPreview event")?
         .map_err(|_| "expected a ToolPreview event")?;
     match event {
-        UiEvent::ToolPreview { tool_key, display } => {
-            assert_eq!(tool_key, format!("nu\n{arguments}"));
+        SystemEvent::PreviewRequested { call, display } => {
+            assert_eq!(call.id.as_str(), format!("nu\n{arguments}"));
             assert_eq!(display.title, None);
             assert_eq!(display.sections.len(), 1);
             assert_eq!(display.sections[0].content, "ls");
@@ -98,7 +98,7 @@ async fn interactive_auto_approve_non_previewable_tool_publishes_no_tool_preview
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::ToolPreview { .. })),
+            .any(|event| matches!(event, SystemEvent::PreviewRequested { .. })),
         "a tool without a pre-authorize display must publish no ToolPreview: {events:?}"
     );
 }
@@ -119,7 +119,7 @@ async fn interactive_deny_publishes_no_tool_preview() {
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::ToolPreview { .. })),
+            .any(|event| matches!(event, SystemEvent::PreviewRequested { .. })),
         "a denied tool must publish no ToolPreview: {events:?}"
     );
 }
@@ -145,7 +145,7 @@ async fn interactive_ask_path_publishes_permission_requested_not_tool_preview() 
         .await
         .map_err(|_| "expected PermissionRequested event")?;
     let request_id = match event {
-        UiEvent::PermissionRequested {
+        SystemEvent::PermissionRequested {
             request_id,
             context,
         } => {
@@ -159,7 +159,7 @@ async fn interactive_ask_path_publishes_permission_requested_not_tool_preview() 
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
     let decision = resolve_fut
@@ -175,7 +175,7 @@ async fn interactive_ask_path_publishes_permission_requested_not_tool_preview() 
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::ToolPreview { .. })),
+            .any(|event| matches!(event, SystemEvent::PreviewRequested { .. })),
         "the Ask path must not also publish a ToolPreview: {events:?}"
     );
     Ok(())
@@ -203,14 +203,14 @@ async fn interactive_resolver_ask_config_submit_allow_returns_allow() -> Result<
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id,
+        SystemEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected PermissionRequested, got {:?}", other),
     };
 
     // Submit Allow decision
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
 
@@ -241,14 +241,14 @@ async fn interactive_resolver_ask_config_submit_deny_returns_deny() -> Result<()
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id,
+        SystemEvent::PermissionRequested { request_id, .. } => request_id,
         other => panic!("Expected PermissionRequested, got {:?}", other),
     };
 
     // Submit Deny decision
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::Deny,
     );
 

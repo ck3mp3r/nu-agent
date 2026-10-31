@@ -31,14 +31,14 @@ async fn interactive_resolver_nu_call_carries_pre_authorize_display() -> Result<
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
 
     // Unblock the resolver after inspecting the event.
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
     let decision = resolve_fut
@@ -47,7 +47,7 @@ async fn interactive_resolver_nu_call_carries_pre_authorize_display() -> Result<
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
-    let UiEvent::PermissionRequested { context, .. } = &event else {
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
     let display = context
@@ -93,12 +93,12 @@ async fn interactive_resolver_ask_path_context_carries_exact_tool_key() -> Resul
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::Deny,
     );
     let _decision = resolve_fut
@@ -106,7 +106,7 @@ async fn interactive_resolver_ask_path_context_carries_exact_tool_key() -> Resul
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
 
     // -- Check
-    let UiEvent::PermissionRequested { context, .. } = &event else {
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
     assert_eq!(
@@ -140,12 +140,12 @@ async fn interactive_resolver_other_ask_tool_has_no_pre_authorize_display() -> R
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
     let decision = resolve_fut
@@ -154,7 +154,7 @@ async fn interactive_resolver_other_ask_tool_has_no_pre_authorize_display() -> R
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
-    let UiEvent::PermissionRequested { context, .. } = &event else {
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
     assert!(
@@ -183,12 +183,12 @@ async fn interactive_resolver_nu_missing_command_prompts_without_display() -> Re
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::AllowOnce,
     );
     let decision = resolve_fut
@@ -197,7 +197,7 @@ async fn interactive_resolver_nu_missing_command_prompts_without_display() -> Re
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
-    let UiEvent::PermissionRequested { context, .. } = &event else {
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
     assert!(
@@ -243,12 +243,12 @@ async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display(
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::Deny,
     );
     let _decision = resolve_fut
@@ -256,7 +256,7 @@ async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display(
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
 
     // -- Check
-    let UiEvent::PermissionRequested { context, .. } = &event else {
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
     let display = context
@@ -318,12 +318,12 @@ async fn interactive_resolver_edit_apply_search_replace_without_expected_version
         .await
         .map_err(|_| "Expected PermissionRequested event")?;
     let request_id = match &event {
-        UiEvent::PermissionRequested { request_id, .. } => request_id.clone(),
+        SystemEvent::PermissionRequested { request_id, .. } => request_id.clone(),
         other => panic!("Expected PermissionRequested, got {other:?}"),
     };
     submit_decision(
         &resolver_clone,
-        &request_id,
+        request_id.as_str(),
         ProtocolPermissionDecision::Deny,
     );
     let _decision = resolve_fut
@@ -331,7 +331,7 @@ async fn interactive_resolver_edit_apply_search_replace_without_expected_version
         .map_err(|e| format!("resolve task panicked: {e:?}"))?;
 
     // -- Check
-    let UiEvent::PermissionRequested { context, .. } = &event else {
+    let SystemEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
     let display = context

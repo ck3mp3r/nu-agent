@@ -16,6 +16,8 @@ mod prose;
 mod records_merge;
 #[path = "delta/skip_warning.rs"]
 mod skip_warning;
+#[path = "delta/statuses.rs"]
+mod statuses;
 #[path = "delta/stored_results.rs"]
 mod stored_results;
 #[path = "delta/support.rs"]
@@ -29,4 +31,5 @@ use super::*;
 
 use crate::conversation::turn::executor::TurnRecovery;
 use crate::hook::TurnToolRecord;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::SystemEvent;
+use crate::session::tool_status::ToolStatus;

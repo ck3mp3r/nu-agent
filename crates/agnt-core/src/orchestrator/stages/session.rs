@@ -1,7 +1,7 @@
 use crate::bus::TurnEvent;
 use crate::orchestrator::stages::{OrchestrationContext, SessionHandler};
 use crate::orchestrator::turn_outcome::TurnOutcome;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::utils::value_ext::extract_response_text_from_value;
 
 /// Applies turn outcomes (success, cancel, error).
@@ -76,7 +76,10 @@ impl SessionHandler for SessionStage {
                 let _ = ctx
                     .bus
                     .ui_event()
-                    .send(UiEvent::TurnError { message: error.msg })
+                    .send(SystemEvent::SystemMessage {
+                        kind: SystemKind::TurnError,
+                        text: error.msg,
+                    })
                     .await;
             }
         }

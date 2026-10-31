@@ -6,12 +6,23 @@ mod agent;
 // endregion: --- Modules
 
 use super::*;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, ToolCall};
 use crate::protocol::tool_args::CallLine;
+use crate::transcript::ir::ToolName;
 use std::time::Duration;
 use tokio::time::timeout;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// A started call carrying `name`, for the channel-shape assertions below.
+fn tool_call(name: &str) -> ToolCall {
+    ToolCall::new(
+        ToolName(name.to_string()),
+        "user",
+        "{}",
+        CallLine::from_json_summary("{}"),
+    )
+}
 
 /// A published event reaches every subscriber of its channel.
 #[tokio::test]
@@ -34,11 +45,8 @@ async fn publish_reaches_subscribers() -> Result<()> {
     let mut rx1 = bus.ui_event().subscribe();
     let mut rx2 = bus.ui_event().subscribe();
     bus.ui_event()
-        .send(UiEvent::ToolStarted {
-            name: "read".into(),
-            source: "user".into(),
-            arguments: "{}".into(),
-            call_line: CallLine::from_json_summary("{}"),
+        .send(SystemEvent::ToolStarted {
+            call: tool_call("read"),
         })
         .await
         .map_err(|e| format!("send should succeed: {e:?}"))?;
@@ -51,11 +59,11 @@ async fn publish_reaches_subscribers() -> Result<()> {
         .map_err(|_| "second subscriber should not time out")?
         .map_err(|_| "second subscriber should receive")?;
     match (received1, received2) {
-        (UiEvent::ToolStarted { name: n1, .. }, UiEvent::ToolStarted { name: n2, .. }) => {
-            assert_eq!(n1, "read");
-            assert_eq!(n2, "read");
+        (SystemEvent::ToolStarted { call: c1 }, SystemEvent::ToolStarted { call: c2 }) => {
+            assert_eq!(c1.name.0, "read");
+            assert_eq!(c2.name.0, "read");
         }
-        _ => panic!("expected UiEvent::ToolStarted on both subscribers"),
+        _ => panic!("expected SystemEvent::ToolStarted on both subscribers"),
     }
 
     // -- Case 3: a session event reaches its subscriber
@@ -98,11 +106,8 @@ async fn bus_channel_semantics() -> Result<()> {
     // expected — the assertion is that the cancel subscriber never sees it.
     let _ = bus
         .ui_event()
-        .send(UiEvent::ToolStarted {
-            name: "write".into(),
-            source: "system".into(),
-            arguments: "{}".into(),
-            call_line: CallLine::from_json_summary("{}"),
+        .send(SystemEvent::ToolStarted {
+            call: tool_call("write"),
         })
         .await;
     let result = timeout(Duration::from_millis(50), cancel_rx.recv()).await;

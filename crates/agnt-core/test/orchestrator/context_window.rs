@@ -29,7 +29,7 @@ impl CoreRuntime for ContextWindowRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -164,11 +164,8 @@ impl ContextWindowUi {
             loop {
                 tokio::select! {
                     Ok(event) = ui_event_rx.recv() => {
-                        match event {
-                            UiEvent::Warning { message } | UiEvent::TurnError { message } => {
-                                warnings.lock().expect("warnings lock").push(message);
-                            }
-                            _ => {}
+                        if let SystemEvent::SystemMessage { text, .. } = event {
+                            warnings.lock().expect("warnings lock").push(text);
                         }
                     }
                     Ok(event) = ui_state_rx.recv() => {
@@ -214,7 +211,7 @@ impl CoreRuntime for TokenSeedingRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,

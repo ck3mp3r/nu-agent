@@ -267,7 +267,7 @@ async fn model_picker_paints_section_header_without_a_background_band() -> Resul
 }
 
 #[tokio::test]
-async fn model_picker_aligns_bold_section_titles_with_model_rows() -> Result<()> {
+async fn model_picker_flushes_section_titles_left_of_the_indented_rows() -> Result<()> {
     // -- Setup & Fixtures
     let mut driver = RenderLoopDriver::new(120, 30);
     driver.coordinator_mut().state.set_picker_options(
@@ -308,8 +308,13 @@ async fn model_picker_aligns_bold_section_titles_with_model_rows() -> Result<()>
         let name_x = popup.x + u16::try_from(name_col)?;
         assert_eq!(
             name_x,
-            popup.x + 5,
-            "{name} title must start on the model identity column\n{popup_text}"
+            popup.x + 3,
+            "{name} title must start flush-left in the MODEL column\n{popup_text}"
+        );
+        assert!(
+            !lines[row].contains('◆'),
+            "{name} title must carry no configured glyph; row: {:?}\n{popup_text}",
+            lines[row]
         );
         assert!(
             driver
@@ -332,21 +337,55 @@ async fn model_picker_aligns_bold_section_titles_with_model_rows() -> Result<()>
     assert_eq!(
         identity_x,
         popup.x + 5,
-        "model identity must keep its two-space prefix\n{popup_text}"
+        "model identity must keep its two-space indent\n{popup_text}"
     );
+    Ok(())
+}
 
-    let title_row = lines
+/// The heads derive from the FILTERED options, so a provider whose every model
+/// the query filtered out loses its head with them.
+#[tokio::test]
+async fn model_picker_drops_the_head_of_a_filtered_out_provider() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut driver = RenderLoopDriver::new(120, 30);
+    driver.coordinator_mut().state.set_picker_options(
+        ActivePicker::Model,
+        vec![
+            model_option("ollama", "llama3", "Ollama"),
+            model_option("openai", "gpt-4o", "OpenAI"),
+        ],
+    );
+    let state = &mut driver.coordinator_mut().state;
+    state.picker.open(ActivePicker::Model);
+    state
+        .picker
+        .active_state_mut()
+        .ok_or("should have an active model picker")?
+        .append_query_char('l');
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check
+    let area = driver.state().scroll.transcript_area;
+    let popup = super::render::frame::modal_rect_for_panel(
+        area,
+        super::render::frame::ModalPanelKind::Models,
+    );
+    let popup_text = driver.buffer_text_in_rect(popup);
+    let lines: Vec<&str> = popup_text.lines().collect();
+    let head_row = lines
         .iter()
         .position(|line| line.contains("Ollama"))
-        .ok_or("should find the Ollama section header row")?;
-    let title_at = lines[title_row]
-        .find("Ollama")
-        .ok_or("Ollama header row should contain the display name")?;
-    let title_col = lines[title_row][..title_at].chars().count();
-    let title_x = popup.x + u16::try_from(title_col)?;
-    assert_eq!(
-        identity_x, title_x,
-        "section title must sit on the model identity column\n{popup_text}"
+        .ok_or("should keep the surviving provider head")?;
+    assert!(
+        !popup_text.contains("OpenAI"),
+        "the filtered-out provider must lose its head\n{popup_text}"
+    );
+    assert!(
+        lines[head_row].contains("Ollama") && !lines[head_row].contains('◆'),
+        "the surviving head must carry no configured glyph; row: {:?}\n{popup_text}",
+        lines[head_row]
     );
     Ok(())
 }

@@ -69,7 +69,7 @@ async fn journey_output_repetition_cross_turn_trips_on_fifth() -> Result<()> {
     assert!(
         last_events
             .iter()
-            .any(|e| matches!(e, UiEvent::Warning { message } if *message == stop_text)),
+            .any(|e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if *text == stop_text)),
         "must emit a Warning with the stop text; got: {last_events:?}"
     );
     // The steering notice rides every conversion; the terminal sequence
@@ -77,7 +77,7 @@ async fn journey_output_repetition_cross_turn_trips_on_fifth() -> Result<()> {
     let steering_notices = last_events
         .iter()
         .filter(
-            |e| matches!(e, UiEvent::Warning { message } if message == REPETITION_STEERING_NOTICE),
+            |e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text == REPETITION_STEERING_NOTICE),
         )
         .count();
     assert_eq!(
@@ -134,7 +134,7 @@ async fn journey_output_repetition_cross_turn_fifth_is_first_continue() -> Resul
     );
     assert!(
         last_events.iter().any(
-            |e| matches!(e, UiEvent::Warning { message } if message == OUTPUT_REPETITION_MESSAGE)
+            |e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text == OUTPUT_REPETITION_MESSAGE)
         ),
         "must emit a Warning with the First steering text; got: {last_events:?}"
     );

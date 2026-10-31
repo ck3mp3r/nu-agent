@@ -288,7 +288,10 @@ fn map_edit_contract_error(error: &ToolHandlerError) -> &'static str {
         ToolErrorKind::Validation => "validation",
         ToolErrorKind::Authorization => "internal",
         ToolErrorKind::Runtime => "internal",
-        ToolErrorKind::Transport | ToolErrorKind::Timeout | ToolErrorKind::Unknown => "internal",
+        ToolErrorKind::Transport
+        | ToolErrorKind::Timeout
+        | ToolErrorKind::NotRun
+        | ToolErrorKind::Unknown => "internal",
     }
 }
 

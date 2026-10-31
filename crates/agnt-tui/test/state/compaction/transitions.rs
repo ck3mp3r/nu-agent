@@ -15,16 +15,16 @@ fn compaction_metadata_is_ui_chrome_not_session_payload() -> Result<()> {
 
     // -- Check
     assert_eq!(
-        state.transcript.blocks()[0].source.plain_text(),
+        entry_text(&state.transcript.entries()[0]),
         "Compaction",
         "metadata is transcript UI chrome, not session system summary payload"
     );
     assert!(
         state
             .transcript
-            .blocks()
+            .entries()
             .iter()
-            .any(|line| line.source.plain_text() == "persisted summary body")
+            .any(|line| entry_text(line) == "persisted summary body")
     );
 
     // -- Setup & Fixtures: an empty summary must not claim a persisted summary.
@@ -38,9 +38,9 @@ fn compaction_metadata_is_ui_chrome_not_session_payload() -> Result<()> {
     // -- Check
     let lines = noop
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|line| line.source.plain_text())
+        .map(entry_text)
         .collect::<Vec<_>>();
     assert!(lines.contains(&"(empty summary)".to_string()));
     assert!(!lines.iter().any(|line| line.contains("source=")));
@@ -64,9 +64,9 @@ fn compaction_metadata_is_ui_chrome_not_session_payload() -> Result<()> {
     // -- Check
     let lines = triggers
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|line| line.source.plain_text())
+        .map(entry_text)
         .collect::<Vec<_>>();
     assert!(lines.contains(&"summary from slash_compact".to_string()));
     assert!(lines.contains(&"summary from auto_threshold".to_string()));
@@ -96,7 +96,7 @@ fn compaction_completion_and_failure_bookkeeping() -> Result<()> {
     // -- Exec
     reduce_compaction(
         &mut failed_state,
-        CompactionEvent::Failed {
+        SystemEvent::CompactionFailed {
             source: "test".to_string(),
             message: "err".to_string(),
         },
@@ -121,12 +121,7 @@ fn compaction_streaming_lifecycle() -> Result<()> {
     assert!(state.transcript.len() > 1, "should have header + content");
     reduce_compaction(&mut state, chunk("auto", " world", "Hello world"));
     reduce_compaction(&mut state, chunk("auto", " done", "Hello world done"));
-    let lines: Vec<String> = state
-        .transcript
-        .blocks()
-        .iter()
-        .map(|line| line.source.plain_text())
-        .collect();
+    let lines: Vec<String> = state.transcript.entries().iter().map(entry_text).collect();
     assert!(lines.iter().any(|l| l.contains("Hello world done")));
 
     // -- Exec & Check: a later chunk reprojects, replacing the old partial.
@@ -136,9 +131,9 @@ fn compaction_streaming_lifecycle() -> Result<()> {
     reduce_compaction(&mut reproject, chunk("auto", " Second", "First Second"));
     let lines: Vec<String> = reproject
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|line| line.source.plain_text())
+        .map(entry_text)
         .collect();
     let first_only_count = lines
         .iter()
@@ -167,12 +162,7 @@ fn compaction_streaming_lifecycle() -> Result<()> {
         &mut state,
         completed("auto", "Hello world done", "Hello world done"),
     );
-    let lines: Vec<String> = state
-        .transcript
-        .blocks()
-        .iter()
-        .map(|line| line.source.plain_text())
-        .collect();
+    let lines: Vec<String> = state.transcript.entries().iter().map(entry_text).collect();
     assert!(lines.iter().any(|l| l.contains("Hello world done")));
     Ok(())
 }

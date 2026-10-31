@@ -5,52 +5,47 @@ fn cancel_pushes_closing_spacer() -> Result<()> {
     use crate::interaction::cancel::CancelController;
 
     let cancel_controller = CancelController::default();
-    let mut state = AppState {
-        input: InputState::default().with_pending_submit_text("hello".to_string()),
-        ..Default::default()
-    };
-    reduce_with_cancel_controller(
+    let mut state = AppState::default();
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::Submit),
+        SystemEvent::PromptSubmitted {
+            text: "hello".to_string(),
+        },
         Some(&cancel_controller),
     );
     let _ = state.take_next_prompt_for_execution();
-    let partial = Message {
-        role: MessageRole::Assistant,
-        markdown: "partial".to_string(),
-    };
-    state.transcript.push_block(Block {
-        source: partial.source(),
-        lane: partial.lane(),
-        fill: partial.fill(),
-        status: None,
-    });
+    state
+        .transcript
+        .push_entry(TranscriptEntry::Message(MessageEntry {
+            role: MessageRole::Assistant,
+            markdown: "partial".to_string(),
+        }));
 
     // First Esc enters AbortPending, second confirms the cancel
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::Esc),
+        SystemEvent::KeyPressed { key: Key::Esc },
         Some(&cancel_controller),
     );
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::EscConfirm),
+        SystemEvent::KeyPressed { key: Key::Esc },
         Some(&cancel_controller),
     );
 
     let last = state
         .transcript
-        .blocks()
+        .entries()
         .last()
-        .ok_or("should have last transcript block")?;
-    // cancel no longer pushes a spacer — the partial assistant block stays
-    // as the last block.
+        .ok_or("should have last transcript entry")?;
+    // cancel no longer pushes a spacer — the partial assistant entry stays
+    // as the last entry.
     assert!(matches!(
-        last.source,
-        BlockSource::Markdown {
+        last,
+        TranscriptEntry::Message(MessageEntry {
             role: MessageRole::Assistant,
             ..
-        }
+        })
     ));
     Ok(())
 }

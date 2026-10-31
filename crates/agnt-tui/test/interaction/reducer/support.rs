@@ -2,23 +2,18 @@ use super::*;
 
 use ratatui::layout::Rect;
 
-/// Push one user Message block via the store's sole push API.
+/// Push one user message entry via the store's sole push API.
 pub(super) fn push_user_line(state: &mut AppState, text: impl Into<String>) {
-    let msg = Message {
+    let entry = TranscriptEntry::Message(MessageEntry {
         role: MessageRole::User,
         markdown: text.into(),
-    };
-    state.transcript.push_block(Block {
-        source: msg.source(),
-        lane: msg.lane(),
-        fill: msg.fill(),
-        status: None,
     });
+    state.transcript.push_entry(entry);
 }
 
-/// Convenience: wraps a UiEvent into a boxed ReducerInput::Event.
-pub(super) fn event_input(e: UiEvent) -> ReducerInput {
-    ReducerInput::Event(Box::new(e))
+/// Fold one `SystemEvent` through the boundary shim and the reducer.
+pub(super) fn reduce_ui(state: &mut AppState, event: SystemEvent) -> bool {
+    reduce(state, event, None)
 }
 
 pub(super) fn assert_reducer_invariants(state: &AppState) {
@@ -69,11 +64,14 @@ pub(super) fn open_permission_card(state: &mut AppState) {
 }
 
 pub(super) fn busy_state_with_clean_transcript() -> AppState {
-    let mut state = AppState {
-        input: InputState::default().with_pending_submit_text("run".to_string()),
-        ..Default::default()
-    };
-    reduce_with_cancel_controller(&mut state, ReducerInput::User(UserAction::Submit), None);
+    let mut state = AppState::default();
+    reduce(
+        &mut state,
+        SystemEvent::PromptSubmitted {
+            text: "run".to_string(),
+        },
+        None,
+    );
     let _ = state.activate_next_prompt();
     state.transcript.clear();
     // Simulate handle_llm_start which sets the lock
@@ -99,7 +97,6 @@ pub(super) fn wheel_noop_state(mode: InputMode) -> AppState {
             scroll_offset: 0,
             max_scroll: 0,
             following_tail: false,
-            entry_indices: (0..30).collect(),
             transcript_area: Rect::new(0, 0, 80, 20),
             ..Default::default()
         },

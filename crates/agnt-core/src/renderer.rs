@@ -1,4 +1,4 @@
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::SystemEvent;
 
 /// Shared UI renderer contract boundary for agent UI output.
 ///
@@ -10,6 +10,6 @@ use crate::protocol::event::UiEvent;
 /// explicit interface boundary between UI event production and renderer
 /// backends.
 pub trait UiRenderer {
-    fn emit(&mut self, event: &UiEvent);
+    fn emit(&mut self, event: &SystemEvent);
     fn flush(&mut self);
 }

@@ -402,7 +402,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
         Arc::new(AcpEngineStub::new(cwd.to_string_lossy().to_string()));
 
     // -- Interactive permission bridge: ACP prompts the client, so the runtime
-    // must publish `UiEvent::PermissionRequested` and await the bridge's decision.
+    // must publish `SystemEvent::PermissionRequested` and await the bridge's decision.
     let pending: PendingPermissions = Arc::new(Mutex::new(HashMap::new()));
 
     let mut runtime = AgentConversationRuntime {

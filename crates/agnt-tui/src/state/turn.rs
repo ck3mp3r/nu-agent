@@ -1,44 +1,26 @@
 //! Turn domain: turn completion — finalize the cycle and close the transcript
 //! block.
 
-use agnt_core::bus::TurnEvent;
-
 use super::transcript_store::TranscriptStore;
-use super::{AppState, StatusMessageKind, StatusState};
+use super::{StatusMessageKind, StatusState};
 
-/// Turn-domain decisions extracted from the former `reduce_ui_event_impl`
-/// `Completed` arm and `finalize` helper. The prompt-cycle completion itself
-/// (prompt queue + phase) stays with `AppState::finalize_cycle`, which the
-/// dispatcher invokes before routing the event here.
+/// Turn-domain state. The prompt-cycle completion itself (prompt queue +
+/// phase) stays with `AppState::finalize_cycle`, which the reducer calls
+/// before folding a completed turn here.
 #[derive(Debug, Clone, Default)]
 pub struct TurnState;
 
 impl TurnState {
-    /// Reduce a turn lifecycle event. Returns whether the TUI changed.
-    pub fn reduce_turn_event(
-        &mut self,
-        store: &mut TranscriptStore,
-        status: &mut StatusState,
-        input_locked: &mut bool,
-        event: TurnEvent,
-    ) -> bool {
-        match event {
-            // Turn start and A2A task outcomes are not rendered in the TUI.
-            TurnEvent::Started { .. }
-            | TurnEvent::TaskCompleted { .. }
-            | TurnEvent::TaskFailed { .. } => false,
-            TurnEvent::Completed { .. } => self.finalize(store, status, input_locked),
-        }
-    }
-
-    fn finalize(
+    /// Fold a `TurnCompleted` event: unlock the input and close the transcript
+    /// block of the finished turn.
+    pub(crate) fn finalize(
         &mut self,
         store: &mut TranscriptStore,
         status: &mut StatusState,
         input_locked: &mut bool,
     ) -> bool {
-        // No explicit spacer: push_block's unified rule separates the next
-        // turn's blocks from this one.
+        // No explicit spacer: push_entry's unified rule separates the next
+        // turn's entries from this one.
         *input_locked = false;
         // Clear only Neutral status messages. Warning-kind messages survive
         // turn finalize and expire via their own 15 s TTL — a repetition-stop
@@ -50,27 +32,5 @@ impl TurnState {
         // Reset streaming state when the LLM response is complete
         store.assistant_stream_start = None;
         true
-    }
-}
-
-/// Single dispatch seam for the turn domain. A completed turn finalizes the
-/// prompt cycle (prompt queue + phase) first, then closes the transcript
-/// block — the exact sequence of the former `finalize` helper.
-pub(crate) fn dispatch_turn_event(state: &mut AppState, event: TurnEvent) -> bool {
-    match event {
-        TurnEvent::Completed { .. } => {
-            state.finalize_cycle();
-            // A cancel can end the turn while a card is still up (A2A task
-            // cancel, Ctrl-C quit+cancel). The request is gone by then, so the
-            // card must not outlive the turn.
-            state.permission.close_prompt();
-            state.turn.reduce_turn_event(
-                &mut state.transcript,
-                &mut state.status,
-                &mut state.input_locked,
-                event,
-            )
-        }
-        _ => false,
     }
 }

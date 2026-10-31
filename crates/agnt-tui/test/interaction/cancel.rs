@@ -1,12 +1,10 @@
 use std::{sync::mpsc, thread, time::Duration};
 
 use crate::{
-    interaction::{
-        cancel::CancelController,
-        reducer::{ReducerInput, UserAction, reduce_with_cancel_controller},
-    },
+    interaction::{cancel::CancelController, reducer::reduce},
     state::{AppState, InputState},
 };
+use agnt_core::protocol::events::{Key, SystemEvent};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -66,24 +64,25 @@ fn reducer_second_escape_triggers_cancel_request() {
         ..Default::default()
     };
 
-    // InsertChar is now a no-op in the reducer (handled by TextArea).
-    // Set pending_submit_text directly so Submit creates an active cycle.
-    reduce_with_cancel_controller(
+    // Editing keys are no-ops at the reducer boundary (the coordinator's
+    // TextArea owns them), so the fixture arms the submit text directly and
+    // lets the submit key create an active cycle.
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::Submit),
+        SystemEvent::KeyPressed { key: Key::Enter },
         Some(&cancel_controller),
     );
 
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::Esc),
+        SystemEvent::KeyPressed { key: Key::Esc },
         Some(&cancel_controller),
     );
     assert!(!cancel_controller.is_cancel_requested());
 
-    reduce_with_cancel_controller(
+    reduce(
         &mut state,
-        ReducerInput::User(UserAction::EscConfirm),
+        SystemEvent::KeyPressed { key: Key::Esc },
         Some(&cancel_controller),
     );
 

@@ -4,17 +4,17 @@ use super::*;
 // Permission pre-display and tool preview dispatch
 // ---------------------------------------------------------------------------
 
-/// A permission request with a display pushes its own ToolDisplay block after
-/// the pending Tool block; the match is by `tool_key`, so a decorated tool name
-/// still attaches. An unmatched key or a missing display adds nothing.
+/// A permission request with a display sets the pending tool entry's preview
+/// in place; the match is by `tool_key`, so a decorated tool name still
+/// attaches. An unmatched key or a missing display adds nothing.
 #[test]
 fn permission_request_display_matrix() -> Result<()> {
     // -- Setup & Fixtures
     let diff = "+new content";
 
-    // -- Exec & Check: display pushes a preview block.
+    // -- Exec & Check: the display lands on the tool entry's preview.
     let mut state = AppState::default();
-    reduce_tool(&mut state, started("edit", r#"{"file":"foo.rs"}"#));
+    reduce_ui(&mut state, started("edit", r#"{"file":"foo.rs"}"#));
     apply_permission_request_display(
         &mut state,
         &permission_context(
@@ -26,35 +26,24 @@ fn permission_request_display_matrix() -> Result<()> {
             }),
         ),
     );
-    assert_eq!(state.transcript.len(), 2);
-    let tool_block = state
+    assert_eq!(state.transcript.len(), 1, "the preview lives on the entry");
+    let entry = state
         .transcript
-        .blocks()
+        .entries()
         .first()
-        .ok_or("should have tool block")?;
-    let BlockSource::Tool { call, preview, .. } = &tool_block.source else {
-        return Err("expected Tool block".into());
+        .ok_or("should have tool entry")?;
+    let TranscriptEntry::Tool(tool) = entry else {
+        return Err("expected Tool entry".into());
     };
-    assert!(call.summary.contains("foo.rs"));
-    assert!(preview.is_none());
-    assert_eq!(tool_block.fill, Fill::None);
-    let preview_block = state
-        .transcript
-        .blocks()
-        .get(1)
-        .ok_or("should have preview block")?;
-    assert!(matches!(
-        preview_block.source,
-        BlockSource::ToolDisplay { .. }
-    ));
-    assert_eq!(preview_block.fill, Fill::Code);
-    assert!(tool_display_lines(preview_block).contains(diff));
+    assert!(tool.call.call_line.summary.contains("foo.rs"));
+    let preview = tool.preview.as_ref().ok_or("should have preview")?;
+    assert!(display_lines(preview).contains(diff));
 
     // -- Exec & Check: decorated tool name still matches via tool_key.
     let mut decorated = AppState::default();
     let arguments =
         r#"{"path":"foo.rs","mode":"apply","operation":{"type":"create","content":"hi\n"}}"#;
-    reduce_tool(&mut decorated, started("edit", arguments));
+    reduce_ui(&mut decorated, started("edit", arguments));
     apply_permission_request_display(
         &mut decorated,
         &permission_context(
@@ -66,17 +55,21 @@ fn permission_request_display_matrix() -> Result<()> {
             }),
         ),
     );
-    assert_eq!(decorated.transcript.len(), 2);
-    let preview_block = decorated
+    assert_eq!(decorated.transcript.len(), 1);
+    let entry = decorated
         .transcript
-        .blocks()
-        .get(1)
-        .ok_or("should have preview block")?;
-    assert!(tool_display_lines(preview_block).contains("+hi"));
+        .entries()
+        .first()
+        .ok_or("should have tool entry")?;
+    let TranscriptEntry::Tool(tool) = entry else {
+        return Err("expected Tool entry".into());
+    };
+    let preview = tool.preview.as_ref().ok_or("should have preview")?;
+    assert!(display_lines(preview).contains("+hi"));
 
-    // -- Exec & Check: unmatched tool_key leaves the transcript unchanged.
+    // -- Exec & Check: unmatched tool_key leaves the entry without a preview.
     let mut unmatched = AppState::default();
-    reduce_tool(&mut unmatched, started("edit", r#"{"path":"foo.rs"}"#));
+    reduce_ui(&mut unmatched, started("edit", r#"{"path":"foo.rs"}"#));
     apply_permission_request_display(
         &mut unmatched,
         &permission_context(
@@ -89,25 +82,26 @@ fn permission_request_display_matrix() -> Result<()> {
         ),
     );
     assert_eq!(unmatched.transcript.len(), 1);
-    let BlockSource::Tool { preview, .. } = &unmatched.transcript.blocks()[0].source else {
-        return Err("expected Tool block".into());
+    let entry = unmatched
+        .transcript
+        .entries()
+        .first()
+        .ok_or("should have tool entry")?;
+    let TranscriptEntry::Tool(tool) = entry else {
+        return Err("expected Tool entry".into());
     };
-    assert!(preview.is_none());
+    assert!(tool.preview.is_none());
 
     // -- Exec & Check: a request without a display adds no entries.
     let mut no_display = AppState::default();
-    reduce_tool(&mut no_display, started("nu", r#"{"command":"ls"}"#));
+    reduce_ui(&mut no_display, started("nu", r#"{"command":"ls"}"#));
     let len_after_start = no_display.transcript.len();
     no_display
         .permission
-        .reduce_permission_event(agnt_core::bus::PermissionEvent::Requested {
-            request_id: "req-1".to_string(),
-            context: Box::new(permission_context(
-                "nu(command=ls)",
-                "nu\n{\"command\":\"ls\"}",
-                None,
-            )),
-        });
+        .open_prompt(PermissionPrompt::from_context(
+            "req-1",
+            &permission_context("nu(command=ls)", "nu\n{\"command\":\"ls\"}", None),
+        ));
     assert_eq!(no_display.transcript.len(), len_after_start);
 
     // -- Setup & Fixtures: the display dedup contract.
@@ -118,7 +112,7 @@ fn permission_request_display_matrix() -> Result<()> {
 
     // -- Exec & Check: source-suppressed display shows once.
     let mut suppressed = AppState::default();
-    reduce_tool(&mut suppressed, started("edit", r#"{"file":"bar.rs"}"#));
+    reduce_ui(&mut suppressed, started("edit", r#"{"file":"bar.rs"}"#));
     apply_permission_request_display(
         &mut suppressed,
         &permission_context(
@@ -130,7 +124,7 @@ fn permission_request_display_matrix() -> Result<()> {
     complete_with_display(&mut suppressed, "edit", r#"{"file":"bar.rs"}"#, None);
     let lines: Vec<String> = suppressed
         .transcript
-        .blocks()
+        .entries()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -142,9 +136,12 @@ fn permission_request_display_matrix() -> Result<()> {
         1
     );
 
-    // -- Exec & Check: no local dedup — a resent display shows twice.
+    // -- Exec & Check: no local dedup — a resent display is recorded again.
+    // The completion writes the result slot even when the gate preview showed
+    // the same content; the unified display (`result.or(preview)`) still
+    // renders once, because the result takes over the preview.
     let mut resent = AppState::default();
-    reduce_tool(&mut resent, started("edit", r#"{"file":"bar.rs"}"#));
+    reduce_ui(&mut resent, started("edit", r#"{"file":"bar.rs"}"#));
     apply_permission_request_display(
         &mut resent,
         &permission_context(
@@ -154,9 +151,13 @@ fn permission_request_display_matrix() -> Result<()> {
         ),
     );
     complete_with_display(&mut resent, "edit", r#"{"file":"bar.rs"}"#, Some(display()));
+    assert!(
+        tool_entry_at(&resent, 0)?.result.is_some(),
+        "the resent completion display lands on the result slot; the TUI does not dedup"
+    );
     let lines: Vec<String> = resent
         .transcript
-        .blocks()
+        .entries()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();
@@ -165,12 +166,13 @@ fn permission_request_display_matrix() -> Result<()> {
             .iter()
             .filter(|line| line.contains("+new content"))
             .count(),
-        2
+        1,
+        "the result takes over the preview: one rendered display"
     );
 
     // -- Exec & Check: no prior permission → display pushes normally.
     let mut plain = AppState::default();
-    reduce_tool(&mut plain, started("edit", r#"{"path":"bar.rs"}"#));
+    reduce_ui(&mut plain, started("edit", r#"{"path":"bar.rs"}"#));
     complete_with_display(
         &mut plain,
         "edit",
@@ -182,7 +184,7 @@ fn permission_request_display_matrix() -> Result<()> {
     );
     let lines: Vec<String> = plain
         .transcript
-        .blocks()
+        .entries()
         .iter()
         .flat_map(extract_all_text_from_entry)
         .collect();

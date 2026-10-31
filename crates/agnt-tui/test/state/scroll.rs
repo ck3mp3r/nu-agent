@@ -18,7 +18,6 @@ fn test_scroll_state_defaults_and_sync_after_render() -> Result<()> {
     assert_eq!(scroll.cursor_visual_row, 0);
     assert_eq!(scroll.viewport_height, 0);
     assert_eq!(scroll.max_scroll, 0);
-    assert!(scroll.entry_indices.is_empty());
     assert_eq!(scroll.total_visual_rows, 0);
     assert!(scroll.selection.is_none());
     // The height index is owned by the transcript domain: a fresh store has
@@ -161,7 +160,6 @@ fn test_scroll_state_reduce_scroll_action_line_moves() -> Result<()> {
         pane_focus: PaneFocus::Transcript,
         viewport_height: 10,
         cursor_visual_row: 5,
-        entry_indices: (0..20).collect(),
         total_visual_rows: 20,
         ..Default::default()
     };
@@ -195,7 +193,6 @@ fn test_scroll_state_reduce_scroll_action_line_moves() -> Result<()> {
         pane_focus: PaneFocus::Transcript,
         viewport_height: 10,
         selection: Some(TranscriptSelection::new(0)),
-        entry_indices: (0..5).collect(),
         total_visual_rows: 5,
         ..Default::default()
     };
@@ -213,7 +210,6 @@ fn test_scroll_state_reduce_scroll_action_line_moves() -> Result<()> {
         pane_focus: PaneFocus::Transcript,
         viewport_height: 10,
         selection: Some(TranscriptSelection::new(0)),
-        entry_indices: (0..5).collect(),
         total_visual_rows: 5,
         ..Default::default()
     };
@@ -275,7 +271,6 @@ fn test_scroll_state_reduce_scroll_action_jumps_and_paging() -> Result<()> {
         total_visual_rows: 30,
         scroll_offset: 5,
         following_tail: false,
-        entry_indices: (0..30).collect(),
         ..Default::default()
     };
     let changed = paging.reduce_scroll_action(ScrollAction::PageDown { select: false });

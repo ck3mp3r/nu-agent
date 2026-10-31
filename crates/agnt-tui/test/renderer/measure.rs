@@ -1,143 +1,139 @@
-use super::support::{frame_ctx, markdown_block, spacer_block, tool_code_block, tool_diff_block};
-use crate::rendering::theme::TuiTheme;
-use crate::tui_renderer::{layout, measure};
-use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::ir::*;
+//! Measure/paint agreement: the backend's `measure` is the height index's only
+//! source, so a measured row the widget never paints (or vice versa) desyncs the
+//! scroll math.
+
+use super::support::*;
+use agnt_core::transcript::ir::MessageRole;
 use agnt_core::transcript::renderer::ItemStatus;
 
-// ========== measure() tests (task 53279c82) ==========
-
+/// WHEN a short markdown entry is measured and painted, THE painted row count
+/// SHALL equal the measured one.
 #[test]
-fn measure_markdown_matches_layout_row_count() {
+fn test_renderer_measure_markdown_matches_painted_rows() -> Result<()> {
     // -- Setup & Fixtures
-    let block = markdown_block(MessageRole::User, "short line", Fill::None);
-    let ctx = frame_ctx(80);
-    let theme = TuiTheme::default();
+    let entry = message_entry(MessageRole::User, "short line");
 
     // -- Exec
-    let measured = measure(&block, 80, &theme);
-    let laid_out = layout(&block, &ctx, &theme).len();
+    let (backend, rows) = render_at(&entry, 0)?;
 
     // -- Check
-    assert_eq!(
-        measured, laid_out,
-        "measure() must equal layout().len() for a markdown block"
-    );
+    assert_eq!(rows, 1, "a short line is one row");
+    assert_eq!(painted_rows(&backend), rows);
+    Ok(())
 }
 
+/// WHEN wrapping prose is measured and painted, THE painted row count SHALL
+/// equal the measured one.
 #[test]
-fn measure_wrapping_prose_matches_layout_row_count() {
+fn test_renderer_measure_wrapping_prose_matches_painted_rows() -> Result<()> {
     // -- Setup & Fixtures
-    let block = markdown_block(
-        MessageRole::User,
-        "aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd",
-        Fill::Full,
-    );
-    let ctx = frame_ctx(24);
-    let theme = TuiTheme::default();
+    let entry = message_entry(MessageRole::User, &long_prose());
 
     // -- Exec
-    let measured = measure(&block, 24, &theme);
-    let laid_out = layout(&block, &ctx, &theme).len();
+    let (backend, rows) = render_at(&entry, 0)?;
 
     // -- Check
-    assert!(laid_out >= 2, "prose must wrap at width 24; got {laid_out}");
-    assert_eq!(
-        measured, laid_out,
-        "measure() must match layout() row count for wrapping prose"
-    );
+    assert!(rows >= 2, "the prose must wrap; got {rows}");
+    assert_eq!(painted_rows(&backend), rows);
+    Ok(())
 }
 
-/// WHEN `measure()` and `layout()` run on a `Fill::Code` block, THE measured
-/// row count SHALL equal the laid-out row count, including the two margin
-/// rows. Pins the renderer contract for any `Fill::Code` block; in production
-/// that block is a `ToolDisplay` preview.
+/// WHEN a code preview is measured and painted, THE painted row count SHALL
+/// equal the measured one and SHALL include the surface's two margin rows.
 #[test]
-fn measure_tool_code_preview_includes_two_margin_rows() {
-    // -- Setup & Fixtures
-    let block = tool_code_block("ls | where size > 1mb");
-    let ctx = frame_ctx(80);
-    let theme = TuiTheme::default();
+fn test_renderer_measure_code_preview_includes_surface_margins() -> Result<()> {
+    // -- Setup & Fixtures: one call row and a three-line code body.
+    let entry = tool_entry(
+        "nu",
+        "→ ls",
+        Some(code_display("nu", "alpha\nbeta\ngamma")),
+        None,
+        ItemStatus::Done,
+    );
 
     // -- Exec
-    let measured = measure(&block, 80, &theme);
-    let laid_out = layout(&block, &ctx, &theme).len();
+    let (backend, rows) = render_at(&entry, 0)?;
 
-    // -- Check: Fill::Code must contribute the 2 margin rows above/below.
+    // -- Check: call + two margins + three code rows.
+    assert_eq!(rows, 6, "the surface contributes its margins and rows");
+    assert_eq!(painted_rows(&backend), rows);
+    let surface = terminal(test_theme().code_surface);
     assert_eq!(
-        measured, laid_out,
-        "measure() must equal layout() row count for Tool+Code preview (incl. margins)"
+        cell_bg(&backend, 0, 1),
+        Some(surface),
+        "the top margin paints the surface"
     );
-    assert!(
-        measured >= 4,
-        "Fill::Code measure must include 2 margin rows + content; got {measured}"
+    assert_eq!(
+        cell_bg(&backend, 0, u16::try_from(rows)? - 1),
+        Some(surface),
+        "the bottom margin paints the surface"
     );
+    Ok(())
 }
 
+/// WHEN a diff preview is measured and painted, THE painted row count SHALL
+/// equal the measured one.
 #[test]
-fn measure_tool_diff_matches_layout_row_count() {
+fn test_renderer_measure_diff_preview_matches_painted_rows() -> Result<()> {
     // -- Setup & Fixtures
-    let block = tool_diff_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n");
-    let ctx = frame_ctx(80);
-    let theme = TuiTheme::default();
+    let entry = tool_entry(
+        "edit",
+        "→ a.rs",
+        Some(diff_display(SIMPLE_DIFF)),
+        None,
+        ItemStatus::Done,
+    );
 
     // -- Exec
-    let measured = measure(&block, 80, &theme);
-    let laid_out = layout(&block, &ctx, &theme).len();
+    let (backend, rows) = render_at(&entry, 0)?;
 
     // -- Check
-    assert_eq!(
-        measured, laid_out,
-        "measure() must equal layout() row count for a Tool+Diff block"
-    );
+    assert!(rows >= 6, "the diff body must render; got {rows}");
+    assert_eq!(painted_rows(&backend), rows);
+    Ok(())
 }
 
+/// WHEN the call line carries a status indicator, THE measured row count SHALL
+/// equal the painted one — the indicator shrinks row 0's wrap budget, so both
+/// sides must wrap identically.
 #[test]
-fn measure_spacer_matches_layout_row_count() {
+fn test_renderer_measure_status_indicator_matches_painted_rows() -> Result<()> {
+    // -- Setup & Fixtures: a summary far wider than the pane.
+    let entry = tool_entry(
+        "read",
+        &format!("\u{2192} {}", "x".repeat(200)),
+        None,
+        None,
+        ItemStatus::InProgress,
+    );
+
+    // -- Exec
+    let (backend, rows) = render_at(&entry, 0)?;
+
+    // -- Check
+    assert!(rows >= 2, "the summary must wrap; got {rows}");
+    assert_eq!(painted_rows(&backend), rows);
+    Ok(())
+}
+
+/// WHEN a plain display is measured and painted, THE painted row count SHALL
+/// equal the measured one.
+#[test]
+fn test_renderer_measure_plain_display_matches_painted_rows() -> Result<()> {
     // -- Setup & Fixtures
-    let block = spacer_block();
-    let ctx = frame_ctx(40);
-    let theme = TuiTheme::default();
+    let entry = tool_entry(
+        "read",
+        "→ a.rs",
+        Some(plain_display("one plain body line")),
+        None,
+        ItemStatus::Done,
+    );
 
     // -- Exec
-    let measured = measure(&block, 40, &theme);
-    let laid_out = layout(&block, &ctx, &theme).len();
+    let (backend, rows) = render_at(&entry, 0)?;
 
-    // -- Check
-    assert_eq!(laid_out, 1, "spacer lays out one row");
-    assert_eq!(
-        measured, laid_out,
-        "measure() must match layout() row count for a spacer"
-    );
-}
-
-#[test]
-fn measure_with_status_indicator_matches_layout_row_count() {
-    // -- Setup & Fixtures: the indicator occupies 2 columns on row 0, so the
-    // wrap budget shrinks and long row-0 content may wrap into more rows.
-    let long_summary = format!("\u{2192} {}", "x".repeat(120));
-    let block = Block {
-        source: BlockSource::Tool {
-            name: ToolName("tool".to_string()),
-            call: CallLine {
-                summary: long_summary,
-            },
-            preview: None,
-        },
-        lane: Lane::Marker("⚙"),
-        fill: Fill::None,
-        status: Some(ItemStatus::InProgress),
-    };
-    let ctx = frame_ctx(80);
-    let theme = TuiTheme::default();
-
-    // -- Exec
-    let measured = measure(&block, 80, &theme);
-    let laid_out = layout(&block, &ctx, &theme).len();
-
-    // -- Check
-    assert_eq!(
-        measured, laid_out,
-        "measure() must match layout() when a status indicator shrinks the row-0 budget"
-    );
+    // -- Check: call row plus one body row, no surface.
+    assert_eq!(rows, 2);
+    assert_eq!(painted_rows(&backend), rows);
+    Ok(())
 }

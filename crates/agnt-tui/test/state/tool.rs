@@ -37,4 +37,5 @@ mod support;
 // The monolith resolved `super::<helper>` against `crate::state`.
 // Sub-files now resolve `super::` against this module root, so the shared
 // fixtures are re-exported here.
+use crate::state::hydrate_by_replay;
 use support::*;

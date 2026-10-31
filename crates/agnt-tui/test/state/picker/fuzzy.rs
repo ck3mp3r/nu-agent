@@ -122,6 +122,7 @@ fn command_row(action: CommandPaletteAction, display: &str, search_text: &str) -
         id: display.to_string(),
         display: display.to_string(),
         search_text: search_text.to_string(),
+        section: None,
         sort_key: Vec::new(),
         payload: PickerPayload::Command(action),
     }
@@ -133,6 +134,7 @@ fn slash_row(command: SlashCommand) -> PickerOption {
         id: label.clone(),
         display: label.clone(),
         search_text: label,
+        section: None,
         sort_key: Vec::new(),
         payload: PickerPayload::Slash(command),
     }
@@ -163,15 +165,17 @@ fn agent_row(name: &str, description: Option<&str>) -> PickerOption {
 }
 
 fn session_row(id: &str, title: &str) -> PickerOption {
+    let created_at = chrono::Utc::now();
     PickerOption {
         id: id.to_string(),
         display: title.to_string(),
         search_text: title.to_string(),
+        section: Some(crate::state::session_day(created_at).to_string()),
         sort_key: Vec::new(),
         payload: PickerPayload::Session {
             session_id: id.to_string(),
             title: Some(title.to_string()),
-            created_at: chrono::Utc::now(),
+            created_at,
             message_count: 1,
         },
     }
@@ -182,6 +186,7 @@ fn theme_row(id: &str, display: &str) -> PickerOption {
         id: id.to_string(),
         display: display.to_string(),
         search_text: display.to_string(),
+        section: None,
         sort_key: Vec::new(),
         payload: PickerPayload::Theme,
     }

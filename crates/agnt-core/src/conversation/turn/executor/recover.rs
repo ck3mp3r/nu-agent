@@ -9,7 +9,7 @@
 
 use crate::conversation::managers::SessionManager;
 use crate::hook::turn_tools::TurnToolRecord;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::session::CachedMemory;
 use crate::types::{
     AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, UserContent,
@@ -69,7 +69,7 @@ where
     /// conversation. A log whose length moved since the turn started is left
     /// alone: slicing it would mis-attribute another writer's messages. That
     /// skip is user-visible: the turn's work is lost, so the skip publishes a
-    /// `UiEvent::Warning` alongside the log line.
+    /// `SystemEvent::SystemMessage` alongside the log line.
     pub(crate) async fn persist_turn_delta(
         &self,
         session_id: Option<&str>,
@@ -109,8 +109,9 @@ where
                 .tool_infra
                 .bus
                 .ui_event()
-                .send(UiEvent::Warning {
-                    message: "Turn stopped: the session log moved mid-turn; this turn's work was \
+                .send(SystemEvent::SystemMessage {
+                    kind: SystemKind::Warning,
+                    text: "Turn stopped: the session log moved mid-turn; this turn's work was \
                               not saved"
                         .to_string(),
                 })
@@ -167,6 +168,39 @@ where
 
         if let Err(error) = rig_memory::save(&*store, session_id, &mut conversation) {
             log::warn!("Failed to save the interrupted turn: {error}");
+        }
+
+        self.persist_tool_statuses(Some(session_id), recovery.tool_records);
+    }
+
+    /// Write the structural status of every call `records` carries.
+    ///
+    /// The store holds the status verbatim: a settled call its variant, a call
+    /// the turn stopped before it settled the `NotRun` variant. A turn writes
+    /// this whether it completed or stopped, so every row the transcript
+    /// rehydrates reads its status from the store instead of deriving it from
+    /// the result text.
+    pub(crate) fn persist_tool_statuses(
+        &self,
+        session_id: Option<&str>,
+        records: &[TurnToolRecord],
+    ) {
+        let Some(session_id) = session_id else {
+            return;
+        };
+        if records.is_empty() {
+            return;
+        }
+        let store = match self.memory_state.rig_store(session_id) {
+            Ok(store) => store,
+            Err(error) => {
+                log::warn!("Failed to open the session store for the tool statuses: {error}");
+                return;
+            }
+        };
+        let statuses = crate::hook::turn_tools::status_records(records);
+        if let Err(error) = crate::session::tool_status::write_statuses(&*store, &statuses) {
+            log::warn!("Failed to save the turn's tool statuses: {error}");
         }
     }
 }

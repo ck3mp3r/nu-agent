@@ -1,89 +1,90 @@
-use super::support::{
-    content_spans, diff_tint_block, frame_ctx, markdown_block, rows_containing, span_containing,
-    tool_code_block,
-};
-use crate::rendering::theme::TuiTheme;
-use crate::tui_renderer::{layout, measure};
-use agnt_core::transcript::ir::*;
+//! Theme threading: every surface the widget paints resolves from the theme the
+//! caller passes, never from a default.
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+use super::support::*;
+use agnt_core::transcript::ir::MessageRole;
+use agnt_core::transcript::renderer::ItemStatus;
 
-// ========== active theme threading (task 7bd4c724) ==========
-
-/// WHEN `layout()` receives a non-default theme, THE syntax/diff colours SHALL
-/// resolve from that theme, not from `TuiTheme::default()`.
+/// WHEN the renderer receives a caller-provided theme, THE diff tint SHALL
+/// resolve from that theme.
 #[test]
-fn layout_uses_caller_provided_theme_for_diff_tint() -> Result<()> {
+fn test_renderer_theme_threading_diff_tint_uses_the_caller_theme() -> Result<()> {
     // -- Setup & Fixtures
-    let mocha = TuiTheme::default();
-    let latte = TuiTheme::catppuccin_latte();
-    assert_ne!(
-        mocha.diff_add_bg, latte.diff_add_bg,
-        "fixture requires the two themes to differ on the add tint"
+    let caller = alt_theme();
+    let entry = tool_entry(
+        "edit",
+        "→ a.rs",
+        Some(diff_display(SIMPLE_DIFF)),
+        None,
+        ItemStatus::Done,
     );
-    let block = diff_tint_block("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n");
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &latte);
-
-    // -- Check: the added row carries the Latte tint, not the Mocha default.
-    let added = rows_containing(&lines, "new");
-    assert_eq!(added.len(), 1, "exactly one row must carry the added body");
-    for span in content_spans(added[0]) {
-        assert_eq!(
-            span.style.bg,
-            Some(latte.diff_add_bg),
-            "added line must carry the caller-provided theme's tint; span '{}' has {:?}",
-            span.content,
-            span.style.bg
-        );
-    }
-    Ok(())
-}
-
-/// WHEN `layout()` receives a non-default theme, THE lane row styles SHALL
-/// derive from that theme, not from `TuiTheme::default()`.
-#[test]
-fn layout_uses_caller_provided_theme_for_lane_row_style() -> Result<()> {
-    // -- Setup & Fixtures
-    let mocha = TuiTheme::default();
-    let latte = TuiTheme::catppuccin_latte();
-    assert_ne!(
-        mocha.row_user_bg, latte.row_user_bg,
-        "fixture requires the two themes to differ on the user row background"
-    );
-    let block = markdown_block(MessageRole::User, "hi", Fill::Full);
-
-    // -- Exec
-    let lines = layout(&block, &frame_ctx(80), &latte);
+    let (backend, _) = render_at_with(&entry, 0, &caller)?;
+    let added = row_index_containing(&backend, "new").ok_or("the added row must render")?;
 
     // -- Check
-    let span = span_containing(&lines, "hi").ok_or("user content span must exist")?;
     assert_eq!(
-        span.style.bg,
-        Some(latte.row_user_bg),
-        "user row must carry the caller-provided theme's row background"
+        cell_bg(&backend, 0, added),
+        Some(terminal(caller.diff_add_bg)),
+        "the added row must carry the caller's tint"
+    );
+    assert_ne!(
+        cell_bg(&backend, 0, added),
+        Some(terminal(test_theme().diff_add_bg)),
+        "the fixture theme must not leak through"
     );
     Ok(())
 }
 
-/// WHEN `measure()` receives a non-default theme, THE row count SHALL equal
-/// the count `layout()` produces for the same theme.
+/// WHEN the renderer receives a caller-provided theme, THE lane surfaces SHALL
+/// resolve from that theme.
 #[test]
-fn measure_uses_caller_provided_theme() -> Result<()> {
+fn test_renderer_theme_threading_lane_surface_uses_the_caller_theme() -> Result<()> {
     // -- Setup & Fixtures
-    let theme = TuiTheme::catppuccin_frappe();
-    let block = tool_code_block("ls | where size > 1mb");
-    let ctx = frame_ctx(80);
+    let caller = alt_theme();
+    let entry = message_entry(MessageRole::User, "hi");
 
     // -- Exec
-    let measured = measure(&block, 80, &theme);
-    let laid_out = layout(&block, &ctx, &theme).len();
+    let (backend, _) = render_at_with(&entry, 0, &caller)?;
 
     // -- Check
     assert_eq!(
-        measured, laid_out,
-        "measure() must match layout() row count for the caller-provided theme"
+        cell_bg(&backend, 0, 0),
+        Some(terminal(caller.user_surface)),
+        "the user row must carry the caller's surface"
+    );
+    assert_eq!(
+        cell_fg(&backend, 2, 0),
+        Some(terminal(caller.text)),
+        "the user text must carry the caller's body color"
+    );
+    Ok(())
+}
+
+/// WHEN one entry is painted under two themes, THE painted row count SHALL stay
+/// the same — the row budget is the theme's business no more than the layout's.
+#[test]
+fn test_renderer_theme_threading_painted_rows_are_theme_independent() -> Result<()> {
+    // -- Setup & Fixtures
+    let entry = tool_entry(
+        "nu",
+        "→ ls",
+        Some(code_display("nu", "alpha\nbeta\ngamma")),
+        None,
+        ItemStatus::Done,
+    );
+
+    // -- Exec
+    let (first, rows_first) = render_at_with(&entry, 0, &test_theme())?;
+    let (second, rows_second) = render_at_with(&entry, 0, &alt_theme())?;
+
+    // -- Check
+    assert_eq!(rows_first, rows_second, "the measured rows must not move");
+    assert_eq!(
+        painted_rows(&first),
+        painted_rows(&second),
+        "the painted rows must not move with the theme"
     );
     Ok(())
 }

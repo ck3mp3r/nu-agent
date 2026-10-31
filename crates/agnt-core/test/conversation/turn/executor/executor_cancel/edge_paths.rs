@@ -264,13 +264,19 @@ async fn user_cancel_stays_silent_with_empty_response() -> Result<()> {
 
     let events = event_collector.drain();
     assert!(
-        !events.iter().any(|e| matches!(e, UiEvent::Warning { .. })),
+        !events.iter().any(|e| matches!(
+            e,
+            SystemEvent::SystemMessage {
+                kind: SystemKind::Warning,
+                ..
+            }
+        )),
         "user cancel must not emit a Warning; got: {events:?}"
     );
     assert!(
         !events
             .iter()
-            .any(|e| matches!(e, UiEvent::AssistantMessage { .. })),
+            .any(|e| matches!(e, SystemEvent::InferenceChunk { .. })),
         "user cancel must not emit an AssistantMessage; got: {events:?}"
     );
 

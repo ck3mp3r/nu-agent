@@ -66,8 +66,8 @@ impl CoreRuntime for PermissionGateRuntime {
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::PermissionRequested {
-                request_id: request_id.clone(),
+            .send(SystemEvent::PermissionRequested {
+                request_id: RequestId::new(request_id.clone()),
                 context,
             })
             .await;
@@ -79,25 +79,27 @@ impl CoreRuntime for PermissionGateRuntime {
         if decision != PermissionDecision::Deny {
             self.side_effects.fetch_add(1, Ordering::SeqCst);
             // Publish the tool-start to the bus ui_event channel directly,
-            // matching production where the hook publishes UiEvent::ToolStarted.
+            // matching production where the hook publishes SystemEvent::ToolStarted.
             let _ = self
                 .bus
                 .ui_event()
-                .send(UiEvent::ToolStarted {
-                    name: "nu".to_string(),
-                    source: "closure".to_string(),
-                    arguments: r#"{"command":"echo hi"}"#.to_string(),
-                    call_line: CallLine::from_json_summary(r#"{"command":"echo hi"}"#),
+                .send(SystemEvent::ToolStarted {
+                    call: ToolCall::new(
+                        ToolName("nu".to_string()),
+                        "closure",
+                        r#"{"command":"echo hi"}"#,
+                        CallLine::from_json_summary(r#"{"command":"echo hi"}"#),
+                    ),
                 })
                 .await;
         }
 
         // Publish TurnCompleted directly to the bus (worker bridge no longer
-        // converts UiEvent::Completed), matching production.
+        // converts SystemEvent::TurnCompleted), matching production.
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -161,7 +163,7 @@ struct PermissionOrderingUi {
     event_tx: mpsc::Sender<OrchestratorEvent>,
     submitted: std::collections::VecDeque<String>,
     pending_decisions: Arc<Mutex<std::collections::VecDeque<PermissionDecisionSubmission>>>,
-    events: Arc<Mutex<Vec<UiEvent>>>,
+    events: Arc<Mutex<Vec<SystemEvent>>>,
     decision: PermissionDecision,
     decision_delay_pumps: usize,
     elapsed_pumps: Arc<AtomicUsize>,
@@ -219,33 +221,28 @@ impl PermissionOrderingUi {
                 tokio::select! {
                     Ok(event) = ui_event_rx.recv() => {
                         match event {
-                            UiEvent::PermissionRequested { request_id, context } => {
+                            SystemEvent::PermissionRequested { request_id, context } => {
                                 request_seen.store(true, Ordering::SeqCst);
                                 pending_decisions.lock().expect("pending decisions lock").push_back(PermissionDecisionSubmission {
-                                    request_id: request_id.clone(),
+                                    request_id: request_id.as_str().to_string(),
                                     decision,
                                     matched_rule_identity: context.matched_rule_identity.clone(),
                                 });
-                                events.lock().expect("events lock").push(UiEvent::PermissionRequested {
+                                events.lock().expect("events lock").push(SystemEvent::PermissionRequested {
                                     request_id,
                                     context,
                                 });
                             }
-                            UiEvent::PermissionDecisionTimedOut { request_id } => {
-                                events.lock().expect("events lock").push(UiEvent::PermissionDecisionTimedOut { request_id });
+                            SystemEvent::PermissionDecisionTimedOut { request_id } => {
+                                events.lock().expect("events lock").push(SystemEvent::PermissionDecisionTimedOut { request_id });
                             }
-                            UiEvent::PermissionDecisionIgnored { request_id, reason } => {
-                                events.lock().expect("events lock").push(UiEvent::PermissionDecisionIgnored { request_id, reason });
+                            SystemEvent::PermissionDecisionIgnored { request_id, reason } => {
+                                events.lock().expect("events lock").push(SystemEvent::PermissionDecisionIgnored { request_id, reason });
                             }
-                            UiEvent::ToolStarted { name, source, arguments, call_line } => {
-                                events.lock().expect("events lock").push(UiEvent::ToolStarted {
-                                    name,
-                                    source,
-                                    arguments,
-                                    call_line,
-                                });
+                            SystemEvent::ToolStarted { call } => {
+                                events.lock().expect("events lock").push(SystemEvent::ToolStarted { call });
                             }
-                            UiEvent::Completed { .. } => {
+                            SystemEvent::TurnCompleted { .. } => {
                                 quit.store(true, Ordering::SeqCst);
                             }
                             _ => {}
@@ -343,7 +340,7 @@ impl ModelPickerLaunchWhileActiveUi {
             loop {
                 tokio::select! {
                     Ok(event) = ui_event_rx.recv() => {
-                        if let UiEvent::Completed { .. } = event {
+                        if let SystemEvent::TurnCompleted { .. } = event {
                             let count = completed_count.fetch_add(1, Ordering::SeqCst) + 1;
                             if count >= expected_completions {
                                 quit.store(true, Ordering::SeqCst);
@@ -437,11 +434,11 @@ async fn permission_requested_emits_before_execution_and_waits_for_decision_befo
     let events = ui.events.lock().unwrap();
     let requested_idx = events
         .iter()
-        .position(|event| matches!(event, UiEvent::PermissionRequested { .. }))
+        .position(|event| matches!(event, SystemEvent::PermissionRequested { .. }))
         .ok_or("PermissionRequested must be emitted")?;
     let tool_start_idx = events
         .iter()
-        .position(|event| matches!(event, UiEvent::ToolStarted { .. }))
+        .position(|event| matches!(event, SystemEvent::ToolStarted { .. }))
         .ok_or("ToolStarted should happen after allow decision")?;
 
     assert!(
@@ -478,12 +475,12 @@ async fn deny_decision_resumes_deterministically_without_pre_decision_handler_si
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, UiEvent::PermissionRequested { .. }))
+            .any(|event| matches!(event, SystemEvent::PermissionRequested { .. }))
     );
     assert!(
         !events
             .iter()
-            .any(|event| matches!(event, UiEvent::ToolStarted { .. }))
+            .any(|event| matches!(event, SystemEvent::ToolStarted { .. }))
     );
     Ok(())
 }

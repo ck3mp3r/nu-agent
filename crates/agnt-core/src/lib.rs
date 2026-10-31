@@ -23,5 +23,9 @@ pub mod utils;
 pub use rig_memory;
 
 #[cfg(test)]
+#[path = "../test/architecture/test.rs"]
+mod architecture_test;
+
+#[cfg(test)]
 #[path = "../test/support.rs"]
 pub(crate) mod test_support;

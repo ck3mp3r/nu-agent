@@ -57,13 +57,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::bus::{AgentEvent, AgentTx, Bus, CompactionEvent, SessionEvent, TurnEvent, create_bus};
+use crate::bus::{AgentEvent, AgentTx, Bus, SessionEvent, TurnEvent, create_bus};
 use crate::config::{HookEvent, ResolvedHook};
 use crate::hooks::{
     HookAgentContext, HookProcess, HookProcessError, build_envelope, spawn_agent_hook_runner,
     spawn_hook_runner,
 };
-use crate::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay, UiEvent};
+use crate::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay};
+use crate::protocol::events::{
+    AutoResolutionAction, RequestId, SystemEvent, ToolCall, ToolOutcome,
+};
+use crate::transcript::ir::ToolName;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

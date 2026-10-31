@@ -13,8 +13,8 @@ async fn test_hooks_runner_permission_request_cancelled_invokes_with_payload() -
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionRequestCancelled {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionRequestCancelled {
+            request_id: RequestId::new("req-1"),
             matched_rule_identity: "global:*".to_string(),
         })
         .await;
@@ -58,8 +58,8 @@ async fn test_hooks_runner_permission_request_cancelled_stamps_session_id() -> R
         .await;
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionRequestCancelled {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionRequestCancelled {
+            request_id: RequestId::new("req-1"),
             matched_rule_identity: "global:*".to_string(),
         })
         .await;
@@ -93,14 +93,14 @@ async fn test_hooks_runner_permission_request_cancelled_ignores_other_permission
     // -- Exec
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionTimedOut {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionTimedOut {
+            request_id: RequestId::new("req-1"),
         })
         .await;
     let _ = bus
         .ui_event()
-        .send(UiEvent::PermissionDecisionSubmitted {
-            request_id: "req-1".to_string(),
+        .send(SystemEvent::PermissionDecisionSubmitted {
+            request_id: RequestId::new("req-1"),
             decision: PermissionDecision::AllowOnce,
             matched_rule_identity: "global:*".to_string(),
         })

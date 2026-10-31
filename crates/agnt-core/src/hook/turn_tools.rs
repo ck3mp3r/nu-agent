@@ -7,6 +7,7 @@
 
 use std::sync::Mutex;
 
+use crate::session::tool_status::{ToolStatus, ToolStatusRecord};
 use crate::types::{CallId, ToolCall, ToolName};
 
 // region:    --- Types
@@ -15,6 +16,10 @@ use crate::types::{CallId, ToolCall, ToolName};
 ///
 /// `result`, `success`, and `error_kind` stay `None` until the call's outcome
 /// arrives. A call the turn stopped before it settled keeps them `None`.
+///
+/// `status` is the call's structural classification, built as a variant when
+/// the outcome settles. `error_kind` is the handler's own vocabulary, carried
+/// for the display and the LLM-facing text: it is never read as a status.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TurnToolRecord {
     /// The call the model emitted, as the dispatch and its outcome carry it.
@@ -29,6 +34,43 @@ pub struct TurnToolRecord {
     pub success: Option<bool>,
     /// The error kind, when the settled result carried an error.
     pub error_kind: Option<String>,
+    /// The structural status the outcome settled with.
+    pub status: Option<ToolStatus>,
+}
+
+/// What a settled call carries: the result the dispatch produced, the
+/// structural verdicts it settled with, and the handler's own error kind.
+///
+/// `status` is the variant built at the set point and `error_kind` is the
+/// handler's vocabulary; the two never substitute for one another.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SettledToolCall {
+    /// The rendered result text.
+    pub result: String,
+    /// The structural success verdict.
+    pub success: bool,
+    /// The structural status the call settled with.
+    pub status: ToolStatus,
+    /// The handler's error kind, when the result carried one.
+    pub error_kind: Option<String>,
+}
+
+impl SettledToolCall {
+    /// A settled call from the facts every dispatch produces.
+    pub fn new(result: impl Into<String>, success: bool, status: ToolStatus) -> Self {
+        Self {
+            result: result.into(),
+            success,
+            status,
+            error_kind: None,
+        }
+    }
+
+    /// The same call, carrying the handler's error kind.
+    pub fn with_error_kind(mut self, error_kind: Option<String>) -> Self {
+        self.error_kind = error_kind;
+        self
+    }
 }
 
 /// Accumulates a turn's tool records in dispatch order.
@@ -61,6 +103,7 @@ impl TurnToolLog {
             result: None,
             success: None,
             error_kind: None,
+            status: None,
         });
     }
 
@@ -74,25 +117,24 @@ impl TurnToolLog {
         call_id: CallId,
         name: ToolName,
         arguments: impl Into<String>,
-        result: impl Into<String>,
-        success: bool,
-        error_kind: Option<String>,
+        settled: SettledToolCall,
     ) {
         let mut records = self.records.lock().expect("turn tool log mutex poisoned");
-        let result = result.into();
         if let Some(record) = records.iter_mut().find(|record| record.call_id == call_id) {
-            record.result = Some(result);
-            record.success = Some(success);
-            record.error_kind = error_kind;
+            record.result = Some(settled.result);
+            record.success = Some(settled.success);
+            record.error_kind = settled.error_kind;
+            record.status = Some(settled.status);
             return;
         }
         records.push(TurnToolRecord {
             call_id,
             name,
             arguments: arguments.into(),
-            result: Some(result),
-            success: Some(success),
-            error_kind,
+            result: Some(settled.result),
+            success: Some(settled.success),
+            error_kind: settled.error_kind,
+            status: Some(settled.status),
         });
     }
 
@@ -108,6 +150,21 @@ impl TurnToolLog {
 // endregion: --- TurnToolLog
 
 // region:    --- Functions
+
+/// The status record of every call the turn dispatched.
+///
+/// A call the turn recorded but never settled never produced a result, so its
+/// record carries the cancelled variant: the turn stopped before the call
+/// completed, whether it never dispatched or was cut short mid-run.
+pub(crate) fn status_records(records: &[TurnToolRecord]) -> Vec<ToolStatusRecord> {
+    records
+        .iter()
+        .map(|record| ToolStatusRecord {
+            call: record.call_id.clone(),
+            status: record.status.unwrap_or(ToolStatus::Cancelled),
+        })
+        .collect()
+}
 
 /// The streamed calls the turn never dispatched, in streamed order.
 ///

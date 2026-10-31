@@ -1,8 +1,8 @@
-use crate::bus::{CancelEvent, CompactionEvent};
+use crate::bus::CancelEvent;
 use crate::orchestrator::stages::{OrchestrationContext, SlashHandler};
 use crate::orchestrator::{UiStateEvent, WorkerCommand};
 use crate::protocol::contracts::SharedUiAction;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::protocol::slash::{SlashCommand, SlashParseResult, parse_slash_command};
 
 /// Processes slash commands and regular prompt submissions from the UI.
@@ -30,7 +30,7 @@ impl SlashHandler for SlashStage {
                 let _ = ctx
                     .bus
                     .compaction()
-                    .send(CompactionEvent::Requested {
+                    .send(SystemEvent::CompactionRequested {
                         source: "slash".to_string(),
                     })
                     .await;
@@ -102,8 +102,9 @@ impl SlashHandler for SlashStage {
                 let _ = ctx
                     .bus
                     .ui_event()
-                    .send(UiEvent::Warning {
-                        message: format!("Unknown slash command: {command}"),
+                    .send(SystemEvent::SystemMessage {
+                        kind: SystemKind::Warning,
+                        text: format!("Unknown slash command: {command}"),
                     })
                     .await;
             }

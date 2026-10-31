@@ -5,15 +5,20 @@
 
 use super::*;
 
+use crate::protocol::events::SystemKind;
+
 /// The warning `persist_turn_delta` publishes when the store moved mid-turn.
 pub(super) const MOVED_MID_TURN_WARNING: &str =
     "Turn stopped: the session log moved mid-turn; this turn's work was not saved";
 
-/// The messages of every `UiEvent::Warning` the executor published.
+/// The texts of every warning `SystemMessage` the executor published.
 pub(super) fn warnings(rx: &mut crate::bus::UiEventRx) -> Vec<String> {
     std::iter::from_fn(|| rx.try_recv().ok())
         .filter_map(|event| match event {
-            UiEvent::Warning { message } => Some(message),
+            SystemEvent::SystemMessage {
+                kind: SystemKind::Warning,
+                text,
+            } => Some(text),
             _ => None,
         })
         .collect()
@@ -39,6 +44,7 @@ pub(super) fn record(call_id: &str, result: Option<&str>) -> Result<TurnToolReco
         result: result.map(str::to_string),
         success: result.map(|_| true),
         error_kind: None,
+        status: result.map(|_| ToolStatus::Success),
     })
 }
 

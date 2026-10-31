@@ -359,15 +359,15 @@ Transcript gutters (columns are list-local; column 0 is the transcript list area
 - Assistant prose starts at column 2 and carries no rail.
 - Tool, compaction, and system rows keep the two-column cursor slot: the marker glyph (`⚙`, `~`, `·`) sits at column 2 and the text starts at column 4, on the first row and on every wrapped row.
 - The banner stays centered within the pane.
-- Every entry keeps a two-column right margin: the wrap budget stops short of the list area's right edge, so no line writes into its last two columns. The background fills still span the full list width.
+- Every entry keeps a two-column right margin: the wrap budget stops short of the list area's right edge, so no line writes into its last two columns. A painted surface — the user turn's background or a display's code surface — still spans the full list width.
 
 Nu command rendering:
 
-- Each tool call row starts with the tool name (for example `edit`, `read`, `nu`) followed by the call summary. The name carries the tool lane's emphasis style; the summary carries the muted style. The `nu` call line carries the applied timeout as `⏱ {timeout}s` (120s when the call omits `timeout_seconds`) — the command renders only in the preview block below it.
-- When the agent calls the `nu` tool, the transcript shows the command as a syntax-highlighted code block under the tool status row, on a full-width background block (with one blank margin row above and below) that separates it from the transcript. The command appears at `ToolEvent::Started` — before the permission decision and before completion.
-- At the permission gate, the `nu` command also renders as a code preview block (language `nu`) directly under the tool row, so you see the exact command before you approve. The preview is built from the tool-call arguments alone — nothing executes before you approve.
-- The edit tool's diff display renders in the same full-width background block style (with margin rows). Each diff body line carries a muted line-number gutter (old and new columns) followed by the syntax-highlighted code body, on a line-level tint: added lines get a dim green background, removed lines a dim red one, and context lines stay untinted. Hunk headers (`@@`), file headers (`---`/`+++`), and the no-newline marker render as plain meta rows.
-- Consecutive tool blocks get one spacer line between them when either renders a background block.
+- Each tool call row starts with the tool name (for example `edit`, `read`, `nu`) followed by the call summary. The name carries the tool lane's emphasis style; the summary carries the muted style. The `nu` call line carries the applied timeout as `⏱ {timeout}s` (120s when the call omits `timeout_seconds`) — the command renders only in the entry's display body below it.
+- A tool call is one transcript entry for its whole life. The entry holds a gate preview and a completion result, and the body renders whichever is present, `result.or(preview)`. A body carrying code or diff content paints on the code surface with one blank padding row above and below, inside the entry's own rect: the command or the diff is never a companion block, and the call row never carries a background or a margin row.
+- When the agent calls the `nu` tool, the command renders as a syntax-highlighted block (language `nu`) under the tool row. While the call waits at the permission gate the body is the preview, built from the tool-call arguments alone — nothing executes before you approve. The preview arrives before the decision; at completion the result takes over the same slot, and the preview persists when the completion carries no display.
+- The edit tool's diff display renders in the same code surface. Each diff body line carries a muted line-number gutter (old and new columns) followed by the syntax-highlighted code body, on a line-level tint: added lines get a dim green background, removed lines a dim red one, and context lines stay untinted. Hunk headers (`@@`), file headers (`---`/`+++`), and the no-newline marker render as plain meta rows.
+- Consecutive tool entries carry no separator row: a tool entry is flush, so the displays' own padding rows supply the spacing. A tool entry next to assistant prose keeps one separator row, in either order. A padding row on the frame's first or last row is clipped, so the frame opens and closes on content rows.
 - Other tools keep their existing previews (edit shows a diff, nu shows the command) or none.
 - See `./contribution-guardrails.md` for the pre-authorize zero-write rules behind the edit preview.
 
@@ -641,7 +641,27 @@ mid-execution is closed as `[interrupted]`, so the log stays valid. The next
 turn continues from that log. A call the stop denied before it ran renders as a
 not-run (⊘) tool block with the args preview of what would have run under it,
 live and after a reload. No reason text renders. The batch's later calls the
-stop skipped without dispatching render the same ⊘ shape.
+stop skipped without dispatching render the same ⊘ shape. A `nu` command the
+wall clock kills (`timeout_seconds` elapsed) or the turn's cancel stops renders
+that same ⊘ block with the command preview, live and after a reload; the model
+still receives the timeout or cancel as an error.
+
+The status of every call is stored with the session, as a variant: success,
+failure, or cancelled (the one class every non-completed call falls in). A
+reloaded row renders the status the store holds, not one re-read from the
+result text, so the timeout, the user's cancel, and a call the stop never
+dispatched all rehydrate as the same ⊘ block. Sessions saved before the status
+was stored keep the verdict their `is_error` flag carries — a failed call
+renders ✕, a successful one ✓.
+
+**Resuming replays the session.** Attaching to a session projects its stored
+messages onto the same event log a live turn produces and folds them through
+the same reducer. The transcript rows, the tool statuses and their displays,
+the usage counters, and the compaction bookkeeping are therefore the state the
+live session ended in — a resumed session and a running one cannot disagree.
+The stored messages, not the rendered rows, are the source: the transcript is
+rebuilt, never re-parsed. A stored role outside the known set carries no
+transcript row and is skipped.
 
 **A warning appears when the turn's work could not be saved.** If another
 writer moved the session log while the turn ran, the host leaves the log alone

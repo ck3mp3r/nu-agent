@@ -21,13 +21,13 @@ impl CoreRuntime for FakeRuntime {
         _span: Span,
     ) -> Result<Value, LabeledError> {
         self.prompts.push(prompt);
-        // The worker bridge no longer converts `UiEvent::Completed` to a
+        // The worker bridge no longer converts `SystemEvent::TurnCompleted` to a
         // `TurnEvent::Completed` on the bus. Publish it directly, matching
         // production (see executor.rs).
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,
@@ -104,11 +104,11 @@ impl SessionPersistence for FakeRuntime {
         }
         // Publish lifecycle events directly to the bus so test-harness quit-gates
         // that subscribe to bus.compaction() fire (matching production, where the
-        // compactor publishes CompactionEvent to the bus directly).
+        // compactor publishes the compaction facts on the bus directly).
         let _ = self
             .bus
             .compaction()
-            .send(CompactionEvent::Completed {
+            .send(SystemEvent::CompactionCompleted {
                 source: source.to_string(),
                 summary_preview: "summary".to_string(),
                 summary_body: "summary".to_string(),
@@ -134,11 +134,11 @@ impl CoreRuntime for FakeValueRuntime {
     ) -> Result<Value, LabeledError> {
         self.prompts.push(prompt);
         // Publish TurnCompleted directly to the bus (worker bridge no longer
-        // converts UiEvent::Completed), matching production.
+        // converts SystemEvent::TurnCompleted), matching production.
         let _ = self
             .bus
             .ui_event()
-            .send(UiEvent::Completed {
+            .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,
                 input_tokens: 0,
                 output_tokens: 0,

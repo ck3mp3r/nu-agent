@@ -1,4 +1,5 @@
 use super::*;
+use agnt_core::transcript::entry::TranscriptEntry;
 
 /// The main pane vertical split reserves the status target height and the
 /// input minimum height, leaving the transcript the remaining space with no
@@ -30,44 +31,8 @@ fn main_pane_vertical_split_layout() -> Result<()> {
     Ok(())
 }
 
-/// `single_line_visual_row_count` counts wrapped rows, treating an empty line
-/// and a zero width as one row.
-#[test]
-fn single_line_visual_row_count_matrix() -> Result<()> {
-    use ratatui::text::Span;
-
-    // -- Setup & Fixtures
-    let multi_span = ratatui::text::Line::from(vec![
-        Span::raw("a".repeat(50)),
-        Span::raw("b".repeat(50)),
-        Span::raw("c".repeat(50)),
-    ]);
-    let cases: [(&str, ratatui::text::Line, usize, usize); 5] = [
-        ("short line", ratatui::text::Line::from("1234567890"), 80, 1),
-        (
-            "wider than viewport",
-            ratatui::text::Line::from("x".repeat(200)),
-            80,
-            3,
-        ),
-        ("multi span", multi_span, 80, 2),
-        ("empty line", ratatui::text::Line::from(""), 80, 1),
-        ("width zero", ratatui::text::Line::from("hello"), 0, 1),
-    ];
-
-    // -- Exec & Check
-    for (label, line, width, expected) in cases {
-        assert_eq!(
-            super::render::single_line_visual_row_count(&line, width),
-            expected,
-            "{label}"
-        );
-    }
-    Ok(())
-}
-
-/// The height index is computed on a new entry, sums measure per block plus
-/// separators, and is invalidated on clear.
+/// The height index is computed on a new entry, sums the backend's measure per
+/// entry plus separators, and is invalidated on clear.
 #[test]
 fn height_index_lifecycle() -> Result<()> {
     // -- Setup & Fixtures
@@ -81,7 +46,7 @@ fn height_index_lifecycle() -> Result<()> {
     assert!(state.transcript.height_index_valid_for(80));
     assert!(state.transcript.total_visual_rows() >= 1);
 
-    // -- Setup & Fixtures: three blocks.
+    // -- Setup & Fixtures: three entries.
     let mut summed = crate::state::AppState::default();
     push_message_line(&mut summed, MessageRole::User, "a");
     push_message_line(&mut summed, MessageRole::Assistant, "b\nc\nd");
@@ -91,11 +56,12 @@ fn height_index_lifecycle() -> Result<()> {
     summed.transcript.rebuild_height_index(80);
 
     // -- Check: measure sum + separators + trailing row.
+    let probe = crate::widgets::RatatuiBackend::new(80, 0);
     let measured: usize = summed
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .map(|block| crate::tui_renderer::measure(block, 80, &TuiTheme::default()))
+        .map(|entry| agnt_render::RenderBackend::measure(&probe, entry, 80))
         .sum();
     assert_eq!(summed.transcript.total_visual_rows(), measured + 4 + 1);
     assert_eq!(summed.transcript.total_visual_rows(), 10);
@@ -126,9 +92,9 @@ fn startup_logo_and_bottom_align() -> Result<()> {
     coordinator.state.push_startup_logo();
 
     // -- Check: the logo is pushed.
-    let blocks = coordinator.state.transcript.blocks();
-    assert_eq!(blocks.len(), 1);
-    assert!(matches!(blocks[0].source, BlockSource::Banner { .. }));
+    let entries = coordinator.state.transcript.entries();
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(entries[0], TranscriptEntry::Banner(_)));
 
     // -- Setup & Fixtures: hydration with no messages.
     let mut hydrating = RuntimeCoordinator::new(120, 40, Some(false));
@@ -141,9 +107,9 @@ fn startup_logo_and_bottom_align() -> Result<()> {
     let has_logo = hydrating
         .state
         .transcript
-        .blocks()
+        .entries()
         .iter()
-        .any(|b| matches!(b.source, BlockSource::Banner { .. }));
+        .any(|entry| matches!(entry, TranscriptEntry::Banner(_)));
     assert!(!has_logo);
 
     // -- Setup & Fixtures: a single logo on a 40-row terminal.
@@ -358,6 +324,7 @@ async fn theme_picker_popup_does_not_bleed_transcript_glyphs() -> Result<()> {
             id: "CatppuccinMocha".to_string(),
             display: "Catppuccin Mocha".to_string(),
             search_text: "Catppuccin Mocha".to_string(),
+            section: None,
             sort_key: Vec::new(),
             payload: PickerPayload::Theme,
         }],

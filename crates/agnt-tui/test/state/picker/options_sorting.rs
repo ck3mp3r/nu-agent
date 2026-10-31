@@ -45,6 +45,9 @@ fn set_picker_options_sorting_and_open() -> Result<()> {
                 id: "old".to_string(),
                 display: "old".to_string(),
                 search_text: "old".to_string(),
+                section: Some(
+                    crate::state::session_day(now - chrono::Duration::days(1)).to_string(),
+                ),
                 sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(
                     now - chrono::Duration::days(1),
                 ))],
@@ -59,6 +62,7 @@ fn set_picker_options_sorting_and_open() -> Result<()> {
                 id: "new".to_string(),
                 display: "new".to_string(),
                 search_text: "new".to_string(),
+                section: Some(crate::state::session_day(now).to_string()),
                 sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(now))],
                 payload: PickerPayload::Session {
                     session_id: "new".to_string(),
@@ -88,6 +92,7 @@ fn set_picker_options_sorting_and_open() -> Result<()> {
                 id: "b".to_string(),
                 display: "b".to_string(),
                 search_text: "b".to_string(),
+                section: None,
                 sort_key: Vec::new(),
                 payload: PickerPayload::Theme,
             },
@@ -95,6 +100,7 @@ fn set_picker_options_sorting_and_open() -> Result<()> {
                 id: "a".to_string(),
                 display: "a".to_string(),
                 search_text: "a".to_string(),
+                section: None,
                 sort_key: Vec::new(),
                 payload: PickerPayload::Theme,
             },

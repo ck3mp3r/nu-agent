@@ -5,8 +5,9 @@ use super::channel::{
     BroadcastRx, BroadcastTx, Metrics, MpscRx, MpscTx, OneshotRx, OneshotTx, UiEventRx,
 };
 use crate::bus::create_bus;
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::{SystemEvent, ToolCall};
 use crate::protocol::tool_args::CallLine;
+use crate::transcript::ir::ToolName;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -124,30 +125,32 @@ async fn bus_default_uses_no_metrics_and_preserves_fifo() -> Result<()> {
     let bus = create_bus();
     let mut rx = bus.ui_event().subscribe();
     bus.ui_event()
-        .send(UiEvent::ToolStarted {
-            name: "read".into(),
-            source: "user".into(),
-            arguments: "{}".into(),
-            call_line: CallLine::from_json_summary("{}"),
+        .send(SystemEvent::ToolStarted {
+            call: ToolCall::new(
+                ToolName("read".to_string()),
+                "user",
+                "{}",
+                CallLine::from_json_summary("{}"),
+            ),
         })
         .await?;
     let event = rx.recv().await?;
     assert!(
-        matches!(event, UiEvent::ToolStarted { .. }),
+        matches!(event, SystemEvent::ToolStarted { .. }),
         "default bus channels must still send and receive"
     );
 
     // -- Case 2: the ui_event channel preserves FIFO order
     let bus = create_bus();
     let mut rx: UiEventRx = bus.ui_event().subscribe();
-    bus.ui_event().send(UiEvent::Tick).await?;
-    bus.ui_event().send(UiEvent::LlmStarted).await?;
+    bus.ui_event().send(SystemEvent::Tick).await?;
+    bus.ui_event().send(SystemEvent::InferenceStarted).await?;
     let first = rx.recv().await?;
     let second = rx.recv().await?;
-    assert_eq!(first, UiEvent::Tick, "first event must arrive first");
+    assert_eq!(first, SystemEvent::Tick, "first event must arrive first");
     assert_eq!(
         second,
-        UiEvent::LlmStarted,
+        SystemEvent::InferenceStarted,
         "second event must arrive second"
     );
     Ok(())

@@ -7,8 +7,8 @@ use super::*;
 /// A repetition stop (the 8th identical text-only completion across
 /// `execute()` calls sharing one `ToolInfra`, surfaced as
 /// `OUTPUT_REPETITION_STOP_PREFIX` cancel reason) must:
-/// 1. emit the stop-reason Warning BEFORE `TurnEvent::Completed` (Fix 1), and
-/// 2. emit `LlmEvent::Stopped` — never `LlmEvent::AssistantMessage` (Fix 2).
+/// 1. emit the stop-reason Warning BEFORE `SystemEvent::TurnCompleted` (Fix 1), and
+/// 2. emit `SystemEvent::InferenceStopped` — never `SystemEvent::InferenceChunk` (Fix 2).
 ///
 /// Under the stop-to-steering flow the FIRST repetition stop converts into a
 /// steering retry, so the terminal stop (with the surfacing assertions) is the
@@ -32,7 +32,7 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
     let bus = crate::bus::create_bus();
 
     // Subscribe BEFORE the turns run — broadcast sends are not buffered for
-    // later subscribers. Raw UiEvents are read from the ui_event channel in
+    // later subscribers. Raw SystemEvents are read from the ui_event channel in
     // send order, which is what the ordering assertions need.
     let mut ui_event_rx = bus.ui_event().subscribe();
     let mut event_collector = super::test_utils::BusEventCollector::subscribe(&bus);
@@ -105,14 +105,14 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
     // The stop-reason Warning was published (converted at the boundary).
     let events = event_collector.drain();
     assert!(
-        events.iter().any(|e| matches!(e, UiEvent::Warning { message } if message.starts_with(OUTPUT_REPETITION_STOP_PREFIX))),
+        events.iter().any(|e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text.starts_with(OUTPUT_REPETITION_STOP_PREFIX))),
         "must emit a Warning starting with OUTPUT_REPETITION_STOP_PREFIX; got: {events:?}"
     );
     // The steering notice rode every conversion on the way to the cap.
     let steering_notices = events
         .iter()
         .filter(
-            |e| matches!(e, UiEvent::Warning { message } if message == REPETITION_STEERING_NOTICE),
+            |e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text == REPETITION_STEERING_NOTICE),
         )
         .count();
     assert_eq!(
@@ -120,11 +120,11 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
         "each conversion must emit the steering notice; got: {events:?}"
     );
     assert!(
-        events.iter().any(|e| matches!(e, UiEvent::Stopped { reason } if reason.starts_with(OUTPUT_REPETITION_STOP_PREFIX))),
+        events.iter().any(|e| matches!(e, SystemEvent::InferenceStopped { reason } if reason.starts_with(OUTPUT_REPETITION_STOP_PREFIX))),
         "must emit a Stopped event starting with OUTPUT_REPETITION_STOP_PREFIX; got: {events:?}"
     );
     assert!(
-        !events.iter().any(|e| matches!(e, UiEvent::AssistantMessage { text, .. } if text.starts_with(OUTPUT_REPETITION_STOP_PREFIX))),
+        !events.iter().any(|e| matches!(e, SystemEvent::InferenceChunk { delta, aggregated } if delta.starts_with(OUTPUT_REPETITION_STOP_PREFIX) || aggregated.starts_with(OUTPUT_REPETITION_STOP_PREFIX))),
         "the stop reason must NOT ride AssistantMessage; got: {events:?}"
     );
 
@@ -143,14 +143,14 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
     assert!(
         ui_events
             .iter()
-            .any(|e| matches!(e, UiEvent::Stopped { reason } if reason.starts_with(OUTPUT_REPETITION_STOP_PREFIX))),
-        "the cancel path must publish UiEvent::Stopped with the reason; got {ui_events:?}"
+            .any(|e| matches!(e, SystemEvent::InferenceStopped { reason } if reason.starts_with(OUTPUT_REPETITION_STOP_PREFIX))),
+        "the cancel path must publish SystemEvent::InferenceStopped with the reason; got {ui_events:?}"
     );
     assert!(
         ui_events
             .iter()
-            .any(|e| matches!(e, UiEvent::Completed { .. })),
-        "the cancel path must publish UiEvent::Completed; got {ui_events:?}"
+            .any(|e| matches!(e, SystemEvent::TurnCompleted { .. })),
+        "the cancel path must publish SystemEvent::TurnCompleted; got {ui_events:?}"
     );
 
     Ok(())
@@ -262,7 +262,7 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
     let steering_notices = events
         .iter()
         .filter(
-            |e| matches!(e, UiEvent::Warning { message } if message == REPETITION_STEERING_NOTICE),
+            |e| matches!(e, SystemEvent::SystemMessage { kind: SystemKind::Warning, text } if text == REPETITION_STEERING_NOTICE),
         )
         .count();
     assert_eq!(

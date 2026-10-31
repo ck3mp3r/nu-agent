@@ -186,8 +186,8 @@ async fn test_hooks_agent_runner_and_session_runner_each_invoke_a_both_class_hoo
 
     // -- Exec
     let _ = bus
-        .turn()
-        .send(TurnEvent::Completed {
+        .ui_event()
+        .send(SystemEvent::TurnCompleted {
             tool_calls: 1,
             input_tokens: 0,
             output_tokens: 0,

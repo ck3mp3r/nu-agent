@@ -21,6 +21,8 @@ pub use rig::DynModel;
 pub use rig::operation::Completion;
 
 // Tool server types (used to register and dispatch dynamic tools)
+pub use rig::tool::ToolErrorKind as RigToolErrorKind;
+pub use rig::tool::ToolResult as ToolExecutionResult;
 pub use rig::tool::server::{ToolServer, ToolServerHandle};
 pub use rig::tool::{DynamicTool, ToolContext, ToolExecutionError, ToolOutput, ToolSet};
 

@@ -20,8 +20,8 @@ mod hydration;
 #[path = "transcript/markdown.rs"]
 mod markdown;
 
-#[path = "transcript/push_block.rs"]
-mod push_block;
+#[path = "transcript/push_entry.rs"]
+mod push_entry;
 
 #[path = "transcript/shift_indices.rs"]
 mod shift_indices;
@@ -32,6 +32,7 @@ mod support;
 // The monolith resolved `super::<item>` against `crate::state`.
 // Sub-files now resolve `super::` against this module root, so the shared
 // fixtures are re-exported here.
+use crate::state::hydrate_by_replay;
 use support::*;
 
 // endregion: --- Modules

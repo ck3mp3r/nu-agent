@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 use tokio::task::JoinHandle;
 
 use crate::bus::{
-    AgentEvent, AgentRx, AgentTx, BroadcastRx, Bus, ChannelError, CompactionEvent, CompactionRx,
-    SessionEvent, SessionRx, TurnEvent, TurnRx, UiEventRx,
+    AgentEvent, AgentRx, AgentTx, BroadcastRx, Bus, ChannelError, CompactionRx, SessionEvent,
+    SessionRx, TurnEvent, TurnRx, UiEventRx,
 };
 use crate::config::{HookEvent, HookEventClass, ResolvedHook};
-use crate::protocol::event::UiEvent;
+use crate::protocol::events::SystemEvent;
 
 use super::context::HookAgentContext;
 use super::envelope::build_envelope;
@@ -123,20 +123,22 @@ where
 
 // region:    --- Support
 
-/// Whether `hook` subscribes to a turn event.
+/// Whether `hook` subscribes to the turn channel.
+///
+/// Only `TurnStarted` rides `bus.turn()`; the completion fact is a
+/// `SystemEvent` on the ui-event channel and is matched by [`needs_ui`].
 fn needs_turn(hook: &ResolvedHook) -> bool {
-    hook.events
-        .iter()
-        .any(|event| matches!(event, HookEvent::TurnStarted | HookEvent::TurnCompleted))
+    hook.events.contains(&HookEvent::TurnStarted)
 }
 
-/// Whether `hook` subscribes to a ui event.
+/// Whether `hook` subscribes to the ui-event channel.
 fn needs_ui(hook: &ResolvedHook) -> bool {
     hook.events.iter().any(|event| {
         matches!(
             event,
             HookEvent::ToolStarted
                 | HookEvent::ToolCompleted
+                | HookEvent::TurnCompleted
                 | HookEvent::PermissionRequested
                 | HookEvent::PermissionDecisionTimedOut
                 | HookEvent::PermissionDecisionSubmitted
@@ -149,9 +151,8 @@ fn needs_ui(hook: &ResolvedHook) -> bool {
 
 /// Whether `hook` subscribes to a compaction event.
 ///
-/// Compaction events ride their own bus channel: no production code publishes
-/// them as `UiEvent`s, so a compaction hook that subscribed `ui_event` would
-/// never fire.
+/// Compaction events ride their own bus channel: the orchestrator acts on the
+/// request, and the hooks observe the lifecycle facts.
 fn needs_compaction(hook: &ResolvedHook) -> bool {
     hook.events.iter().any(|event| {
         matches!(
@@ -267,7 +268,125 @@ async fn run_hook<P>(
                         ));
                     }
                 }
-                Some(TurnEvent::Completed {
+                Some(_) => {}
+                None => turn_rx = None,
+            },
+            event = recv_optional(&mut ui_rx) => match event {
+                Some(SystemEvent::ToolStarted { call }) => {
+                    if hook.events.contains(&HookEvent::ToolStarted) {
+                        invocation = Some((
+                            "tool_started",
+                            serde_json::json!({
+                                "name": call.name.0,
+                                "source": call.source,
+                                "arguments": call.arguments,
+                            }),
+                        ));
+                    }
+                }
+                Some(SystemEvent::ToolCompleted { call, outcome }) => {
+                    if hook.events.contains(&HookEvent::ToolCompleted) {
+                        invocation = Some((
+                            "tool_completed",
+                            serde_json::json!({
+                                "name": call.name.0,
+                                "source": call.source,
+                                "arguments": call.arguments,
+                                "success": outcome.success,
+                                "error_kind": outcome.error_kind,
+                                "message": outcome.message,
+                            }),
+                        ));
+                    }
+                }
+                Some(SystemEvent::PermissionRequested {
+                    request_id,
+                    context,
+                }) => {
+                    if hook.events.contains(&HookEvent::PermissionRequested) {
+                        invocation = Some((
+                            "permission_requested",
+                            serde_json::json!({
+                                "request_id": request_id.as_str(),
+                                "tool": context.tool,
+                                "tool_key": context.tool_key,
+                                "source": context.source,
+                                "mode": context.mode,
+                                "matched_rule_identity": context.matched_rule_identity,
+                                "scope": context.scope,
+                                "target_field": context.target_field,
+                                "pattern": context.pattern,
+                                "summary": context.summary,
+                            }),
+                        ));
+                    }
+                }
+                Some(SystemEvent::PermissionDecisionTimedOut { request_id }) => {
+                    if hook.events.contains(&HookEvent::PermissionDecisionTimedOut) {
+                        invocation = Some((
+                            "permission_decision_timed_out",
+                            serde_json::json!({"request_id": request_id.as_str()}),
+                        ));
+                    }
+                }
+                Some(SystemEvent::PermissionDecisionSubmitted {
+                    request_id,
+                    decision,
+                    matched_rule_identity,
+                }) => {
+                    if hook.events.contains(&HookEvent::PermissionDecisionSubmitted) {
+                        invocation = Some((
+                            "permission_decision_submitted",
+                            serde_json::json!({
+                                "request_id": request_id.as_str(),
+                                "decision": decision.as_str(),
+                                "matched_rule_identity": matched_rule_identity,
+                            }),
+                        ));
+                    }
+                }
+                Some(SystemEvent::PermissionDecisionIgnored { request_id, reason }) => {
+                    if hook.events.contains(&HookEvent::PermissionDecisionIgnored) {
+                        invocation = Some((
+                            "permission_decision_ignored",
+                            serde_json::json!({
+                                "request_id": request_id.as_str(),
+                                "reason": reason,
+                            }),
+                        ));
+                    }
+                }
+                Some(SystemEvent::PermissionRequestCancelled {
+                    request_id,
+                    matched_rule_identity,
+                }) => {
+                    if hook.events.contains(&HookEvent::PermissionRequestCancelled) {
+                        invocation = Some((
+                            "permission_request_cancelled",
+                            serde_json::json!({
+                                "request_id": request_id.as_str(),
+                                "matched_rule_identity": matched_rule_identity,
+                            }),
+                        ));
+                    }
+                }
+                Some(SystemEvent::PermissionAutoResolved {
+                    matched_rule_identity,
+                    action,
+                    reason,
+                }) => {
+                    if hook.events.contains(&HookEvent::PermissionAutoResolved) {
+                        invocation = Some((
+                            "permission_auto_resolved",
+                            serde_json::json!({
+                                "matched_rule_identity": matched_rule_identity,
+                                "action": action.as_str(),
+                                "reason": reason,
+                            }),
+                        ));
+                    }
+                }
+                Some(SystemEvent::TurnCompleted {
                     tool_calls,
                     input_tokens,
                     output_tokens,
@@ -292,141 +411,10 @@ async fn run_hook<P>(
                     }
                 }
                 Some(_) => {}
-                None => turn_rx = None,
-            },
-            event = recv_optional(&mut ui_rx) => match event {
-                Some(UiEvent::ToolStarted {
-                    name,
-                    source,
-                    arguments,
-                    ..
-                }) => {
-                    if hook.events.contains(&HookEvent::ToolStarted) {
-                        invocation = Some((
-                            "tool_started",
-                            serde_json::json!({
-                                "name": name,
-                                "source": source,
-                                "arguments": arguments,
-                            }),
-                        ));
-                    }
-                }
-                Some(UiEvent::ToolCompleted {
-                    name,
-                    source,
-                    arguments,
-                    success,
-                    error_kind,
-                    message,
-                    ..
-                }) => {
-                    if hook.events.contains(&HookEvent::ToolCompleted) {
-                        invocation = Some((
-                            "tool_completed",
-                            serde_json::json!({
-                                "name": name,
-                                "source": source,
-                                "arguments": arguments,
-                                "success": success,
-                                "error_kind": error_kind,
-                                "message": message,
-                            }),
-                        ));
-                    }
-                }
-                Some(UiEvent::PermissionRequested {
-                    request_id,
-                    context,
-                }) => {
-                    if hook.events.contains(&HookEvent::PermissionRequested) {
-                        invocation = Some((
-                            "permission_requested",
-                            serde_json::json!({
-                                "request_id": request_id,
-                                "tool": context.tool,
-                                "tool_key": context.tool_key,
-                                "source": context.source,
-                                "mode": context.mode,
-                                "matched_rule_identity": context.matched_rule_identity,
-                                "scope": context.scope,
-                                "target_field": context.target_field,
-                                "pattern": context.pattern,
-                                "summary": context.summary,
-                            }),
-                        ));
-                    }
-                }
-                Some(UiEvent::PermissionDecisionTimedOut { request_id }) => {
-                    if hook.events.contains(&HookEvent::PermissionDecisionTimedOut) {
-                        invocation = Some((
-                            "permission_decision_timed_out",
-                            serde_json::json!({"request_id": request_id}),
-                        ));
-                    }
-                }
-                Some(UiEvent::PermissionDecisionSubmitted {
-                    request_id,
-                    decision,
-                    matched_rule_identity,
-                }) => {
-                    if hook.events.contains(&HookEvent::PermissionDecisionSubmitted) {
-                        invocation = Some((
-                            "permission_decision_submitted",
-                            serde_json::json!({
-                                "request_id": request_id,
-                                "decision": decision.as_str(),
-                                "matched_rule_identity": matched_rule_identity,
-                            }),
-                        ));
-                    }
-                }
-                Some(UiEvent::PermissionDecisionIgnored { request_id, reason }) => {
-                    if hook.events.contains(&HookEvent::PermissionDecisionIgnored) {
-                        invocation = Some((
-                            "permission_decision_ignored",
-                            serde_json::json!({
-                                "request_id": request_id,
-                                "reason": reason,
-                            }),
-                        ));
-                    }
-                }
-                Some(UiEvent::PermissionRequestCancelled {
-                    request_id,
-                    matched_rule_identity,
-                }) => {
-                    if hook.events.contains(&HookEvent::PermissionRequestCancelled) {
-                        invocation = Some((
-                            "permission_request_cancelled",
-                            serde_json::json!({
-                                "request_id": request_id,
-                                "matched_rule_identity": matched_rule_identity,
-                            }),
-                        ));
-                    }
-                }
-                Some(UiEvent::PermissionAutoResolved {
-                    matched_rule_identity,
-                    action,
-                    reason,
-                }) => {
-                    if hook.events.contains(&HookEvent::PermissionAutoResolved) {
-                        invocation = Some((
-                            "permission_auto_resolved",
-                            serde_json::json!({
-                                "matched_rule_identity": matched_rule_identity,
-                                "action": action,
-                                "reason": reason,
-                            }),
-                        ));
-                    }
-                }
-                Some(_) => {}
                 None => ui_rx = None,
             },
             event = recv_optional(&mut compaction_rx) => match event {
-                Some(CompactionEvent::Started { source }) => {
+                Some(SystemEvent::CompactionStarted { source }) => {
                     if hook.events.contains(&HookEvent::CompactionStarted) {
                         invocation = Some((
                             "compaction_started",
@@ -434,7 +422,7 @@ async fn run_hook<P>(
                         ));
                     }
                 }
-                Some(CompactionEvent::Completed {
+                Some(SystemEvent::CompactionCompleted {
                     source,
                     summary_preview,
                     ..
@@ -449,7 +437,7 @@ async fn run_hook<P>(
                         ));
                     }
                 }
-                Some(CompactionEvent::Failed { source, message }) => {
+                Some(SystemEvent::CompactionFailed { source, message }) => {
                     if hook.events.contains(&HookEvent::CompactionFailed) {
                         invocation = Some((
                             "compaction_failed",

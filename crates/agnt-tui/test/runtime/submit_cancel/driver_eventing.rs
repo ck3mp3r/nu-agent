@@ -1,5 +1,7 @@
 use super::*;
 
+use agnt_core::transcript::entry::TranscriptEntry;
+
 /// The runtime renderer reuses eventing and preserves emit passthrough.
 #[test]
 fn runtime_renderer_reuses_eventing_and_preserves_emit_passthrough() {
@@ -7,11 +9,11 @@ fn runtime_renderer_reuses_eventing_and_preserves_emit_passthrough() {
     let scripted = ScriptedTerminalEvents::from_script("char:h,ctrlc,ctrlc,ctrlc,resize:140x35");
     let mut runtime_renderer = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
 
-    runtime_renderer.emit(&UiEvent::LlmStarted);
-    runtime_renderer.emit(&UiEvent::Tick);
-    runtime_renderer.emit(&UiEvent::Tick);
-    runtime_renderer.emit(&UiEvent::Tick);
-    runtime_renderer.emit(&UiEvent::Tick);
+    runtime_renderer.emit(&SystemEvent::InferenceStarted);
+    runtime_renderer.emit(&SystemEvent::Tick);
+    runtime_renderer.emit(&SystemEvent::Tick);
+    runtime_renderer.emit(&SystemEvent::Tick);
+    runtime_renderer.emit(&SystemEvent::Tick);
     runtime_renderer.flush();
 
     assert!(runtime_renderer.coordinator().take_cancel_requested());
@@ -53,13 +55,12 @@ async fn render_loop_submit_and_abort_handoff() -> Result<()> {
             .take_next_prompt_for_execution(),
         None
     );
-    assert!(driver.state().transcript.blocks().iter().any(|b| matches!(
-        b.source,
-        BlockSource::Markdown {
-            role: MessageRole::User,
-            ..
-        }
-    ) && b.source.plain_text() == "hi"));
+    assert!(driver.state().transcript.entries().iter().any(|entry| {
+        matches!(
+            entry,
+            TranscriptEntry::Message(message) if message.role == MessageRole::User
+        ) && entry_text(entry) == "hi"
+    }));
 
     // -- Setup & Fixtures: Ctrl+C twice (arm, then confirm).
     let mut quitting = RenderLoopDriver::new(120, 30);

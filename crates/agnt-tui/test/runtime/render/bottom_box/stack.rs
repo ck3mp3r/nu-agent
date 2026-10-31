@@ -1,13 +1,12 @@
 //! Queued-message stack rendering: position, wrapping, rail, and height.
 
-use agnt_core::transcript::ir::{Block as IrBlock, MessageRole};
-use agnt_core::transcript::items::Message;
-use agnt_core::transcript::renderer::{FrameContext, Renderable};
+use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_core::transcript::ir::MessageRole;
+use agnt_render::{RenderBackend, Theme};
 
 use super::bottom_box_support::*;
-use crate::rendering::theme::TuiTheme;
 use crate::runtime::render::bottom_box::stacked_messages_height;
-use crate::tui_renderer::layout;
+use crate::widgets::RatatuiBackend;
 
 /// WHEN two or more prompts are stacked, THE bottom box SHALL render one
 /// `row_user_bg` padding row, the message rows back to back with a continuous
@@ -79,10 +78,11 @@ async fn test_bottom_box_queued_stack_paints_user_rows_gap_and_footer_status() -
             "the padding rows bracketing the text must carry the rail at the stack's first column\n{buffer}"
         );
     }
+    let body = Theme::from(&theme).text;
     assert_eq!(
         driver.cell_style_at(5, first).fg,
-        theme.role_user.fg,
-        "stack text must carry the role_user foreground"
+        Some(ratatui::style::Color::Rgb(body.r, body.g, body.b)),
+        "stack text must carry the body text foreground"
     );
     assert_eq!(
         cell_bg(&driver, 5, gap),
@@ -255,49 +255,37 @@ async fn test_bottom_box_stack_text_aligns_with_transcript_user_message() -> Res
 }
 
 /// THE `stacked_messages_height` function SHALL equal the rows the stack
-/// paints — every block's wrapped rows plus the two padding rows — and SHALL
+/// paints — every entry's measured rows plus the two padding rows — and SHALL
 /// return `0` for an empty stack.
 #[test]
 fn test_stacked_messages_height_matches_rendered_rows_and_blanks() -> Result<()> {
     // -- Setup & Fixtures
-    let theme = TuiTheme::catppuccin_mocha();
     let width = 60;
     let long = (0..40)
         .map(|index| format!("word{index} "))
         .collect::<String>();
-    let blocks: Vec<IrBlock> = ["short-one", long.trim_end()]
+    let entries: Vec<TranscriptEntry> = ["short-one", long.trim_end()]
         .iter()
         .map(|text| {
-            let message = Message {
+            TranscriptEntry::Message(MessageEntry {
                 role: MessageRole::User,
                 markdown: (*text).to_string(),
-            };
-            IrBlock {
-                source: message.source(),
-                lane: message.lane(),
-                fill: message.fill(),
-                status: None,
-            }
+            })
         })
         .collect();
-    let ctx = FrameContext {
-        width,
-        now_millis: 0,
-        cursor: false,
-        selected: false,
-    };
+    let probe = RatatuiBackend::new(0, 0);
 
     // -- Exec
-    let height = stacked_messages_height(&blocks, width, &theme);
-    let rendered = blocks
+    let height = stacked_messages_height(&entries, width);
+    let rendered = entries
         .iter()
-        .map(|block| layout(block, &ctx, &theme).len())
+        .map(|entry| probe.measure(entry, width))
         .sum::<usize>()
         + 2;
 
     // -- Check
     assert!(
-        rendered > blocks.len() + 2,
+        rendered > entries.len() + 2,
         "fixture requires the long prompt to wrap, rendered {rendered}"
     );
     assert_eq!(
@@ -306,7 +294,7 @@ fn test_stacked_messages_height_matches_rendered_rows_and_blanks() -> Result<()>
         "the reserved stack height must match the painted rows"
     );
     assert_eq!(
-        stacked_messages_height(&[], width, &theme),
+        stacked_messages_height(&[], width),
         0,
         "an empty stack must reserve no rows"
     );

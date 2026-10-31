@@ -12,11 +12,10 @@ use ratatui::widgets::{Block, Paragraph};
 
 use crate::interaction::{
     cancel::CancelController,
-    dispatch::{dispatch_terminal_event, rewrite_action},
+    dispatch::{KeyLens, dispatch_terminal_event, rewrite_action},
     input::{TerminalEvent, TerminalKey},
-    reducer::{ReducerInput, UserAction, reduce_with_cancel_controller},
 };
-use crate::platform::transport::{TransportItem, TuiTransport};
+use crate::platform::transport::{Source, TuiTransport};
 use crate::rendering::{
     chrome::{Chrome, ContainerBorder},
     layout::{INPUT_MAX_HEIGHT, INPUT_MIN_HEIGHT, MAIN_SIDE_MARGIN, input_content_row_count},
@@ -24,18 +23,19 @@ use crate::rendering::{
 };
 use crate::runtime::backend::FrameSync;
 use crate::runtime::layout::{compute_bottom_box_height, compute_status_h};
-use crate::runtime::render::bottom_box::{queued_prompt_blocks, stacked_messages_height};
+use crate::runtime::render::bottom_box::{queued_prompt_entries, stacked_messages_height};
 use crate::runtime::render::frame::current_time_millis;
+use crate::runtime::render::transcript::PaintWindow;
 use crate::runtime::status::{
     RepoBranchTracker, availability_label, status_left_content, status_right_content,
 };
 use crate::state::{
-    AppState, InputMode, McpServerState, McpServerUsabilityState, PickerRenderKind, SubmitAction,
+    AppState, InputMode, McpServerState, McpServerUsabilityState, PickerRenderKind,
 };
-use agnt_core::bus::{CompactionEvent, LlmEvent, ToolEvent, TurnEvent};
 use agnt_core::orchestrator::UiStateEvent;
 use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::protocol::event::UiEvent;
+use agnt_core::protocol::events::Key;
+use agnt_core::protocol::events::SystemEvent;
 use agnt_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use agnt_core::tools::mcp::runtime::McpServerLifecycle;
 use agnt_core::transcript::renderer::ItemStatus;
@@ -62,6 +62,9 @@ pub struct RuntimeCoordinator {
     pub(crate) theme: TuiTheme,
     pub(crate) render_needed: bool,
     pub(crate) last_render_at: Instant,
+    /// The busy spinner's cadence step that last produced an animation frame.
+    /// `None` means "not animating" — the next animated step renders at once.
+    last_spinner_step: Option<u128>,
     pub(crate) textarea: ratatui_textarea::TextArea<'static>,
 }
 
@@ -96,13 +99,7 @@ impl RuntimeCoordinator {
         messages: impl IntoIterator<Item = UiMessageSnapshot>,
         last_total_tokens: Option<u64>,
     ) {
-        self.state.transcript.hydrate_from_messages(
-            messages,
-            last_total_tokens,
-            &mut self.state.status,
-            &mut self.state.tool,
-            &mut self.state.compaction,
-        );
+        crate::state::hydrate_by_replay(&mut self.state, messages, last_total_tokens);
     }
 
     pub(crate) fn new_with_watchdog(
@@ -136,6 +133,7 @@ impl RuntimeCoordinator {
             theme: theme.clone(),
             render_needed: true,
             last_render_at: Instant::now() - Duration::from_millis(100),
+            last_spinner_step: None,
             textarea: Self::new_textarea(Vec::new()),
         };
         coordinator.state.theme = theme;
@@ -166,32 +164,10 @@ impl RuntimeCoordinator {
         self.state.reduce_ui_state_event(event);
     }
 
-    /// Consume a tool lifecycle event from the bus.
-    pub fn reduce_tool_event(&mut self, event: ToolEvent) -> bool {
-        crate::state::dispatch_tool_event(&mut self.state, event)
-    }
-
-    /// Consume an LLM lifecycle event from the bus.
-    pub fn reduce_llm_event(&mut self, event: LlmEvent) -> bool {
-        crate::state::dispatch_llm_event(&mut self.state, event)
-    }
-
-    /// Consume a compaction lifecycle event from the bus. Returns false for
-    /// events the TUI does not render (`CompactionEvent::Requested`).
-    pub fn reduce_compaction_event(&mut self, event: CompactionEvent) -> bool {
-        crate::state::dispatch_compaction_event(&mut self.state, event)
-    }
-
-    /// Consume a turn lifecycle event from the bus. Returns false for events
-    /// the TUI does not render (`TurnEvent::Started` / `TaskCompleted`).
-    pub fn reduce_turn_event(&mut self, event: TurnEvent) -> bool {
-        crate::state::dispatch_turn_event(&mut self.state, event)
-    }
-
-    /// Dispatch a protocol `UiEvent` to the domain reducers. Both the bus
-    /// `ui_event` arm and the transport drain converge here.
-    pub(crate) fn reduce_ui_event(&mut self, event: UiEvent) -> bool {
-        crate::interaction::reducer::dispatch_ui_event(&mut self.state, event)
+    /// Consume a `SystemEvent`. This is the only reducer entry point for
+    /// events: the bus arms and the transport drain both converge here.
+    pub fn reduce_system_event(&mut self, event: SystemEvent) -> bool {
+        crate::interaction::reducer::reduce(&mut self.state, event, Some(&self.cancel_controller))
     }
 
     pub(crate) fn set_mcp_lifecycle_projection(&mut self, projection: Vec<McpServerLifecycle>) {
@@ -321,9 +297,9 @@ impl RuntimeCoordinator {
         self.cancel_controller.take_cancel_requested()
     }
 
-    pub fn enqueue_ui_event(&mut self, event: UiEvent) {
-        log::trace!("tui: enqueue_ui_event {:?}", std::mem::discriminant(&event));
-        self.transport.enqueue_ui_event(event);
+    pub fn enqueue_event(&mut self, event: SystemEvent) {
+        log::trace!("tui: enqueue_event {:?}", std::mem::discriminant(&event));
+        self.transport.enqueue_event(event);
     }
 
     pub fn poll_terminal_event(
@@ -719,13 +695,30 @@ impl RuntimeCoordinator {
             | TerminalKey::Tab
             | TerminalKey::BackTab
             | TerminalKey::CtrlC => false,
-            // Char keys — map to UserAction, run through rewrite_action, then route
+            // Char keys — the lens may consume them (panel, picker, the card),
+            // the reducer's insert-exit chord may consume them, otherwise the
+            // textarea takes them.
             TerminalKey::Char(ch) => {
-                let mapped_action = UserAction::InsertChar(ch);
-                let (rewritten, force_changed) = rewrite_action(&mut self.state, mapped_action);
-                match rewritten {
-                    UserAction::InsertChar(ch) => {
-                        if self.state.input_locked {
+                let chord_pending =
+                    matches!(ch, 'j' | 'k') && self.state.input.insert_exit_pending_j();
+                match rewrite_action(&mut self.state, Key::Char(ch)) {
+                    KeyLens::Pass => {
+                        let _ = self
+                            .reduce_system_event(SystemEvent::KeyPressed { key: Key::Char(ch) });
+                        if chord_pending {
+                            // The chord left insert mode: drop the j/k the textarea
+                            // already holds.
+                            if !self.state.input_locked {
+                                self.textarea.input(ratatui_textarea::Input {
+                                    key: ratatui_textarea::Key::Backspace,
+                                    ctrl: false,
+                                    alt: false,
+                                    shift: false,
+                                });
+                            }
+                            self.mark_render_needed();
+                            true
+                        } else if self.state.input_locked {
                             self.mark_render_needed();
                             true
                         } else {
@@ -741,37 +734,13 @@ impl RuntimeCoordinator {
                             true
                         }
                     }
-                    UserAction::EnterNormalModeFromChord => {
-                        // j/k chord triggered normal mode exit
-                        // Remove the 'j' that was already inserted by TextArea
-                        if !self.state.input_locked {
-                            self.textarea.input(ratatui_textarea::Input {
-                                key: ratatui_textarea::Key::Backspace,
-                                ctrl: false,
-                                alt: false,
-                                shift: false,
-                            });
-                        }
-                        let _changed = reduce_with_cancel_controller(
-                            &mut self.state,
-                            ReducerInput::User(UserAction::EnterNormalModeFromChord),
-                            Some(&self.cancel_controller),
-                        );
-                        self.mark_render_needed();
-                        true
-                    }
-                    UserAction::Noop => {
-                        // rewrite_action modified input chord state (e.g. the
-                        // insert-exit chord armed)
-                        if force_changed {
+                    KeyLens::Consumed(changed) => {
+                        if changed {
                             self.mark_render_needed();
                         }
                         true
                     }
-                    _ => {
-                        // Some other action — let dispatch handle it
-                        false
-                    }
+                    _ => false,
                 }
             }
         }
@@ -782,35 +751,29 @@ impl RuntimeCoordinator {
     /// Enter/Esc to accept/close, and Backspace to delete + re-check.
     fn handle_inline_slash_key(&mut self, key: TerminalKey) -> bool {
         match key {
-            TerminalKey::Char(ch) => {
-                let (rewritten, _) = rewrite_action(&mut self.state, UserAction::InsertChar(ch));
-                match rewritten {
-                    UserAction::InsertChar(ch) => {
-                        self.textarea.input(ratatui_textarea::Input {
-                            key: ratatui_textarea::Key::Char(ch),
-                            ctrl: false,
-                            alt: false,
-                            shift: false,
-                        });
-                        let buffer = self.textarea.lines().join("\n");
-                        self.state.check_inline_slash(&buffer);
-                        self.mark_render_needed();
-                        true
-                    }
-                    UserAction::PickerSubmit(SubmitAction::SlashAccept) => {
-                        let _changed = reduce_with_cancel_controller(
-                            &mut self.state,
-                            ReducerInput::User(UserAction::PickerSubmit(SubmitAction::SlashAccept)),
-                            Some(&self.cancel_controller),
-                        );
-                        self.replace_textarea(Vec::new());
-                        self.state.check_inline_slash("");
-                        self.mark_render_needed();
-                        true
-                    }
-                    _ => false,
+            TerminalKey::Char(ch) => match rewrite_action(&mut self.state, Key::Char(ch)) {
+                KeyLens::Pass => {
+                    let _ =
+                        self.reduce_system_event(SystemEvent::KeyPressed { key: Key::Char(ch) });
+                    self.textarea.input(ratatui_textarea::Input {
+                        key: ratatui_textarea::Key::Char(ch),
+                        ctrl: false,
+                        alt: false,
+                        shift: false,
+                    });
+                    let buffer = self.textarea.lines().join("\n");
+                    self.state.check_inline_slash(&buffer);
+                    self.mark_render_needed();
+                    true
                 }
-            }
+                KeyLens::Consumed(changed) => {
+                    if changed {
+                        self.mark_render_needed();
+                    }
+                    true
+                }
+                _ => false,
+            },
             TerminalKey::Up | TerminalKey::BackTab => {
                 if let Some(s) = self.state.picker.active_state_mut() {
                     s.move_up();
@@ -826,11 +789,12 @@ impl RuntimeCoordinator {
                 true
             }
             TerminalKey::Tab | TerminalKey::Enter => {
-                let changed = reduce_with_cancel_controller(
-                    &mut self.state,
-                    ReducerInput::User(UserAction::PickerSubmit(SubmitAction::SlashAccept)),
-                    Some(&self.cancel_controller),
-                );
+                let submit_key = if key == TerminalKey::Tab {
+                    Key::Tab
+                } else {
+                    Key::Enter
+                };
+                let changed = self.reduce_system_event(SystemEvent::KeyPressed { key: submit_key });
                 self.replace_textarea(Vec::new());
                 self.state.check_inline_slash("");
                 self.mark_render_needed();
@@ -969,65 +933,43 @@ impl RuntimeCoordinator {
     }
 
     pub fn drain_transport(&mut self) {
-        let mut pending_assistant: Option<UiEvent> = None;
-        let mut pending_compaction: Option<UiEvent> = None;
+        // Coalescing rule, stated here and nowhere else: at most the latest
+        // `InferenceChunk` and the latest `CompactionSummaryChunk` per drain
+        // cycle. A pending chunk is flushed before any other event so the
+        // streamed text keeps its place in the order, and a newer chunk of the
+        // same kind replaces the older one. Input events are never coalesced.
+        let mut pending_inference: Option<SystemEvent> = None;
+        let mut pending_compaction: Option<SystemEvent> = None;
         let mut changed = false;
 
         while let Some(item) = self.transport.poll_next() {
-            if matches!(
-                &item,
-                TransportItem::Event(e) if matches!(e.as_ref(), UiEvent::AssistantMessage { .. })
-            ) {
-                let TransportItem::Event(e) = item else {
-                    // Guard above guarantees this is an Event; drop defensively.
+            if item.source == Source::Event {
+                if matches!(&item.event, SystemEvent::InferenceChunk { .. }) {
+                    pending_inference = Some(item.event);
                     continue;
-                };
-                pending_assistant = Some(*e);
-                continue;
+                }
+                if matches!(&item.event, SystemEvent::CompactionSummaryChunk { .. }) {
+                    pending_compaction = Some(item.event);
+                    continue;
+                }
             }
 
-            if matches!(
-                &item,
-                TransportItem::Event(e) if matches!(e.as_ref(), UiEvent::CompactionSummaryChunk { .. })
-            ) {
-                let TransportItem::Event(e) = item else {
-                    // Guard above guarantees this is an Event; drop defensively.
-                    continue;
-                };
-                pending_compaction = Some(*e);
-                continue;
-            }
-
-            // Flush any pending coalesced events before processing a different event type
-            // (preserves ordering: assistant text before tool events, etc.)
-            if let Some(event) = pending_assistant.take() {
-                changed |= self.reduce_ui_event(event);
+            if let Some(event) = pending_inference.take() {
+                changed |= self.reduce_system_event(event);
             }
             if let Some(event) = pending_compaction.take() {
-                changed |= self.reduce_ui_event(event);
+                changed |= self.reduce_system_event(event);
             }
 
-            // Process the current non-coalesceable event
-            match item {
-                TransportItem::User(action) => {
-                    changed |= reduce_with_cancel_controller(
-                        &mut self.state,
-                        ReducerInput::User(action),
-                        Some(&self.cancel_controller),
-                    );
-                }
-                TransportItem::Event(event) => {
-                    changed |= self.reduce_ui_event(*event);
-                }
-            }
+            changed |= self.reduce_system_event(item.event);
         }
 
-        // Flush remaining pending events
-        if let Some(event) = pending_assistant.take() {
-            changed |= self.reduce_ui_event(event);
+        // Flush the tail of the stream.
+        if let Some(event) = pending_inference.take() {
+            changed |= self.reduce_system_event(event);
         }
         if let Some(event) = pending_compaction.take() {
-            changed |= self.reduce_ui_event(event);
+            changed |= self.reduce_system_event(event);
         }
 
         if changed {
@@ -1041,12 +983,32 @@ impl RuntimeCoordinator {
 
     pub(crate) fn has_active_animation(&self) -> bool {
         crate::runtime::status::model_activity_label(&self.state) == "busy"
-            || self
-                .state
-                .transcript
-                .blocks()
-                .iter()
-                .any(|block| block.status == Some(ItemStatus::InProgress))
+            || self.state.transcript.entries().iter().any(|entry| {
+                matches!(
+                    entry,
+                    agnt_core::transcript::entry::TranscriptEntry::Tool(tool)
+                        if tool.status == ItemStatus::InProgress
+                )
+            })
+    }
+
+    /// Whether the busy spinner advanced to a new cadence step since the last
+    /// animation frame — the only reason the render loop renders without an
+    /// event. The spinner's own 150 ms step is the animation cadence, so a
+    /// repeated step reports `false` and the loop emits no bytes: an idle loop
+    /// and a stalled animation both stay silent.
+    ///
+    /// `now_millis` is the frame clock, passed in so the gate is testable
+    /// without a wall-clock wait.
+    pub(crate) fn spinner_cadence_advanced(&mut self, now_millis: u128) -> bool {
+        let step = self
+            .has_active_animation()
+            .then_some(now_millis / crate::runtime::SPINNER_CADENCE_MS);
+        if step == self.last_spinner_step {
+            return false;
+        }
+        self.last_spinner_step = step;
+        step.is_some()
     }
 
     pub(crate) fn expire_status_message_if_due(&mut self, now: Instant) -> bool {
@@ -1078,26 +1040,33 @@ impl RuntimeCoordinator {
         self.render_frame(live)
     }
 
-    /// Apply selection highlight to buffer cells for the given visual row range.
+    /// Apply the selection highlight to the buffer rows that host the selection's
+    /// visual rows.
+    ///
+    /// The rows come from the same [`PaintWindow`] the paint used, so the
+    /// highlight lands where the paint put those rows — the window's `top`
+    /// padding included. The visible frame and the highlight cannot drift.
     pub(crate) fn apply_selection_highlight(
         buffer: &mut ratatui::buffer::Buffer,
         area: ratatui::layout::Rect,
         sel_start: usize,
         sel_end: usize,
-        effective_offset: usize,
-        viewport_height: usize,
+        window: &PaintWindow<'_>,
         selection_style: ratatui::style::Style,
     ) {
         for vis_row in sel_start..=sel_end {
-            if vis_row >= effective_offset && vis_row < effective_offset + viewport_height {
-                let row_y = (vis_row - effective_offset) as u16;
-                let row_screen_y = area.y + row_y;
-                for x in area.x..area.x + area.width {
-                    if let Some(cell) =
-                        buffer.cell_mut(ratatui::layout::Position { x, y: row_screen_y })
-                    {
-                        cell.set_style(selection_style);
-                    }
+            if !window.contains(vis_row) {
+                continue;
+            }
+            let Ok(buffer_row) = u16::try_from(window.buffer_row(vis_row)) else {
+                continue;
+            };
+            let row_screen_y = area.y.saturating_add(buffer_row);
+            for x in area.x..area.x + area.width {
+                if let Some(cell) =
+                    buffer.cell_mut(ratatui::layout::Position { x, y: row_screen_y })
+                {
+                    cell.set_style(selection_style);
                 }
             }
         }
@@ -1187,9 +1156,8 @@ impl RuntimeCoordinator {
                     pre_right_width,
                     has_message,
                 );
-                let stack_blocks = queued_prompt_blocks(&self.state);
-                let stack_h =
-                    stacked_messages_height(&stack_blocks, available_inner_w, &self.theme);
+                let stack_entries = queued_prompt_entries(&self.state);
+                let stack_h = stacked_messages_height(&stack_entries, available_inner_w);
                 let bottom_box_h = compute_bottom_box_height(stack_h, self.input_height, status_h);
                 let vertical = Layout::default()
                     .direction(Direction::Vertical)
@@ -1223,7 +1191,7 @@ impl RuntimeCoordinator {
                 self.render_bottom_box(
                     frame,
                     vertical[2],
-                    &stack_blocks,
+                    &stack_entries,
                     stack_h,
                     self.input_height,
                     now_millis,

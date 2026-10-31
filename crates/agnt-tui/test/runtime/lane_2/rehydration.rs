@@ -119,15 +119,7 @@ fn lane_2_rehydrate_replaced_by_live_turn_usage() -> Result<()> {
     assert!(hydrated_text.ends_with("7 (7%)"));
 
     // -- Exec: a live turn.
-    coordinator.enqueue_ui_event(UiEvent::LlmCompleted {
-        response_chars: 20,
-        tool_calls: 0,
-        input_tokens: 8,
-        output_tokens: 32,
-        total_tokens: Some(40),
-        cost: None,
-        cost_complete: false,
-    });
+    coordinator.enqueue_event(llm_completed(20, 0, 8, 32, Some(40), None, false));
     coordinator.drain_transport();
 
     // -- Check: the live value replaces the rehydrated one.

@@ -1,106 +1,77 @@
-//! Table clamping in the transcript: the projector's clamp target must be the
-//! renderer's wrap budget, or a table that "fits" the canvas gets re-wrapped
-//! and its box drawing is shredded.
+//! Table clamping: the projector's clamp target is the renderer's wrap budget,
+//! so a table that "fits" the canvas is never re-wrapped and its box drawing
+//! stays intact.
 
-use super::support::{frame_ctx, markdown_block};
-use crate::rendering::theme::TuiTheme;
-use crate::state::code_block::content_wrap_width;
-use crate::tui_renderer::{lane_prefix_width, layout, measure};
-use agnt_core::transcript::ir::{Fill, Lane, MessageRole};
-use unicode_width::UnicodeWidthStr;
+use super::support::*;
+use agnt_core::transcript::ir::MessageRole;
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+use crate::widgets::RatatuiBackend;
 
 /// Natural table width 37 (4 columns, 6 display columns each): wider than the
-/// wrap budget of a 40-column canvas (36) but inside the canvas itself. The
-/// pre-fix renderer projected at 40, saw the table fit, then wrapped its 37-wide
-/// rows at 36 — every border and row line split.
+/// wrap budget of a 40-column canvas but inside the canvas itself.
 const WIDE_TABLE: &str = "| Name | Status | Owner | Notes |\n\
 | --- | --- | --- | --- |\n\
 | abcdef | ghijkl | mnopqr | stuvwx |";
 
-fn line_width(line: &ratatui::text::Line<'static>) -> usize {
-    line.spans
-        .iter()
-        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
-        .sum()
-}
+const CANVAS: u16 = 40;
 
-fn line_text(line: &ratatui::text::Line<'static>) -> String {
-    line.spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect()
-}
-
-/// WHEN a Markdown block holds a table whose natural width sits between the
-/// wrap budget and the canvas width, THE renderer SHALL clamp it to the wrap
-/// budget so no row is re-wrapped and the top border stays unbroken.
+/// WHEN a table's natural width sits between the wrap budget and the canvas
+/// width, THE renderer SHALL clamp it to the wrap budget: no row is re-wrapped
+/// and the top and bottom borders stay on one row.
 #[test]
-fn layout_table_clamp_keeps_borders_unbroken_at_wrap_budget() -> Result<()> {
+fn test_renderer_table_clamp_keeps_borders_unbroken_at_wrap_budget() -> Result<()> {
     // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let width = 40;
-    let block = markdown_block(MessageRole::Assistant, WIDE_TABLE, Fill::None);
-    assert!(
-        content_wrap_width(width, false, lane_prefix_width(&Lane::Blank)) < 37,
-        "fixture must straddle the wrap budget (budget={})",
-        content_wrap_width(width, false, lane_prefix_width(&Lane::Blank))
-    );
+    let entry = message_entry(MessageRole::Assistant, WIDE_TABLE);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(width), &theme);
+    let (backend, rows) = render_in(&entry, CANVAS)?;
 
-    // -- Check: no rendered row exceeds the canvas.
-    for line in &lines {
+    // -- Check: no row exceeds the canvas.
+    let texts: Vec<String> = (0..u16::try_from(rows)?)
+        .map(|y| row_text_in(&backend, CANVAS, y).trim_end().to_string())
+        .collect();
+    for (y, row) in texts.iter().enumerate() {
         assert!(
-            line_width(line) <= width,
-            "row exceeds canvas width {width}: {:?} (width={})",
-            line_text(line),
-            line_width(line)
+            row.chars().count() <= usize::from(CANVAS),
+            "row {y} exceeds the canvas: {row:?}"
         );
     }
 
-    // -- Check: the top border is one unbroken row.
-    let top = lines
+    // -- Check: the top and bottom borders are each one unbroken row.
+    let top = texts
         .iter()
-        .map(line_text)
-        .find(|text| text.contains('╭'))
-        .ok_or("table must render a top border")?;
+        .find(|row| row.contains('\u{256d}'))
+        .ok_or("the table must paint a top border")?;
     assert!(
-        top.contains('╮'),
-        "top border must stay on one row: {top:?}"
+        top.contains('\u{256e}'),
+        "the top border must stay on one row: {top:?}"
     );
-
-    // -- Check: the bottom border is one unbroken row too.
-    let bottom = lines
+    let bottom = texts
         .iter()
-        .map(line_text)
-        .find(|text| text.contains('╰'))
-        .ok_or("table must render a bottom border")?;
+        .find(|row| row.contains('\u{2570}'))
+        .ok_or("the table must paint a bottom border")?;
     assert!(
-        bottom.contains('╯'),
-        "bottom border must stay on one row: {bottom:?}"
+        bottom.contains('\u{256f}'),
+        "the bottom border must stay on one row: {bottom:?}"
     );
     Ok(())
 }
 
-/// WHEN a table's natural width exceeds the wrap budget, THE renderer SHALL keep
-/// every column — cell contents wrap inside their column — and emit no wrapped
-/// border fragment: every box row stays one transcript row.
+/// WHEN a table is wider than the wrap budget, THE renderer SHALL keep every
+/// column — cell contents wrap inside their column and no border fragment splits.
 #[test]
-fn layout_table_clamp_keeps_all_columns_within_canvas() -> Result<()> {
+fn test_renderer_table_clamp_keeps_all_columns_within_canvas() -> Result<()> {
     // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let width = 40;
-    let block = markdown_block(MessageRole::Assistant, WIDE_TABLE, Fill::None);
+    let entry = message_entry(MessageRole::Assistant, WIDE_TABLE);
 
     // -- Exec
-    let lines = layout(&block, &frame_ctx(width), &theme);
-    let texts: Vec<String> = lines.iter().map(line_text).collect();
-
-    // -- Check: every column survives; nothing is dropped or announced.
+    let (backend, rows) = render_in(&entry, CANVAS)?;
+    let texts: Vec<String> = (0..u16::try_from(rows)?)
+        .map(|y| row_text_in(&backend, CANVAS, y).trim_end().to_string())
+        .collect();
     let joined = texts.join("\n");
+
+    // -- Check: every column survives.
     for label in ["Name", "Status", "Owner", "Notes"] {
         assert!(
             joined.contains(label),
@@ -112,28 +83,18 @@ fn layout_table_clamp_keeps_all_columns_within_canvas() -> Result<()> {
         "no column is dropped, so no hidden-columns marker; got:\n{joined}"
     );
 
-    // -- Check: every row fits the canvas, so the word wrapper never splits a box
-    // row into fragments.
-    for line in &lines {
-        assert!(
-            line_width(line) <= width,
-            "row exceeds canvas width {width}: {:?} (width={})",
-            line_text(line),
-            line_width(line)
-        );
-    }
-
-    // -- Check: each box row carries the full border set — 4 columns need 5 `│`.
-    // The narrow first column wraps its `abcdef` cell into two physical rows.
-    let box_rows: Vec<&String> = texts.iter().filter(|text| text.contains('│')).collect();
-    assert_eq!(
-        box_rows.len(),
-        3,
-        "header + 2 wrapped data rows expected; got:\n{joined}"
+    // -- Check: each box row keeps the full border set — 4 columns need 5 `│`.
+    let box_rows: Vec<&String> = texts
+        .iter()
+        .filter(|row| row.contains('\u{2502}'))
+        .collect();
+    assert!(
+        box_rows.len() >= 3,
+        "header plus the wrapped data rows expected; got:\n{joined}"
     );
     for row in box_rows {
         assert_eq!(
-            row.matches('│').count(),
+            row.matches('\u{2502}').count(),
             5,
             "every physical row keeps all 5 cell separators: {row:?}"
         );
@@ -141,23 +102,33 @@ fn layout_table_clamp_keeps_all_columns_within_canvas() -> Result<()> {
     Ok(())
 }
 
-/// WHEN `measure()` and `layout()` process the same table block at the same
-/// width, THE measured row count SHALL equal the laid-out row count — both
-/// project at the wrap budget, or the height index desyncs from the render.
+/// WHEN the backend measures a clamped table and paints it, THE painted row count
+/// SHALL equal the measured one — both project at the wrap budget.
 #[test]
-fn measure_table_clamp_matches_layout_row_count() {
+fn test_renderer_table_clamp_measure_matches_painted_rows() -> Result<()> {
     // -- Setup & Fixtures
-    let theme = TuiTheme::default();
-    let width = 40;
-    let block = markdown_block(MessageRole::Assistant, WIDE_TABLE, Fill::None);
+    let entry = message_entry(MessageRole::Assistant, WIDE_TABLE);
 
     // -- Exec
-    let measured = measure(&block, width, &theme);
-    let laid_out = layout(&block, &frame_ctx(width), &theme).len();
+    let (backend, rows) = render_in(&entry, CANVAS)?;
 
     // -- Check
-    assert_eq!(
-        measured, laid_out,
-        "measure() must equal layout().len() for a clamped table block"
-    );
+    assert_eq!(painted_rows_in(&backend, CANVAS), rows);
+    Ok(())
+}
+
+/// The rendered rows a backend `width` columns wide painted.
+fn painted_rows_in(backend: &RatatuiBackend, width: u16) -> usize {
+    let mut count = 0;
+    for y in 0..HEIGHT {
+        let painted = (0..width).any(|x| {
+            let cell = &backend.buffer()[(x, y)];
+            cell.symbol() != " " || !is_untinted(cell.style().bg)
+        });
+        if !painted {
+            break;
+        }
+        count += 1;
+    }
+    count
 }

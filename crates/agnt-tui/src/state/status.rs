@@ -1,6 +1,5 @@
 use std::time::{Duration, Instant};
 
-use agnt_core::bus::WarningEvent;
 use agnt_core::llm::SessionCost;
 use agnt_core::orchestrator::UiStateEvent;
 use agnt_core::protocol::contracts::McpUsabilityState;
@@ -22,7 +21,7 @@ pub enum StatusMessageKind {
     Warning,
     /// A marker that survives turn finalize and does not expire on a timer.
     /// `TurnState::finalize` clears only `Neutral` messages, so a marker set
-    /// just before `TurnEvent::Completed` is not wiped before it renders. It
+    /// just before `SystemEvent::TurnCompleted` is not wiped before it renders. It
     /// stays until the next turn start clears it (`LlmState::handle_start`):
     /// a stop marker that self-expires is invisible.
     Notice,
@@ -134,23 +133,6 @@ impl TokenUsage {
         }
     }
 
-    pub fn hydrate_usage(
-        &mut self,
-        input_tokens: Option<u64>,
-        output_tokens: Option<u64>,
-        total_tokens: Option<u64>,
-    ) {
-        if let Some(input_tokens) = input_tokens {
-            self.latest_input_tokens = Some(input_tokens);
-        }
-        if let Some(output_tokens) = output_tokens {
-            self.latest_output_tokens = Some(output_tokens);
-        }
-        if let Some(total_tokens) = total_tokens {
-            self.hydrate_latest_total_tokens(total_tokens);
-        }
-    }
-
     pub fn set_context_window_max_tokens(&mut self, max_tokens: Option<u64>) {
         self.context_window_max_tokens = max_tokens;
     }
@@ -215,16 +197,6 @@ impl StatusState {
                 true
             }
             _ => false,
-        }
-    }
-
-    pub fn reduce_warning_event(&mut self, event: WarningEvent) -> bool {
-        match event {
-            WarningEvent::Message { message } => {
-                self.message.set_warning(message);
-                true
-            }
-            WarningEvent::TurnError { .. } => false,
         }
     }
 }

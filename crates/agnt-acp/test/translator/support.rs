@@ -11,10 +11,12 @@ use agent_client_protocol::schema::v1::{
 use agnt_core::bus::{OneshotRx, OneshotTx};
 use agnt_core::conversation::runtime::PendingPermissions;
 use agnt_core::protocol::event::{
-    PermissionDecision, PermissionRequestContext, ToolDisplaySection, UiEvent,
+    PermissionDecision, PermissionRequestContext, ToolDisplaySection,
 };
+use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
 use agnt_core::protocol::tool_args::CallLine;
-use agnt_core::transcript::ir::ContentKind;
+use agnt_core::session::tool_status::ToolStatus;
+use agnt_core::transcript::ir::{ContentKind, ToolName};
 
 use crate::error::AcpError;
 use crate::permission::{AcpPermissionBridge, PermissionRequestSink};
@@ -53,25 +55,37 @@ pub fn diff_section(label: &str, content: &str) -> ToolDisplaySection {
     }
 }
 
-pub fn tool_started(name: &str, arguments: &str) -> UiEvent {
-    UiEvent::ToolStarted {
-        name: name.to_string(),
-        source: "builtin".to_string(),
-        arguments: arguments.to_string(),
-        call_line: call_line("→ read src/lib.rs"),
+pub fn tool_started(name: &str, arguments: &str) -> SystemEvent {
+    SystemEvent::ToolStarted {
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            "builtin",
+            arguments,
+            call_line("→ read src/lib.rs"),
+        ),
     }
 }
 
-pub fn tool_completed(name: &str, arguments: &str, success: bool) -> UiEvent {
-    UiEvent::ToolCompleted {
-        name: name.to_string(),
-        source: "builtin".to_string(),
-        arguments: arguments.to_string(),
-        success,
-        result: "{}".to_string(),
-        display: None,
-        error_kind: None,
-        message: None,
+pub fn tool_completed(name: &str, arguments: &str, success: bool) -> SystemEvent {
+    SystemEvent::ToolCompleted {
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            "builtin",
+            arguments,
+            call_line("→ read src/lib.rs"),
+        ),
+        outcome: ToolOutcome {
+            success,
+            status: if success {
+                ToolStatus::Success
+            } else {
+                ToolStatus::Failed
+            },
+            result: "{}".to_string(),
+            display: None,
+            error_kind: None,
+            message: None,
+        },
     }
 }
 

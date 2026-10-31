@@ -53,7 +53,6 @@ fn wheel_state() -> AppState {
             viewport_height: 10,
             cursor_visual_row: 5,
             total_visual_rows: 30,
-            entry_indices: (0..30).collect(),
             transcript_area: Rect::new(0, 0, 80, 20),
             ..Default::default()
         },
