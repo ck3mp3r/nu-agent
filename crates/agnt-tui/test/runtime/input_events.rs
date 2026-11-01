@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::interaction::cancel::CancelController;
 use crate::interaction::input::{TerminalMouse, TerminalResize};
 use ratatui::layout::Rect;
 
@@ -258,6 +259,106 @@ fn crossterm_event_source_and_enter_modifier_mapping() -> Result<()> {
     assert_eq!(shift, Some(TerminalEvent::Key(TerminalKey::ShiftEnter)));
     Ok(())
 }
+
+// region:    --- Busy typing
+
+/// WHEN a turn runs and a character key arrives in insert mode, THE coordinator
+/// SHALL write it into the draft; Backspace still edits the same draft.
+#[test]
+fn coordinator_char_while_input_locked_lands_in_draft() -> Result<()> {
+    // -- Setup & Fixtures: a running turn, locked input, empty draft.
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.state.phase = UiPhase::Busy;
+    coordinator.state.input_locked = true;
+    assert!(!coordinator.state.permission.has_prompt());
+    assert_eq!(coordinator.textarea.lines().join("\n"), "");
+
+    // -- Exec
+    coordinator.handle_terminal_event(TerminalEvent::Key(TerminalKey::Char('x')));
+
+    // -- Check: the typed char reached the draft and the frame is dirty.
+    assert_eq!(coordinator.textarea.lines().join("\n"), "x");
+    assert!(coordinator.render_needed());
+
+    // -- Exec
+    coordinator.handle_terminal_event(TerminalEvent::Key(TerminalKey::Backspace));
+
+    // -- Check: Backspace keeps editing the locked draft.
+    assert_eq!(coordinator.textarea.lines().join("\n"), "");
+    Ok(())
+}
+
+/// WHEN Enter arrives while a turn runs and the draft holds text, THE
+/// coordinator SHALL enqueue it as one pending prompt, clear the draft, and
+/// leave no dispatched-submit residue behind after the settle drain.
+#[test]
+fn coordinator_enter_while_input_locked_queues_prompt_and_clears_draft() -> Result<()> {
+    // -- Setup & Fixtures: a running turn with a typed draft.
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.state.phase = UiPhase::Busy;
+    coordinator.state.input_locked = true;
+    coordinator.textarea.insert_str("typed while busy");
+    assert_eq!(coordinator.state.pending_prompt_count(), 0);
+
+    // -- Exec
+    coordinator.handle_terminal_event(TerminalEvent::Key(TerminalKey::Enter));
+
+    // -- Check: one queued prompt, empty draft, no residue.
+    assert_eq!(coordinator.textarea.lines().join("\n"), "");
+    assert_eq!(coordinator.state.pending_prompt_count(), 1);
+    assert_eq!(coordinator.state.input.pending_submit_text, None);
+
+    // -- Exec: the turn settles and the pending events drain.
+    coordinator.enqueue_event(SystemEvent::TurnCompleted {
+        tool_calls: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: None,
+        cost: None,
+        cost_complete: true,
+        duration_ms: 0,
+    });
+    coordinator.drain_transport();
+    let events = coordinator
+        .state
+        .take_pending_events(&CancelController::default());
+
+    // -- Check: the queued prompt is delivered exactly once.
+    let submitted: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match event {
+            OrchestratorEvent::PromptSubmitted { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(submitted, vec!["typed while busy"]);
+    assert_eq!(coordinator.state.pending_prompt_count(), 0);
+    assert_eq!(coordinator.state.input.pending_submit_text, None);
+    Ok(())
+}
+
+/// WHEN AltEnter or ShiftEnter arrives while a turn runs, THE coordinator SHALL
+/// add one newline to the draft and queue nothing: only Enter submits.
+#[test]
+fn coordinator_newline_keys_while_input_locked_edit_draft_without_queueing() -> Result<()> {
+    // -- Setup & Fixtures: a running turn with a typed draft.
+    let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
+    coordinator.state.phase = UiPhase::Busy;
+    coordinator.state.input_locked = true;
+    coordinator.textarea.insert_str("line");
+
+    // -- Exec
+    coordinator.handle_terminal_event(TerminalEvent::Key(TerminalKey::AltEnter));
+    coordinator.handle_terminal_event(TerminalEvent::Key(TerminalKey::ShiftEnter));
+
+    // -- Check: two newlines, nothing queued.
+    assert_eq!(coordinator.textarea.lines().join("\n"), "line\n\n");
+    assert_eq!(coordinator.state.pending_prompt_count(), 0);
+    assert_eq!(coordinator.state.input.pending_submit_text, None);
+    Ok(())
+}
+
+// endregion: --- Busy typing
 
 // region:    --- Render gating
 

@@ -23,7 +23,7 @@ async fn dispatch_execute_turn_publishes_exactly_one_started()
         },
         &mut runtime,
         &result_tx,
-        None,
+        None::<NoAgentSwitchHook>,
         &bus,
     )
     .await;
@@ -70,7 +70,7 @@ async fn dispatch_ui_request_switch_model() -> core::result::Result<(), Box<dyn 
             spec: "test-model".to_string(),
         },
         &mut runtime,
-        &None,
+        &None::<NoAgentSwitchHook>,
         response_tx,
     )
     .await;
@@ -99,7 +99,7 @@ async fn dispatch_ui_request_switch_agent() -> core::result::Result<(), Box<dyn 
             name: "research-agent".to_string(),
         },
         &mut runtime,
-        &None,
+        &None::<NoAgentSwitchHook>,
         response_tx,
     )
     .await;
@@ -120,27 +120,24 @@ async fn dispatch_ui_request_switch_agent() -> core::result::Result<(), Box<dyn 
 #[tokio::test]
 async fn dispatch_ui_request_switch_agent_invokes_callback()
 -> core::result::Result<(), Box<dyn std::error::Error>> {
-    let switched_name = Arc::new(Mutex::new(None::<String>));
-    let cb_name = Arc::clone(&switched_name);
-    let callback: OnAgentSwitch = Arc::new(
-        move |name: String, _desc: Option<String>, _icon: Option<String>| {
-            *cb_name.lock().expect("name lock") = Some(name);
-        },
-    );
-
+    // -- Setup & Fixtures
+    let hook = RecordingAgentSwitchHook::default();
+    let hook_calls = Arc::clone(&hook.calls);
     let mut runtime = AgentSwitchRuntime::default();
     let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
 
+    // -- Exec
     CommandRouter::dispatch_ui_request(
         UiRequest::SwitchAgent {
             name: "research-agent".to_string(),
         },
         &mut runtime,
-        &Some(callback),
+        &Some(hook),
         response_tx,
     )
     .await;
 
+    // -- Check
     let response = response_rx.recv().await.ok_or("response should be sent")?;
     match response {
         UiRequestResponse::AgentSwitch(result) => {
@@ -149,8 +146,9 @@ async fn dispatch_ui_request_switch_agent_invokes_callback()
         other => panic!("expected AgentSwitch, got {other:?}"),
     }
 
-    let name = switched_name.lock().expect("name lock").take();
-    assert_eq!(name.as_deref(), Some("research-agent"));
+    let calls = hook_calls.lock().expect("hook calls lock");
+    assert_eq!(calls.len(), 1, "the hook must fire exactly once");
+    assert_eq!(calls[0].0, "research-agent");
     Ok(())
 }
 
@@ -169,7 +167,7 @@ async fn dispatch_ui_request_switch_session() -> core::result::Result<(), Box<dy
             id: "test-session-123".to_string(),
         },
         &mut runtime,
-        &None,
+        &None::<NoAgentSwitchHook>,
         response_tx,
     )
     .await;
@@ -199,7 +197,7 @@ async fn dispatch_ui_request_toggle_mcp() -> core::result::Result<(), Box<dyn st
             enable: true,
         },
         &mut runtime,
-        &None,
+        &None::<NoAgentSwitchHook>,
         response_tx,
     )
     .await;
@@ -233,7 +231,7 @@ async fn dispatch_ui_request_refresh_agent_picker()
     CommandRouter::dispatch_ui_request(
         UiRequest::RefreshAgentPicker,
         &mut runtime,
-        &None,
+        &None::<NoAgentSwitchHook>,
         response_tx,
     )
     .await;
@@ -261,7 +259,7 @@ async fn dispatch_ui_request_refresh_session_picker()
     CommandRouter::dispatch_ui_request(
         UiRequest::RefreshSessionPicker,
         &mut runtime,
-        &None,
+        &None::<NoAgentSwitchHook>,
         response_tx,
     )
     .await;

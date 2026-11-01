@@ -2,6 +2,7 @@
 
 - Type your request in the input box.
 - Press `Enter` to send.
+- While a turn is busy, typing still edits the draft and `Enter` queues the prompt.
 - Press `Ctrl-C` twice to quit and restore your terminal.
 
 # Modes (insert vs normal)

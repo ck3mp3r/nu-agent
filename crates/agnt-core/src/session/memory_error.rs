@@ -4,8 +4,33 @@
 //! `ConversationMemory` trait. This mirrors the deleted shape so the memory
 //! stack keeps its existing error surface.
 
-/// Boxed error source for memory backend failures.
-pub type MemoryBackendError = Box<dyn std::error::Error + Send + Sync + 'static>;
+use super::factory::RigStoreError;
+
+/// Why a conversation-memory backend failed.
+///
+/// Flat on purpose: [`RigStoreError`] holds a [`MemoryError`] by value, so a
+/// variant carrying it here would make this type its own size
+/// (`MemoryBackendError` → `RigStoreError` → `MemoryError` →
+/// `MemoryBackendError`). A `RigStoreError` converts at the [`MemoryError`]
+/// level instead, in `impl From<RigStoreError> for MemoryError`.
+#[derive(Debug, thiserror::Error)]
+pub enum MemoryBackendError {
+    /// The store failed to read or write a file.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+
+    /// The SQLite store failed.
+    #[error(transparent)]
+    Sqlx(#[from] sqlx::Error),
+
+    /// rig-memory refused the session.
+    #[error(transparent)]
+    Rig(#[from] rig_memory::SessionError),
+
+    /// A backend failure named by a message.
+    #[error("{0}")]
+    Message(String),
+}
 
 /// Errors produced by a conversation-memory backend.
 #[derive(Debug, thiserror::Error)]
@@ -34,3 +59,28 @@ impl MemoryError {
         Self::Backend(source.into())
     }
 }
+
+// region:    --- Froms
+
+impl From<String> for MemoryBackendError {
+    /// A message is not an `Error`, so it carries no source of its own.
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl From<RigStoreError> for MemoryError {
+    /// Move the store failure's own payload into the matching
+    /// [`MemoryBackendError`] variant, at the [`MemoryError`] level.
+    fn from(error: RigStoreError) -> Self {
+        match error {
+            RigStoreError::Io(error) => Self::backend(error),
+            RigStoreError::Sqlite(error) => Self::backend(error),
+            RigStoreError::Session(error) => Self::backend(error),
+            // The cycle break: the payload already is a `MemoryError`.
+            RigStoreError::Memory(error) => error,
+        }
+    }
+}
+
+// endregion: --- Froms

@@ -70,49 +70,6 @@ fn append_log_refuses_stale_length() -> Result<()> {
     Ok(())
 }
 
-/// A session the JSONL store nu-agent kept before rig-memory saved is refused.
-#[test]
-fn legacy_jsonl_session_is_refused() -> Result<()> {
-    // -- Setup & Fixtures
-    let temp = TempDir::new()?;
-    let sessions = crate::utils::paths::app_dir(temp.path()).join("sessions");
-    std::fs::create_dir_all(&sessions)?;
-    std::fs::write(sessions.join("session-legacy.jsonl"), b"{}\n")?;
-
-    // -- Exec
-    let refused = open_session_store(temp.path(), "session-legacy");
-
-    // -- Check
-    let error = refused.err().ok_or("a legacy session is refused")?;
-    assert!(
-        matches!(&error, RigStoreError::Legacy),
-        "the error names the legacy layout: {error}"
-    );
-    assert!(
-        error.to_string().contains("start a new session"),
-        "the error says what to do: {error}"
-    );
-    Ok(())
-}
-
-/// A session directory that holds a top-level JSONL file is refused.
-#[test]
-fn legacy_jsonl_in_session_directory_is_refused() -> Result<()> {
-    // -- Setup & Fixtures
-    let temp = TempDir::new()?;
-    let dir = session_dir(temp.path(), "session-old");
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("agent.jsonl"), b"{}\n")?;
-
-    // -- Exec
-    let refused = open_session_store(temp.path(), "session-old");
-
-    // -- Check
-    let error = refused.err().ok_or("a legacy session is refused")?;
-    assert!(matches!(&error, RigStoreError::Legacy));
-    Ok(())
-}
-
 /// An image is saved as a blob file under `files/blobs/` and read back.
 #[test]
 fn images_round_trip_as_blobs() -> Result<()> {

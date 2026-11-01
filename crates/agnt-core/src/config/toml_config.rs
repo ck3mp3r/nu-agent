@@ -68,7 +68,7 @@ pub fn load_from(path: &Path) -> Result<PluginConfig, TomlConfigError> {
 /// resolved.
 pub fn load_from_with(
     path: &Path,
-    runner: &dyn CmdRunner,
+    runner: &(impl CmdRunner + ?Sized),
 ) -> Result<PluginConfig, TomlConfigError> {
     if !path.exists() {
         return Ok(PluginConfig::default());

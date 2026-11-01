@@ -73,7 +73,7 @@ impl CachedMemory {
         if let Some(store) = open.stores.get(session_id) {
             return Ok(Arc::clone(store));
         }
-        let store = self.rig.open(session_id).map_err(MemoryError::backend)?;
+        let store = self.rig.open(session_id).map_err(MemoryError::from)?;
         open.stores
             .insert(session_id.to_string(), Arc::clone(&store));
         open.order.push_back(session_id.to_string());
@@ -95,7 +95,7 @@ impl CachedMemory {
     ///
     /// When the store cannot be listed.
     pub fn session_ids(&self) -> Result<Vec<String>, MemoryError> {
-        let mut ids = self.rig.session_ids().map_err(MemoryError::backend)?;
+        let mut ids = self.rig.session_ids().map_err(MemoryError::from)?;
         let opened: Vec<String> = self
             .rig_stores
             .lock()
@@ -132,7 +132,7 @@ impl CachedMemory {
         {
             return Ok(true);
         }
-        let store = self.rig.open(session_id).map_err(MemoryError::backend)?;
+        let store = self.rig.open(session_id).map_err(MemoryError::from)?;
         let logs = store.logs().map_err(MemoryError::backend)?;
         Ok(logs.iter().any(|log| log == session_id))
     }

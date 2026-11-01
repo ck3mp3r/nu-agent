@@ -53,11 +53,11 @@ fn table_driven_key_mapping_to_the_system_vocabulary() {
     );
 }
 
-/// The input lock lives in the reducer, not the terminal layer: while a turn
-/// runs it drops the keys that would edit the draft or submit it, and keeps
-/// escape and quit live.
+/// The input lock keeps the draft alive: the reducer drops the editing keys the
+/// coordinator owns, and Enter still folds the dispatched text into the prompt
+/// queue. Escape and quit stay live.
 #[test]
-fn test_interaction_input_locked_drops_editing_keys_only() {
+fn test_interaction_input_locked_queues_submit_and_drops_editing_keys() {
     // -- Setup & Fixtures: a running turn with a drafted submit text.
     let mut state = AppState::default();
     reduce(
@@ -74,18 +74,19 @@ fn test_interaction_input_locked_drops_editing_keys_only() {
     let _ = state.take_next_prompt_for_execution();
     state.input.pending_submit_text = Some("draft".to_string());
 
-    // -- Exec & Check: the submit key is dropped, the draft survives.
+    // -- Exec & Check: the submit key queues the dispatched draft.
     let changed = reduce(
         &mut state,
         SystemEvent::KeyPressed { key: Key::Enter },
         None,
     );
-    assert!(!changed, "a locked submit changes nothing");
-    assert_eq!(state.input.pending_submit_text.as_deref(), Some("draft"));
+    assert!(changed, "a locked submit queues the draft");
+    assert_eq!(state.input.pending_submit_text, None);
+    assert_eq!(state.pending_prompt_count(), 1);
     assert_eq!(
-        state.take_next_prompt_for_execution(),
-        None,
-        "a locked submit queues no prompt"
+        state.prompt_items().last().map(|p| p.prompt_text.as_str()),
+        Some("draft"),
+        "a locked submit queues the dispatched text"
     );
 
     // -- Exec & Check: an editing key is dropped.

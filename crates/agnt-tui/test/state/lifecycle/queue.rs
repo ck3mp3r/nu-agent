@@ -1,5 +1,46 @@
 use super::*;
 
+use crate::interaction::cancel::CancelController;
+use agnt_core::orchestrator::OrchestratorEvent;
+
+/// WHEN prompts queue up while a turn runs, THE pending-event drain SHALL
+/// deliver them once, in FIFO order, as a single coalesced `PromptSubmitted`
+/// event and then yield nothing.
+#[test]
+fn pending_prompts_drain_once_as_one_prompt_submitted_event() -> Result<()> {
+    // -- Setup & Fixtures: a running turn with two queued prompts, then the
+    // running turn settles.
+    let mut state = AppState::default();
+    state.enqueue_prompt("first".to_string());
+    let _ = state.activate_next_prompt();
+    state.enqueue_prompt("second".to_string());
+    state.enqueue_prompt("third".to_string());
+    assert_eq!(pending_prompt_ids(&state), vec![2, 3]);
+    state.complete_active_prompt();
+    let controller = CancelController::default();
+
+    // -- Exec
+    let events = state.take_pending_events(&controller);
+
+    // -- Check: one coalesced submission in FIFO order, queue empty.
+    let submitted: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match event {
+            OrchestratorEvent::PromptSubmitted { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(submitted, vec!["second\nthird"]);
+    assert!(pending_prompt_ids(&state).is_empty());
+
+    // -- Exec
+    let again = state.take_pending_events(&controller);
+
+    // -- Check: a second drain delivers nothing.
+    assert!(again.is_empty());
+    Ok(())
+}
+
 /// Submitting a prompt keeps input editable while queuing; the abort
 /// confirmation requires a busy context and finalize resets it.
 #[test]

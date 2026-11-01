@@ -16,7 +16,7 @@ use super::llm::LlmState;
 use super::permission::PermissionState;
 use super::picker::{ActivePicker, PickerContainer, PickerOption, PickerPayload, SwitchRequest};
 use super::scroll::ScrollState;
-use super::status::StatusState;
+use super::status::{NEUTRAL_MESSAGE_TTL, StatusState};
 use super::tool::ToolState;
 use super::transcript_store::TranscriptStore;
 use super::turn::TurnState;
@@ -212,10 +212,44 @@ pub struct ToolCallLine {
     pub block_index: Option<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AbortState {
     pub pending: bool,
     pub confirmation_marker: u64,
+    /// An armed abort lost its turn to the settle before the confirming press
+    /// arrived. The notice the user is owed is spent by the first press that
+    /// lands on an idle surface.
+    pub settle_notice: bool,
+    /// When the arm was stamped, if it is armed.
+    pub armed_at: Option<Instant>,
+    /// How long an armed abort stays executable. The arm lives exactly as long
+    /// as its affordance message, so this is the Neutral message TTL; tests set
+    /// a shorter window on the field.
+    pub arm_window: Duration,
+}
+
+impl Default for AbortState {
+    fn default() -> Self {
+        Self {
+            pending: false,
+            confirmation_marker: 0,
+            settle_notice: false,
+            armed_at: None,
+            arm_window: NEUTRAL_MESSAGE_TTL,
+        }
+    }
+}
+
+impl AbortState {
+    /// True only if the arm is stamped AND its message lifetime is not over.
+    /// The press that finds an expired arm disarms it and re-arms instead of
+    /// executing.
+    pub fn arm_live(&self) -> bool {
+        match self.armed_at {
+            Some(armed_at) => armed_at.elapsed() < self.arm_window,
+            None => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

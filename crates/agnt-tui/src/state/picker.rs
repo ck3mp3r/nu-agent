@@ -660,7 +660,7 @@ impl AppState {
 
     pub fn queue_launch_request(&mut self, action: SharedUiAction) {
         self.pending_launch.push_back(action);
-        self.abort.pending = false;
+        self.disarm_abort();
         self.ensure_invariants();
     }
 

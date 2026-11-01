@@ -625,13 +625,17 @@ the backend:
 | `memory` | An in-memory database. Nothing survives the process, so it is for tests and one-shot runs |
 
 `APP_DIR_NAME` is `nu-agent-dev` in debug builds and `nu-agent` in release
-builds. The rig database is separate from the old `sessions.db`: the rig store
-refuses a database that holds the pre-rig-memory schema.
+builds. The rig database is separate from the old `sessions.db`. Pointing a
+store at files from before rig-memory gives one of three outcomes:
 
-**Legacy sessions are refused, not migrated.** A session saved by a version of
-nu-agent before rig-memory makes the store report *"this session was made by
-another version of nu-agent; start a new session"*. The old files are left as
-they are. Start a new session.
+- An old-schema SQLite database opens, and its sessions hydrate empty. The old
+  `sessions` and `entries` tables stay where they are, beside the `logs` and
+  `files` tables the store adds.
+- A `jsonl` session directory that holds a top-level `*.jsonl` file fails to
+  open with rig-memory's own `SessionError::OldLayout` message — the upstream
+  error, not one of the host's. The directory is left as it is.
+- A bare `{session_id}.jsonl` beside the session directories is not a session:
+  the id is not listed, and the session hydrates empty.
 
 **A stopped or failed turn keeps its completed work.** rig saves a turn only
 when it succeeds, so the host appends the interrupted turn's delta to the
@@ -784,11 +788,14 @@ CLI flags override config.toml, which overrides built-in defaults.
 ### Prompt queue and cancel-on-empty-Enter
 
 - Submitting a prompt while a turn is busy queues it; the queued prompts run after the active turn completes.
+- Typing while a turn is busy edits the draft: characters, `Backspace`, `Delete`, and `Alt-Enter`/`Shift-Enter` newlines reach the input box, and `Enter` queues the prompt instead of dropping it. A bracketed paste while a turn is busy is still dropped.
 - Queued prompts render as one merged user-message block stacked directly above the input box: a tinted padding line above and below the text, a continuous `╎` gutter down every row with no separators between messages, and one blank row separating the block from the transcript. Text wraps at the transcript user-message width, so the stack's rail and text columns match the transcript user rows.
 - The queue drains as one submission, and that submitted block renders the same one-row-per-message rhythm as the stack — no blank line between the coalesced prompts.
 - Pressing Enter on empty input while a turn is busy and at least one prompt is queued cancels the active turn. The queued prompts then run through the normal drain path.
 - Pressing Enter on empty input while idle, or while busy with no queued prompts, does nothing.
 - Stopping a turn shows `Turn stopped` in the status bar until the next turn starts, and keeps the turn's completed work in the session.
+- `Esc` while a turn runs arms the cancel confirmation (`Esc again to cancel`); a second `Esc` cancels the turn. While a picker or an info panel is open, `Esc` closes it and does nothing else: the next bare `Esc` arms the confirmation. The arm lives exactly as long as its message — once the message expires, the next `Esc` arms again instead of cancelling.
+- If the turn finishes between the two presses, the next `Esc` shows `turn already finished — nothing to cancel` instead of silently toggling the input mode. The notice appears once and expires through its own TTL.
 
 ### Ctrl-C quit guard
 

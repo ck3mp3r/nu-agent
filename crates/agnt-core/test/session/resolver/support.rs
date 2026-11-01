@@ -4,11 +4,13 @@
 //! Sub-files pull them in with `use super::*;`.
 
 pub(super) use crate::protocol::contracts::UiMessageSnapshot;
+pub(super) use crate::session::resolver::StoredEntry;
 pub(super) use crate::session::tool_status::{ToolStatus, ToolStatusMap};
 pub(super) use crate::types::{
     AssistantContent, AssistantMessage, CallId, Message, Text, ToolCall, ToolFunction, ToolName,
     ToolResult, ToolResultContent, UserContent,
 };
+pub(super) use rig_memory::summary_author;
 pub(super) use serde_json::json;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -23,7 +25,7 @@ pub(super) fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiM
         .iter()
         .flat_map(|m| {
             super::resolver::hydrate_single_message(
-                m,
+                &StoredEntry::from(m.clone()),
                 &tool_success_map,
                 &tool_displays,
                 &call_statuses,
@@ -46,7 +48,26 @@ pub(super) fn hydrate_with_statuses(
     cwd: &std::path::Path,
     statuses: &ToolStatusMap,
 ) -> Vec<UiMessageSnapshot> {
-    super::resolver::hydrate_transcript_messages(messages, cwd, statuses)
+    let entries: Vec<StoredEntry> = messages.iter().cloned().map(StoredEntry::from).collect();
+    hydrate_entries_with_statuses(&entries, cwd, statuses)
+}
+
+/// Hydrate `entries` into transcript snapshots, as a session with no recorded
+/// statuses hydrates them: every row reads its stored verdict.
+pub(super) fn hydrate_entries(
+    entries: &[StoredEntry],
+    cwd: &std::path::Path,
+) -> Vec<UiMessageSnapshot> {
+    hydrate_entries_with_statuses(entries, cwd, &ToolStatusMap::new())
+}
+
+/// Hydrate `entries` with the structural statuses `statuses` carries.
+pub(super) fn hydrate_entries_with_statuses(
+    entries: &[StoredEntry],
+    cwd: &std::path::Path,
+    statuses: &ToolStatusMap,
+) -> Vec<UiMessageSnapshot> {
+    super::resolver::hydrate_transcript_messages(entries, cwd, statuses)
 }
 
 /// Build [assistant ToolCall, user ToolResult] messages for one call whose

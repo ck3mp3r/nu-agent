@@ -254,6 +254,8 @@ async fn run_inner(
 
     // Register a signal handler for ctrl-c cancellation
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+    // Third-party-forced erasure: EngineInterface::register_signal_handler takes a
+    // nu_protocol::Handler, a type alias for a boxed closure, so the box is required.
     let cancel_handler: Box<dyn Fn(SignalAction) + Send + Sync> = Box::new(move |action| {
         if matches!(action, SignalAction::Interrupt) {
             let _ = cancel_tx.send(true);

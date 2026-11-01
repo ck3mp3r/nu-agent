@@ -34,8 +34,12 @@ pub(crate) enum KeyLens {
     Event(Box<SystemEvent>),
     /// The panel lens resolves Ctrl-C to a quit.
     Quit,
-    /// Escape without the busy-mode escalation: the panel lens closes itself
-    /// and the key keeps the plain escape behavior.
+    /// Escape that closes an info panel: the panel lens has closed itself and
+    /// the reducer's escape coupling ends the press at the surface. An open
+    /// picker never reports this variant — its own `handle_key` closes it and
+    /// reports [`KeyLens::Consumed`], so a surface-close press cannot arm or
+    /// confirm the abort. A bare press reaches the coupling, which arms or
+    /// confirms the cancel, or exits the mode when the turn is idle.
     Escape,
     /// Not the lens's key: the reducer keymap handles it.
     Pass,
@@ -49,6 +53,10 @@ pub(crate) fn rewrite_action(state: &mut AppState, key: Key) -> KeyLens {
     }
 
     if state.picker.active().is_some() {
+        // Every picker's own Esc closes it and the press ends there: the press
+        // never reaches the reducer's escape coupling, so a surface-close press
+        // cannot arm or confirm the abort. The reducer repaints when the picker
+        // reports a change.
         match state.picker.handle_key(key) {
             PickerKeyOutcome::Consumed(changed) => return KeyLens::Consumed(changed),
             PickerKeyOutcome::Submit(submit) => return KeyLens::PickerSubmit(submit),

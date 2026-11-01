@@ -30,8 +30,14 @@ async fn switch_session_dispatches_async_load_without_panic()
     // Dispatch from within an async context — this is the exact scenario
     // that was panicking with "Cannot start a runtime from within a runtime"
     // when load_session used Handle::current().block_on(...)
-    let should_continue =
-        CommandRouter::dispatch(cmd, &mut runtime, &result_tx, None, &create_bus()).await;
+    let should_continue = CommandRouter::dispatch(
+        cmd,
+        &mut runtime,
+        &result_tx,
+        None::<NoAgentSwitchHook>,
+        &create_bus(),
+    )
+    .await;
 
     // 1. No panic occurred (reaching here proves it)
     assert!(should_continue, "SwitchSession should not trigger shutdown");
@@ -68,20 +74,9 @@ async fn switch_session_dispatches_async_load_without_panic()
 #[tokio::test]
 async fn on_agent_switch_callback_invoked_after_successful_switch()
 -> core::result::Result<(), Box<dyn std::error::Error>> {
-    let switched_name = Arc::new(std::sync::Mutex::new(None::<String>));
-    let switched_desc = Arc::new(std::sync::Mutex::new(None::<Option<String>>));
-    let switched_icon = Arc::new(std::sync::Mutex::new(None::<Option<String>>));
-    let cb_name = Arc::clone(&switched_name);
-    let cb_desc = Arc::clone(&switched_desc);
-    let cb_icon = Arc::clone(&switched_icon);
-
-    let callback: OnAgentSwitch = Arc::new(
-        move |name: String, description: Option<String>, icon: Option<String>| {
-            *cb_name.lock().expect("name lock") = Some(name);
-            *cb_desc.lock().expect("desc lock") = Some(description);
-            *cb_icon.lock().expect("icon lock") = Some(icon);
-        },
-    );
+    // -- Setup & Fixtures
+    let hook = RecordingAgentSwitchHook::default();
+    let hook_calls = Arc::clone(&hook.calls);
 
     let bus = create_bus();
     let runtime = AgentSwitchRuntime {
@@ -93,24 +88,26 @@ async fn on_agent_switch_callback_invoked_after_successful_switch()
     let spawner = ui.make_event_spawner();
 
     let config = InteractiveLoopConfig::new(Span::test_data())
-        .with_on_agent_switch(callback)
+        .with_on_agent_switch(hook)
         .with_bus(bus)
         .with_spawn_render_loop(spawner);
 
+    // -- Exec
     let (_runtime, result) = run_interactive_loop_impl(runtime, config).await;
+
+    // -- Check
     let value = result.map_err(|e| format!("interactive loop: {e:?}"))?;
     assert!(value.is_nothing());
 
-    // Verify the callback was invoked with the correct values
-    let name = switched_name.lock().expect("name lock").take();
-    let desc = switched_desc.lock().expect("desc lock").take();
-    let icon = switched_icon.lock().expect("icon lock").take();
-    assert_eq!(name.as_deref(), Some("research-agent"));
+    // Verify the hook was invoked with the correct values
+    let calls = hook_calls.lock().expect("hook calls lock");
+    assert_eq!(calls.len(), 1, "the hook must fire exactly once");
+    assert_eq!(calls[0].0, "research-agent");
     // The AgentSwitchRuntime doesn't implement agent_description(), so it
     // returns None (the default trait method).
-    assert_eq!(desc, Some(None));
+    assert_eq!(calls[0].1, None);
     // The AgentSwitchRuntime doesn't implement agent_icon(), so it
     // returns None (the default trait method).
-    assert_eq!(icon, Some(None));
+    assert_eq!(calls[0].2, None);
     Ok(())
 }

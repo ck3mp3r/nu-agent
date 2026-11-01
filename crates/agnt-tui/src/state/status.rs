@@ -27,7 +27,10 @@ pub enum StatusMessageKind {
     Notice,
 }
 
-const NEUTRAL_MESSAGE_TTL: Duration = Duration::from_secs(5);
+/// The lifetime of a neutral status message. An armed abort lives exactly as
+/// long as its affordance message, so [`AbortState`](crate::state::AbortState)
+/// defaults its window to this TTL.
+pub(crate) const NEUTRAL_MESSAGE_TTL: Duration = Duration::from_secs(5);
 const WARNING_MESSAGE_TTL: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Default)]

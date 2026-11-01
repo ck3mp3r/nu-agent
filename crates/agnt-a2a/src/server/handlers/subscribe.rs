@@ -1,5 +1,3 @@
-use std::pin::Pin;
-
 use axum::{extract::State, http::StatusCode, response::Sse};
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -18,7 +16,7 @@ use super::SseResult;
 pub async fn handle_tasks_subscribe(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<Sse<Pin<Box<dyn tokio_stream::Stream<Item = SseResult> + Send>>>, SseError> {
+) -> Result<Sse<ReceiverStream<SseResult>>, SseError> {
     let task = match state.task_store.get_task(&id) {
         Ok(t) => t,
         Err(_) => {
@@ -141,5 +139,5 @@ pub async fn handle_tasks_subscribe(
         log::warn!("SSE subscription handler exited for task {id}");
     });
 
-    Ok(Sse::new(Box::pin(ReceiverStream::new(sse_rx))))
+    Ok(Sse::new(ReceiverStream::new(sse_rx)))
 }

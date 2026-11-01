@@ -17,8 +17,8 @@ use crate::orchestrator::stages::{
 };
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{
-    DeferredPrompt, InteractiveLoopConfig, OrchestratorEvent, UiRequestResponse, UiStateEvent,
-    WorkerCommand, dispatch_compaction, handle_external_cancel, handle_worker_result,
+    AgentSwitchHook, DeferredPrompt, InteractiveLoopConfig, OrchestratorEvent, UiRequestResponse,
+    UiStateEvent, WorkerCommand, dispatch_compaction, handle_external_cancel, handle_worker_result,
     recv_or_pending, reject_busy_task, reject_superseded_task, submit_deferred_prompt,
 };
 use crate::protocol::events::SystemEvent;
@@ -34,9 +34,9 @@ use crate::protocol::{
 /// width.
 pub(crate) const WORKER_CMD_CAPACITY: usize = 256;
 
-pub(crate) async fn run_interactive_loop_impl<R, F>(
+pub(crate) async fn run_interactive_loop_impl<R, F, H>(
     mut runtime: R,
-    config: InteractiveLoopConfig<F>,
+    config: InteractiveLoopConfig<F, H>,
 ) -> (R, Result<Value, LabeledError>)
 where
     R: CoreRuntime
@@ -47,6 +47,7 @@ where
         + Send
         + 'static,
     F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static,
+    H: AgentSwitchHook + Clone + Send + 'static,
 {
     let InteractiveLoopConfig {
         span,
@@ -237,9 +238,9 @@ where
 /// Checks an external channel for pre-formatted prompt strings (e.g., injected
 /// A2A tasks) before each iteration. These prompts are dispatched with higher
 /// priority than regular user input.
-pub async fn run_interactive_loop_with_external_prompts<R, F>(
+pub async fn run_interactive_loop_with_external_prompts<R, F, H>(
     runtime: R,
-    config: InteractiveLoopConfig<F>,
+    config: InteractiveLoopConfig<F, H>,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -250,6 +251,7 @@ where
         + Send
         + 'static,
     F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static,
+    H: AgentSwitchHook + Clone + Send + 'static,
 {
     let (_runtime, result) = run_interactive_loop_impl(runtime, config).await;
     result
@@ -257,9 +259,9 @@ where
 
 /// Checks an external channel for pre-formatted prompt strings (e.g., injected
 /// A2A tasks) before each iteration.
-pub async fn run_hydrated_interactive_loop_with_external_prompts<R, F>(
+pub async fn run_hydrated_interactive_loop_with_external_prompts<R, F, H>(
     runtime: R,
-    config: InteractiveLoopConfig<F>,
+    config: InteractiveLoopConfig<F, H>,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -270,6 +272,7 @@ where
         + Send
         + 'static,
     F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static,
+    H: AgentSwitchHook + Clone + Send + 'static,
 {
     let (_runtime, result) = run_interactive_loop_impl(runtime, config).await;
     result

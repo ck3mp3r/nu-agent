@@ -43,9 +43,6 @@ impl FromStr for StoreType {
 /// Errors that can occur when opening a rig-memory session store.
 #[derive(Debug, thiserror::Error)]
 pub enum RigStoreError {
-    /// The session was saved by a store nu-agent kept before rig-memory.
-    #[error("this session was made by another version of nu-agent; start a new session")]
-    Legacy,
     /// An I/O error occurred.
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -69,8 +66,7 @@ pub enum RigStoreError {
 /// resolved, so no site re-joins the file name.
 ///
 /// The SQLite database is separate from the session store's `sessions.db`: the
-/// rig store refuses a database that holds the pre-rig-memory schema, so the
-/// two must not share a file.
+/// two hold different tables.
 pub fn create_rig_store_at(
     store_type: StoreType,
     store_path: &std::path::Path,

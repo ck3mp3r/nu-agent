@@ -718,9 +718,6 @@ impl RuntimeCoordinator {
                             }
                             self.mark_render_needed();
                             true
-                        } else if self.state.input_locked {
-                            self.mark_render_needed();
-                            true
                         } else {
                             self.textarea.input(ratatui_textarea::Input {
                                 key: ratatui_textarea::Key::Char(ch),
@@ -801,6 +798,12 @@ impl RuntimeCoordinator {
                 changed
             }
             TerminalKey::Esc => {
+                // A running turn reroutes the press to the reducer. The slash
+                // list closes there and the press ends at the surface: a
+                // surface-close press never arms the abort.
+                if self.state.phase != crate::state::UiPhase::Idle {
+                    return false;
+                }
                 self.state.check_inline_slash("");
                 self.mark_render_needed();
                 true
@@ -1012,12 +1015,12 @@ impl RuntimeCoordinator {
     }
 
     pub(crate) fn expire_status_message_if_due(&mut self, now: Instant) -> bool {
+        let abort_expired = self.state.sweep_expired_abort(now);
         if self.state.status.message.expired(now) {
             self.state.status.message.clear();
-            true
-        } else {
-            false
+            return true;
         }
+        abort_expired
     }
 
     pub(crate) fn has_pending_status_message(&self) -> bool {

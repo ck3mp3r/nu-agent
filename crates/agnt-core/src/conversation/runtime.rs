@@ -744,7 +744,7 @@ where
         };
 
         // Phase 3: update state and hydrate
-        let messages = rig_messages(&memory, &matched_id)?;
+        let entries = rig_messages(&memory, &matched_id)?;
         self.session.clear();
         self.final_session_id = Some(matched_id.clone());
         self.session.inner_memory().warn_repairs(&matched_id);
@@ -754,7 +754,7 @@ where
 
         let statuses = rig_tool_statuses(&memory, &matched_id);
         Ok(crate::session::resolver::hydrate_transcript_messages(
-            &messages, &self.cwd, &statuses,
+            &entries, &self.cwd, &statuses,
         ))
     }
 
@@ -801,7 +801,7 @@ where
 
     async fn attach_session(&mut self, session_id: &str) -> Result<Vec<UiMessageSnapshot>, String> {
         let memory = Arc::clone(self.session.memory());
-        let messages = if rig_holds(&memory, session_id)? {
+        let entries = if rig_holds(&memory, session_id)? {
             rig_messages(&memory, session_id)?
         } else {
             Vec::new()
@@ -820,7 +820,7 @@ where
 
         let statuses = rig_tool_statuses(&memory, session_id);
         Ok(crate::session::resolver::hydrate_transcript_messages(
-            &messages, &self.cwd, &statuses,
+            &entries, &self.cwd, &statuses,
         ))
     }
 }
@@ -832,20 +832,20 @@ fn rig_holds(memory: &crate::session::CachedMemory, session_id: &str) -> Result<
         .map_err(|e| format!("Failed to open session '{session_id}': {e}"))
 }
 
-/// The messages of `session_id`, read from the rig-memory store.
+/// The entries of `session_id`, read from the rig-memory store: each message
+/// with the author the store records for it.
 fn rig_messages(
     memory: &crate::session::CachedMemory,
     session_id: &str,
-) -> Result<Vec<crate::types::Message>, String> {
+) -> Result<Vec<crate::session::resolver::StoredEntry>, String> {
     let store = memory
         .rig_store(session_id)
         .map_err(|e| format!("Failed to open session '{session_id}': {e}"))?;
     let conversation = rig_memory::load(&*store, session_id)
         .map_err(|e| format!("Failed to load session '{session_id}': {e}"))?;
     Ok(conversation
-        .messages()
-        .iter()
-        .map(|message| (**message).clone())
+        .entries()
+        .map(crate::session::resolver::StoredEntry::from)
         .collect())
 }
 

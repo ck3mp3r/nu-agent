@@ -2,15 +2,14 @@
 //!
 //! A session directory holds `logs/` (one JSON-lines log per agent), `files/`
 //! (the session's named files, its blobs under `files/blobs/`), and the `name`
-//! file that holds the display name. Sessions saved by the JSONL store that
-//! nu-agent kept before rig-memory are refused, never migrated.
+//! file that holds the display name.
 
 // region:    --- Modules
 
 use std::io;
 use std::path::{Path, PathBuf};
 
-use rig_memory::{DirStore, Files, SessionError, check_name};
+use rig_memory::{DirStore, Files, check_name};
 
 use super::factory::RigStoreError;
 
@@ -23,10 +22,6 @@ pub const NAME_FILE: &str = "name";
 
 /// The folder of the sessions of one application directory.
 const SESSIONS: &str = "sessions";
-
-/// The extension of a session file of the JSONL store nu-agent kept before
-/// rig-memory.
-const LEGACY_EXTENSION: &str = "jsonl";
 
 // endregion: --- Constants
 
@@ -50,20 +45,15 @@ pub fn sessions_root(store_dir: &Path) -> PathBuf {
 ///
 /// # Errors
 ///
-/// [`RigStoreError::Legacy`] when the session was saved by the JSONL store
-/// nu-agent kept before rig-memory; it is left as it is.
+/// As rig-memory's `DirStore::open`: its own refusal of a directory it cannot
+/// read surfaces unchanged.
 pub fn open_session_store_at(
     sessions_dir: &Path,
     session_id: &str,
 ) -> Result<DirStore, RigStoreError> {
     check_name(session_id)?;
     let dir = sessions_dir.join(session_id);
-    refuse_legacy(&dir, session_id)?;
-    match DirStore::open(&dir) {
-        Ok(store) => Ok(store),
-        Err(SessionError::OldLayout) => Err(RigStoreError::Legacy),
-        Err(error) => Err(RigStoreError::Session(error)),
-    }
+    DirStore::open(&dir).map_err(RigStoreError::Session)
 }
 
 /// Writes the display name of the session into its store.
@@ -107,19 +97,3 @@ pub fn session_ids_at(sessions_dir: &Path) -> Result<Vec<String>, RigStoreError>
 }
 
 // endregion: --- Public Functions
-
-// region:    --- Support
-
-/// Refuses `dir` when the JSONL store nu-agent kept before rig-memory saved
-/// `session_id` beside it.
-fn refuse_legacy(dir: &Path, session_id: &str) -> Result<(), RigStoreError> {
-    let legacy = dir
-        .parent()
-        .map(|sessions| sessions.join(format!("{session_id}.{LEGACY_EXTENSION}")));
-    match legacy {
-        Some(legacy) if legacy.exists() => Err(RigStoreError::Legacy),
-        _ => Ok(()),
-    }
-}
-
-// endregion: --- Support

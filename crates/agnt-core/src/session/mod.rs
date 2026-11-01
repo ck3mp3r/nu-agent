@@ -24,6 +24,10 @@ mod factory_test;
 mod journal_test;
 
 #[cfg(test)]
+#[path = "../../test/session/memory_error.rs"]
+mod memory_error_test;
+
+#[cfg(test)]
 #[path = "../../test/session/repair.rs"]
 mod repair_test;
 

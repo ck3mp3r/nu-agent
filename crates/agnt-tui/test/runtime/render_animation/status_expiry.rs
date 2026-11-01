@@ -30,6 +30,50 @@ fn expire_status_message_if_due_contract() -> Result<()> {
     Ok(())
 }
 
+/// `expire_status_message_if_due` also drops an armed abort whose message
+/// lifetime is over: silently, with the turn back in its busy state, and with
+/// no new status text. An arm inside its window survives the sweep.
+#[test]
+fn expire_status_message_if_due_disarms_expired_abort() -> Result<()> {
+    // -- Setup & Fixtures: a busy turn armed by one bare Esc.
+    let mut expired = RuntimeCoordinator::new(80, 24, None);
+    expired.state.enqueue_prompt("w".to_string());
+    let _ = expired.state.activate_next_prompt();
+    assert!(expired.state.request_abort_confirmation());
+    expired
+        .state
+        .status
+        .message
+        .set_message(ESC_ABORT_CONFIRM_STATUS);
+    assert_eq!(expired.state.phase, UiPhase::AbortPending);
+
+    // -- Exec: the sweep lands a second past the five-second window.
+    let now = Instant::now() + Duration::from_secs(5);
+
+    // -- Check: armed gone, busy again, nothing new in the status bar.
+    assert!(expired.expire_status_message_if_due(now));
+    assert!(!expired.state.abort.pending);
+    assert!(expired.state.abort.armed_at.is_none());
+    assert_eq!(expired.state.phase, UiPhase::Busy);
+    assert!(expired.state.status.message.status_line().is_empty());
+    assert!(
+        !expired.state.abort.settle_notice,
+        "an expired arm owes no settled notice"
+    );
+
+    // -- Setup & Fixtures: a fresh arm.
+    let mut fresh = RuntimeCoordinator::new(80, 24, None);
+    fresh.state.enqueue_prompt("w".to_string());
+    let _ = fresh.state.activate_next_prompt();
+    assert!(fresh.state.request_abort_confirmation());
+
+    // -- Exec & Check: the sweep inside the window leaves it armed.
+    assert!(!fresh.expire_status_message_if_due(Instant::now()));
+    assert!(fresh.state.abort.pending);
+    assert_eq!(fresh.state.phase, UiPhase::AbortPending);
+    Ok(())
+}
+
 /// `has_pending_status_message` is false when fresh, true after a message is
 /// set, and false again once expiry clears it.
 #[test]

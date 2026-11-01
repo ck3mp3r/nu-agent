@@ -52,7 +52,10 @@ use crate::runtime::status::test::{init_repo_with_branch, run_git};
 use crate::runtime::test_driver::{DriveEvent, RenderLoopDriver};
 use crate::test_support::{entry_text, markdown_fixture, open_command_palette_for_test};
 use crate::{
-    interaction::input::{TerminalEvent, TerminalKey},
+    interaction::{
+        input::{TerminalEvent, TerminalKey},
+        reducer::ESC_ABORT_CONFIRM_STATUS,
+    },
     platform::safety::RestoreRunError,
     platform::terminal::{
         TerminalAction, TerminalBackend, TerminalLifecycle, TerminalLifecycleError,

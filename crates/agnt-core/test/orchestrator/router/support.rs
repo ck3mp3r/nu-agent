@@ -13,8 +13,8 @@ pub(super) use tokio::sync::mpsc;
 
 pub(super) use crate::bus::create_bus;
 pub(super) use crate::orchestrator::{
-    CommandRouter, InteractiveLoopConfig, OnAgentSwitch, OrchestratorEvent, UiRequest,
-    UiRequestResponse, WorkerCommand, run_interactive_loop_impl,
+    AgentSwitchHook, CommandRouter, InteractiveLoopConfig, NoAgentSwitchHook, OrchestratorEvent,
+    UiRequest, UiRequestResponse, WorkerCommand, run_interactive_loop_impl,
 };
 pub(super) use crate::protocol::{
     contracts::{CoreRuntime, McpUsabilityState, UiMessageSnapshot, UserInputUi},
@@ -23,6 +23,34 @@ pub(super) use crate::protocol::{
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
 };
+
+// ---------------------------------------------------------------------------
+// Recording agent-switch hook
+// ---------------------------------------------------------------------------
+
+/// One recorded agent-switch invocation: identity, description, icon.
+type AgentSwitchCall = (String, Option<String>, Option<String>);
+
+/// Records every agent-switch invocation so a test can assert the arguments.
+#[derive(Clone, Default)]
+pub(super) struct RecordingAgentSwitchHook {
+    pub(super) calls: Arc<Mutex<Vec<AgentSwitchCall>>>,
+}
+
+impl AgentSwitchHook for RecordingAgentSwitchHook {
+    fn on_agent_switch(
+        &self,
+        agent_identity: String,
+        agent_description: Option<String>,
+        agent_icon: Option<String>,
+    ) {
+        self.calls.lock().expect("hook calls lock").push((
+            agent_identity,
+            agent_description,
+            agent_icon,
+        ));
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Simple fake runtime with switch_agent support (idle worker)

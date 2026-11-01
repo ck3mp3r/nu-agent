@@ -60,9 +60,9 @@ impl AuditLogger {
     ///
     /// ```rust,no_run
     /// use std::path::PathBuf;
-    /// use agnt_core::tools::audit::{AuditLogger, AuditEntry, AuditResult};
+    /// use agnt_core::tools::audit::{AuditError, AuditLogger, AuditEntry, AuditResult};
     ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example() -> Result<(), AuditError> {
     /// // Step 1: Define log path
     /// let log_dir = PathBuf::from("/var/log/app");
     /// let log_path = log_dir.join("audit.log");

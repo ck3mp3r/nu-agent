@@ -386,7 +386,7 @@ impl ClientHandler for NamespacedClientHandler {
 #[derive(Debug, thiserror::Error)]
 pub enum McpClientError {
     #[error("Service error: {0}")]
-    ServiceError(#[source] Box<dyn Error + Send + Sync>),
+    ServiceError(#[source] Box<rmcp::service::ClientInitializeError>),
 
     #[error("Failed to list tools: {0}")]
     ListToolsError(#[source] rmcp::service::ServiceError),

@@ -15,7 +15,7 @@ use crate::protocol::contracts::UiMessageSnapshot;
 ///
 /// Groups common arguments that would otherwise be passed individually,
 /// keeping function signatures under clippy's `too_many_arguments` threshold.
-pub struct InteractiveLoopConfig<F = fn(mpsc::Sender<OrchestratorEvent>)> {
+pub struct InteractiveLoopConfig<F = fn(mpsc::Sender<OrchestratorEvent>), H = NoAgentSwitchHook> {
     /// The span to use for values created during the loop.
     pub span: Span,
     /// Pending permission requests awaiting user decisions.
@@ -33,16 +33,16 @@ pub struct InteractiveLoopConfig<F = fn(mpsc::Sender<OrchestratorEvent>)> {
     pub bus: Bus,
     /// Optional hydration config for resuming a prior session.
     pub hydration: Option<HydrationConfig>,
-    /// Optional callback invoked after a successful agent switch.
-    /// Receives the new agent's identity (name) and optional description.
-    /// Used by the binary layer to update the A2A agent card.
-    pub on_agent_switch: Option<OnAgentSwitch>,
+    /// Optional hook invoked after a successful agent switch.
+    /// Receives the new agent's identity (name), optional description, and
+    /// optional icon. Used by the binary layer to update the A2A agent card.
+    pub on_agent_switch: Option<H>,
     /// Optional closure that spawns the TUI render loop.
     /// Receives the orchestrator event sender.
     pub spawn_render_loop: Option<F>,
 }
 
-impl InteractiveLoopConfig<fn(mpsc::Sender<OrchestratorEvent>)> {
+impl InteractiveLoopConfig<fn(mpsc::Sender<OrchestratorEvent>), NoAgentSwitchHook> {
     /// Create a new config with the given span and all other fields set to `None`.
     pub fn new(span: Span) -> Self {
         Self {
@@ -60,7 +60,7 @@ impl InteractiveLoopConfig<fn(mpsc::Sender<OrchestratorEvent>)> {
     }
 }
 
-impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static> InteractiveLoopConfig<F> {
+impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static, H> InteractiveLoopConfig<F, H> {
     /// Set the interactive pending permissions.
     pub fn with_interactive_pending(mut self, pending: Option<PendingPermissions>) -> Self {
         self.interactive_pending = pending;
@@ -113,21 +113,46 @@ impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static> InteractiveLoo
         self
     }
 
-    /// Set the on-agent-switch callback.
+    /// Set the on-agent-switch hook.
     ///
-    /// The callback receives the new agent's identity (name) and optional
-    /// description after a successful switch. Used by the binary layer to
+    /// The hook receives the new agent's identity (name), optional description,
+    /// and optional icon after a successful switch. Used by the binary layer to
     /// update the A2A agent card.
-    pub fn with_on_agent_switch(mut self, callback: OnAgentSwitch) -> Self {
-        self.on_agent_switch = Some(callback);
-        self
+    pub fn with_on_agent_switch<H2: AgentSwitchHook>(
+        self,
+        hook: H2,
+    ) -> InteractiveLoopConfig<F, H2> {
+        let InteractiveLoopConfig {
+            span,
+            interactive_pending,
+            task_cancel_rx,
+            a2a_task_rx,
+            a2a_completion_rx,
+            task_store,
+            bus,
+            hydration,
+            on_agent_switch: _,
+            spawn_render_loop,
+        } = self;
+        InteractiveLoopConfig {
+            span,
+            interactive_pending,
+            task_cancel_rx,
+            a2a_task_rx,
+            a2a_completion_rx,
+            task_store,
+            bus,
+            hydration,
+            on_agent_switch: Some(hook),
+            spawn_render_loop,
+        }
     }
 
     /// Set the render-loop spawner closure.
     pub fn with_spawn_render_loop<F2: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static>(
         self,
         f: F2,
-    ) -> InteractiveLoopConfig<F2> {
+    ) -> InteractiveLoopConfig<F2, H> {
         let InteractiveLoopConfig {
             span,
             interactive_pending,
@@ -163,6 +188,34 @@ pub struct HydrationConfig {
     pub last_total_tokens: Option<u64>,
 }
 
-/// Callback invoked after a successful agent switch.
-/// Receives the new agent's identity (name), optional description, and optional icon.
-pub type OnAgentSwitch = Arc<dyn Fn(String, Option<String>, Option<String>) + Send + Sync>;
+/// Hook invoked after a successful agent switch.
+///
+/// Receives the new agent's identity (name), optional description, and optional
+/// icon. Implementors are statically dispatched through
+/// [`InteractiveLoopConfig`].
+pub trait AgentSwitchHook: Send + Sync + 'static {
+    /// Called after a switch succeeded, with the switched-to agent's details.
+    fn on_agent_switch(
+        &self,
+        agent_identity: String,
+        agent_description: Option<String>,
+        agent_icon: Option<String>,
+    );
+}
+
+/// The default hook: does nothing.
+///
+/// Used as the type-parameter default so construction sites that never set a
+/// hook keep compiling unchanged.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoAgentSwitchHook;
+
+impl AgentSwitchHook for NoAgentSwitchHook {
+    fn on_agent_switch(
+        &self,
+        _agent_identity: String,
+        _agent_description: Option<String>,
+        _agent_icon: Option<String>,
+    ) {
+    }
+}

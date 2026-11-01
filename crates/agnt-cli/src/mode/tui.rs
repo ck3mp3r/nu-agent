@@ -1,14 +1,17 @@
 //! Interactive TUI execution mode for the `agent` CLI.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use agnt_a2a::{Peer, mdns_name_for_switch, rebuild_card_for_switch, skill_from_persona};
+use agnt_a2a::{
+    AgentCard, Peer, PeerCache, PeerDiscoveryImpl, mdns_name_for_switch, rebuild_card_for_switch,
+    skill_from_persona,
+};
 use agnt_core::bus::OneshotTx;
 use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::orchestrator::{
-    InteractiveLoopConfig, OnAgentSwitch, run_hydrated_interactive_loop_with_external_prompts,
+    AgentSwitchHook, InteractiveLoopConfig, run_hydrated_interactive_loop_with_external_prompts,
     run_interactive_loop_with_external_prompts, run_single_turn,
 };
 use agnt_core::protocol::event::PermissionDecision;
@@ -35,6 +38,59 @@ use super::{
     AgentLifecycle, TuiHydrationInput, TuiModeOptions, apply_turn_event_to_store,
     run_with_agent_lifecycle, spawn_configured_hooks_with_nu,
 };
+
+// region:    --- Types
+
+/// Keeps the A2A agent card, the peer-cache self entry, and the mDNS
+/// registration in sync after an agent switch.
+#[derive(Clone)]
+struct TuiAgentSwitchHook {
+    card_handle: Option<Arc<RwLock<AgentCard>>>,
+    cache: Option<Arc<PeerCache>>,
+    self_port: Option<u16>,
+    discovery: Option<Arc<Mutex<PeerDiscoveryImpl>>>,
+    mesh_key: Option<String>,
+}
+
+impl AgentSwitchHook for TuiAgentSwitchHook {
+    fn on_agent_switch(&self, name: String, description: Option<String>, _icon: Option<String>) {
+        let Some(card_handle) = self.card_handle.as_ref() else {
+            // No A2A card to update; nothing further to do here.
+            return;
+        };
+        let mut card = card_handle.write().expect("agent_card lock");
+        let old_name = card.name.clone();
+        let skill = skill_from_persona(&name, description.as_deref());
+        let new_card = rebuild_card_for_switch(&card, &name, description.as_deref(), vec![skill]);
+        *card = new_card.clone();
+        // Update the peer cache self-entry so agent_list reflects the new name.
+        if let (Some(cache), Some(port)) = (self.cache.as_ref(), self.self_port) {
+            cache.remove(&old_name);
+            cache.add_or_update(Peer {
+                name: name.clone(),
+                url: card.url.clone(),
+                host: "127.0.0.1".to_string(),
+                port,
+                card: Some(card.clone()),
+                discovered_at: std::time::Instant::now(),
+            });
+        }
+        // Re-register mDNS with the new name so other agents discover the change.
+        if let (Some(discovery), Some(mesh_key)) = (self.discovery.as_ref(), self.mesh_key.as_ref())
+        {
+            let mut d = discovery.lock().expect("discovery lock");
+            let old_fullname = d.fullname().map(|s| s.to_string());
+            if let Some(old_fullname) = &old_fullname
+                && let Some(port) = self.self_port
+            {
+                let new_mdns_name = mdns_name_for_switch(&old_name, &name, port);
+                d.rename(old_fullname, &new_mdns_name, port, &card, mesh_key);
+            }
+        }
+    }
+}
+
+// endregion: --- Types
 
 /// Run the interactive TUI, or a single turn when `prompt` is `Some`.
 ///
@@ -217,51 +273,16 @@ async fn run_tui_mode_inner(
         });
     }
 
-    // Build the on_agent_switch callback for A2A card updates.
+    // Build the on_agent_switch hook for A2A card updates.
     // Always built (regardless of A2A status) so the persona icon can be
     // updated on agent switch even when A2A is disabled.
-    let card_handle = options.a2a.card_handle;
-    let cache = options.a2a.cache.clone();
-    let self_port = options.a2a.self_port;
-    let discovery = options.a2a.discovery.clone();
-    let mesh_key = options.a2a.mesh_key.clone();
-    let on_agent_switch: Option<OnAgentSwitch> = Some(Arc::new(
-        move |name: String, description: Option<String>, _icon: Option<String>| {
-            let Some(card_handle) = card_handle.as_ref() else {
-                // No A2A card to update; nothing further to do here.
-                return;
-            };
-            let mut card = card_handle.write().expect("agent_card lock");
-            let old_name = card.name.clone();
-            let skill = skill_from_persona(&name, description.as_deref());
-            let new_card =
-                rebuild_card_for_switch(&card, &name, description.as_deref(), vec![skill]);
-            *card = new_card.clone();
-            // Update the peer cache self-entry so agent_list reflects the new name.
-            if let (Some(cache), Some(port)) = (cache.clone(), self_port) {
-                cache.remove(&old_name);
-                cache.add_or_update(Peer {
-                    name: name.clone(),
-                    url: card.url.clone(),
-                    host: "127.0.0.1".to_string(),
-                    port,
-                    card: Some(card.clone()),
-                    discovered_at: std::time::Instant::now(),
-                });
-            }
-            // Re-register mDNS with the new name so other agents discover the change.
-            if let (Some(discovery), Some(mesh_key)) = (discovery.as_ref(), mesh_key.as_ref()) {
-                let mut d = discovery.lock().expect("discovery lock");
-                let old_fullname = d.fullname().map(|s| s.to_string());
-                if let Some(old_fullname) = &old_fullname
-                    && let Some(port) = self_port
-                {
-                    let new_mdns_name = mdns_name_for_switch(&old_name, &name, port);
-                    d.rename(old_fullname, &new_mdns_name, port, &card, mesh_key);
-                }
-            }
-        },
-    ) as OnAgentSwitch);
+    let on_agent_switch = TuiAgentSwitchHook {
+        card_handle: options.a2a.card_handle,
+        cache: options.a2a.cache.clone(),
+        self_port: options.a2a.self_port,
+        discovery: options.a2a.discovery.clone(),
+        mesh_key: options.a2a.mesh_key.clone(),
+    };
 
     // Start the user hook runner before the loop so the first prompt's events
     // are observed. Zero hooks spawns nothing.
@@ -296,7 +317,7 @@ async fn run_tui_mode_inner(
             hydration.initial_messages.clone(),
             hydration.last_total_tokens,
         );
-        let mut config = InteractiveLoopConfig::new(Span::unknown())
+        let config = InteractiveLoopConfig::new(Span::unknown())
             .with_bus(runtime_impl.bus.clone())
             .with_hydration(hydration.initial_messages, hydration.last_total_tokens)
             .with_interactive_pending(Some(Arc::clone(&pending)))
@@ -304,25 +325,21 @@ async fn run_tui_mode_inner(
             .with_a2a_task_rx(a2a_task_rx)
             .with_a2a_completion_rx(a2a_completion_rx)
             .with_task_store(a2a_task_store.clone())
-            .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()));
-        if let Some(cb) = on_agent_switch {
-            config = config.with_on_agent_switch(cb);
-        }
+            .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()))
+            .with_on_agent_switch(on_agent_switch);
         run_hydrated_interactive_loop_with_external_prompts(runtime_impl, config)
             .await
             .map_err(Error::from)
     } else {
-        let mut config = InteractiveLoopConfig::new(Span::unknown())
+        let config = InteractiveLoopConfig::new(Span::unknown())
             .with_bus(runtime_impl.bus.clone())
             .with_interactive_pending(Some(Arc::clone(&pending)))
             .with_task_cancel_rx(task_cancel_rx)
             .with_a2a_task_rx(a2a_task_rx)
             .with_a2a_completion_rx(a2a_completion_rx)
             .with_task_store(a2a_task_store.clone())
-            .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()));
-        if let Some(cb) = on_agent_switch {
-            config = config.with_on_agent_switch(cb);
-        }
+            .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()))
+            .with_on_agent_switch(on_agent_switch);
         run_interactive_loop_with_external_prompts(runtime_impl, config)
             .await
             .map_err(Error::from)

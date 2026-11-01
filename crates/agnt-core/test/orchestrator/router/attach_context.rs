@@ -89,7 +89,7 @@ async fn attach_a2a_context_derives_prefixed_session_key()
         },
         &mut runtime,
         &result_tx,
-        None,
+        None::<NoAgentSwitchHook>,
         &bus,
     )
     .await;
@@ -139,7 +139,7 @@ async fn attach_a2a_context_clears_transcript_when_snapshots_empty()
         },
         &mut runtime,
         &result_tx,
-        None,
+        None::<NoAgentSwitchHook>,
         &bus,
     )
     .await;
@@ -214,7 +214,7 @@ async fn attach_a2a_context_hydrates_transcript_when_snapshots_present()
         },
         &mut runtime,
         &result_tx,
-        None,
+        None::<NoAgentSwitchHook>,
         &bus,
     )
     .await;
@@ -289,7 +289,7 @@ async fn attach_a2a_context_same_session_skips_clear_and_hydrate()
         },
         &mut runtime,
         &result_tx,
-        None,
+        None::<NoAgentSwitchHook>,
         &bus,
     )
     .await;

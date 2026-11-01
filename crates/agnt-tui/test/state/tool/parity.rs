@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::runtime::RuntimeCoordinator;
-use agnt_core::session::resolver::hydrate_transcript_messages;
+use agnt_core::session::resolver::{StoredEntry, hydrate_transcript_messages};
 use agnt_core::session::tool_status::{ToolStatus, ToolStatusMap};
 use agnt_core::tools::handler::builtin_tool::call_line_render_for;
 use agnt_core::tools::handler::tool_display_from_arguments;
@@ -171,20 +171,20 @@ fn rehydrated_entries(
     let tool_name = ToolName::new(tool).map_err(|_| "should be a non-empty tool name")?;
     let call = CallId::from_wire("call_parity");
     let rows = vec![
-        Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
-            ToolCall::new(
+        StoredEntry::from(Message::Assistant(AssistantMessage::new(vec![
+            AssistantContent::ToolCall(ToolCall::new(
                 call.clone(),
                 ToolFunction::parse(tool_name.clone(), arguments),
-            ),
-        )])),
-        Message::User {
+            )),
+        ]))),
+        StoredEntry::from(Message::User {
             content: vec![UserContent::ToolResult(ToolResult {
                 call: call.clone(),
                 name: tool_name,
                 content: vec![ToolResultContent::Text(Text::new(row_text))],
                 is_error: !matches!(status, ToolStatus::Success),
             })],
-        },
+        }),
     ];
     let mut statuses = ToolStatusMap::new();
     statuses.insert(call, status);

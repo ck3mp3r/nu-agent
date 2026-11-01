@@ -81,3 +81,50 @@ async fn cancel_paths() -> Result<()> {
     assert_eq!(none.state().phase, UiPhase::Busy);
     Ok(())
 }
+
+/// A surface above a running turn ends its own Esc: the inline slash list
+/// closes and nothing else changes. The next bare Esc arms, and the one after
+/// that confirms.
+#[tokio::test]
+async fn busy_escape_closes_inline_slash_only() -> Result<()> {
+    // -- Setup & Fixtures: a running turn with the inline slash list open.
+    let mut driver = RenderLoopDriver::new(120, 30);
+    driver
+        .advance(&[key(TerminalKey::Char('x')), key(TerminalKey::Enter)])
+        .await?;
+    assert_eq!(driver.state().phase, UiPhase::Busy);
+    driver.advance(&[key(TerminalKey::Char('/'))]).await?;
+    assert_eq!(
+        driver.state().picker.render_kind(),
+        Some(PickerRenderKind::InlineSlash)
+    );
+
+    // -- Exec: one Esc.
+    driver.advance(&[key(TerminalKey::Esc)]).await?;
+
+    // -- Check: the list closed and the press ended at the surface.
+    assert_eq!(driver.state().picker.render_kind(), None);
+    assert_eq!(driver.state().phase, UiPhase::Busy);
+    assert!(!driver.state().abort.pending);
+    assert!(driver.state().status.message.status_line().is_empty());
+    assert!(!driver.coordinator().take_cancel_requested());
+
+    // -- Exec: the second Esc is bare and arms the abort.
+    driver.advance(&[key(TerminalKey::Esc)]).await?;
+
+    // -- Check
+    assert_eq!(driver.state().phase, UiPhase::AbortPending);
+    assert_eq!(
+        driver.state().status.message.status_line(),
+        ESC_ABORT_CONFIRM_STATUS
+    );
+    assert!(!driver.coordinator().take_cancel_requested());
+
+    // -- Exec: the third Esc confirms the armed abort.
+    driver.advance(&[key(TerminalKey::Esc)]).await?;
+
+    // -- Check
+    assert!(driver.coordinator().take_cancel_requested());
+    assert!(driver.state().status.message.status_line().is_empty());
+    Ok(())
+}

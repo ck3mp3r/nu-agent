@@ -11,18 +11,18 @@ mod blobs;
 #[path = "rig_sqlite_store/files.rs"]
 mod files;
 
-#[path = "rig_sqlite_store/legacy.rs"]
-mod legacy;
-
 #[path = "rig_sqlite_store/logs.rs"]
 mod logs;
 
 #[path = "rig_sqlite_store/seam.rs"]
 mod seam;
 
+#[path = "rig_sqlite_store/sessions.rs"]
+mod sessions;
+
 // endregion: --- Modules
 
-use super::{RigSqliteStore, RigStoreError, StoreType, create_rig_store_in};
+use super::{RigSqliteStore, StoreType, create_rig_store_in};
 use crate::types::Message;
 use rig::completion::message::{DocumentSourceKind, ImageMediaType, UserContent};
 use rig_memory::{Files, LogWriteError, Store, load_images, store_images};

@@ -1,5 +1,5 @@
 use crate::orchestrator::{
-    OnAgentSwitch, UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome,
+    AgentSwitchHook, UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome,
 };
 use crate::protocol::events::SystemEvent;
 use crate::protocol::{
@@ -25,17 +25,18 @@ impl CommandRouter {
     /// Returns `true` if the worker loop should continue, `false` if it should
     /// shut down (i.e. `WorkerCommand::Shutdown`).
     ///
-    /// `on_agent_switch` is an optional callback invoked after a successful
-    /// agent switch, receiving the new agent's identity and description.
-    pub async fn dispatch<R>(
+    /// `on_agent_switch` is an optional hook invoked after a successful
+    /// agent switch, receiving the new agent's identity, description, and icon.
+    pub async fn dispatch<R, H>(
         cmd: WorkerCommand,
         runtime: &mut R,
         result_tx: &mpsc::Sender<TurnOutcome>,
-        on_agent_switch: Option<OnAgentSwitch>,
+        on_agent_switch: Option<H>,
         bus: &crate::bus::Bus,
     ) -> bool
     where
         R: CoreRuntime + McpManagement + ModelSwitching + SessionState + SessionPersistence + Send,
+        H: AgentSwitchHook,
     {
         match cmd {
             WorkerCommand::ExecuteTurn {
@@ -165,13 +166,14 @@ impl CommandRouter {
 
     /// Dispatch a single [`UiRequest`] to the runtime and send the response
     /// through the provided channel.
-    pub async fn dispatch_ui_request<R>(
+    pub async fn dispatch_ui_request<R, H>(
         request: UiRequest,
         runtime: &mut R,
-        on_agent_switch: &Option<OnAgentSwitch>,
+        on_agent_switch: &Option<H>,
         response_tx: mpsc::Sender<UiRequestResponse>,
     ) where
         R: CoreRuntime + McpManagement + ModelSwitching + SessionState + SessionPersistence + Send,
+        H: AgentSwitchHook,
     {
         match request {
             UiRequest::SwitchModel { spec } => {
@@ -190,7 +192,7 @@ impl CommandRouter {
                     let icon = runtime.agent_icon().map(|s| s.to_string());
                     if let Some(cb) = on_agent_switch {
                         let description = runtime.agent_description().map(|s| s.to_string());
-                        cb(agent_identity.clone(), description, icon.clone());
+                        cb.on_agent_switch(agent_identity.clone(), description, icon.clone());
                     }
                     (agent_identity, model_identity, max_tokens, icon)
                 });

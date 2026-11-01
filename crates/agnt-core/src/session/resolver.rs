@@ -2,6 +2,8 @@ use nu_protocol::LabeledError;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use rig::conversation::{Author, EntryRef};
+
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::protocol::event::ToolDisplay;
 use crate::session::tool_status::{ToolStatus, ToolStatusMap, read_statuses};
@@ -33,6 +35,20 @@ pub struct SessionResolution {
     pub should_hydrate_transcript: bool,
     pub initial_messages: Vec<UiMessageSnapshot>,
     pub last_total_tokens: Option<u64>,
+}
+
+/// One persisted conversation entry as hydration reads it: the message, and
+/// who wrote it when the store records an author.
+///
+/// The author is what tells a compaction summary apart from the user's own
+/// text: rig-memory splices its summary in as a user message by
+/// [`rig_memory::summary_author`].
+#[derive(Debug, Clone)]
+pub struct StoredEntry {
+    /// The persisted message.
+    pub message: Message,
+    /// Who wrote it, when the store records an author.
+    pub author: Option<Author>,
 }
 
 pub trait SessionResolver {
@@ -127,12 +143,27 @@ fn hydrate_transcript(
 ) -> Result<Vec<UiMessageSnapshot>, LabeledError> {
     let conversation = rig_memory::load(&**store, session_id)
         .map_err(|e| LabeledError::new(format!("Failed to load session '{session_id}': {e}")))?;
-    let messages: Vec<Message> = conversation
-        .entries()
-        .map(|entry| entry.message.clone())
-        .collect();
+    let entries: Vec<StoredEntry> = conversation.entries().map(StoredEntry::from).collect();
     let statuses = read_statuses(&**store);
-    Ok(hydrate_transcript_messages(&messages, cwd, &statuses))
+    Ok(hydrate_transcript_messages(&entries, cwd, &statuses))
+}
+
+impl From<Message> for StoredEntry {
+    fn from(message: Message) -> Self {
+        Self {
+            message,
+            author: None,
+        }
+    }
+}
+
+impl From<EntryRef<'_>> for StoredEntry {
+    fn from(entry: EntryRef<'_>) -> Self {
+        Self {
+            message: entry.message.clone(),
+            author: entry.author.cloned(),
+        }
+    }
 }
 
 pub fn generate_session_id() -> String {
@@ -156,13 +187,16 @@ pub fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> Ses
     }
 }
 
-/// Converts rig messages into UiMessageSnapshots for TUI transcript hydration.
+/// Converts rig store entries into UiMessageSnapshots for TUI transcript
+/// hydration.
 ///
-/// Each message is delegated to `hydrate_single_message`. Compaction summaries
-/// live in the rig-memory log, not in the session store.
+/// Each entry is delegated to `hydrate_single_message`. A compaction summary
+/// hydrates as a `"compaction"` snapshot carrying its raw text, so the replayed
+/// log renders the same block the live compaction emits.
 ///
 /// # Arguments
-/// * `messages` - The conversation's messages, as rig reads them
+/// * `entries` - The conversation's entries, as rig reads them: message plus
+///   the author the store recorded
 /// * `cwd` - Working directory the session was executed in; used to
 ///   reconstruct tool previews that depend on the filesystem root
 /// * `statuses` - The structural status of every call the session's store
@@ -171,7 +205,7 @@ pub fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> Ses
 /// # Returns
 /// Iterator of UiMessageSnapshot ready for transcript hydration
 pub fn hydrate_transcript_messages(
-    messages: &[Message],
+    entries: &[StoredEntry],
     cwd: &Path,
     statuses: &ToolStatusMap,
 ) -> Vec<UiMessageSnapshot> {
@@ -181,8 +215,8 @@ pub fn hydrate_transcript_messages(
     let mut tool_names: HashMap<CallId, String> = HashMap::new();
     let mut tool_arguments: HashMap<CallId, String> = HashMap::new();
     let mut tool_success_map: HashMap<CallId, bool> = HashMap::new();
-    for message in messages {
-        match message {
+    for entry in entries {
+        match &entry.message {
             Message::Assistant(assistant) => {
                 let content = &assistant.content;
                 for item in content.iter() {
@@ -215,8 +249,8 @@ pub fn hydrate_transcript_messages(
     //          would have run, the same preview the live permission gate shows.
     let mut tool_displays: HashMap<CallId, ToolDisplay> = HashMap::new();
     let mut call_statuses: ToolStatusMap = HashMap::new();
-    for message in messages {
-        let Message::User { content } = message else {
+    for entry in entries {
+        let Message::User { content } = &entry.message else {
             continue;
         };
         for item in content.iter() {
@@ -271,37 +305,43 @@ pub fn hydrate_transcript_messages(
         }
     }
     // Pass 2: generate snapshots with tool display reconstruction
-    messages
+    entries
         .iter()
-        .flat_map(|message| {
-            hydrate_single_message(message, &tool_success_map, &tool_displays, &call_statuses)
+        .flat_map(|entry| {
+            hydrate_single_message(entry, &tool_success_map, &tool_displays, &call_statuses)
         })
         .collect()
 }
 
-/// Converts a single rig Message into UiMessageSnapshots.
+/// Converts a single rig store entry into UiMessageSnapshots.
 ///
 /// This function maps rig message types to transcript display items:
-/// - `Message::User { content }` with `UserContent::Text` → user transcript item
+/// - `Message::User { content }` with `UserContent::Text` → user transcript item,
+///   or a compaction item when the entry is a compaction summary
 /// - `Message::User { content }` with `UserContent::ToolResult` → skipped (not shown in TUI)
 /// - `Message::Assistant(AssistantMessage { content, .. })` with `AssistantContent::Text` → assistant text
 /// - `Message::Assistant(AssistantMessage { content, .. })` with `AssistantContent::ToolCall` → tool call display,
 ///   followed by the call's own `tool_display` snapshot when its result yielded one
 /// - `Message::System { content }` → system/compaction summary display
 pub(crate) fn hydrate_single_message(
-    msg: &Message,
+    entry: &StoredEntry,
     tool_success_map: &HashMap<CallId, bool>,
     tool_displays: &HashMap<CallId, ToolDisplay>,
     call_statuses: &ToolStatusMap,
 ) -> Vec<UiMessageSnapshot> {
     let mut snapshots = Vec::new();
 
-    match msg {
+    match &entry.message {
         Message::User { content } => {
             for item in content.iter() {
                 // ToolResult, Image, etc. — skip
                 if let UserContent::Text(text) = item {
-                    snapshots.push(UiMessageSnapshot::new("user", text.text.clone()));
+                    match compaction_summary(&text.text, entry.author.as_ref()) {
+                        Some(summary) => {
+                            snapshots.push(UiMessageSnapshot::new("compaction", summary))
+                        }
+                        None => snapshots.push(UiMessageSnapshot::new("user", text.text.clone())),
+                    }
                 }
             }
         }
@@ -357,3 +397,45 @@ pub(crate) fn hydrate_single_message(
 
     snapshots
 }
+
+// region:    --- Support
+
+/// The headline rig-memory puts above the summary it splices in.
+const SUMMARY_HEADLINE: &str =
+    "The conversation before this point was compacted into this summary:";
+
+/// The raw summary `text` carries, when the entry is a compaction summary.
+///
+/// The entry author is the primary signal. A store that lost the author (an
+/// older entry, written before it was recorded) is still recognised by the
+/// wrapper shape rig-memory writes. Any other text is the user's own and
+/// yields `None`.
+fn compaction_summary(text: &str, author: Option<&Author>) -> Option<String> {
+    let wrapped = summary_body(text);
+    if author == Some(&rig_memory::summary_author()) {
+        return Some(wrapped.unwrap_or_else(|| text.to_string()));
+    }
+    wrapped
+}
+
+/// The summary rig-memory's wrapper holds: the text between its `<summary>
+/// line and the first `</summary>` line. The tracked sections that follow the
+/// closing tag are the model's context, not the summary, so they are dropped.
+///
+/// `None` when `text` is not the wrapper: the headline must be the first line,
+/// and the closing tag must follow the opening one.
+fn summary_body(text: &str) -> Option<String> {
+    let mut lines = text.split('\n');
+    if lines.next() != Some(SUMMARY_HEADLINE) {
+        return None;
+    }
+    let rest: Vec<&str> = lines.collect();
+    let open = rest.iter().position(|line| *line == "<summary>")?;
+    let close = rest.iter().position(|line| *line == "</summary>")?;
+    if open >= close {
+        return None;
+    }
+    Some(rest[open + 1..close].join("\n"))
+}
+
+// endregion: --- Support

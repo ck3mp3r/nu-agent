@@ -34,7 +34,7 @@ impl AppState {
     pub fn accept_submit(&mut self) {
         self.phase = UiPhase::Busy;
         self.active_cycle = self.active_prompt_id.is_some() || !self.pending_prompt_ids.is_empty();
-        self.abort.pending = false;
+        self.reset_abort();
         self.ensure_invariants();
     }
 
@@ -52,7 +52,7 @@ impl AppState {
 
     pub fn enqueue_immediate_submission(&mut self, submitted_text: String) {
         self.pending_immediate_submissions.push_back(submitted_text);
-        self.abort.pending = false;
+        self.reset_abort();
         self.ensure_invariants();
     }
 
@@ -86,7 +86,7 @@ impl AppState {
 
         self.phase = UiPhase::Busy;
         self.active_cycle = true;
-        self.abort.pending = false;
+        self.reset_abort();
         self.ensure_invariants();
         Some(active_id)
     }
@@ -124,7 +124,7 @@ impl AppState {
 
         self.phase = UiPhase::Busy;
         self.active_cycle = true;
-        self.abort.pending = false;
+        self.reset_abort();
         self.ensure_invariants();
         Some(combined)
     }
@@ -138,10 +138,16 @@ impl AppState {
         )
         .complete_active_prompt();
 
+        // The settle that lands between the arming press and the confirming one:
+        // the arm is dropped without a cancel, so the next idle Esc owes the
+        // user the settled notice.
+        if self.phase == UiPhase::AbortPending && self.abort.pending {
+            self.abort.settle_notice = true;
+        }
         self.phase = UiPhase::Idle;
         self.input_locked = false;
         self.active_cycle = false;
-        self.abort.pending = false;
+        self.disarm_abort();
         self.ensure_invariants();
     }
 
@@ -155,9 +161,32 @@ impl AppState {
         }
 
         self.abort.pending = true;
+        self.abort.armed_at = Some(Instant::now());
         self.abort.confirmation_marker = self.abort.confirmation_marker.saturating_add(1);
+        self.abort.settle_notice = false;
         self.phase = UiPhase::AbortPending;
         self.ensure_invariants();
+        true
+    }
+
+    /// Drop an arm whose message lifetime is over: silently, with the turn back
+    /// in its busy state when a cycle still runs, otherwise idle. The settle
+    /// notice is not owed — an expired arm was never lost to a settle.
+    ///
+    /// Returns whether the arm was dropped.
+    pub fn sweep_expired_abort(&mut self, now: Instant) -> bool {
+        let Some(armed_at) = self.abort.armed_at else {
+            return false;
+        };
+        if now.saturating_duration_since(armed_at) < self.abort.arm_window {
+            return false;
+        }
+        self.disarm_abort();
+        self.phase = if self.active_cycle {
+            UiPhase::Busy
+        } else {
+            UiPhase::Idle
+        };
         true
     }
 
@@ -188,7 +217,7 @@ impl AppState {
         self.phase = UiPhase::Idle;
         self.input_locked = false;
         self.active_cycle = false;
-        self.abort.pending = false;
+        self.reset_abort();
         self.ensure_invariants();
         result
     }
@@ -254,13 +283,15 @@ impl AppState {
     }
 
     pub fn ensure_invariants(&mut self) {
+        let armed = self.phase == UiPhase::AbortPending && self.abort.pending;
+
         if self.phase == UiPhase::AbortPending && !self.active_cycle {
             self.phase = UiPhase::Idle;
-            self.abort.pending = false;
+            self.disarm_abort();
         }
 
         if self.phase != UiPhase::AbortPending {
-            self.abort.pending = false;
+            self.disarm_abort();
         }
 
         self.active_cycle = self.active_prompt_id.is_some() || !self.pending_prompt_ids.is_empty();
@@ -271,7 +302,13 @@ impl AppState {
 
         if self.phase == UiPhase::AbortPending && !self.active_cycle {
             self.phase = UiPhase::Idle;
-            self.abort.pending = false;
+            self.disarm_abort();
+        }
+
+        // Both disarm blocks above drop the arm when the cycle settles. The
+        // transition, not the call, is what owes the user the settled notice.
+        if armed && !(self.phase == UiPhase::AbortPending && self.abort.pending) {
+            self.abort.settle_notice = true;
         }
 
         self.picker.clamp_selections();
@@ -287,5 +324,18 @@ impl AppState {
             &mut self.next_prompt_id,
         )
         .enforce_single_active_invariant();
+    }
+
+    /// Drop any abort arm and any settled notice owed for it. A new turn's
+    /// start, a submission, and a confirmed cancel all reset the press state.
+    fn reset_abort(&mut self) {
+        self.disarm_abort();
+        self.abort.settle_notice = false;
+    }
+
+    /// Drop the arm and its deadline, leaving the settled notice alone.
+    pub(crate) fn disarm_abort(&mut self) {
+        self.abort.pending = false;
+        self.abort.armed_at = None;
     }
 }

@@ -130,7 +130,7 @@ pub struct ProcessCmdRunner {
 /// literal.
 pub fn resolve_cmd_refs(
     value: &mut toml::Value,
-    runner: &dyn CmdRunner,
+    runner: &(impl CmdRunner + ?Sized),
 ) -> Result<(), CmdRefError> {
     walk(value, "", runner)
 }
@@ -211,7 +211,7 @@ impl CmdRunner for ProcessCmdRunner {
 fn walk(
     value: &mut toml::Value,
     key_path: &str,
-    runner: &dyn CmdRunner,
+    runner: &(impl CmdRunner + ?Sized),
 ) -> Result<(), CmdRefError> {
     match value {
         toml::Value::String(text) => {
@@ -247,7 +247,7 @@ fn join_key(key_path: &str, key: &str) -> String {
 fn resolve_value(
     text: &str,
     key_path: &str,
-    runner: &dyn CmdRunner,
+    runner: &(impl CmdRunner + ?Sized),
 ) -> Result<Option<String>, CmdRefError> {
     let Some(reference) = text.strip_prefix(CMD_PREFIX) else {
         return Ok(None);

@@ -435,3 +435,41 @@ fn completion_finalize_table() {
 
     assert_reducer_invariants(&state);
 }
+
+/// WHEN Enter arrives while the input is locked and a dispatched draft waits,
+/// THE reducer SHALL enqueue that text as one pending prompt and clear the
+/// dispatched residue, so typing during a turn is not lost.
+#[test]
+fn test_interaction_reducer_locked_enter_enqueues_pending_prompt() -> Result<()> {
+    // -- Setup & Fixtures: a running turn with a dispatched submit text.
+    let mut state = busy_state_with_clean_transcript();
+    state.input.pending_submit_text = Some("typed while busy".to_string());
+    assert!(state.input_locked);
+    assert!(pending_prompt_ids(&state).is_empty());
+
+    // -- Exec
+    let changed = reduce(
+        &mut state,
+        SystemEvent::KeyPressed { key: Key::Enter },
+        None,
+    );
+
+    // -- Check: one queued prompt, no residue.
+    assert!(changed, "a locked submit queues the dispatched draft");
+    assert_eq!(pending_prompt_ids(&state).len(), 1);
+    assert_eq!(state.input.pending_submit_text, None);
+    assert_eq!(
+        state.prompt_items().last().map(|p| p.prompt_text.as_str()),
+        Some("typed while busy")
+    );
+    assert_reducer_invariants(&state);
+
+    // -- Exec: the running turn settles and the queue drains.
+    state.complete_active_prompt();
+    let drained = state.take_next_prompt_for_execution();
+
+    // -- Check: the typed text survives the settle.
+    assert_eq!(drained.as_deref(), Some("typed while busy"));
+    assert!(pending_prompt_ids(&state).is_empty());
+    Ok(())
+}

@@ -12,7 +12,11 @@ use agnt_core::protocol::slash::{SlashParseResult, extract_session_id, parse_sla
 use agnt_core::transcript::entry::{NoticeEntry, TranscriptEntry};
 use agnt_core::transcript::ir::NoticeKind;
 
+use std::time::Instant;
+
 pub(crate) const ESC_ABORT_CONFIRM_STATUS: &str = "Esc again to cancel";
+
+pub(crate) const ESC_SETTLED_STATUS: &str = "turn already finished — nothing to cancel";
 
 pub(crate) const PERMISSION_TIMEOUT_STATUS: &str = "permission request timed out — denied";
 
@@ -173,8 +177,10 @@ fn reduce_key(
     key: Key,
     cancel_controller: Option<&CancelController>,
 ) -> bool {
-    // The input lock drops editing keys while a turn runs. The card's own keys
-    // stay reachable, so a decision can be taken while the input is locked.
+    // The input lock drops the editing keys the coordinator owns while a turn
+    // runs. Enter is not one of them: a prompt typed during the turn must queue
+    // instead of vanishing. The card's own keys stay reachable, so a decision
+    // can be taken while the input is locked.
     let locked = state.input_locked && !state.permission.has_prompt();
     if locked && edits_input(key) {
         return false;
@@ -186,20 +192,8 @@ fn reduce_key(
         KeyLens::PickerSubmit(submit) => handle_picker_submit(state, submit),
         KeyLens::Event(event) => reduce_key_event(state, *event, cancel_controller),
         KeyLens::Quit => handle_quit(state, cancel_controller),
-        KeyLens::Escape => handle_escape(state),
-        KeyLens::Pass => {
-            // Busy-mode Esc escalation: AbortPending escalates Esc to the
-            // cancel confirmation. It couples the orchestrator phase/abort
-            // state with the reducer, so it sits above the keymap and below
-            // the lens (an open panel or picker keeps its own Esc).
-            if state.phase != UiPhase::Idle
-                && key == Key::Esc
-                && state.input.mode != InputMode::Insert
-            {
-                return reduce_busy_escape(state, cancel_controller);
-            }
-            reduce_keymap(state, key, cancel_controller)
-        }
+        KeyLens::Escape => handle_escape(state, cancel_controller),
+        KeyLens::Pass => reduce_keymap(state, key, cancel_controller),
     }
 }
 
@@ -221,12 +215,13 @@ fn reduce_permission_decided(state: &mut AppState, decision: PermissionDecision)
     true
 }
 
-/// The keys the input lock drops: everything that would edit the draft or
-/// submit it. Every other key stays live (navigation, pickers, quit).
+/// The keys the input lock drops: every key that edits the draft without
+/// queueing it. Enter is absent on purpose — it submits, so a prompt typed
+/// during a turn reaches the queue.
 fn edits_input(key: Key) -> bool {
     matches!(
         key,
-        Key::Char(_) | Key::Enter | Key::AltEnter | Key::ShiftEnter | Key::Backspace | Key::Delete
+        Key::Char(_) | Key::AltEnter | Key::ShiftEnter | Key::Backspace | Key::Delete
     )
 }
 
@@ -252,7 +247,7 @@ fn reduce_insert_key(
     cancel_controller: Option<&CancelController>,
 ) -> bool {
     match key {
-        Key::Esc => reduce_insert_escape(state, idle),
+        Key::Esc => reduce_insert_escape(state, idle, cancel_controller),
         Key::Char('j') | Key::Char('k') => reduce_insert_chord(state, key, idle),
         other => {
             state.input.clear_insert_exit_pending_j();
@@ -262,16 +257,20 @@ fn reduce_insert_key(
     }
 }
 
-fn reduce_insert_escape(state: &mut AppState, idle: bool) -> bool {
+fn reduce_insert_escape(
+    state: &mut AppState,
+    idle: bool,
+    cancel_controller: Option<&CancelController>,
+) -> bool {
     state.input.clear_insert_exit_pending_j();
     state.input.clear_normal_pending_key();
     if idle {
-        return handle_escape(state);
+        return handle_escape(state, cancel_controller);
     }
-    // Busy: Esc drops to normal mode first, then the abort-confirmation
+    // Busy: Esc drops to normal mode first — itself a repaint — then the escape
     // coupling arms the cancel confirmation.
     state.enter_normal_mode();
-    let _ = handle_escape(state);
+    let _ = handle_escape(state, cancel_controller);
     true
 }
 
@@ -312,7 +311,7 @@ fn reduce_normal_key(
     match key {
         Key::Esc => {
             state.input.clear_normal_pending_key();
-            handle_escape(state)
+            handle_escape(state, cancel_controller)
         }
         Key::Char('i') => {
             state.input.clear_normal_pending_key();
@@ -438,7 +437,7 @@ fn reduce_visual_key(
         }
         Key::Esc => {
             state.input.clear_normal_pending_key();
-            handle_escape(state)
+            handle_escape(state, cancel_controller)
         }
         Key::PageUp | Key::CtrlU => {
             state.input.clear_normal_pending_key();
@@ -487,7 +486,7 @@ fn reduce_common_key(
         }
         Key::CtrlC => handle_quit(state, cancel_controller),
         Key::CtrlP => handle_toggle_command_palette(state),
-        Key::Esc => handle_escape(state),
+        Key::Esc => handle_escape(state, cancel_controller),
         Key::PageUp | Key::CtrlU => state
             .scroll
             .reduce_scroll_action(ScrollAction::PageUp { select }),
@@ -498,16 +497,6 @@ fn reduce_common_key(
         // they are no-ops. History and query cycling are coordinator-side too.
         _ => false,
     }
-}
-
-/// The busy-mode Esc escalation: AbortPending confirms, everything else arms.
-fn reduce_busy_escape(state: &mut AppState, cancel_controller: Option<&CancelController>) -> bool {
-    state.input.clear_normal_pending_key();
-    state.input.clear_insert_exit_pending_j();
-    if state.phase == UiPhase::AbortPending && state.abort.pending {
-        return handle_escape_confirm(state, cancel_controller);
-    }
-    handle_escape(state)
 }
 
 /// A wheel notch goes through the same modal gates as a key: an open info
@@ -746,20 +735,44 @@ fn handle_quit(state: &mut AppState, cancel_controller: Option<&CancelController
     true
 }
 
-fn handle_escape(state: &mut AppState) -> bool {
+/// The escape coupling: one press does one thing by phase.
+///
+/// A press that closes an open surface ends at the surface: it never arms,
+/// never confirms, and never touches the mode, the status bar, or the settle
+/// notice. A bare press on a running turn arms the abort, and a bare press
+/// inside the arm's message lifetime executes it. A bare press that finds an
+/// expired arm drops it silently and re-arms — the message reappears and no
+/// cancel fires out of nowhere. Idle keeps the plain behavior: a settled abort
+/// reports the notice that its lost press is owed, otherwise the mode exits.
+fn handle_escape(state: &mut AppState, cancel_controller: Option<&CancelController>) -> bool {
     if state.info_panel.is_some() {
         state.close_info_panel();
         return true;
     }
 
-    if state.phase == UiPhase::Idle && state.input.mode == InputMode::Insert {
-        state.enter_normal_mode();
-        return true;
+    if state.phase == UiPhase::Idle {
+        if state.abort.settle_notice {
+            state.abort.settle_notice = false;
+            state.status.message.set_message(ESC_SETTLED_STATUS);
+            return true;
+        }
+        if state.input.mode == InputMode::Insert {
+            state.enter_normal_mode();
+            return true;
+        }
+        if state.input.mode == InputMode::Visual {
+            state.scroll.selection = None;
+            state.enter_normal_mode();
+            return true;
+        }
+        return false;
     }
-    if state.phase == UiPhase::Idle && state.input.mode == InputMode::Visual {
-        state.scroll.selection = None;
-        state.enter_normal_mode();
-        return true;
+
+    if state.phase == UiPhase::AbortPending && state.abort.pending {
+        if state.abort.arm_live() {
+            return handle_escape_confirm(state, cancel_controller);
+        }
+        let _ = state.sweep_expired_abort(Instant::now());
     }
     if state.request_abort_confirmation() {
         state.status.message.set_message(ESC_ABORT_CONFIRM_STATUS);
@@ -772,7 +785,11 @@ fn handle_escape_confirm(
     state: &mut AppState,
     cancel_controller: Option<&CancelController>,
 ) -> bool {
-    if state.phase == UiPhase::AbortPending && state.abort.pending && state.is_active_cycle() {
+    if state.phase == UiPhase::AbortPending
+        && state.abort.pending
+        && state.is_active_cycle()
+        && state.abort.arm_live()
+    {
         if let Some(controller) = cancel_controller {
             controller.request_cancel();
         }

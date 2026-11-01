@@ -1,8 +1,7 @@
 //! Unit tests for the rig-memory store seam.
 
 use super::{
-    RigStoreConfig, RigStoreError, StoreType, create_rig_store_at, create_rig_store_in,
-    session_dir, sessions_root,
+    RigStoreConfig, StoreType, create_rig_store_at, create_rig_store_in, session_dir, sessions_root,
 };
 use crate::config::Paths;
 use crate::test_support::env_map;
@@ -36,32 +35,6 @@ fn seam_jsonl_uses_the_session_directory() -> Result<()> {
         "the log is in the session directory"
     );
     assert_eq!(store.read_log("agent")?, b"one");
-    Ok(())
-}
-
-/// The seam refuses a session the JSONL store nu-agent kept before rig-memory
-/// saved.
-#[test]
-fn seam_refuses_legacy_jsonl_session() -> Result<()> {
-    // -- Setup & Fixtures
-    let temp = TempDir::new()?;
-    let sessions = crate::utils::paths::app_dir(temp.path()).join("sessions");
-    std::fs::create_dir_all(&sessions)?;
-    std::fs::write(sessions.join("session-legacy.jsonl"), b"{}\n")?;
-
-    // -- Exec
-    let refused = create_rig_store_in(StoreType::Jsonl, temp.path(), "session-legacy");
-
-    // -- Check
-    let error = refused.err().ok_or("a legacy session is refused")?;
-    assert!(
-        matches!(&error, RigStoreError::Legacy),
-        "the error names the legacy layout: {error}"
-    );
-    assert!(
-        error.to_string().contains("start a new session"),
-        "the error says what to do: {error}"
-    );
     Ok(())
 }
 
