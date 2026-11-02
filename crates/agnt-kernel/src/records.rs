@@ -12,6 +12,8 @@
 pub enum SessionRecord {
     Inference(InferenceRecord),
     Tool(ToolRecord),
+    Permission(PermissionRecord),
+    Notice(NoticeRecord),
     Turn(TurnRecord),
 }
 
@@ -135,6 +137,13 @@ impl ToolCallId {
         Self(format!("{name}\n{arguments}"))
     }
 
+    /// Adopt a canonical key a producer already holds (the permission gate
+    /// carries the call key, not its parts). Prefer [`ToolCall::new`] whenever
+    /// the parts are at hand; this constructor exists only for that boundary.
+    pub fn from_key(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+
     /// The key as text.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -165,6 +174,103 @@ pub struct ToolOutcome {
     pub result: String,
     /// The handler's or gate's own message (a denial reason, a failure detail).
     pub message: Option<String>,
+}
+
+/// Identity of one permission request. Assigned by the producing gate; opaque
+/// to the kernel and to consumers alike.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestId(String);
+
+impl RequestId {
+    /// The request id the gate assigned.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// The id as text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The authorization pipeline. A prompted call narrates `Requested` and then
+/// exactly one resolution (`Decided`, `TimedOut`, `Ignored`, or `Cancelled`); a
+/// call a policy resolved without prompting narrates `AutoResolved` and no
+/// `Requested`. Authorization records are the never-evicted class of the
+/// stream: losing one would strand a pause point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermissionRecord {
+    /// A permission card was opened for `call_id`.
+    Requested {
+        request_id: RequestId,
+        call_id: ToolCallId,
+        /// The tool's display identity as the gate spells it (a decorated name —
+        /// matching on call identity uses `call_id`, never this).
+        tool: String,
+        source: String,
+        /// The rule that matched, as data.
+        rule_identity: String,
+        scope: String,
+        pattern: String,
+        target_field: Option<String>,
+        mode: Option<String>,
+        /// The question the card asks, as content text.
+        summary: String,
+    },
+    /// A decision was submitted for the request.
+    Decided {
+        request_id: RequestId,
+        decision: PermissionDecision,
+        rule_identity: String,
+    },
+    /// The request expired without a decision (`ask` means deny on timeout).
+    TimedOut { request_id: RequestId },
+    /// A submitted decision was discarded.
+    Ignored {
+        request_id: RequestId,
+        reason: String,
+    },
+    /// The request was abandoned because the turn was cancelled.
+    Cancelled {
+        request_id: RequestId,
+        rule_identity: String,
+    },
+    /// The policy resolved the call without prompting.
+    AutoResolved {
+        rule_identity: String,
+        action: AutoResolution,
+        reason: Option<String>,
+    },
+}
+
+/// What a user (or surface) answered to a permission card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionDecision {
+    AllowOnce,
+    AllowAlways,
+    Deny,
+}
+
+/// The action a policy resolved a call to without prompting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoResolution {
+    Allow,
+    Deny,
+}
+
+/// A user-facing notice: enumerated kind plus content text. The kind decides
+/// how it is treated; the text is content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoticeRecord {
+    pub kind: NoticeKind,
+    pub text: String,
+}
+
+/// What kind of notice this is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeKind {
+    Warning,
+    TurnError,
 }
 
 // endregion: --- Types

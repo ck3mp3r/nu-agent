@@ -10,8 +10,9 @@ pub mod bus;
 pub mod records;
 
 pub use records::{
-    InferenceRecord, SessionRecord, StopCause, ToolCall, ToolCallId, ToolOutcome, ToolRecord,
-    ToolStatus, TurnRecord, Usage,
+    AutoResolution, InferenceRecord, NoticeKind, NoticeRecord, PermissionDecision,
+    PermissionRecord, RequestId, SessionRecord, StopCause, ToolCall, ToolCallId, ToolOutcome,
+    ToolRecord, ToolStatus, TurnRecord, Usage,
 };
 
 // endregion: --- Modules
@@ -27,7 +28,15 @@ pub(crate) mod test_support;
 mod bus_test;
 
 #[cfg(test)]
-#[path = "../test/records.rs"]
-mod records_test;
+#[path = "../test/records/inference.rs"]
+mod records_inference_test;
+
+#[cfg(test)]
+#[path = "../test/records/tool.rs"]
+mod records_tool_test;
+
+#[cfg(test)]
+#[path = "../test/records/permission.rs"]
+mod records_permission_test;
 
 // endregion: --- Tests
