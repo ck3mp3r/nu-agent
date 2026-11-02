@@ -15,7 +15,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use agnt_kernel::{InferenceRecord, SessionRecord, StopCause, Usage as StreamUsage};
+use agnt_kernel::{
+    InferenceRecord, SessionRecord, StopCause, ToolCall as StreamToolCall,
+    ToolOutcome as StreamToolOutcome, ToolRecord, Usage as StreamUsage,
+};
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
     HookContext, InvalidToolCallAction, InvalidToolCallContext, ModelSelection,
@@ -650,6 +653,13 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 call_line.clone(),
             );
             let _ = bus.ui_event().send(SystemEvent::ToolStarted { call }).await;
+            // The record stream opens the pair with the same call as data:
+            // identity, name, source, arguments — never the rendered line.
+            let _ = bus
+                .stream()
+                .publish(SessionRecord::Tool(ToolRecord::Started {
+                    call: StreamToolCall::new(tool_name.clone(), source.clone(), args.clone()),
+                }));
 
             let decision = permission
                 .resolve(&tool_name, &args, tool_call_id, &bus)
@@ -781,6 +791,22 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 }
 
                 // 5. Emit ToolCompleted (success was computed structurally above)
+                // The pair closes on the record stream first: the disposition is
+                // the enum the settle site built, and the result text is content.
+                let _ = bus
+                    .stream()
+                    .publish(SessionRecord::Tool(ToolRecord::Completed {
+                        call: StreamToolCall::new(
+                            tool_name.to_string(),
+                            source.to_string(),
+                            args.to_string(),
+                        ),
+                        outcome: StreamToolOutcome {
+                            status,
+                            result: result_text.clone(),
+                            message: None,
+                        },
+                    }));
                 let call_line = self.render_registry.render(tool_name, args);
                 let call =
                     ToolCall::new(ir::ToolName(tool_name.to_string()), source, args, call_line);
