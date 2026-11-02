@@ -21,6 +21,7 @@ pub(super) fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiM
     let tool_success_map = std::collections::HashMap::new();
     let tool_displays = std::collections::HashMap::new();
     let call_statuses = ToolStatusMap::new();
+    let turns = std::collections::HashMap::new();
     messages
         .iter()
         .flat_map(|m| {
@@ -29,6 +30,7 @@ pub(super) fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiM
                 &tool_success_map,
                 &tool_displays,
                 &call_statuses,
+                &turns,
             )
         })
         .collect()
@@ -67,7 +69,7 @@ pub(super) fn hydrate_entries_with_statuses(
     cwd: &std::path::Path,
     statuses: &ToolStatusMap,
 ) -> Vec<UiMessageSnapshot> {
-    super::resolver::hydrate_transcript_messages(entries, cwd, statuses)
+    super::resolver::hydrate_transcript_messages(entries, cwd, statuses, &[])
 }
 
 /// Build [assistant ToolCall, user ToolResult] messages for one call whose

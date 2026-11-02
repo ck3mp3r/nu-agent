@@ -7,6 +7,8 @@
 //!
 //! Recovery never fails the turn: every failure is a `log::warn!` and a return.
 
+use std::sync::Arc;
+
 use crate::conversation::managers::SessionManager;
 use crate::hook::turn_tools::TurnToolRecord;
 use crate::protocol::events::{SystemEvent, SystemKind};
@@ -83,7 +85,7 @@ where
             return;
         };
 
-        let store = match self.memory_state.rig_store(session_id) {
+        let store = match self.memory_state.rig_store(session_id).await {
             Ok(store) => store,
             Err(error) => {
                 log::warn!("Failed to open the session store for recovery: {error}");
@@ -91,8 +93,18 @@ where
             }
         };
 
-        let mut conversation = match rig_memory::load(&*store, session_id) {
-            Ok(conversation) => conversation,
+        let loaded = crate::session::blocking::on_pool({
+            let store = Arc::clone(&store);
+            let session_id = session_id.to_owned();
+            move || rig_memory::load(&*store, &session_id)
+        })
+        .await;
+        let mut conversation = match loaded {
+            Ok(Ok(conversation)) => conversation,
+            Ok(Err(error)) => {
+                log::warn!("Failed to load the session for recovery: {error}");
+                return;
+            }
             Err(error) => {
                 log::warn!("Failed to load the session for recovery: {error}");
                 return;
@@ -164,43 +176,84 @@ where
             }
         }
 
+        // The keys the log already held: the delta's keys are what recovery adds.
+        let loaded_keys = crate::session::settle::entry_keys(conversation.entries());
         conversation.extend(delta);
 
-        if let Err(error) = rig_memory::save(&*store, session_id, &mut conversation) {
-            log::warn!("Failed to save the interrupted turn: {error}");
-        }
+        let saved = crate::session::blocking::on_pool({
+            let store = Arc::clone(&store);
+            let session_id = session_id.to_owned();
+            let mut conversation = conversation;
+            move || {
+                let saved = rig_memory::save(&*store, &session_id, &mut conversation);
+                // The post-save read-back names the entries the recovery persisted.
+                let keys = if saved.is_ok() {
+                    rig_memory::load(&*store, &session_id)
+                        .map(|saved| crate::session::settle::entry_keys(saved.entries()))
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                (saved, keys)
+            }
+        })
+        .await;
+        let keys = match saved {
+            Ok((Ok(()), keys)) => keys,
+            Ok((Err(error), _)) => {
+                log::warn!("Failed to save the interrupted turn: {error}");
+                Vec::new()
+            }
+            Err(error) => {
+                log::warn!("Failed to save the interrupted turn: {error}");
+                Vec::new()
+            }
+        };
 
-        self.persist_tool_statuses(Some(session_id), recovery.tool_records);
+        self.persist_tool_facts(session_id, &keys, &loaded_keys, recovery.tool_records)
+            .await;
     }
 
-    /// Write the structural status of every call `records` carries.
+    /// Record the facts of the turn `persist_turn_delta` just closed.
     ///
-    /// The store holds the status verbatim: a settled call its variant, a call
-    /// the turn stopped before it settled the `NotRun` variant. A turn writes
-    /// this whether it completed or stopped, so every row the transcript
-    /// rehydrates reads its status from the store instead of deriving it from
-    /// the result text.
-    pub(crate) fn persist_tool_statuses(
+    /// The closed turn is a settled turn like any other: its row, the keys of
+    /// the entries recovery persisted and the status every call settled with
+    /// land in one transaction. The submission instant is the persisted
+    /// prompt's own made-time; nothing here is derived from order or invented.
+    pub(crate) async fn persist_tool_facts(
         &self,
-        session_id: Option<&str>,
+        session_id: &str,
+        saved: &[agnt_storage::MessageKey],
+        loaded: &[agnt_storage::MessageKey],
         records: &[TurnToolRecord],
     ) {
-        let Some(session_id) = session_id else {
-            return;
-        };
         if records.is_empty() {
             return;
         }
-        let store = match self.memory_state.rig_store(session_id) {
-            Ok(store) => store,
+        let facts = match self.memory_state.inner_memory().facts().await {
+            Ok(facts) => facts,
             Err(error) => {
-                log::warn!("Failed to open the session store for the tool statuses: {error}");
+                log::warn!("Failed to open the session's fact tables: {error}");
                 return;
             }
         };
-        let statuses = crate::hook::turn_tools::status_records(records);
-        if let Err(error) = crate::session::tool_status::write_statuses(&*store, &statuses) {
-            log::warn!("Failed to save the turn's tool statuses: {error}");
+        // Both sides of the difference are known here: the log as recovery
+        // loaded it, and the log as the read-back found it.
+        let keys = crate::session::settle::new_keys(saved, Some(loaded));
+        let submitted_millis = keys
+            .as_deref()
+            .and_then(|keys| keys.first())
+            .map_or_else(crate::session::settle::now_millis, |key| key.made);
+        let input = crate::session::settle::SettleInput {
+            session_id,
+            model: &format!("{}/{}", self.config.provider, self.config.model),
+            agent: &self.agent,
+            submitted_millis,
+            keys,
+            records,
+        };
+        if let Err(error) = facts.settle(input).await {
+            log::warn!("Failed to record the interrupted turn's facts: {error}");
         }
     }
 }

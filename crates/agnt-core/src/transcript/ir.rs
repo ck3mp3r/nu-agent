@@ -9,7 +9,6 @@ pub enum MessageRole {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeKind {
-    Compaction,
     System,
 }
 

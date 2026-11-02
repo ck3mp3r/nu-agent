@@ -3,7 +3,7 @@ use crate::catalog::{
 };
 use agnt_core::protocol::event::ToolDisplayStats;
 use agnt_core::transcript::entry::{
-    BannerEntry, MessageEntry, NoticeEntry, ToolEntry, ToolKind, TranscriptEntry,
+    BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
 use agnt_core::transcript::ir::{ContentLine, DiffTint, MessageRole, NoticeKind, StyleHint};
 use agnt_core::transcript::renderer::ItemStatus;
@@ -21,7 +21,7 @@ fn test_catalog_lane_kind_of_entry_classifies_every_family() -> Result<()> {
         (message_entry(MessageRole::User), LaneKind::User),
         (message_entry(MessageRole::Assistant), LaneKind::Assistant),
         (tool_entry(), LaneKind::Tool),
-        (notice_entry(NoticeKind::Compaction), LaneKind::Compaction),
+        (task_entry(), LaneKind::Compaction),
         (notice_entry(NoticeKind::System), LaneKind::System),
         (banner_entry(), LaneKind::Banner),
     ];
@@ -268,6 +268,9 @@ fn message_entry(role: MessageRole) -> TranscriptEntry {
     TranscriptEntry::Message(MessageEntry {
         role,
         markdown: "hi".to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     })
 }
 
@@ -284,6 +287,14 @@ fn tool_entry() -> TranscriptEntry {
         ),
         preview: None,
         result: None,
+        status: ItemStatus::Done,
+    })
+}
+
+fn task_entry() -> TranscriptEntry {
+    TranscriptEntry::Task(TaskEntry {
+        name: "Compaction".to_string(),
+        summary: "auto".to_string(),
         status: ItemStatus::Done,
     })
 }

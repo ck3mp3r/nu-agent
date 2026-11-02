@@ -110,6 +110,7 @@ fn build_hook<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
             last_total_tokens: Arc::new(Mutex::new(None)),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
+            store_latch: Default::default(),
         },
     )
 }

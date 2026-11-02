@@ -108,6 +108,9 @@ fn golden_log_prompt_submit_streaming_and_turn_completion() -> Result<()> {
     let log = vec![
         SystemEvent::PromptSubmitted {
             text: "say hi".to_string(),
+            stamp_millis: None,
+            stamp_model: None,
+            stamp_agent: None,
         },
         SystemEvent::InferenceStarted,
         inference_chunk("hi", "hi"),
@@ -430,6 +433,9 @@ fn golden_key_busy_escape_arms_abort_confirmation() -> Result<()> {
         &mut state,
         SystemEvent::PromptSubmitted {
             text: "say hi".to_string(),
+            stamp_millis: None,
+            stamp_model: None,
+            stamp_agent: None,
         },
         None,
     );

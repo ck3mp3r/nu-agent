@@ -63,26 +63,26 @@ fn test_renderer_lane_styling_system_notice_paints_the_notice_color() -> Result<
     Ok(())
 }
 
-/// WHEN a compaction notice renders, THE text SHALL paint the muted color.
+/// WHEN a compaction task line renders, THE name SHALL paint the muted color.
 #[test]
-fn test_renderer_lane_styling_compaction_notice_paints_the_muted_color() -> Result<()> {
+fn test_renderer_lane_styling_compaction_task_paints_the_muted_color() -> Result<()> {
     // -- Setup & Fixtures
     let theme = test_theme();
-    let entry = notice_entry(NoticeKind::Compaction, "compaction notice text");
+    let entry = task_entry("auto", ItemStatus::Done);
 
     // -- Exec
     let (backend, _) = render_at(&entry, 0)?;
 
-    // -- Check
+    // -- Check: the name cell (after the marker and the indicator) is muted.
     assert_eq!(
-        cell_fg(&backend, 4, 0),
+        cell_fg(&backend, 6, 0),
         Some(terminal(theme.muted)),
-        "a compaction notice paints the muted color"
+        "a task line paints the muted color"
     );
     assert_ne!(
-        cell_fg(&backend, 4, 0),
+        cell_fg(&backend, 6, 0),
         Some(terminal(theme.notice)),
-        "a compaction notice must not paint the notice color"
+        "a task line must not paint the notice color"
     );
     Ok(())
 }
@@ -151,7 +151,7 @@ fn test_renderer_lane_styling_markers_paint_their_lane_accent() -> Result<()> {
     let cases = [
         (bare_tool(ItemStatus::Done), 2u16, theme.accent),
         (message_entry(MessageRole::User, "hi"), 0, theme.user_accent),
-        (notice_entry(NoticeKind::Compaction, "c"), 2, theme.muted),
+        (task_entry("auto", ItemStatus::Done), 2u16, theme.muted),
         (notice_entry(NoticeKind::System, "s"), 2, theme.notice),
     ];
 

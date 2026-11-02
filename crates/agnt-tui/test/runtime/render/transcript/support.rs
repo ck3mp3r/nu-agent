@@ -27,6 +27,9 @@ pub(super) fn user_entry(text: &str) -> TranscriptEntry {
     TranscriptEntry::Message(MessageEntry {
         role: MessageRole::User,
         markdown: text.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     })
 }
 
@@ -35,6 +38,9 @@ pub(super) fn assistant_entry(text: &str) -> TranscriptEntry {
     TranscriptEntry::Message(MessageEntry {
         role: MessageRole::Assistant,
         markdown: text.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     })
 }
 

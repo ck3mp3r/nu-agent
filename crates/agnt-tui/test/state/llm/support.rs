@@ -20,6 +20,9 @@ pub(super) fn busy_state_with_clean_transcript() -> AppState {
         &mut state,
         SystemEvent::PromptSubmitted {
             text: "run".to_string(),
+            stamp_millis: None,
+            stamp_model: None,
+            stamp_agent: None,
         },
         None,
     );

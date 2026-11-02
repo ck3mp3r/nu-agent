@@ -66,7 +66,7 @@
 #
 # [paths]
 # data_home = "/srv/nu-agent/data"    # tool_audit.log, secrets.json, models.json, theme.json
-# cache_home = "~/.cache/nu-agent"    # rig-sessions.db; the grammar cache sits at {cache}/tree-sitter (no app dir)
+# cache_home = "~/.cache/nu-agent"    # sessions.db; the grammar cache sits at {cache}/tree-sitter (no app dir)
 # state_home = "/var/log/nu-agent"    # logs/agent.log
 
 

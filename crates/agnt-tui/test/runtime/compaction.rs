@@ -11,13 +11,13 @@ fn hydration_compaction_creates_block_structure() {
         None,
     );
 
-    // The compaction block header ("Compaction") should be present in transcript
+    // The compaction task line ("Compaction · history") should be present.
     let has_compaction_header = coordinator
         .state()
         .transcript
         .entries()
         .iter()
-        .any(|b| entry_text(b) == "Compaction");
+        .any(|b| entry_text(b) == "Compaction · history");
     assert!(
         has_compaction_header,
         "expected compaction block header in transcript"
@@ -115,14 +115,14 @@ fn hydration_compaction_empty_summary_shows_block_only() {
         .map(entry_text)
         .collect();
 
-    // The compaction header should exist
+    // The compaction call line should exist
     assert!(
-        texts.contains(&"Compaction".to_string()),
-        "expected compaction block header: {texts:?}"
+        texts.contains(&"Compaction · history".to_string()),
+        "expected compaction call line: {texts:?}"
     );
 
-    // Only the header should be present — no body content: the Notice header
-    // block is the only Compaction-role block and it carries just the header
+    // Only the call line should be present — no body content: the Task header
+    // block is the only Compaction-role block and it carries just the line
     // text.
     let blocks = coordinator.state().transcript.entries();
     let compaction_blocks: Vec<_> = blocks
@@ -132,12 +132,12 @@ fn hydration_compaction_empty_summary_shows_block_only() {
     assert_eq!(
         compaction_blocks.len(),
         1,
-        "empty summary should produce the header block only: {compaction_blocks:?}"
+        "empty summary should produce the call line only: {compaction_blocks:?}"
     );
     assert_eq!(
         entry_text(compaction_blocks[0]),
-        "Compaction",
-        "the compaction header block must carry only the header text"
+        "Compaction · history",
+        "the compaction call line must carry only the line text"
     );
 }
 

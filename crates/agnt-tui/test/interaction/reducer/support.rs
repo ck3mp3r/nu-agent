@@ -7,6 +7,9 @@ pub(super) fn push_user_line(state: &mut AppState, text: impl Into<String>) {
     let entry = TranscriptEntry::Message(MessageEntry {
         role: MessageRole::User,
         markdown: text.into(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     });
     state.transcript.push_entry(entry);
 }
@@ -69,6 +72,9 @@ pub(super) fn busy_state_with_clean_transcript() -> AppState {
         &mut state,
         SystemEvent::PromptSubmitted {
             text: "run".to_string(),
+            stamp_millis: None,
+            stamp_model: None,
+            stamp_agent: None,
         },
         None,
     );

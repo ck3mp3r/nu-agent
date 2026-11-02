@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn stream_error_surfaces_actual_error_message() -> Result<()> {
     // -- Setup & Fixtures
-    let store = memory_store()?;
+    let store = memory_store().await?;
     seed(&*store)?;
     let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
@@ -15,7 +15,12 @@ async fn stream_error_surfaces_actual_error_message() -> Result<()> {
 
     // -- Exec
     let result = compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "test_source")
+        .compact(
+            Arc::clone(&store),
+            CONV,
+            &CompactReason::Threshold,
+            "test_source",
+        )
         .await;
 
     // -- Check
@@ -41,7 +46,7 @@ async fn empty_summary_is_rejected_and_nothing_is_spliced() -> Result<()> {
     // A stream that emits only reasoning (no text) leaves the folded response
     // empty. Compaction must reject it: emit Failed, return Err, and leave the
     // stored conversation untouched.
-    let store = memory_store()?;
+    let store = memory_store().await?;
     seed(&*store)?;
     let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
@@ -53,7 +58,12 @@ async fn empty_summary_is_rejected_and_nothing_is_spliced() -> Result<()> {
 
     // -- Exec
     let result = compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "test_source")
+        .compact(
+            Arc::clone(&store),
+            CONV,
+            &CompactReason::Threshold,
+            "test_source",
+        )
         .await;
 
     // -- Check
@@ -83,7 +93,7 @@ async fn tool_call_chunk_during_compaction_emits_failed() -> Result<()> {
     // -- Setup & Fixtures
     // No tools are registered during compaction, so a ToolCall chunk is
     // unexpected and must emit Failed rather than being swallowed.
-    let store = memory_store()?;
+    let store = memory_store().await?;
     seed(&*store)?;
     let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
@@ -95,7 +105,12 @@ async fn tool_call_chunk_during_compaction_emits_failed() -> Result<()> {
 
     // -- Exec
     let result = compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "test_source")
+        .compact(
+            Arc::clone(&store),
+            CONV,
+            &CompactReason::Threshold,
+            "test_source",
+        )
         .await;
 
     // -- Check
@@ -117,7 +132,7 @@ async fn tool_call_chunk_during_compaction_emits_failed() -> Result<()> {
 #[tokio::test]
 async fn unknown_stream_chunk_emits_failed() -> Result<()> {
     // -- Setup & Fixtures
-    let store = memory_store()?;
+    let store = memory_store().await?;
     seed(&*store)?;
     let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
@@ -129,7 +144,12 @@ async fn unknown_stream_chunk_emits_failed() -> Result<()> {
 
     // -- Exec
     let result = compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "test_source")
+        .compact(
+            Arc::clone(&store),
+            CONV,
+            &CompactReason::Threshold,
+            "test_source",
+        )
         .await;
 
     // -- Check
@@ -152,7 +172,7 @@ async fn unknown_stream_chunk_emits_failed() -> Result<()> {
 async fn store_load_failure_emits_failed_and_returns_error() -> Result<()> {
     // -- Setup & Fixtures
     let store = FailingStore {
-        inner: memory_store()?,
+        inner: memory_store().await?,
         fail_read: true,
     };
     let bus = Bus::default();
@@ -161,7 +181,12 @@ async fn store_load_failure_emits_failed_and_returns_error() -> Result<()> {
 
     // -- Exec
     let result = compactor
-        .compact(&store, CONV, &CompactReason::Threshold, "test_source")
+        .compact(
+            Arc::new(store),
+            CONV,
+            &CompactReason::Threshold,
+            "test_source",
+        )
         .await;
 
     // -- Check
@@ -183,7 +208,7 @@ async fn store_load_failure_emits_failed_and_returns_error() -> Result<()> {
 #[tokio::test]
 async fn store_save_failure_emits_failed_and_returns_error() -> Result<()> {
     // -- Setup & Fixtures
-    let inner = memory_store()?;
+    let inner = memory_store().await?;
     seed(&*inner)?;
     let store = FailingStore {
         inner,
@@ -195,7 +220,12 @@ async fn store_save_failure_emits_failed_and_returns_error() -> Result<()> {
 
     // -- Exec
     let result = compactor
-        .compact(&store, CONV, &CompactReason::Threshold, "test_source")
+        .compact(
+            Arc::new(store),
+            CONV,
+            &CompactReason::Threshold,
+            "test_source",
+        )
         .await;
 
     // -- Check

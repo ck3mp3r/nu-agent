@@ -7,7 +7,7 @@ use agnt_core::protocol::event::ToolDisplayStats;
 use agnt_core::protocol::events::ToolCall;
 use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::entry::{
-    BannerEntry, MessageEntry, NoticeEntry, ToolEntry, ToolKind, TranscriptEntry,
+    BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
 use agnt_core::transcript::ir::{
     ContentKind, ContentLine, Display, DisplaySection, MessageRole, NoticeKind, StyleHint, ToolName,
@@ -78,6 +78,9 @@ impl Gallery {
                 entry: TranscriptEntry::Message(MessageEntry {
                     role: MessageRole::User,
                     markdown: "What changed in the render loop?".to_string(),
+                    timestamp_millis: None,
+                    model: None,
+                    agent: None,
                 }),
             },
             GallerySample {
@@ -140,6 +143,15 @@ impl Gallery {
                             stats: None,
                         }],
                     }),
+                    status: ItemStatus::Done,
+                }),
+            },
+            GallerySample {
+                name: "task",
+                family: EntryFamily::Task,
+                entry: TranscriptEntry::Task(TaskEntry {
+                    name: "Compaction".to_string(),
+                    summary: "auto".to_string(),
                     status: ItemStatus::Done,
                 }),
             },
@@ -220,6 +232,9 @@ impl Gallery {
                     // `render_markdown_lines` emits, both backends consume it.
                     role: MessageRole::Assistant,
                     markdown: "Two seams moved in this wave.\n\nThe planner now plans the gap rows, so a wrapped preview keeps its spacing.\n\nThe TTY strips the escapes back to the plain rows.".to_string(),
+                    timestamp_millis: None,
+                    model: None,
+                    agent: None,
                 }),
             },
         ]

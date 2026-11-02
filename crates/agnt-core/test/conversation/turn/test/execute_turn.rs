@@ -87,6 +87,7 @@ async fn execute_turn_cancel_returns_cancelled_true() -> Result<()> {
         .tool(executor::test_utils::CancellingTool::new(bus.clone()))
         .run();
     let tool_infra = executor::ToolInfra {
+        store_latch: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: handle,

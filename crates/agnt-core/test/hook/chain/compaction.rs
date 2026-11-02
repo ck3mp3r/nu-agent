@@ -5,6 +5,7 @@ async fn seed_rig(fx: &DecideFixture, messages: &[Message]) -> Result<()> {
     let store = fx
         .memory
         .rig_store("conv-1")
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let mut conversation = rig_memory::load(&*store, "conv-1")?;
     conversation.extend(messages.iter().cloned());
@@ -45,6 +46,7 @@ async fn decide_compaction_surfaces_store_error_as_failed() -> Result<()> {
         memory.as_ref(),
         &compaction,
         &last_total_tokens,
+        &Default::default(),
         &bus,
     )
     .await;
@@ -87,6 +89,7 @@ async fn over_threshold_fires_requested_and_does_not_compact_synchronously() -> 
         fx.memory.as_ref(),
         &compaction,
         &fx.last_total_tokens,
+        &Default::default(),
         &fx.bus,
     )
     .await;
@@ -127,6 +130,7 @@ async fn decide_compaction_real_tokens_over_threshold_fires() -> Result<()> {
         fx.memory.as_ref(),
         &fx.compaction,
         &fx.last_total_tokens,
+        &Default::default(),
         &fx.bus,
     )
     .await;
@@ -156,6 +160,7 @@ async fn decide_compaction_real_tokens_under_threshold_does_not_fire() -> Result
         fx.memory.as_ref(),
         &fx.compaction,
         &fx.last_total_tokens,
+        &Default::default(),
         &fx.bus,
     )
     .await;
@@ -184,6 +189,7 @@ async fn decide_compaction_no_real_tokens_falls_back_to_conversation_estimate() 
         fx.memory.as_ref(),
         &fx.compaction,
         &fx.last_total_tokens,
+        &Default::default(),
         &fx.bus,
     )
     .await;
@@ -222,6 +228,7 @@ async fn decide_compaction_counts_a_turn_saved_after_the_first_read() -> Result<
     let store = fx
         .memory
         .rig_store("conv-1")
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let first_read = rig_memory::load(&*store, "conv-1")?;
     assert_eq!(
@@ -242,6 +249,7 @@ async fn decide_compaction_counts_a_turn_saved_after_the_first_read() -> Result<
         fx.memory.as_ref(),
         &compaction,
         &fx.last_total_tokens,
+        &Default::default(),
         &fx.bus,
     )
     .await;
@@ -282,6 +290,7 @@ async fn auto_compaction_splices_and_the_next_load_sees_it() -> Result<()> {
         fx.memory.as_ref(),
         &compaction,
         &fx.last_total_tokens,
+        &Default::default(),
         &fx.bus,
     )
     .await;
@@ -298,6 +307,7 @@ async fn auto_compaction_splices_and_the_next_load_sees_it() -> Result<()> {
         &compaction,
         "auto",
         &fx.last_total_tokens,
+        &Default::default(),
         &fx.bus,
     )
     .await
@@ -307,6 +317,7 @@ async fn auto_compaction_splices_and_the_next_load_sees_it() -> Result<()> {
     let store = fx
         .memory
         .rig_store("conv-1")
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let stored = rig_memory::load(&*store, "conv-1")?;
     let first = stored
@@ -339,6 +350,7 @@ async fn run_compaction_empty_history_emits_completed_with_empty_summary() -> Re
         &fx.compaction,
         "slash",
         &fx.last_total_tokens,
+        &Default::default(),
         &fx.bus,
     )
     .await;
@@ -364,6 +376,144 @@ async fn run_compaction_empty_history_emits_completed_with_empty_summary() -> Re
                 && summary_body.is_empty()
         ),
         "an empty conversation must emit Completed with empty summary, got {completed:?}"
+    );
+    Ok(())
+}
+
+/// WHEN a store refuses to open, THE decision SHALL latch it and emit exactly
+/// one clean line; the next decision SHALL make no further attempt.
+#[tokio::test]
+async fn store_dead_latch_makes_one_clean_line_and_no_further_attempt() -> Result<()> {
+    // -- Setup & Fixtures: the legacy pre-engine store every open refuses.
+    let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
+    let path = temp_dir.path().join("sessions.db");
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await?;
+    sqlx::query("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
+        .execute(&pool)
+        .await?;
+    pool.close().await;
+    let memory = Arc::new(CachedMemory::new(
+        crate::session::RigStoreConfig::new(crate::session::StoreType::Sqlite)
+            .with_store_path(&path),
+    ));
+    let bus = Bus::default();
+    let mut rx = bus.compaction().subscribe();
+    let compaction = CompactionConfig {
+        compactor: NuCompactor::new(
+            MockCompletionModel::text("summary").erase(),
+            Bus::default(),
+            rig_memory::CompactionPolicy::default(),
+            test_model_spec(),
+        ),
+        threshold_tokens: Some(100),
+        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+    };
+    let last_total_tokens = Arc::new(Mutex::new(None));
+    let store_latch: crate::hook::StoreLatch = Default::default();
+
+    // -- Exec: two decisions over the dead store.
+    decide_compaction(
+        &Message::user("hi"),
+        "conv-1",
+        memory.as_ref(),
+        &compaction,
+        &last_total_tokens,
+        &store_latch,
+        &bus,
+    )
+    .await;
+    decide_compaction(
+        &Message::user("hi"),
+        "conv-1",
+        memory.as_ref(),
+        &compaction,
+        &last_total_tokens,
+        &store_latch,
+        &bus,
+    )
+    .await;
+
+    // -- Check: one line, carrying the refusal itself.
+    let failed = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .map_err(|_| "should receive Failed within timeout")?
+        .map_err(|_| "should receive Failed")?;
+    let SystemEvent::CompactionFailed { message, .. } = failed else {
+        return Err(format!("the refusal SHALL be a Failed event, got {failed:?}").into());
+    };
+    assert!(
+        message.contains("legacy sqlx-migration store")
+            && message.contains("stored schema version 0")
+            && message.contains("migrates to 2"),
+        "the line SHALL name the era and both versions: {message}"
+    );
+    assert!(
+        message.contains(&path.display().to_string()),
+        "the line SHALL name the resolved path: {message}"
+    );
+    assert!(
+        !message.contains("error returned from database")
+            && !message.contains("Memory backend error"),
+        "the line SHALL carry no sqlx or wrapper wording: {message}"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "a latched store SHALL make no further attempt"
+    );
+    assert!(
+        store_latch
+            .lock()
+            .map_err(|_| "store latch poisoned")?
+            .is_some(),
+        "the refusal SHALL latch the store"
+    );
+    Ok(())
+}
+
+/// WHEN `run_compaction` opens the store, THE latch SHALL clear.
+#[tokio::test]
+async fn successful_run_compaction_clears_the_latch() -> Result<()> {
+    // -- Setup & Fixtures: a latched store that is now reachable.
+    let memory = Arc::new(CachedMemory::new(
+        crate::session::RigStoreConfig::in_memory(),
+    ));
+    let bus = Bus::default();
+    let compaction = CompactionConfig {
+        compactor: NuCompactor::new(
+            MockCompletionModel::text("summary").erase(),
+            Bus::default(),
+            rig_memory::CompactionPolicy::default(),
+            test_model_spec(),
+        ),
+        threshold_tokens: None,
+        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+    };
+    let last_total_tokens = Arc::new(Mutex::new(None));
+    let store_latch: crate::hook::StoreLatch = Default::default();
+    *store_latch.lock().map_err(|_| "store latch poisoned")? = Some("dead".to_string());
+
+    // -- Exec
+    let _ = run_compaction(
+        "conv-1",
+        memory.as_ref(),
+        &compaction,
+        "slash",
+        &last_total_tokens,
+        &store_latch,
+        &bus,
+    )
+    .await;
+
+    // -- Check
+    assert!(
+        store_latch
+            .lock()
+            .map_err(|_| "store latch poisoned")?
+            .is_none(),
+        "a store that opens SHALL clear the latch"
     );
     Ok(())
 }

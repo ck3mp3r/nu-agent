@@ -8,6 +8,7 @@ use super::*;
 /// A `ToolInfra` with no tools and the given bus.
 pub(super) fn tool_infra(bus: crate::bus::Bus) -> executor::ToolInfra {
     executor::ToolInfra {
+        store_latch: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
@@ -71,12 +72,12 @@ pub(super) fn assistant_tool_calls(call_ids: &[&str]) -> Result<Message> {
 }
 
 /// Seed the session's rig store with `messages`.
-pub(super) fn seed(
+pub(super) async fn seed(
     memory_state: &MemoryState,
     session_id: &str,
     messages: Vec<Message>,
 ) -> Result<()> {
-    let store = memory_state.inner_memory().rig_store(session_id)?;
+    let store = memory_state.inner_memory().rig_store(session_id).await?;
     let mut conversation = rig_memory::load(&*store, session_id)?;
     conversation.extend(messages);
     rig_memory::save(&*store, session_id, &mut conversation)?;
@@ -84,8 +85,8 @@ pub(super) fn seed(
 }
 
 /// The conversation the session's rig store holds.
-pub(super) fn stored(memory_state: &MemoryState, session_id: &str) -> Result<Vec<Message>> {
-    let store = memory_state.inner_memory().rig_store(session_id)?;
+pub(super) async fn stored(memory_state: &MemoryState, session_id: &str) -> Result<Vec<Message>> {
+    let store = memory_state.inner_memory().rig_store(session_id).await?;
     let conversation = rig_memory::load(&*store, session_id)?;
     Ok(conversation
         .messages()
@@ -107,6 +108,7 @@ where
 {
     let handle = rig::tool::server::ToolServer::new().tool(tool).run();
     let tool_infra = executor::ToolInfra {
+        store_latch: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: handle,

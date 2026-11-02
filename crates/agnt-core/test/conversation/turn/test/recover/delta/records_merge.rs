@@ -14,7 +14,8 @@ async fn persist_turn_delta_appends_the_closed_delta() -> Result<()> {
         &memory_state,
         session_id,
         vec![Message::user("q1"), Message::assistant("a1")],
-    )?;
+    )
+    .await?;
     let full_history = vec![
         Message::user("q1"),
         Message::assistant("a1"),
@@ -37,7 +38,7 @@ async fn persist_turn_delta_appends_the_closed_delta() -> Result<()> {
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages.len(),
         5,
@@ -90,7 +91,7 @@ async fn persist_turn_delta_reconstructs_the_missing_tool_exchange() -> Result<(
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages.len(),
         3,
@@ -137,7 +138,7 @@ async fn persist_turn_delta_does_not_duplicate_a_recorded_call() -> Result<()> {
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages.len(),
         3,
@@ -195,7 +196,7 @@ async fn persist_turn_delta_replaces_a_placeholder_result_with_the_settled_recor
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages.len(),
         3,

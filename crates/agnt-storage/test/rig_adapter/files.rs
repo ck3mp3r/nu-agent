@@ -2,7 +2,7 @@ use super::*;
 
 /// `write_file` replaces a file and `read_file` reads it back.
 #[test]
-fn write_and_read_file() -> Result<()> {
+fn test_rig_adapter_write_and_read_file() -> Result<()> {
     // -- Setup & Fixtures
     let store = memory_store("session-files")?;
 
@@ -18,7 +18,7 @@ fn write_and_read_file() -> Result<()> {
 
 /// `append_file` adds to a file, creating it when it is not there.
 #[test]
-fn append_file_creates_and_appends() -> Result<()> {
+fn test_rig_adapter_append_file_creates_and_appends() -> Result<()> {
     // -- Setup & Fixtures
     let store = memory_store("session-append-file")?;
 
@@ -33,7 +33,7 @@ fn append_file_creates_and_appends() -> Result<()> {
 
 /// `files` lists the names of the session's files.
 #[test]
-fn files_lists_names() -> Result<()> {
+fn test_rig_adapter_files_lists_names() -> Result<()> {
     // -- Setup & Fixtures
     let store = memory_store("session-list-files")?;
     store.write_file("b.txt", b"b")?;
@@ -49,7 +49,7 @@ fn files_lists_names() -> Result<()> {
 
 /// `remove_file` removes a file, and removing one that is not there succeeds.
 #[test]
-fn remove_file_is_idempotent() -> Result<()> {
+fn test_rig_adapter_remove_file_is_idempotent() -> Result<()> {
     // -- Setup & Fixtures
     let store = memory_store("session-remove-file")?;
     store.write_file("a.txt", b"a")?;
@@ -65,7 +65,7 @@ fn remove_file_is_idempotent() -> Result<()> {
 
 /// `read_file` of a file that is not there is `NotFound`.
 #[test]
-fn read_file_missing_is_not_found() -> Result<()> {
+fn test_rig_adapter_read_file_missing_is_not_found() -> Result<()> {
     // -- Setup & Fixtures
     let store = memory_store("session-file-not-found")?;
 
@@ -82,12 +82,29 @@ fn read_file_missing_is_not_found() -> Result<()> {
 
 /// A name that leaves the store is refused.
 #[test]
-fn names_outside_the_store_are_refused() -> Result<()> {
+fn test_rig_adapter_names_outside_the_store_are_refused() -> Result<()> {
     // -- Setup & Fixtures
     let store = memory_store("session-names")?;
 
     // -- Exec & Check
     assert!(store.write_file("../elsewhere", b"x").is_err());
     assert!(store.read_log("a/b").is_err());
+    Ok(())
+}
+
+/// Removing a file records no session: nothing persisted.
+#[test]
+fn test_rig_adapter_remove_file_records_no_session() -> Result<()> {
+    // -- Setup & Fixtures
+    let (db, store) = memory_database("session-remove-only")?;
+
+    // -- Exec
+    store.remove_file("absent.txt")?;
+
+    // -- Check
+    assert!(
+        session_ids(&db)?.is_empty(),
+        "a removal persists nothing on its own"
+    );
     Ok(())
 }

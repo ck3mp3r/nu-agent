@@ -614,10 +614,16 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         let rig = self
             .rig
             .open(id)
+            .await
             .map_err(|e| AcpError::Runtime(format!("failed to open session '{id}': {e}")))?;
-        rig.destroy().map_err(|e| {
-            AcpError::Runtime(format!("failed to delete the session log of '{id}': {e}"))
-        })?;
+        agnt_core::session::blocking::on_pool(move || rig.destroy())
+            .await
+            .map_err(|e| {
+                AcpError::Runtime(format!("failed to delete the session log of '{id}': {e}"))
+            })?
+            .map_err(|e| {
+                AcpError::Runtime(format!("failed to delete the session log of '{id}': {e}"))
+            })?;
         Ok(())
     }
 
@@ -635,8 +641,9 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             .map(|session| SessionInfo {
                 id: session.id.clone(),
                 message_count: 0,
-                last_active: session.created_at,
+                last_active: Some(session.created_at),
                 title: None,
+                agent: None,
             })
             .collect();
         sessions.sort_by_key(|info| std::cmp::Reverse(info.last_active));
@@ -712,7 +719,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         // `hydrated` reports whether the store already holds this session's
         // log, so a session-lifecycle hook can tell a fresh session from a
         // resumed one. A store that cannot be read is treated as not hydrated.
-        let hydrated = self.rig.holds(session_id).unwrap_or(false);
+        let hydrated = self.rig.holds(session_id).await.unwrap_or(false);
         let _ = bus
             .session()
             .send(SessionEvent::Started {
@@ -730,16 +737,24 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     /// conversation for a log that does not exist, so absence is detected from
     /// the store's log names first.
     async fn load_entries(&self, session_id: &str) -> Result<Vec<Message>> {
-        let store = self.rig.open(session_id).map_err(|e| {
+        let store = self.rig.open(session_id).await.map_err(|e| {
             AcpError::Runtime(format!("failed to open session '{session_id}': {e}"))
         })?;
-        let logs = store.logs().map_err(|e| {
+        let session = session_id.to_owned();
+        let (logs, loaded) = agnt_core::session::blocking::on_pool(move || {
+            let logs = store.logs();
+            let loaded = rig_memory::load(&*store, &session);
+            (logs, loaded)
+        })
+        .await
+        .map_err(|e| AcpError::Runtime(format!("failed to read session '{session_id}': {e}")))?;
+        let logs = logs.map_err(|e| {
             AcpError::Runtime(format!("failed to list session logs '{session_id}': {e}"))
         })?;
         if !logs.iter().any(|log| log == session_id) {
             return Err(AcpError::SessionNotFound(session_id.to_string()));
         }
-        let conversation = rig_memory::load(&*store, session_id).map_err(|e| {
+        let conversation = loaded.map_err(|e| {
             AcpError::Runtime(format!("failed to load session '{session_id}': {e}"))
         })?;
         Ok(conversation

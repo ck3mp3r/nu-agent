@@ -3,6 +3,72 @@ use super::*;
 use crate::rendering::theme::TuiTheme;
 use crate::state::{PickerOption, PickerPayload, PickerSortKeyPart};
 
+/// WHEN the listing mixes a recorded change instant with an unknown one, THE
+/// table SHALL show the recorded row's day head and the real agent, and SHALL
+/// leave the unknown row headless with blank When and Agent cells — no
+/// invented clock, no invented label.
+#[tokio::test]
+async fn test_session_picker_carries_the_agent_and_blanks_unknown_cells() -> Result<()> {
+    // -- Setup & Fixtures: one fully recorded session, one with no facts at all.
+    let now = chrono::Utc::now();
+    let known = agnt_core::session::SessionInfo {
+        id: "known".to_string(),
+        message_count: 2,
+        last_active: Some(now),
+        title: Some("titled session".to_string()),
+        agent: Some("reviewer".to_string()),
+    };
+    let unknown = agnt_core::session::SessionInfo {
+        id: "unknown".to_string(),
+        message_count: 3,
+        last_active: None,
+        title: None,
+        agent: None,
+    };
+    let options: Vec<PickerOption> = vec![known.into(), unknown.into()];
+    let mut driver = RenderLoopDriver::new(64, 20);
+    driver
+        .coordinator_mut()
+        .state
+        .set_picker_options(ActivePicker::Session, options);
+    driver
+        .coordinator_mut()
+        .state
+        .picker
+        .open(ActivePicker::Session);
+
+    // -- Exec
+    driver.advance_with_frame(&[]).await?;
+
+    // -- Check
+    let popup = super::render::frame::modal_rect_for_panel(
+        driver.state().scroll.transcript_area,
+        super::render::frame::ModalPanelKind::Sessions,
+    );
+    let text = driver.buffer_text_in_rect(popup);
+    assert!(
+        text.contains("Agent"),
+        "the header carries the agent column\n{text}"
+    );
+    assert!(
+        text.contains("reviewer"),
+        "a recorded last-turn agent shows\n{text}"
+    );
+    assert!(
+        !text.contains("(untitled)"),
+        "an unknown title stays blank\n{text}"
+    );
+    let heads = text
+        .lines()
+        .filter(|line| line.contains("Today") || line.contains("Yesterday"))
+        .count();
+    assert_eq!(
+        heads, 1,
+        "only the recorded instant opens a day head; the unknown row rides headless\n{text}"
+    );
+    Ok(())
+}
+
 /// At 56x20 the popup inner height is 18, so the details ladder caps the footer
 /// at three rows. The one-row selected title occupies the bottom inner row and
 /// the table budget grows by the two rows the footer does not need, so the
@@ -44,7 +110,7 @@ async fn test_session_picker_footer_shows_full_title_and_reduced_cue() -> Result
         title_line.contains("13 of 20"),
         "the cue must count rows against the footer-sized budget; title: {title_line:?}\n{popup_text}"
     );
-    let clipped = format!("{}…", title.chars().take(30).collect::<String>());
+    let clipped = format!("{}…", title.chars().take(17).collect::<String>());
     let table_idx = lines
         .iter()
         .position(|line| line.contains(&clipped))
@@ -231,14 +297,15 @@ async fn test_session_picker_ellipsizes_a_long_title_under_its_head() -> Result<
     // -- Exec
     driver.advance_with_frame(&[]).await?;
 
-    // -- Check: the table width is 56, so the Title column takes 31 cells and the
-    // row keeps 30 of them plus the ellipsis marker.
+    // -- Check: the table width is 56; When (13), Agent (12), Msgs (6) and the
+    // spacing leave the Title column 18 cells, so the row keeps 17 of them plus
+    // the ellipsis marker.
     let popup = super::render::frame::modal_rect_for_panel(
         driver.state().scroll.transcript_area,
         super::render::frame::ModalPanelKind::Sessions,
     );
     let popup_text = driver.buffer_text_in_rect(popup);
-    let clipped = format!("{}…", "t".repeat(30));
+    let clipped = format!("{}…", "t".repeat(17));
     assert!(
         popup_text.contains(&clipped),
         "the table row must carry the ellipsized title; expected {clipped:?}\n{popup_text}"
@@ -348,8 +415,9 @@ fn session_option(
         payload: PickerPayload::Session {
             session_id: id.to_string(),
             title: Some(title.to_string()),
-            created_at,
+            created_at: Some(created_at),
             message_count,
+            agent: None,
         },
     }
 }

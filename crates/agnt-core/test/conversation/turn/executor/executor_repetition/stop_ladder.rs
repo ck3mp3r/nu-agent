@@ -56,6 +56,7 @@ async fn repetition_stop_warns_before_completed_and_emits_stopped_event() -> Res
             &config,
             &mut memory_state,
             ToolInfra {
+                store_latch: Default::default(),
                 closure_registry: Arc::new(ClosureRegistry::default()),
                 mcp_registry: Arc::new(McpToolRegistry::empty()),
                 tool_server_handle: rig::tool::server::ToolServer::new().run(),
@@ -206,6 +207,7 @@ async fn repetition_stop_retries_up_to_cap_then_cap_stop_is_terminal() -> Result
             &config,
             &mut memory_state,
             ToolInfra {
+                store_latch: Default::default(),
                 closure_registry: Arc::new(ClosureRegistry::default()),
                 mcp_registry: Arc::new(McpToolRegistry::empty()),
                 tool_server_handle: rig::tool::server::ToolServer::new().run(),
@@ -388,6 +390,7 @@ async fn repetition_stop_reset_ladder_lets_retry_sequence_restart_at_first() -> 
             &config,
             &mut memory_state,
             ToolInfra {
+                store_latch: Default::default(),
                 closure_registry: Arc::new(ClosureRegistry::default()),
                 mcp_registry: Arc::new(McpToolRegistry::empty()),
                 tool_server_handle: rig::tool::server::ToolServer::new().run(),

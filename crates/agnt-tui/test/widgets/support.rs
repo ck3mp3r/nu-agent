@@ -4,7 +4,7 @@ use agnt_core::protocol::event::ToolDisplayStats;
 use agnt_core::protocol::events::ToolCall;
 use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::entry::{
-    BannerEntry, MessageEntry, NoticeEntry, ToolEntry, ToolKind, TranscriptEntry,
+    BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
 use agnt_core::transcript::ir::{
     ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
@@ -101,7 +101,40 @@ pub(super) fn message_entry(role: MessageRole, markdown: &str) -> TranscriptEntr
     TranscriptEntry::Message(MessageEntry {
         role,
         markdown: markdown.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     })
+}
+
+/// A prose entry carrying the footer facts its producer holds: the stamp and
+/// the model identity, or nothing.
+pub(super) fn stamped_message_entry(
+    role: MessageRole,
+    markdown: &str,
+    timestamp_millis: Option<i64>,
+    model: Option<&str>,
+) -> TranscriptEntry {
+    TranscriptEntry::Message(MessageEntry {
+        role,
+        markdown: markdown.to_string(),
+        timestamp_millis,
+        model: model.map(str::to_string),
+        agent: None,
+    })
+}
+
+/// The stamp a footer shows for `millis`, formatted the way the widget formats
+/// it: the local wall clock, minute resolution.
+pub(super) fn stamp_text(millis: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(millis)
+        .map(|stamp| {
+            stamp
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default()
 }
 
 pub(super) fn tool_entry(
@@ -181,6 +214,15 @@ pub(super) fn stat_display() -> Display {
             }),
         }],
     }
+}
+
+/// A task call line: the name, the subject it works on, and its status.
+pub(super) fn task_entry(summary: &str, status: ItemStatus) -> TranscriptEntry {
+    TranscriptEntry::Task(TaskEntry {
+        name: "Compaction".to_string(),
+        summary: summary.to_string(),
+        status,
+    })
 }
 
 pub(super) fn notice_entry(kind: NoticeKind, text: &str) -> TranscriptEntry {

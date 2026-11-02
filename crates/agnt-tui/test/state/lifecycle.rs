@@ -18,6 +18,9 @@ mod misc;
 #[path = "lifecycle/queue.rs"]
 mod queue;
 
+#[path = "lifecycle/stamp.rs"]
+mod stamp;
+
 #[path = "lifecycle/support.rs"]
 mod support;
 

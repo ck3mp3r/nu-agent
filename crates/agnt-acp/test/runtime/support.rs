@@ -70,7 +70,7 @@ pub(super) fn test_paths(config_path: &Path) -> agnt_core::config::Paths {
         dotenv_path: dir.join(".env"),
         agents_dir: dir.join("agents"),
         copilot_token_dir: dir.join("github_copilot"),
-        store_path: dir.join("rig-sessions.db"),
+        store_path: dir.join("sessions.db"),
         log_dir: logs.clone(),
         log_path: logs.join("agent.log"),
         audit_log_path: dir.join("tool_audit.log"),

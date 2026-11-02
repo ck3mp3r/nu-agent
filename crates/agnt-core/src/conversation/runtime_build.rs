@@ -181,7 +181,7 @@ pub async fn build_runtime(
     // Surface what reading the session repaired, such as an image whose blob is
     // gone. A session that cannot be read still opens; the next save reports it.
     if let Some(session_id) = params.final_session_id.as_deref() {
-        session.warn_repairs(session_id);
+        session.warn_repairs(session_id).await;
     }
 
     // Threshold used by the hook to decide when to compact: proactive_threshold_pct
@@ -249,6 +249,7 @@ pub async fn build_runtime(
         render_registry: params.render_registry,
         hook_context,
         session_usage: crate::hook::TurnUsage::default(),
+        store_latch: Default::default(),
         dyn_model,
         compaction,
     })

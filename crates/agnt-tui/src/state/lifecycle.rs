@@ -38,20 +38,52 @@ impl AppState {
         self.ensure_invariants();
     }
 
+    /// The footer facts a submission made now carries: the submit instant and
+    /// the identities active at this boundary.
+    ///
+    /// This is the TUI's one sanctioned now-write — the moment a prompt is
+    /// accepted, never later, and never a re-derivation of the instant.
+    pub fn submit_facts(&self) -> PromptFacts {
+        PromptFacts {
+            millis: Some(chrono::Utc::now().timestamp_millis()),
+            model: Some(self.status.identity.active_model_identity.clone()),
+            agent: self.status.identity.active_agent_identity.clone(),
+        }
+    }
+
     pub fn enqueue_prompt(&mut self, submitted_text: String) -> u64 {
+        self.enqueue_prompt_with_facts(submitted_text, PromptFacts::default())
+    }
+
+    /// The submit boundary's enqueue: the carrier keeps the facts it was handed.
+    pub fn enqueue_prompt_with_facts(&mut self, submitted_text: String, facts: PromptFacts) -> u64 {
         let id = prompt_queue::PromptQueueLifecycle::new(
             &mut self.prompt_items,
             &mut self.pending_prompt_ids,
             &mut self.active_prompt_id,
             &mut self.next_prompt_id,
         )
-        .enqueue_prompt(submitted_text);
+        .enqueue_prompt(submitted_text, facts);
         self.accept_submit();
         id
     }
 
     pub fn enqueue_immediate_submission(&mut self, submitted_text: String) {
-        self.pending_immediate_submissions.push_back(submitted_text);
+        self.enqueue_immediate_submission_with_facts(submitted_text, PromptFacts::default())
+    }
+
+    /// The submit boundary's immediate enqueue: the carrier keeps the facts it
+    /// was handed.
+    pub fn enqueue_immediate_submission_with_facts(
+        &mut self,
+        submitted_text: String,
+        facts: PromptFacts,
+    ) {
+        self.pending_immediate_submissions
+            .push_back(ImmediateSubmission {
+                text: submitted_text,
+                facts,
+            });
         self.reset_abort();
         self.ensure_invariants();
     }
@@ -71,15 +103,25 @@ impl AppState {
         }
 
         let active_id = maybe_id?;
-        let prompt_text = self
+        let prompt = self
             .prompt_items
             .iter()
             .find(|p| p.id == active_id)
-            .map(|p| p.prompt_text.clone())
-            .unwrap_or_default();
+            .cloned()
+            .unwrap_or_else(|| QueuedPrompt {
+                id: active_id,
+                prompt_text: String::new(),
+                status: PromptStatus::InProgress,
+                facts: PromptFacts::default(),
+            });
+        // The row carries the carrier's facts verbatim: what the submit boundary
+        // stamped, nothing filled in.
         let msg = MessageEntry {
             role: MessageRole::User,
-            markdown: prompt_text.clone(),
+            markdown: prompt.prompt_text,
+            timestamp_millis: prompt.facts.millis,
+            model: prompt.facts.model,
+            agent: prompt.facts.agent,
         };
         let evicted = self.transcript.push_entry(TranscriptEntry::Message(msg));
         self.shift_bookkeeping_after_eviction(evicted);
@@ -93,11 +135,14 @@ impl AppState {
 
     pub fn take_next_prompt_for_execution(&mut self) -> Option<String> {
         if let Some(immediate) = self.pending_immediate_submissions.pop_front() {
+            // The immediate lane runs commands, not prose: it never pushes a row
+            // of its own (the slash-command contract pins an untouched
+            // transcript). Its facts ride the carrier and stop here.
             self.ensure_invariants();
-            return Some(immediate);
+            return Some(immediate.text);
         }
 
-        let texts = prompt_queue::PromptQueueLifecycle::new(
+        let (texts, facts) = prompt_queue::PromptQueueLifecycle::new(
             &mut self.prompt_items,
             &mut self.pending_prompt_ids,
             &mut self.active_prompt_id,
@@ -115,9 +160,14 @@ impl AppState {
         // queued message — the stack's rhythm, with no blank row between them
         // (pinned by `layout_coalesced_user_block_renders_one_row_per_message`).
         let combined = texts.join("\n");
+        // The coalesced block carries the first `Some` of each fact, in queue
+        // order: a merged row keeps what its first stamped prompt knew.
         let msg = MessageEntry {
             role: MessageRole::User,
             markdown: combined.clone(),
+            timestamp_millis: facts.millis,
+            model: facts.model,
+            agent: facts.agent,
         };
         let evicted = self.transcript.push_entry(TranscriptEntry::Message(msg));
         self.shift_bookkeeping_after_eviction(evicted);

@@ -13,7 +13,8 @@ async fn persist_turn_delta_anchors_the_delta_on_the_prompt() -> Result<()> {
         &memory_state,
         session_id,
         vec![Message::user("q1"), Message::assistant("a1")],
-    )?;
+    )
+    .await?;
     // The run loaded one message fewer than the persist-time log holds, so its
     // prompt sits at index 1 while the count slice would start at index 2.
     let full_history = vec![
@@ -36,7 +37,7 @@ async fn persist_turn_delta_anchors_the_delta_on_the_prompt() -> Result<()> {
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages.len(),
         6,
@@ -63,7 +64,7 @@ async fn persist_turn_delta_matches_the_steering_augmented_prompt() -> Result<()
     let config = Config::default();
     let mut memory_state = MemoryState::new(RigStoreConfig::in_memory());
     let session_id = "test-recover-steering";
-    seed(&memory_state, session_id, vec![Message::user("q1")])?;
+    seed(&memory_state, session_id, vec![Message::user("q1")]).await?;
     let full_history = vec![
         Message::user("q1"),
         Message::user("feedback line\n\nthe prompt"),
@@ -83,7 +84,7 @@ async fn persist_turn_delta_matches_the_steering_augmented_prompt() -> Result<()
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages.len(),
         3,
@@ -117,7 +118,7 @@ async fn persist_turn_delta_falls_back_when_the_prompt_is_absent() -> Result<()>
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages,
         vec![
@@ -153,7 +154,7 @@ async fn persist_turn_delta_reconstructs_the_exchange_when_the_prompt_is_absent(
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages.len(),
         3,

@@ -181,6 +181,7 @@ impl RuntimeBuilder for MockRuntimeBuilder {
         Ok(AgentConversationRuntime {
             runtime: runtime_handle,
             tool_server_handle: agnt_core::types::ToolServer::new().run(),
+            store_latch: Default::default(),
             provider,
             tools: ToolState::new(Vec::new(), Vec::new(), ClosureRegistry::default()),
             mcp_state: McpState::new(
@@ -259,7 +260,7 @@ pub(super) fn test_paths(dir: &Path) -> agnt_core::config::Paths {
         dotenv_path: dir.join(".env"),
         agents_dir: dir.join("agents"),
         copilot_token_dir: dir.join("github_copilot"),
-        store_path: dir.join("rig-sessions.db"),
+        store_path: dir.join("sessions.db"),
         log_dir: logs.clone(),
         log_path: logs.join("agent.log"),
         audit_log_path: dir.join("tool_audit.log"),
@@ -376,9 +377,10 @@ pub(super) async fn manager_with_rig_store(
 }
 
 /// Persist a two-message conversation under `session_id` in the rig store.
-pub(super) fn seed_session(rig: &RigStoreConfig, session_id: &str) -> Result<()> {
+pub(super) async fn seed_session(rig: &RigStoreConfig, session_id: &str) -> Result<()> {
     let store = rig
         .open(session_id)
+        .await
         .map_err(|e| format!("should open rig store: {e:?}"))?;
     let mut conversation = rig_memory::load(&*store, session_id)
         .map_err(|e| format!("should load rig conversation: {e:?}"))?;

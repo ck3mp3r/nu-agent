@@ -102,8 +102,9 @@ fn picker_option_from_carries_the_section_key() -> Result<()> {
     let session_section = PickerOption::from(agnt_core::session::SessionInfo {
         id: "abc123".to_string(),
         message_count: 3,
-        last_active,
+        last_active: Some(last_active),
         title: Some("A session".to_string()),
+        agent: None,
     })
     .section;
 

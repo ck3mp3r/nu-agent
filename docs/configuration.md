@@ -87,7 +87,7 @@ The block has exactly three keys: `data_home`, `cache_home`, `state_home`. Rules
 
 - **No file pins.** An override re-roots its whole tree: the tree keeps the
   `{APP_DIR_NAME}/<tail>` substructure, so `config.toml`, `.env`, `agents/`,
-  `logs/agent.log`, `rig-sessions.db`, `tool_audit.log`, `secrets.json`,
+  `logs/agent.log`, `sessions.db`, `tool_audit.log`, `secrets.json`,
   `models.json`, and `theme.json` all move with their tree. There is no per-file
   override.
 - **The config tree has no `[paths]` key.** The file that would hold it is the
@@ -314,14 +314,17 @@ This works for Together AI, Groq, OpenRouter, vLLM, LiteLLM, and any other OpenA
 
 ```toml
 [session_store]
-store_type = "sqlite"    # "sqlite" (default), "jsonl", or "memory"
+store_type = "sqlite"    # "sqlite" (default) or "memory"
 path = "/custom/path"   # optional custom path
 ```
 
-- `store_type` — `"sqlite"` (default), `"jsonl"`, or `"memory"`
-- `path` — optional custom path (JSONL defaults to `$XDG_CACHE_HOME/nu-agent/sessions/`)
+- `store_type` — `"sqlite"` (default) or `"memory"`
+- `path` — optional custom path for the database file
 
-`"memory"` uses an in-memory SQLite database — nothing persists after the process exits. It is useful for ephemeral sessions and testing.
+One backend writes the store: SQLite. It holds every session in
+`{cache}/{APP_DIR_NAME}/sessions.db`, or in an in-memory database when
+`"memory"` is selected — nothing persists after the process exits there, which
+is useful for ephemeral sessions and testing.
 
 Precedence for store type: CLI `--store` flag > `AGENT_SESSION_STORE_TYPE` env var > config > built-in default (SQLite).
 
@@ -1094,7 +1097,7 @@ Environment variables still work as a lowest-priority fallback when `config.toml
 - `AGENT_READ_TIMEOUT_SECS` — HTTP read timeout in seconds (default 120). 0 disables.
 - `AGENT_A2A_ENABLED` — enable A2A (default `false`)
 - `AGENT_A2A_PORT` — A2A port (0 = random, >0 = fixed)
-- `AGENT_SESSION_STORE_TYPE` — `sqlite`, `jsonl`, or `memory`
+- `AGENT_SESSION_STORE_TYPE` — `sqlite` or `memory`
 - `{PROVIDER}_API_KEY` — e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` (for providers with direct env naming)
 
 There is no `AGENT_MODEL` env override at runtime; set the default model in `config.toml`. (`agent config init` reads `AGENT_PROVIDER`/`AGENT_MODEL` when generating a starter config.)

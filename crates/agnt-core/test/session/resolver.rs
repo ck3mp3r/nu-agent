@@ -23,6 +23,12 @@ mod support;
 #[path = "resolver/tool_result.rs"]
 mod tool_result;
 
+#[path = "resolver/turn_facts.rs"]
+mod turn_facts;
+
+#[path = "resolver/turn_linkage.rs"]
+mod turn_linkage;
+
 // The monolith resolved `super::<item>` against `crate::session`.
 // Sub-files now resolve `super::` against this module root, so the shared
 // fixtures are re-exported here.

@@ -72,15 +72,16 @@ pub(super) fn make_compactor(chunks: &[&str], bus: Bus) -> Result<NuCompactor> {
 /// An in-memory SQLite rig store.
 ///
 /// A memory store resolves no path, so no ambient cache directory is touched.
-pub(super) fn memory_store() -> Result<Arc<dyn Store>> {
-    Ok(RigStoreConfig::in_memory().open(CONV)?)
+pub(super) async fn memory_store() -> Result<Arc<dyn Store>> {
+    Ok(RigStoreConfig::in_memory().open(CONV).await?)
 }
 
-/// A file-backed `DirStore` rig store rooted at `cache_dir`.
-pub(super) fn dir_store(cache_dir: &std::path::Path) -> Result<Arc<dyn Store>> {
-    Ok(RigStoreConfig::new(StoreType::Jsonl)
+/// A file-backed rig store rooted at `cache_dir`.
+pub(super) async fn file_store(cache_dir: &std::path::Path) -> Result<Arc<dyn Store>> {
+    Ok(RigStoreConfig::new(StoreType::Sqlite)
         .with_cache_dir(cache_dir)
-        .open(CONV)?)
+        .open(CONV)
+        .await?)
 }
 
 /// Seed `store` with a short conversation: two user turns and two replies.

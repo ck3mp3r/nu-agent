@@ -128,6 +128,7 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
             last_total_tokens: Arc::new(Mutex::new(None)),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
+            store_latch: Default::default(),
         },
     );
     // The "add" tool is not in `safe_defaults(true)`'s allow list, so the
@@ -248,6 +249,7 @@ async fn on_dispatch_publishes_the_fallback_call_line_for_an_unregistered_tool()
             last_total_tokens: Arc::new(Mutex::new(None)),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
+            store_latch: Default::default(),
         },
     );
     let agent =
@@ -355,6 +357,7 @@ async fn on_dispatch_publishes_registry_rendered_call_line() -> Result<()> {
             last_total_tokens: Arc::new(Mutex::new(None)),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
+            store_latch: Default::default(),
         },
     );
     let agent =

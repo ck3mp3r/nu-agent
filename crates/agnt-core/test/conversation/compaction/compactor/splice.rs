@@ -2,15 +2,15 @@ use super::*;
 
 /// Compact `store`, assert the splice landed under the `rig.compaction` author,
 /// then undo it and assert the original conversation is back.
-async fn assert_splice_and_undo(store: &dyn Store) -> Result<()> {
+async fn assert_splice_and_undo(store: Arc<dyn Store>) -> Result<()> {
     // -- Setup & Fixtures
-    seed(store)?;
+    seed(&*store)?;
     let bus = Bus::default();
     let compactor = make_compactor(&["rolled-up summary"], bus)?;
 
     // -- Exec
     let outcome = compactor
-        .compact(store, CONV, &CompactReason::Threshold, "auto")
+        .compact(Arc::clone(&store), CONV, &CompactReason::Threshold, "auto")
         .await?
         .ok_or("compaction should have run")?;
 
@@ -29,7 +29,7 @@ async fn assert_splice_and_undo(store: &dyn Store) -> Result<()> {
         "the summary must carry the streamed text, got: {summary_text}"
     );
 
-    let mut conversation = rig_memory::load(store, CONV)?;
+    let mut conversation = rig_memory::load(&*store, CONV)?;
     let first = conversation
         .entries()
         .next()
@@ -51,7 +51,7 @@ async fn assert_splice_and_undo(store: &dyn Store) -> Result<()> {
     );
 
     // -- Exec: undo the compaction.
-    let undone = rig_memory::undo_summary(&mut conversation, store, CONV, summary_author())?;
+    let undone = rig_memory::undo_summary(&mut conversation, &*store, CONV, summary_author())?;
 
     // -- Check: the replaced messages are back.
     assert_eq!(
@@ -75,20 +75,20 @@ async fn assert_splice_and_undo(store: &dyn Store) -> Result<()> {
 #[tokio::test]
 async fn compact_splices_under_the_summary_author_on_the_sqlite_backend() -> Result<()> {
     // -- Setup & Fixtures
-    let store = memory_store()?;
+    let store = memory_store().await?;
 
     // -- Exec & Check
-    assert_splice_and_undo(&*store).await
+    assert_splice_and_undo(Arc::clone(&store)).await
 }
 
 #[tokio::test]
-async fn compact_splices_under_the_summary_author_on_the_dir_backend() -> Result<()> {
+async fn compact_splices_under_the_summary_author_on_the_file_backend() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
-    let store = dir_store(temp_dir.path())?;
+    let store = file_store(temp_dir.path()).await?;
 
     // -- Exec & Check
-    assert_splice_and_undo(&*store).await
+    assert_splice_and_undo(Arc::clone(&store)).await
 }
 
 #[tokio::test]
@@ -96,14 +96,14 @@ async fn compact_validates_the_summary_through_the_folded_partial_response() -> 
     // -- Setup & Fixtures
     // The summary is read from `Streamed::partial()`, not from the deltas, so a
     // multi-chunk stream folds into one trimmed summary.
-    let store = memory_store()?;
+    let store = memory_store().await?;
     seed(&*store)?;
     let bus = Bus::default();
     let compactor = make_compactor(&["  part one ", "part two  "], bus)?;
 
     // -- Exec
     let outcome = compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "auto")
+        .compact(Arc::clone(&store), CONV, &CompactReason::Threshold, "auto")
         .await?
         .ok_or("compaction should have run")?;
 
@@ -123,7 +123,7 @@ async fn compact_validates_the_summary_through_the_folded_partial_response() -> 
 #[tokio::test]
 async fn compact_emits_started_chunks_and_completed() -> Result<()> {
     // -- Setup & Fixtures
-    let store = memory_store()?;
+    let store = memory_store().await?;
     seed(&*store)?;
     let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
@@ -131,7 +131,7 @@ async fn compact_emits_started_chunks_and_completed() -> Result<()> {
 
     // -- Exec
     compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "auto")
+        .compact(Arc::clone(&store), CONV, &CompactReason::Threshold, "auto")
         .await?;
 
     // -- Check
@@ -163,7 +163,7 @@ async fn compact_emits_started_chunks_and_completed() -> Result<()> {
 async fn compact_returns_none_when_nothing_would_be_summarized() -> Result<()> {
     // -- Setup & Fixtures
     // A single-message conversation has nothing older to summarize.
-    let store = memory_store()?;
+    let store = memory_store().await?;
     let mut conversation = rig_memory::load(&*store, CONV)?;
     conversation.extend([Message::user("only message")]);
     rig_memory::save(&*store, CONV, &mut conversation)?;
@@ -172,7 +172,7 @@ async fn compact_returns_none_when_nothing_would_be_summarized() -> Result<()> {
 
     // -- Exec
     let outcome = compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "auto")
+        .compact(Arc::clone(&store), CONV, &CompactReason::Threshold, "auto")
         .await?;
 
     // -- Check
@@ -187,7 +187,7 @@ async fn compact_returns_none_when_nothing_would_be_summarized() -> Result<()> {
 async fn compact_is_disabled_without_a_model_spec() -> Result<()> {
     // -- Setup & Fixtures
     // An unresolved provider name disables compaction for the session.
-    let store = memory_store()?;
+    let store = memory_store().await?;
     seed(&*store)?;
     let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
@@ -200,7 +200,7 @@ async fn compact_is_disabled_without_a_model_spec() -> Result<()> {
 
     // -- Exec
     let result = compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "auto")
+        .compact(Arc::clone(&store), CONV, &CompactReason::Threshold, "auto")
         .await;
 
     // -- Check

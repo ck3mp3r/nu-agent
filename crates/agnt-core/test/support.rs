@@ -34,7 +34,7 @@ pub(crate) fn paths_in(root: &Path) -> Paths {
         dotenv_path: root.join(".env"),
         agents_dir: root.join("agents"),
         copilot_token_dir: root.join("github_copilot"),
-        store_path: root.join("rig-sessions.db"),
+        store_path: root.join("sessions.db"),
         log_dir: logs.clone(),
         log_path: logs.join("agent.log"),
         audit_log_path: root.join("tool_audit.log"),

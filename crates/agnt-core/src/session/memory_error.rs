@@ -19,6 +19,14 @@ pub enum MemoryBackendError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
+    /// The storage engine failed.
+    #[error(transparent)]
+    Storage(#[from] agnt_storage::StorageError),
+
+    /// The blocking pool never ran the work, or the work panicked.
+    #[error(transparent)]
+    Pool(#[from] super::blocking::PoolError),
+
     /// The SQLite store failed.
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
@@ -75,6 +83,7 @@ impl From<RigStoreError> for MemoryError {
     fn from(error: RigStoreError) -> Self {
         match error {
             RigStoreError::Io(error) => Self::backend(error),
+            RigStoreError::Storage(error) => Self::backend(error),
             RigStoreError::Sqlite(error) => Self::backend(error),
             RigStoreError::Session(error) => Self::backend(error),
             // The cycle break: the payload already is a `MemoryError`.

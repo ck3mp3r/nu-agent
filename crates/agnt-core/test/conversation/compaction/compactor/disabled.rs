@@ -6,7 +6,7 @@ use super::*;
 async fn disabled_compactor_emits_failed_and_returns_error() -> Result<()> {
     // -- Setup & Fixtures: the 4th argument is the planning spec; `None` means
     // the provider resolved to no rig provider id.
-    let store = memory_store()?;
+    let store = memory_store().await?;
     seed(&*store)?;
     let bus = Bus::default();
     let mut rx = bus.compaction().subscribe();
@@ -14,7 +14,12 @@ async fn disabled_compactor_emits_failed_and_returns_error() -> Result<()> {
 
     // -- Exec
     let result = compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "test_source")
+        .compact(
+            Arc::clone(&store),
+            CONV,
+            &CompactReason::Threshold,
+            "test_source",
+        )
         .await;
 
     // -- Check

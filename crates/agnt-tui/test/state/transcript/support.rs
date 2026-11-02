@@ -8,9 +8,11 @@ pub(super) use agnt_core::protocol::contracts::UiMessageSnapshot;
 pub(super) use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
 pub(super) use agnt_core::protocol::events::ToolCall;
 pub(super) use agnt_core::protocol::tool_args::CallLine;
-pub(super) use agnt_core::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
+pub(super) use agnt_core::transcript::entry::{
+    MessageEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
+};
 pub(super) use agnt_core::transcript::ir::{
-    ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
+    ContentKind, Display, DisplaySection, MessageRole, ToolName,
 };
 pub(super) use agnt_core::transcript::renderer::ItemStatus;
 
@@ -33,6 +35,9 @@ pub(super) fn push_user(state: &mut AppState, text: &str) {
     let entry = TranscriptEntry::Message(MessageEntry {
         role: MessageRole::User,
         markdown: text.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     });
     state.transcript.push_entry(entry);
 }
@@ -41,6 +46,9 @@ pub(super) fn push_assistant(state: &mut AppState, text: &str) {
     let entry = TranscriptEntry::Message(MessageEntry {
         role: MessageRole::Assistant,
         markdown: text.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     });
     state.transcript.push_entry(entry);
 }
@@ -50,6 +58,9 @@ pub(super) fn rendered_row_count(markdown: &str, width: usize) -> usize {
     let entry = TranscriptEntry::Message(MessageEntry {
         role: MessageRole::User,
         markdown: markdown.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     });
     let probe = crate::widgets::RatatuiBackend::new(u16::try_from(width).unwrap_or(u16::MAX), 0);
     agnt_render::RenderBackend::measure(&probe, &entry, width)

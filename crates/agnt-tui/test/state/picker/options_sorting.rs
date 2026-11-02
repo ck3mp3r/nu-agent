@@ -54,8 +54,9 @@ fn set_picker_options_sorting_and_open() -> Result<()> {
                 payload: PickerPayload::Session {
                     session_id: "old".to_string(),
                     title: None,
-                    created_at: now - chrono::Duration::days(1),
+                    created_at: Some(now - chrono::Duration::days(1)),
                     message_count: 1,
+                    agent: None,
                 },
             },
             PickerOption {
@@ -67,8 +68,9 @@ fn set_picker_options_sorting_and_open() -> Result<()> {
                 payload: PickerPayload::Session {
                     session_id: "new".to_string(),
                     title: None,
-                    created_at: now,
+                    created_at: Some(now),
                     message_count: 1,
+                    agent: None,
                 },
             },
         ],

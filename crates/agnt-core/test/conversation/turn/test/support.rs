@@ -113,6 +113,7 @@ pub(super) fn make_turn_context<'a>(
     let conversation = TurnConversation {
         memory,
         conversation_id: "test-conv".to_string(),
+        agent: String::new(),
         has_session: true,
         dyn_model,
         compaction: test_compaction_config(bus.clone()),
@@ -123,6 +124,7 @@ pub(super) fn make_turn_context<'a>(
         max_turns: None,
     };
     let tool_infra = executor::ToolInfra {
+        store_latch: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),

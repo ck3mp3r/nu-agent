@@ -39,6 +39,7 @@ impl AgentSessionList {
 
         let ids = rig
             .session_ids()
+            .await
             .map_err(|e| LabeledError::new(format!("Failed to list sessions: {e}")))?;
 
         // Convert each session's `meta.json` listing to a Nushell record. A
@@ -49,7 +50,7 @@ impl AgentSessionList {
             let Some(display_id) = id.strip_prefix(&prefixed) else {
                 continue;
             };
-            let Ok(meta) = rig.listing(&id) else {
+            let Ok(meta) = rig.listing(&id).await else {
                 log::warn!("failed to read the session listing of '{id}'");
                 continue;
             };
@@ -117,7 +118,7 @@ impl SimplePluginCommand for AgentSessionList {
             .named(
                 "store",
                 nu_protocol::SyntaxShape::String,
-                "Session store backend: sqlite|jsonl|memory",
+                "Session store backend: sqlite|memory",
                 None,
             )
             .category(Category::Experimental)

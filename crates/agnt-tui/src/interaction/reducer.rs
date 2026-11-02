@@ -2,7 +2,8 @@ use crate::{
     interaction::{cancel::CancelController, dispatch::KeyLens},
     state::{
         ActivePicker, AppState, CommandPaletteAction, InputMode, PermissionPrompt, PickerOption,
-        PickerPayload, PickerRenderKind, ScrollAction, SubmitAction, SwitchRequest, UiPhase,
+        PickerPayload, PickerRenderKind, PromptFacts, ScrollAction, SubmitAction, SwitchRequest,
+        UiPhase,
     },
 };
 use agnt_core::protocol::contracts::SharedUiAction;
@@ -56,7 +57,20 @@ fn reduce_event(
         // The card is the only writer of a decision: the reducer resolves the
         // request id from the open prompt, so the event carries no id.
         SystemEvent::PermissionDecided { decision } => reduce_permission_decided(state, decision),
-        SystemEvent::PromptSubmitted { text } => handle_submit(state, text),
+        SystemEvent::PromptSubmitted {
+            text,
+            stamp_millis,
+            stamp_model,
+            stamp_agent,
+        } => handle_submit(
+            state,
+            text,
+            PromptFacts {
+                millis: stamp_millis,
+                model: stamp_model,
+                agent: stamp_agent,
+            },
+        ),
         SystemEvent::InferenceStarted => {
             state.llm.started(
                 &mut state.transcript,
@@ -482,7 +496,10 @@ fn reduce_common_key(
     match key {
         Key::Enter => {
             let text = state.input.pending_submit_text.take().unwrap_or_default();
-            handle_submit(state, text)
+            // The live submit boundary: the facts are stamped as the prompt is
+            // accepted, and they travel with it to the row.
+            let facts = state.submit_facts();
+            handle_submit(state, text, facts)
         }
         Key::CtrlC => handle_quit(state, cancel_controller),
         Key::CtrlP => handle_toggle_command_palette(state),
@@ -563,7 +580,7 @@ pub(crate) fn push_system_notice(state: &mut AppState, text: String) {
         }));
 }
 
-fn handle_submit(state: &mut AppState, submitted_text: String) -> bool {
+fn handle_submit(state: &mut AppState, submitted_text: String, facts: PromptFacts) -> bool {
     state.input.pending_submit_text = None;
     if submitted_text.trim().is_empty() {
         return false;
@@ -591,13 +608,13 @@ fn handle_submit(state: &mut AppState, submitted_text: String) -> bool {
             return true;
         }
         SlashParseResult::Command(_) | SlashParseResult::Unknown(_) => {
-            state.enqueue_immediate_submission(submitted_text);
+            state.enqueue_immediate_submission_with_facts(submitted_text, facts);
             return true;
         }
         SlashParseResult::NotSlash => {}
     }
 
-    state.enqueue_prompt(submitted_text);
+    state.enqueue_prompt_with_facts(submitted_text, facts);
     true
 }
 
@@ -716,7 +733,8 @@ fn handle_picker_submit(state: &mut AppState, submit: SubmitAction) -> bool {
                 return false;
             };
             state.picker.close();
-            handle_submit(state, selected)
+            let facts = state.submit_facts();
+            handle_submit(state, selected, facts)
         }
     }
 }

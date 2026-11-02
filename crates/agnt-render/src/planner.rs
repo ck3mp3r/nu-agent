@@ -19,13 +19,15 @@ pub enum EntryFamily {
     User,
     Assistant,
     Tool,
+    Task,
     Notice,
     Banner,
 }
 
 impl EntryFamily {
     /// Classify an entry. A tool call is one `Tool` entry for its whole life,
-    /// so this reads the entry variant and, for prose, the message role.
+    /// and a task line one `Task` entry, so this reads the entry variant and,
+    /// for prose, the message role.
     pub fn of(entry: &TranscriptEntry) -> Self {
         match entry {
             TranscriptEntry::Message(message) => match message.role {
@@ -33,6 +35,7 @@ impl EntryFamily {
                 MessageRole::Assistant => Self::Assistant,
             },
             TranscriptEntry::Tool(_) => Self::Tool,
+            TranscriptEntry::Task(_) => Self::Task,
             TranscriptEntry::Notice(_) => Self::Notice,
             TranscriptEntry::Banner(_) => Self::Banner,
         }

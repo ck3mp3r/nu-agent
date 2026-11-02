@@ -43,7 +43,7 @@ fn test_paths_resolve_env_homes_win_over_config_homes() -> Result<()> {
         paths.copilot_token_dir,
         config_app_dir.join(copilot_dir_name())
     );
-    assert_eq!(paths.store_path, cache_app_dir.join("rig-sessions.db"));
+    assert_eq!(paths.store_path, cache_app_dir.join("sessions.db"));
     assert_eq!(
         paths.grammar_cache_dir,
         PathBuf::from("/env/cache").join("tree-sitter")
@@ -91,7 +91,7 @@ fn test_paths_resolve_config_homes_used_when_env_unset() -> Result<()> {
     );
     assert_eq!(
         paths.store_path,
-        app_dir("/from/config/cache").join("rig-sessions.db")
+        app_dir("/from/config/cache").join("sessions.db")
     );
     // -- Check: the grammar cache follows the same cache winner, without
     // APP_DIR_NAME: the tree-sitter CLI shares that directory
@@ -135,7 +135,7 @@ fn test_paths_resolve_falls_back_to_xdg_tree() -> Result<()> {
         paths.copilot_token_dir,
         config_app_dir.join(copilot_dir_name())
     );
-    assert_eq!(paths.store_path, cache_app_dir.join("rig-sessions.db"));
+    assert_eq!(paths.store_path, cache_app_dir.join("sessions.db"));
     assert_eq!(paths.log_dir, log_app_dir);
     assert_eq!(paths.log_path, log_app_dir.join("agent.log"));
     assert_eq!(paths.secrets_path, data_app_dir.join("secrets.json"));
@@ -174,7 +174,7 @@ fn test_paths_resolve_expands_leading_tilde() -> Result<()> {
     );
     assert_eq!(
         paths.store_path,
-        app_dir("/home/tester/cache").join("rig-sessions.db")
+        app_dir("/home/tester/cache").join("sessions.db")
     );
     assert_eq!(
         paths.secrets_path,
@@ -214,10 +214,7 @@ fn test_paths_resolve_empty_values_count_as_absent() -> Result<()> {
         paths.secrets_path,
         app_dir("/xdg/data").join("secrets.json")
     );
-    assert_eq!(
-        paths.store_path,
-        app_dir("/xdg/cache").join("rig-sessions.db")
-    );
+    assert_eq!(paths.store_path, app_dir("/xdg/cache").join("sessions.db"));
     assert_eq!(
         paths.log_path,
         app_dir("/xdg/state").join("logs").join("agent.log")
@@ -256,7 +253,7 @@ fn test_paths_resolve_for_process_with_derives_the_config_quartet_from_bootstrap
     );
     assert_eq!(
         paths.store_path,
-        app_dir("/from/config/cache").join("rig-sessions.db")
+        app_dir("/from/config/cache").join("sessions.db")
     );
     Ok(())
 }

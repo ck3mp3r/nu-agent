@@ -14,6 +14,11 @@ pub use crate::hook::output_repetition::RepetitionState;
 pub use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 pub use crate::hook::turn_usage::TurnUsage;
 
+/// The last clean store refusal, shared by the hook chain and the turn's
+/// tool infrastructure: `None` while the session store opens, and the refusal
+/// text once it could not, so no further per-turn attempt is made.
+pub type StoreLatch = Arc<Mutex<Option<String>>>;
+
 /// Session-scoped state shared across turns via the hook.
 ///
 /// Bundles the `Arc<Mutex<…>>` state that outlives individual turns and
@@ -54,6 +59,10 @@ pub struct HookState {
     /// every call into it, and it resets only when the runtime switches
     /// sessions.
     pub session_usage: TurnUsage,
+    /// The store-dead latch: the clean refusal text once the session store
+    /// could not be opened, `None` while it opens. Shared with the turn's
+    /// `ToolInfra` so a session change can clear it.
+    pub store_latch: StoreLatch,
 }
 
 #[cfg(test)]

@@ -5,11 +5,12 @@ use agnt_core::transcript::entry::TranscriptEntry;
 use crate::state::{ActivePicker, AppState, CommandPaletteAction, PickerOption, PickerPayload};
 
 /// Flatten one entry to plain text: the markdown body, the tool call summary,
-/// or the notice/banner text.
+/// the task call line, or the notice/banner text.
 pub(crate) fn entry_text(entry: &TranscriptEntry) -> String {
     match entry {
         TranscriptEntry::Message(message) => message.markdown.clone(),
         TranscriptEntry::Tool(tool) => tool.call.call_line.summary.clone(),
+        TranscriptEntry::Task(task) => format!("{} · {}", task.name, task.summary),
         TranscriptEntry::Notice(notice) => notice.text.clone(),
         TranscriptEntry::Banner(banner) => banner.text.clone(),
     }

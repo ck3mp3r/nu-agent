@@ -1,7 +1,8 @@
+use super::blocking::on_pool;
 use super::factory::RigStoreConfig;
 use super::memory_error::MemoryError;
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// How many sessions' rig-memory stores stay open at once.
 ///
@@ -68,20 +69,15 @@ impl CachedMemory {
     /// # Errors
     ///
     /// When the store cannot be opened.
-    pub fn rig_store(&self, session_id: &str) -> Result<Arc<dyn rig_memory::Store>, MemoryError> {
-        let mut open = self.rig_stores.lock().expect("rig stores lock poisoned");
-        if let Some(store) = open.stores.get(session_id) {
-            return Ok(Arc::clone(store));
+    pub async fn rig_store(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<dyn rig_memory::Store>, MemoryError> {
+        if let Some(store) = self.open_store(session_id) {
+            return Ok(store);
         }
-        let store = self.rig.open(session_id).map_err(MemoryError::from)?;
-        open.stores
-            .insert(session_id.to_string(), Arc::clone(&store));
-        open.order.push_back(session_id.to_string());
-        while open.order.len() > OPEN_STORES {
-            if let Some(oldest) = open.order.pop_front() {
-                open.stores.remove(&oldest);
-            }
-        }
+        let store = self.rig.open(session_id).await.map_err(MemoryError::from)?;
+        self.keep_store(session_id, &store);
         Ok(store)
     }
 
@@ -94,16 +90,9 @@ impl CachedMemory {
     /// # Errors
     ///
     /// When the store cannot be listed.
-    pub fn session_ids(&self) -> Result<Vec<String>, MemoryError> {
-        let mut ids = self.rig.session_ids().map_err(MemoryError::from)?;
-        let opened: Vec<String> = self
-            .rig_stores
-            .lock()
-            .expect("rig stores lock poisoned")
-            .stores
-            .keys()
-            .cloned()
-            .collect();
+    pub async fn session_ids(&self) -> Result<Vec<String>, MemoryError> {
+        let mut ids = self.rig.session_ids().await.map_err(MemoryError::from)?;
+        let opened: Vec<String> = self.open_stores().stores.keys().cloned().collect();
         for id in opened {
             if !ids.contains(&id) {
                 ids.push(id);
@@ -122,43 +111,83 @@ impl CachedMemory {
     /// # Errors
     ///
     /// When the store cannot be opened or listed.
-    pub fn rig_holds(&self, session_id: &str) -> Result<bool, MemoryError> {
-        if self
-            .rig_stores
-            .lock()
-            .expect("rig stores lock poisoned")
-            .stores
-            .contains_key(session_id)
-        {
+    pub async fn rig_holds(&self, session_id: &str) -> Result<bool, MemoryError> {
+        if self.open_store(session_id).is_some() {
             return Ok(true);
         }
-        let store = self.rig.open(session_id).map_err(MemoryError::from)?;
-        let logs = store.logs().map_err(MemoryError::backend)?;
-        Ok(logs.iter().any(|log| log == session_id))
+        let store = self.rig.open(session_id).await.map_err(MemoryError::from)?;
+        let session = session_id.to_owned();
+        let logs = on_pool(move || store.logs())
+            .await
+            .map_err(MemoryError::backend)?
+            .map_err(MemoryError::backend)?;
+        Ok(logs.iter().any(|log| log == &session))
     }
 
     /// Log what reading the session repaired, such as an image whose blob is
     /// gone, and return them. A store that cannot be read is logged too: the
     /// session still opens, and the next save reports the failure.
-    pub fn warn_repairs(&self, session_id: &str) -> Vec<rig_memory::Repair> {
-        let store = match self.rig_store(session_id) {
+    pub async fn warn_repairs(&self, session_id: &str) -> Vec<rig_memory::Repair> {
+        let store = match self.rig_store(session_id).await {
             Ok(store) => store,
             Err(error) => {
                 log::warn!("Failed to open the session store: {error}");
                 return Vec::new();
             }
         };
-        match rig_memory::Session::read(&*store) {
-            Ok(session) => {
+        match on_pool(move || rig_memory::Session::read(&*store)).await {
+            Ok(Ok(session)) => {
                 for repair in &session.repairs {
                     log::warn!("session repair: {repair}");
                 }
                 session.repairs
+            }
+            Ok(Err(error)) => {
+                log::warn!("Failed to read the session: {error}");
+                Vec::new()
             }
             Err(error) => {
                 log::warn!("Failed to read the session: {error}");
                 Vec::new()
             }
         }
+    }
+
+    /// The fact tables of the store this type opens for a session.
+    ///
+    /// # Errors
+    ///
+    /// When the database cannot be opened.
+    pub(crate) async fn facts(&self) -> Result<super::settle::FactStore, MemoryError> {
+        super::settle::FactStore::open(&self.rig)
+            .await
+            .map_err(MemoryError::from)
+    }
+
+    // --- Cache ---
+
+    /// The store of `session_id` when it is already open.
+    fn open_store(&self, session_id: &str) -> Option<Arc<dyn rig_memory::Store>> {
+        self.open_stores().stores.get(session_id).cloned()
+    }
+
+    /// Keep `store` as the open store of `session_id`, dropping the oldest when
+    /// the bound is reached.
+    fn keep_store(&self, session_id: &str, store: &Arc<dyn rig_memory::Store>) {
+        let mut open = self.open_stores();
+        open.stores
+            .insert(session_id.to_string(), Arc::clone(store));
+        open.order.push_back(session_id.to_string());
+        while open.order.len() > OPEN_STORES {
+            if let Some(oldest) = open.order.pop_front() {
+                open.stores.remove(&oldest);
+            }
+        }
+    }
+
+    fn open_stores(&self) -> MutexGuard<'_, OpenStores> {
+        self.rig_stores
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }

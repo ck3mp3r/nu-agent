@@ -107,6 +107,10 @@ pub struct ToolInfra {
     /// The session working directory. The hook chain reads it to build the
     /// argument-sourced preview for a call the turn stopped before it ran.
     pub cwd: PathBuf,
+    /// The store-dead latch, shared with the hook chain: the clean refusal text
+    /// once the session store could not be opened, `None` while it opens. The
+    /// runtime clears it when the session changes.
+    pub store_latch: crate::hook::StoreLatch,
 }
 
 pub struct TurnExecutor<'a, S: SessionManager> {
@@ -121,6 +125,9 @@ pub struct TurnExecutor<'a, S: SessionManager> {
     pub compaction: CompactionConfig,
     /// Stored after a completed turn so the delegate can extract it for response formatting.
     pub(super) response_data: Option<TurnResponseData>,
+    /// The persona slug the runtime had loaded, empty when none was loaded.
+    /// The settled turn records it as its agent.
+    pub agent: String,
 }
 
 impl<'a, S> TurnExecutor<'a, S>
@@ -144,7 +151,16 @@ where
             dyn_model,
             compaction,
             response_data: None,
+            agent: String::new(),
         }
+    }
+
+    /// The persona slug the runtime had loaded when the turn runs.
+    ///
+    /// Empty means no persona was loaded. The settled turn records it.
+    pub fn with_agent(mut self, agent: impl Into<String>) -> Self {
+        self.agent = agent.into();
+        self
     }
 
     /// Extract the response data captured during `execute`. Returns `None` if

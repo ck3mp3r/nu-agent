@@ -127,6 +127,9 @@ fn user_entry(markdown: &str) -> TranscriptEntry {
     TranscriptEntry::Message(MessageEntry {
         role: MessageRole::User,
         markdown: markdown.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     })
 }
 

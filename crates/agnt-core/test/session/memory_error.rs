@@ -26,6 +26,42 @@ fn memory_error_backend_io_transparent() -> Result<()> {
     Ok(())
 }
 
+/// WHEN the legacy-store refusal flows to the memory error, THE flatten SHALL
+/// carry the complete refusal sentence and no sqlx wording.
+#[test]
+fn memory_error_flats_the_legacy_store_refusal_clean() -> Result<()> {
+    // -- Setup & Fixtures
+    let refusal = agnt_storage::StorageError::LegacyStore {
+        stored: 0,
+        target: 2,
+        path: std::path::PathBuf::from("/tmp/nu-agent/sessions.db"),
+    };
+    let sentence = refusal.to_string();
+
+    // -- Exec
+    let error = MemoryError::from(RigStoreError::Storage(refusal));
+
+    // -- Check
+    assert_eq!(
+        error.to_string(),
+        format!("Memory backend error: {sentence}"),
+        "the flatten carries the refusal whole"
+    );
+    let flat = error.to_string();
+    assert!(
+        flat.contains("legacy sqlx-migration store")
+            && flat.contains("stored schema version 0")
+            && flat.contains("migrates to 2")
+            && flat.contains("left untouched"),
+        "the flatten names the era, both versions and the untouched file: {flat}"
+    );
+    assert!(
+        !flat.contains("error returned from database"),
+        "the flatten carries no sqlx wording: {flat}"
+    );
+    Ok(())
+}
+
 /// A rig `SessionError` wraps as `Backend(Rig)`.
 #[test]
 fn memory_error_backend_rig_transparent() -> Result<()> {

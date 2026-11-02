@@ -61,6 +61,7 @@ async fn cancelled_turn_with_a_tool_call_persists_the_closed_delta() -> Result<(
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: handle,

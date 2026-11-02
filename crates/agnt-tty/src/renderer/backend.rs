@@ -135,8 +135,11 @@ impl TtyBackend {
                 let indicator = tool.status.indicator_char(self.now_millis);
                 format!("[tool] {indicator} ")
             }
+            TranscriptEntry::Task(task) => {
+                let indicator = task.status.indicator_char(self.now_millis);
+                format!("[compaction] {indicator} ")
+            }
             TranscriptEntry::Notice(notice) => match notice.kind {
-                NoticeKind::Compaction => "[compaction] ".to_string(),
                 NoticeKind::System => "[system] ".to_string(),
             },
             TranscriptEntry::Banner(_) => String::new(),
@@ -172,6 +175,10 @@ fn content_lines(entry: &TranscriptEntry, width: usize) -> Vec<ContentLine> {
             }
             lines
         }
+        TranscriptEntry::Task(task) => vec![ContentLine::from_spans(vec![
+            Span::new(task.name.clone(), StyleHint::Emphasis),
+            Span::new(format!(" · {}", task.summary), StyleHint::Muted),
+        ])],
         TranscriptEntry::Notice(notice) => text_lines(&notice.text),
         TranscriptEntry::Banner(banner) => text_lines(&banner.text),
     }

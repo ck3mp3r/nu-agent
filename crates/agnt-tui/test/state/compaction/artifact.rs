@@ -20,7 +20,7 @@ fn compaction_artifact_renders_summary_without_metadata_or_copy() -> Result<()> 
 
     // -- Check
     let raw_texts: Vec<String> = state.transcript.entries().iter().map(entry_text).collect();
-    assert!(raw_texts.contains(&"Compaction".to_string()));
+    assert!(raw_texts.contains(&"Compaction · slash_compact".to_string()));
     assert!(raw_texts.contains(&"full summary body".to_string()));
     assert!(!raw_texts.iter().any(|line| line.contains("source=")));
     assert!(
@@ -74,7 +74,7 @@ fn compaction_artifact_renders_summary_without_metadata_or_copy() -> Result<()> 
         .flat_map(|line| crate::markdown::render_markdown_lines(&entry_text(line), None))
         .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
         .collect();
-    assert!(raw_texts.contains(&"Compaction".to_string()));
+    assert!(raw_texts.contains(&"Compaction · auto_threshold".to_string()));
     assert!(projected_texts.iter().any(|l| l.contains("Summary")));
     assert!(projected_texts.iter().any(|l| l.contains("content line")));
     assert!(!raw_texts.iter().any(|line| line.contains("source=")));
@@ -191,7 +191,7 @@ fn compaction_block_header_is_concise_without_artifact_label() -> Result<()> {
         .iter()
         .map(entry_text)
         .collect::<Vec<_>>();
-    assert!(lines.contains(&"Compaction".to_string()));
+    assert!(lines.contains(&"Compaction · auto_threshold".to_string()));
     assert!(!lines.contains(&"Compaction artifact".to_string()));
     Ok(())
 }

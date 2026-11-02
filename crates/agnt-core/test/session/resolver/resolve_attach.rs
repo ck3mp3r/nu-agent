@@ -59,13 +59,14 @@ async fn attach_existing_session_returns_initial_messages_and_no_tokens() -> Res
 
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().unwrap();
-    let rig = RigStoreConfig::new(crate::session::StoreType::Jsonl).with_cache_dir(temp_dir.path());
+    let rig =
+        RigStoreConfig::new(crate::session::StoreType::Sqlite).with_cache_dir(temp_dir.path());
     let cwd = std::path::PathBuf::from("/home/user/project");
     let prefix = crate::session::prefix::dir_prefix(&cwd);
     let raw_id = "existing-session";
     let prefixed_id = format!("{prefix}-{raw_id}");
     let messages = vec![Message::user("hello"), Message::assistant("world")];
-    seed(&rig, &prefixed_id, messages)?;
+    seed(&rig, &prefixed_id, messages).await?;
 
     // -- Exec
     let resolver = DefaultSessionResolver::new(rig);
@@ -98,13 +99,14 @@ async fn attach_existing_session_returns_initial_messages_and_no_tokens() -> Res
 // -- Test Support
 
 /// Seed the rig-memory store of `session_id` with `messages`.
-fn seed(
+async fn seed(
     rig: &crate::session::RigStoreConfig,
     session_id: &str,
     messages: Vec<Message>,
 ) -> Result<()> {
     let store = rig
         .open(session_id)
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let mut conversation = rig_memory::load(&*store, session_id)
         .map_err(|e| format!("rig store load should succeed: {e:?}"))?;

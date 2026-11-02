@@ -12,7 +12,7 @@ pub mod turn_usage;
 pub mod unpriced_warnings;
 
 pub use adapter::{ClosureToolAdapter, adapt_closures};
-pub use agent_hook::{DoomLoopState, HookState};
+pub use agent_hook::{DoomLoopState, HookState, StoreLatch};
 pub use chain::HookChain;
 pub use permission_resolver::{
     AsyncPermissionResolver, InteractivePermissionResolver, PermissionDecision,

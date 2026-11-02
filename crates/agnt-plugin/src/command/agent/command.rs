@@ -247,7 +247,7 @@ Compaction flags:
             .named(
                 "store",
                 nu_protocol::SyntaxShape::String,
-                "Session store backend: sqlite|jsonl|memory",
+                "Session store backend: sqlite|memory",
                 None,
             )
     }

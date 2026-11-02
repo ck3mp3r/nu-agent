@@ -225,7 +225,6 @@ fn test_dispatch_config_store_type_from_flags() -> Result<()> {
     // -- Setup & Fixtures
     let cases = [
         (None, StoreType::Sqlite),
-        (Some("jsonl"), StoreType::Jsonl),
         (Some("memory"), StoreType::Memory),
         (Some("SQLITE"), StoreType::Sqlite),
     ];
@@ -254,13 +253,13 @@ fn test_dispatch_config_store_type_from_flags() -> Result<()> {
 #[test]
 fn test_dispatch_config_store_type_flag_wins_over_config() -> Result<()> {
     // -- Setup & Fixtures
-    let args = parse_args(&["--store", "jsonl"])?;
+    let args = parse_args(&["--store", "memory"])?;
 
     // -- Exec
-    let store_type = resolve_store_type_from_clap(&args, Some(StoreType::Memory))?;
+    let store_type = resolve_store_type_from_clap(&args, Some(StoreType::Sqlite))?;
 
     // -- Check
-    assert_eq!(store_type, StoreType::Jsonl);
+    assert_eq!(store_type, StoreType::Memory);
     Ok(())
 }
 
@@ -270,10 +269,10 @@ fn test_dispatch_config_store_type_config_value_when_flag_absent() -> Result<()>
     let args = parse_args(&[])?;
 
     // -- Exec
-    let store_type = resolve_store_type_from_clap(&args, Some(StoreType::Jsonl))?;
+    let store_type = resolve_store_type_from_clap(&args, Some(StoreType::Memory))?;
 
     // -- Check
-    assert_eq!(store_type, StoreType::Jsonl);
+    assert_eq!(store_type, StoreType::Memory);
     Ok(())
 }
 
@@ -297,7 +296,7 @@ fn test_dispatch_config_store_type_invalid_flag_errors_with_config_value() -> Re
     let args = parse_args(&["--store", "bogus"])?;
 
     // -- Exec
-    let err = resolve_store_type_from_clap(&args, Some(StoreType::Jsonl))
+    let err = resolve_store_type_from_clap(&args, Some(StoreType::Memory))
         .err()
         .ok_or("should reject unknown store")?;
 
@@ -431,7 +430,7 @@ fn test_dispatch_config_session_store_type_from_config_load_with_store() -> Resu
     // -- Setup & Fixtures
     let loaded = Ok(PluginConfig {
         session_store: Some(StoreTypeConfig {
-            store_type: StoreType::Jsonl,
+            store_type: StoreType::Memory,
             path: None,
         }),
         ..Default::default()
@@ -441,7 +440,7 @@ fn test_dispatch_config_session_store_type_from_config_load_with_store() -> Resu
     let store_type = session_store_type_from_config_load(loaded);
 
     // -- Check
-    assert_eq!(store_type, Some(StoreType::Jsonl));
+    assert_eq!(store_type, Some(StoreType::Memory));
     Ok(())
 }
 

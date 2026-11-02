@@ -202,6 +202,44 @@ pub struct QueuedPrompt {
     pub id: u64,
     pub prompt_text: String,
     pub status: PromptStatus,
+    /// The footer facts the submit boundary stamped: carried from the enqueue
+    /// to the transcript row, verbatim.
+    pub facts: PromptFacts,
+}
+
+/// The footer facts one submission carries from its boundary to its row.
+///
+/// The submit instant and the identities active when the prompt was accepted.
+/// Every field is what the boundary knew: an unknown fact stays absent, and the
+/// row it reaches carries exactly this.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PromptFacts {
+    pub millis: Option<i64>,
+    pub model: Option<String>,
+    pub agent: Option<String>,
+}
+
+impl PromptFacts {
+    /// Fold `later` into `self`: the first `Some` per field wins, in queue order.
+    pub fn merge_first_some(&mut self, later: &PromptFacts) {
+        if self.millis.is_none() {
+            self.millis = later.millis;
+        }
+        if self.model.is_none() {
+            self.model.clone_from(&later.model);
+        }
+        if self.agent.is_none() {
+            self.agent.clone_from(&later.agent);
+        }
+    }
+}
+
+/// One prompt taken for immediate execution: its text and the facts its submit
+/// boundary stamped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImmediateSubmission {
+    pub text: String,
+    pub facts: PromptFacts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,7 +315,7 @@ pub struct AppState {
     pub status: StatusState,
     pub(crate) prompt_items: Vec<QueuedPrompt>,
     pub(crate) pending_prompt_ids: VecDeque<u64>,
-    pub(crate) pending_immediate_submissions: VecDeque<String>,
+    pub(crate) pending_immediate_submissions: VecDeque<ImmediateSubmission>,
     pub(crate) active_prompt_id: Option<u64>,
     pub(crate) next_prompt_id: u64,
     pub(crate) active_cycle: bool,
@@ -452,7 +490,11 @@ impl AppState {
                 self.ensure_invariants();
             }
             UiStateEvent::EnqueueExternalPrompt { text } => {
-                self.enqueue_prompt(text);
+                // The ingest instant is this prompt's submit boundary: the
+                // external intake stamps exactly as the interactive submit
+                // does, then carries.
+                let facts = self.submit_facts();
+                self.enqueue_prompt_with_facts(text, facts);
             }
             UiStateEvent::ExecuteSharedUiAction(action) => {
                 self.execute_shared_ui_action(action);

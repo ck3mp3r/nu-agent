@@ -1,25 +1,22 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
+use agnt_storage::{RigAdapter, Storage};
 use rig_memory::Store;
 use serde::{Deserialize, Serialize};
 
 use super::SessionMeta;
-use super::rig_dir_store;
-use super::rig_sqlite_store::RigSqliteStore;
+use super::blocking::{PoolError, on_pool};
 use super::rig_state::{self, SessionView};
 use crate::config::paths::STORE_FILE;
 
 /// The type of session store backend to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum StoreType {
-    /// SQLite-backed session store.
+    /// SQLite-backed session store: one database file holds every session.
     #[default]
     #[serde(rename = "sqlite")]
     Sqlite,
-    /// JSONL file-backed session store.
-    #[serde(rename = "jsonl")]
-    Jsonl,
     /// In-memory session store (backed by SQLite `:memory:`).
     #[serde(rename = "memory")]
     Memory,
@@ -31,10 +28,9 @@ impl FromStr for StoreType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "sqlite" => Ok(StoreType::Sqlite),
-            "jsonl" => Ok(StoreType::Jsonl),
             "memory" => Ok(StoreType::Memory),
             other => Err(format!(
-                "Unknown store type: '{other}'. Expected 'sqlite', 'jsonl', or 'memory'."
+                "Unknown store type: '{other}'. Expected 'sqlite' or 'memory'."
             )),
         }
     }
@@ -46,6 +42,9 @@ pub enum RigStoreError {
     /// An I/O error occurred.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// The storage engine refused the database or a unit on it.
+    #[error(transparent)]
+    Storage(#[from] agnt_storage::StorageError),
     /// A SQLite error occurred.
     #[error(transparent)]
     Sqlite(#[from] sqlx::Error),
@@ -57,31 +56,41 @@ pub enum RigStoreError {
     Memory(#[from] super::MemoryError),
 }
 
+// region:    --- Froms
+
+impl From<PoolError> for RigStoreError {
+    /// Fold a pool failure into the family's I/O error, which keeps it as the
+    /// cause and prints it in the message.
+    fn from(error: PoolError) -> Self {
+        Self::Io(std::io::Error::other(error))
+    }
+}
+
+// endregion: --- Froms
+
 /// Create a rig-memory store for one session at an explicit store path.
 ///
-/// `Sqlite` opens `store_path` exactly. `Jsonl` keeps its session directories
-/// beside it, under `<store_path parent>/sessions/`. `Memory` ignores the path.
+/// `Sqlite` opens `store_path` exactly. `Memory` ignores the path.
 ///
 /// This is the production entry: the caller passes the store path `Paths`
 /// resolved, so no site re-joins the file name.
 ///
-/// The SQLite database is separate from the session store's `sessions.db`: the
-/// two hold different tables.
+/// `Sqlite` hands out one handle per session over that one database file: the
+/// blobs are rig's, the engine under them is `agnt-storage`'s.
 pub fn create_rig_store_at(
     store_type: StoreType,
     store_path: &std::path::Path,
     session_id: &str,
 ) -> Result<Arc<dyn Store>, RigStoreError> {
     match store_type {
-        StoreType::Sqlite => Ok(Arc::new(RigSqliteStore::open(
-            utf8_path(store_path)?,
-            session_id,
-        )?)),
-        StoreType::Jsonl => Ok(Arc::new(rig_dir_store::open_session_store_at(
-            &rig_dir_store::sessions_root(store_dir(store_path)),
-            session_id,
-        )?)),
-        StoreType::Memory => Ok(Arc::new(RigSqliteStore::in_memory(session_id)?)),
+        StoreType::Sqlite => {
+            let storage = Arc::new(Storage::open(store_path)?);
+            Ok(Arc::new(RigAdapter::new(storage, session_id)))
+        }
+        StoreType::Memory => {
+            let storage = Arc::new(Storage::in_memory()?);
+            Ok(Arc::new(RigAdapter::new(storage, session_id)))
+        }
     }
 }
 
@@ -89,10 +98,9 @@ pub fn create_rig_store_at(
 /// directory.
 ///
 /// `Sqlite` (the default) keeps every session in
-/// `{cache_dir}/{APP_DIR_NAME}/rig-sessions.db`; `Jsonl` keeps the session in
-/// `{cache_dir}/{APP_DIR_NAME}/sessions/{session_id}/`; `Memory` keeps it in an
-/// in-memory SQLite database. `APP_DIR_NAME` is `nu-agent-dev` in debug builds
-/// and `nu-agent` in release builds.
+/// `{cache_dir}/{APP_DIR_NAME}/sessions.db`; `Memory` keeps it in an in-memory
+/// SQLite database. `APP_DIR_NAME` is `nu-agent-dev` in debug builds and
+/// `nu-agent` in release builds.
 pub fn create_rig_store_in(
     store_type: StoreType,
     cache_dir: &std::path::Path,
@@ -110,9 +118,9 @@ pub fn list_rig_sessions_at(
     store_path: &std::path::Path,
 ) -> Result<Vec<String>, RigStoreError> {
     match store_type {
-        StoreType::Sqlite => RigSqliteStore::session_ids(utf8_path(store_path)?),
-        StoreType::Jsonl => {
-            rig_dir_store::session_ids_at(&rig_dir_store::sessions_root(store_dir(store_path)))
+        StoreType::Sqlite => {
+            let storage = Storage::open(store_path)?;
+            Ok(RigAdapter::session_ids(&storage)?)
         }
         StoreType::Memory => Ok(Vec::new()),
     }
@@ -143,7 +151,8 @@ pub fn create_rig_store(
     // A memory store keeps nothing on disk, so the ambient cache directory is
     // never resolved for it: short-circuit before the path lookup.
     if store_type == StoreType::Memory {
-        return Ok(Arc::new(RigSqliteStore::in_memory(session_id)?));
+        let storage = Arc::new(Storage::in_memory()?);
+        return Ok(Arc::new(RigAdapter::new(storage, session_id)));
     }
     create_rig_store_at(store_type, &cache_store_path()?, session_id)
 }
@@ -188,7 +197,7 @@ impl RigStoreConfig {
     ///
     /// This is how production root the store: `Paths.store_path` is already
     /// resolved, so this config never re-derives it. `Sqlite` opens the file;
-    /// `Jsonl` keeps its session directories in its parent's `sessions/`.
+    /// `Memory` ignores the path and keeps the database in memory.
     pub fn with_store_path(self, store_path: impl Into<std::path::PathBuf>) -> Self {
         Self {
             store_type: self.store_type,
@@ -214,12 +223,11 @@ impl RigStoreConfig {
         Self::new(StoreType::Memory)
     }
 
-    // --- Accessors ---
-
-    /// The store type this config opens.
-    pub fn store_type(&self) -> StoreType {
-        self.store_type
-    }
+    // --- Facade ---
+    //
+    // Every store interaction of this family crosses the blocking pool: rig's
+    // store contracts are synchronous and its callers are async, so the work
+    // runs on the pool and never parks a runtime thread.
 
     /// Opens the rig-memory store of `session_id`.
     ///
@@ -227,12 +235,12 @@ impl RigStoreConfig {
     ///
     /// As [`create_rig_store_at`], [`create_rig_store_in`], and
     /// [`create_rig_store`].
-    pub fn open(&self, session_id: &str) -> Result<Arc<dyn Store>, RigStoreError> {
-        match (&self.store_path, &self.cache_dir) {
-            (Some(store_path), _) => create_rig_store_at(self.store_type, store_path, session_id),
-            (None, Some(cache_dir)) => create_rig_store_in(self.store_type, cache_dir, session_id),
-            (None, None) => create_rig_store(self.store_type, session_id),
-        }
+    pub async fn open(&self, session_id: &str) -> Result<Arc<dyn Store>, RigStoreError> {
+        let config = self.clone();
+        let session = session_id.to_owned();
+        on_pool(move || config.open_blocking(&session))
+            .await
+            .map_err(RigStoreError::from)?
     }
 
     /// The ids of the sessions this config's store holds.
@@ -241,12 +249,11 @@ impl RigStoreConfig {
     ///
     /// As [`list_rig_sessions_at`], [`list_rig_sessions_in`], and
     /// [`list_rig_sessions`].
-    pub fn session_ids(&self) -> Result<Vec<String>, RigStoreError> {
-        match (&self.store_path, &self.cache_dir) {
-            (Some(store_path), _) => list_rig_sessions_at(self.store_type, store_path),
-            (None, Some(cache_dir)) => list_rig_sessions_in(self.store_type, cache_dir),
-            (None, None) => list_rig_sessions(self.store_type),
-        }
+    pub async fn session_ids(&self) -> Result<Vec<String>, RigStoreError> {
+        let config = self.clone();
+        on_pool(move || config.session_ids_blocking())
+            .await
+            .map_err(RigStoreError::from)?
     }
 
     /// Whether the store of `session_id` holds the session.
@@ -254,9 +261,14 @@ impl RigStoreConfig {
     /// # Errors
     ///
     /// As [`Self::open`].
-    pub fn holds(&self, session_id: &str) -> Result<bool, RigStoreError> {
-        let logs = self.open(session_id)?.logs()?;
-        Ok(logs.iter().any(|log| log == session_id))
+    pub async fn holds(&self, session_id: &str) -> Result<bool, RigStoreError> {
+        let store = self.open(session_id).await?;
+        let session = session_id.to_owned();
+        let logs = on_pool(move || store.logs())
+            .await
+            .map_err(RigStoreError::from)?
+            .map_err(RigStoreError::Io)?;
+        Ok(logs.iter().any(|log| log == &session))
     }
 
     /// The listing of `session_id`: its `meta.json`, or the default when it has
@@ -265,9 +277,13 @@ impl RigStoreConfig {
     /// # Errors
     ///
     /// As [`Self::open`].
-    pub fn listing(&self, session_id: &str) -> Result<SessionMeta, RigStoreError> {
-        let store = self.open(session_id)?;
-        Ok(SessionMeta::read(&*store).unwrap_or_default())
+    pub async fn listing(&self, session_id: &str) -> Result<SessionMeta, RigStoreError> {
+        let store = self.open(session_id).await?;
+        on_pool(move || {
+            Ok::<SessionMeta, RigStoreError>(SessionMeta::read(&*store).unwrap_or_default())
+        })
+        .await
+        .map_err(RigStoreError::from)?
     }
 
     /// The whole session `session_id`: its listing, its main agent's model,
@@ -276,9 +292,11 @@ impl RigStoreConfig {
     /// # Errors
     ///
     /// As [`Self::open`], or when the session cannot be read.
-    pub fn view(&self, session_id: &str) -> Result<SessionView, RigStoreError> {
-        let store = self.open(session_id)?;
-        rig_state::read_view(&*store).map_err(RigStoreError::from)
+    pub async fn view(&self, session_id: &str) -> Result<SessionView, RigStoreError> {
+        let store = self.open(session_id).await?;
+        rig_state::read_view(store)
+            .await
+            .map_err(RigStoreError::from)
     }
 
     /// Delete the store of `session_id`: its logs and its files.
@@ -286,9 +304,57 @@ impl RigStoreConfig {
     /// # Errors
     ///
     /// As [`Self::open`], or when the store cannot be deleted.
-    pub fn destroy(&self, session_id: &str) -> Result<(), RigStoreError> {
-        self.open(session_id)?.destroy()?;
-        Ok(())
+    pub async fn destroy(&self, session_id: &str) -> Result<(), RigStoreError> {
+        let store = self.open(session_id).await?;
+        on_pool(move || store.destroy())
+            .await
+            .map_err(RigStoreError::from)?
+            .map_err(RigStoreError::Io)
+    }
+
+    // --- Blocking internals ---
+
+    /// The body of [`Self::open`], run on the blocking pool.
+    fn open_blocking(&self, session_id: &str) -> Result<Arc<dyn Store>, RigStoreError> {
+        match (&self.store_path, &self.cache_dir) {
+            (Some(store_path), _) => create_rig_store_at(self.store_type, store_path, session_id),
+            (None, Some(cache_dir)) => create_rig_store_in(self.store_type, cache_dir, session_id),
+            (None, None) => create_rig_store(self.store_type, session_id),
+        }
+    }
+
+    /// The body of [`Self::session_ids`], run on the blocking pool.
+    fn session_ids_blocking(&self) -> Result<Vec<String>, RigStoreError> {
+        match (&self.store_path, &self.cache_dir) {
+            (Some(store_path), _) => list_rig_sessions_at(self.store_type, store_path),
+            (None, Some(cache_dir)) => list_rig_sessions_in(self.store_type, cache_dir),
+            (None, None) => list_rig_sessions(self.store_type),
+        }
+    }
+
+    /// The engine of this config's database, the one the fact services write
+    /// through.
+    ///
+    /// `Sqlite` opens the file the rig store opens; `Memory` opens an in-memory
+    /// database of its own, which keeps nothing beyond the call.
+    ///
+    /// # Errors
+    ///
+    /// As [`create_rig_store_at`].
+    pub(crate) fn facts_blocking(&self) -> Result<Arc<Storage>, RigStoreError> {
+        match self.store_type {
+            StoreType::Memory => Ok(Arc::new(Storage::in_memory()?)),
+            StoreType::Sqlite => {
+                let store_path = match (&self.store_path, &self.cache_dir) {
+                    (Some(store_path), _) => store_path.clone(),
+                    (None, Some(cache_dir)) => {
+                        crate::utils::paths::app_dir(cache_dir).join(STORE_FILE)
+                    }
+                    (None, None) => cache_store_path()?,
+                };
+                Ok(Arc::new(Storage::open(store_path)?))
+            }
+        }
     }
 }
 
@@ -301,21 +367,4 @@ fn cache_store_path() -> Result<std::path::PathBuf, RigStoreError> {
         ))
     })?;
     Ok(crate::utils::paths::app_dir(cache_dir).join(STORE_FILE))
-}
-
-/// The store directory a resolved store path belongs to.
-fn store_dir(store_path: &std::path::Path) -> &std::path::Path {
-    store_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-}
-
-/// `path` as `&str`, refusing a non-UTF-8 path.
-fn utf8_path(path: &std::path::Path) -> Result<&str, RigStoreError> {
-    path.to_str().ok_or_else(|| {
-        RigStoreError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "Non-UTF-8 path for SQLite database",
-        ))
-    })
 }

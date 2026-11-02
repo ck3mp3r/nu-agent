@@ -133,6 +133,7 @@ fn build_fixture(
     let runtime = AgentConversationRuntime {
         runtime: tokio::runtime::Handle::current(),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
+        store_latch: Default::default(),
         mcp_state: McpState::new(
             None,
             Vec::new(),

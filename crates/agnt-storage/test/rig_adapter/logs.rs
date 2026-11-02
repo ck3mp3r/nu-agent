@@ -2,7 +2,7 @@ use super::*;
 
 /// `append_log` starts a log at length 0 and appends to it at its length.
 #[test]
-fn append_log_starts_and_appends() -> Result<()> {
+fn test_rig_adapter_append_log_starts_and_appends() -> Result<()> {
     // -- Setup & Fixtures
     let store = memory_store("session-logs")?;
 
@@ -19,9 +19,9 @@ fn append_log_starts_and_appends() -> Result<()> {
 
 /// `append_log` refuses a stale length and writes nothing.
 #[test]
-fn append_log_refuses_stale_length() -> Result<()> {
+fn test_rig_adapter_append_log_refuses_stale_length() -> Result<()> {
     // -- Setup & Fixtures
-    let store = memory_store("session-stale")?;
+    let (db, store) = memory_database("session-stale")?;
     store.append_log("agent", 0, b"abc")?;
 
     // -- Exec
@@ -33,14 +33,16 @@ fn append_log_refuses_stale_length() -> Result<()> {
         "a stale length is refused: {refused:?}"
     );
     assert_eq!(store.read_log("agent")?, b"abc", "nothing is written");
+    assert_eq!(session_ids(&db)?, vec!["session-stale".to_owned()]);
     Ok(())
 }
 
-/// `append_log` refuses a log that is not there when the length is not 0.
+/// `append_log` refuses a log that is not there when the length is not 0, and
+/// records no session: nothing persisted.
 #[test]
-fn append_log_refuses_missing_log() -> Result<()> {
+fn test_rig_adapter_append_log_refuses_missing_log() -> Result<()> {
     // -- Setup & Fixtures
-    let store = memory_store("session-missing")?;
+    let (db, store) = memory_database("session-missing")?;
 
     // -- Exec
     let refused = store.append_log("agent", 5, b"x");
@@ -48,12 +50,13 @@ fn append_log_refuses_missing_log() -> Result<()> {
     // -- Check
     assert!(matches!(refused, Err(LogWriteError::Changed)));
     assert!(store.logs()?.is_empty(), "no log is started");
+    assert!(session_ids(&db)?.is_empty(), "no session is recorded");
     Ok(())
 }
 
 /// The length a log write names counts bytes, not characters.
 #[test]
-fn append_log_counts_bytes() -> Result<()> {
+fn test_rig_adapter_append_log_counts_bytes() -> Result<()> {
     // -- Setup & Fixtures: "é" is two bytes in UTF-8
     let store = memory_store("session-bytes")?;
     store.append_log("agent", 0, "é".as_bytes())?;
@@ -66,7 +69,7 @@ fn append_log_counts_bytes() -> Result<()> {
 
 /// A log holds bytes that are not text: an append keeps them whole.
 #[test]
-fn append_log_keeps_binary_bytes() -> Result<()> {
+fn test_rig_adapter_append_log_keeps_binary_bytes() -> Result<()> {
     // -- Setup & Fixtures: a NUL, a lone continuation byte, and an invalid pair
     let store = memory_store("session-binary")?;
     let first = [0x00u8, 0xff, 0x80, 0x0a];
@@ -85,7 +88,7 @@ fn append_log_keeps_binary_bytes() -> Result<()> {
 
 /// `replace_log` replaces the whole log under the same length condition.
 #[test]
-fn replace_log_replaces_and_refuses_stale() -> Result<()> {
+fn test_rig_adapter_replace_log_replaces_and_refuses_stale() -> Result<()> {
     // -- Setup & Fixtures
     let store = memory_store("session-replace")?;
     store.append_log("agent", 0, b"abc")?;
@@ -103,21 +106,22 @@ fn replace_log_replaces_and_refuses_stale() -> Result<()> {
 
 /// `replace_log` starts a log that is not there.
 #[test]
-fn replace_log_starts_missing_log() -> Result<()> {
+fn test_rig_adapter_replace_log_starts_missing_log() -> Result<()> {
     // -- Setup & Fixtures
-    let store = memory_store("session-replace-start")?;
+    let (db, store) = memory_database("session-replace-start")?;
 
     // -- Exec
     store.replace_log("agent", 0, b"new")?;
 
     // -- Check
     assert_eq!(store.read_log("agent")?, b"new");
+    assert_eq!(session_ids(&db)?, vec!["session-replace-start".to_owned()]);
     Ok(())
 }
 
 /// `read_log` of a log that is not there is `NotFound`.
 #[test]
-fn read_log_missing_is_not_found() -> Result<()> {
+fn test_rig_adapter_read_log_missing_is_not_found() -> Result<()> {
     // -- Setup & Fixtures
     let store = memory_store("session-not-found")?;
 
@@ -132,11 +136,11 @@ fn read_log_missing_is_not_found() -> Result<()> {
     Ok(())
 }
 
-/// `destroy` removes the session's logs and files.
+/// `destroy` removes the session's logs, its files, and its session row.
 #[test]
-fn destroy_removes_everything() -> Result<()> {
+fn test_rig_adapter_destroy_removes_everything() -> Result<()> {
     // -- Setup & Fixtures
-    let store = memory_store("session-destroy")?;
+    let (db, store) = memory_database("session-destroy")?;
     store.append_log("agent", 0, b"log")?;
     store.write_file("name", b"a name")?;
 
@@ -146,18 +150,21 @@ fn destroy_removes_everything() -> Result<()> {
     // -- Check
     assert!(store.logs()?.is_empty());
     assert!(store.files()?.is_empty());
+    assert!(
+        session_ids(&db)?.is_empty(),
+        "the destroyed session is listed no more"
+    );
     Ok(())
 }
 
 /// Two sessions in one database do not see each other's logs.
 #[test]
-fn logs_are_scoped_to_the_session() -> Result<()> {
+fn test_rig_adapter_logs_are_scoped_to_the_session() -> Result<()> {
     // -- Setup & Fixtures
     let temp = TempDir::new()?;
     let path = temp.path().join("sessions.db");
-    let path = path.to_str().ok_or("the path is UTF-8")?;
-    let first = RigSqliteStore::open(path, "first")?;
-    let second = RigSqliteStore::open(path, "second")?;
+    let first = file_store(&path, "first")?;
+    let second = file_store(&path, "second")?;
 
     // -- Exec
     first.append_log("agent", 0, b"one")?;

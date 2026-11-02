@@ -21,7 +21,7 @@ async fn memory_state_inner_is_cached_memory_with_rig_store() -> Result<()> {
     let state = make_state();
 
     let inner = state.inner_memory();
-    let store = inner.rig_store("conv-1").map_err(|_| "should open")?;
+    let store = inner.rig_store("conv-1").await.map_err(|_| "should open")?;
     let conversation = rig_memory::load(&*store, "conv-1").map_err(|_| "should load")?;
     assert!(
         conversation.messages().is_empty(),
@@ -40,6 +40,7 @@ async fn clear_resets_the_token_counter_and_keeps_the_store() -> Result<()> {
     let store = state
         .inner_memory()
         .rig_store(conv)
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let mut conversation = rig_memory::load(&*store, conv)?;
     conversation.extend([Message::user("user-0"), Message::assistant("assistant-0")]);

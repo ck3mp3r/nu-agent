@@ -57,8 +57,9 @@ fn transcript_cap_enforces_bound_and_evicts_oldest() -> Result<()> {
 fn message_text(entry: &TranscriptEntry) -> String {
     match entry {
         TranscriptEntry::Message(message) => message.markdown.clone(),
-        TranscriptEntry::Tool(_) | TranscriptEntry::Notice(_) | TranscriptEntry::Banner(_) => {
-            String::new()
-        }
+        TranscriptEntry::Tool(_)
+        | TranscriptEntry::Task(_)
+        | TranscriptEntry::Notice(_)
+        | TranscriptEntry::Banner(_) => String::new(),
     }
 }

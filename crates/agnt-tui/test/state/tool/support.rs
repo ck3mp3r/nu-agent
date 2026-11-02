@@ -35,9 +35,10 @@ fn entry_display_lines(entry: &TranscriptEntry) -> Vec<agnt_core::transcript::ir
         TranscriptEntry::Tool(tool) => unified_display(tool)
             .map(Display::project_lines)
             .unwrap_or_default(),
-        TranscriptEntry::Message(_) | TranscriptEntry::Notice(_) | TranscriptEntry::Banner(_) => {
-            Vec::new()
-        }
+        TranscriptEntry::Message(_)
+        | TranscriptEntry::Task(_)
+        | TranscriptEntry::Notice(_)
+        | TranscriptEntry::Banner(_) => Vec::new(),
     }
 }
 
@@ -97,6 +98,7 @@ pub(super) fn extract_all_text_from_entry(entry: &TranscriptEntry) -> Vec<String
             lines
         }
         TranscriptEntry::Message(message) => vec![message.markdown.clone()],
+        TranscriptEntry::Task(task) => vec![format!("{} · {}", task.name, task.summary)],
         TranscriptEntry::Notice(notice) => vec![notice.text.clone()],
         TranscriptEntry::Banner(banner) => vec![banner.text.clone()],
     }

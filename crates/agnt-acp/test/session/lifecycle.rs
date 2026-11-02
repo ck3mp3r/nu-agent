@@ -349,9 +349,9 @@ async fn test_session_manager_delete_session_deletes_the_rig_log() -> Result<()>
     let temp = tempfile::tempdir()?;
     let (manager, rig) = manager_with_rig_store(temp.path()).await?;
     let session_id = "persisted-session";
-    seed_session(&rig, session_id)?;
+    seed_session(&rig, session_id).await?;
     assert!(
-        rig.holds(session_id)?,
+        rig.holds(session_id).await?,
         "the fixture must start with a persisted rig log"
     );
 
@@ -360,7 +360,7 @@ async fn test_session_manager_delete_session_deletes_the_rig_log() -> Result<()>
 
     // -- Check
     assert!(
-        !rig.holds(session_id)?,
+        !rig.holds(session_id).await?,
         "deleting a session must delete its rig log, not orphan it"
     );
     Ok(())

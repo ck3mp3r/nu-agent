@@ -30,7 +30,8 @@ async fn repetition_stop_empty_delta_retry_persists_original_prompt_placeholder(
         &memory_state,
         session_id,
         vec![crate::types::Message::user("dangling question")],
-    )?;
+    )
+    .await?;
 
     // Turn 1 stops intra-stream at the text delta (its final_response is never
     // consumed); turn 2 is the steered retry and completes.

@@ -79,8 +79,8 @@ fn test_renderer_lane_prefix_every_marker_lane_renders_its_marker() -> Result<()
             LaneKind::User,
         ),
         (
-            notice_entry(NoticeKind::Compaction, "c"),
-            "  ~ c",
+            task_entry("auto", ItemStatus::Done),
+            "  \u{2261} \u{2713} Compaction · auto",
             LaneKind::Compaction,
         ),
         (
@@ -123,7 +123,7 @@ fn test_renderer_lane_prefix_width_matches_reserved_columns() -> Result<()> {
     let cases = [
         (bare_tool(ItemStatus::Done), LaneKind::Tool, 4usize, 2u16),
         (
-            notice_entry(NoticeKind::Compaction, "compacted"),
+            task_entry("auto", ItemStatus::Done),
             LaneKind::Compaction,
             4,
             2,
@@ -239,27 +239,27 @@ fn test_renderer_lane_prefix_tool_continuation_rows_blank_the_marker() -> Result
     Ok(())
 }
 
-/// WHEN a compaction notice wraps, THE continuation rows SHALL keep the blank
-/// marker slot — the tilde renders on row 0 only.
+/// WHEN a compaction task line wraps, THE continuation rows SHALL keep the blank
+/// marker slot — the fold glyph renders on row 0 only.
 #[test]
 fn test_renderer_lane_prefix_compaction_continuation_rows_blank_the_marker() -> Result<()> {
     // -- Setup & Fixtures
-    let entry = notice_entry(NoticeKind::Compaction, &"compact ".repeat(30));
+    let entry = task_entry(&"compact ".repeat(30), ItemStatus::Done);
 
     // -- Exec
     let backend = render(&entry)?;
 
     // -- Check
     let rows = measured_rows(&entry)?;
-    assert!(rows >= 2, "the notice must wrap; got {rows}");
+    assert!(rows >= 2, "the task line must wrap; got {rows}");
     assert!(
-        row_text(&backend, 0).contains('~'),
+        row_text(&backend, 0).contains('\u{2261}'),
         "row 0 carries the compaction marker"
     );
     for y in 1..u16::try_from(rows)? {
         let row = row_text(&backend, y);
         assert!(
-            !row.contains('~'),
+            !row.contains('\u{2261}'),
             "continuation row {y} must blank the marker; got {row:?}"
         );
         assert!(

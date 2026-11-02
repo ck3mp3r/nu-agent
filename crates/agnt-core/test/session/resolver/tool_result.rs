@@ -419,6 +419,6 @@ fn test_tool_result_other_rows_keep_the_verdict_mapping() -> Result<()> {
 /// The status the store carries for one call.
 fn cancelled_status(call: &str) -> ToolStatusMap {
     let mut statuses = ToolStatusMap::new();
-    statuses.insert(CallId::from_wire(call), ToolStatus::Cancelled);
+    statuses.insert(call.to_owned(), ToolStatus::Cancelled);
     statuses
 }

@@ -14,12 +14,18 @@ fn push_entry_and_external_prompt_delivery() -> Result<()> {
         .push_entry(TranscriptEntry::Message(MessageEntry {
             role: MessageRole::User,
             markdown: "hi".to_string(),
+            timestamp_millis: None,
+            model: None,
+            agent: None,
         }));
     state
         .transcript
         .push_entry(TranscriptEntry::Message(MessageEntry {
             role: MessageRole::Assistant,
             markdown: "reply".to_string(),
+            timestamp_millis: None,
+            model: None,
+            agent: None,
         }));
 
     // -- Check: two content entries, no spacers.

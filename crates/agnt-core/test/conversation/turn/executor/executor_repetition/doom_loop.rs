@@ -41,6 +41,7 @@ async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,

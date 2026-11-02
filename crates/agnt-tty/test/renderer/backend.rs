@@ -4,7 +4,7 @@
 use agnt_core::protocol::events::ToolCall;
 use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::entry::{
-    BannerEntry, MessageEntry, NoticeEntry, ToolEntry, ToolKind, TranscriptEntry,
+    BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
 use agnt_core::transcript::ir::{
     ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
@@ -69,11 +69,12 @@ fn test_renderer_backend_tool_name_and_summary_fallbacks() -> Result<()> {
     Ok(())
 }
 
-/// The notice prefix follows the notice kind; the banner carries none.
+/// The notice prefix follows the notice kind; a task line carries the
+/// compaction prefix and its status indicator; the banner carries none.
 #[test]
-fn test_renderer_backend_notice_and_banner_prefixes() -> Result<()> {
+fn test_renderer_backend_task_notice_and_banner_prefixes() -> Result<()> {
     // -- Setup & Fixtures
-    let compaction = notice_entry(NoticeKind::Compaction, "summarized 12 turns");
+    let compaction = task_entry("auto", ItemStatus::Done);
     let system = notice_entry(NoticeKind::System, "transcript is short");
     let banner = TranscriptEntry::Banner(BannerEntry {
         text: "nu-agent".to_string(),
@@ -85,7 +86,7 @@ fn test_renderer_backend_notice_and_banner_prefixes() -> Result<()> {
     let banner_rows = render(&banner, 40, false);
 
     // -- Check
-    assert_eq!(compaction_rows, ["[compaction] summarized 12 turns"]);
+    assert_eq!(compaction_rows, ["[compaction] ✓ Compaction · auto"]);
     assert_eq!(system_rows, ["[system] transcript is short"]);
     assert_eq!(banner_rows, ["nu-agent"]);
     Ok(())
@@ -258,6 +259,9 @@ fn message_entry(role: MessageRole, markdown: &str) -> TranscriptEntry {
     TranscriptEntry::Message(MessageEntry {
         role,
         markdown: markdown.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     })
 }
 
@@ -283,6 +287,14 @@ fn tool_entry_with_status(
         ),
         preview,
         result: None,
+        status,
+    })
+}
+
+fn task_entry(summary: &str, status: ItemStatus) -> TranscriptEntry {
+    TranscriptEntry::Task(TaskEntry {
+        name: "Compaction".to_string(),
+        summary: summary.to_string(),
         status,
     })
 }

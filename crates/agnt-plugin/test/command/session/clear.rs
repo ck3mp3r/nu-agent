@@ -35,7 +35,7 @@ async fn test_agent_session_clear_deletes_existing_session() -> Result<()> {
     let rig = rig_at(&temp_dir);
     let prefix = agnt_core::session::prefix::dir_prefix(temp_dir.path());
     let full_id = format!("{prefix}-test-session");
-    seed(&rig, &full_id, vec![Message::user("hello")])?;
+    seed(&rig, &full_id, vec![Message::user("hello")]).await?;
 
     // -- Exec
     let command = AgentSessionClear;
@@ -50,7 +50,7 @@ async fn test_agent_session_clear_deletes_existing_session() -> Result<()> {
 
     // -- Check
     assert!(
-        !rig.holds(&full_id).map_err(|e| format!("{e:?}"))?,
+        !rig.holds(&full_id).await.map_err(|e| format!("{e:?}"))?,
         "the session's rig store must be gone after clear"
     );
     Ok(())
@@ -105,7 +105,7 @@ async fn test_delete_session_removes_only_target_session() -> Result<()> {
         .map(|name| format!("{prefix}-{name}"))
         .collect();
     for id in &ids {
-        seed(&rig, id, vec![Message::user("hello")])?;
+        seed(&rig, id, vec![Message::user("hello")]).await?;
     }
 
     // -- Exec
@@ -121,15 +121,15 @@ async fn test_delete_session_removes_only_target_session() -> Result<()> {
 
     // -- Check
     assert!(
-        rig.holds(&ids[0]).map_err(|e| format!("{e:?}"))?,
+        rig.holds(&ids[0]).await.map_err(|e| format!("{e:?}"))?,
         "session-1 should still exist"
     );
     assert!(
-        !rig.holds(&ids[1]).map_err(|e| format!("{e:?}"))?,
+        !rig.holds(&ids[1]).await.map_err(|e| format!("{e:?}"))?,
         "session-2 should be deleted"
     );
     assert!(
-        rig.holds(&ids[2]).map_err(|e| format!("{e:?}"))?,
+        rig.holds(&ids[2]).await.map_err(|e| format!("{e:?}"))?,
         "session-3 should still exist"
     );
     Ok(())
@@ -146,7 +146,7 @@ async fn clear_ignores_sessions_of_another_cwd() -> Result<()> {
         "{}-old-session",
         agnt_core::session::prefix::dir_prefix(std::path::Path::new("/other/dir"))
     );
-    seed(&rig, &foreign_id, vec![Message::user("hello")])?;
+    seed(&rig, &foreign_id, vec![Message::user("hello")]).await?;
 
     // -- Exec
     let command = AgentSessionClear;
@@ -162,7 +162,7 @@ async fn clear_ignores_sessions_of_another_cwd() -> Result<()> {
         "a session of another cwd must not be cleared from this cwd"
     );
     assert!(
-        rig.holds(&foreign_id).map_err(|e| format!("{e:?}"))?,
+        rig.holds(&foreign_id).await.map_err(|e| format!("{e:?}"))?,
         "the foreign session must still exist"
     );
     Ok(())
@@ -170,14 +170,14 @@ async fn clear_ignores_sessions_of_another_cwd() -> Result<()> {
 
 // -- Test Support
 
-/// A `DirStore` rig store rooted at `temp_dir`.
+/// A file-backed rig store rooted at `temp_dir`.
 fn rig_at(temp_dir: &TempDir) -> RigStoreConfig {
-    RigStoreConfig::new(StoreType::Jsonl).with_cache_dir(temp_dir.path())
+    RigStoreConfig::new(StoreType::Sqlite).with_cache_dir(temp_dir.path())
 }
 
 /// Seed the rig-memory store of `session_id` with `messages`.
-fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
-    let store = rig.open(session_id).map_err(|e| format!("{e:?}"))?;
+async fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
+    let store = rig.open(session_id).await.map_err(|e| format!("{e:?}"))?;
     let mut conversation =
         agnt_core::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
     conversation.extend(messages);

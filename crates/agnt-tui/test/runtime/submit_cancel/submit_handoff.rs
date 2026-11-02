@@ -129,7 +129,7 @@ async fn slash_commands_handoff() -> Result<()> {
         .iter()
         .map(entry_text)
         .collect::<Vec<_>>();
-    assert!(lines.contains(&"Compaction".to_string()));
+    assert!(lines.contains(&"Compaction · slash_compact".to_string()));
     assert!(lines.contains(&"summary body".to_string()));
     assert!(!lines.iter().any(|line| line.contains("source=")));
     assert!(!lines.iter().any(|line| line.contains("status=running")));

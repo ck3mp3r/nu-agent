@@ -100,6 +100,7 @@ where
                 TurnConversation {
                     memory: Arc::clone(self.memory_state.memory()),
                     conversation_id: conversation_id.clone(),
+                    agent: self.agent.clone(),
                     has_session: final_session_id.is_some(),
                     dyn_model: self.dyn_model.clone(),
                     compaction: self.compaction.clone(),
@@ -131,6 +132,7 @@ where
                     bus: self.tool_infra.bus.clone(),
                     render_registry: self.tool_infra.render_registry.clone(),
                     cwd: self.tool_infra.cwd.clone(),
+                    store_latch: Arc::clone(&self.tool_infra.store_latch),
                 },
                 attempt_cfg.unwrap_or(self.config),
             );

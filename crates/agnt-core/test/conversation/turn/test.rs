@@ -23,6 +23,9 @@ mod recover;
 #[path = "test/rig_memory.rs"]
 mod rig_persistence;
 
+#[path = "test/settle.rs"]
+mod settle;
+
 #[path = "test/support.rs"]
 mod support;
 

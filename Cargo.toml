@@ -13,7 +13,7 @@ strip = false
 debug = "line-tables-only"
 
 [workspace]
-members = ["crates/*"]
+members = ["crates/*", "crates/agnt-storage"]
 resolver = "2"
 
 [workspace.package]
@@ -27,6 +27,7 @@ agnt-acp = { path = "crates/agnt-acp" }
 agnt-cli = { path = "crates/agnt-cli" }
 agnt-core = { path = "crates/agnt-core" }
 agnt-render = { path = "crates/agnt-render" }
+agnt-storage = { path = "crates/agnt-storage" }
 agnt-testkit = { path = "crates/agnt-testkit" }
 agnt-tui = { path = "crates/agnt-tui" }
 agnt-tty = { path = "crates/agnt-tty" }

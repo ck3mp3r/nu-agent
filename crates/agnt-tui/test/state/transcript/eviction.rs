@@ -56,6 +56,9 @@ fn assistant_filler(text: &str) -> TranscriptEntry {
     TranscriptEntry::Message(MessageEntry {
         role: MessageRole::Assistant,
         markdown: text.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     })
 }
 

@@ -7,10 +7,14 @@
 //! which dedups unchanged values and refuses stale writes.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use rig_memory::{MODEL, Repair, Session, SessionMeta, Store, TITLE};
 
+use agnt_storage::MessageKey;
+
 use super::MemoryError;
+use super::blocking::on_pool;
 use crate::types::{Message, UserContent};
 
 /// What the session commands show of a session: its listing, its main agent's
@@ -38,7 +42,14 @@ pub struct SessionView {
 /// # Errors
 ///
 /// When the store cannot be read.
-pub fn read_view(store: &dyn Store) -> Result<SessionView, MemoryError> {
+pub async fn read_view(store: Arc<dyn Store>) -> Result<SessionView, MemoryError> {
+    on_pool(move || read_view_blocking(&*store))
+        .await
+        .map_err(MemoryError::backend)?
+}
+
+/// The body of [`read_view`], run on the blocking pool.
+fn read_view_blocking(store: &dyn Store) -> Result<SessionView, MemoryError> {
     let session = Session::read(store).map_err(MemoryError::backend)?;
     let (model, title, started_ms, messages) = match session.main_agent() {
         Some(agent) => (
@@ -70,21 +81,36 @@ pub fn read_view(store: &dyn Store) -> Result<SessionView, MemoryError> {
 /// A repeated write with unchanged values adds no record: `Session::save`
 /// dedups them against the log.
 ///
+/// Answers rig's key for every entry the saved log holds: the read-back after
+/// the save is what proves the store gave each persisted entry an id and a
+/// made-time, so the settle path never has to invent one.
+///
 /// # Errors
 ///
 /// When the store cannot be read or written.
-pub fn write_state_records(
+pub async fn write_state_records(
+    store: Arc<dyn Store>,
+    model: String,
+    title: Option<String>,
+) -> Result<Vec<MessageKey>, MemoryError> {
+    on_pool(move || write_state_records_blocking(&*store, &model, title.as_deref()))
+        .await
+        .map_err(MemoryError::backend)?
+}
+
+/// The body of [`write_state_records`], run on the blocking pool.
+fn write_state_records_blocking(
     store: &dyn Store,
     model: &str,
     title: Option<&str>,
-) -> Result<(), MemoryError> {
+) -> Result<Vec<MessageKey>, MemoryError> {
     let mut session = Session::read(store).map_err(MemoryError::backend)?;
     let Some(main) = session.main_agent().map(|agent| agent.id.clone()) else {
         log::debug!("No main agent to write state records for");
-        return Ok(());
+        return Ok(Vec::new());
     };
     let Some(agent) = session.agents.iter_mut().find(|agent| agent.id == main) else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     agent.saved.insert(
         MODEL.to_string(),
@@ -97,7 +123,26 @@ pub fn write_state_records(
         );
     }
     session.save(store).map_err(MemoryError::backend)?;
-    relist(store, &session, title)
+    relist(store, &session, title)?;
+    let saved = Session::read(store).map_err(MemoryError::backend)?;
+    Ok(saved_keys(&saved))
+}
+
+/// rig's key of every entry the session's main agent holds.
+fn saved_keys(session: &Session) -> Vec<MessageKey> {
+    session
+        .main_agent()
+        .map(|agent| {
+            agent
+                .conversation
+                .entries()
+                .map(|entry| MessageKey {
+                    made: entry.made as i64,
+                    id: entry.id.get() as i64,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Refresh the session's `meta.json` listing from `session`.

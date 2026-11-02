@@ -276,6 +276,7 @@ async fn journey_session_reload_from_disk() -> Result<()> {
         let store = ms
             .inner_memory()
             .rig_store(session_id)
+            .await
             .map_err(|e| format!("rig store open: {e:?}"))?;
         let conversation =
             rig_memory::load(&*store, session_id).map_err(|e| format!("rig store load: {e:?}"))?;

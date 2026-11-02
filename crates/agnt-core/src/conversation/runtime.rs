@@ -136,6 +136,10 @@ where
     /// wire's total when it reports one, else input + output. Used by the
     /// hook's compaction threshold check and the model-switch gate.
     pub last_total_tokens: Arc<Mutex<Option<u64>>>,
+    /// The session's store-dead latch: set when a session-store open fails, so
+    /// the compaction path stops attempting a store it knows is broken. Cleared
+    /// by the session switch and by a `run_compaction` that opened the store.
+    pub store_latch: crate::hook::StoreLatch,
     /// The session's cumulative LLM usage: every turn's calls accumulate here,
     /// and the cells reset only when the runtime switches sessions. The
     /// `session_ended` event reports these totals.
@@ -247,6 +251,7 @@ where
                     output_repetition: Arc::clone(&self.output_repetition),
                     repetition_guard: self.repetition_guard,
                     last_total_tokens: Arc::clone(&self.last_total_tokens),
+                    store_latch: Arc::clone(&self.store_latch),
                     turn_usage: crate::hook::TurnUsage::default(),
                     session_usage: self.session_usage.clone(),
                     bus: self.bus.clone(),
@@ -255,7 +260,8 @@ where
                 },
                 Arc::clone(&self.dyn_model),
                 self.compaction.clone(),
-            );
+            )
+            .with_agent(self.hook_context.persona().unwrap_or_default());
 
             let outcome = if let Some(pending) = self.interactive_pending.as_ref() {
                 // TUI mode: construct InteractivePermissionResolver. The resolver owns
@@ -460,10 +466,14 @@ where
         // is best effort: the switch already took effect, and a store that
         // cannot be written must not undo it.
         if let Some(session_id) = self.final_session_id.clone() {
-            match self.session.rig_store(&session_id) {
+            match self.session.rig_store(&session_id).await {
                 Ok(store) => {
-                    if let Err(error) =
-                        crate::session::rig_state::write_state_records(&*store, &identity, None)
+                    if let Err(error) = crate::session::rig_state::write_state_records(
+                        store,
+                        identity.clone(),
+                        None,
+                    )
+                    .await
                     {
                         log::warn!(
                             "failed to write the model state record of '{session_id}': {error}"
@@ -656,10 +666,12 @@ where
 {
     fn clear_session(&mut self) {
         self.session.clear();
+        reset_session_scoped_inputs(&self.store_latch, &self.last_total_tokens);
     }
 
     fn new_session(&mut self) {
         self.session.clear();
+        reset_session_scoped_inputs(&self.store_latch, &self.last_total_tokens);
         let new_id = crate::session::resolver::generate_session_id();
         let prefix = crate::session::prefix::dir_prefix(&self.cwd);
         let new_id = format!("{prefix}-{new_id}");
@@ -713,6 +725,7 @@ where
             &self.compaction,
             source,
             &self.last_total_tokens,
+            &self.store_latch,
             &self.bus,
         )
         .await;
@@ -724,12 +737,13 @@ where
 
         // Phase 1: exact match; Phase 2: suffix, then contains, over the
         // sessions the rig-memory store holds.
-        let matched_id = if rig_holds(&memory, session_id)? {
+        let matched_id = if rig_holds(&memory, session_id).await? {
             session_id.to_string()
         } else {
             let sid = session_id.to_ascii_lowercase();
             let sessions = memory
                 .session_ids()
+                .await
                 .map_err(|e| format!("Failed to list sessions: {e}"))?;
             sessions
                 .iter()
@@ -743,18 +757,23 @@ where
                 .ok_or_else(|| format!("Session '{session_id}' not found"))?
         };
 
-        // Phase 3: update state and hydrate
-        let entries = rig_messages(&memory, &matched_id)?;
+        // Phase 3: update state and hydrate. The facts are read once; the same
+        // read answers the join, the statuses, and the turns.
+        let facts = rig_session_facts(&memory, &matched_id).await;
+        let entries = rig_messages(&memory, &matched_id, &facts.entry_turns()).await?;
         self.session.clear();
+        reset_session_scoped_inputs(&self.store_latch, &self.last_total_tokens);
         self.final_session_id = Some(matched_id.clone());
-        self.session.inner_memory().warn_repairs(&matched_id);
+        self.session.inner_memory().warn_repairs(&matched_id).await;
         // The switch starts a new session's usage: the totals cover the
         // session the runtime is attached to, not the one it left.
         self.session_usage.reset();
 
-        let statuses = rig_tool_statuses(&memory, &matched_id);
         Ok(crate::session::resolver::hydrate_transcript_messages(
-            &entries, &self.cwd, &statuses,
+            &entries,
+            &self.cwd,
+            &facts.status_map(),
+            &facts.turns,
         ))
     }
 
@@ -762,8 +781,19 @@ where
         let memory = Arc::clone(self.session.memory());
         let ids = memory
             .session_ids()
+            .await
             .map_err(|e| format!("Failed to list sessions: {e}"))?;
         let current = self.current_session_id();
+        // One facts read serves the whole listing: the agent column is the last
+        // recorded turn's. A session whose facts cannot be read shows a blank
+        // cell rather than a guessed one.
+        let facts = match memory.facts().await {
+            Ok(facts) => Some(facts),
+            Err(error) => {
+                log::warn!("failed to open the session fact tables for the listing: {error}");
+                None
+            }
+        };
         let mut sessions = Vec::new();
         for id in ids {
             // A session with no messages is not usable: a model switch writes
@@ -773,25 +803,47 @@ where
             if current == Some(id.as_str()) {
                 continue;
             }
-            let Ok(store) = memory.rig_store(&id) else {
+            let Ok(store) = memory.rig_store(&id).await else {
                 // One unreadable session must not hide the others.
                 log::warn!("failed to open the session store of '{id}'");
                 continue;
             };
-            let meta = rig_memory::SessionMeta::read(&*store).unwrap_or_default();
+            let read = crate::session::blocking::on_pool(move || {
+                Ok::<rig_memory::SessionMeta, core::convert::Infallible>(
+                    rig_memory::SessionMeta::read(&*store).unwrap_or_default(),
+                )
+            })
+            .await;
+            let meta = match read {
+                Ok(Ok(meta)) => meta,
+                Ok(Err(cannot_happen)) => match cannot_happen {},
+                Err(error) => {
+                    log::warn!("failed to read the session listing of '{id}': {error}");
+                    continue;
+                }
+            };
             if meta.messages == 0 {
                 continue;
             }
+            // The recorded change instant, or nothing: an unknown stamp shows a
+            // blank cell, never the wall clock.
             let last_active = match meta.updated {
-                0 => chrono::Utc::now(),
-                ms => chrono::DateTime::from_timestamp_millis(ms as i64)
-                    .unwrap_or_else(chrono::Utc::now),
+                0 => None,
+                ms => chrono::DateTime::from_timestamp_millis(ms as i64),
+            };
+            let agent = match facts.as_ref() {
+                Some(facts) => facts.last_turn_agent(&id).await.unwrap_or_else(|error| {
+                    log::warn!("failed to read the last turn of '{id}': {error}");
+                    None
+                }),
+                None => None,
             };
             sessions.push(SessionInfo {
                 id,
                 message_count: meta.messages,
                 last_active,
                 title: (!meta.title.is_empty()).then_some(meta.title),
+                agent,
             });
         }
         Ok(crate::session::prefix::filter_sessions_by_cwd(
@@ -801,8 +853,11 @@ where
 
     async fn attach_session(&mut self, session_id: &str) -> Result<Vec<UiMessageSnapshot>, String> {
         let memory = Arc::clone(self.session.memory());
-        let entries = if rig_holds(&memory, session_id)? {
-            rig_messages(&memory, session_id)?
+        // One facts read answers the keyed join, the statuses, and the turns: the
+        // attach path joins exactly as the startup resolver does.
+        let facts = rig_session_facts(&memory, session_id).await;
+        let entries = if rig_holds(&memory, session_id).await? {
+            rig_messages(&memory, session_id, &facts.entry_turns()).await?
         } else {
             Vec::new()
         };
@@ -812,55 +867,102 @@ where
         // resumed session continues from its persisted history and a fresh
         // session starts empty.
         self.session.clear();
+        reset_session_scoped_inputs(&self.store_latch, &self.last_total_tokens);
         self.final_session_id = Some(session_id.to_string());
-        self.session.inner_memory().warn_repairs(session_id);
+        self.session.inner_memory().warn_repairs(session_id).await;
         // The attach starts a new session's usage: the totals cover the
         // session the runtime is attached to, not the one it left.
         self.session_usage.reset();
 
-        let statuses = rig_tool_statuses(&memory, session_id);
+        let (statuses, turns) = (facts.status_map(), &facts.turns);
         Ok(crate::session::resolver::hydrate_transcript_messages(
-            &entries, &self.cwd, &statuses,
+            &entries, &self.cwd, &statuses, turns,
         ))
     }
 }
 
+/// Clear the hook inputs that describe the session the runtime is leaving.
+///
+/// Every active-session switch (`clear_session`, `new_session`, `load_session`,
+/// `attach_session`) goes through here: a store-dead latch and a last real token
+/// count belong to one conversation, so neither survives a switch to another.
+fn reset_session_scoped_inputs(
+    store_latch: &crate::hook::StoreLatch,
+    last_total_tokens: &Arc<Mutex<Option<u64>>>,
+) {
+    *store_latch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    *last_total_tokens
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+}
+
 /// Whether the rig-memory store holds a log for `session_id`.
-fn rig_holds(memory: &crate::session::CachedMemory, session_id: &str) -> Result<bool, String> {
+async fn rig_holds(
+    memory: &crate::session::CachedMemory,
+    session_id: &str,
+) -> Result<bool, String> {
     memory
         .rig_holds(session_id)
+        .await
         .map_err(|e| format!("Failed to open session '{session_id}': {e}"))
 }
 
 /// The entries of `session_id`, read from the rig-memory store: each message
-/// with the author the store records for it.
-fn rig_messages(
+/// with the author the store records for it, joined to the turn that persisted
+/// it by rig's key — the same keyed join the startup resolver makes.
+async fn rig_messages(
     memory: &crate::session::CachedMemory,
     session_id: &str,
+    turns: &std::collections::HashMap<agnt_storage::MessageKey, i64>,
 ) -> Result<Vec<crate::session::resolver::StoredEntry>, String> {
     let store = memory
         .rig_store(session_id)
+        .await
         .map_err(|e| format!("Failed to open session '{session_id}': {e}"))?;
-    let conversation = rig_memory::load(&*store, session_id)
-        .map_err(|e| format!("Failed to load session '{session_id}': {e}"))?;
+    let session = session_id.to_owned();
+    let loaded =
+        crate::session::blocking::on_pool(move || rig_memory::load(&*store, &session)).await;
+    let conversation = match loaded {
+        Ok(Ok(conversation)) => conversation,
+        Ok(Err(e)) => return Err(format!("Failed to load session '{session_id}': {e}")),
+        Err(e) => return Err(format!("Failed to load session '{session_id}': {e}")),
+    };
     Ok(conversation
         .entries()
-        .map(crate::session::resolver::StoredEntry::from)
+        .map(|entry| {
+            let key = crate::session::settle::entry_keys([entry]);
+            crate::session::resolver::StoredEntry {
+                message: entry.message.clone(),
+                author: entry.author.cloned(),
+                turn_seq: key.first().and_then(|key| turns.get(key)).copied(),
+            }
+        })
         .collect())
 }
 
-/// The structural tool statuses of `session_id`, read from the rig-memory
-/// store. A session whose statuses cannot be read hydrates as one that carries
-/// none: its rows read their stored verdict.
-fn rig_tool_statuses(
+/// The facts of `session_id`: the entry attributions, the call statuses, and the
+/// settled turns, read once from the fact tables. A session whose facts cannot
+/// be read hydrates as one that carries none: its rows read their stored
+/// verdict and no entry carries a turn.
+async fn rig_session_facts(
     memory: &crate::session::CachedMemory,
     session_id: &str,
-) -> crate::session::tool_status::ToolStatusMap {
-    match memory.rig_store(session_id) {
-        Ok(store) => crate::session::tool_status::read_statuses(&*store),
+) -> crate::session::settle::SessionFacts {
+    use crate::session::settle::SessionFacts;
+    let facts = match memory.facts().await {
+        Ok(facts) => facts,
         Err(error) => {
-            log::warn!("failed to open the session store for '{session_id}': {error}");
-            crate::session::tool_status::ToolStatusMap::new()
+            log::warn!("failed to open the session's fact tables for '{session_id}': {error}");
+            return SessionFacts::default();
+        }
+    };
+    match facts.read(session_id).await {
+        Ok(facts) => facts,
+        Err(error) => {
+            log::warn!("failed to read the tool statuses for '{session_id}': {error}");
+            SessionFacts::default()
         }
     }
 }

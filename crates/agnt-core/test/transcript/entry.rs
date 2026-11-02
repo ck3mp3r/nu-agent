@@ -1,6 +1,8 @@
 //! Transcript entry tests: the tool-kind classification and the entry payloads.
 
-use super::{BannerEntry, MessageEntry, NoticeEntry, ToolEntry, ToolKind, TranscriptEntry};
+use super::{
+    BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
+};
 use crate::protocol::events::ToolCall;
 use crate::protocol::tool_args::CallLine;
 use crate::transcript::ir::{
@@ -87,6 +89,9 @@ fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
             TranscriptEntry::Message(MessageEntry {
                 role: MessageRole::User,
                 markdown: "hi".to_string(),
+                timestamp_millis: None,
+                model: None,
+                agent: None,
             }),
             (0usize, 0usize),
         ),
@@ -94,6 +99,9 @@ fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
             TranscriptEntry::Message(MessageEntry {
                 role: MessageRole::Assistant,
                 markdown: "hi".to_string(),
+                timestamp_millis: None,
+                model: None,
+                agent: None,
             }),
             (0, 0),
         ),
@@ -211,18 +219,25 @@ fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
     Ok(())
 }
 
-/// The message, notice, and banner entries carry their role/kind/text payload
-/// unchanged.
+/// The message, task, notice, and banner entries carry their payload unchanged.
 #[test]
-fn test_entry_message_notice_banner_payloads() -> Result<()> {
+fn test_entry_message_task_notice_banner_payloads() -> Result<()> {
     // -- Setup & Fixtures
     let message = TranscriptEntry::Message(MessageEntry {
         role: MessageRole::User,
         markdown: "hello".to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
+    });
+    let task = TranscriptEntry::Task(TaskEntry {
+        name: "Compaction".to_string(),
+        summary: "auto".to_string(),
+        status: ItemStatus::Done,
     });
     let notice = TranscriptEntry::Notice(NoticeEntry {
-        kind: NoticeKind::Compaction,
-        text: "Compaction".to_string(),
+        kind: NoticeKind::System,
+        text: "a system line".to_string(),
     });
     let banner = TranscriptEntry::Banner(BannerEntry {
         text: "logo".to_string(),
@@ -235,15 +250,52 @@ fn test_entry_message_notice_banner_payloads() -> Result<()> {
     assert_eq!(message.role, MessageRole::User);
     assert_eq!(message.markdown, "hello");
 
+    let TranscriptEntry::Task(task) = task else {
+        return Err("entry must be a task entry".into());
+    };
+    assert_eq!(task.name, "Compaction");
+    assert_eq!(task.summary, "auto");
+    assert_eq!(task.status, ItemStatus::Done);
+
     let TranscriptEntry::Notice(notice) = notice else {
         return Err("entry must be a notice entry".into());
     };
-    assert_eq!(notice.kind, NoticeKind::Compaction);
-    assert_eq!(notice.text, "Compaction");
+    assert_eq!(notice.kind, NoticeKind::System);
+    assert_eq!(notice.text, "a system line");
 
     let TranscriptEntry::Banner(banner) = banner else {
         return Err("entry must be a banner entry".into());
     };
     assert_eq!(banner.text, "logo");
+    Ok(())
+}
+
+/// The footer facts are slots: an entry carries exactly the facts its producer
+/// holds, so no fact at all means no footer, and any one real fact means one.
+#[test]
+fn test_entry_message_has_footer_follows_the_facts() -> Result<()> {
+    // -- Setup & Fixtures
+    let entry = |timestamp_millis, model: Option<&str>, agent: Option<&str>| MessageEntry {
+        role: MessageRole::Assistant,
+        markdown: "hi".to_string(),
+        timestamp_millis,
+        model: model.map(str::to_string),
+        agent: agent.map(str::to_string),
+    };
+    let cases = [
+        (entry(None, None, None), false),
+        (entry(Some(1_700_000_000_000), None, None), true),
+        (entry(None, Some("openai/gpt-5"), None), true),
+        (entry(None, None, Some("coder")), true),
+        (
+            entry(Some(1_700_000_000_000), Some("openai/gpt-5"), Some("coder")),
+            true,
+        ),
+    ];
+
+    // -- Exec & Check
+    for (entry, expected) in cases {
+        assert_eq!(entry.has_footer(), expected, "has_footer of {entry:?}");
+    }
     Ok(())
 }

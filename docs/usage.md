@@ -620,22 +620,12 @@ the backend:
 
 | `--store` | Where the session lives |
 |-----------|--------------------------|
-| `sqlite` (default) | `{cache}/{APP_DIR_NAME}/rig-sessions.db` — one database holds every session |
-| `jsonl` | `{cache}/{APP_DIR_NAME}/sessions/{session_id}/` — a `DirStore` directory per session, holding `logs/`, `files/` (with `files/blobs/`), and the `name` file |
+| `sqlite` (default) | `{cache}/{APP_DIR_NAME}/sessions.db` — one database holds every session |
 | `memory` | An in-memory database. Nothing survives the process, so it is for tests and one-shot runs |
 
 `APP_DIR_NAME` is `nu-agent-dev` in debug builds and `nu-agent` in release
-builds. The rig database is separate from the old `sessions.db`. Pointing a
-store at files from before rig-memory gives one of three outcomes:
-
-- An old-schema SQLite database opens, and its sessions hydrate empty. The old
-  `sessions` and `entries` tables stay where they are, beside the `logs` and
-  `files` tables the store adds.
-- A `jsonl` session directory that holds a top-level `*.jsonl` file fails to
-  open with rig-memory's own `SessionError::OldLayout` message — the upstream
-  error, not one of the host's. The directory is left as it is.
-- A bare `{session_id}.jsonl` beside the session directories is not a session:
-  the id is not listed, and the session hydrates empty.
+builds. One backend writes the store: SQLite, in a file or in memory. Pointing
+an unsupported store name yields an `Invalid --store value` error.
 
 **A stopped or failed turn keeps its completed work.** rig saves a turn only
 when it succeeds, so the host appends the interrupted turn's delta to the
@@ -1135,7 +1125,7 @@ edit = "deny"
 - `--name <string>` — agent instance identity for multi-agent messaging
 - `--parent-name <string>` — parent agent name for sub-agent reporting (internal)
 - `--proactive-threshold-pct <number>` — proactive compaction threshold 0.0–1.0 (default: 0.80)
-- `--store <string>` — session store backend: `sqlite|jsonl|memory`
+- `--store <string>` — session store backend: `sqlite|memory`
 
 ## Log file
 

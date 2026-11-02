@@ -88,14 +88,15 @@ fn push_entry_stores_content_entries_without_spacers() -> Result<()> {
         assert!(matches!(entry, TranscriptEntry::Message(_)));
     }
 
-    // -- Exec & Check: a notice stores content only.
+    // -- Exec & Check: a task line stores content only.
     let mut mixed = AppState::default();
-    mixed.transcript.push_entry(TranscriptEntry::Notice(
-        agnt_core::transcript::entry::NoticeEntry {
-            kind: NoticeKind::Compaction,
-            text: "Compaction".to_string(),
-        },
-    ));
+    mixed
+        .transcript
+        .push_entry(TranscriptEntry::Task(TaskEntry {
+            name: "Compaction".to_string(),
+            summary: "auto".to_string(),
+            status: ItemStatus::InProgress,
+        }));
     mixed.transcript.push_entry(simple_tool_entry());
     assert_eq!(mixed.transcript.len(), 2);
     assert!(matches!(

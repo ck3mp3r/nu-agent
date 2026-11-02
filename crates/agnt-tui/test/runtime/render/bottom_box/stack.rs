@@ -270,6 +270,9 @@ fn test_stacked_messages_height_matches_rendered_rows_and_blanks() -> Result<()>
             TranscriptEntry::Message(MessageEntry {
                 role: MessageRole::User,
                 markdown: (*text).to_string(),
+                timestamp_millis: None,
+                model: None,
+                agent: None,
             })
         })
         .collect();

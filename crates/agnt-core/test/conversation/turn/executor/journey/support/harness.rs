@@ -26,6 +26,7 @@ pub(crate) fn default_tool_infra(
     definitions: Vec<rig::completion::ToolDefinition>,
 ) -> ToolInfra {
     ToolInfra {
+        store_latch: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: handle,
@@ -137,6 +138,7 @@ impl JourneyHarness {
             .memory_state
             .inner_memory()
             .rig_store(self.session_id)
+            .await
             .map_err(|e| format!("rig store open: {e:?}"))?;
         let conversation = rig_memory::load(&*store, self.session_id)
             .map_err(|e| format!("rig store load: {e:?}"))?;
@@ -148,11 +150,12 @@ impl JourneyHarness {
     }
 
     /// Seed the rig-memory store with `messages` before the first turn.
-    pub(crate) fn seed_history(&self, messages: Vec<Message>) -> Result<()> {
+    pub(crate) async fn seed_history(&self, messages: Vec<Message>) -> Result<()> {
         let store = self
             .memory_state
             .inner_memory()
             .rig_store(self.session_id)
+            .await
             .map_err(|e| format!("rig store open: {e:?}"))?;
         let mut conversation = rig_memory::load(&*store, self.session_id)
             .map_err(|e| format!("rig store load: {e:?}"))?;

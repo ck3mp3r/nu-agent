@@ -64,6 +64,9 @@ fn test_interaction_input_locked_queues_submit_and_drops_editing_keys() {
         &mut state,
         SystemEvent::PromptSubmitted {
             text: "work".to_string(),
+            stamp_millis: None,
+            stamp_model: None,
+            stamp_agent: None,
         },
         None,
     );

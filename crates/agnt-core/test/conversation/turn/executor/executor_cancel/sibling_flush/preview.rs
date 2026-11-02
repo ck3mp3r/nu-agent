@@ -48,6 +48,7 @@ async fn cancelled_turn_flushes_undispatched_nu_calls_with_preview_between_pair(
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle: handle,

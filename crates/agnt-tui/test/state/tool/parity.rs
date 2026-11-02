@@ -187,8 +187,8 @@ fn rehydrated_entries(
         }),
     ];
     let mut statuses = ToolStatusMap::new();
-    statuses.insert(call, status);
-    let snapshots = hydrate_transcript_messages(&rows, cwd, &statuses);
+    statuses.insert(call.to_string(), status);
+    let snapshots = hydrate_transcript_messages(&rows, cwd, &statuses, &[]);
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     coordinator.hydrate_transcript_from_messages(snapshots, None);
     Ok(coordinator.state().transcript.entries().to_vec())

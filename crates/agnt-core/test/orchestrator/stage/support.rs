@@ -170,7 +170,8 @@ pub(super) fn session_info(id: &str) -> SessionInfo {
     SessionInfo {
         id: id.to_string(),
         message_count: 0,
-        last_active: chrono::Utc::now(),
+        last_active: Some(chrono::Utc::now()),
         title: None,
+        agent: None,
     }
 }

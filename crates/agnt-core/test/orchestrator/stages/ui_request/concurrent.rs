@@ -119,8 +119,9 @@ async fn concurrent_response_session_refresh_success() {
     let session = SessionInfo {
         id: "session-1".to_string(),
         message_count: 3,
-        last_active: chrono::Utc::now(),
+        last_active: Some(chrono::Utc::now()),
         title: Some("Test".to_string()),
+        agent: None,
     };
     let mut ctx = make_ctx(
         p.worker_tx,

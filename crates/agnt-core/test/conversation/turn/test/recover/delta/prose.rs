@@ -24,7 +24,7 @@ async fn persist_turn_delta_appends_the_streamed_prose_remainder() -> Result<()>
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages.len(),
         4,
@@ -66,7 +66,7 @@ async fn persist_turn_delta_drops_prose_that_does_not_extend_the_committed_text(
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages.len(),
         2,

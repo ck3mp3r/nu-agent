@@ -1,8 +1,10 @@
 //! Family-level rendering: what each entry family paints on its lane.
 
 use super::support::*;
-use agnt_core::transcript::ir::{MessageRole, NoticeKind};
+use crate::state::code_block::content_wrap_width;
+use agnt_core::transcript::ir::MessageRole;
 use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::catalog::LaneKind;
 
 // region:    --- Prose
 
@@ -210,13 +212,53 @@ fn test_renderer_layout_tool_in_progress_paints_content() -> Result<()> {
 
 // endregion: --- Tool call line
 
-// region:    --- Notices and banners
-
-/// WHEN a notice renders, THE widget SHALL paint one meta row per source line.
+/// WHEN a task line and a tool line carry the same amount of text, THEY SHALL
+/// wrap at the same points: the task lane reserves the status indicator exactly
+/// as the tool lane does.
 #[test]
-fn test_renderer_layout_notice_paints_one_row() -> Result<()> {
+fn test_renderer_layout_task_wraps_like_the_tool_line() -> Result<()> {
+    // -- Setup & Fixtures: space-free fillers, so the wrap is a character count.
+    // The task's content leads with "Compaction · " (13 columns) where the tool's
+    // leads with "read " (5), so each carries the filler that makes both total
+    // lengths one column past two budgets.
+    const TASK_LEAD: usize = 13;
+    const TOOL_LEAD: usize = 5;
+    let budget = content_wrap_width(
+        usize::from(WIDTH),
+        true,
+        LaneKind::Compaction.prefix_width(),
+    );
+    let total = 2 * budget + 1;
+    let task = task_entry(&"x".repeat(total - TASK_LEAD), ItemStatus::Done);
+    let tool = tool_entry(
+        "read",
+        &"x".repeat(total - TOOL_LEAD),
+        None,
+        None,
+        ItemStatus::Done,
+    );
+
+    // -- Exec
+    let task_rows = measured_rows(&task)?;
+    let tool_rows = measured_rows(&tool)?;
+
+    // -- Check: one budget, one wrap; and one column past two budgets needs
+    // three rows on both — a two-column-wider task budget would need two.
+    assert_eq!(
+        task_rows, tool_rows,
+        "the task lane wraps like the tool lane"
+    );
+    assert_eq!(task_rows, 3, "two budgets plus one column needs three rows");
+    Ok(())
+}
+
+// region:    --- Tasks, notices and banners
+
+/// WHEN a task line renders, THE widget SHALL paint one call-line row.
+#[test]
+fn test_renderer_layout_task_paints_one_row() -> Result<()> {
     // -- Setup & Fixtures
-    let entry = notice_entry(NoticeKind::Compaction, "compacted 5 entries");
+    let entry = task_entry("auto", ItemStatus::Done);
 
     // -- Exec
     let (backend, rows) = render_at(&entry, 0)?;
@@ -224,7 +266,7 @@ fn test_renderer_layout_notice_paints_one_row() -> Result<()> {
     // -- Check
     assert_eq!(rows, 1);
     assert!(
-        row_trimmed(&backend, 0).contains("compacted 5 entries"),
+        row_trimmed(&backend, 0).contains("Compaction · auto"),
         "got {:?}",
         row_trimmed(&backend, 0)
     );

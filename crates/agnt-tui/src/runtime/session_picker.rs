@@ -32,8 +32,8 @@ pub(super) fn session_picker_table_model(
     let available_rows = inner_height
         .saturating_sub(query_height)
         .saturating_sub(header_height);
-    // When + Msgs columns, their spacing, and the selection column.
-    let title_budget = table_width.saturating_sub(25) as usize;
+    // When + Agent + Msgs columns, their spacing, and the selection column.
+    let title_budget = table_width.saturating_sub(38) as usize;
     let now = chrono::Utc::now();
     let today = chrono::Local::now().date_naive();
 

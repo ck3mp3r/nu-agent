@@ -52,6 +52,7 @@ fn test_golden_decorated_rows_per_family() -> Result<()> {
             "tool-result",
             vec!["[tool] ✓ edit → src/render.rs", "result body"],
         ),
+        ("task", vec!["[compaction] ✓ Compaction · auto"]),
         (
             "notice",
             vec!["[system] Compaction skipped: transcript is short"],
@@ -192,8 +193,12 @@ fn strip_decoration(entry: &TranscriptEntry, rows: &[String]) -> Result<Vec<Stri
             let indicator = tool.status.indicator_char(0);
             strip_prefix(&call_line, &format!("{indicator} "))?
         }
+        TranscriptEntry::Task(task) => {
+            let line = strip_prefix(first, "[compaction] ")?;
+            let indicator = task.status.indicator_char(0);
+            strip_prefix(&line, &format!("{indicator} "))?
+        }
         TranscriptEntry::Notice(notice) => match notice.kind {
-            NoticeKind::Compaction => strip_prefix(first, "[compaction] ")?,
             NoticeKind::System => strip_prefix(first, "[system] ")?,
         },
         TranscriptEntry::Banner(_) => first.clone(),

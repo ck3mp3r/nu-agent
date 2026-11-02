@@ -18,17 +18,18 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 async fn seed_session(prefix: &str, bare_id: &str) -> Result<()> {
     let rig = RigStoreConfig::new(StoreType::Sqlite);
     let id = format!("{prefix}-{bare_id}");
-    let store = rig.open(&id)?;
+    let store = rig.open(&id).await?;
     let mut conversation = agnt_core::rig_memory::load(&*store, &id)?;
     conversation.extend([Message::User {
         content: vec![UserContent::Text(Text::new("seeded prompt"))],
     }]);
     agnt_core::rig_memory::save(&*store, &id, &mut conversation)?;
     agnt_core::session::rig_state::write_state_records(
-        &*store,
-        "test/model",
-        Some("seeded prompt"),
-    )?;
+        std::sync::Arc::clone(&store),
+        "test/model".to_string(),
+        Some("seeded prompt".to_string()),
+    )
+    .await?;
     Ok(())
 }
 
@@ -69,9 +70,9 @@ async fn test_integration_session_list_renders_seeded_session() -> Result<()> {
 
     // -- Check
     assert!(
-        env.cache_home_path(&format!("{APP_DIR_NAME}/rig-sessions.db"))
+        env.cache_home_path(&format!("{APP_DIR_NAME}/sessions.db"))
             .exists(),
-        "the rig sqlite store must live under the tempdir cache home"
+        "the session store must live under the tempdir cache home"
     );
     Ok(())
 }
@@ -128,7 +129,7 @@ async fn test_integration_session_clear_deletes_seeded_session() -> Result<()> {
     // -- Check
     let rig = RigStoreConfig::new(StoreType::Sqlite);
     assert!(
-        !rig.holds(&format!("{prefix}-clearcase"))?,
+        !rig.holds(&format!("{prefix}-clearcase")).await?,
         "the cleared session must be gone"
     );
     Ok(())
@@ -153,7 +154,7 @@ async fn test_integration_session_clear_ignores_another_cwd() -> Result<()> {
     );
     let rig = RigStoreConfig::new(StoreType::Sqlite);
     assert!(
-        rig.holds(&format!("{foreign_prefix}-foreigncase"))?,
+        rig.holds(&format!("{foreign_prefix}-foreigncase")).await?,
         "the foreign session must still exist"
     );
     Ok(())
@@ -177,21 +178,6 @@ async fn test_integration_session_clear_missing_session_errors() -> Result<()> {
         err.to_string().contains("Session not found: absent"),
         "got: {err}"
     );
-    Ok(())
-}
-
-#[tokio::test]
-#[serial_test::serial]
-async fn test_integration_session_list_uses_jsonl_store() -> Result<()> {
-    // -- Setup & Fixtures
-    let _env = support::TestEnv::new().await?;
-    let (args, command) = support::parse_session_command(&["session", "list", "--store", "jsonl"])?;
-
-    // -- Exec
-    dispatch::run_session_command(&args, &command).await?;
-
-    // -- Check
-    // The jsonl backend resolves its base path from the tempdir cache home.
     Ok(())
 }
 

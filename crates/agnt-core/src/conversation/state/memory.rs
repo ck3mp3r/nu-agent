@@ -22,8 +22,8 @@ impl MemoryState {
 
     /// Log what reading the session repaired, such as an image whose blob is
     /// gone, and return them.
-    pub fn warn_repairs(&self, session_id: &str) -> Vec<rig_memory::Repair> {
-        self.memory.warn_repairs(session_id)
+    pub async fn warn_repairs(&self, session_id: &str) -> Vec<rig_memory::Repair> {
+        self.memory.warn_repairs(session_id).await
     }
 
     pub fn memory(&self) -> &MemoryOf {
@@ -74,7 +74,9 @@ impl SessionManager for MemoryState {
     fn rig_store(
         &self,
         session_id: &str,
-    ) -> Result<Arc<dyn rig_memory::Store>, crate::session::MemoryError> {
+    ) -> impl std::future::Future<
+        Output = Result<Arc<dyn rig_memory::Store>, crate::session::MemoryError>,
+    > + Send {
         self.memory.rig_store(session_id)
     }
 

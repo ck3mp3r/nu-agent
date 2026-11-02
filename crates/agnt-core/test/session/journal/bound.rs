@@ -6,8 +6,8 @@ use super::*;
 /// On the in-memory backend `session_ids()` is exactly the open stores' keys —
 /// nothing persists across opens — so the count is the map's size. Without the
 /// bound it would be 40.
-#[test]
-fn rig_store_evicts_the_oldest_past_the_bound() -> Result<()> {
+#[tokio::test]
+async fn rig_store_evicts_the_oldest_past_the_bound() -> Result<()> {
     // -- Setup & Fixtures
     let memory = test_memory();
 
@@ -15,12 +15,14 @@ fn rig_store_evicts_the_oldest_past_the_bound() -> Result<()> {
     for i in 0..40 {
         memory
             .rig_store(&format!("conv-{i}"))
+            .await
             .map_err(|e| format!("rig store should open: {e:?}"))?;
     }
 
     // -- Check: the map holds the bound, not every session touched.
     let ids = memory
         .session_ids()
+        .await
         .map_err(|e| format!("session ids should list: {e:?}"))?;
     assert_eq!(
         ids.len(),

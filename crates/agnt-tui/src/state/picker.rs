@@ -24,6 +24,9 @@ pub enum PickerSortKeyPart {
     /// Recency part, latest sorts first (wrapped in Reverse so the derived
     /// Ord yields latest-first under a plain `cmp`).
     Recent(std::cmp::Reverse<chrono::DateTime<chrono::Utc>>),
+    /// Rows with no recorded instant. Declared last, so they sort after every
+    /// row that has one: the picker never invents a time to sort by.
+    Unknown,
 }
 
 pub trait PickerItem: Clone {
@@ -82,8 +85,11 @@ pub enum PickerPayload {
     Session {
         session_id: String,
         title: Option<String>,
-        created_at: chrono::DateTime<chrono::Utc>,
+        /// The recorded change instant, or `None` when the store holds none.
+        created_at: Option<chrono::DateTime<chrono::Utc>>,
         message_count: usize,
+        /// The agent of the session's most recent recorded turn, when named.
+        agent: Option<String>,
     },
     Theme,
     Command(CommandPaletteAction),
@@ -563,20 +569,30 @@ impl From<AgentPickerOption> for PickerOption {
 impl From<agnt_core::session::SessionInfo> for PickerOption {
     fn from(info: agnt_core::session::SessionInfo) -> Self {
         let title = info.title.clone();
-        let display = title.clone().unwrap_or_else(|| "(untitled)".to_string());
+        // A known title shows as stored; an unknown one is an empty cell — never
+        // an invented label.
+        let display = title.clone().unwrap_or_default();
+        // A row with no recorded instant carries no day head and sorts after the
+        // rows that have one.
+        let section = info
+            .last_active
+            .map(|instant| session_day(instant).to_string());
+        let sort_key = match info.last_active {
+            Some(instant) => vec![PickerSortKeyPart::Recent(std::cmp::Reverse(instant))],
+            None => vec![PickerSortKeyPart::Unknown],
+        };
         Self {
             id: info.id.clone(),
             display: display.clone(),
-            search_text: display.clone(),
-            section: Some(session_day(info.last_active).to_string()),
-            sort_key: vec![PickerSortKeyPart::Recent(std::cmp::Reverse(
-                info.last_active,
-            ))],
+            search_text: display,
+            section,
+            sort_key,
             payload: PickerPayload::Session {
                 session_id: info.id,
                 title,
                 created_at: info.last_active,
                 message_count: info.message_count,
+                agent: info.agent,
             },
         }
     }

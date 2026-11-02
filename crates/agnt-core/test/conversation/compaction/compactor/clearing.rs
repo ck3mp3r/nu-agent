@@ -29,7 +29,7 @@ async fn compact_clears_old_tool_outputs_before_the_summary() -> Result<()> {
     // -- Setup & Fixtures
     // The old tool output is far over `keep_under`, so the policy clears it. The
     // summarizer must read the placeholder, not the raw output.
-    let store = memory_store()?;
+    let store = memory_store().await?;
     let raw_output = "raw tool output ".repeat(400);
     let mut conversation = rig_memory::load(&*store, CONV)?;
     conversation.extend([
@@ -53,7 +53,7 @@ async fn compact_clears_old_tool_outputs_before_the_summary() -> Result<()> {
 
     // -- Exec
     let outcome = compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "auto")
+        .compact(Arc::clone(&store), CONV, &CompactReason::Threshold, "auto")
         .await?;
 
     // -- Check
@@ -78,7 +78,7 @@ async fn compact_keeps_tool_outputs_the_policy_does_not_clear() -> Result<()> {
     // -- Setup & Fixtures
     // The default policy keeps the newest 20k tokens of output, so a small
     // conversation's output is never cleared.
-    let store = memory_store()?;
+    let store = memory_store().await?;
     let mut conversation = rig_memory::load(&*store, CONV)?;
     conversation.extend([
         Message::User {
@@ -101,7 +101,7 @@ async fn compact_keeps_tool_outputs_the_policy_does_not_clear() -> Result<()> {
 
     // -- Exec
     compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "auto")
+        .compact(Arc::clone(&store), CONV, &CompactReason::Threshold, "auto")
         .await?;
 
     // -- Check

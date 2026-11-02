@@ -104,6 +104,7 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
         })
         .run();
     let tool_infra = ToolInfra {
+        store_latch: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: handle,
@@ -214,6 +215,7 @@ async fn user_cancel_stays_silent_with_empty_response() -> Result<()> {
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle: handle,

@@ -29,7 +29,7 @@ async fn persist_turn_delta_does_not_repeat_a_stored_result() -> Result<()> {
             })],
         },
     ];
-    seed(&memory_state, session_id, interrupted.clone())?;
+    seed(&memory_state, session_id, interrupted.clone()).await?;
     // The next turn reports rig's canonical history: the repair merges the
     // store's last result row into the turn's prompt.
     let mut reported = interrupted;
@@ -50,7 +50,7 @@ async fn persist_turn_delta_does_not_repeat_a_stored_result() -> Result<()> {
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         result_rows(&messages, &call),
         1,

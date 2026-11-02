@@ -16,7 +16,7 @@ fn compaction_metadata_is_ui_chrome_not_session_payload() -> Result<()> {
     // -- Check
     assert_eq!(
         entry_text(&state.transcript.entries()[0]),
-        "Compaction",
+        "Compaction · slash_compact",
         "metadata is transcript UI chrome, not session system summary payload"
     );
     assert!(

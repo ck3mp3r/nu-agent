@@ -16,8 +16,10 @@ const CONV: &str = "conv-1";
 // region:    --- Test Support
 
 /// An in-memory rig store holding a two-message conversation.
-fn seeded_store() -> Result<Arc<dyn Store>> {
-    let store = crate::session::RigStoreConfig::in_memory().open(CONV)?;
+async fn seeded_store() -> Result<Arc<dyn Store>> {
+    let store = crate::session::RigStoreConfig::in_memory()
+        .open(CONV)
+        .await?;
     let mut conversation = rig_memory::load(&*store, CONV)?;
     conversation.extend([
         Message::user("how do I read a file?"),
@@ -37,13 +39,18 @@ fn main_log(session: &Session) -> Result<String> {
 
 // endregion: --- Test Support
 
-#[test]
-fn write_state_records_persists_model_and_title() -> Result<()> {
+#[tokio::test]
+async fn write_state_records_persists_model_and_title() -> Result<()> {
     // -- Setup & Fixtures
-    let store = seeded_store()?;
+    let store = seeded_store().await?;
 
     // -- Exec
-    write_state_records(&*store, "openai/gpt-4o", Some("how do I read a file?"))?;
+    write_state_records(
+        Arc::clone(&store),
+        "openai/gpt-4o".to_string(),
+        Some("how do I read a file?".to_string()),
+    )
+    .await?;
 
     // -- Check: the state records are readable through the typed accessors.
     let session = Session::read(&*store)?;
@@ -65,17 +72,27 @@ fn write_state_records_persists_model_and_title() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn write_state_records_adds_no_record_for_unchanged_values() -> Result<()> {
+#[tokio::test]
+async fn write_state_records_adds_no_record_for_unchanged_values() -> Result<()> {
     // -- Setup & Fixtures
-    let store = seeded_store()?;
-    write_state_records(&*store, "openai/gpt-4o", Some("a title"))?;
+    let store = seeded_store().await?;
+    write_state_records(
+        Arc::clone(&store),
+        "openai/gpt-4o".to_string(),
+        Some("a title".to_string()),
+    )
+    .await?;
     let session = Session::read(&*store)?;
     let log = main_log(&session)?;
     let before = store.read_log(&log)?.len();
 
     // -- Exec: the same values again.
-    write_state_records(&*store, "openai/gpt-4o", Some("a title"))?;
+    write_state_records(
+        Arc::clone(&store),
+        "openai/gpt-4o".to_string(),
+        Some("a title".to_string()),
+    )
+    .await?;
 
     // -- Check
     let after = store.read_log(&log)?.len();
@@ -86,14 +103,24 @@ fn write_state_records_adds_no_record_for_unchanged_values() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn write_state_records_updates_the_model_on_switch() -> Result<()> {
+#[tokio::test]
+async fn write_state_records_updates_the_model_on_switch() -> Result<()> {
     // -- Setup & Fixtures
-    let store = seeded_store()?;
-    write_state_records(&*store, "openai/gpt-4o", Some("a title"))?;
+    let store = seeded_store().await?;
+    write_state_records(
+        Arc::clone(&store),
+        "openai/gpt-4o".to_string(),
+        Some("a title".to_string()),
+    )
+    .await?;
 
     // -- Exec
-    write_state_records(&*store, "anthropic/claude-sonnet-4", Some("a title"))?;
+    write_state_records(
+        Arc::clone(&store),
+        "anthropic/claude-sonnet-4".to_string(),
+        Some("a title".to_string()),
+    )
+    .await?;
 
     // -- Check
     let session = Session::read(&*store)?;
@@ -107,14 +134,24 @@ fn write_state_records_updates_the_model_on_switch() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn write_state_records_keeps_the_title_when_none_is_given() -> Result<()> {
+#[tokio::test]
+async fn write_state_records_keeps_the_title_when_none_is_given() -> Result<()> {
     // -- Setup & Fixtures: a session that already carries a title.
-    let store = seeded_store()?;
-    write_state_records(&*store, "openai/gpt-4o", Some("the original title"))?;
+    let store = seeded_store().await?;
+    write_state_records(
+        Arc::clone(&store),
+        "openai/gpt-4o".to_string(),
+        Some("the original title".to_string()),
+    )
+    .await?;
 
     // -- Exec: a model switch passes no title.
-    write_state_records(&*store, "anthropic/claude-sonnet-4", None)?;
+    write_state_records(
+        Arc::clone(&store),
+        "anthropic/claude-sonnet-4".to_string(),
+        None,
+    )
+    .await?;
 
     // -- Check: the model follows the switch, the title is untouched.
     let session = Session::read(&*store)?;
@@ -133,19 +170,25 @@ fn write_state_records_keeps_the_title_when_none_is_given() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn write_state_records_works_on_the_dir_backend() -> Result<()> {
+#[tokio::test]
+async fn write_state_records_works_on_a_file_store() -> Result<()> {
     // -- Setup & Fixtures
     let temp_dir = TempDir::new().map_err(|_| "should create temp dir")?;
-    let store = RigStoreConfig::new(StoreType::Jsonl)
+    let store = RigStoreConfig::new(StoreType::Sqlite)
         .with_cache_dir(temp_dir.path())
-        .open(CONV)?;
+        .open(CONV)
+        .await?;
     let mut conversation = rig_memory::load(&*store, CONV)?;
     conversation.extend([Message::user("hello"), Message::assistant("hi")]);
     rig_memory::save(&*store, CONV, &mut conversation)?;
 
     // -- Exec
-    write_state_records(&*store, "openai/gpt-4o", Some("hello"))?;
+    write_state_records(
+        Arc::clone(&store),
+        "openai/gpt-4o".to_string(),
+        Some("hello".to_string()),
+    )
+    .await?;
 
     // -- Check
     let session = Session::read(&*store)?;

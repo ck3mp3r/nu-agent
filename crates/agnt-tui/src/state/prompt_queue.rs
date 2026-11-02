@@ -1,4 +1,4 @@
-use super::{PromptStatus, QueuedPrompt};
+use super::{PromptFacts, PromptStatus, QueuedPrompt};
 use std::collections::VecDeque;
 
 pub(super) struct PromptQueueLifecycle<'a> {
@@ -23,7 +23,7 @@ impl<'a> PromptQueueLifecycle<'a> {
         }
     }
 
-    pub(super) fn enqueue_prompt(&mut self, submitted_text: String) -> u64 {
+    pub(super) fn enqueue_prompt(&mut self, submitted_text: String, facts: PromptFacts) -> u64 {
         let id = *self.next_prompt_id;
         *self.next_prompt_id = self.next_prompt_id.saturating_add(1);
 
@@ -31,6 +31,7 @@ impl<'a> PromptQueueLifecycle<'a> {
             id,
             prompt_text: submitted_text,
             status: PromptStatus::Queued,
+            facts,
         });
         self.pending_prompt_ids.push_back(id);
         id
@@ -85,22 +86,23 @@ impl<'a> PromptQueueLifecycle<'a> {
             .collect()
     }
 
-    pub(super) fn coalesce_pending_prompts(&mut self) -> Vec<String> {
+    pub(super) fn coalesce_pending_prompts(&mut self) -> (Vec<String>, PromptFacts) {
         if self.pending_prompt_ids.is_empty() {
-            return vec![];
+            return (vec![], PromptFacts::default());
         }
 
         // FIX: Don't coalesce if there's already an active prompt — wait for it to complete.
         // Without this guard, coalesce overwrites active_prompt_id, then enforce_single_active_invariant
         // re-queues the prompt because two InProgress prompts exist, causing double delivery.
         if self.active_prompt_id.is_some() {
-            return vec![];
+            return (vec![], PromptFacts::default());
         }
 
         let ids: Vec<u64> = self.pending_prompt_ids.drain(..).collect();
         *self.active_prompt_id = ids.first().copied();
 
         let mut texts = Vec::with_capacity(ids.len());
+        let mut facts = PromptFacts::default();
         for (i, &id) in ids.iter().enumerate() {
             if let Some(p) = self.prompt_items.iter_mut().find(|p| p.id == id) {
                 if i == 0 {
@@ -108,10 +110,11 @@ impl<'a> PromptQueueLifecycle<'a> {
                 } else {
                     p.status = PromptStatus::Done;
                 }
+                facts.merge_first_some(&p.facts);
                 texts.push(p.prompt_text.clone());
             }
         }
-        texts
+        (texts, facts)
     }
 
     pub(super) fn enforce_single_active_invariant(&mut self) {

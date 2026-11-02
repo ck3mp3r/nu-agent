@@ -53,7 +53,7 @@ async fn test_session_manager_open_session_publishes_started_hydrated_for_a_pers
     let (manager, rig) = manager_with_bus_and_rig_store(temp.path(), bus.clone()).await?;
     let mut session_rx = bus.session().subscribe();
     let session_id = "persisted-session";
-    seed_session(&rig, session_id)?;
+    seed_session(&rig, session_id).await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
 
     // -- Exec
@@ -130,7 +130,7 @@ async fn test_session_manager_delete_session_without_a_live_session_publishes_no
     let (manager, rig) = manager_with_bus_and_rig_store(temp.path(), bus.clone()).await?;
     let mut session_rx = bus.session().subscribe();
     let session_id = "persisted-session";
-    seed_session(&rig, session_id)?;
+    seed_session(&rig, session_id).await?;
 
     // -- Exec
     manager.delete_session(session_id).await?;
@@ -157,8 +157,8 @@ async fn test_session_manager_ended_reports_each_sessions_own_usage() -> Result<
     let (manager, rig) =
         manager_with_usage_for_session(temp.path(), bus.clone(), used_session, 30, 12).await?;
     let mut session_rx = bus.session().subscribe();
-    seed_session(&rig, used_session)?;
-    seed_session(&rig, "unused-session")?;
+    seed_session(&rig, used_session).await?;
+    seed_session(&rig, "unused-session").await?;
     let cwd = session_cwd(temp.path(), "session-cwd")?;
     manager.resume_session(used_session, cwd.clone()).await?;
     manager.resume_session("unused-session", cwd).await?;

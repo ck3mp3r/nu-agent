@@ -269,7 +269,7 @@ pub struct AgentArgs {
     #[arg(long, global = true)]
     pub repetition_guard: Option<String>,
 
-    /// Session store backend: sqlite, jsonl, or memory.
+    /// Session store backend: sqlite or memory.
     #[arg(long, global = true)]
     pub store: Option<String>,
 

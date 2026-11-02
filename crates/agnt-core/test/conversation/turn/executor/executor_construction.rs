@@ -174,6 +174,7 @@ async fn last_total_tokens_updated_on_completed_turn() -> Result<()> {
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
@@ -271,7 +272,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
         seeded.push(crate::types::Message::user(format!("user-{i}")));
         seeded.push(crate::types::Message::assistant(format!("assistant-{i}")));
     }
-    seed_rig_store(&memory_state, session_id, seeded)?;
+    seed_rig_store(&memory_state, session_id, seeded).await?;
 
     // The model must be scripted to produce a final text response on the agent
     // turn. Clone before moving so we can inspect the agent request's
@@ -302,6 +303,7 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,
@@ -397,6 +399,7 @@ async fn on_outcome_stores_total_tokens() -> Result<()> {
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,

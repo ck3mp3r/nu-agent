@@ -474,9 +474,9 @@ impl RuntimeCoordinator {
             let options = picker_state.filtered();
             let selected = options.get(picker_state.selection)?;
             match &selected.payload {
-                PickerPayload::Session { title, .. } => {
-                    Some(title.clone().unwrap_or_else(|| "(untitled)".to_string()))
-                }
+                // A session with no recorded title has no cue to show: the fallback
+                // label is gone, so an unknown title stays blank.
+                PickerPayload::Session { title, .. } => title.clone(),
                 _ => None,
             }
         });
@@ -518,40 +518,49 @@ impl RuntimeCoordinator {
                         created_at,
                         title,
                         message_count,
+                        agent,
                         ..
                     } => Row::new(vec![
-                        Cell::from(format!(
-                            "  {}",
-                            crate::runtime::session_picker::relative_timestamp(
-                                *created_at,
-                                model.now
-                            )
-                        )),
+                        // An unknown instant leaves the cell blank: no relative
+                        // stamp, and no day head either (the row's section is
+                        // `None`).
+                        Cell::from(match created_at {
+                            Some(instant) => format!(
+                                "  {}",
+                                crate::runtime::session_picker::relative_timestamp(
+                                    *instant, model.now
+                                )
+                            ),
+                            None => String::new(),
+                        }),
                         Cell::from(ellipsize(
-                            title.as_deref().unwrap_or("(untitled)"),
+                            title.as_deref().unwrap_or(""),
                             model.title_budget,
                         )),
+                        Cell::from(agent.clone().unwrap_or_default()),
                         Cell::from(message_count.to_string()),
                     ]),
                     _ => unreachable!(),
                 },
                 |opt| match &opt.payload {
-                    PickerPayload::Session { created_at, .. } => {
-                        crate::runtime::session_picker::day_header_label(
-                            crate::state::session_day(*created_at),
+                    PickerPayload::Session { created_at, .. } => match created_at {
+                        Some(instant) => crate::runtime::session_picker::day_header_label(
+                            crate::state::session_day(*instant),
                             model.today,
-                        )
-                    }
+                        ),
+                        None => String::new(),
+                    },
                     _ => unreachable!(),
                 },
             );
-            let header = Row::new(vec!["When", "Title", "Msgs"]);
+            let header = Row::new(vec!["When", "Title", "Agent", "Msgs"]);
             let columns = [
                 // Wide enough for the longest day header ("Sep 30, 2025", 12
                 // cells) on the When column; the session rows carry their
                 // two-space indent inside it.
                 Constraint::Length(13),
                 Constraint::Min(20),
+                Constraint::Length(12),
                 Constraint::Length(6),
             ];
             render_picker_table(

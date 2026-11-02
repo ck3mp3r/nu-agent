@@ -12,6 +12,7 @@ mod banner;
 mod components;
 mod message;
 mod notice;
+mod task;
 pub(crate) mod text;
 mod tool;
 

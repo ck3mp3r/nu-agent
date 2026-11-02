@@ -18,7 +18,7 @@ async fn hard_error_after_prior_history_persists_the_prompt() -> Result<()> {
         crate::types::Message::user("work done"),
         crate::types::Message::assistant("ok"),
     ];
-    seed_rig_store(&memory_state, session_id, prior_messages.clone())?;
+    seed_rig_store(&memory_state, session_id, prior_messages.clone()).await?;
 
     // Mock model: errors immediately (simulates CompletionError / network failure).
     let model =
@@ -94,8 +94,8 @@ async fn hard_error_after_prior_history_appends_the_delta() -> Result<()> {
         crate::types::Message::user("prior work"),
         crate::types::Message::assistant("done"),
     ];
-    seed_rig_store(&memory_state, session_id, prior_msgs)?;
-    let before = rig_log(&memory_state, session_id)?;
+    seed_rig_store(&memory_state, session_id, prior_msgs).await?;
+    let before = rig_log(&memory_state, session_id).await?;
 
     // Model errors immediately — simulates CompletionError / network failure.
     let model =
@@ -126,7 +126,7 @@ async fn hard_error_after_prior_history_appends_the_delta() -> Result<()> {
 
     // The failed turn appends its delta: the log grows and the store gains the
     // prompt the turn never answered.
-    let after = rig_log(&memory_state, session_id)?;
+    let after = rig_log(&memory_state, session_id).await?;
     assert_ne!(
         after, before,
         "a failed run appends its delta to the rig log"

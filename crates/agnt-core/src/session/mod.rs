@@ -1,3 +1,4 @@
+pub mod blocking;
 pub mod factory;
 mod info;
 pub mod journal;
@@ -6,14 +7,21 @@ mod model;
 pub mod prefix;
 pub(crate) mod repair;
 pub mod resolver;
-mod rig_dir_store;
-mod rig_sqlite_store;
 pub mod rig_state;
+pub(crate) mod settle;
 pub mod tool_status;
+
+#[cfg(test)]
+#[path = "../../test/session/blocking.rs"]
+mod blocking_test;
 
 #[cfg(test)]
 #[path = "../../test/session/prefix.rs"]
 mod prefix_test;
+
+#[cfg(test)]
+#[path = "../../test/session/settle.rs"]
+mod settle_test;
 
 #[cfg(test)]
 #[path = "../../test/session/factory.rs"]
@@ -40,10 +48,6 @@ mod resolver_test;
 mod rig_state_test;
 
 #[cfg(test)]
-#[path = "../../test/session/rig_dir_store.rs"]
-mod rig_dir_store_test;
-
-#[cfg(test)]
 #[path = "../../test/session/rig_factory.rs"]
 mod rig_factory_test;
 
@@ -52,8 +56,8 @@ mod rig_factory_test;
 mod tool_status_test;
 
 #[cfg(all(test, feature = "integration"))]
-#[path = "../../test/session/rig_sqlite_store.rs"]
-mod rig_sqlite_store_test;
+#[path = "../../test/session/rig_blobs.rs"]
+mod rig_blobs_test;
 
 pub use factory::{
     RigStoreConfig, RigStoreError, StoreType, create_rig_store, create_rig_store_at,
@@ -63,11 +67,7 @@ pub use info::SessionInfo;
 pub use journal::CachedMemory;
 pub use memory_error::{MemoryBackendError, MemoryError};
 pub use model::Session;
-pub use rig_dir_store::{
-    NAME_FILE, read_session_name, session_dir, sessions_root, write_session_name,
-};
 pub use rig_memory::SessionMeta;
-pub use rig_sqlite_store::RigSqliteStore;
 
 #[cfg(test)]
 #[path = "../../test/session/tool_session.rs"]

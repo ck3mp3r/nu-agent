@@ -12,7 +12,7 @@ use agnt_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
 use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
 use agnt_core::protocol::events::SystemEvent;
 use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
 use agnt_core::transcript::ir::{ContentKind, MessageRole};
 use agnt_core::transcript::renderer::ItemStatus;
 
@@ -125,6 +125,7 @@ fn entry_roles(state: &AppState) -> Vec<&'static str> {
             TranscriptEntry::Message(message) if message.role == MessageRole::User => "user",
             TranscriptEntry::Message(_) => "assistant",
             TranscriptEntry::Tool(_) => "tool",
+            TranscriptEntry::Task(_) => "task",
             TranscriptEntry::Notice(_) => "notice",
             TranscriptEntry::Banner(_) => "banner",
         })
@@ -149,7 +150,7 @@ fn test_state_hydration_projection_maps_user_prompt() {
     assert_eq!(log.len(), 2, "the prompt plus the turn boundary");
     assert!(matches!(
         log.first(),
-        Some(SystemEvent::PromptSubmitted { text }) if text == "hi"
+        Some(SystemEvent::PromptSubmitted { text, .. }) if text == "hi"
     ));
     assert!(matches!(
         log.get(1),
@@ -382,11 +383,11 @@ fn test_state_hydration_replay_matches_live_reduction() -> Result<()> {
             "assistant",
             "tool",
             "user",
-            "notice",
+            "task",
             "assistant",
             "assistant"
         ],
-        "one entry per persisted fact: the compaction header plus its summary"
+        "one entry per persisted fact: the compaction call line plus its summary"
     );
 
     // -- Check: main's hydrated shape. The hand-builder docked every persisted
@@ -519,6 +520,44 @@ fn test_state_hydration_replay_discards_pending_effects() -> Result<()> {
         vec!["user", "assistant"],
         "the prompt row lands through the drain"
     );
+    Ok(())
+}
+
+/// WHEN the replay folds a stamped prompt, THE pushed entry SHALL hold exactly
+/// the event's facts; an unstamped prompt SHALL stay field-less.
+#[test]
+fn test_state_hydration_stamped_replay_carries_the_facts() -> Result<()> {
+    // -- Setup & Fixtures: one stamped prompt, one without facts.
+    let stamped = UiMessageSnapshot::new("user", "stamped prompt").with_stamp(
+        Some(1_765_000_000_000),
+        Some("openai/gpt-5".to_string()),
+        Some("coder".to_string()),
+    );
+    let plain = UiMessageSnapshot::new("user", "plain prompt");
+    let mut state = AppState::default();
+
+    // -- Exec
+    hydrate_by_replay(&mut state, vec![stamped, plain], None);
+
+    // -- Check: the stamped row holds the snapshot's values verbatim.
+    let rows: Vec<&MessageEntry> = state
+        .transcript
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            TranscriptEntry::Message(message) => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rows.len(), 2, "both prompts replay a row");
+    assert_eq!(rows[0].timestamp_millis, Some(1_765_000_000_000));
+    assert_eq!(rows[0].model.as_deref(), Some("openai/gpt-5"));
+    assert_eq!(rows[0].agent.as_deref(), Some("coder"));
+
+    // -- Check: the fact-less row invents nothing.
+    assert_eq!(rows[1].timestamp_millis, None);
+    assert_eq!(rows[1].model, None);
+    assert_eq!(rows[1].agent, None);
     Ok(())
 }
 

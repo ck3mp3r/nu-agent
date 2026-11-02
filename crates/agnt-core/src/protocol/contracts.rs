@@ -44,6 +44,14 @@ pub struct UiMessageSnapshot {
     /// `tool_success` states.
     tool_status: Option<ToolStatus>,
     tool_display: Option<ToolDisplay>,
+    /// The submit instant the entry's turn recorded, when the entry is a user
+    /// row whose key joined a settled turn. The recorded value, never a
+    /// re-derivation.
+    stamp_millis: Option<i64>,
+    /// The model identity the entry's turn ran under.
+    stamp_model: Option<String>,
+    /// The persona identity that answered the entry's turn.
+    stamp_agent: Option<String>,
     pub usage: Option<UiMessageUsageSnapshot>,
 }
 
@@ -65,8 +73,25 @@ impl UiMessageSnapshot {
             tool_success: None,
             tool_status: None,
             tool_display: None,
+            stamp_millis: None,
+            stamp_model: None,
+            stamp_agent: None,
             usage: None,
         }
+    }
+
+    /// Mark the snapshot with the footer facts its entry carries: the submit
+    /// instant and the identities the turn ran under, verbatim.
+    pub fn with_stamp(
+        mut self,
+        millis: Option<i64>,
+        model: Option<String>,
+        agent: Option<String>,
+    ) -> Self {
+        self.stamp_millis = millis;
+        self.stamp_model = model;
+        self.stamp_agent = agent;
+        self
     }
 
     pub fn with_tool_details(
@@ -142,6 +167,21 @@ impl UiMessageSnapshot {
 
     pub fn usage(&self) -> Option<UiMessageUsageSnapshot> {
         self.usage
+    }
+
+    /// The recorded submit instant the row carries, when it carries one.
+    pub fn stamp_millis(&self) -> Option<i64> {
+        self.stamp_millis
+    }
+
+    /// The model identity the row carries, when it carries one.
+    pub fn stamp_model(&self) -> Option<&str> {
+        self.stamp_model.as_deref()
+    }
+
+    /// The persona identity the row carries, when it carries one.
+    pub fn stamp_agent(&self) -> Option<&str> {
+        self.stamp_agent.as_deref()
     }
 }
 

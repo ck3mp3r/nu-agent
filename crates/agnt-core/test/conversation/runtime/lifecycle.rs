@@ -18,11 +18,17 @@ async fn seed_session(
         .session
         .inner_memory()
         .rig_store(id)
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let mut conversation = rig_memory::load(&*store, id)?;
     conversation.extend(messages.iter().cloned());
     rig_memory::save(&*store, id, &mut conversation)?;
-    crate::session::rig_state::write_state_records(&*store, "test/model", None)?;
+    crate::session::rig_state::write_state_records(
+        Arc::clone(&store),
+        "test/model".to_string(),
+        None,
+    )
+    .await?;
     Ok(())
 }
 
@@ -57,6 +63,7 @@ async fn clear_session_resets_token_tracking_and_keeps_the_store() -> Result<()>
         .session
         .inner_memory()
         .rig_store(&session_id)
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let stored = rig_memory::load(&*store, &session_id)?;
     assert_eq!(
@@ -158,6 +165,7 @@ async fn run_compaction_summarizes_a_populated_session() -> Result<()> {
         .session
         .inner_memory()
         .rig_store("test-session")
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let mut conversation = rig_memory::load(&*store, "test-session")?;
     conversation.extend([
@@ -451,4 +459,164 @@ async fn interactive_pending_arc_clones_the_shared_map() {
         std::sync::Arc::ptr_eq(&cloned, &pending),
         "the accessor must clone the same shared map"
     );
+}
+
+/// WHEN the session changes, THE hook's threshold input SHALL NOT describe the
+/// session just left: neither the last real token count nor a store-dead latch
+/// survives the switch.
+#[tokio::test]
+async fn session_switch_drops_the_previous_sessions_threshold_inputs() -> Result<()> {
+    // -- Setup & Fixtures: a total and a latch recorded under another session.
+    let mut fixture = make_runtime(text_model("unused"))?;
+    *fixture
+        .runtime
+        .last_total_tokens
+        .lock()
+        .map_err(|_| "token slot poisoned")? = Some(500_000);
+    *fixture
+        .runtime
+        .store_latch
+        .lock()
+        .map_err(|_| "store latch poisoned")? = Some("dead".to_string());
+
+    // -- Exec
+    fixture.runtime.clear_session();
+
+    // -- Check: a conversation under the threshold can no longer fire a
+    // decision from the previous session's total.
+    assert_eq!(
+        *fixture
+            .runtime
+            .last_total_tokens
+            .lock()
+            .map_err(|_| "token slot poisoned")?,
+        None,
+        "the previous session's total must not survive the switch"
+    );
+    assert!(
+        fixture
+            .runtime
+            .store_latch
+            .lock()
+            .map_err(|_| "store latch poisoned")?
+            .is_none(),
+        "the previous session's store latch must not survive the switch"
+    );
+    Ok(())
+}
+
+/// WHEN the runtime attaches to another session, THE hook's threshold input
+/// SHALL NOT describe the session just left — the attach is a switch too.
+#[tokio::test]
+async fn attach_session_drops_the_previous_sessions_threshold_inputs() -> Result<()> {
+    // -- Setup & Fixtures: a total and a latch recorded under another session.
+    let mut fixture = make_runtime(text_model("unused"))?;
+    let previous = fixture
+        .runtime
+        .final_session_id
+        .clone()
+        .ok_or("fixture must start attached to a session")?;
+    *fixture
+        .runtime
+        .last_total_tokens
+        .lock()
+        .map_err(|_| "token slot poisoned")? = Some(500_000);
+    *fixture
+        .runtime
+        .store_latch
+        .lock()
+        .map_err(|_| "store latch poisoned")? = Some("dead".to_string());
+
+    // -- Exec
+    fixture.runtime.attach_session("attached-session").await?;
+
+    // -- Check
+    assert_ne!(
+        fixture.runtime.final_session_id.as_deref(),
+        Some(previous.as_str()),
+        "the attach must move the runtime to the new session"
+    );
+    assert_eq!(
+        *fixture
+            .runtime
+            .last_total_tokens
+            .lock()
+            .map_err(|_| "token slot poisoned")?,
+        None,
+        "the previous session's total must not survive the attach"
+    );
+    assert!(
+        fixture
+            .runtime
+            .store_latch
+            .lock()
+            .map_err(|_| "store latch poisoned")?
+            .is_none(),
+        "the previous session's store latch must not survive the attach"
+    );
+    Ok(())
+}
+
+/// WHEN the runtime attaches to a session whose turns settled, THE user row
+/// SHALL carry the recorded facts: the attach joins by key exactly as the
+/// startup resolver does.
+#[tokio::test]
+async fn attach_session_stamps_the_joined_turns_facts() -> Result<()> {
+    // -- Setup & Fixtures: a store on disk, so the facts one open writes are the
+    // facts the next open reads.
+    let mut fixture = make_runtime(text_model("unused"))?;
+    fixture.runtime.session = crate::conversation::state::memory::MemoryState::new(
+        crate::session::RigStoreConfig::new(crate::session::StoreType::Sqlite)
+            .with_cache_dir(fixture.root().join("attach-facts")),
+    );
+    let session_id = "test-attach-facts";
+    seed_session(
+        &fixture,
+        session_id,
+        &[crate::types::Message::user("the prompt")],
+    )
+    .await?;
+    let store = fixture
+        .runtime
+        .session
+        .inner_memory()
+        .rig_store(session_id)
+        .await
+        .map_err(|e| format!("rig store should open: {e:?}"))?;
+    let saved = rig_memory::load(&*store, session_id)?;
+    let keys = crate::session::settle::entry_keys(saved.entries());
+    let facts = fixture
+        .runtime
+        .session
+        .inner_memory()
+        .facts()
+        .await
+        .map_err(|e| format!("facts should open: {e:?}"))?;
+    facts
+        .settle(crate::session::settle::SettleInput {
+            session_id,
+            model: "openai/gpt-5",
+            agent: "coder",
+            submitted_millis: 1_790_974_800_000,
+            keys: Some(keys),
+            records: &[],
+        })
+        .await?;
+
+    // -- Exec
+    let snapshots = fixture.runtime.attach_session(session_id).await?;
+
+    // -- Check: the attach path's row carries the recorded facts.
+    let user = snapshots
+        .iter()
+        .find(|snapshot| snapshot.role() == "user")
+        .ok_or("the attach must hydrate the prompt")?;
+    assert_eq!(
+        user.stamp_millis(),
+        Some(1_790_974_800_000),
+        "the attach joins by key exactly as the startup path does"
+    );
+    assert_eq!(user.stamp_model(), Some("openai/gpt-5"));
+    assert_eq!(user.stamp_agent(), Some("coder"));
+    Ok(())
 }

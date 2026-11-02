@@ -43,7 +43,7 @@ impl AgentSessionInspect {
         let id = format!("{prefix}-{session_id}");
 
         // The session must exist in the rig-memory store.
-        if !rig.holds(&id).unwrap_or(false) {
+        if !rig.holds(&id).await.unwrap_or(false) {
             return Err(LabeledError::new(format!(
                 "Session not found: {session_id}"
             )));
@@ -51,6 +51,7 @@ impl AgentSessionInspect {
 
         let view = rig
             .view(&id)
+            .await
             .map_err(|e| LabeledError::new(format!("Failed to read session: {e}")))?;
 
         // Collect the stored messages
@@ -221,7 +222,7 @@ impl SimplePluginCommand for AgentSessionInspect {
             .named(
                 "store",
                 SyntaxShape::String,
-                "Session store backend: sqlite|jsonl|memory",
+                "Session store backend: sqlite|memory",
                 None,
             )
             .category(Category::Experimental)

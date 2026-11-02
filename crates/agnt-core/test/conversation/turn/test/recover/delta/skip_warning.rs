@@ -10,7 +10,7 @@ async fn persist_turn_delta_skips_when_the_store_moved_mid_turn() -> Result<()> 
     let mut memory_state = MemoryState::new(RigStoreConfig::in_memory());
     let session_id = "test-recover-moved";
     let prior = vec![Message::user("q1"), Message::assistant("a1")];
-    seed(&memory_state, session_id, prior.clone())?;
+    seed(&memory_state, session_id, prior.clone()).await?;
     let full_history = vec![Message::user("q1"), Message::assistant("a1")];
     let bus = crate::bus::create_bus();
     let mut ui_events = bus.ui_event().subscribe();
@@ -28,7 +28,7 @@ async fn persist_turn_delta_skips_when_the_store_moved_mid_turn() -> Result<()> 
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages, prior,
         "a moved store must be left untouched; got {messages:?}"
@@ -62,7 +62,7 @@ async fn persist_turn_delta_without_a_session_writes_nothing() -> Result<()> {
         .await;
 
     // -- Check
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert!(
         messages.is_empty(),
         "a session-less turn writes nothing; got {messages:?}"

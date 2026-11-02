@@ -50,6 +50,7 @@ async fn cancelled_turn_flushes_undispatched_siblings_as_denied_pairs() -> Resul
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle: handle,
@@ -216,6 +217,7 @@ async fn completed_turn_emits_no_cancelled_dispatch_pair() -> Result<()> {
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle: handle,

@@ -37,6 +37,9 @@ mod preamble;
 mod provider;
 #[path = "runtime/rescan_agents.rs"]
 mod rescan_agents;
+#[path = "runtime/session_lists.rs"]
+mod session_lists;
+
 #[path = "runtime/session_usage.rs"]
 mod session_usage;
 #[cfg(all(test, feature = "integration"))]

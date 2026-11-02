@@ -12,6 +12,7 @@ use ratatui::layout::Rect;
 use super::banner::BannerWidget;
 use super::message::MessageWidget;
 use super::notice::NoticeWidget;
+use super::task::TaskWidget;
 use super::tool::ToolWidget;
 use super::{PaintCtx, PaneWidget};
 
@@ -77,6 +78,9 @@ impl RenderBackend for RatatuiBackend {
             TranscriptEntry::Tool(tool) => {
                 ToolWidget { entry: tool }.paint(area, &mut self.buffer, ctx)
             }
+            TranscriptEntry::Task(task) => {
+                TaskWidget { entry: task }.paint(area, &mut self.buffer, ctx)
+            }
             TranscriptEntry::Notice(notice) => {
                 NoticeWidget { entry: notice }.paint(area, &mut self.buffer, ctx)
             }
@@ -94,6 +98,7 @@ impl RenderBackend for RatatuiBackend {
             }
             .measure(width),
             TranscriptEntry::Tool(tool) => ToolWidget { entry: tool }.measure(width),
+            TranscriptEntry::Task(task) => TaskWidget { entry: task }.measure(width),
             TranscriptEntry::Notice(notice) => NoticeWidget { entry: notice }.measure(width),
             TranscriptEntry::Banner(banner) => BannerWidget { entry: banner }.measure(width),
         }

@@ -291,10 +291,8 @@ where
         }
 
         // Completed turn: update last_total_tokens for compaction tracking.
-        // rig saved the conversation when the run succeeded, so the delta needs
-        // nothing here — but the calls' statuses ride the session's own file
-        // layer, which rig knows nothing about.
-        self.persist_tool_statuses(final_session_id, &turn_result.tool_records);
+        // rig saved the conversation when the run succeeded, and the turn's own
+        // settle recorded its facts, so nothing is written here.
         if final_session_id.is_some() {
             *self.memory_state.last_total_tokens_mut() = Some(turn_result.last_total_tokens);
             log::debug!(

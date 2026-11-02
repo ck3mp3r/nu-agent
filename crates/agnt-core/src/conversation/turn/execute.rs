@@ -108,6 +108,10 @@ where
 {
     log::info!("execute_turn: starting turn");
 
+    // The turn's submission instant: the settle path records it beside the
+    // instant the turn settled.
+    let submitted_millis = crate::session::settle::now_millis();
+
     // The rig-memory store and log this turn keeps its conversation in. A
     // session-less turn persists nothing, so it gets no memory.
     let rig_memory = if ctx.conversation.has_session {
@@ -115,6 +119,7 @@ where
             .conversation
             .memory
             .rig_store(&ctx.conversation.conversation_id)
+            .await
         {
             Ok(store) => Some((store, ctx.conversation.conversation_id.clone())),
             Err(error) => {
@@ -129,22 +134,55 @@ where
     // The conversation the run starts from: the same store the run loads, so
     // the count is exact. Recovery anchors the turn's delta on the prompt, so
     // the count's only role is the skip guard: a log whose length moved since
-    // the turn started is left alone.
-    let pre_turn_messages: Vec<Message> = match &rig_memory {
-        Some((store, log)) => match rig_memory::load(&**store, log) {
-            Ok(conversation) => conversation
-                .messages()
-                .iter()
-                .map(|message| (**message).clone())
-                .collect(),
-            Err(error) => {
-                log::warn!("Failed to load the session's pre-turn messages: {error}");
-                vec![]
+    // the turn started is left alone. The keys are what the settle path
+    // subtracts from the saved log to name the entries this turn persisted;
+    // `None` when this read failed, so the settle can skip instead of counting
+    // the session's whole history as this turn's.
+    let (pre_turn_messages, pre_turn_keys): (Vec<Message>, Option<Vec<agnt_storage::MessageKey>>) =
+        match &rig_memory {
+            Some((store, log)) => {
+                let loaded = crate::session::blocking::on_pool({
+                    let store = Arc::clone(store);
+                    let log = log.clone();
+                    move || rig_memory::load(&*store, &log)
+                })
+                .await;
+                match loaded {
+                    Ok(Ok(conversation)) => (
+                        conversation
+                            .messages()
+                            .iter()
+                            .map(|message| (**message).clone())
+                            .collect(),
+                        Some(crate::session::settle::entry_keys(conversation.entries())),
+                    ),
+                    Ok(Err(error)) => {
+                        log::warn!("Failed to load the session's pre-turn messages: {error}");
+                        (vec![], None)
+                    }
+                    Err(error) => {
+                        log::warn!("Failed to load the session's pre-turn messages: {error}");
+                        (vec![], None)
+                    }
+                }
             }
-        },
-        None => vec![],
-    };
+            None => (vec![], Some(Vec::new())),
+        };
     let pre_turn_message_count = pre_turn_messages.len();
+
+    // The fact tables the settle writes: the same database the session's rig
+    // log lives in. A session-less turn records no facts, so it opens none.
+    let facts = if ctx.conversation.has_session {
+        match ctx.conversation.memory.facts().await {
+            Ok(facts) => Some(facts),
+            Err(error) => {
+                log::warn!("Failed to open the session's fact tables: {error}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Build the hook using HookChain<P> — no HookDriver needed.
     // Cancellation is driven through the shared bus's cancel channel.
@@ -180,6 +218,7 @@ where
             last_total_tokens: ctx.tool_infra.last_total_tokens.clone(),
             turn_usage: ctx.tool_infra.turn_usage.clone(),
             session_usage: ctx.tool_infra.session_usage.clone(),
+            store_latch: Arc::clone(&ctx.tool_infra.store_latch),
         },
     );
 
@@ -218,6 +257,10 @@ where
             .or(ctx.config.max_output_tokens)
             .map(|t| t as u64),
         model: format!("{}/{}", ctx.config.provider, ctx.config.model),
+        agent: ctx.conversation.agent.clone(),
+        submitted_millis,
+        facts,
+        pre_turn_keys,
         pre_turn_message_count,
         cancel_grace: ctx.cancel_grace,
     };
@@ -341,6 +384,18 @@ struct AgentPromptConfig<P: AsyncPermissionResolver> {
     /// The model this turn runs, `vendor/model`, saved as the session's
     /// `rig::model` state record once the run persists.
     model: String,
+    /// The persona that answered the turn, empty when none was loaded. It is
+    /// recorded as the settled turn's agent.
+    agent: String,
+    /// When the turn was submitted, in milliseconds since the Unix epoch.
+    submitted_millis: i64,
+    /// The fact tables the turn's settle writes; `None` for a session-less
+    /// turn, which records nothing.
+    facts: Option<crate::session::settle::FactStore>,
+    /// rig's key of every entry the log held when the turn started, `None`
+    /// when that read failed: the settle then has no "before" to subtract and
+    /// records nothing rather than claim the session's history.
+    pre_turn_keys: Option<Vec<agnt_storage::MessageKey>>,
     /// Number of messages the session's rig log held when the turn started.
     pre_turn_message_count: usize,
     /// How long the stream loop keeps draining after a bus cancel signal.
@@ -395,6 +450,10 @@ where
         temperature,
         max_tokens,
         model,
+        agent: turn_agent,
+        submitted_millis,
+        facts,
+        pre_turn_keys,
         pre_turn_message_count,
         cancel_grace,
     } = config;
@@ -420,12 +479,16 @@ where
     // The agent keeps its conversation in the rig-memory store: rig loads it
     // before the run and saves it once the run succeeds. A session-less turn
     // gets no store, so rig neither loads nor saves a conversation.
+    // The turn's tool records, read after the run: the hook writes them as each
+    // call is dispatched and settles, and the settle path records their status.
+    let turn_tools = hook.turn_tools();
     let mut builder = rig::agent::AgentBuilder::new(dyn_model)
         .add_hook(hook)
         .dynamic_tools(proxy_tools);
     // Keep the store handle for the host-written state records below: rig saves
     // the conversation at run end, and the state records and listing are ours.
     let state_store = rig_memory.as_ref().map(|(store, _)| Arc::clone(store));
+    let state_session = rig_memory.as_ref().map(|(_, log)| log.clone());
     if let Some((store, log)) = rig_memory {
         builder = builder.memory(store).conversation(log);
     }
@@ -455,18 +518,40 @@ where
 
     // rig saved the conversation at run end. Write the host-owned state records
     // and refresh the listing, so `SavedAgent::model()`/`title()` and the session
-    // list see this turn. A cancelled turn saves nothing, so it writes nothing.
+    // list see this turn. The same read-back names the entries the run persisted,
+    // so the turn's facts are written in one transaction beside them. A
+    // cancelled turn saves nothing, so it writes nothing.
     if !result.cancelled
         && let Some(store) = &state_store
     {
+        let settle_records = turn_tools.records();
         let title = result
             .messages
             .as_deref()
             .and_then(crate::session::rig_state::title_of_messages);
-        if let Err(error) =
-            crate::session::rig_state::write_state_records(&**store, &model, title.as_deref())
+        match crate::session::rig_state::write_state_records(
+            Arc::clone(store),
+            model.clone(),
+            title.clone(),
+        )
+        .await
         {
-            log::warn!("Failed to write session state records: {error}");
+            Ok(saved) => {
+                if let (Some(facts), Some(session_id)) = (&facts, &state_session) {
+                    let input = crate::session::settle::SettleInput {
+                        session_id: session_id.as_str(),
+                        model: &model,
+                        agent: &turn_agent,
+                        submitted_millis,
+                        keys: crate::session::settle::new_keys(&saved, pre_turn_keys.as_deref()),
+                        records: &settle_records,
+                    };
+                    if let Err(error) = facts.settle(input).await {
+                        log::warn!("Failed to record the settled turn's facts: {error}");
+                    }
+                }
+            }
+            Err(error) => log::warn!("Failed to write session state records: {error}"),
         }
     }
 

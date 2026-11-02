@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn set_model_swaps_the_model_used_by_the_next_compact_call() -> Result<()> {
     // -- Setup & Fixtures
-    let store = memory_store()?;
+    let store = memory_store().await?;
     seed(&*store)?;
     let bus = Bus::default();
     let old_model = stream_model(&["old summary"]);
@@ -16,7 +16,12 @@ async fn set_model_swaps_the_model_used_by_the_next_compact_call() -> Result<()>
 
     // -- Exec
     let outcome = compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "test_source")
+        .compact(
+            Arc::clone(&store),
+            CONV,
+            &CompactReason::Threshold,
+            "test_source",
+        )
         .await?
         .ok_or("compaction should have run")?;
 
@@ -41,7 +46,7 @@ async fn set_model_swaps_the_model_used_by_the_next_compact_call() -> Result<()>
 #[tokio::test]
 async fn from_shared_model_compactor_uses_model_swapped_on_the_shared_arc() -> Result<()> {
     // -- Setup & Fixtures
-    let store = memory_store()?;
+    let store = memory_store().await?;
     seed(&*store)?;
     let bus = Bus::default();
     // The compactor is built from an external shared Arc; the old model is
@@ -65,7 +70,12 @@ async fn from_shared_model_compactor_uses_model_swapped_on_the_shared_arc() -> R
 
     // -- Exec
     let outcome = compactor
-        .compact(&*store, CONV, &CompactReason::Threshold, "test_source")
+        .compact(
+            Arc::clone(&store),
+            CONV,
+            &CompactReason::Threshold,
+            "test_source",
+        )
         .await?
         .ok_or("compaction should have run")?;
 

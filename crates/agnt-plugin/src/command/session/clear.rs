@@ -18,7 +18,7 @@ impl CwdInterface for EngineInterface {
     }
 }
 
-/// The `agent session clear` command deletes a session by removing its JSONL file.
+/// The `agent session clear` command deletes a session's record from the session store.
 pub struct AgentSessionClear;
 
 impl Default for AgentSessionClear {
@@ -42,7 +42,7 @@ impl AgentSessionClear {
         let target_id = format!("{prefix}-{session_id}");
 
         // The session must exist in the rig-memory store.
-        if !rig.holds(&target_id).unwrap_or(false) {
+        if !rig.holds(&target_id).await.unwrap_or(false) {
             return Err(LabeledError::new(format!(
                 "Session not found: {session_id}"
             )));
@@ -50,6 +50,7 @@ impl AgentSessionClear {
 
         // Delete the session's rig-memory store: its logs and its files.
         rig.destroy(&target_id)
+            .await
             .map_err(|e| LabeledError::new(format!("Failed to delete session: {e}")))?;
 
         // Return empty value (success)
@@ -65,11 +66,11 @@ impl SimplePluginCommand for AgentSessionClear {
     }
 
     fn description(&self) -> &str {
-        "Delete a session by removing its JSONL file from cache"
+        "Delete a session and its stored conversation"
     }
 
     fn extra_description(&self) -> &str {
-        "Permanently deletes the session's JSONL file from the cache directory."
+        "Permanently removes the session's logs and files from the session database (`sessions.db`), or from the in-memory database."
     }
 
     fn search_terms(&self) -> Vec<&str> {
@@ -90,7 +91,7 @@ impl SimplePluginCommand for AgentSessionClear {
             .named(
                 "store",
                 SyntaxShape::String,
-                "Session store backend: sqlite|jsonl|memory",
+                "Session store backend: sqlite|memory",
                 None,
             )
             .category(Category::Experimental)

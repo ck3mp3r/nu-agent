@@ -409,6 +409,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     let mut runtime = AgentConversationRuntime {
         runtime: runtime_handle,
         tool_server_handle,
+        store_latch: Default::default(),
         provider,
         tools: ToolState::new(
             tool_definitions,

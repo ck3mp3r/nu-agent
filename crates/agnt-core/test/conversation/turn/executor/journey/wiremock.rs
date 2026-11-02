@@ -128,7 +128,8 @@ async fn journey_context_warning_emitted_near_limit() -> Result<()> {
     h.seed_history(vec![
         Message::user("initial prompt with some content here"),
         Message::assistant(filler),
-    ])?;
+    ])
+    .await?;
 
     // Execute a turn — the seeded history exceeds the 50-token threshold
     // (100 * 0.5).

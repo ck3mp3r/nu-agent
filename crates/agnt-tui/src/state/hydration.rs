@@ -110,6 +110,11 @@ pub(crate) fn project_snapshots(
                 }
                 steps.push(ReplayStep::event(SystemEvent::PromptSubmitted {
                     text: message.content().to_string(),
+                    // The snapshot carries the facts the join recorded; the
+                    // replay passes them on verbatim, never filling one in.
+                    stamp_millis: message.stamp_millis(),
+                    stamp_model: message.stamp_model().map(str::to_string),
+                    stamp_agent: message.stamp_agent().map(str::to_string),
                 }));
                 turn_open = true;
             }

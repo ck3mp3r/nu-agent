@@ -387,6 +387,9 @@ pub(crate) fn queued_prompt_entries(state: &AppState) -> Vec<TranscriptEntry> {
             TranscriptEntry::Message(MessageEntry {
                 role: MessageRole::User,
                 markdown: prompt.prompt_text.clone(),
+                timestamp_millis: None,
+                model: None,
+                agent: None,
             })
         })
         .collect()

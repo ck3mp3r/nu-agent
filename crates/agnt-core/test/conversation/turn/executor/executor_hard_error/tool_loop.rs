@@ -122,6 +122,7 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle,

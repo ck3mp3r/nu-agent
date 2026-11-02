@@ -7,7 +7,7 @@
 
 use std::sync::Mutex;
 
-use crate::session::tool_status::{ToolStatus, ToolStatusRecord};
+use crate::session::tool_status::ToolStatus;
 use crate::types::{CallId, ToolCall, ToolName};
 
 // region:    --- Types
@@ -150,21 +150,6 @@ impl TurnToolLog {
 // endregion: --- TurnToolLog
 
 // region:    --- Functions
-
-/// The status record of every call the turn dispatched.
-///
-/// A call the turn recorded but never settled never produced a result, so its
-/// record carries the cancelled variant: the turn stopped before the call
-/// completed, whether it never dispatched or was cut short mid-run.
-pub(crate) fn status_records(records: &[TurnToolRecord]) -> Vec<ToolStatusRecord> {
-    records
-        .iter()
-        .map(|record| ToolStatusRecord {
-            call: record.call_id.clone(),
-            status: record.status.unwrap_or(ToolStatus::Cancelled),
-        })
-        .collect()
-}
 
 /// The streamed calls the turn never dispatched, in streamed order.
 ///

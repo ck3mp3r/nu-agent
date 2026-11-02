@@ -13,6 +13,10 @@ use super::executor::ToolInfra;
 pub struct TurnConversation {
     pub memory: MemoryOf,
     pub conversation_id: String,
+    /// The persona that answered the turn, empty when none was loaded.
+    ///
+    /// The settled turn records it as its agent.
+    pub agent: String,
     /// Whether this turn belongs to a persistent session.
     ///
     /// When `false` (transient), the turn's message delta is not persisted: no

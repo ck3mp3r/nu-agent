@@ -121,6 +121,9 @@ fn set_tool_preview_invalidates_and_rebuilds_to_a_wholesale_index() -> Result<()
         .push_entry(TranscriptEntry::Message(MessageEntry {
             role: MessageRole::User,
             markdown: "later turn".to_string(),
+            timestamp_millis: None,
+            model: None,
+            agent: None,
         }));
     mid.transcript.rebuild_height_index(width);
     assert!(

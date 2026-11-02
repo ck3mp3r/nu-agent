@@ -19,6 +19,9 @@ pub(super) fn push_message_line(
     let entry = TranscriptEntry::Message(MessageEntry {
         role,
         markdown: text.into(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     });
     state.transcript.push_entry(entry);
 }
@@ -39,8 +42,8 @@ pub(super) fn entry_to_role(entry: &TranscriptEntry) -> TranscriptRole {
             MessageRole::Assistant => TranscriptRole::Assistant,
         },
         TranscriptEntry::Tool(_) => TranscriptRole::Tool,
+        TranscriptEntry::Task(_) => TranscriptRole::Compaction,
         TranscriptEntry::Notice(notice) => match notice.kind {
-            NoticeKind::Compaction => TranscriptRole::Compaction,
             NoticeKind::System => TranscriptRole::System,
         },
         TranscriptEntry::Banner(_) => TranscriptRole::System,

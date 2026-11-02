@@ -36,8 +36,9 @@ fn session(id: &str) -> SessionInfo {
     SessionInfo {
         id: id.to_string(),
         message_count: 0,
-        last_active: Utc::now(),
+        last_active: Some(Utc::now()),
         title: None,
+        agent: None,
     }
 }
 

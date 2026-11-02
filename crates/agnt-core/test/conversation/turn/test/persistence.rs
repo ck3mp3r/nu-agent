@@ -27,6 +27,7 @@ async fn transient_turn_does_not_write_jsonl() -> Result<()> {
                 .unwrap_or_default()
                 .as_millis()
         ),
+        agent: String::new(),
         has_session: false,
         dyn_model: shared_handle(model),
         compaction: test_compaction_config(crate::bus::create_bus()),
@@ -37,6 +38,7 @@ async fn transient_turn_does_not_write_jsonl() -> Result<()> {
         max_turns: None,
     };
     let tool_infra = executor::ToolInfra {
+        store_latch: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),

@@ -36,6 +36,7 @@ pub(super) fn make_memory_state_on_disk(temp_dir: &tempfile::TempDir) -> MemoryS
 /// Build a `ToolInfra` with deterministic defaults and the given bus.
 pub(super) fn default_tool_infra(bus: Bus) -> ToolInfra {
     ToolInfra {
+        store_latch: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle: rig::tool::server::ToolServer::new().run(),
@@ -97,6 +98,7 @@ pub(super) async fn load_persisted_messages(
     let store = memory_state
         .inner_memory()
         .rig_store(session_id)
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let conversation = rig_memory::load(&*store, session_id)
         .map_err(|e| format!("rig store load should succeed: {e:?}"))?;
@@ -108,7 +110,7 @@ pub(super) async fn load_persisted_messages(
 }
 
 /// Seed the rig-memory store of a session with `messages`.
-pub(super) fn seed_rig_store(
+pub(super) async fn seed_rig_store(
     memory_state: &MemoryState,
     session_id: &str,
     messages: Vec<crate::types::Message>,
@@ -116,6 +118,7 @@ pub(super) fn seed_rig_store(
     let store = memory_state
         .inner_memory()
         .rig_store(session_id)
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let mut conversation = rig_memory::load(&*store, session_id)
         .map_err(|e| format!("rig store load should succeed: {e:?}"))?;
@@ -126,10 +129,11 @@ pub(super) fn seed_rig_store(
 }
 
 /// The raw bytes of a session's rig log.
-pub(super) fn rig_log(memory_state: &MemoryState, session_id: &str) -> Result<Vec<u8>> {
+pub(super) async fn rig_log(memory_state: &MemoryState, session_id: &str) -> Result<Vec<u8>> {
     let store = memory_state
         .inner_memory()
         .rig_store(session_id)
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     rig_memory::Store::read_log(&*store, session_id)
         .map_err(|e| format!("rig log should read: {e:?}").into())

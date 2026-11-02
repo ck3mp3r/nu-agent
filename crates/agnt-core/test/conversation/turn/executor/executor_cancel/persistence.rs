@@ -60,6 +60,7 @@ async fn cancelled_ok_path_returns_early_return_persists_messages_and_emits_comp
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: handle,
@@ -188,6 +189,7 @@ async fn cancelled_turn_writes_via_single_memory_append() -> Result<()> {
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: handle,
@@ -263,7 +265,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
         crate::types::Message::user("prior work"),
         crate::types::Message::assistant("done"),
     ];
-    seed_rig_store(&memory_state, session_id, prior_msgs)?;
+    seed_rig_store(&memory_state, session_id, prior_msgs).await?;
 
     let model = MockCompletionModel::from_stream_turns([
         vec![
@@ -290,6 +292,7 @@ async fn cancelled_turn_after_prior_history_persists_only_delta() -> Result<()> 
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(closure_registry),
             mcp_registry: Arc::new(mcp_registry),
             tool_server_handle: handle,

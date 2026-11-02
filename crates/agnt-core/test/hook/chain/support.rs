@@ -129,6 +129,7 @@ pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissi
             last_total_tokens: Arc::new(Mutex::new(None)),
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
+            store_latch: Default::default(),
         },
     )
 }
@@ -186,6 +187,7 @@ impl RepetitionTurnFixture {
                 last_total_tokens: Arc::new(std::sync::Mutex::new(None)),
                 turn_usage: crate::hook::TurnUsage::default(),
                 session_usage: crate::hook::TurnUsage::default(),
+                store_latch: Default::default(),
             },
             _temp_dir: temp_dir,
         })
@@ -240,6 +242,7 @@ impl RepetitionTurnFixture {
                 last_total_tokens: self.hook_state.last_total_tokens.clone(),
                 turn_usage: self.hook_state.turn_usage.clone(),
                 session_usage: self.hook_state.session_usage.clone(),
+                store_latch: self.hook_state.store_latch.clone(),
             },
         );
         let builder = rig::agent::AgentBuilder::new(model).add_hook(hook);

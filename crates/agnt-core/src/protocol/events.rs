@@ -28,8 +28,18 @@ pub enum SystemEvent {
     Resized { width: u16, height: u16 },
     /// A permission card decision. The reducer resolves the active request id.
     PermissionDecided { decision: PermissionDecision },
-    /// The user submitted prompt text. The reducer parses slash commands.
-    PromptSubmitted { text: String },
+    /// The user submitted prompt text, with the footer facts its carrier holds:
+    /// the submit instant and the then-active identities. The reducer parses
+    /// slash commands; a replay folds the stamped facts into the entry verbatim.
+    PromptSubmitted {
+        text: String,
+        /// When the prompt was submitted, in Unix milliseconds, when known.
+        stamp_millis: Option<i64>,
+        /// The model identity active at submission, when known.
+        stamp_model: Option<String>,
+        /// The agent identity active at submission, when known.
+        stamp_agent: Option<String>,
+    },
 
     // inference
     /// An inference call started.

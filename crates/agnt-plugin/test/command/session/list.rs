@@ -43,8 +43,8 @@ async fn test_agent_session_list_returns_table_with_session_stats() -> Result<()
     let messages2: Vec<Message> = (0..10)
         .map(|i| Message::user(format!("msg {}", i)))
         .collect();
-    seed(&rig, &session1, messages1)?;
-    seed(&rig, &session2, messages2)?;
+    seed(&rig, &session1, messages1).await?;
+    seed(&rig, &session2, messages2).await?;
 
     // -- Exec
     let command = AgentSessionList;
@@ -124,7 +124,8 @@ async fn list_returns_only_prefixed_sessions() -> Result<()> {
         &rig,
         &format!("{prefix}-new-session"),
         vec![Message::user("hello")],
-    )?;
+    )
+    .await?;
     seed(
         &rig,
         &format!(
@@ -132,7 +133,8 @@ async fn list_returns_only_prefixed_sessions() -> Result<()> {
             dir_prefix(std::path::Path::new("/other/dir"))
         ),
         vec![Message::user("hello")],
-    )?;
+    )
+    .await?;
 
     // -- Exec
     let command = AgentSessionList;
@@ -173,21 +175,26 @@ async fn list_returns_only_prefixed_sessions() -> Result<()> {
 
 // -- Test Support
 
-/// A `DirStore` rig store rooted at `temp_dir`.
+/// A file-backed rig store rooted at `temp_dir`.
 fn rig_at(temp_dir: &TempDir) -> RigStoreConfig {
-    RigStoreConfig::new(StoreType::Jsonl).with_cache_dir(temp_dir.path())
+    RigStoreConfig::new(StoreType::Sqlite).with_cache_dir(temp_dir.path())
 }
 
 /// Seed the rig-memory store of `session_id` with `messages`, then write its
 /// state records so its `meta.json` listing exists.
-fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
-    let store = rig.open(session_id).map_err(|e| format!("{e:?}"))?;
+async fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
+    let store = rig.open(session_id).await.map_err(|e| format!("{e:?}"))?;
     let mut conversation =
         agnt_core::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
     conversation.extend(messages);
     agnt_core::rig_memory::save(&*store, session_id, &mut conversation)
         .map_err(|e| format!("{e:?}"))?;
-    agnt_core::session::rig_state::write_state_records(&*store, "test/model", Some("hello"))
-        .map_err(|e| format!("{e:?}"))?;
+    agnt_core::session::rig_state::write_state_records(
+        std::sync::Arc::clone(&store),
+        "test/model".to_string(),
+        Some("hello".to_string()),
+    )
+    .await
+    .map_err(|e| format!("{e:?}"))?;
     Ok(())
 }

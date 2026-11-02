@@ -26,8 +26,8 @@ fn test_renderer_alignment_marker_lanes_keep_marker_at_two_and_text_at_four() ->
             LaneKind::Tool,
         ),
         (
-            notice_entry(NoticeKind::Compaction, &long_prose()),
-            '~',
+            task_entry(&long_prose(), ItemStatus::Done),
+            '\u{2261}',
             LaneKind::Compaction,
         ),
         (
@@ -157,7 +157,7 @@ fn test_renderer_alignment_every_lane_keeps_the_right_margin_clear() -> Result<(
         message_entry(MessageRole::Assistant, &long_prose()),
         tool_entry("read", &long_prose(), None, None, ItemStatus::Done),
         notice_entry(NoticeKind::System, &long_prose()),
-        notice_entry(NoticeKind::Compaction, &long_prose()),
+        task_entry(&long_prose(), ItemStatus::Done),
     ];
 
     // -- Exec & Check

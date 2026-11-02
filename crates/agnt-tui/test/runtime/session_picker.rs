@@ -332,7 +332,9 @@ fn test_session_picker_table_model_title_budget_leaves_the_columns() -> Result<(
     let model = session_picker_table_model(&state, 20, 80);
 
     // -- Check
-    assert_eq!(model.title_budget, 55);
+    // 80 columns minus the When (13), Agent (12) and Msgs (6) columns, their
+    // spacing, and the selection column.
+    assert_eq!(model.title_budget, 42);
     let Some(option) = model.options.first() else {
         return Err("should carry the session option".into());
     };
@@ -347,6 +349,9 @@ fn test_session_picker_table_model_title_budget_leaves_the_columns() -> Result<(
     };
     assert_eq!(title.as_deref(), Some("My Session"));
     assert_eq!(*message_count, 42);
+    let created_at = created_at
+        .as_ref()
+        .ok_or("the fixture stamps a real instant")?;
     assert!(!relative_timestamp(*created_at, model.now).is_empty());
     Ok(())
 }
@@ -380,8 +385,9 @@ fn session_option(
         payload: PickerPayload::Session {
             session_id: id.to_string(),
             title: title.map(str::to_string),
-            created_at,
+            created_at: Some(created_at),
             message_count,
+            agent: None,
         },
     })
 }

@@ -11,6 +11,9 @@
 #[path = "compaction/artifact.rs"]
 mod artifact;
 
+#[path = "compaction/lifecycle.rs"]
+mod lifecycle;
+
 #[path = "compaction/markdown.rs"]
 mod markdown;
 

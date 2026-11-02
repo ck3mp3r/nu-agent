@@ -109,6 +109,9 @@ impl LlmState {
         store.push_entry(TranscriptEntry::Message(MessageEntry {
             role: MessageRole::Assistant,
             markdown: trimmed.to_string(),
+            timestamp_millis: None,
+            model: None,
+            agent: None,
         }));
         true
     }
@@ -170,6 +173,9 @@ impl LlmState {
         store.push_entry(TranscriptEntry::Message(MessageEntry {
             role: MessageRole::Assistant,
             markdown: trimmed.to_string(),
+            timestamp_millis: None,
+            model: None,
+            agent: None,
         }));
         true
     }

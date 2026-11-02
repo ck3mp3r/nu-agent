@@ -43,6 +43,7 @@ async fn repetition_stop_session_less_steers_via_prompt_and_terminal_on_cap() ->
             &config,
             &mut memory_state,
             ToolInfra {
+                store_latch: Default::default(),
                 closure_registry: Arc::new(ClosureRegistry::default()),
                 mcp_registry: Arc::new(McpToolRegistry::empty()),
                 tool_server_handle: rig::tool::server::ToolServer::new().run(),

@@ -220,7 +220,7 @@ pub struct CompactionConfig {
 /// Configuration for session store backend selection.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct StoreTypeConfig {
-    /// Session store backend type: sqlite or jsonl
+    /// Session store backend type: sqlite or memory
     #[serde(default)]
     pub store_type: StoreType,
     /// Optional custom path for the session store

@@ -59,6 +59,7 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
@@ -219,6 +220,7 @@ async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Re
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,
@@ -358,6 +360,7 @@ async fn no_session_max_turns_failure_steers_once_then_hard_errors() -> Result<(
         &config,
         &mut memory_state,
         ToolInfra {
+            store_latch: Default::default(),
             closure_registry: Arc::new(ClosureRegistry::default()),
             mcp_registry: Arc::new(McpToolRegistry::empty()),
             tool_server_handle,

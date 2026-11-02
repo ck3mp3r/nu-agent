@@ -175,8 +175,9 @@ fn session_row(id: &str, title: &str) -> PickerOption {
         payload: PickerPayload::Session {
             session_id: id.to_string(),
             title: Some(title.to_string()),
-            created_at,
+            created_at: Some(created_at),
             message_count: 1,
+            agent: None,
         },
     }
 }

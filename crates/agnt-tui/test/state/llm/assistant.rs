@@ -12,6 +12,9 @@ fn assistant_message_is_appended_to_transcript_before_completed_unlock() -> Resu
         &mut state,
         SystemEvent::PromptSubmitted {
             text: "ping".to_string(),
+            stamp_millis: None,
+            stamp_model: None,
+            stamp_agent: None,
         },
         None,
     );

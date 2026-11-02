@@ -126,6 +126,7 @@ fn turn_hook(
             last_total_tokens: last_total_tokens.clone(),
             turn_usage: turn_usage.clone(),
             session_usage: crate::hook::TurnUsage::default(),
+            store_latch: Default::default(),
         },
     );
     Ok(TurnHook {

@@ -13,6 +13,9 @@ fn push_assistant_blocks(state: &mut AppState, count: usize) {
             .push_entry(TranscriptEntry::Message(MessageEntry {
                 role: MessageRole::Assistant,
                 markdown: format!("assistant text {i}"),
+                timestamp_millis: None,
+                model: None,
+                agent: None,
             }));
     }
 }

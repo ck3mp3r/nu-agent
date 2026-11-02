@@ -146,6 +146,7 @@ name = "agnt-core"
 version = "0.1.0"
 dependencies = [
  "agnt-a2a",
+ "agnt-storage",
  "agnt-testkit",
  "async-trait",
  "bytes",
@@ -203,6 +204,18 @@ version = "0.1.0"
 dependencies = [
  "agnt-core",
  "textwrap",
+]
+
+[[package]]
+name = "agnt-storage"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "rig-memory",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

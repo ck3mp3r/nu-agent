@@ -10,6 +10,9 @@ fn cancel_pushes_closing_spacer() -> Result<()> {
         &mut state,
         SystemEvent::PromptSubmitted {
             text: "hello".to_string(),
+            stamp_millis: None,
+            stamp_model: None,
+            stamp_agent: None,
         },
         Some(&cancel_controller),
     );
@@ -19,6 +22,9 @@ fn cancel_pushes_closing_spacer() -> Result<()> {
         .push_entry(TranscriptEntry::Message(MessageEntry {
             role: MessageRole::Assistant,
             markdown: "partial".to_string(),
+            timestamp_millis: None,
+            model: None,
+            agent: None,
         }));
 
     // First Esc enters AbortPending, second confirms the cancel

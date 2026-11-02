@@ -40,7 +40,7 @@ async fn test_agent_session_inspect_displays_full_session_details() -> Result<()
     let messages: Vec<Message> = (0..10)
         .map(|i| Message::user(format!("Message {}", i)))
         .collect();
-    seed(&rig, &full_id, messages)?;
+    seed(&rig, &full_id, messages).await?;
 
     // -- Exec
     let command = AgentSessionInspect;
@@ -121,7 +121,7 @@ async fn run_prepends_cwd_prefix_to_session_id() -> Result<()> {
     let rig = rig_at(&temp_dir);
     let prefix = dir_prefix(temp_dir.path());
     let full_id = format!("{prefix}-my-session");
-    seed(&rig, &full_id, vec![Message::user("hello")])?;
+    seed(&rig, &full_id, vec![Message::user("hello")]).await?;
 
     // -- Exec
     let command = AgentSessionInspect;
@@ -161,7 +161,7 @@ async fn inspect_ignores_sessions_of_another_cwd() -> Result<()> {
         "{}-old-session",
         dir_prefix(std::path::Path::new("/other/dir"))
     );
-    seed(&rig, &foreign_id, vec![Message::user("hello")])?;
+    seed(&rig, &foreign_id, vec![Message::user("hello")]).await?;
 
     // -- Exec
     let command = AgentSessionInspect;
@@ -188,7 +188,7 @@ async fn test_agent_session_inspect_shows_the_default_compaction_policy() -> Res
     let rig = rig_at(&temp_dir);
     let prefix = dir_prefix(temp_dir.path());
     let full_id = format!("{prefix}-test-session");
-    seed(&rig, &full_id, vec![Message::user("hello")])?;
+    seed(&rig, &full_id, vec![Message::user("hello")]).await?;
     let command = AgentSessionInspect;
     let engine = MockCwd {
         dir: temp_dir.path().to_string_lossy().to_string(),
@@ -237,7 +237,7 @@ async fn test_agent_session_inspect_shows_the_configured_compaction_policy() -> 
     let rig = rig_at(&temp_dir);
     let prefix = dir_prefix(temp_dir.path());
     let full_id = format!("{prefix}-test-session");
-    seed(&rig, &full_id, vec![Message::user("hello")])?;
+    seed(&rig, &full_id, vec![Message::user("hello")]).await?;
     let command = AgentSessionInspect;
     let engine = MockCwd {
         dir: temp_dir.path().to_string_lossy().to_string(),
@@ -280,14 +280,14 @@ fn config_int(result: &Value, field: &str) -> Option<i64> {
     val.get(field)?.as_int().ok()
 }
 
-/// A `DirStore` rig store rooted at `temp_dir`.
+/// A file-backed rig store rooted at `temp_dir`.
 fn rig_at(temp_dir: &TempDir) -> RigStoreConfig {
-    RigStoreConfig::new(StoreType::Jsonl).with_cache_dir(temp_dir.path())
+    RigStoreConfig::new(StoreType::Sqlite).with_cache_dir(temp_dir.path())
 }
 
 /// Seed the rig-memory store of `session_id` with `messages`.
-fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
-    let store = rig.open(session_id).map_err(|e| format!("{e:?}"))?;
+async fn seed(rig: &RigStoreConfig, session_id: &str, messages: Vec<Message>) -> Result<()> {
+    let store = rig.open(session_id).await.map_err(|e| format!("{e:?}"))?;
     let mut conversation =
         agnt_core::rig_memory::load(&*store, session_id).map_err(|e| format!("{e:?}"))?;
     conversation.extend(messages);

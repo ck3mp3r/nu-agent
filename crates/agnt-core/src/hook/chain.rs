@@ -250,6 +250,11 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     /// The session's cumulative LLM usage. Every call adds into it; it resets
     /// only when the runtime switches sessions.
     session_usage: TurnUsage,
+    /// The store-dead latch, shared with the turn's tool infrastructure: the
+    /// clean refusal text once the session store could not be opened. While it
+    /// is set, the compaction decision opens no store, so an unreadable store
+    /// costs one line, not one per turn.
+    store_latch: crate::hook::StoreLatch,
     /// Model ids already reported as unpriced, so the warn fires once per
     /// model rather than once per call.
     unpriced_warnings: UnpricedWarnings,
@@ -294,6 +299,7 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
             last_total_tokens: hook_state.last_total_tokens,
             turn_usage: hook_state.turn_usage,
             session_usage: hook_state.session_usage,
+            store_latch: hook_state.store_latch,
             unpriced_warnings: UnpricedWarnings::default(),
         }
     }
@@ -430,6 +436,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         let conversation_id = self.conversation_id.clone();
         let compaction = self.compaction.clone();
         let last_total_tokens = Arc::clone(&self.last_total_tokens);
+        let store_latch = Arc::clone(&self.store_latch);
         let prompt = event.prompt.clone();
 
         async move {
@@ -447,6 +454,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 memory.as_ref(),
                 &compaction,
                 &last_total_tokens,
+                &store_latch,
                 &bus,
             )
             .await;
@@ -923,8 +931,19 @@ async fn decide_compaction(
     memory: &crate::session::CachedMemory,
     compaction: &CompactionConfig,
     last_total_tokens: &Arc<Mutex<Option<u64>>>,
+    store_latch: &crate::hook::StoreLatch,
     bus: &Bus,
 ) {
+    // A store that already refused to open makes no further attempt: the
+    // conversation cannot be read, so no decision can be made from it, and the
+    // one clean line was emitted when the latch was set.
+    if store_latch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_some()
+    {
+        return;
+    }
     let Some(threshold_tokens) = compaction.threshold_tokens else {
         return;
     };
@@ -935,7 +954,8 @@ async fn decide_compaction(
         return;
     }
 
-    let Some(conversation) = current_conversation(memory, conversation_id, bus).await else {
+    let Some(conversation) = current_conversation(memory, conversation_id, store_latch, bus).await
+    else {
         return;
     };
     if conversation.is_empty() {
@@ -976,29 +996,36 @@ async fn decide_compaction(
 async fn current_conversation(
     memory: &crate::session::CachedMemory,
     conversation_id: &str,
+    store_latch: &crate::hook::StoreLatch,
     bus: &Bus,
 ) -> Option<Vec<Message>> {
-    let store = match memory.rig_store(conversation_id) {
+    let store = match memory.rig_store(conversation_id).await {
         Ok(store) => store,
         Err(e) => {
-            let _ = bus
-                .compaction()
-                .send(SystemEvent::CompactionFailed {
-                    source: "auto".to_string(),
-                    message: format!("Failed to open the session store: {e}"),
-                })
-                .await;
+            emit_store_dead(store_latch, &e, "auto", bus).await;
             return None;
         }
     };
-    match rig_memory::load(&*store, conversation_id) {
-        Ok(conversation) => Some(
+    let log = conversation_id.to_owned();
+    let loaded = crate::session::blocking::on_pool(move || rig_memory::load(&*store, &log)).await;
+    match loaded {
+        Ok(Ok(conversation)) => Some(
             conversation
                 .messages()
                 .iter()
                 .map(|message| (**message).clone())
                 .collect(),
         ),
+        Ok(Err(e)) => {
+            let _ = bus
+                .compaction()
+                .send(SystemEvent::CompactionFailed {
+                    source: "auto".to_string(),
+                    message: format!("Failed to load the session: {e}"),
+                })
+                .await;
+            None
+        }
         Err(e) => {
             let _ = bus
                 .compaction()
@@ -1010,6 +1037,58 @@ async fn current_conversation(
             None
         }
     }
+}
+
+/// Latch a store that cannot be opened and emit its one clean refusal line.
+///
+/// The latch makes the compaction path skip every further attempt, so an
+/// unreadable store costs one line rather than one per completion call. A
+/// second refusal finds the latch set and emits nothing.
+async fn emit_store_dead(
+    store_latch: &crate::hook::StoreLatch,
+    error: &crate::session::MemoryError,
+    source: &str,
+    bus: &Bus,
+) {
+    let message = store_refusal_text(error);
+    let first = {
+        let mut latch = store_latch
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if latch.is_some() {
+            false
+        } else {
+            *latch = Some(message.clone());
+            true
+        }
+    };
+    if first {
+        let _ = bus
+            .compaction()
+            .send(SystemEvent::CompactionFailed {
+                source: source.to_string(),
+                message,
+            })
+            .await;
+    }
+}
+
+/// The clean refusal line a store failure reports.
+///
+/// The storage refusal itself is the line when the error chain carries one;
+/// the wrappers above it (`Memory backend error: …`, the sqlx wording) are
+/// never part of what the user reads.
+fn store_refusal_text(error: &crate::session::MemoryError) -> String {
+    let mut current = std::error::Error::source(error);
+    while let Some(source) = current {
+        if let Some(storage) = source.downcast_ref::<agnt_storage::StorageError>() {
+            return storage.to_string();
+        }
+        current = source.source();
+    }
+    std::error::Error::source(error)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| error.to_string())
 }
 
 /// Run a compaction for `conversation_id`, returning the post-splice history
@@ -1030,26 +1109,26 @@ pub(crate) async fn run_compaction(
     compaction: &CompactionConfig,
     source: &str,
     last_total_tokens: &Arc<Mutex<Option<u64>>>,
+    store_latch: &crate::hook::StoreLatch,
     bus: &Bus,
 ) -> Option<Vec<Message>> {
-    let store = match memory.rig_store(conversation_id) {
+    let store = match memory.rig_store(conversation_id).await {
         Ok(store) => store,
         Err(e) => {
-            let _ = bus
-                .compaction()
-                .send(SystemEvent::CompactionFailed {
-                    source: source.to_string(),
-                    message: format!("Failed to open the session store: {e}"),
-                })
-                .await;
+            emit_store_dead(store_latch, &e, source, bus).await;
             return None;
         }
     };
+    // The store opened: whatever refused before is gone, so the latch clears
+    // and the automatic decision resumes on the next completion.
+    *store_latch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
 
     let reason = compact_reason(source);
     match compaction
         .compactor
-        .compact(&*store, conversation_id, &reason, source)
+        .compact(store, conversation_id, &reason, source)
         .await
     {
         Ok(Some(outcome)) => {

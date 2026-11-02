@@ -193,7 +193,7 @@ impl NuCompactor {
     /// as `SystemEvent::CompactionFailed`.
     pub async fn compact(
         &self,
-        store: &dyn rig_memory::Store,
+        store: std::sync::Arc<dyn rig_memory::Store>,
         conversation_id: &str,
         reason: &CompactReason,
         source: &str,
@@ -206,8 +206,19 @@ impl NuCompactor {
             return Err(MemoryError::backend(message));
         };
 
-        let mut conversation = match rig_memory::load(store, conversation_id) {
-            Ok(conversation) => conversation,
+        let loaded = crate::session::blocking::on_pool({
+            let store = std::sync::Arc::clone(&store);
+            let log = conversation_id.to_owned();
+            move || rig_memory::load(&*store, &log)
+        })
+        .await;
+        let mut conversation = match loaded {
+            Ok(Ok(conversation)) => conversation,
+            Ok(Err(e)) => {
+                let message = format!("Compaction load error: {e}");
+                self.emit_failed(source, &message).await;
+                return Err(MemoryError::backend(message));
+            }
             Err(e) => {
                 let message = format!("Compaction load error: {e}");
                 self.emit_failed(source, &message).await;
@@ -222,7 +233,13 @@ impl NuCompactor {
             .clearing
             .clear_conversation(&mut conversation, summary_author());
         if cleared.results > 0 {
-            self.save(store, conversation_id, &mut conversation, source)
+            conversation = self
+                .save(
+                    std::sync::Arc::clone(&store),
+                    conversation_id.to_owned(),
+                    conversation,
+                    source,
+                )
                 .await?;
         }
 
@@ -259,7 +276,13 @@ impl NuCompactor {
             self.emit_failed(source, &message).await;
             return Err(MemoryError::backend(message));
         }
-        self.save(store, conversation_id, &mut conversation, source)
+        conversation = self
+            .save(
+                std::sync::Arc::clone(&store),
+                conversation_id.to_owned(),
+                conversation,
+                source,
+            )
             .await?;
 
         let messages = conversation
@@ -383,16 +406,27 @@ impl NuCompactor {
         }
     }
 
-    /// Save `conversation` to `store`, emitting `Failed` when the write fails.
+    /// Save `conversation` to `store`, answering it back and emitting `Failed`
+    /// when the write fails.
     async fn save(
         &self,
-        store: &dyn rig_memory::Store,
-        conversation_id: &str,
-        conversation: &mut rig::conversation::Conversation,
+        store: std::sync::Arc<dyn rig_memory::Store>,
+        conversation_id: String,
+        mut conversation: rig::conversation::Conversation,
         source: &str,
-    ) -> Result<(), MemoryError> {
-        match rig_memory::save(store, conversation_id, conversation) {
-            Ok(()) => Ok(()),
+    ) -> Result<rig::conversation::Conversation, MemoryError> {
+        let saved = crate::session::blocking::on_pool(move || {
+            let saved = rig_memory::save(&*store, &conversation_id, &mut conversation);
+            (saved, conversation)
+        })
+        .await;
+        match saved {
+            Ok((Ok(()), conversation)) => Ok(conversation),
+            Ok((Err(e), _)) => {
+                let message = format!("Compaction save error: {e}");
+                self.emit_failed(source, &message).await;
+                Err(MemoryError::backend(message))
+            }
             Err(e) => {
                 let message = format!("Compaction save error: {e}");
                 self.emit_failed(source, &message).await;

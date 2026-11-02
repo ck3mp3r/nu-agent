@@ -12,7 +12,6 @@ fn test_session_store_env_var_parsing() -> Result<()> {
     // -- Setup & Fixtures
     let cases: Vec<(&str, Option<StoreType>)> = vec![
         ("sqlite", Some(StoreType::Sqlite)),
-        ("jsonl", Some(StoreType::Jsonl)),
         ("memory", Some(StoreType::Memory)),
         ("unknown", None),
     ];

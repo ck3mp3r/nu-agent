@@ -20,6 +20,7 @@ fn context<'a>(
         TurnConversation {
             memory,
             conversation_id: session_id.to_string(),
+            agent: String::new(),
             has_session: true,
             dyn_model: shared_handle(model),
             compaction: test_compaction_config(crate::bus::create_bus()),
@@ -45,6 +46,7 @@ fn tool_infra(
     tool_server_handle: rig::tool::server::ToolServerHandle,
 ) -> executor::ToolInfra {
     executor::ToolInfra {
+        store_latch: Default::default(),
         closure_registry: Arc::new(ClosureRegistry::default()),
         mcp_registry: Arc::new(McpToolRegistry::empty()),
         tool_server_handle,
@@ -105,7 +107,7 @@ async fn agent_persists_the_conversation_in_the_rig_store() -> Result<()> {
         .map_err(|e| format!("execute_turn should succeed: {e:?}"))?;
 
     // -- Check: the store holds the prompt and the reply
-    let store = memory.rig_store(session_id)?;
+    let store = memory.rig_store(session_id).await?;
     let conversation = rig_memory::load(&*store, session_id)?;
     assert_eq!(
         conversation.messages().len(),
@@ -184,50 +186,45 @@ async fn second_turn_reloads_the_saved_conversation() -> Result<()> {
     );
 
     // -- Check: the store now holds both turns
-    let store = memory.rig_store(session_id)?;
+    let store = memory.rig_store(session_id).await?;
     let conversation = rig_memory::load(&*store, session_id)?;
     assert_eq!(conversation.messages().len(), 4);
     Ok(())
 }
 
-/// A turn round-trips through a file-backed SQLite store and a DirStore.
+/// A turn round-trips through a file-backed SQLite store.
 #[tokio::test]
-async fn turn_round_trips_on_each_backend() -> Result<()> {
-    for store_type in [
-        crate::session::StoreType::Sqlite,
-        crate::session::StoreType::Jsonl,
-    ] {
-        // -- Setup & Fixtures: a store on disk, not in memory
-        let temp_dir = tempfile::tempdir()?;
-        let rig = crate::session::RigStoreConfig::new(store_type)
-            .with_cache_dir(temp_dir.path().join("cache"));
-        let memory = Arc::new(crate::session::CachedMemory::new(rig));
-        let session_id = "test-round-trip";
-        let config = Config::default();
+async fn turn_round_trips_on_a_file_store() -> Result<()> {
+    // -- Setup & Fixtures: a store on disk, not in memory
+    let temp_dir = tempfile::tempdir()?;
+    let rig = crate::session::RigStoreConfig::new(crate::session::StoreType::Sqlite)
+        .with_cache_dir(temp_dir.path().join("cache"));
+    let memory = Arc::new(crate::session::CachedMemory::new(rig));
+    let session_id = "test-round-trip";
+    let config = Config::default();
 
-        // -- Exec: two turns
-        for reply in ["first reply", "second reply"] {
-            let model = MockCompletionModel::from_stream_turns([[
-                MockStreamEvent::Text(reply.to_string()),
-                MockStreamEvent::final_response_with_default_usage(),
-            ]]);
-            execute_turn(
-                context(memory.clone(), session_id, model, &config),
-                MockResolver(PermissionDecision::Allow),
-            )
-            .await
-            .map_err(|e| format!("{store_type:?} turn should succeed: {e:?}"))?;
-        }
-
-        // -- Check: the store on disk holds both turns
-        let store = memory.rig_store(session_id)?;
-        let conversation = rig_memory::load(&*store, session_id)?;
-        assert_eq!(
-            conversation.messages().len(),
-            4,
-            "{store_type:?} keeps both turns"
-        );
+    // -- Exec: two turns
+    for reply in ["first reply", "second reply"] {
+        let model = MockCompletionModel::from_stream_turns([[
+            MockStreamEvent::Text(reply.to_string()),
+            MockStreamEvent::final_response_with_default_usage(),
+        ]]);
+        execute_turn(
+            context(memory.clone(), session_id, model, &config),
+            MockResolver(PermissionDecision::Allow),
+        )
+        .await
+        .map_err(|e| format!("turn should succeed: {e:?}"))?;
     }
+
+    // -- Check: the store on disk holds both turns
+    let store = memory.rig_store(session_id).await?;
+    let conversation = rig_memory::load(&*store, session_id)?;
+    assert_eq!(
+        conversation.messages().len(),
+        4,
+        "the store keeps both turns"
+    );
     Ok(())
 }
 
@@ -249,14 +246,15 @@ async fn cancelled_turn_appends_its_delta_to_the_rig_log() -> Result<()> {
 
     // -- Setup & Fixtures: seed the rig store, then capture its log
     {
-        let store = memory_state.inner_memory().rig_store(session_id)?;
+        let store = memory_state.inner_memory().rig_store(session_id).await?;
         let mut conversation = rig_memory::load(&*store, session_id)?;
         conversation.extend(raw);
         rig_memory::save(&*store, session_id, &mut conversation)?;
     }
     let log_before = memory_state
         .inner_memory()
-        .rig_store(session_id)?
+        .rig_store(session_id)
+        .await?
         .read_log(session_id)?;
     assert!(!log_before.is_empty(), "the seed writes the log");
 
@@ -315,13 +313,14 @@ async fn cancelled_turn_appends_its_delta_to_the_rig_log() -> Result<()> {
     // turn's delta
     let log_after = memory_state
         .inner_memory()
-        .rig_store(session_id)?
+        .rig_store(session_id)
+        .await?
         .read_log(session_id)?;
     assert_ne!(
         log_before, log_after,
         "a cancelled turn appends its delta to the rig log"
     );
-    let store = memory_state.inner_memory().rig_store(session_id)?;
+    let store = memory_state.inner_memory().rig_store(session_id).await?;
     let conversation = rig_memory::load(&*store, session_id)?;
     let messages: Vec<crate::types::Message> = conversation
         .messages()
@@ -362,13 +361,13 @@ async fn warn_repairs_reports_the_repairs_it_logs() -> Result<()> {
         crate::session::RigStoreConfig::in_memory(),
     ));
     let session_id = "test-warn-repairs";
-    let store = memory.rig_store(session_id)?;
+    let store = memory.rig_store(session_id).await?;
     let mut conversation = rig_memory::load(&*store, session_id)?;
     conversation.extend([lost_image_message()]);
     rig_memory::save(&*store, session_id, &mut conversation)?;
 
     // -- Exec
-    let repairs = memory.warn_repairs(session_id);
+    let repairs = memory.warn_repairs(session_id).await;
 
     // -- Check: the loss is reported, which is what the path logs
     assert!(

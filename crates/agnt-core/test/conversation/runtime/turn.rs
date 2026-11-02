@@ -22,6 +22,7 @@ async fn persisted_messages(
         .session
         .inner_memory()
         .rig_store(session_id)
+        .await
         .map_err(|e| format!("rig store open should succeed: {e:?}"))?;
     let conversation = rig_memory::load(&*store, session_id)
         .map_err(|e| format!("rig store load should succeed: {e:?}"))?;

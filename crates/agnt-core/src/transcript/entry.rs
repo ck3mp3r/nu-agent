@@ -48,11 +48,25 @@ pub struct ToolEntry {
     pub status: ItemStatus,
 }
 
-/// User or assistant prose — raw markdown, projected at render width.
+/// User or assistant prose — raw markdown, projected at render width, plus the
+/// footer facts the entry's producer holds.
+///
+/// The three footer slots carry exactly what their producer knows and nothing
+/// else: no fallback fill, no invented value. A slot stays `None` where the fact
+/// is unknown or was never recorded (a `0` stamp, an empty or whitespace
+/// identity is unknown), so an entry whose three slots are `None` renders
+/// footerless.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageEntry {
     pub role: MessageRole,
     pub markdown: String,
+    /// When the entry was made, in Unix milliseconds. `i64`, the storage
+    /// engine's own stamp type: no casts between the two.
+    pub timestamp_millis: Option<i64>,
+    /// The model identity the entry was produced with, as recorded.
+    pub model: Option<String>,
+    /// The agent identity the entry was produced with, as recorded.
+    pub agent: Option<String>,
 }
 
 /// A compaction or system notice.
@@ -60,6 +74,24 @@ pub struct MessageEntry {
 pub struct NoticeEntry {
     pub kind: NoticeKind,
     pub text: String,
+}
+
+/// One background task's call line: the task, the subject it works on, and the
+/// status its glyph carries.
+///
+/// One entry for the task's whole life, like [`ToolEntry`]: the line is pushed
+/// once, and finishing mutates its `status` in place. What the task produces —
+/// a compaction's streamed summary — renders below the line as its own entries,
+/// so the call line itself is stable except for its glyph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskEntry {
+    /// The task's name, as the line's emphasis: `Compaction`.
+    pub name: String,
+    /// The subject the task works on, as the line's muted tail: the compaction
+    /// source, `auto`.
+    pub summary: String,
+    /// Where the task stands. The glyph animates from this in place.
+    pub status: ItemStatus,
 }
 
 /// Centered banner text (e.g. startup ASCII art).
@@ -94,12 +126,21 @@ impl ToolEntry {
     }
 }
 
+impl MessageEntry {
+    /// Whether the entry has any footer fact to show. False only when all three
+    /// slots are absent: the entry then renders footerless.
+    pub fn has_footer(&self) -> bool {
+        self.timestamp_millis.is_some() || self.model.is_some() || self.agent.is_some()
+    }
+}
+
 /// One transcript entry. The store holds these; the render layer consumes
 /// them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TranscriptEntry {
     Message(MessageEntry),
     Tool(ToolEntry),
+    Task(TaskEntry),
     Notice(NoticeEntry),
     Banner(BannerEntry),
 }
@@ -114,7 +155,7 @@ impl TranscriptEntry {
     pub fn padding(&self) -> (usize, usize) {
         match self {
             Self::Tool(tool) => tool.padding(),
-            Self::Message(_) | Self::Notice(_) | Self::Banner(_) => (0, 0),
+            Self::Message(_) | Self::Task(_) | Self::Notice(_) | Self::Banner(_) => (0, 0),
         }
     }
 }

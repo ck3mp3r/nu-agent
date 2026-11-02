@@ -55,6 +55,7 @@ async fn journey_corrupt_session_is_tolerated_on_load() -> Result<()> {
         let store = ms
             .inner_memory()
             .rig_store(session_id)
+            .await
             .map_err(|e| format!("rig store open: {e:?}"))?;
         let mut conversation =
             rig_memory::load(&*store, session_id).map_err(|e| format!("rig store load: {e:?}"))?;
@@ -100,6 +101,7 @@ async fn journey_corrupt_session_is_tolerated_on_load() -> Result<()> {
     let store = ms
         .inner_memory()
         .rig_store(session_id)
+        .await
         .map_err(|e| format!("rig store open: {e:?}"))?;
     let conversation =
         rig_memory::load(&*store, session_id).map_err(|e| format!("rig store load: {e:?}"))?;
@@ -168,7 +170,7 @@ async fn journey_empty_tool_result_is_tolerated() -> Result<()> {
         crate::types::Message::assistant("[ok]"),
     ];
 
-    h.seed_history(prior_messages.clone())?;
+    h.seed_history(prior_messages.clone()).await?;
 
     // Now run a follow-up turn — rig must accept the empty ToolResult.
     let model = MockCompletionModel::from_stream_turns([[
@@ -256,6 +258,7 @@ async fn journey_invalid_args_tool_call_repaired_on_load() -> Result<()> {
         let store = ms
             .inner_memory()
             .rig_store(session_id)
+            .await
             .map_err(|e| format!("rig store open: {e:?}"))?;
         let mut conversation =
             rig_memory::load(&*store, session_id).map_err(|e| format!("rig store load: {e:?}"))?;
@@ -300,6 +303,7 @@ async fn journey_invalid_args_tool_call_repaired_on_load() -> Result<()> {
     let store = ms
         .inner_memory()
         .rig_store(session_id)
+        .await
         .map_err(|e| format!("rig store open: {e:?}"))?;
     let conversation =
         rig_memory::load(&*store, session_id).map_err(|e| format!("rig store load: {e:?}"))?;

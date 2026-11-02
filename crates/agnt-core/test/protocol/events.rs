@@ -77,6 +77,9 @@ fn test_protocol_events_vocabulary_covers_completeness_trace() -> Result<()> {
         },
         SystemEvent::PromptSubmitted {
             text: "hello".to_string(),
+            stamp_millis: Some(1_765_000_000_000),
+            stamp_model: Some("openai/gpt-5".to_string()),
+            stamp_agent: None,
         },
         SystemEvent::InferenceStarted,
         SystemEvent::InferenceChunk {

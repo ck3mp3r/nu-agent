@@ -6,7 +6,7 @@
 use agnt_core::protocol::events::ToolCall;
 use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::entry::{
-    BannerEntry, MessageEntry, NoticeEntry, ToolEntry, ToolKind, TranscriptEntry,
+    BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
 use agnt_core::transcript::ir::{
     ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
@@ -211,6 +211,9 @@ pub(crate) fn message_entry(role: MessageRole, markdown: &str) -> TranscriptEntr
     TranscriptEntry::Message(MessageEntry {
         role,
         markdown: markdown.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     })
 }
 
@@ -242,6 +245,15 @@ pub(crate) fn tool_entry(
 /// A bare tool call: no display body.
 pub(crate) fn bare_tool(status: ItemStatus) -> TranscriptEntry {
     tool_entry("read", "→ a.rs", None, None, status)
+}
+
+/// A task call line: the name, the subject it works on, and its status.
+pub(crate) fn task_entry(summary: &str, status: ItemStatus) -> TranscriptEntry {
+    TranscriptEntry::Task(TaskEntry {
+        name: "Compaction".to_string(),
+        summary: summary.to_string(),
+        status,
+    })
 }
 
 pub(crate) fn notice_entry(kind: NoticeKind, text: &str) -> TranscriptEntry {

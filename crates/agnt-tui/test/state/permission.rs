@@ -11,6 +11,9 @@ fn push_user(state: &mut AppState, text: &str) {
     let entry = TranscriptEntry::Message(MessageEntry {
         role: MessageRole::User,
         markdown: text.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     });
     state.transcript.push_entry(entry);
 }
@@ -19,6 +22,9 @@ fn push_assistant(state: &mut AppState, text: &str) {
     let entry = TranscriptEntry::Message(MessageEntry {
         role: MessageRole::Assistant,
         markdown: text.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     });
     state.transcript.push_entry(entry);
 }

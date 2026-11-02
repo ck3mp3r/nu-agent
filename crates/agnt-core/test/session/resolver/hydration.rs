@@ -42,6 +42,7 @@ fn hydrate_store_entries_render_an_authored_summary_as_compaction() -> Result<()
                 content: vec![UserContent::Text(Text::new(wrapped_summary("rolled up")))],
             },
             author: Some(summary_author()),
+            turn_seq: None,
         },
         StoredEntry::from(Message::Assistant(AssistantMessage::new(vec![
             AssistantContent::Text(Text::new("Response after compaction")),
@@ -92,6 +93,7 @@ fn hydrate_store_entries_strip_the_trailing_tracked_sections() -> Result<()> {
             content: vec![UserContent::Text(Text::new(text))],
         },
         author: Some(summary_author()),
+        turn_seq: None,
     }];
 
     // -- Exec
@@ -137,6 +139,7 @@ fn hydrate_store_entries_render_each_summary_as_its_own_compaction() -> Result<(
                 )))],
             },
             author: Some(summary_author()),
+            turn_seq: None,
         },
         StoredEntry::from(Message::User {
             content: vec![UserContent::Text(Text::new("a prompt"))],
@@ -148,6 +151,7 @@ fn hydrate_store_entries_render_each_summary_as_its_own_compaction() -> Result<(
                 )))],
             },
             author: Some(summary_author()),
+            turn_seq: None,
         },
     ];
 

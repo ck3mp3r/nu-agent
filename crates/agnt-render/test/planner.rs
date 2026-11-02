@@ -5,7 +5,7 @@ use crate::theme::Theme;
 use agnt_core::protocol::events::ToolCall;
 use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::entry::{
-    BannerEntry, MessageEntry, NoticeEntry, ToolEntry, ToolKind, TranscriptEntry,
+    BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
 use agnt_core::transcript::ir::{
     ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
@@ -71,7 +71,7 @@ fn test_planner_gap_between_four_family_table() {
 /// trailing rule is untouched.
 #[test]
 fn test_planner_padding_plus_gap_equals_the_landed_total() {
-    use EntryFamily::{Assistant, Banner, Notice, Tool, User};
+    use EntryFamily::{Assistant, Banner, Notice, Task, Tool, User};
 
     // -- Setup & Fixtures: (prev, incoming, prev_bottom, next_top, gap, landed).
     let cases = [
@@ -79,6 +79,12 @@ fn test_planner_padding_plus_gap_equals_the_landed_total() {
         (Tool, Tool, 0, 0, 0, 0),
         (Tool, Assistant, 0, 0, 1, 1),
         (Tool, Notice, 0, 0, 2, 2),
+        // A task line is flush like a notice: the pair table decides alone.
+        (Task, Task, 0, 0, 2, 2),
+        (Task, Assistant, 0, 0, 2, 2),
+        (Tool, Task, 0, 0, 2, 2),
+        (Assistant, Task, 0, 0, 2, 2),
+        (Task, User, 0, 0, 2, 2),
         // A surface-carrying tool closes with one blank row.
         (Tool, Tool, 1, 0, 0, 1),
         (Tool, Assistant, 1, 0, 0, 1),
@@ -156,6 +162,14 @@ fn test_planner_entry_family_classification_table() {
         (user_entry("hi"), EntryFamily::User),
         (assistant_entry("hi"), EntryFamily::Assistant),
         (tool_entry("→ a.rs", None), EntryFamily::Tool),
+        (
+            TranscriptEntry::Task(TaskEntry {
+                name: "Compaction".to_string(),
+                summary: "auto".to_string(),
+                status: ItemStatus::InProgress,
+            }),
+            EntryFamily::Task,
+        ),
         (
             TranscriptEntry::Notice(NoticeEntry {
                 kind: NoticeKind::System,
@@ -375,6 +389,9 @@ fn user_entry(markdown: &str) -> TranscriptEntry {
     TranscriptEntry::Message(MessageEntry {
         role: MessageRole::User,
         markdown: markdown.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     })
 }
 
@@ -382,6 +399,9 @@ fn assistant_entry(markdown: &str) -> TranscriptEntry {
     TranscriptEntry::Message(MessageEntry {
         role: MessageRole::Assistant,
         markdown: markdown.to_string(),
+        timestamp_millis: None,
+        model: None,
+        agent: None,
     })
 }
 

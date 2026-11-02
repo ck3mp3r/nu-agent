@@ -37,6 +37,7 @@ async fn run_session_list(args: &AgentArgs) -> Result<()> {
 
     let ids = rig
         .session_ids()
+        .await
         .map_err(|e| Error::Custom(format!("Failed to list sessions: {e}")))?;
 
     // A session whose store cannot be opened is skipped: one unreadable log
@@ -46,7 +47,7 @@ async fn run_session_list(args: &AgentArgs) -> Result<()> {
         let Some(display_id) = id.strip_prefix(&prefixed) else {
             continue;
         };
-        let Ok(meta) = rig.listing(&id) else {
+        let Ok(meta) = rig.listing(&id).await else {
             log::warn!("failed to read the session listing of '{id}'");
             continue;
         };
@@ -77,12 +78,13 @@ async fn run_session_clear(args: &AgentArgs, id: &SessionIdArgs) -> Result<()> {
     let target_id = format!("{prefix}-{}", id.id);
 
     // The session must exist in the rig-memory store.
-    if !rig.holds(&target_id).unwrap_or(false) {
+    if !rig.holds(&target_id).await.unwrap_or(false) {
         return Err(Error::Custom(format!("Session not found: {}", id.id)));
     }
 
     // Delete the session's rig-memory store: its logs and its files.
     rig.destroy(&target_id)
+        .await
         .map_err(|e| Error::Custom(format!("Failed to delete session: {e}")))?;
 
     println!("Deleted session '{}'", id.id);
@@ -97,11 +99,12 @@ async fn run_session_inspect(args: &AgentArgs, id: &SessionIdArgs) -> Result<()>
     let prefix = dir_prefix(&cwd);
     let session_id = format!("{prefix}-{}", id.id);
 
-    if !rig.holds(&session_id).unwrap_or(false) {
+    if !rig.holds(&session_id).await.unwrap_or(false) {
         return Err(Error::Custom(format!("Session not found: {}", id.id)));
     }
     let view = rig
         .view(&session_id)
+        .await
         .map_err(|e| Error::Custom(format!("Failed to read session: {e}")))?;
 
     // The compaction policy is not persisted in the store format: display the

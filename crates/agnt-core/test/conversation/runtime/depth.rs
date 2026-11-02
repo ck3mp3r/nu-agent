@@ -33,6 +33,7 @@ async fn seed_session(fixture: &RuntimeFixture, id: &str, messages: &[Message]) 
         .session
         .inner_memory()
         .rig_store(id)
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let mut conversation = rig_memory::load(&*store, id)?;
     conversation.extend(messages.iter().cloned());
@@ -143,6 +144,7 @@ async fn run_compaction_splices_the_rig_store() -> Result<()> {
         .session
         .inner_memory()
         .rig_store("test-session")
+        .await
         .map_err(|e| format!("rig store should open: {e:?}"))?;
     let mut conversation = rig_memory::load(&*store, "test-session")?;
     conversation.extend([

@@ -45,8 +45,8 @@ const CONFIG_FILE: &str = "config.toml";
 const DOTENV_FILE: &str = ".env";
 /// Persona directory name inside the application config directory.
 const AGENTS_DIR: &str = "agents";
-/// rig-memory store file name inside the application cache directory.
-pub const STORE_FILE: &str = "rig-sessions.db";
+/// Session-store file name inside the application cache directory.
+pub const STORE_FILE: &str = "sessions.db";
 /// Log directory name inside the application state directory.
 const LOG_DIR: &str = "logs";
 /// Log file name inside the log directory.

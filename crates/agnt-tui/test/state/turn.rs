@@ -36,6 +36,9 @@ fn finalize_cycle_effects() -> Result<()> {
         &mut state,
         SystemEvent::PromptSubmitted {
             text: "prompt".to_string(),
+            stamp_millis: None,
+            stamp_model: None,
+            stamp_agent: None,
         },
         None,
     );
@@ -45,6 +48,9 @@ fn finalize_cycle_effects() -> Result<()> {
         .push_entry(TranscriptEntry::Message(MessageEntry {
             role: MessageRole::Assistant,
             markdown: "response".to_string(),
+            timestamp_millis: None,
+            model: None,
+            agent: None,
         }));
     state.transcript.assistant_stream_start = Some(3);
 

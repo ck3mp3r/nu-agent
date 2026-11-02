@@ -33,6 +33,7 @@ impl LaneKind {
         match entry {
             TranscriptEntry::Message(message) => Self::of_message(message.role),
             TranscriptEntry::Tool(_) => Self::Tool,
+            TranscriptEntry::Task(_) => Self::Compaction,
             TranscriptEntry::Notice(notice) => Self::of_notice(notice.kind),
             TranscriptEntry::Banner(_) => Self::Banner,
         }
@@ -47,7 +48,6 @@ impl LaneKind {
 
     pub fn of_notice(kind: NoticeKind) -> Self {
         match kind {
-            NoticeKind::Compaction => Self::Compaction,
             NoticeKind::System => Self::System,
         }
     }
@@ -57,7 +57,7 @@ impl LaneKind {
         match self {
             Self::User => "╎ ",
             Self::Tool => "⚙ ",
-            Self::Compaction => "~ ",
+            Self::Compaction => "≡ ",
             Self::System => "· ",
             Self::Assistant | Self::Banner => "  ",
         }

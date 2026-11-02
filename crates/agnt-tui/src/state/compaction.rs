@@ -1,10 +1,14 @@
 //! Compaction domain: the compaction block rows and their streamed summary.
 
-use agnt_core::transcript::entry::{MessageEntry, NoticeEntry, TranscriptEntry};
+use agnt_core::transcript::entry::{MessageEntry, NoticeEntry, TaskEntry, TranscriptEntry};
 
 use super::transcript_store::TranscriptStore;
 use super::{CompactionLine, CompactionStatus, ScrollState, StatusState};
 use agnt_core::transcript::ir::NoticeKind;
+use agnt_core::transcript::renderer::ItemStatus;
+
+/// The name the compaction task's call line carries.
+const COMPACTION_TASK: &str = "Compaction";
 
 /// Compaction-domain state extracted from `AppState`: the compaction block
 /// rows tracked per source.
@@ -54,6 +58,12 @@ impl CompactionState {
     }
 
     pub(crate) fn start_block(&mut self, store: &mut TranscriptStore, source: &str) {
+        self.ensure_block(source);
+        self.ensure_task(store, source, ItemStatus::InProgress);
+    }
+
+    /// Record the source's in-progress block once.
+    fn ensure_block(&mut self, source: &str) {
         if self
             .blocks
             .iter()
@@ -61,35 +71,68 @@ impl CompactionState {
         {
             return;
         }
-        store.push_entry(TranscriptEntry::Notice(NoticeEntry {
-            kind: NoticeKind::Compaction,
-            text: "Compaction".to_string(),
-        }));
         self.blocks.push(CompactionLine {
             source: source.to_string(),
             status: CompactionStatus::InProgress,
         });
     }
 
-    pub(crate) fn finish_block(&mut self, source: &str, status: CompactionStatus) {
-        let mut found_idx: Option<usize> = self
-            .blocks
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, item)| item.source == source && item.status == CompactionStatus::InProgress)
-            .map(|(i, _)| i);
-        if found_idx.is_none() {
-            found_idx = self
-                .blocks
-                .iter()
-                .enumerate()
-                .rev()
-                .find(|(_, item)| item.status == CompactionStatus::InProgress)
-                .map(|(i, _)| i);
+    /// Push the compaction task's call line when the transcript holds none for
+    /// `source`, opening at `status`.
+    ///
+    /// A replayed completion (`source` `history`) opens the line already `Done`:
+    /// the event that started the compaction is not replayed, so opening it
+    /// `InProgress` would flash a spinner the session never showed.
+    fn ensure_task(&mut self, store: &mut TranscriptStore, source: &str, status: ItemStatus) {
+        let present = store.entries().iter().any(|entry| match entry {
+            TranscriptEntry::Task(task) => {
+                task.summary == source && task.status == ItemStatus::InProgress
+            }
+            _ => false,
+        });
+        if present {
+            return;
         }
-        if let Some(idx) = found_idx {
-            let item = &mut self.blocks[idx];
+        store.push_entry(TranscriptEntry::Task(TaskEntry {
+            name: COMPACTION_TASK.to_string(),
+            summary: source.to_string(),
+            status,
+        }));
+    }
+
+    /// Move the compaction task's call line to `status` in place.
+    ///
+    /// The line is found by scanning the store, never by index: a cap eviction
+    /// between start and finish shifts every index, and the scan still holds
+    /// the row. The entry keeps its identity, so the line is never re-pushed
+    /// and its text is never rewritten.
+    pub(crate) fn finish_block(
+        &mut self,
+        store: &mut TranscriptStore,
+        source: &str,
+        status: CompactionStatus,
+    ) {
+        let mut mutated = false;
+        for entry in store.entries_mut().iter_mut().rev() {
+            let TranscriptEntry::Task(task) = entry else {
+                continue;
+            };
+            if task.summary != source || task.status != ItemStatus::InProgress {
+                continue;
+            }
+            task.status = item_status(status);
+            mutated = true;
+            break;
+        }
+        if mutated {
+            store.invalidate_height_index();
+        }
+        if let Some(item) = self
+            .blocks
+            .iter_mut()
+            .rev()
+            .find(|item| item.source == source && item.status == CompactionStatus::InProgress)
+        {
             item.status = status;
         }
     }
@@ -130,6 +173,9 @@ impl CompactionState {
         store.push_entry(TranscriptEntry::Message(MessageEntry {
             role: agnt_core::transcript::ir::MessageRole::Assistant,
             markdown: crate::markdown::unwrap_single_fenced_block(trimmed),
+            timestamp_millis: None,
+            model: None,
+            agent: None,
         }));
         true
     }
@@ -141,8 +187,9 @@ impl CompactionState {
         source: &str,
         summary_body: &str,
     ) -> bool {
-        self.start_block(store, source);
-        self.finish_block(source, CompactionStatus::Done);
+        self.ensure_block(source);
+        self.ensure_task(store, source, ItemStatus::Done);
+        self.finish_block(store, source, CompactionStatus::Done);
         let body = if summary_body.trim().is_empty() {
             "(empty summary)".to_string()
         } else {
@@ -158,6 +205,9 @@ impl CompactionState {
             store.push_entry(TranscriptEntry::Message(MessageEntry {
                 role: agnt_core::transcript::ir::MessageRole::Assistant,
                 markdown: crate::markdown::unwrap_single_fenced_block(&body),
+                timestamp_millis: None,
+                model: None,
+                agent: None,
             }));
         }
         store.summary_stream_start = None;
@@ -175,7 +225,7 @@ impl CompactionState {
         message: &str,
     ) -> bool {
         self.start_block(store, source);
-        self.finish_block(source, CompactionStatus::Failed);
+        self.finish_block(store, source, CompactionStatus::Failed);
         store.push_entry(TranscriptEntry::Notice(NoticeEntry {
             kind: NoticeKind::System,
             text: format!("Compaction failed deterministically: {message}"),
@@ -184,3 +234,16 @@ impl CompactionState {
         true
     }
 }
+
+// region:    --- Support
+
+/// The call line's status for the block's bookkeeping status.
+fn item_status(status: CompactionStatus) -> ItemStatus {
+    match status {
+        CompactionStatus::InProgress => ItemStatus::InProgress,
+        CompactionStatus::Done => ItemStatus::Done,
+        CompactionStatus::Failed => ItemStatus::Failed,
+    }
+}
+
+// endregion:    --- Support

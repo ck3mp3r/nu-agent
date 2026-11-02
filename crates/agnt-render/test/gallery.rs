@@ -16,6 +16,7 @@ fn test_gallery_snapshots_cover_every_family() -> Result<()> {
         ("message", EntryFamily::User),
         ("tool", EntryFamily::Tool),
         ("tool-result", EntryFamily::Tool),
+        ("task", EntryFamily::Task),
         ("notice", EntryFamily::Notice),
         ("banner", EntryFamily::Banner),
         ("tool-diff", EntryFamily::Tool),
@@ -77,6 +78,7 @@ fn test_gallery_snapshots_golden() -> Result<()> {
         ("message", "What changed in the render loop?"),
         ("tool", "read → src/render.rs\nseam 2 now plans the gaps"),
         ("tool-result", "edit → src/render.rs\nresult body"),
+        ("task", "Compaction · auto"),
         ("notice", "Compaction skipped: transcript is short"),
         ("banner", "nu-agent"),
         (

@@ -55,7 +55,7 @@ async fn backoff_retry_persists_the_failed_attempt_delta() -> Result<()> {
         matches!(outcome, TurnOutcome::Completed),
         "the backoff retry must complete the turn"
     );
-    let messages = stored(&memory_state, session_id)?;
+    let messages = stored(&memory_state, session_id).await?;
     assert_eq!(
         messages.len(),
         3,
