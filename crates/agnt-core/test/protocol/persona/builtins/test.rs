@@ -1,4 +1,6 @@
-use super::{BUILTIN_MAKER_CONTENT, BUILTIN_PERSONAS, BUILTIN_PLANNER_CONTENT, is_builtin_persona};
+use super::builtins::{
+    BUILTIN_MAKER_CONTENT, BUILTIN_PERSONAS, BUILTIN_PLANNER_CONTENT, is_builtin_persona,
+};
 use crate::protocol::persona::{
     FrontMatterParser, PulldownCmarkFrontMatterParser, interpret_front_matter,
 };

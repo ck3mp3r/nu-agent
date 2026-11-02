@@ -8,6 +8,7 @@
 mod mcp;
 
 pub mod agents;
+pub mod persona;
 pub mod skills;
 
 pub use mcp::{McpManagement, McpUsabilityState};

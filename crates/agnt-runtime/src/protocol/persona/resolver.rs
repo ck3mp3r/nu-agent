@@ -26,9 +26,9 @@ pub trait PersonaLister {
 
 /// Filesystem-based persona resolver
 ///
-/// `agents_dir` is the resolved persona directory
-/// ([`Paths::agents_dir`](crate::config::Paths::agents_dir)); the resolver never
-/// joins an `agents` segment onto it.
+/// `agents_dir` is the resolved persona directory (the `Paths::agents_dir`
+/// value supplied by the caller); the resolver never joins an `agents` segment
+/// onto it.
 pub struct FsPersonaResolver {
     cwd: PathBuf,
     agents_dir: PathBuf,

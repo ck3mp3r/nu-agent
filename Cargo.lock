@@ -219,7 +219,11 @@ name = "agnt-runtime"
 version = "0.1.0"
 dependencies = [
  "log",
+ "noyalib",
+ "pulldown-cmark",
  "rig",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
