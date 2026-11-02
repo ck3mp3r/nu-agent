@@ -9,7 +9,7 @@
 //! fails or is cancelled. Every non-success terminal arm therefore persists the
 //! turn's delta through `persist_turn_delta`; the completed tail writes nothing.
 
-use agnt_kernel::StopCause;
+use agnt_kernel::{SessionRecord, StopCause, TurnRecord};
 use nu_protocol::{LabeledError, Span};
 
 use crate::hook::chain::{NotRunCall, NotRunOutcome, NotRunStart, emit_not_run_dispatch};
@@ -253,6 +253,13 @@ where
                     String::new()
                 }
             };
+            // The turn's one unfoldable fact — every other turn figure folds
+            // from the records this stream already carried.
+            let _ = self
+                .tool_infra
+                .bus
+                .stream()
+                .publish(SessionRecord::Turn(TurnRecord::Completed { duration_ms }));
             let _ = self
                 .tool_infra
                 .bus
@@ -319,6 +326,13 @@ where
         // them.
         let usage = self.tool_infra.turn_usage.totals();
         let duration_ms = turn_started.elapsed().as_millis() as u64;
+        // The turn's one unfoldable fact — every other turn figure folds from
+        // the records this stream already carried.
+        let _ = self
+            .tool_infra
+            .bus
+            .stream()
+            .publish(SessionRecord::Turn(TurnRecord::Completed { duration_ms }));
         let _ = self
             .tool_infra
             .bus

@@ -193,3 +193,95 @@ async fn dispatch_completed_turn_publishes_the_accumulated_usage_and_duration() 
     );
     Ok(())
 }
+
+/// The turn's end narrates on the record stream too: exactly one `Turn` record,
+/// carrying the one fact a consumer cannot fold from the inference and tool
+/// records — the turn's wall clock.
+#[tokio::test]
+async fn dispatch_completed_turn_narrates_one_turn_record() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = test_config();
+    let temp_dir = tempfile::tempdir()?;
+    let mut memory_state = make_memory_state(&temp_dir);
+    let bus = crate::bus::create_bus();
+    let mut records = bus.stream().subscribe();
+    let mut executor = make_executor(
+        &config,
+        &mut memory_state,
+        super::test_utils::shared_mock_model(),
+        default_tool_infra(bus),
+    );
+
+    // -- Exec
+    executor
+        .dispatch_result(
+            Ok(completed_result("final answer")),
+            "the prompt".to_string(),
+            nu_protocol::Span::test_data(),
+            Some("test-turn-record-completed"),
+            std::time::Instant::now(),
+        )
+        .await
+        .map_err(|e| format!("a completed turn must not be an error: {e}"))?;
+
+    // -- Check
+    let narrated = turn_records(&mut records);
+    assert_eq!(
+        narrated.len(),
+        1,
+        "a completed turn narrates exactly one turn record"
+    );
+    Ok(())
+}
+
+/// A turn that stops early still completes: its end narrates one `Turn` record,
+/// on the same stream, before the surface-facing event.
+#[tokio::test]
+async fn dispatch_cancelled_turn_narrates_one_turn_record() -> Result<()> {
+    // -- Setup & Fixtures
+    let config = test_config();
+    let temp_dir = tempfile::tempdir()?;
+    let mut memory_state = make_memory_state(&temp_dir);
+    let bus = crate::bus::create_bus();
+    let mut records = bus.stream().subscribe();
+    let mut executor = make_executor(
+        &config,
+        &mut memory_state,
+        super::test_utils::shared_mock_model(),
+        default_tool_infra(bus),
+    );
+
+    // -- Exec
+    executor
+        .dispatch_result(
+            Ok(cancelled_result(None, Vec::new(), None, "", None)),
+            "the prompt".to_string(),
+            nu_protocol::Span::test_data(),
+            None,
+            std::time::Instant::now(),
+        )
+        .await
+        .map_err(|e| format!("a cancelled turn must not be an error: {e}"))?;
+
+    // -- Check
+    let narrated = turn_records(&mut records);
+    assert_eq!(
+        narrated.len(),
+        1,
+        "a stopped turn still completes, so it narrates one turn record"
+    );
+    Ok(())
+}
+
+/// The turn records the subscriber buffered, in publish order.
+fn turn_records(
+    rx: &mut agnt_kernel::bus::Subscription<agnt_kernel::SessionRecord>,
+) -> Vec<agnt_kernel::TurnRecord> {
+    let mut out = Vec::new();
+    while let Ok(record) = rx.try_recv() {
+        if let agnt_kernel::SessionRecord::Turn(turn) = record {
+            out.push(turn);
+        }
+    }
+    out
+}
