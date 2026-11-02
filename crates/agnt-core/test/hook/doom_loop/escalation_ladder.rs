@@ -53,7 +53,12 @@ async fn second_detection_backoff_skips_naming_tool() -> TestResult<()> {
     );
 
     let second = detector
-        .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
+        .check_and_record(
+            "read_file",
+            "{\"path\": \"same\"}",
+            &bus,
+            &crate::hook::agent_hook::StopLedger::default(),
+        )
         .await;
     let message = skip_reason(&second).ok_or("should be a skip denial")?;
     assert!(
@@ -85,18 +90,33 @@ async fn fourth_detection_stops_run() -> TestResult<()> {
     // -- Exec & Check
     let _ = drive_to_first_detection(&detector, &bus).await;
     let second = detector
-        .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
+        .check_and_record(
+            "read_file",
+            "{\"path\": \"same\"}",
+            &bus,
+            &crate::hook::agent_hook::StopLedger::default(),
+        )
         .await;
     assert!(
         is_skip(&second),
         "second detection should be a backoff skip"
     );
     let third = detector
-        .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
+        .check_and_record(
+            "read_file",
+            "{\"path\": \"same\"}",
+            &bus,
+            &crate::hook::agent_hook::StopLedger::default(),
+        )
         .await;
     assert!(is_skip(&third), "third detection should be a backoff skip");
     let fourth = detector
-        .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
+        .check_and_record(
+            "read_file",
+            "{\"path\": \"same\"}",
+            &bus,
+            &crate::hook::agent_hook::StopLedger::default(),
+        )
         .await;
     let message = stop_reason(&fourth).ok_or("should be a stop denial")?;
     assert!(
@@ -132,7 +152,12 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
     let _ = ui_event_rx.try_recv();
     // Second detection (backoff skip + warning), then drain.
     let second = detector
-        .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
+        .check_and_record(
+            "read_file",
+            "{\"path\": \"same\"}",
+            &bus,
+            &crate::hook::agent_hook::StopLedger::default(),
+        )
         .await;
     assert!(
         is_skip(&second),
@@ -141,13 +166,23 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
     let _ = ui_event_rx.try_recv();
     // Third detection (backoff skip + warning), then drain.
     let third = detector
-        .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
+        .check_and_record(
+            "read_file",
+            "{\"path\": \"same\"}",
+            &bus,
+            &crate::hook::agent_hook::StopLedger::default(),
+        )
         .await;
     assert!(is_skip(&third), "third detection should be a backoff skip");
     let _ = ui_event_rx.try_recv();
     // Fourth detection (stop) — must emit no warning.
     let fourth = detector
-        .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
+        .check_and_record(
+            "read_file",
+            "{\"path\": \"same\"}",
+            &bus,
+            &crate::hook::agent_hook::StopLedger::default(),
+        )
         .await;
 
     // -- Check
@@ -176,7 +211,12 @@ async fn reset_clears_escalation_counter() -> TestResult<()> {
     // -- Exec & Check
     let _ = drive_to_first_detection(&detector, &bus).await;
     let second = detector
-        .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
+        .check_and_record(
+            "read_file",
+            "{\"path\": \"same\"}",
+            &bus,
+            &crate::hook::agent_hook::StopLedger::default(),
+        )
         .await;
     assert!(
         is_skip(&second),

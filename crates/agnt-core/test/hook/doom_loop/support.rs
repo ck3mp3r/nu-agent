@@ -23,7 +23,12 @@ pub(super) async fn drive_to_first_detection(
     let mut actions = Vec::new();
     for _ in 0..DOOM_LOOP_THRESHOLD {
         let action = detector
-            .check_and_record("read_file", "{\"path\": \"same\"}", bus)
+            .check_and_record(
+                "read_file",
+                "{\"path\": \"same\"}",
+                bus,
+                &crate::hook::agent_hook::StopLedger::default(),
+            )
             .await;
         actions.push(action);
     }

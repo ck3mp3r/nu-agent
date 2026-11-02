@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use agnt_kernel::{InferenceRecord, SessionRecord, Usage as StreamUsage};
+use agnt_kernel::{InferenceRecord, SessionRecord, StopCause, Usage as StreamUsage};
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
     HookContext, InvalidToolCallAction, InvalidToolCallContext, ModelSelection,
@@ -41,7 +41,7 @@ use crate::tools::handler::tool_display_from_arguments;
 use crate::transcript::ir;
 use crate::types::ToolName;
 
-use super::agent_hook::HookState;
+use super::agent_hook::{HookState, StopLedger};
 use super::circuit_breaker_guard::CircuitBreakerGuard;
 use super::doom_loop::DoomLoopDetector;
 use super::history_snapshot::HistorySnapshot;
@@ -61,6 +61,12 @@ use super::unpriced_warnings::UnpricedWarnings;
 /// The call never executes, so there is no result to report — the message says
 /// why the block is empty.
 pub const CANCELLED_DISPATCH_MESSAGE: &str = "Interrupted: the turn stopped before this call ran";
+
+/// The reason a user cancel carries.
+///
+/// One text, one place: the stop record, rig's stop reason, and the executor's
+/// notice all name the same thing.
+pub const CANCELLED_STOP_REASON: &str = "Cancelled by user";
 
 /// The error kind the cancel arm's emissions carry.
 ///
@@ -259,6 +265,8 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     /// Model ids already reported as unpriced, so the warn fires once per
     /// model rather than once per call.
     unpriced_warnings: UnpricedWarnings,
+    /// Why this turn's run stopped, recorded when a guard or the user stops it.
+    stop: StopLedger,
 }
 
 impl<P: AsyncPermissionResolver> HookChain<P> {
@@ -302,6 +310,7 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
             session_usage: hook_state.session_usage,
             store_latch: hook_state.store_latch,
             unpriced_warnings: UnpricedWarnings::default(),
+            stop: StopLedger::default(),
         }
     }
 
@@ -321,6 +330,15 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
     /// out of rig's history.
     pub fn turn_tools(&self) -> Arc<TurnToolLog> {
         Arc::clone(&self.turn_tools)
+    }
+
+    /// Return a clone of the ledger that records why the run stopped.
+    ///
+    /// Callers clone it **before** passing the hook into the agent builder
+    /// (which consumes `self`), then read it after the run: a hook stop carries
+    /// its reason text through rig, so the cause travels beside it here.
+    pub fn stop_ledger(&self) -> StopLedger {
+        self.stop.clone()
     }
 
     /// Returns `true` if a cancellation has been requested via the bus cancel channel.
@@ -438,11 +456,13 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         let compaction = self.compaction.clone();
         let last_total_tokens = Arc::clone(&self.last_total_tokens);
         let store_latch = Arc::clone(&self.store_latch);
+        let stop = self.stop.clone();
         let prompt = event.prompt.clone();
 
         async move {
             if cancelled {
-                return CompletionCallAction::stop("Cancelled by user");
+                stop.narrate(&bus, StopCause::UserCancelled, CANCELLED_STOP_REASON);
+                return CompletionCallAction::stop(CANCELLED_STOP_REASON);
             }
             let _ = bus.ui_event().send(SystemEvent::InferenceStarted).await;
             // Zero retention: a failed publish means no subscriber is attached
@@ -476,6 +496,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
     ) -> impl std::future::Future<Output = ObservationAction> + WasmCompatSend {
         let cancelled = self.is_cancelled();
         let bus = self.bus.clone();
+        let stop = self.stop.clone();
         let delta = event.delta.to_string();
         let aggregated = event.aggregated.to_string();
         // Intra-stream repetition detection: check the full aggregated stream
@@ -494,7 +515,8 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
 
         async move {
             if cancelled {
-                return ObservationAction::stop("Cancelled by user");
+                stop.narrate(&bus, StopCause::UserCancelled, CANCELLED_STOP_REASON);
+                return ObservationAction::stop(CANCELLED_STOP_REASON);
             }
             // Every intra-stream detection stops the stream: `check_aggregated`
             // returns Stop on ANY detection (the stream stops on the FIRST,
@@ -505,10 +527,12 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             // ::stop` → Cancelled → cancel-reason matching →
             // `LlmEvent::Stopped` + `WarningEvent`.
             if repetition_action.is_some() {
-                return ObservationAction::stop(format!(
+                let reason = format!(
                     "{OUTPUT_REPETITION_STOP_PREFIX} the assistant kept repeating the same \
                      output after repeated steering. The run was stopped."
-                ));
+                );
+                stop.narrate(&bus, StopCause::OutputRepetition, &reason);
+                return ObservationAction::stop(reason);
             }
             let _ = bus
                 .ui_event()
@@ -540,6 +564,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         let tool_name = event.tool_name().map(str::to_string);
         let args = event.tool_args().map(str::to_string);
         let tool_call_id = event.call_id.map(|id| id.to_string());
+        let stop = self.stop.clone();
 
         // Record the call before any gate runs. A stop that lands mid-batch
         // drops the stream, and this record is what keeps the call once rig's
@@ -588,13 +613,16 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 // only host event the denied call produces.
                 self.emit_cancelled_dispatch(&tool_name, &source, &args)
                     .await;
-                return DispatchAction::stop("Cancelled by user");
+                stop.narrate(&bus, StopCause::UserCancelled, CANCELLED_STOP_REASON);
+                return DispatchAction::stop(CANCELLED_STOP_REASON);
             }
             if let Some(action) = subturn_action {
                 return action;
             }
             let doom_action = if self.repetition_guard {
-                self.doom.check_and_record(&tool_name, &args, &bus).await
+                self.doom
+                    .check_and_record(&tool_name, &args, &bus, &stop)
+                    .await
             } else {
                 None
             };
@@ -892,6 +920,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             None
         };
         let bus = self.bus.clone();
+        let stop = self.stop.clone();
         async move {
             if let Some(detection) = repetition_detection {
                 match detection {
@@ -907,7 +936,10 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                     }
                     RepetitionDetection::Stop(message) => {
                         // No hook-side warning — the executor surfaces the stop
-                        // reason, mirroring the tool doom loop.
+                        // reason, mirroring the tool doom loop. This is the
+                        // repetition ladder's terminal stop, not the doom loop:
+                        // the cause is what the steering retry keys on.
+                        stop.narrate(&bus, StopCause::OutputRepetition, &message);
                         return ModelTurnAction::stop(message);
                     }
                 }

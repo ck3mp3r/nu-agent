@@ -111,7 +111,7 @@ async fn dispatch_cancelled_turn_publishes_turn_completed_with_the_tool_call_cou
         super::test_utils::shared_mock_model(),
         default_tool_infra(bus),
     );
-    let mut result = cancelled_result(None, Vec::new(), None, "");
+    let mut result = cancelled_result(None, Vec::new(), None, "", None);
     result.tool_call_count = 2;
 
     // -- Exec

@@ -25,9 +25,9 @@ use super::test_utils::{BusEventCollector, message_text, test_config};
 use super::*;
 use crate::conversation::turn::error::TurnContext;
 use crate::conversation::turn::{TurnError, TurnResult};
-use crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
 use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::types::Message;
+use agnt_kernel::StopCause;
 
 /// A `TurnResult` for a completed, non-cancelled turn.
 fn completed_result(text: &str) -> TurnResult {
@@ -39,6 +39,7 @@ fn completed_result(text: &str) -> TurnResult {
         deltas_emitted: true,
         cancelled: false,
         cancel_reason: None,
+        stop_cause: None,
         last_total_tokens: 12,
         last_known_history: Vec::new(),
         pre_turn_message_count: 0,
@@ -53,6 +54,7 @@ fn cancelled_result(
     last_known_history: Vec<Message>,
     cancel_reason: Option<String>,
     text: &str,
+    stop_cause: Option<StopCause>,
 ) -> TurnResult {
     TurnResult {
         text: text.to_string(),
@@ -62,6 +64,7 @@ fn cancelled_result(
         deltas_emitted: true,
         cancelled: true,
         cancel_reason,
+        stop_cause,
         last_total_tokens: 0,
         last_known_history,
         pre_turn_message_count: 0,
@@ -244,7 +247,13 @@ async fn dispatch_path_c_cancelled_with_an_empty_delta_persists_the_prompt_and_p
     // -- Exec
     let outcome = executor
         .dispatch_result(
-            Ok(cancelled_result(Some(Vec::new()), Vec::new(), None, "")),
+            Ok(cancelled_result(
+                Some(Vec::new()),
+                Vec::new(),
+                None,
+                "",
+                None,
+            )),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
@@ -291,6 +300,7 @@ async fn dispatch_path_b_uses_the_last_known_history() -> Result<()> {
                 vec![Message::user("completed work")],
                 None,
                 "",
+                None,
             )),
             "completed work".to_string(),
             nu_protocol::Span::test_data(),
@@ -332,7 +342,13 @@ async fn dispatch_path_b_true_fallback_synthesizes_a_placeholder() -> Result<()>
     // -- Exec
     let outcome = executor
         .dispatch_result(
-            Ok(cancelled_result(None, Vec::new(), None, "partial text")),
+            Ok(cancelled_result(
+                None,
+                Vec::new(),
+                None,
+                "partial text",
+                None,
+            )),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             Some(session_id),
@@ -371,7 +387,9 @@ async fn dispatch_path_c_stop_reason_surfaces_warning_and_completed() -> Result<
         super::test_utils::shared_mock_model(),
         default_tool_infra(bus),
     );
-    let reason = format!("{OUTPUT_REPETITION_STOP_PREFIX} repeated output");
+    // The producer's stop text is content: the dispatch decides on the recorded
+    // cause, never on what the text says.
+    let reason = "repeated output".to_string();
 
     // -- Exec
     let outcome = executor
@@ -381,6 +399,7 @@ async fn dispatch_path_c_stop_reason_surfaces_warning_and_completed() -> Result<
                 Vec::new(),
                 Some(reason.clone()),
                 "",
+                Some(StopCause::OutputRepetition),
             )),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),

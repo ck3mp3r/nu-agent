@@ -9,9 +9,11 @@ use futures::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;
 
+use agnt_kernel::StopCause;
+
 use crate::bus::Bus;
 use crate::config::defaults;
-use crate::hook::agent_hook::HookState;
+use crate::hook::agent_hook::{HookState, StopLedger};
 use crate::hook::chain::{HookChain, HookEnv};
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::hook::turn_tools::TurnToolRecord;
@@ -55,6 +57,7 @@ pub struct TurnResult {
     /// The cancellation reason when the turn was cancelled by a hook stop
     /// (e.g. doom-loop stop). `None` for bus-cancel and normal completion.
     pub cancel_reason: Option<String>,
+    pub stop_cause: Option<StopCause>,
     /// Last sub-call's total_tokens from the hook.
     /// This is the per-sub-call value representing actual context window usage,
     /// NOT the aggregated total across all sub-calls in this turn.
@@ -353,6 +356,7 @@ where
         deltas_emitted: response.deltas_emitted,
         cancelled: response.cancelled,
         cancel_reason: response.cancel_reason,
+        stop_cause: response.stop_cause,
         last_total_tokens: response.last_total_tokens,
         last_known_history: last_known_history_arc.lock().unwrap().clone(),
         pre_turn_message_count: response.pre_turn_message_count,
@@ -413,6 +417,9 @@ struct StreamingTurnResult {
     /// The cancellation reason when the stream was cancelled by a hook stop
     /// (e.g. doom-loop stop). `None` for bus-cancel and normal completion.
     cancel_reason: Option<String>,
+    /// Why a guard or the user stopped the run, as the hook that stopped it
+    /// recorded it. `None` when no hook stopped the run.
+    stop_cause: Option<StopCause>,
     /// Number of complete tool calls seen in the stream
     tool_call_count: usize,
     /// The calls the model committed this turn, in commit order, as the
@@ -482,6 +489,9 @@ where
     // The turn's tool records, read after the run: the hook writes them as each
     // call is dispatched and settles, and the settle path records their status.
     let turn_tools = hook.turn_tools();
+    // Why a guard or the user stops the run: the hook records the cause, and the
+    // executor reads it after the run to narrate and steer the stop.
+    let stop_ledger = hook.stop_ledger();
     let mut builder = rig::agent::AgentBuilder::new(dyn_model)
         .add_hook(hook)
         .dynamic_tools(proxy_tools);
@@ -514,7 +524,14 @@ where
         .max_invalid_tool_call_retries(3)
         .stream();
 
-    let result = drive_stream(stream, bus, cancel_grace, pre_turn_message_count).await?;
+    let result = drive_stream(
+        stream,
+        bus,
+        cancel_grace,
+        pre_turn_message_count,
+        stop_ledger,
+    )
+    .await?;
 
     // rig saved the conversation at run end. Write the host-owned state records
     // and refresh the listing, so `SavedAgent::model()`/`title()` and the session
@@ -570,6 +587,7 @@ async fn drive_stream<S>(
     bus: Bus,
     cancel_grace: Duration,
     pre_turn_message_count: usize,
+    stop_ledger: StopLedger,
 ) -> Result<StreamingTurnResult, Box<rig::completion::PromptError>>
 where
     S: futures::Stream<
@@ -737,6 +755,7 @@ where
         messages,
         cancelled,
         cancel_reason,
+        stop_cause: stop_ledger.take(),
         tool_call_count,
         streamed_tool_calls,
         deltas_emitted,

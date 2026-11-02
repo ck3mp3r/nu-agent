@@ -8,7 +8,10 @@ use std::sync::{Arc, Mutex};
 use rig::agent::DispatchAction;
 use serde_json::Value;
 
+use agnt_kernel::StopCause;
+
 use crate::bus::Bus;
+use crate::hook::agent_hook::StopLedger;
 use crate::protocol::events::{SystemEvent, SystemKind};
 
 pub const DOOM_LOOP_THRESHOLD: usize = 5;
@@ -142,6 +145,7 @@ impl DoomLoopDetector {
         tool_name: &str,
         args: &str,
         bus: &Bus,
+        stop: &StopLedger,
     ) -> Option<DispatchAction> {
         let detected = {
             let mut state = self.state.lock().expect("doom loop mutex poisoned");
@@ -186,6 +190,7 @@ impl DoomLoopDetector {
                     "{DOOM_LOOP_STOP_PREFIX} '{}' kept looping after repeated steering. The run was stopped.",
                     tool
                 );
+                stop.narrate(bus, StopCause::DoomLoop, &message);
                 Some(DispatchAction::stop(message))
             }
             None => None,

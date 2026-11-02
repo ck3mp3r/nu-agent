@@ -57,7 +57,7 @@ async fn dispatch_user_cancel_without_a_reason_sends_the_notice_before_completed
     // -- Exec
     let outcome = executor
         .dispatch_result(
-            Ok(cancelled_result(None, Vec::new(), None, "")),
+            Ok(cancelled_result(None, Vec::new(), None, "", None)),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),
             None,
@@ -106,6 +106,7 @@ async fn dispatch_user_cancel_with_the_hook_reason_sends_the_notice_before_compl
                 Vec::new(),
                 Some("Cancelled by user".to_string()),
                 "",
+                Some(StopCause::UserCancelled),
             )),
             "the prompt".to_string(),
             nu_protocol::Span::test_data(),

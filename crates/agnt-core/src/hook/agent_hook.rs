@@ -4,6 +4,9 @@
 
 use std::sync::{Arc, Mutex};
 
+use agnt_kernel::{InferenceRecord, SessionRecord, StopCause};
+
+use crate::bus::Bus;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::state::memory::MemoryOf;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
@@ -18,6 +21,49 @@ pub use crate::hook::turn_usage::TurnUsage;
 /// tool infrastructure: `None` while the session store opens, and the refusal
 /// text once it could not, so no further per-turn attempt is made.
 pub type StoreLatch = Arc<Mutex<Option<String>>>;
+
+/// Why the turn's run stopped, recorded by the hook that decided to stop.
+///
+/// A hook stop carries its reason text through rig, and text is content: the
+/// cause travels beside it as data, recorded here by the producer that acted on
+/// it. The turn executor reads it to narrate the stop and to decide whether a
+/// repetition stop becomes a steering retry — neither consumer parses the text.
+#[derive(Clone, Default)]
+pub struct StopLedger {
+    cause: Arc<Mutex<Option<StopCause>>>,
+}
+
+impl StopLedger {
+    /// Record the cause. The first stop of a turn wins: a stopped stream ends
+    /// the run, so a later record would describe work that never happened.
+    pub fn record(&self, cause: StopCause) {
+        // Mutex poison is a fatal internal inconsistency — panicking is correct.
+        let mut slot = self.cause.lock().unwrap();
+        if slot.is_none() {
+            *slot = Some(cause);
+        }
+    }
+
+    /// Take the recorded cause, leaving the ledger empty.
+    pub fn take(&self) -> Option<StopCause> {
+        // Mutex poison is a fatal internal inconsistency — panicking is correct.
+        self.cause.lock().unwrap().take()
+    }
+
+    /// Record the stop and narrate it on the record stream.
+    ///
+    /// One place, so a stop's cause and its record can never disagree. A failed
+    /// publish means no subscriber is attached (zero retention), not an error.
+    pub fn narrate(&self, bus: &Bus, cause: StopCause, reason: &str) {
+        self.record(cause);
+        let _ = bus
+            .stream()
+            .publish(SessionRecord::Inference(InferenceRecord::Stopped {
+                cause,
+                reason: reason.to_string(),
+            }));
+    }
+}
 
 /// Session-scoped state shared across turns via the hook.
 ///

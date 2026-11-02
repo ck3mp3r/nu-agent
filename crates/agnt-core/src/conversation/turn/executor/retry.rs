@@ -14,14 +14,14 @@
 
 use std::sync::Arc;
 
+use agnt_kernel::StopCause;
+
 use crate::config::{Config, defaults};
 use crate::conversation::turn::feedback::{
     FeedbackPhase, build_feedback_message, build_max_turns_feedback_message, is_model_correctable,
 };
 use crate::conversation::turn::{TurnContext, TurnConversation, TurnInput, error, execute_turn};
-use crate::hook::output_repetition::{
-    OUTPUT_REPETITION_BACKOFF_MESSAGE, OUTPUT_REPETITION_STOP_PREFIX,
-};
+use crate::hook::output_repetition::OUTPUT_REPETITION_BACKOFF_MESSAGE;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 
 use super::TurnRecovery;
@@ -377,9 +377,7 @@ where
                 }
                 Ok(turn_result)
                     if turn_result.cancelled
-                        && turn_result.cancel_reason.as_deref().is_some_and(|reason| {
-                            reason.starts_with(OUTPUT_REPETITION_STOP_PREFIX)
-                        }) =>
+                        && turn_result.stop_cause == Some(StopCause::OutputRepetition) =>
                 {
                     // Path C stop-to-steering: the repetition guard stopped the
                     // stream mid-turn and the Ok-cancelled result carries the

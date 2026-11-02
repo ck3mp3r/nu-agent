@@ -84,9 +84,15 @@ async fn test_execute_drive_stream_expires_the_grace_without_history() -> Result
 
     // -- Exec
     let started = std::time::Instant::now();
-    let result = drive_stream(stream, bus, grace, 7)
-        .await
-        .map_err(|e| format!("drive_stream should succeed: {e}"))?;
+    let result = drive_stream(
+        stream,
+        bus,
+        grace,
+        7,
+        crate::hook::agent_hook::StopLedger::default(),
+    )
+    .await
+    .map_err(|e| format!("drive_stream should succeed: {e}"))?;
     let elapsed = started.elapsed();
 
     // -- Check
@@ -135,9 +141,15 @@ async fn test_execute_drive_stream_completes_normally_during_the_grace() -> Resu
     );
 
     // -- Exec
-    let result = drive_stream(stream, bus, Duration::from_millis(50), 0)
-        .await
-        .map_err(|e| format!("drive_stream should succeed: {e}"))?;
+    let result = drive_stream(
+        stream,
+        bus,
+        Duration::from_millis(50),
+        0,
+        crate::hook::agent_hook::StopLedger::default(),
+    )
+    .await
+    .map_err(|e| format!("drive_stream should succeed: {e}"))?;
 
     // -- Check
     assert!(
@@ -172,9 +184,15 @@ async fn test_execute_drive_stream_captures_the_cancelled_history() -> Result<()
     );
 
     // -- Exec
-    let result = drive_stream(stream, bus, Duration::from_millis(50), 0)
-        .await
-        .map_err(|e| format!("drive_stream should succeed: {e}"))?;
+    let result = drive_stream(
+        stream,
+        bus,
+        Duration::from_millis(50),
+        0,
+        crate::hook::agent_hook::StopLedger::default(),
+    )
+    .await
+    .map_err(|e| format!("drive_stream should succeed: {e}"))?;
 
     // -- Check
     assert!(result.cancelled, "the turn must report cancelled");
@@ -217,9 +235,15 @@ async fn test_execute_drive_stream_tracks_the_committed_tool_calls() -> Result<(
     );
 
     // -- Exec
-    let result = drive_stream(stream, bus, Duration::from_millis(50), 0)
-        .await
-        .map_err(|e| format!("drive_stream should succeed: {e}"))?;
+    let result = drive_stream(
+        stream,
+        bus,
+        Duration::from_millis(50),
+        0,
+        crate::hook::agent_hook::StopLedger::default(),
+    )
+    .await
+    .map_err(|e| format!("drive_stream should succeed: {e}"))?;
 
     // -- Check
     assert!(result.cancelled, "the turn must report cancelled");
@@ -247,9 +271,15 @@ async fn test_execute_drive_stream_tracks_no_calls_without_the_projection() -> R
     );
 
     // -- Exec
-    let result = drive_stream(stream, bus, Duration::from_millis(50), 0)
-        .await
-        .map_err(|e| format!("drive_stream should succeed: {e}"))?;
+    let result = drive_stream(
+        stream,
+        bus,
+        Duration::from_millis(50),
+        0,
+        crate::hook::agent_hook::StopLedger::default(),
+    )
+    .await
+    .map_err(|e| format!("drive_stream should succeed: {e}"))?;
 
     // -- Check
     assert!(

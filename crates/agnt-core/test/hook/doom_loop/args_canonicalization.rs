@@ -55,7 +55,14 @@ async fn reordered_json_args_trip_doom_loop() {
 
     // -- Exec & Check
     for (i, args) in variants.iter().enumerate() {
-        let result = detector.check_and_record("read_file", args, &bus).await;
+        let result = detector
+            .check_and_record(
+                "read_file",
+                args,
+                &bus,
+                &crate::hook::agent_hook::StopLedger::default(),
+            )
+            .await;
         if i < DOOM_LOOP_THRESHOLD - 1 {
             assert!(result.is_none(), "call {i} should not trip doom loop");
         } else {
@@ -85,7 +92,14 @@ async fn whitespace_only_args_trip_doom_loop() {
 
     // -- Exec & Check
     for (i, args) in variants.iter().enumerate() {
-        let result = detector.check_and_record("read_file", args, &bus).await;
+        let result = detector
+            .check_and_record(
+                "read_file",
+                args,
+                &bus,
+                &crate::hook::agent_hook::StopLedger::default(),
+            )
+            .await;
         if i < DOOM_LOOP_THRESHOLD - 1 {
             assert!(result.is_none(), "call {i} should not trip doom loop");
         } else {
@@ -109,7 +123,12 @@ async fn non_json_args_use_raw_signature() {
     // -- Exec & Check
     for i in 0..DOOM_LOOP_THRESHOLD {
         let result = detector
-            .check_and_record("read_file", "raw args", &bus)
+            .check_and_record(
+                "read_file",
+                "raw args",
+                &bus,
+                &crate::hook::agent_hook::StopLedger::default(),
+            )
             .await;
         if i < DOOM_LOOP_THRESHOLD - 1 {
             assert!(result.is_none(), "call {i} should not trip doom loop");

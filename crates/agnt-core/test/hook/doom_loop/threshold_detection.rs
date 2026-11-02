@@ -10,7 +10,12 @@ async fn no_doom_loop_under_threshold() {
 
     for _ in 0..(DOOM_LOOP_THRESHOLD - 1) {
         let result = detector
-            .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
+            .check_and_record(
+                "read_file",
+                "{\"path\": \"same\"}",
+                &bus,
+                &crate::hook::agent_hook::StopLedger::default(),
+            )
             .await;
         assert!(result.is_none());
     }
@@ -26,7 +31,12 @@ async fn doom_loop_fires_at_threshold() {
 
     for i in 0..DOOM_LOOP_THRESHOLD {
         let result = detector
-            .check_and_record("read_file", "{\"path\": \"same\"}", &bus)
+            .check_and_record(
+                "read_file",
+                "{\"path\": \"same\"}",
+                &bus,
+                &crate::hook::agent_hook::StopLedger::default(),
+            )
             .await;
         if i < DOOM_LOOP_THRESHOLD - 1 {
             assert!(result.is_none(), "call {i} should not trip doom loop");
@@ -60,7 +70,12 @@ async fn different_args_does_not_trip_doom_loop() {
 
     for i in 0..DOOM_LOOP_THRESHOLD {
         let result = detector
-            .check_and_record("read_file", &format!("{{\"path\": \"{i}\"}}"), &bus)
+            .check_and_record(
+                "read_file",
+                &format!("{{\"path\": \"{i}\"}}"),
+                &bus,
+                &crate::hook::agent_hook::StopLedger::default(),
+            )
             .await;
         assert!(
             result.is_none(),

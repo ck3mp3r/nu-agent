@@ -9,11 +9,10 @@
 //! fails or is cancelled. Every non-success terminal arm therefore persists the
 //! turn's delta through `persist_turn_delta`; the completed tail writes nothing.
 
+use agnt_kernel::StopCause;
 use nu_protocol::{LabeledError, Span};
 
 use crate::hook::chain::{NotRunCall, NotRunOutcome, NotRunStart, emit_not_run_dispatch};
-use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
-use crate::hook::output_repetition::OUTPUT_REPETITION_STOP_PREFIX;
 use crate::hook::permission_resolver::resolve_tool_source;
 use crate::hook::turn_tools::undispatched_streamed_calls;
 use crate::protocol::events::{SystemEvent, SystemKind};
@@ -221,11 +220,8 @@ where
             // block. A user cancel carries no stop reason, so it gets the
             // generic notice instead: the turn's completed work is kept, and
             // without the notice the user sees no sign the turn stopped.
-            let response_text = match &turn_result.cancel_reason {
-                Some(reason)
-                    if reason.starts_with(DOOM_LOOP_STOP_PREFIX)
-                        || reason.starts_with(OUTPUT_REPETITION_STOP_PREFIX) =>
-                {
+            let response_text = match (&turn_result.cancel_reason, turn_result.stop_cause) {
+                (Some(reason), Some(StopCause::DoomLoop | StopCause::OutputRepetition)) => {
                     let _ = self
                         .tool_infra
                         .bus
