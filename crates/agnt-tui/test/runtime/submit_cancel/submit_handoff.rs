@@ -108,18 +108,16 @@ async fn slash_commands_handoff() -> Result<()> {
     // -- Exec: the compaction artifact.
     compact
         .coordinator_mut()
-        .enqueue_event(SystemEvent::CompactionStarted {
+        .reduce_system_event(SystemEvent::CompactionStarted {
             source: "slash_compact".to_string(),
         });
-    compact.coordinator_mut().drain_transport();
     compact
         .coordinator_mut()
-        .enqueue_event(SystemEvent::CompactionCompleted {
+        .reduce_system_event(SystemEvent::CompactionCompleted {
             source: "slash_compact".to_string(),
             summary_preview: "preview".to_string(),
             summary_body: "summary body".to_string(),
         });
-    compact.coordinator_mut().drain_transport();
 
     // -- Check: the artifact is visible without a slash echo.
     let lines = compact

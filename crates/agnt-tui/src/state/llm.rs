@@ -161,11 +161,20 @@ impl LlmState {
             store.truncate(start);
         }
 
-        // Project the full accumulated text through markdown for the dedup
-        // check against the latest tool-display diff.
-        let projected_for_dedup = crate::markdown::render_markdown_lines(trimmed, None);
-        if assistant_diff_regurgitation_is_redundant(store, &projected_for_dedup) {
-            return false;
+        // Pre-scan the RAW accumulated text for a diff signature before paying
+        // for a markdown projection of the whole message. A projected line can
+        // only start with one of the three diff prefixes when raw source near
+        // that line carries them, except when markdown syntax wraps them (for
+        // example `**--- x**` projects to `--- x`). In that rare case this gate
+        // treats the chunk as prose and pushes it where the dedup might
+        // suppress: missed suppression is cosmetic (duplicate diff text in the
+        // stream). Over-detection (raw line has a prefix, projected lines do
+        // not) falls through to the dedup path below, so it changes nothing.
+        if aggregated_has_diff_signature(trimmed) {
+            let projected_for_dedup = crate::markdown::render_markdown_lines(trimmed, None);
+            if assistant_diff_regurgitation_is_redundant(store, &projected_for_dedup) {
+                return false;
+            }
         }
 
         // Always follow tail with ListState
@@ -197,6 +206,14 @@ fn handle_llm_end(
 }
 
 // region:    --- Support
+
+/// True when any raw line of the aggregated text starts with one of the three
+/// unified-diff prefixes the regurgitation dedup reacts to.
+fn aggregated_has_diff_signature(trimmed: &str) -> bool {
+    trimmed
+        .split('\n')
+        .any(|line| line.starts_with("--- ") || line.starts_with("+++ ") || line.starts_with("@@ "))
+}
 
 fn assistant_diff_regurgitation_is_redundant(
     store: &TranscriptStore,

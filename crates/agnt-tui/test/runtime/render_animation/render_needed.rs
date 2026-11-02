@@ -1,6 +1,6 @@
 use super::*;
 
-/// `render_needed` is set by `drain_transport`; `render_if_needed` skips when
+/// `render_needed` is set by the reducer fold; `render_if_needed` skips when
 /// not dirty or too soon, and fires (clearing the flag) when dirty and elapsed.
 #[test]
 fn render_needed_gating() -> Result<()> {
@@ -10,10 +10,9 @@ fn render_needed_gating() -> Result<()> {
     assert!(!coord.render_needed());
 
     // -- Exec
-    coord.enqueue_event(SystemEvent::Tick);
-    coord.drain_transport();
+    coord.reduce_event_batch([SystemEvent::Tick]);
 
-    // -- Check: drain_transport marks the frame dirty.
+    // -- Check: the reducer fold marks the frame dirty.
     assert!(coord.render_needed());
 
     // -- Setup & Fixtures: not dirty.

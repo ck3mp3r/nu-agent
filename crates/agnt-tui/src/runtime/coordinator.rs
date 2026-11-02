@@ -15,7 +15,6 @@ use crate::interaction::{
     dispatch::{KeyLens, dispatch_terminal_event, rewrite_action},
     input::{TerminalEvent, TerminalKey},
 };
-use crate::platform::transport::{Source, TuiTransport};
 use crate::rendering::{
     chrome::{Chrome, ContainerBorder},
     layout::{INPUT_MAX_HEIGHT, INPUT_MIN_HEIGHT, MAIN_SIDE_MARGIN, input_content_row_count},
@@ -26,9 +25,7 @@ use crate::runtime::layout::{compute_bottom_box_height, compute_status_h};
 use crate::runtime::render::bottom_box::{queued_prompt_entries, stacked_messages_height};
 use crate::runtime::render::frame::current_time_millis;
 use crate::runtime::render::transcript::PaintWindow;
-use crate::runtime::status::{
-    RepoBranchTracker, availability_label, status_left_content, status_right_content,
-};
+use crate::runtime::status::{RepoBranchTracker, status_left_content, status_right_content};
 use crate::state::{
     AppState, InputMode, McpServerState, McpServerUsabilityState, PickerRenderKind,
 };
@@ -40,23 +37,17 @@ use agnt_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use agnt_core::tools::mcp::runtime::McpServerLifecycle;
 use agnt_core::transcript::renderer::ItemStatus;
 
-/// The runtime coordinator that owns the TUI application state, the input
-/// transport, and render bookkeeping for the interactive render loop.
+/// The runtime coordinator that owns the TUI application state and the render
+/// bookkeeping for the interactive render loop.
 #[derive(Debug)]
 pub struct RuntimeCoordinator {
     pub(crate) state: AppState,
-    transport: TuiTransport,
     pub(crate) cancel_controller: CancelController,
     pub(crate) input_height: u16,
     last_input_content_width: usize,
     side_pane_visible: Option<bool>,
     pub(crate) quit_requested: bool,
     pub(crate) fatal_error: Option<String>,
-    pub(crate) input_backend_status: String,
-    pub(crate) last_input_poll_status: String,
-    pub(crate) last_input_error: Option<String>,
-    input_watchdog_started_at: Instant,
-    input_watchdog_timeout: Duration,
     pub(crate) repo_branch_tracker: Option<RepoBranchTracker>,
     pub(crate) theme_name: ThemeName,
     pub(crate) theme: TuiTheme,
@@ -69,16 +60,34 @@ pub struct RuntimeCoordinator {
 }
 
 impl RuntimeCoordinator {
-    const DEFAULT_INPUT_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(5);
     const MIN_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
-    pub fn new(columns: u16, rows: u16, side_pane_visible: Option<bool>) -> Self {
-        Self::new_with_watchdog(
-            columns,
-            rows,
+    pub fn new(columns: u16, _rows: u16, side_pane_visible: Option<bool>) -> Self {
+        let theme_name = ThemeName::default();
+        let theme = theme_name.resolve();
+        let (event_tx, _event_rx) =
+            tokio::sync::mpsc::channel::<agnt_core::orchestrator::OrchestratorEvent>(256);
+        let side_margin = if columns >= 8 { MAIN_SIDE_MARGIN } else { 0 };
+        let last_input_content_width = columns.saturating_sub(2 * side_margin + 4) as usize;
+        let mut coordinator = Self {
+            state: AppState::new_with_sender(event_tx),
+            cancel_controller: CancelController::default(),
+            input_height: INPUT_MIN_HEIGHT,
+            last_input_content_width,
             side_pane_visible,
-            Self::DEFAULT_INPUT_WATCHDOG_TIMEOUT,
-        )
+            quit_requested: false,
+            fatal_error: None,
+            repo_branch_tracker: None,
+            theme_name,
+            theme: theme.clone(),
+            render_needed: true,
+            last_render_at: Instant::now() - Duration::from_millis(100),
+            last_spinner_step: None,
+            textarea: Self::new_textarea(Vec::new()),
+        };
+        coordinator.state.theme = theme;
+        coordinator.sync_transcript_viewport_lines_with_layout();
+        coordinator
     }
 
     /// Build an input textarea with word-or-glyph soft wrap enabled.
@@ -100,45 +109,6 @@ impl RuntimeCoordinator {
         last_total_tokens: Option<u64>,
     ) {
         crate::state::hydrate_by_replay(&mut self.state, messages, last_total_tokens);
-    }
-
-    pub(crate) fn new_with_watchdog(
-        columns: u16,
-        _rows: u16,
-        side_pane_visible: Option<bool>,
-        input_watchdog_timeout: Duration,
-    ) -> Self {
-        let theme_name = ThemeName::default();
-        let theme = theme_name.resolve();
-        let (event_tx, _event_rx) =
-            tokio::sync::mpsc::channel::<agnt_core::orchestrator::OrchestratorEvent>(256);
-        let side_margin = if columns >= 8 { MAIN_SIDE_MARGIN } else { 0 };
-        let last_input_content_width = columns.saturating_sub(2 * side_margin + 4) as usize;
-        let mut coordinator = Self {
-            state: AppState::new_with_sender(event_tx),
-            transport: TuiTransport::default(),
-            cancel_controller: CancelController::default(),
-            input_height: INPUT_MIN_HEIGHT,
-            last_input_content_width,
-            side_pane_visible,
-            quit_requested: false,
-            fatal_error: None,
-            input_backend_status: "unknown".to_string(),
-            last_input_poll_status: "waiting for input poll".to_string(),
-            last_input_error: None,
-            input_watchdog_started_at: Instant::now(),
-            input_watchdog_timeout,
-            repo_branch_tracker: None,
-            theme_name,
-            theme: theme.clone(),
-            render_needed: true,
-            last_render_at: Instant::now() - Duration::from_millis(100),
-            last_spinner_step: None,
-            textarea: Self::new_textarea(Vec::new()),
-        };
-        coordinator.state.theme = theme;
-        coordinator.sync_transcript_viewport_lines_with_layout();
-        coordinator
     }
 
     /// Set the active theme by name, mirroring the `SwitchRequest::Theme` arm
@@ -165,7 +135,7 @@ impl RuntimeCoordinator {
     }
 
     /// Consume a `SystemEvent`. This is the only reducer entry point for
-    /// events: the bus arms and the transport drain both converge here.
+    /// events: every bus arm converges here.
     pub fn reduce_system_event(&mut self, event: SystemEvent) -> bool {
         crate::interaction::reducer::reduce(&mut self.state, event, Some(&self.cancel_controller))
     }
@@ -297,53 +267,10 @@ impl RuntimeCoordinator {
         self.cancel_controller.take_cancel_requested()
     }
 
-    pub fn enqueue_event(&mut self, event: SystemEvent) {
-        log::trace!("tui: enqueue_event {:?}", std::mem::discriminant(&event));
-        self.transport.enqueue_event(event);
-    }
-
-    pub fn poll_terminal_event(
-        &mut self,
-        event_source: &mut impl crate::runtime::TerminalEventSource,
-    ) {
-        // Pick up any restored input text from cancelled prompts before
-        // processing the next event.
-        self.pickup_restored_input_text();
-
-        if let Some(tracker) = self.repo_branch_tracker.as_mut() {
-            tracker.refresh();
-        }
-
-        let poll_result = event_source.poll_event();
-        let diagnostics = event_source.diagnostics();
-        self.update_input_diagnostics(&diagnostics);
-
-        let event = match poll_result {
-            Ok(Some(event)) => event,
-            Ok(None) => {
-                self.maybe_trigger_input_watchdog(&diagnostics);
-                return;
-            }
-            Err(error) => {
-                if Self::both_backends_unavailable(&diagnostics) {
-                    self.trigger_no_interactive_backend_fail_fast(Some(error));
-                    return;
-                }
-                self.fatal_error = Some(format!("Terminal input error: {error}"));
-                self.quit_requested = true;
-                self.cancel_controller.request_cancel();
-                return;
-            }
-        };
-
-        self.last_input_poll_status = format!("event from {}", diagnostics.active_backend);
-        self.handle_terminal_event(event);
-    }
-
     /// Process a single terminal event received from the input source: route
     /// insert-mode characters/paste into the textarea, and dispatch everything
-    /// else (submit, quit, navigation, pickers) through the reducer. Shared by
-    /// the blocking terminal poll path and the async render loop.
+    /// else (submit, quit, navigation, pickers) through the reducer. Called by
+    /// the async render loop for every terminal event it receives.
     pub fn handle_terminal_event(&mut self, event: TerminalEvent) {
         // Pick up any restored input text from cancelled prompts before
         // processing the next event.
@@ -879,105 +806,52 @@ impl RuntimeCoordinator {
         }
     }
 
-    fn update_input_diagnostics(&mut self, diagnostics: &crate::runtime::InputSourceDiagnostics) {
-        let primary = availability_label(diagnostics.primary_available);
-        let fallback = availability_label(diagnostics.fallback_available);
-        self.input_backend_status = format!(
-            "active={}, crossterm={}, /dev/tty={}",
-            diagnostics.active_backend, primary, fallback
-        );
-        self.last_input_poll_status = diagnostics.last_poll_state.clone();
-        self.last_input_error = diagnostics.last_error.clone();
-    }
-
-    fn maybe_trigger_input_watchdog(
+    /// Fold a batch of bus events under the chunk-coalescing rule:
+    /// at most the latest `InferenceChunk` and the latest
+    /// `CompactionSummaryChunk` are held; a pending chunk flushes before any
+    /// other event so the streamed text keeps its order; a newer chunk of the
+    /// same kind replaces the older one. Returns whether any fold changed
+    /// state, and marks the render needed when it did.
+    pub(crate) fn reduce_event_batch(
         &mut self,
-        diagnostics: &crate::runtime::InputSourceDiagnostics,
-    ) {
-        if self.quit_requested || self.fatal_error.is_some() {
-            return;
-        }
-
-        if !Self::both_backends_unavailable(diagnostics) {
-            return;
-        }
-
-        if self.input_watchdog_started_at.elapsed() < self.input_watchdog_timeout {
-            return;
-        }
-
-        self.trigger_no_interactive_backend_fail_fast(None);
-    }
-
-    fn both_backends_unavailable(diagnostics: &crate::runtime::InputSourceDiagnostics) -> bool {
-        diagnostics.primary_available == Some(false)
-            && diagnostics.fallback_available == Some(false)
-    }
-
-    fn trigger_no_interactive_backend_fail_fast(&mut self, poll_error: Option<String>) {
-        if let Some(error) = poll_error
-            && self.last_input_error.is_none()
-        {
-            self.last_input_error = Some(error);
-        }
-
-        let mut message = format!(
-            "No interactive input backend available (crossterm and /dev/tty unavailable). Last poll: {}.",
-            self.last_input_poll_status
-        );
-        if let Some(error) = self.last_input_error.as_deref() {
-            message.push_str(&format!(" Last error: {error}."));
-        }
-        message.push_str(" Run `agent` in an interactive terminal and verify TTY access.");
-
-        self.fatal_error = Some(message);
-        self.quit_requested = true;
-        self.cancel_controller.request_cancel();
-    }
-
-    pub fn drain_transport(&mut self) {
-        // Coalescing rule, stated here and nowhere else: at most the latest
-        // `InferenceChunk` and the latest `CompactionSummaryChunk` per drain
-        // cycle. A pending chunk is flushed before any other event so the
-        // streamed text keeps its place in the order, and a newer chunk of the
-        // same kind replaces the older one. Input events are never coalesced.
+        events: impl IntoIterator<Item = SystemEvent>,
+    ) -> bool {
         let mut pending_inference: Option<SystemEvent> = None;
         let mut pending_compaction: Option<SystemEvent> = None;
         let mut changed = false;
 
-        while let Some(item) = self.transport.poll_next() {
-            if item.source == Source::Event {
-                if matches!(&item.event, SystemEvent::InferenceChunk { .. }) {
-                    pending_inference = Some(item.event);
-                    continue;
-                }
-                if matches!(&item.event, SystemEvent::CompactionSummaryChunk { .. }) {
-                    pending_compaction = Some(item.event);
-                    continue;
-                }
+        for event in events {
+            if matches!(&event, SystemEvent::InferenceChunk { .. }) {
+                pending_inference = Some(event);
+                continue;
+            }
+            if matches!(&event, SystemEvent::CompactionSummaryChunk { .. }) {
+                pending_compaction = Some(event);
+                continue;
             }
 
-            if let Some(event) = pending_inference.take() {
-                changed |= self.reduce_system_event(event);
+            if let Some(pending) = pending_inference.take() {
+                changed |= self.reduce_system_event(pending);
             }
-            if let Some(event) = pending_compaction.take() {
-                changed |= self.reduce_system_event(event);
+            if let Some(pending) = pending_compaction.take() {
+                changed |= self.reduce_system_event(pending);
             }
 
-            changed |= self.reduce_system_event(item.event);
+            changed |= self.reduce_system_event(event);
         }
 
         // Flush the tail of the stream.
-        if let Some(event) = pending_inference.take() {
-            changed |= self.reduce_system_event(event);
+        if let Some(pending) = pending_inference.take() {
+            changed |= self.reduce_system_event(pending);
         }
-        if let Some(event) = pending_compaction.take() {
-            changed |= self.reduce_system_event(event);
+        if let Some(pending) = pending_compaction.take() {
+            changed |= self.reduce_system_event(pending);
         }
 
         if changed {
             self.mark_render_needed();
         }
+        changed
     }
 
     pub(crate) fn mark_render_needed(&mut self) {

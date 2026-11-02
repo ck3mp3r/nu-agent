@@ -1,9 +1,7 @@
 use std::time::Instant;
 
+use agnt_core::bus::TryRecvError;
 use agnt_core::orchestrator::OrchestratorEvent;
-use agnt_core::protocol::contracts::{ProgressUi, UserInputUi};
-use agnt_core::protocol::events::SystemEvent;
-use agnt_core::renderer::UiRenderer;
 use nu_protocol::LabeledError;
 use tokio::sync::mpsc;
 
@@ -11,18 +9,15 @@ use crate::interaction::cancel::CancelController;
 use crate::interaction::input::TerminalEvent;
 use crate::runtime::map_crossterm_event;
 use crate::runtime::render::current_time_millis;
-use crate::runtime::{HybridTerminalEvents, RuntimeCoordinator, TuiRuntimeRenderer};
+use crate::runtime::{RuntimeCoordinator, TuiRuntimeRenderer};
 use crate::state::{ActivePicker, PickerOption};
 
 #[cfg(test)]
 #[path = "../test/interactive.rs"]
 mod interactive_test;
 
-pub struct TuiInteractiveUi<R>
-where
-    R: UiRenderer,
-{
-    renderer: TuiRuntimeRenderer<R, HybridTerminalEvents>,
+pub struct TuiInteractiveUi {
+    renderer: TuiRuntimeRenderer,
     theme_persist_tx: Option<mpsc::Sender<String>>,
 }
 
@@ -39,11 +34,8 @@ pub(crate) struct RenderLoopChannels {
 pub(crate) const RENDER_TICK: std::time::Duration =
     std::time::Duration::from_millis(crate::runtime::SPINNER_CADENCE_MS as u64);
 
-impl<R> TuiInteractiveUi<R>
-where
-    R: UiRenderer,
-{
-    pub fn new(renderer: TuiRuntimeRenderer<R, HybridTerminalEvents>) -> Self {
+impl TuiInteractiveUi {
+    pub fn new(renderer: TuiRuntimeRenderer) -> Self {
         Self {
             renderer,
             theme_persist_tx: None,
@@ -238,36 +230,6 @@ where
     }
 }
 
-impl<R> ProgressUi for TuiInteractiveUi<R>
-where
-    R: UiRenderer,
-{
-    fn emit(&mut self, event: &SystemEvent) {
-        self.renderer.emit(event);
-    }
-
-    fn flush(&mut self) {
-        self.renderer.flush();
-    }
-
-    fn take_cancel_requested(&self) -> bool {
-        self.renderer.take_cancel_requested()
-    }
-
-    fn emit_batch(&mut self, events: &[SystemEvent]) {
-        self.renderer.emit_batch(events);
-    }
-}
-
-impl<R> UserInputUi for TuiInteractiveUi<R>
-where
-    R: UiRenderer,
-{
-    fn event_sender(&self) -> &mpsc::Sender<OrchestratorEvent> {
-        self.renderer.event_sender()
-    }
-}
-
 /// Spawn a dedicated thread that reads crossterm terminal events and sends
 /// them on the given channel.
 ///
@@ -367,25 +329,38 @@ pub(crate) async fn run_render_loop<
                 let _ = coordinator.render_if_needed(live_terminal);
             }
             ok = ui_event_rx.recv() => {
-                if let Ok(event) = ok
-                    && coordinator.reduce_system_event(event)
-                {
-                    // A turn completion (or failure) clears the active prompt. Drain
-                    // any prompts stacked during the turn into PromptSubmitted events
-                    // now, without waiting for the next terminal input.
-                    let pending = coordinator.state.take_pending_events(cancel_controller);
-                    for ev in pending {
-                        if event_tx.send(ev).await.is_err() {
-                            return;
+                if let Ok(event) = ok {
+                    // Coalesce the burst that queued behind the awaited event:
+                    // one chunk fold per wake instead of one per chunk. `Lagged`
+                    // ends the drain — the buffered events arrive on later
+                    // iterations, and chunks carry `aggregated`, so a dropped
+                    // older chunk loses no content.
+                    let mut batch = vec![event];
+                    loop {
+                        match ui_event_rx.try_recv() {
+                            Ok(next) => batch.push(next),
+                            Err(TryRecvError::Empty | TryRecvError::Closed) => break,
+                            Err(TryRecvError::Lagged(_)) => break,
                         }
                     }
-                    drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
-                    let ui_state_events = coordinator.state.take_pending_ui_state_events();
-                    for ev in ui_state_events {
-                        let _ = bus.ui_state().send(ev).await;
+                    if coordinator.reduce_event_batch(batch) {
+                        // A turn completion (or failure) clears the active prompt. Drain
+                        // any prompts stacked during the turn into PromptSubmitted events
+                        // now, without waiting for the next terminal input.
+                        let pending = coordinator.state.take_pending_events(cancel_controller);
+                        for ev in pending {
+                            if event_tx.send(ev).await.is_err() {
+                                return;
+                            }
+                        }
+                        drain_theme_persist(coordinator, &channels.theme_persist_tx).await;
+                        let ui_state_events = coordinator.state.take_pending_ui_state_events();
+                        for ev in ui_state_events {
+                            let _ = bus.ui_state().send(ev).await;
+                        }
+                        coordinator.mark_render_needed();
+                        let _ = coordinator.render_if_needed(live_terminal);
                     }
-                    coordinator.mark_render_needed();
-                    let _ = coordinator.render_if_needed(live_terminal);
                 }
             }
             ok = compaction_rx.recv() => {

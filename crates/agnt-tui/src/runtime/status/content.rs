@@ -222,11 +222,3 @@ fn format_mcp_failure_line(
 
     format!("Failures: {}", ellipsize(&joined, max_line_chars))
 }
-
-pub(crate) fn availability_label(availability: Option<bool>) -> &'static str {
-    match availability {
-        Some(true) => "available",
-        Some(false) => "unavailable",
-        None => "unknown",
-    }
-}

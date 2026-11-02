@@ -14,6 +14,9 @@ mod eviction;
 #[path = "transcript/height_index.rs"]
 mod height_index;
 
+#[path = "transcript/invalidation.rs"]
+mod invalidation;
+
 #[path = "transcript/hydration.rs"]
 mod hydration;
 

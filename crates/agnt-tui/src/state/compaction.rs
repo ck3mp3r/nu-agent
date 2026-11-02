@@ -112,8 +112,8 @@ impl CompactionState {
         source: &str,
         status: CompactionStatus,
     ) {
-        let mut mutated = false;
-        for entry in store.entries_mut().iter_mut().rev() {
+        let mut mutated_row: Option<usize> = None;
+        for (index, entry) in store.entries_mut().iter_mut().enumerate().rev() {
             let TranscriptEntry::Task(task) = entry else {
                 continue;
             };
@@ -121,11 +121,11 @@ impl CompactionState {
                 continue;
             }
             task.status = item_status(status);
-            mutated = true;
+            mutated_row = Some(index);
             break;
         }
-        if mutated {
-            store.invalidate_height_index();
+        if let Some(index) = mutated_row {
+            store.remeasure_entry_at(index);
         }
         if let Some(item) = self
             .blocks

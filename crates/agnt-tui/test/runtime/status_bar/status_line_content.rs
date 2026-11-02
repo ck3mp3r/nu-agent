@@ -111,10 +111,8 @@ fn status_lines_tokens_and_llm_end() -> Result<()> {
 
     // -- Setup & Fixtures: a coordinator with two LLM completions.
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.enqueue_event(llm_completed(10, 0, 11, 9, Some(20), None, false));
-    coordinator.drain_transport();
-    coordinator.enqueue_event(llm_completed(12, 0, 3, 4, Some(7), None, false));
-    coordinator.drain_transport();
+    coordinator.reduce_system_event(llm_completed(10, 0, 11, 9, Some(20), None, false));
+    coordinator.reduce_system_event(llm_completed(12, 0, 3, 4, Some(7), None, false));
 
     // -- Check
     let status_lines =
@@ -143,7 +141,7 @@ fn status_line_shows_cumulative_session_cost() -> Result<()> {
         .status
         .tokens
         .set_context_window_max_tokens(Some(128_000));
-    coordinator.enqueue_event(llm_completed(
+    coordinator.reduce_system_event(llm_completed(
         40,
         0,
         2_500,
@@ -152,8 +150,7 @@ fn status_line_shows_cumulative_session_cost() -> Result<()> {
         Some(0.001),
         true,
     ));
-    coordinator.drain_transport();
-    coordinator.enqueue_event(llm_completed(
+    coordinator.reduce_system_event(llm_completed(
         40,
         0,
         2_500,
@@ -162,7 +159,6 @@ fn status_line_shows_cumulative_session_cost() -> Result<()> {
         Some(0.002),
         true,
     ));
-    coordinator.drain_transport();
 
     // -- Exec
     let line = crate::runtime::status_left_content_for_test(
@@ -189,8 +185,7 @@ fn status_line_shows_tokens_only_when_unpriced() -> Result<()> {
         .status
         .tokens
         .set_context_window_max_tokens(Some(128_000));
-    coordinator.enqueue_event(llm_completed(40, 0, 2_500, 500, Some(3_000), None, false));
-    coordinator.drain_transport();
+    coordinator.reduce_system_event(llm_completed(40, 0, 2_500, 500, Some(3_000), None, false));
 
     // -- Exec
     let line = crate::runtime::status_left_content_for_test(
@@ -218,7 +213,7 @@ fn status_line_marks_mixed_pricing_with_plus() -> Result<()> {
         .status
         .tokens
         .set_context_window_max_tokens(Some(128_000));
-    coordinator.enqueue_event(llm_completed(
+    coordinator.reduce_system_event(llm_completed(
         40,
         0,
         2_500,
@@ -227,9 +222,7 @@ fn status_line_marks_mixed_pricing_with_plus() -> Result<()> {
         Some(0.001),
         true,
     ));
-    coordinator.drain_transport();
-    coordinator.enqueue_event(llm_completed(40, 0, 2_500, 500, Some(3_000), None, false));
-    coordinator.drain_transport();
+    coordinator.reduce_system_event(llm_completed(40, 0, 2_500, 500, Some(3_000), None, false));
 
     // -- Exec
     let line = crate::runtime::status_left_content_for_test(
@@ -251,7 +244,7 @@ fn status_line_marks_mixed_pricing_with_plus() -> Result<()> {
 fn status_line_shows_cost_without_percentage_when_max_unknown() -> Result<()> {
     // -- Setup & Fixtures: a priced call and no context window.
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
-    coordinator.enqueue_event(llm_completed(
+    coordinator.reduce_system_event(llm_completed(
         40,
         0,
         2_500,
@@ -260,7 +253,6 @@ fn status_line_shows_cost_without_percentage_when_max_unknown() -> Result<()> {
         Some(0.001),
         true,
     ));
-    coordinator.drain_transport();
 
     // -- Exec
     let line = crate::runtime::status_left_content_for_test(
@@ -296,8 +288,7 @@ fn test_token_usage_total_less_completion_preserves_hydrated_count() -> Result<(
         .set_context_window_max_tokens(Some(128_000));
 
     // -- Exec: a completion whose wire omitted the total.
-    coordinator.enqueue_event(llm_completed(20, 0, 11, 9, None, None, false));
-    coordinator.drain_transport();
+    coordinator.reduce_system_event(llm_completed(20, 0, 11, 9, None, None, false));
 
     // -- Check: the hydrated count and percentage survive.
     let line = crate::runtime::status_left_content_for_test(

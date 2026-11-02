@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
 
 use agnt_a2a::{
     AgentCard, Peer, PeerCache, PeerDiscoveryImpl, mdns_name_for_switch, rebuild_card_for_switch,
@@ -12,7 +11,7 @@ use agnt_core::bus::OneshotTx;
 use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::orchestrator::{
     AgentSwitchHook, InteractiveLoopConfig, run_hydrated_interactive_loop_with_external_prompts,
-    run_interactive_loop_with_external_prompts, run_single_turn,
+    run_interactive_loop_with_external_prompts,
 };
 use agnt_core::protocol::event::PermissionDecision;
 use agnt_core::protocol::mcp_management::McpManagement;
@@ -22,13 +21,9 @@ use agnt_core::protocol::picker::{
 };
 use agnt_core::protocol::session_management::SessionPersistence;
 use agnt_tty::policy::UiPolicy;
-use agnt_tty::{StderrUiFactory, UiRendererFactory};
 use agnt_tui::TuiInteractiveUi;
 use agnt_tui::platform::terminal::TerminalLifecycle;
-use agnt_tui::runtime::{
-    AnsiTerminalBackend, HybridTerminalEvents, TtyTerminalEvents, TuiRuntimeRenderer,
-    open_tty_reader,
-};
+use agnt_tui::runtime::{AnsiTerminalBackend, TuiRuntimeRenderer};
 use agnt_tui::state::ActivePicker;
 use nu_protocol::{Span, Value};
 
@@ -92,11 +87,9 @@ impl AgentSwitchHook for TuiAgentSwitchHook {
 
 // endregion: --- Types
 
-/// Run the interactive TUI, or a single turn when `prompt` is `Some`.
+/// Run the interactive TUI.
 ///
-/// `prompt` is `None` when the CLI was started without a prompt: the
-/// interactive loop then reads prompts from the TUI input pane. When `prompt`
-/// is `Some`, the function runs exactly one turn with the optional `context`.
+/// The interactive loop reads prompts from the TUI input pane.
 pub async fn run_tui_mode(
     runtime_impl: AgentConversationRuntime,
     prompt: Option<String>,
@@ -127,9 +120,9 @@ pub async fn run_tui_mode(
 /// The TUI body, without the process-wide agent lifecycle.
 async fn run_tui_mode_inner(
     mut runtime_impl: AgentConversationRuntime,
-    prompt: Option<String>,
-    context: Option<String>,
-    ui_policy: UiPolicy,
+    _prompt: Option<String>,
+    _context: Option<String>,
+    _ui_policy: UiPolicy,
     hydration: TuiHydrationInput,
     options: TuiModeOptions,
 ) -> Result<Value> {
@@ -147,17 +140,9 @@ async fn run_tui_mode_inner(
         TerminalLifecycle::new(AnsiTerminalBackend::new(std::io::stderr()));
 
     let (columns, rows) = crossterm::terminal::size().unwrap_or((120, 30));
-    let fallback_events = open_tty_reader()
-        .ok()
-        .and_then(|tty_reader| TtyTerminalEvents::new(tty_reader, Duration::from_millis(30)).ok());
 
-    let runtime_renderer = TuiRuntimeRenderer::new_live(
-        StderrUiFactory::new(std::io::stderr(), false).create(ui_policy),
-        HybridTerminalEvents::new(Duration::from_millis(60), fallback_events),
-        columns,
-        rows,
-    )
-    .map_err(|err| Error::Custom(format!("Failed to initialize TUI renderer: {err}")))?;
+    let runtime_renderer = TuiRuntimeRenderer::new_live(columns, rows)
+        .map_err(|err| Error::Custom(format!("Failed to initialize TUI renderer: {err}")))?;
 
     let mut tui_ui = TuiInteractiveUi::new(runtime_renderer);
     tui_ui.set_theme(options.theme_name);
@@ -300,15 +285,7 @@ async fn run_tui_mode_inner(
         .enter()
         .map_err(|e| Error::Custom(format!("Failed to enter terminal raw mode: {e}")))?;
 
-    let result = if let Some(prompt) = prompt {
-        // Single-turn TUI: core emits domain events on the bus; the renderer
-        // subscribes to bus channels directly (the render loop subscribes), so we
-        // pass the bus rather than a `ProgressUi`.
-        let bus = runtime_impl.bus.clone();
-        run_single_turn(&mut runtime_impl, &bus, prompt, context, Span::unknown())
-            .await
-            .map_err(Error::from)
-    } else if hydration.should_hydrate {
+    let result = if hydration.should_hydrate {
         // The startup `HydrateTranscript` event is published before the render
         // loop subscribes to the UI-state channel, so it is dropped. Push the
         // persisted transcript directly, before `make_render_loop_spawner`

@@ -4,29 +4,19 @@ use agnt_core::bus::Bus;
 use agnt_core::orchestrator::OrchestratorEvent;
 use agnt_core::protocol::contracts::UiMessageSnapshot;
 use agnt_core::protocol::events::SystemEvent;
-use agnt_core::renderer::UiRenderer;
 use tokio::sync::mpsc;
 
 use crate::interaction::cancel::CancelController;
 use crate::interaction::input::{TerminalEvent, TerminalKey};
-use crate::runtime::{HybridTerminalEvents, RuntimeCoordinator};
+use crate::runtime::RuntimeCoordinator;
 use crate::test_support::entry_text;
 
 use super::{TuiInteractiveUi, run_render_loop};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-struct FakeRenderer;
-
-impl UiRenderer for FakeRenderer {
-    fn emit(&mut self, _event: &SystemEvent) {}
-    fn flush(&mut self) {}
-}
-
-fn make_ui() -> TuiInteractiveUi<FakeRenderer> {
-    let events = HybridTerminalEvents::new(Duration::from_millis(60), None);
-    let renderer = crate::runtime::TuiRuntimeRenderer::new(FakeRenderer, events, 120, 30);
-    TuiInteractiveUi::new(renderer)
+fn make_ui() -> TuiInteractiveUi {
+    TuiInteractiveUi::new(crate::runtime::TuiRuntimeRenderer::new(120, 30))
 }
 
 #[test]

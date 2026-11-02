@@ -63,14 +63,15 @@ fn test_transcript_display_completion_paints_once_after_a_rebuild() -> Result<()
 }
 
 // ---------------------------------------------------------------------------
-// The in-place completion mutation invalidates the cached rows
+// The in-place completion mutation re-measures the cached rows
 // ---------------------------------------------------------------------------
 
 /// WHEN a tool call completes with a display and the pane repaints without a
-/// resize, THE height index SHALL re-measure the mutated entry, so every planned
-/// entry spans exactly its measured rows — no stale metric clips the body.
+/// resize, THE height index SHALL re-measure the mutated entry in place, so
+/// every planned entry spans exactly its measured rows — no stale metric clips
+/// the body and no wholesale rebuild runs.
 #[test]
-fn test_transcript_display_completion_invalidates_the_height_index() -> Result<()> {
+fn test_transcript_display_completion_remeasures_the_height_index() -> Result<()> {
     // -- Setup & Fixtures: a live session with the pane already painted, so a
     // cached metric exists for the entry the completion mutates.
     let mut coord = RuntimeCoordinator::new(COLUMNS, ROWS, None);
@@ -81,13 +82,14 @@ fn test_transcript_display_completion_invalidates_the_height_index() -> Result<(
     // -- Exec: the completion records the display on the entry in place.
     complete_call_with_display(&mut coord);
 
-    // -- Check: the in-place mutation marks the cached rows stale.
+    // -- Check: the in-place mutation re-measures the entry and leaves the
+    // index valid — no wholesale rebuild is needed for the next paint.
     assert!(
-        !coord.state.transcript.height_index_valid_for(width),
-        "the completion display must invalidate the height index"
+        coord.state.transcript.height_index_valid_for(width),
+        "the completion display must re-measure in place, not invalidate"
     );
 
-    // -- Exec: the next paint re-measures — no resize, only the invalidation.
+    // -- Exec: the next paint plans the mutated entry — no resize, no rebuild.
     let _ = render_transcript_pane_to_backend(&mut coord, COLUMNS, ROWS, true, 0);
 
     // -- Check: every planned entry spans exactly its measured rows.

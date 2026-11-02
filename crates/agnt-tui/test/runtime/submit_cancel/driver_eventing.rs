@@ -2,26 +2,6 @@ use super::*;
 
 use agnt_core::transcript::entry::TranscriptEntry;
 
-/// The runtime renderer reuses eventing and preserves emit passthrough.
-#[test]
-fn runtime_renderer_reuses_eventing_and_preserves_emit_passthrough() {
-    let inner = FakeRenderer::default();
-    let scripted = ScriptedTerminalEvents::from_script("char:h,ctrlc,ctrlc,ctrlc,resize:140x35");
-    let mut runtime_renderer = TuiRuntimeRenderer::new(inner, scripted, 120, 30);
-
-    runtime_renderer.emit(&SystemEvent::InferenceStarted);
-    runtime_renderer.emit(&SystemEvent::Tick);
-    runtime_renderer.emit(&SystemEvent::Tick);
-    runtime_renderer.emit(&SystemEvent::Tick);
-    runtime_renderer.emit(&SystemEvent::Tick);
-    runtime_renderer.flush();
-
-    assert!(runtime_renderer.coordinator().take_cancel_requested());
-    assert!(runtime_renderer.coordinator().quit_requested());
-    let state = runtime_renderer.coordinator().state();
-    assert_eq!(state.phase, UiPhase::Busy);
-}
-
 /// The render loop hands a submitted prompt to the orchestrator channel exactly
 /// once, forwards Quit on Ctrl+C, and a global abort cancels active and pending
 /// prompts and starts fresh.

@@ -61,16 +61,15 @@ fn start_finish_and_preview_mutate_one_entry_in_place() -> Result<()> {
     let entry = tool_entry_at(&preview_state, 0)?;
     assert_eq!(entry.preview.as_ref(), Some(&preview));
 
-    // -- Check: the in-place mutation marks the index stale; the rebuild
-    // accounts for the preview rows.
+    // -- Check: the in-place mutation re-measures only that entry, so the index
+    // stays valid and already carries the preview rows.
     assert!(
-        !preview_state.transcript.height_index_valid_for(width),
-        "an in-place preview mutation must invalidate the height index"
+        preview_state.transcript.height_index_valid_for(width),
+        "an in-place preview mutation must keep the height index valid"
     );
-    preview_state.transcript.rebuild_height_index(width);
     assert!(
         preview_state.transcript.total_visual_rows() > rows_before,
-        "the preview content must add visual rows after the rebuild"
+        "the preview content must add visual rows"
     );
     Ok(())
 }
@@ -79,11 +78,11 @@ fn start_finish_and_preview_mutate_one_entry_in_place() -> Result<()> {
 // Preview-path height index (task 69706655)
 // ---------------------------------------------------------------------------
 
-/// `set_tool_preview` mutates the tool entry in place and marks the height
-/// index stale. A rebuild must therefore agree with a wholesale rebuild, both
-/// when the tool entry is last and when another entry follows it.
+/// `set_tool_preview` mutates the tool entry in place and re-measures only
+/// that entry, so the index stays valid and agrees with a wholesale rebuild,
+/// both when the tool entry is last and when another entry follows it.
 #[test]
-fn set_tool_preview_invalidates_and_rebuilds_to_a_wholesale_index() -> Result<()> {
+fn set_tool_preview_remeasures_to_a_wholesale_index() -> Result<()> {
     // -- Setup & Fixtures: a tool call with a valid index at width 80.
     let width = 80usize;
     let mut state = AppState::default();
@@ -103,14 +102,13 @@ fn set_tool_preview_invalidates_and_rebuilds_to_a_wholesale_index() -> Result<()
         &edit_preview(),
     );
 
-    // -- Check: one entry, stale index, rebuild matches a wholesale rebuild.
+    // -- Check: one entry, index still valid, total matches a wholesale rebuild.
     assert_eq!(state.transcript.len(), 1);
-    assert!(!state.transcript.height_index_valid_for(width));
-    state.transcript.rebuild_height_index(width);
+    assert!(state.transcript.height_index_valid_for(width));
     assert_eq!(
         state.transcript.total_visual_rows(),
         wholesale_total_rows(&state, width),
-        "the rebuilt index must match a wholesale rebuild after a tail preview"
+        "the re-measured index must match a wholesale rebuild after a tail preview"
     );
 
     // -- Setup & Fixtures: a user entry after the tool entry.
@@ -138,15 +136,14 @@ fn set_tool_preview_invalidates_and_rebuilds_to_a_wholesale_index() -> Result<()
         &edit_preview(),
     );
 
-    // -- Check: the mutation keeps the entry count, invalidates the index, and
-    // the rebuild matches a wholesale rebuild.
+    // -- Check: the mutation keeps the entry count, leaves the index valid, and
+    // the total matches a wholesale rebuild.
     assert_eq!(mid.transcript.len(), 2);
-    assert!(!mid.transcript.height_index_valid_for(width));
-    mid.transcript.rebuild_height_index(width);
+    assert!(mid.transcript.height_index_valid_for(width));
     assert_eq!(
         mid.transcript.total_visual_rows(),
         wholesale_total_rows(&mid, width),
-        "the rebuilt index must match a wholesale rebuild after a mid-list preview"
+        "the re-measured index must match a wholesale rebuild after a mid-list preview"
     );
     Ok(())
 }

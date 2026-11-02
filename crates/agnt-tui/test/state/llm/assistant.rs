@@ -204,6 +204,93 @@ fn assistant_diff_regurgitation_is_processed_without_a_tool_display() -> Result<
     Ok(())
 }
 
+/// Prose-only chunks carry no diff signature, so the fold truncates and
+/// re-pushes one streamed entry: a longer delta replaces it, and folding the
+/// same text twice still leaves exactly one entry at the stream start.
+#[test]
+fn test_llm_assistant_message_prose_chunk_pushes_one_entry() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = busy_state_with_clean_transcript();
+
+    // -- Exec & Check: the first prose delta pushes one entry after the start.
+    reduce_llm(&mut state, assistant_message("Here is the plan."));
+    let start = state
+        .transcript
+        .assistant_stream_start
+        .ok_or("should have assistant_stream_start")?;
+    assert_eq!(state.transcript.len(), start + 1);
+
+    // -- Exec & Check: a longer prose delta replaces the entry, not appends.
+    reduce_llm(
+        &mut state,
+        assistant_message("Here is the plan.\nStep one."),
+    );
+    assert_eq!(state.transcript.assistant_stream_start, Some(start));
+    assert_eq!(state.transcript.len(), start + 1);
+    assert_eq!(
+        assistant_markdown_entries(&state),
+        vec!["Here is the plan.\nStep one.".to_string()]
+    );
+
+    // -- Exec & Check: the same aggregated text folded again keeps one entry.
+    reduce_llm(
+        &mut state,
+        assistant_message("Here is the plan.\nStep one."),
+    );
+    assert_eq!(state.transcript.len(), start + 1);
+    Ok(())
+}
+
+/// A diff marker wrapped in markdown emphasis is prose to the raw pre-scan:
+/// its projection starts with `--- ` but no raw line does, so the fold pushes
+/// the chunk (the accepted divergence, documented at the pre-scan).
+#[test]
+fn test_llm_assistant_message_emphasis_wrapped_diff_marker_pushes() -> Result<()> {
+    // -- Setup & Fixtures: a completed edit whose diff is the dedup target.
+    let mut state = AppState::default();
+    completed_edit_with_diff(&mut state);
+    let before = state.transcript.len();
+    let wrapped = "**--- x**";
+    let projected_line = project_spans(wrapped)
+        .into_iter()
+        .map(|(text, _)| text)
+        .collect::<String>();
+    assert!(
+        projected_line.trim_start().starts_with("--- "),
+        "the projection must surface a diff prefix the raw line does not carry"
+    );
+
+    // -- Exec
+    reduce_llm(&mut state, assistant_message(wrapped));
+
+    // -- Check: the streamed entry is pushed.
+    assert_eq!(state.transcript.len(), before + 1);
+    assert_eq!(
+        assistant_markdown_entries(&state),
+        vec![wrapped.to_string()]
+    );
+    Ok(())
+}
+
+/// A raw diff signature the tool display does not contain is not redundant, so
+/// the signature branch keeps HEAD's push.
+#[test]
+fn test_llm_assistant_message_unrelated_diff_signature_pushes() -> Result<()> {
+    // -- Setup & Fixtures
+    let mut state = AppState::default();
+    completed_edit_with_diff(&mut state);
+    let before = state.transcript.len();
+    let text = "```diff\n--- a/other.txt\n+++ b/other.txt\n@@ -1 +1 @@\n-old\n+other\n```";
+
+    // -- Exec
+    reduce_llm(&mut state, assistant_message(text));
+
+    // -- Check
+    assert_eq!(state.transcript.len(), before + 1);
+    assert_eq!(assistant_markdown_entries(&state), vec![text.to_string()]);
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Test Support
 // ---------------------------------------------------------------------------

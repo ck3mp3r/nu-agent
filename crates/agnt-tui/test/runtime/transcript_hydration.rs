@@ -240,16 +240,14 @@ async fn coordinator_hydration_markdown_projection() -> Result<()> {
     let markdown = markdown_fixture("fenced_code_blocks.md");
 
     // -- Exec
-    memoized.enqueue_event(SystemEvent::InferenceChunk {
+    memoized.reduce_system_event(SystemEvent::InferenceChunk {
         delta: markdown.clone(),
         aggregated: markdown.clone(),
     });
-    memoized.drain_transport();
-    memoized.enqueue_event(SystemEvent::InferenceChunk {
+    memoized.reduce_system_event(SystemEvent::InferenceChunk {
         delta: markdown.clone(),
         aggregated: markdown,
     });
-    memoized.drain_transport();
 
     // -- Check: the second message replaces the first.
     assert_eq!(
@@ -271,11 +269,10 @@ async fn coordinator_hydration_markdown_projection() -> Result<()> {
     let markdown = markdown_fixture("fenced_code_blocks.md");
     driver
         .coordinator_mut()
-        .enqueue_event(SystemEvent::InferenceChunk {
+        .reduce_system_event(SystemEvent::InferenceChunk {
             delta: markdown.clone(),
             aggregated: markdown,
         });
-    driver.coordinator_mut().drain_transport();
 
     // -- Exec
     for (columns, rows) in [(100, 28), (140, 42), (80, 24)] {
@@ -299,11 +296,10 @@ fn assistant_message_event_sanitizes_pseudo_and_control_tags() -> Result<()> {
     let text = "prefix\n[code:json]\n{\"ok\":true}\n[/code]\n<system-reminder>hidden</system-reminder>\nsuffix";
 
     // -- Exec
-    coordinator.enqueue_event(SystemEvent::InferenceChunk {
+    coordinator.reduce_system_event(SystemEvent::InferenceChunk {
         delta: text.to_string(),
         aggregated: text.to_string(),
     });
-    coordinator.drain_transport();
 
     // -- Check
     let projected_lines: Vec<String> = coordinator

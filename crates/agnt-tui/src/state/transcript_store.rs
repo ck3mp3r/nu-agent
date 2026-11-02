@@ -189,27 +189,26 @@ impl TranscriptStore {
     }
 
     /// Set the preview on the tool entry at `index` in place. The entry keeps
-    /// its identity, so no companion entry is pushed. Returns whether the
-    /// entry is a tool entry.
+    /// its identity, so no companion entry is pushed; only this entry is
+    /// re-measured. Returns whether the entry is a tool entry.
     pub(crate) fn set_tool_preview_at(&mut self, index: usize, preview: Display) -> bool {
         let Some(TranscriptEntry::Tool(tool)) = self.entries.get_mut(index) else {
             return false;
         };
         tool.preview = Some(preview);
-        self.invalidate_height_index();
+        self.remeasure_entry_at(index);
         true
     }
 
     /// Set the completion display on the tool entry at `index` in place. The
-    /// entry keeps its identity, so no companion entry is pushed; the in-place
-    /// mutation invalidates the cached rows, exactly as the preview path does.
-    /// Returns whether the entry is a tool entry.
+    /// entry keeps its identity, so no companion entry is pushed; only this
+    /// entry is re-measured. Returns whether the entry is a tool entry.
     pub(crate) fn set_tool_result_at(&mut self, index: usize, result: Display) -> bool {
         let Some(TranscriptEntry::Tool(tool)) = self.entries.get_mut(index) else {
             return false;
         };
         tool.result = Some(result);
-        self.invalidate_height_index();
+        self.remeasure_entry_at(index);
         true
     }
 
@@ -227,6 +226,24 @@ impl TranscriptStore {
         self.height_index.derive();
     }
 
+    /// Re-measure one entry mutated in place at the indexed width, then
+    /// re-derive the offsets. No-op when the index is stale — the next
+    /// `rebuild_height_index` re-measures everything.
+    pub(crate) fn remeasure_entry_at(&mut self, index: usize) {
+        let Some(width) = self.height_index_width else {
+            return;
+        };
+        let Some(entry) = self.entries.get(index) else {
+            return;
+        };
+        let metrics = entry_metrics(entry, width);
+        let Some(slot) = self.height_index.metrics.get_mut(index) else {
+            return;
+        };
+        *slot = metrics;
+        self.height_index.derive();
+    }
+
     /// Rebuild the height index from the backend's `measure(entry, width)` for
     /// every entry.
     pub(crate) fn rebuild_height_index(&mut self, width: usize) {
@@ -235,8 +252,8 @@ impl TranscriptStore {
     }
 
     /// Mark the height index stale — the next `rebuild_height_index` must
-    /// re-measure. Called when the width changes or an entry mutates in place
-    /// (preview) or the list changes outside `push_entry`/`truncate` (resize).
+    /// re-measure. Called when the width changes (the resize site); in-place
+    /// entry mutations re-measure through `remeasure_entry_at` instead.
     pub(crate) fn invalidate_height_index(&mut self) {
         self.height_index_width = None;
     }

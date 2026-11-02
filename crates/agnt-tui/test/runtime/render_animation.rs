@@ -11,9 +11,6 @@ mod animation;
 #[path = "render_animation/cadence.rs"]
 mod cadence;
 
-#[path = "render_animation/drain.rs"]
-mod drain;
-
 #[path = "render_animation/render_needed.rs"]
 mod render_needed;
 
@@ -22,6 +19,9 @@ mod status_expiry;
 
 #[path = "render_animation/ui_events.rs"]
 mod ui_events;
+
+#[path = "render_animation/event_batch.rs"]
+mod event_batch;
 
 // endregion: --- Modules
 

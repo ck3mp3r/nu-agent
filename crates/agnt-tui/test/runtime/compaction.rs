@@ -147,16 +147,14 @@ fn hydration_compaction_matches_live_rendering() {
 
     // Live path: CompactionStarted + CompactionCompleted via reducer
     let mut live = RuntimeCoordinator::new(120, 30, Some(true));
-    live.enqueue_event(SystemEvent::CompactionStarted {
+    live.reduce_system_event(SystemEvent::CompactionStarted {
         source: "history".to_string(),
     });
-    live.drain_transport();
-    live.enqueue_event(SystemEvent::CompactionCompleted {
+    live.reduce_system_event(SystemEvent::CompactionCompleted {
         source: "history".to_string(),
         summary_preview: "preview".to_string(),
         summary_body: summary_body.to_string(),
     });
-    live.drain_transport();
 
     // Hydration path: UiMessageSnapshot with role "compaction"
     let mut hydrated = RuntimeCoordinator::new(120, 30, Some(true));

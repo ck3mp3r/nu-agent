@@ -45,10 +45,6 @@ mod layout_test;
 mod panels_test;
 
 #[cfg(test)]
-#[path = "../../test/runtime/renderer.rs"]
-mod renderer_test;
-
-#[cfg(test)]
 #[path = "../../test/runtime/session_picker.rs"]
 mod session_picker_test;
 

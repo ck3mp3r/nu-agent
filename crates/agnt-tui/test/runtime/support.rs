@@ -1,8 +1,8 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::interaction::input::{TerminalEvent, TerminalKey};
+use crate::runtime::RuntimeCoordinator;
 use crate::runtime::test_driver::{CellProbe, DriveEvent, RenderLoopDriver};
-use crate::runtime::{InputSourceDiagnostics, RuntimeCoordinator, TerminalEventSource};
 use crate::state::{AppState, PickerRenderKind, TranscriptRole};
 use agnt_core::protocol::events::ToolCall;
 use agnt_core::protocol::tool_args::CallLine;
@@ -51,25 +51,8 @@ pub(super) fn entry_to_role(entry: &TranscriptEntry) -> TranscriptRole {
 }
 
 impl RuntimeCoordinator {
-    pub(crate) fn new_for_test_with_watchdog(
-        columns: u16,
-        rows: u16,
-        side_pane_visible: Option<bool>,
-        input_watchdog_timeout: Duration,
-    ) -> Self {
-        Self::new_with_watchdog(columns, rows, side_pane_visible, input_watchdog_timeout)
-    }
-
     pub(crate) fn state(&self) -> &AppState {
         &self.state
-    }
-
-    pub(crate) fn input_diagnostics_snapshot(&self) -> (String, String, Option<String>) {
-        (
-            self.input_backend_status.clone(),
-            self.last_input_poll_status.clone(),
-            self.last_input_error.clone(),
-        )
     }
 
     pub(crate) fn render_needed(&self) -> bool {
@@ -195,47 +178,3 @@ pub(super) fn push_entry(coord: &mut RuntimeCoordinator, status: Option<ItemStat
 }
 
 // endregion: --- Test Support
-
-// region:    --- Test Doubles
-
-#[derive(Default)]
-pub(super) struct ErrorEventSource;
-
-impl TerminalEventSource for ErrorEventSource {
-    fn poll_event(&mut self) -> core::result::Result<Option<TerminalEvent>, String> {
-        Err("simulated source failure".to_string())
-    }
-}
-
-#[derive(Clone)]
-pub(super) struct ErrorWithDiagnosticsEventSource {
-    pub(super) diagnostics: InputSourceDiagnostics,
-    pub(super) error: String,
-}
-
-impl TerminalEventSource for ErrorWithDiagnosticsEventSource {
-    fn poll_event(&mut self) -> core::result::Result<Option<TerminalEvent>, String> {
-        Err(self.error.clone())
-    }
-
-    fn diagnostics(&self) -> InputSourceDiagnostics {
-        self.diagnostics.clone()
-    }
-}
-
-#[derive(Clone)]
-pub(super) struct DiagnosticsOnlyEventSource {
-    pub(super) diagnostics: InputSourceDiagnostics,
-}
-
-impl TerminalEventSource for DiagnosticsOnlyEventSource {
-    fn poll_event(&mut self) -> core::result::Result<Option<TerminalEvent>, String> {
-        Ok(None)
-    }
-
-    fn diagnostics(&self) -> InputSourceDiagnostics {
-        self.diagnostics.clone()
-    }
-}
-
-// endregion: --- Test Doubles
