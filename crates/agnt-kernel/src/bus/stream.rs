@@ -37,3 +37,9 @@ impl Stream {
         self.ring.subscriber_count()
     }
 }
+
+impl Default for Stream {
+    fn default() -> Self {
+        Self::new()
+    }
+}

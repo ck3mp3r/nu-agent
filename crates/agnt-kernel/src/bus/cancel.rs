@@ -6,7 +6,6 @@
 //! record stream).
 
 use crate::bus::ring::{PublishError, Ring, Subscription};
-use tokio::sync::broadcast;
 
 /// The cancellation vocabulary.
 ///
@@ -41,5 +40,11 @@ impl Cancel {
     /// receive it; the resolver relies on this ordering.
     pub fn subscribe(&self) -> Subscription<CancelEvent> {
         self.ring.subscribe()
+    }
+}
+
+impl Default for Cancel {
+    fn default() -> Self {
+        Self::new()
     }
 }

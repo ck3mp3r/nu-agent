@@ -16,6 +16,10 @@ pub use records::{InferenceRecord, SessionRecord, TurnRecord, Usage};
 // region:    --- Tests
 
 #[cfg(test)]
+#[path = "../test/support.rs"]
+pub(crate) mod test_support;
+
+#[cfg(test)]
 #[path = "../test/bus/test.rs"]
 mod bus_test;
 

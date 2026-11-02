@@ -6,7 +6,7 @@
 use crate::bus::Bus;
 use crate::records::{InferenceRecord, SessionRecord, TurnRecord, Usage};
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+use crate::test_support::Result;
 
 /// Within one call: chunks accumulate monotonically and usage arrives before
 /// the turn record. Every producer of [`SessionRecord`]s must honor this.
@@ -19,19 +19,19 @@ async fn test_records_single_call_orders_usage_before_turn_completion() -> Resul
     // -- Exec
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Started))
-        .ok_or("publish started")?;
+        .map_err(|e| format!("publish started: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
             delta: "a".to_string(),
             aggregated: "a".to_string(),
         }))
-        .ok_or("publish chunk a")?;
+        .map_err(|e| format!("publish chunk a: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
             delta: "b".to_string(),
             aggregated: "ab".to_string(),
         }))
-        .ok_or("publish chunk b")?;
+        .map_err(|e| format!("publish chunk b: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Completed {
             usage: Usage {
@@ -40,13 +40,13 @@ async fn test_records_single_call_orders_usage_before_turn_completion() -> Resul
                 total_tokens: Some(3),
             },
         }))
-        .ok_or("publish completed")?;
+        .map_err(|e| format!("publish completed: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Turn(TurnRecord::Completed {
             tool_calls: 0,
             duration_ms: 2,
         }))
-        .ok_or("publish turn")?;
+        .map_err(|e| format!("publish turn: {e:?}"))?;
     drop(bus);
 
     // -- Check
@@ -58,6 +58,7 @@ async fn test_records_single_call_orders_usage_before_turn_completion() -> Resul
         match rx.recv().await {
             Ok(record) => {
                 match record {
+                    SessionRecord::Inference(InferenceRecord::Started) => {}
                     SessionRecord::Inference(InferenceRecord::Chunk { aggregated, .. }) => {
                         assert!(
                             aggregate

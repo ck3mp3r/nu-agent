@@ -1,6 +1,8 @@
 //! The private ring mechanism. Concern types own the public surface; the
 //! generic ring stays here.
 
+use std::fmt;
+
 use tokio::sync::broadcast;
 
 /// The subscriber handle of a ring. Seals the transport: consumers never
@@ -41,6 +43,18 @@ pub enum PublishError {
     NoSubscribers,
 }
 
+impl fmt::Display for PublishError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoSubscribers => {
+                write!(f, "publish failed: the ring has no subscribers")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PublishError {}
+
 /// Blocking-receive failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiveError {
@@ -51,6 +65,22 @@ pub enum ReceiveError {
     Closed,
 }
 
+impl fmt::Display for ReceiveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Lagged(n) => {
+                write!(
+                    f,
+                    "receive lagged: {n} record(s) dropped, re-synced at the tail"
+                )
+            }
+            Self::Closed => write!(f, "receive failed: the ring is closed"),
+        }
+    }
+}
+
+impl std::error::Error for ReceiveError {}
+
 /// Non-blocking receive failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TryReceiveError {
@@ -58,6 +88,20 @@ pub enum TryReceiveError {
     Closed,
     Lagged(u64),
 }
+
+impl fmt::Display for TryReceiveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => write!(f, "try-receive failed: the ring is empty"),
+            Self::Closed => write!(f, "try-receive failed: the ring is closed"),
+            Self::Lagged(n) => {
+                write!(f, "try-receive lagged: {n} record(s) dropped")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TryReceiveError {}
 
 /// Ring-capacity wrapper over a tokio broadcast pair.
 #[derive(Clone)]

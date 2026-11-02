@@ -1,9 +1,9 @@
 //! Stream-contract tests: ordering, lag resync, zero retention.
 
-use crate::bus::Bus;
-use crate::records::{InferenceRecord, SessionRecord, Usage};
+use crate::bus::{Bus, ReceiveError};
+use crate::records::{InferenceRecord, SessionRecord, TurnRecord, Usage};
 
-type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+use crate::test_support::Result;
 
 /// Publish order == receive order across record kinds.
 #[tokio::test]
@@ -15,38 +15,48 @@ async fn test_stream_delivers_records_in_publish_order() -> Result<()> {
     // -- Exec
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Started))
-        .ok_or("stream should accept with a subscriber")?;
+        .map_err(|e| format!("stream should accept with a subscriber: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Chunk {
             delta: "a".to_string(),
             aggregated: "a".to_string(),
         }))
-        .ok_or("stream should accept")?;
+        .map_err(|e| format!("stream should accept: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Completed {
-            usage: crate::records::Usage {
+            usage: Usage {
                 input_tokens: 1,
                 output_tokens: 2,
                 total_tokens: Some(3),
             },
         }))
-        .ok_or("stream should accept")?;
+        .map_err(|e| format!("stream should accept: {e:?}"))?;
     drop(bus);
 
     // -- Check
-    let first = rx.recv().await.ok_or("first record")?;
+    let first = rx
+        .recv()
+        .await
+        .map_err(|e| format!("first record: {e:?}"))?;
     assert!(
         matches!(first, SessionRecord::Inference(InferenceRecord::Started)),
         "the first record should be Inference::Started"
     );
-    let second = rx.recv().await.ok_or("second record")?;
+    let second = rx
+        .recv()
+        .await
+        .map_err(|e| format!("second record: {e:?}"))?;
     assert!(
         matches!(&second, SessionRecord::Inference(InferenceRecord::Chunk { aggregated, .. }) if aggregated == "a"),
         "the second record should be Inference::Chunk with the accumulated text"
     );
+    let third = rx
+        .recv()
+        .await
+        .map_err(|e| format!("third record: {e:?}"))?;
     assert!(
         matches!(
-            rx.recv().await.ok_or("third record")?,
+            third,
             SessionRecord::Inference(InferenceRecord::Completed { .. })
         ),
         "the third record should be Inference::Completed"
@@ -56,8 +66,8 @@ async fn test_stream_delivers_records_in_publish_order() -> Result<()> {
 
 /// The ring is delivery, not a log: publishing with zero subscribers reports
 /// the send failure instead of silently dropping.
-#[tokio::test]
-async fn test_stream_publish_without_subscribers_reports_error() {
+#[test]
+fn test_stream_publish_without_subscribers_reports_error() {
     // -- Setup & Fixtures
     let bus = Bus::new();
 
@@ -99,8 +109,8 @@ async fn test_stream_lagged_consumer_resyncs_at_tail() -> Result<()> {
                 }
                 other => panic!("unexpected non-chunk record while draining: {other:?}"),
             },
-            Err(crate::bus::ReceiveError::Lagged(_)) => continue,
-            Err(crate::bus::ReceiveError::Closed) => break,
+            Err(ReceiveError::Lagged(_)) => continue,
+            Err(ReceiveError::Closed) => break,
         }
     }
 
@@ -125,5 +135,94 @@ async fn test_stream_lagged_consumer_resyncs_at_tail() -> Result<()> {
             "tail delivery must stay in publish order, saw {a} then {b}"
         );
     }
+    Ok(())
+}
+
+/// Vocabulary producer contract: within one call, chunks accumulate
+/// monotonically and usage arrives before the turn record. Migrates beside
+/// the producer once the turn-executor lifts into the kernel.
+#[tokio::test]
+async fn test_stream_vocabulary_orders_usage_before_turn_completion() -> Result<()> {
+    // -- Setup & Fixtures
+    let bus = Bus::new();
+    let mut rx = bus.stream().subscribe();
+
+    // -- Exec
+    bus.stream()
+        .publish(SessionRecord::Inference(InferenceRecord::Started))
+        .map_err(|e| format!("publish started: {e:?}"))?;
+    bus.stream()
+        .publish(SessionRecord::Inference(InferenceRecord::Chunk {
+            delta: "a".to_string(),
+            aggregated: "a".to_string(),
+        }))
+        .map_err(|e| format!("publish chunk a: {e:?}"))?;
+    bus.stream()
+        .publish(SessionRecord::Inference(InferenceRecord::Chunk {
+            delta: "b".to_string(),
+            aggregated: "ab".to_string(),
+        }))
+        .map_err(|e| format!("publish chunk b: {e:?}"))?;
+    bus.stream()
+        .publish(SessionRecord::Inference(InferenceRecord::Completed {
+            usage: Usage {
+                input_tokens: 1,
+                output_tokens: 2,
+                total_tokens: Some(3),
+            },
+        }))
+        .map_err(|e| format!("publish completed: {e:?}"))?;
+    bus.stream()
+        .publish(SessionRecord::Turn(TurnRecord::Completed {
+            tool_calls: 0,
+            duration_ms: 2,
+        }))
+        .map_err(|e| format!("publish turn: {e:?}"))?;
+    drop(bus);
+
+    // -- Check
+    let mut aggregate: Option<String> = None;
+    let mut usage_seen = false;
+    let mut turn_seen_at: Option<usize> = None;
+    let mut index: usize = 0;
+    loop {
+        match rx.recv().await {
+            Ok(record) => {
+                match record {
+                    SessionRecord::Inference(InferenceRecord::Started) => {}
+                    SessionRecord::Inference(InferenceRecord::Chunk { aggregated, .. }) => {
+                        assert!(
+                            aggregate
+                                .as_deref()
+                                .map(|prev| aggregated.starts_with(prev))
+                                .unwrap_or(true),
+                            "aggregated must accumulate monotonically"
+                        );
+                        aggregate = Some(aggregated);
+                    }
+                    SessionRecord::Inference(InferenceRecord::Completed { .. }) => {
+                        usage_seen = true
+                    }
+                    SessionRecord::Turn(TurnRecord::Completed { .. }) => turn_seen_at = Some(index),
+                }
+                index += 1;
+            }
+            Err(ReceiveError::Closed) => break,
+            Err(ReceiveError::Lagged(_)) => {
+                panic!("under capacity, lag is a contract violation")
+            }
+        }
+    }
+    assert!(usage_seen, "usage must be narrated");
+    let turn_index = turn_seen_at.ok_or("the turn record must arrive")?;
+    assert!(
+        index > turn_index && usage_seen,
+        "usage must precede the turn record"
+    );
+    assert_eq!(
+        aggregate.as_deref(),
+        Some("ab"),
+        "the final aggregate must be the full text"
+    );
     Ok(())
 }

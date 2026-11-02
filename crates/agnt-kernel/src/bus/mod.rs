@@ -15,6 +15,7 @@ mod ring;
 mod stream;
 
 pub use cancel::{Cancel, CancelEvent};
+pub use ring::{PublishError, ReceiveError, Subscription, TryReceiveError};
 pub use stream::Stream;
 
 // endregion: --- Modules
