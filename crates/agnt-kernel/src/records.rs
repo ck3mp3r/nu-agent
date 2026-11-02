@@ -28,6 +28,14 @@ pub enum InferenceRecord {
     },
     /// The completion finished and the totals attached to it arrived.
     Completed { usage: Usage },
+    /// The completion was stopped before it finished: a hook or the user
+    /// cancelled the run. The call narrates [`InferenceRecord::Stopped`]
+    /// instead of [`InferenceRecord::Completed`]; the turn itself still
+    /// completes.
+    Stopped {
+        /// Why the run stopped.
+        reason: String,
+    },
 }
 
 /// The totals of one inference call.
