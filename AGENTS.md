@@ -229,6 +229,7 @@ cargo llvm-cov --workspace --html --output-dir coverage/
 - Each test should verify one behavior
 - Refactor only when tests are green
 - No hidden global mutable state — use explicit state via structs
+- **Lift sweep before adoption.** Before a module moves into another crate, run the sweep on it: (a) single-expression free functions (`fn x(..) -> T { expr }` — the one-line wrapper), (b) string comparisons on identifiers (`== "vendor"`, `contains("…")`, `starts_with("…")`). Resolve what it surfaces in the lift commit itself: inline or delete helper wrappers, isolate identifier sniffing into one named adapter with a doc note. Never promote either into the new crate.
 
 ### Constructor Patterns
 

@@ -7,6 +7,9 @@
 
 mod mcp;
 
+pub mod agents;
+pub mod skills;
+
 pub use mcp::{McpManagement, McpUsabilityState};
 
 // endregion: --- Modules

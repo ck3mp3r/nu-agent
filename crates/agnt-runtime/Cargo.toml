@@ -4,4 +4,5 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+log = { workspace = true }
 rig = { workspace = true }

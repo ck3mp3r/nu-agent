@@ -1,10 +1,10 @@
 //! The one typed event vocabulary for a session.
 //!
 //! `SystemEvent` is the model-update message of the transcript state fold. The
-//! variant list comes from the fact inventory in design note `6ad10855` §3.1
-//! rev 7: every fact the pre-wave `UiEvent`, the bus event enums, and
-//! `UserAction` carried appears here exactly once, with typed payloads. Those
-//! three vocabularies are deleted; this enum replaced them.
+//! variant list comes from the session fact inventory: every fact the pre-wave
+//! `UiEvent`, the bus event enums, and `UserAction` carried appears here exactly
+//! once, with typed payloads. Those three vocabularies are deleted; this enum
+//! replaced them.
 
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay};
 use crate::protocol::tool_args::CallLine;

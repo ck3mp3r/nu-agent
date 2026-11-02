@@ -1,3 +1,11 @@
+//! Model-family classification.
+//!
+//! Adapter note: a model identity is an external string (`provider/model`), so
+//! this module is the one place where identity strings decide behavior. The
+//! heuristics live here and nowhere else. An explicit family declaration in
+//! model config will supersede them (pluggable model versions); until then this
+//! adapter is the only decision point.
+
 use super::ModelFamily;
 
 pub fn classify_model_family(provider: &str, model: &str) -> ModelFamily {
@@ -41,6 +49,12 @@ pub fn classify_model_family(provider: &str, model: &str) -> ModelFamily {
 
 /// Classify a three-part identity's model part by its backend provider and
 /// model name.
+///
+/// Known divergence, kept as-is until the explicit family declaration lands:
+/// the provider path returns `Unknown` for unrecognized OpenAI models, while
+/// this backend path treats every non-`gpt-5` OpenAI model as `Gpt4x`. Both
+/// fallbacks are recorded here so the difference is a decision, not an
+/// accident.
 fn classify_from_backend_parts(backend: &str, model: &str) -> ModelFamily {
     if backend == "anthropic" {
         if model.contains("sonnet") {

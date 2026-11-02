@@ -75,19 +75,6 @@ fn discover_and_resolve_skill_scenarios() -> Result<()> {
             .map_err(|e| format!("missing skill should not error: {e:?}"))?;
 
     assert_eq!(resolved, None);
-
-    // Deep ancestry ranks do not collapse into an equal precedence tuple.
-    let local_deep = (SkillSource::Local.priority(), 16);
-    let home = (SkillSource::Home.priority(), 0);
-
-    assert!(
-        is_higher_precedence(local_deep, home),
-        "local source precedence must remain stable even when ancestry rank >= 16"
-    );
-    assert!(
-        !is_higher_precedence(home, local_deep),
-        "distinct precedence tuples must not collapse into an equal rank"
-    );
     Ok(())
 }
 

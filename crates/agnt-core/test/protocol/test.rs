@@ -35,8 +35,7 @@ use tempfile::tempdir;
 use super::agents::load_agents_chain;
 use super::skills::{
     SkillResolveError, SkillSource, discover_skill_catalog, extract_skill_description,
-    is_higher_precedence, render_available_skills_preamble_from_catalog,
-    resolve_explicit_skill_request,
+    render_available_skills_preamble_from_catalog, resolve_explicit_skill_request,
 };
 use super::slash::{
     SLASH_COMMAND_ORDER, SlashCommand, SlashParseResult, extract_session_id,
