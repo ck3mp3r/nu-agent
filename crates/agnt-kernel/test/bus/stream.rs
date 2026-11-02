@@ -191,6 +191,7 @@ async fn test_stream_vocabulary_orders_usage_before_turn_completion() -> Result<
                 match record {
                     SessionRecord::Inference(InferenceRecord::Started) => {}
                     SessionRecord::Inference(InferenceRecord::Stopped { .. }) => {}
+                    SessionRecord::Tool(_) => {}
                     SessionRecord::Inference(InferenceRecord::Chunk { aggregated, .. }) => {
                         assert!(
                             aggregate

@@ -4,7 +4,10 @@
 //! these pin what every producer (turn executor, compactor) must emit.
 
 use crate::bus::Bus;
-use crate::records::{InferenceRecord, SessionRecord, TurnRecord, Usage};
+use crate::records::{
+    InferenceRecord, SessionRecord, StopCause, ToolCall, ToolOutcome, ToolRecord, ToolStatus,
+    TurnRecord, Usage,
+};
 
 use crate::test_support::Result;
 
@@ -60,6 +63,7 @@ async fn test_records_single_call_orders_usage_before_turn_completion() -> Resul
                 match record {
                     SessionRecord::Inference(InferenceRecord::Started) => {}
                     SessionRecord::Inference(InferenceRecord::Stopped { .. }) => {}
+                    SessionRecord::Tool(_) => {}
                     SessionRecord::Inference(InferenceRecord::Chunk { aggregated, .. }) => {
                         assert!(
                             aggregate
@@ -156,6 +160,7 @@ async fn test_records_streaming_turn_pins_full_narration_sequence() -> Result<()
                     tags.push("completed")
                 }
                 SessionRecord::Inference(InferenceRecord::Stopped { .. }) => tags.push("stopped"),
+                SessionRecord::Tool(_) => tags.push("tool"),
                 SessionRecord::Turn(TurnRecord::Completed { .. }) => tags.push("turn"),
             },
             Err(crate::bus::ReceiveError::Closed) => break,
@@ -199,6 +204,7 @@ async fn test_records_stopped_call_narrates_stop_before_turn_completion() -> Res
         .map_err(|e| format!("publish chunk a: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Inference(InferenceRecord::Stopped {
+            cause: StopCause::OutputRepetition,
             reason: "the assistant kept repeating the same output".to_string(),
         }))
         .map_err(|e| format!("publish stopped: {e:?}"))?;
@@ -212,6 +218,7 @@ async fn test_records_stopped_call_narrates_stop_before_turn_completion() -> Res
 
     // -- Check
     let mut tags: Vec<&str> = Vec::new();
+    let mut stop_causes: Vec<StopCause> = Vec::new();
     let mut stop_reasons: Vec<String> = Vec::new();
     loop {
         match rx.recv().await {
@@ -221,10 +228,12 @@ async fn test_records_stopped_call_narrates_stop_before_turn_completion() -> Res
                 SessionRecord::Inference(InferenceRecord::Completed { .. }) => {
                     tags.push("completed")
                 }
-                SessionRecord::Inference(InferenceRecord::Stopped { reason }) => {
+                SessionRecord::Inference(InferenceRecord::Stopped { cause, reason }) => {
                     tags.push("stopped");
+                    stop_causes.push(*cause);
                     stop_reasons.push(reason.clone());
                 }
+                SessionRecord::Tool(_) => tags.push("tool"),
                 SessionRecord::Turn(TurnRecord::Completed { .. }) => tags.push("turn"),
             },
             Err(crate::bus::ReceiveError::Closed) => break,
@@ -239,9 +248,174 @@ async fn test_records_stopped_call_narrates_stop_before_turn_completion() -> Res
         "a stopped call narrates stop, never completion, and the turn still closes"
     );
     assert_eq!(
+        stop_causes,
+        [StopCause::OutputRepetition],
+        "the stop cause is an enumerated producer fact, never sniffed from text"
+    );
+    assert_eq!(
         stop_reasons,
         ["the assistant kept repeating the same output"],
         "the stop reason must travel with the record"
+    );
+    Ok(())
+}
+
+/// The tool windows of a turn: each dispatched call narrates `Started` then
+/// exactly one `Completed`, in stream order, correlated by the derived call
+/// id — the anchor consumers key on, never rendered text.
+#[tokio::test]
+async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> Result<()> {
+    // -- Setup & Fixtures
+    let bus = Bus::new();
+    let mut rx = bus.stream().subscribe();
+    let first = ToolCall::new("nu__shell", "builtin", r#"{"command":"ls"}"#);
+    let second = ToolCall::new("fs__read", "builtin", r#"{"path":"a.txt"}"#);
+    assert_ne!(first.id, second.id, "distinct calls must key distinctly");
+
+    // -- Exec
+    bus.stream()
+        .publish(SessionRecord::Tool(ToolRecord::Started {
+            call: first.clone(),
+        }))
+        .map_err(|e| format!("publish tool started a: {e:?}"))?;
+    bus.stream()
+        .publish(SessionRecord::Tool(ToolRecord::Completed {
+            call: first.clone(),
+            outcome: ToolOutcome {
+                status: ToolStatus::Success,
+                result: "a.txt".to_string(),
+                message: None,
+            },
+        }))
+        .map_err(|e| format!("publish tool completed a: {e:?}"))?;
+    bus.stream()
+        .publish(SessionRecord::Tool(ToolRecord::Started {
+            call: second.clone(),
+        }))
+        .map_err(|e| format!("publish tool started b: {e:?}"))?;
+    bus.stream()
+        .publish(SessionRecord::Tool(ToolRecord::Completed {
+            call: second.clone(),
+            outcome: ToolOutcome {
+                status: ToolStatus::Failed,
+                result: String::new(),
+                message: Some("no such file".to_string()),
+            },
+        }))
+        .map_err(|e| format!("publish tool completed b: {e:?}"))?;
+    bus.stream()
+        .publish(SessionRecord::Turn(TurnRecord::Completed {
+            tool_calls: 2,
+            duration_ms: 9,
+        }))
+        .map_err(|e| format!("publish turn: {e:?}"))?;
+    drop(bus);
+
+    // -- Check
+    let mut tags: Vec<&str> = Vec::new();
+    let mut completed: Vec<(crate::records::ToolCallId, ToolStatus)> = Vec::new();
+    loop {
+        match rx.recv().await {
+            Ok(record) => match &record {
+                SessionRecord::Tool(ToolRecord::Started { .. }) => tags.push("tool_started"),
+                SessionRecord::Tool(ToolRecord::Completed { call, outcome }) => {
+                    tags.push("tool_completed");
+                    completed.push((call.id.clone(), outcome.status));
+                }
+                SessionRecord::Inference(_) => tags.push("inference"),
+                SessionRecord::Turn(TurnRecord::Completed { .. }) => tags.push("turn"),
+            },
+            Err(crate::bus::ReceiveError::Closed) => break,
+            Err(crate::bus::ReceiveError::Lagged(_)) => {
+                panic!("under capacity, lag is a contract violation")
+            }
+        }
+    }
+    assert_eq!(
+        tags,
+        [
+            "tool_started",
+            "tool_completed",
+            "tool_started",
+            "tool_completed",
+            "turn"
+        ],
+        "each call brackets as started then completed, in stream order"
+    );
+    assert_eq!(
+        completed,
+        vec![
+            (first.id.clone(), ToolStatus::Success),
+            (second.id.clone(), ToolStatus::Failed)
+        ],
+        "the completed records carry the call id and the enumerated disposition"
+    );
+    Ok(())
+}
+
+/// A permission-denied call still narrates the pair and settles as the
+/// enumerated `Cancelled` disposition; the denial reason is content, not a
+/// status (`session/tool_status.rs` law mirrored by the kernel).
+#[tokio::test]
+async fn test_records_denied_call_settles_cancelled_without_running() -> Result<()> {
+    // -- Setup & Fixtures
+    let bus = Bus::new();
+    let mut rx = bus.stream().subscribe();
+    let call = ToolCall::new("nu__shell", "builtin", r#"{"command":"rm -rf /"}"#);
+
+    // -- Exec
+    bus.stream()
+        .publish(SessionRecord::Tool(ToolRecord::Started {
+            call: call.clone(),
+        }))
+        .map_err(|e| format!("publish tool started: {e:?}"))?;
+    bus.stream()
+        .publish(SessionRecord::Tool(ToolRecord::Completed {
+            call: call.clone(),
+            outcome: ToolOutcome {
+                status: ToolStatus::Cancelled,
+                result: String::new(),
+                message: Some("denied by policy".to_string()),
+            },
+        }))
+        .map_err(|e| format!("publish tool completed: {e:?}"))?;
+    bus.stream()
+        .publish(SessionRecord::Turn(TurnRecord::Completed {
+            tool_calls: 0,
+            duration_ms: 3,
+        }))
+        .map_err(|e| format!("publish turn: {e:?}"))?;
+    drop(bus);
+
+    // -- Check
+    let mut tags: Vec<&str> = Vec::new();
+    let mut denied: Vec<(ToolStatus, Option<String>)> = Vec::new();
+    loop {
+        match rx.recv().await {
+            Ok(record) => match &record {
+                SessionRecord::Tool(ToolRecord::Started { .. }) => tags.push("tool_started"),
+                SessionRecord::Tool(ToolRecord::Completed { outcome, .. }) => {
+                    tags.push("tool_completed");
+                    denied.push((outcome.status, outcome.message.clone()));
+                }
+                SessionRecord::Inference(_) => tags.push("inference"),
+                SessionRecord::Turn(TurnRecord::Completed { .. }) => tags.push("turn"),
+            },
+            Err(crate::bus::ReceiveError::Closed) => break,
+            Err(crate::bus::ReceiveError::Lagged(_)) => {
+                panic!("under capacity, lag is a contract violation")
+            }
+        }
+    }
+    assert_eq!(
+        tags,
+        ["tool_started", "tool_completed", "turn"],
+        "a denied call still narrates its full pair before the turn closes"
+    );
+    assert_eq!(
+        denied,
+        vec![(ToolStatus::Cancelled, Some("denied by policy".to_string()))],
+        "denial settles as the enumerated disposition; the reason is content"
     );
     Ok(())
 }

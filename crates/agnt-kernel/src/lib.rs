@@ -9,7 +9,10 @@
 pub mod bus;
 pub mod records;
 
-pub use records::{InferenceRecord, SessionRecord, TurnRecord, Usage};
+pub use records::{
+    InferenceRecord, SessionRecord, StopCause, ToolCall, ToolCallId, ToolOutcome, ToolRecord,
+    ToolStatus, TurnRecord, Usage,
+};
 
 // endregion: --- Modules
 

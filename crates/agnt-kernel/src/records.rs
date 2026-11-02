@@ -11,6 +11,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionRecord {
     Inference(InferenceRecord),
+    Tool(ToolRecord),
     Turn(TurnRecord),
 }
 
@@ -28,14 +29,30 @@ pub enum InferenceRecord {
     },
     /// The completion finished and the totals attached to it arrived.
     Completed { usage: Usage },
-    /// The completion was stopped before it finished: a hook or the user
-    /// cancelled the run. The call narrates [`InferenceRecord::Stopped`]
+    /// The completion was stopped before it finished: a hook, a guard, or the
+    /// user cancelled the run. The call narrates [`InferenceRecord::Stopped`]
     /// instead of [`InferenceRecord::Completed`]; the turn itself still
     /// completes.
     Stopped {
-        /// Why the run stopped.
+        /// Why the run stopped, as a closed enum — never read from text.
+        cause: StopCause,
+        /// The stop's content text, for the surfaces that show it.
         reason: String,
     },
+}
+
+/// Why a completion call stopped early. Producers know the cause and emit the
+/// variant; no consumer ever infers a cause by inspecting text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopCause {
+    /// The user cancelled the run.
+    UserCancelled,
+    /// The doom-loop guard stopped the stream.
+    DoomLoop,
+    /// The output-repetition guard stopped the stream.
+    OutputRepetition,
+    /// Any other stop that produced no completion result.
+    Other,
 }
 
 /// The totals of one inference call.
@@ -53,6 +70,101 @@ pub enum TurnRecord {
     /// The turn finished; the usage totals arrive on
     /// [`InferenceRecord::Completed`] before this record.
     Completed { tool_calls: usize, duration_ms: u64 },
+}
+
+/// The tool-call pipeline. Every dispatched call narrates a started record and
+/// exactly one completed record — including calls the permission gate denies:
+/// they dispatch, are decided against, and settle as [`ToolStatus::Cancelled`]
+/// without running. The started record is published before the permission
+/// decision is requested, so the pair brackets the whole call lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolRecord {
+    /// The call was dispatched.
+    Started { call: ToolCall },
+    /// The call settled; `outcome` carries the disposition and the content.
+    Completed {
+        call: ToolCall,
+        outcome: ToolOutcome,
+    },
+}
+
+/// One tool call, as the stream identifies it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCall {
+    /// Derived by [`ToolCallId::new`] from `name` and `arguments`, and carried
+    /// so consumers never recompute the anchor: the id cannot drift between a
+    /// live call and a replayed record.
+    pub id: ToolCallId,
+    pub name: String,
+    /// Where the tool comes from (builtin, closure, or an MCP server name).
+    pub source: String,
+    /// The raw arguments JSON — the other half of the call key.
+    pub arguments: String,
+}
+
+impl ToolCall {
+    /// A call with its id derived by the one derivation.
+    pub fn new(
+        name: impl Into<String>,
+        source: impl Into<String>,
+        arguments: impl Into<String>,
+    ) -> Self {
+        let name = name.into();
+        let source = source.into();
+        let arguments = arguments.into();
+        let id = ToolCallId::new(&name, &arguments);
+        Self {
+            id,
+            name,
+            source,
+            arguments,
+        }
+    }
+}
+
+/// The exact key of a tool call: `{name}\n{arguments}`.
+///
+/// One constructor derives it, so the key cannot drift between producers, the
+/// permission gate, and a replayed transcript.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCallId(String);
+
+impl ToolCallId {
+    /// The key of the call with `name` and `arguments`.
+    pub fn new(name: &str, arguments: &str) -> Self {
+        Self(format!("{name}\n{arguments}"))
+    }
+
+    /// The key as text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The structural disposition of a settled call.
+///
+/// The variant decides; the text fields are content and are never read as
+/// status. Every call that produced no result — a gate denial, a turn cancel,
+/// a wall clock — is [`ToolStatus::Cancelled`]; what differs between them is
+/// content, and content is not a disposition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolStatus {
+    /// The call ran and succeeded.
+    Success,
+    /// The call ran and failed.
+    Failed,
+    /// The call produced no result.
+    Cancelled,
+}
+
+/// One settled call: its disposition plus content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolOutcome {
+    pub status: ToolStatus,
+    /// The call's result content.
+    pub result: String,
+    /// The handler's or gate's own message (a denial reason, a failure detail).
+    pub message: Option<String>,
 }
 
 // endregion: --- Types

@@ -245,7 +245,7 @@ Follow the rust10x fluid API conventions:
 
 ### Method & API Design
 
-These laws bind every crate; they record the ADR rulings D7/D8/D11 (ADR note 64cbfced).
+These laws bind every crate; they record the architecture rulings D2/D7/D8/D11 plus the data-only and no-sniffing laws.
 
 **Behavior lives on the owner of the data.**
 - ❌ NO: free functions that hug properties — reading fields of another type, combining fields, or forwarding to a method (a `combine_foo(x: &X)` beside `X`).
@@ -263,6 +263,14 @@ These laws bind every crate; they record the ADR rulings D7/D8/D11 (ADR note 64c
 **Fewer functions, composable traits.**
 - ❌ NO: variant-function families, second ways in, companion free-function modules beside a trait.
 - ✅ YES: one well-named method per behavior; a second entry point is a trait seam, not another function; the public fn count tends to the minimum.
+
+**The substrate carries data only — never display.**
+- ❌ NO: rendered lines, display blocks, preview blobs, style/layout hints, or call-line summaries inside records and data types (kernel or adapter layer).
+- ✅ YES: data granular enough that a consumer which has never seen the producer's code derives every display state from the record's presence + content: identity (stable, derived handles), classification (enumerated kind), payload (raw arguments, result text, deltas, counts), enumerated disposition, causal anchors, order. The record's variant IS the display instruction; how to render it is the consumer's business.
+
+**No string sniffing, ever.**
+- ❌ NO: deciding behavior by parsing text — `reason.starts_with(PREFIX)`, suffix checks, pattern matches over message/result strings, sentinel strings.
+- ✅ YES: the producer that knows a distinction emits an enum variant (`StopCause::DoomLoop`, `ToolStatus::Cancelled`); text fields are content for display only. A distinction no consumer acts on does not get an enum.
 
 ### Code Structure (rust10x regions)
 
@@ -545,3 +553,7 @@ When changing tool handler modules, permission UX, or TUI transcript rendering:
 
 - Follow `docs/contribution-guardrails.md` checklist (inline permission card, viewport invariants, sticky controls)
 - Keep `docs/usage.md` aligned with user-visible behavior changes
+
+**Repo files never reference internal notes.**
+- ❌ NO: note IDs, ADR-note citations, or session-note links in `AGENTS.md`, `docs/`, code comments, or commit messages.
+- ✅ YES: the law stands on its own text; provenance lives in the session ledger, and notes may reference repo files — never the reverse.
