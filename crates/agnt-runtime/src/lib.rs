@@ -7,6 +7,7 @@
 
 // region:    --- Modules
 
+pub mod protocol;
 pub mod types;
 
 // endregion: --- Modules

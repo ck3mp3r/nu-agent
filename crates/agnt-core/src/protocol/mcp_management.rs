@@ -1,30 +1,4 @@
-use crate::protocol::contracts::McpUsabilityState;
+//! Runtime capability seam — re-exported from `agnt_runtime::protocol` while
+//! the runtime layer is strangled out of this crate.
 
-/// Runtime capability for MCP server management.
-pub trait McpManagement {
-    fn set_mcp_server_enabled(
-        &mut self,
-        _name: &str,
-        enabled: bool,
-    ) -> impl std::future::Future<Output = Result<McpUsabilityState, String>> + Send {
-        async move {
-            Ok(if enabled {
-                McpUsabilityState::Enabled
-            } else {
-                McpUsabilityState::Disabled
-            })
-        }
-    }
-
-    fn llm_visible_mcp_tool_count(&self) -> usize {
-        0
-    }
-
-    fn llm_visible_mcp_tool_count_for_server(&self, _server_name: &str) -> usize {
-        0
-    }
-
-    fn llm_visible_mcp_tool_names_by_server(&self) -> Vec<(String, Vec<String>)> {
-        Vec::new()
-    }
-}
+pub use agnt_runtime::protocol::McpManagement;

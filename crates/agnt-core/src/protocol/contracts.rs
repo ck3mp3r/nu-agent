@@ -6,12 +6,9 @@ use crate::protocol::event::ToolDisplay;
 use crate::protocol::events::SystemEvent;
 use crate::session::tool_status::ToolStatus;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum McpUsabilityState {
-    Enabled,
-    Disabled,
-    Failed,
-}
+/// The usability of one MCP server — re-exported from `agnt_runtime::protocol`
+/// while the runtime layer is strangled out of this crate.
+pub use agnt_runtime::protocol::McpUsabilityState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpToggleRequest {
