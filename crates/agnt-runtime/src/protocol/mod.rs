@@ -8,7 +8,9 @@
 mod mcp;
 
 pub mod agents;
+pub mod model_switching;
 pub mod persona;
+pub mod preamble;
 pub mod skills;
 
 pub use mcp::{McpManagement, McpUsabilityState};
