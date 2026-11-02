@@ -243,6 +243,27 @@ Follow the rust10x fluid API conventions:
 - Use `impl Into<...>` for constructor and setter parameters where appropriate
 - Separate `Builder` struct with `.build()` only when construction is complex, requires validation, or is fallible (returning `Result`)
 
+### Method & API Design
+
+These laws bind every crate; they record the ADR rulings D7/D8/D11 (ADR note 64cbfced).
+
+**Behavior lives on the owner of the data.**
+- ❌ NO: free functions that hug properties — reading fields of another type, combining fields, or forwarding to a method (a `combine_foo(x: &X)` beside `X`).
+- ✅ YES: a method on `X` (or on the trait `X` implements), unless the function is a pure standalone transform owning no state.
+
+**Names describe behavior — never shape.**
+- ❌ NO: names encoding parameters, options, or call-variant: `run_hydrated_interactive_loop_with_external_prompts`.
+- ❌ NO: builder seams named by origin: `with_spawn_render_loop`, `with_a2a_task_rx`.
+- ✅ YES: verb + receiver on the owning type: `run(runtime, config)`; builder seams by ROLE (`with_event_sink`, `with_control_intake`) — surface words (tui/a2a/render) never appear in core naming.
+
+**No half-built configs or constructors.**
+- ❌ NO: `Config::new(one_param)` with the rest behind builders — half-real at construction, no signal for what is missing.
+- ✅ YES: completeness at build time — every required part a constructor parameter (omission = compile error), or take nothing: `Config::default()` with typed defaults. Per-invocation diagnostic context (`Span`) is not config.
+
+**Fewer functions, composable traits.**
+- ❌ NO: variant-function families, second ways in, companion free-function modules beside a trait.
+- ✅ YES: one well-named method per behavior; a second entry point is a trait seam, not another function; the public fn count tends to the minimum.
+
 ### Code Structure (rust10x regions)
 
 Organize source files in this order:
@@ -423,6 +444,8 @@ pub trait AskApprovalHook {
 pub trait AskApprovalHook {
     fn choose<S: Sink>(&mut self, ..., sink: Option<&mut S>) -> AskChoice;
 }
+
+**Trait methods carry the behavior.** If a trait's logic lives in companion free functions or wrapper impls, the trait is misdesigned — move the method onto the trait (default impl where the logic is shared).
 
 ### No Delegation Chains
 
