@@ -199,6 +199,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "agnt-kernel"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "agnt-render"
 version = "0.1.0"
 dependencies = [

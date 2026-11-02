@@ -1,0 +1,11 @@
+[package]
+name = "agnt-kernel"
+edition.workspace = true
+version.workspace = true
+description = "Eventing substrate — one ordered session-record stream per session plus the strict cancel ring."
+
+[dependencies]
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
