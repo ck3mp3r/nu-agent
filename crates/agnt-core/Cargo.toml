@@ -8,6 +8,7 @@ integration = []
 
 [dependencies]
 agnt-a2a = { workspace = true }
+agnt-kernel = { workspace = true }
 agnt-runtime = { workspace = true }
 agnt-storage = { workspace = true }
 nu-plugin = { workspace = true }

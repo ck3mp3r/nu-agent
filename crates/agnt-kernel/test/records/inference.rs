@@ -36,6 +36,8 @@ async fn test_records_single_call_orders_usage_before_turn_completion() -> Resul
                 input_tokens: 1,
                 output_tokens: 2,
                 total_tokens: Some(3),
+                cost: None,
+                cost_complete: false,
             },
         }))
         .map_err(|e| format!("publish completed: {e:?}"))?;
@@ -130,6 +132,8 @@ async fn test_records_streaming_turn_pins_full_narration_sequence() -> Result<()
                 input_tokens: 2,
                 output_tokens: 3,
                 total_tokens: Some(5),
+                cost: None,
+                cost_complete: false,
             },
         }))
         .map_err(|e| format!("publish completed: {e:?}"))?;

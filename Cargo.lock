@@ -146,6 +146,7 @@ name = "agnt-core"
 version = "0.1.0"
 dependencies = [
  "agnt-a2a",
+ "agnt-kernel",
  "agnt-runtime",
  "agnt-storage",
  "agnt-testkit",
@@ -203,6 +204,7 @@ dependencies = [
 name = "agnt-kernel"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "tokio",
 ]
 

@@ -28,6 +28,8 @@ async fn test_stream_delivers_records_in_publish_order() -> Result<()> {
                 input_tokens: 1,
                 output_tokens: 2,
                 total_tokens: Some(3),
+                cost: None,
+                cost_complete: false,
             },
         }))
         .map_err(|e| format!("stream should accept: {e:?}"))?;
@@ -169,6 +171,8 @@ async fn test_stream_vocabulary_orders_usage_before_turn_completion() -> Result<
                 input_tokens: 1,
                 output_tokens: 2,
                 total_tokens: Some(3),
+                cost: None,
+                cost_complete: false,
             },
         }))
         .map_err(|e| format!("publish completed: {e:?}"))?;

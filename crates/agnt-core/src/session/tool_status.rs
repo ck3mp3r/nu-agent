@@ -2,9 +2,10 @@
 //!
 //! A call's status is a variant, never a reading of its result text. The turn
 //! settles it when the outcome arrives, the store writes it verbatim, and the
-//! resolver matches it. Four variants cover what an outcome can be: a success,
-//! a failure, a run the turn stopped before it produced a result, and a call
-//! that never ran.
+//! resolver matches it. Three variants cover what an outcome can be: a success,
+//! a failure, and a call that produced no result (a gate denial, a turn cancel,
+//! a wall clock). What differs between non-produced results is content, and
+//! content is not a status.
 
 // region:    --- Modules
 
@@ -18,20 +19,10 @@ use crate::types::{CallId, RigToolErrorKind, ToolExecutionResult};
 
 // region:    --- Types
 
-/// The status of one tool call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolStatus {
-    /// The call ran and produced a result.
-    Success,
-    /// The call ran and failed.
-    Failed,
-    /// The call never reached a result: the turn's cancel, a wall clock that
-    /// killed the command, or a dispatch policy that stopped it before it ran.
-    /// Every non-completed call is this one variant; the difference between them
-    /// is content, and content is not a status.
-    Cancelled,
-}
+/// The status of one tool call — re-exported from the kernel's record
+/// vocabulary: the persisted representation and the narrated one are the same
+/// three dispositions, never a re-derived copy.
+pub use agnt_kernel::records::ToolStatus;
 
 /// One call's status, as the store carries it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

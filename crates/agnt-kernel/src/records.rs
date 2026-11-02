@@ -8,7 +8,7 @@
 
 /// The typed envelope of the session stream. The stream ring delivers these
 /// in publish order; the reducer of every consumer folds this vocabulary.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SessionRecord {
     Inference(InferenceRecord),
     Tool(ToolRecord),
@@ -20,7 +20,7 @@ pub enum SessionRecord {
 }
 
 /// The inference pipeline of one completion call.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InferenceRecord {
     /// The completion call started.
     Started,
@@ -60,12 +60,19 @@ pub enum StopCause {
 }
 
 /// The totals of one inference call.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Carries the priced cost so consumers showing usage do not have to join the
+/// stream with runtime accounting. `PartialEq` only: prices are floats.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     /// The total the wire reported, when it reported one.
     pub total_tokens: Option<u64>,
+    /// What the call cost in USD, when anything priced it.
+    pub cost: Option<f64>,
+    /// Whether `cost` is the whole charge rather than a lower bound.
+    pub cost_complete: bool,
 }
 
 /// The turn pipeline of one submitted prompt.
@@ -164,7 +171,11 @@ impl ToolCallId {
 /// status. Every call that produced no result — a gate denial, a turn cancel,
 /// a wall clock — is [`ToolStatus::Cancelled`]; what differs between them is
 /// content, and content is not a disposition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Serde is present because the session store persists this status per call;
+/// the stored shape is the same three dispositions, never a re-derived one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolStatus {
     /// The call ran and succeeded.
     Success,
