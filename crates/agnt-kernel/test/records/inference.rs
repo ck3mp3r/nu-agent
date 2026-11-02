@@ -41,7 +41,6 @@ async fn test_records_single_call_orders_usage_before_turn_completion() -> Resul
         .map_err(|e| format!("publish completed: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Turn(TurnRecord::Completed {
-            tool_calls: 0,
             duration_ms: 2,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
@@ -134,7 +133,6 @@ async fn test_records_streaming_turn_pins_full_narration_sequence() -> Result<()
         .map_err(|e| format!("publish completed: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Turn(TurnRecord::Completed {
-            tool_calls: 0,
             duration_ms: 7,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
@@ -207,7 +205,6 @@ async fn test_records_stopped_call_narrates_stop_before_turn_completion() -> Res
         .map_err(|e| format!("publish stopped: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Turn(TurnRecord::Completed {
-            tool_calls: 0,
             duration_ms: 4,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;

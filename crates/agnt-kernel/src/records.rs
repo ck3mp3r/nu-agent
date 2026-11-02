@@ -70,8 +70,14 @@ pub struct Usage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurnRecord {
     /// The turn finished; the usage totals arrive on
-    /// [`InferenceRecord::Completed`] before this record.
-    Completed { tool_calls: usize, duration_ms: u64 },
+    /// [`InferenceRecord::Completed`] before this record. Call counts are not
+    /// carried: they fold from the turn's [`ToolRecord`]s (dispatched = the
+    /// started records; executed = the completions that are not
+    /// [`ToolStatus::Cancelled`]).
+    Completed {
+        /// Wall-clock time of the turn — the one fact records cannot fold.
+        duration_ms: u64,
+    },
 }
 
 /// The tool-call pipeline. Every dispatched call narrates a started record and

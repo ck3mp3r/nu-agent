@@ -174,7 +174,6 @@ async fn test_stream_vocabulary_orders_usage_before_turn_completion() -> Result<
         .map_err(|e| format!("publish completed: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Turn(TurnRecord::Completed {
-            tool_calls: 0,
             duration_ms: 2,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;

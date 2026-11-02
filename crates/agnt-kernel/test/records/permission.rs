@@ -59,7 +59,6 @@ async fn test_records_ask_path_denial_brackets_call_and_permission() -> Result<(
         .map_err(|e| format!("publish tool completed: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Turn(TurnRecord::Completed {
-            tool_calls: 0,
             duration_ms: 2,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
@@ -144,7 +143,6 @@ async fn test_records_policy_path_narrates_auto_resolution_without_request() -> 
         .map_err(|e| format!("publish tool completed: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Turn(TurnRecord::Completed {
-            tool_calls: 1,
             duration_ms: 6,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
@@ -207,7 +205,6 @@ async fn test_records_notice_carries_enumerated_kind_and_content() -> Result<()>
         .map_err(|e| format!("publish turn error: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Turn(TurnRecord::Completed {
-            tool_calls: 0,
             duration_ms: 5,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;

@@ -50,7 +50,6 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
         .map_err(|e| format!("publish tool completed b: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Turn(TurnRecord::Completed {
-            tool_calls: 2,
             duration_ms: 9,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
@@ -128,7 +127,6 @@ async fn test_records_denied_call_settles_cancelled_without_running() -> Result<
         .map_err(|e| format!("publish tool completed: {e:?}"))?;
     bus.stream()
         .publish(SessionRecord::Turn(TurnRecord::Completed {
-            tool_calls: 0,
             duration_ms: 3,
         }))
         .map_err(|e| format!("publish turn: {e:?}"))?;
