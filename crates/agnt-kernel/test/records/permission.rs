@@ -81,6 +81,8 @@ async fn test_records_ask_path_denial_brackets_call_and_permission() -> Result<(
                 }
                 SessionRecord::Permission(_) => tags.push("permission_other"),
                 SessionRecord::Notice(_) => tags.push("notice"),
+                SessionRecord::Compaction(_) => tags.push("compaction"),
+                SessionRecord::Session(_) => tags.push("session"),
                 SessionRecord::Inference(_) => tags.push("inference"),
                 SessionRecord::Turn(TurnRecord::Completed { .. }) => tags.push("turn"),
             },
@@ -160,6 +162,8 @@ async fn test_records_policy_path_narrates_auto_resolution_without_request() -> 
                 }
                 SessionRecord::Permission(_) => tags.push("permission_other"),
                 SessionRecord::Notice(_) => tags.push("notice"),
+                SessionRecord::Compaction(_) => tags.push("compaction"),
+                SessionRecord::Session(_) => tags.push("session"),
                 SessionRecord::Inference(_) => tags.push("inference"),
                 SessionRecord::Turn(TurnRecord::Completed { .. }) => tags.push("turn"),
             },

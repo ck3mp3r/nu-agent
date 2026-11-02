@@ -193,6 +193,8 @@ async fn test_stream_vocabulary_orders_usage_before_turn_completion() -> Result<
                     SessionRecord::Tool(_) => {}
                     SessionRecord::Permission(_) => {}
                     SessionRecord::Notice(_) => {}
+                    SessionRecord::Compaction(_) => {}
+                    SessionRecord::Session(_) => {}
                     SessionRecord::Inference(InferenceRecord::Chunk { aggregated, .. }) => {
                         assert!(
                             aggregate

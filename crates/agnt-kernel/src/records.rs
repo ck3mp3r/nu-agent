@@ -13,7 +13,9 @@ pub enum SessionRecord {
     Inference(InferenceRecord),
     Tool(ToolRecord),
     Permission(PermissionRecord),
+    Compaction(CompactionRecord),
     Notice(NoticeRecord),
+    Session(SessionLifecycle),
     Turn(TurnRecord),
 }
 
@@ -277,6 +279,83 @@ pub struct NoticeRecord {
 pub enum NoticeKind {
     Warning,
     TurnError,
+}
+
+/// Where a compaction came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionSource {
+    /// The conversation crossed the compaction threshold on its own.
+    Auto,
+    /// Something asked for the compaction explicitly.
+    Manual,
+}
+
+/// The compaction pipeline: the transcript-mutating sweep. A compaction that
+/// runs brackets its summary stream (`Started` … chunks … `Completed`); one
+/// that fails narrates `Failed` instead of `Completed`. The summary text is the
+/// transcript content that replaced the swept region.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompactionRecord {
+    /// A compaction was decided for the session.
+    Requested { source: CompactionSource },
+    /// The compaction sweep started.
+    Started { source: CompactionSource },
+    /// One streamed delta of the compaction summary; `aggregated` accumulates
+    /// from the sweep start.
+    SummaryChunk {
+        source: CompactionSource,
+        delta: String,
+        aggregated: String,
+    },
+    /// The sweep finished; `summary` is the text that replaced the region.
+    Completed {
+        source: CompactionSource,
+        summary: String,
+    },
+    /// The sweep failed; the region is untouched and `message` says why.
+    Failed {
+        source: CompactionSource,
+        message: String,
+    },
+}
+
+/// Identity of one session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionId(String);
+
+impl SessionId {
+    /// The session identity as the store keys it.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// The id as text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The session lifecycle: identity, identity switches, and the close. Session
+/// usage totals are not carried — they fold from the session's inference
+/// records, the same way turn-level usage does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionLifecycle {
+    /// The session opened; `hydrated` says whether prior history loaded.
+    Started {
+        session_id: SessionId,
+        hydrated: bool,
+    },
+    /// The session closed. Totals fold from inference records.
+    Ended { session_id: SessionId },
+    /// The active session switched.
+    Switched {
+        from: Option<SessionId>,
+        to: SessionId,
+    },
+    /// The active agent (persona) switched.
+    AgentSwitched { from: Option<String>, to: String },
+    /// The active model switched.
+    ModelSwitched { from: String, to: String },
 }
 
 // endregion: --- Types

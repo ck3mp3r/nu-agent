@@ -60,6 +60,8 @@ async fn test_records_single_call_orders_usage_before_turn_completion() -> Resul
                     SessionRecord::Tool(_) => {}
                     SessionRecord::Permission(_) => {}
                     SessionRecord::Notice(_) => {}
+                    SessionRecord::Compaction(_) => {}
+                    SessionRecord::Session(_) => {}
                     SessionRecord::Inference(InferenceRecord::Chunk { aggregated, .. }) => {
                         assert!(
                             aggregate
@@ -156,6 +158,8 @@ async fn test_records_streaming_turn_pins_full_narration_sequence() -> Result<()
                 SessionRecord::Tool(_) => tags.push("tool"),
                 SessionRecord::Permission(_) => tags.push("permission"),
                 SessionRecord::Notice(_) => tags.push("notice"),
+                SessionRecord::Compaction(_) => tags.push("compaction"),
+                SessionRecord::Session(_) => tags.push("session"),
                 SessionRecord::Turn(TurnRecord::Completed { .. }) => tags.push("turn"),
             },
             Err(crate::bus::ReceiveError::Closed) => break,
@@ -230,6 +234,8 @@ async fn test_records_stopped_call_narrates_stop_before_turn_completion() -> Res
                 SessionRecord::Tool(_) => tags.push("tool"),
                 SessionRecord::Permission(_) => tags.push("permission"),
                 SessionRecord::Notice(_) => tags.push("notice"),
+                SessionRecord::Compaction(_) => tags.push("compaction"),
+                SessionRecord::Session(_) => tags.push("session"),
                 SessionRecord::Turn(TurnRecord::Completed { .. }) => tags.push("turn"),
             },
             Err(crate::bus::ReceiveError::Closed) => break,

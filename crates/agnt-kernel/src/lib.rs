@@ -10,9 +10,9 @@ pub mod bus;
 pub mod records;
 
 pub use records::{
-    AutoResolution, InferenceRecord, NoticeKind, NoticeRecord, PermissionDecision,
-    PermissionRecord, RequestId, SessionRecord, StopCause, ToolCall, ToolCallId, ToolOutcome,
-    ToolRecord, ToolStatus, TurnRecord, Usage,
+    AutoResolution, CompactionRecord, CompactionSource, InferenceRecord, NoticeKind, NoticeRecord,
+    PermissionDecision, PermissionRecord, RequestId, SessionId, SessionLifecycle, SessionRecord,
+    StopCause, ToolCall, ToolCallId, ToolOutcome, ToolRecord, ToolStatus, TurnRecord, Usage,
 };
 
 // endregion: --- Modules
@@ -38,5 +38,13 @@ mod records_tool_test;
 #[cfg(test)]
 #[path = "../test/records/permission.rs"]
 mod records_permission_test;
+
+#[cfg(test)]
+#[path = "../test/records/compaction.rs"]
+mod records_compaction_test;
+
+#[cfg(test)]
+#[path = "../test/records/session.rs"]
+mod records_session_test;
 
 // endregion: --- Tests

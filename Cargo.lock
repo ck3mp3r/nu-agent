@@ -146,6 +146,7 @@ name = "agnt-core"
 version = "0.1.0"
 dependencies = [
  "agnt-a2a",
+ "agnt-runtime",
  "agnt-storage",
  "agnt-testkit",
  "async-trait",
@@ -211,6 +212,13 @@ version = "0.1.0"
 dependencies = [
  "agnt-core",
  "textwrap",
+]
+
+[[package]]
+name = "agnt-runtime"
+version = "0.1.0"
+dependencies = [
+ "rig",
 ]
 
 [[package]]

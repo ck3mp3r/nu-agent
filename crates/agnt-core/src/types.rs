@@ -1,36 +1,12 @@
-//! Internal type aliases and re-exports for rig types.
+//! Type seam — re-exported from `agnt-runtime` while the runtime layer is
+//! strangled out of this crate.
 //!
-//! All internal modules import rig types from here rather than directly from
-//! `rig::completion`. This creates a single seam for future rig version migrations.
-//!
-//! See: rig 0.39.0 migration note (c5t note 50a9d896) — Option<Usage> → Usage breaking change.
+//! Core-internal paths (`crate::types::…`) stay stable during the migration;
+//! the type definitions live in `agnt_runtime::types`. The one core-local
+//! re-export (the copilot token directory) stays here because it is a config
+//! concern, not a shared type.
 
-// Core conversation message types
-pub use rig::completion::Message;
-pub use rig::completion::message::ToolResult;
-pub use rig::completion::message::{
-    AssistantContent, AssistantMessage, CallId, EmptyToolName, Opaque, ProviderCallId, Text,
-    ToolCall, ToolFunction, ToolName, ToolResultContent, UserContent,
-};
+pub use agnt_runtime::types::*;
 
-// Tool definitions (used in runtime and turn execution)
-pub use rig::completion::{ToolAnnotations, ToolDefinition};
-
-// Runtime model types (used by the ACP and plugin runtimes)
-pub use rig::DynModel;
-pub use rig::operation::Completion;
-
-// Tool server types (used to register and dispatch dynamic tools)
-pub use rig::tool::ToolErrorKind as RigToolErrorKind;
-pub use rig::tool::ToolResult as ToolExecutionResult;
-pub use rig::tool::server::{ToolServer, ToolServerHandle};
-pub use rig::tool::{DynamicTool, ToolContext, ToolExecutionError, ToolOutput, ToolSet};
-
-// Copilot provider OAuth device-code auth
+// Copilot token directory (config concern — not a shared rig type)
 pub use crate::config::copilot_tokens::copilot_token_dir;
-pub use rig::providers::copilot::auth::{
-    AuthError, AuthSource, Authenticator, DeviceCodeHandler, FileTokenStore,
-};
-
-// Test double for provider models (used by downstream crate tests)
-pub use rig::test_utils::MockCompletionModel;

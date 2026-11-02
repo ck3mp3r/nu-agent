@@ -70,6 +70,8 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
                 SessionRecord::Turn(TurnRecord::Completed { .. }) => tags.push("turn"),
                 SessionRecord::Permission(_) => tags.push("permission"),
                 SessionRecord::Notice(_) => tags.push("notice"),
+                SessionRecord::Compaction(_) => tags.push("compaction"),
+                SessionRecord::Session(_) => tags.push("session"),
             },
             Err(crate::bus::ReceiveError::Closed) => break,
             Err(crate::bus::ReceiveError::Lagged(_)) => {
@@ -147,6 +149,8 @@ async fn test_records_denied_call_settles_cancelled_without_running() -> Result<
                 SessionRecord::Turn(TurnRecord::Completed { .. }) => tags.push("turn"),
                 SessionRecord::Permission(_) => tags.push("permission"),
                 SessionRecord::Notice(_) => tags.push("notice"),
+                SessionRecord::Compaction(_) => tags.push("compaction"),
+                SessionRecord::Session(_) => tags.push("session"),
             },
             Err(crate::bus::ReceiveError::Closed) => break,
             Err(crate::bus::ReceiveError::Lagged(_)) => {
