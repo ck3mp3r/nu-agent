@@ -1,3 +1,5 @@
+use agnt_kernel::bus::Stream;
+
 use super::channel::{CancelTx, CompactionTx, ExternalTx, SessionTx, TurnTx, UiEventTx, UiStateTx};
 
 /// Typed broadcast channels, one per event category.
@@ -10,6 +12,7 @@ use super::channel::{CancelTx, CompactionTx, ExternalTx, SessionTx, TurnTx, UiEv
 /// typed event type for every UI-facing fact.
 #[derive(Clone)]
 pub struct Bus {
+    stream: Stream,
     cancel: CancelTx,
     turn: TurnTx,
     session: SessionTx,
@@ -20,6 +23,11 @@ pub struct Bus {
 }
 
 impl Bus {
+    /// The ordered session-record stream — the narration pipeline that
+    /// replaces these channels one record family at a time.
+    pub fn stream(&self) -> &Stream {
+        &self.stream
+    }
     pub fn cancel(&self) -> &CancelTx {
         &self.cancel
     }
@@ -46,6 +54,7 @@ impl Bus {
 impl Default for Bus {
     fn default() -> Self {
         Self {
+            stream: Stream::new(),
             cancel: CancelTx::new("cancel", 64),
             turn: TurnTx::new("turn", 64),
             session: SessionTx::new("session", 16),

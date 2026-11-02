@@ -20,6 +20,9 @@ mod deny_dispatch;
 #[path = "chain/inference_chunks.rs"]
 mod inference_chunks;
 
+#[path = "chain/narration.rs"]
+mod narration;
+
 #[path = "chain/output_repetition.rs"]
 mod output_repetition;
 

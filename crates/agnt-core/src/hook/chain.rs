@@ -15,6 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use agnt_kernel::{InferenceRecord, SessionRecord, Usage as StreamUsage};
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
     HookContext, InvalidToolCallAction, InvalidToolCallContext, ModelSelection,
@@ -444,6 +445,11 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 return CompletionCallAction::stop("Cancelled by user");
             }
             let _ = bus.ui_event().send(SystemEvent::InferenceStarted).await;
+            // Zero retention: a failed publish means no subscriber is attached
+            // (nobody is listening), which is not a turn error.
+            let _ = bus
+                .stream()
+                .publish(SessionRecord::Inference(InferenceRecord::Started));
 
             // Compaction decision: schedule a compaction when the session's
             // current conversation is over the threshold. The hook never patches
@@ -506,8 +512,19 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             }
             let _ = bus
                 .ui_event()
-                .send(SystemEvent::InferenceChunk { delta, aggregated })
+                .send(SystemEvent::InferenceChunk {
+                    delta: delta.clone(),
+                    aggregated: aggregated.clone(),
+                })
                 .await;
+            // Same deltas on the record stream: the hub event dies when the
+            // surfaces fold records instead.
+            let _ = bus
+                .stream()
+                .publish(SessionRecord::Inference(InferenceRecord::Chunk {
+                    delta,
+                    aggregated,
+                }));
             ObservationAction::continue_run()
         }
     }
@@ -840,6 +857,17 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                             },
                         })
                         .await;
+                    let _ = bus.stream().publish(SessionRecord::Inference(
+                        InferenceRecord::Completed {
+                            usage: StreamUsage {
+                                input_tokens: usage.input_tokens.unwrap_or(0),
+                                output_tokens: usage.output_tokens.unwrap_or(0),
+                                total_tokens: usage.total_tokens,
+                                cost,
+                                cost_complete,
+                            },
+                        },
+                    ));
                 }
             }
 
