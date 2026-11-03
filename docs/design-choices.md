@@ -4,6 +4,8 @@ Patterns this workspace follows. Read this before adding a crate, a layer, an ev
 
 Each rule states what it prevents, so you can recognize the mistake instead of memorizing the rule. **Status** says whether the pattern is enforced in the tree today or is the direction the migration is moving in. Do not cite an unimplemented pattern as if it exists; do not cite an implemented one as if it is still open.
 
+This document is per-change guidance. The properties the **target** must satisfy, the numbered checks that enforce them, and the rule by which a slice is accepted are in `docs/target-architecture.md`.
+
 ---
 
 ## 1. A crate boundary exists to forbid an edge
@@ -41,7 +43,17 @@ Corollaries:
 
 - The kernel prints nothing and supplies no text mapping. A layer that needs text declares its own trait and implements it for the kernel type.
 - No `as_str`-style table on a kernel enum. Parsing text **into** a variant at the boundary is correct and belongs there (`impl FromStr for BuiltinKind`); rendering a variant back to text does not.
-- No derived structure stored on a record (see §3).
+- **Identity contract.** An entity derives its identifier however it likes — content hash, counter, uuid — provided it keeps the contract:
+  1. **Derived, never supplied.** The id comes from the entity's own content, or from a monotonic source inside the owning layer. A caller never hands one in.
+  2. **Deterministic where replay matters.** If the entity crosses a persistence boundary, the same content must yield the same id in any process. A random value there is a defect, not a choice.
+  3. **Unique where replay does not matter.** An allocated id (a permission request, a session) need only be unique within its stated scope.
+  4. **Typed.** One newtype per entity. No bare `String` or `u64` in a signature.
+  5. **Immutable and unreachable.** Fixed at construction, no public field, no setter. A record that can be built with an id disagreeing with its content is the defect.
+  6. **Scoped.** The collision domain is stated where the id is defined — per process, per session, per store — so a short hash is a decision, not a hope.
+  7. **Identity is not display.** An id may be rendered; a rendered value is never an id.
+
+  Value objects are exempt: no identity, equality by value. No shared `Identifiable` trait exists until a consumer must be generic over identity; when one appears it carries the associated id type, never a string.
+- No *display* derived from a record is stored on it (see §3). An identifier is not a display.
 
 ---
 

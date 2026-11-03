@@ -584,6 +584,8 @@ fn test_module_function_variant() -> Result<()> {
 
 Before adding a crate, a layer, an event, or a rendering path, read `docs/design-choices.md`. It states the patterns this workspace follows — forbidden edges, the kernel as a data plane, producer-ships-data/drawer-derives-display, text parsed once at the boundary, the builder-gated composition root, the loop owner, the store-owned transcript ETL — and where a new thing belongs. Each rule is marked *enforced* or *direction*; do not cite a direction as if it already exists.
 
+The properties the **target** must satisfy — and the numbered checks (`ARCH-1` … `ARCH-12`) that fail the build when one stops holding — are in `docs/target-architecture.md`. A slice is accepted against those assertions, never against "tests pass".
+
 ## Docs Guardrails (Tool/Authz/TUI changes)
 
 When changing tool handler modules, permission UX, or TUI transcript rendering:
