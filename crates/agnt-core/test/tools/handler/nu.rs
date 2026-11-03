@@ -199,5 +199,3 @@ async fn nu_cancellation_kills_process_quickly() -> Result<()> {
     assert_eq!(err.kind, ToolErrorKind::NotRun, "cancel kind: {err:?}");
     Ok(())
 }
-
-// === call_line_render ===

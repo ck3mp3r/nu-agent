@@ -221,5 +221,3 @@ fn process_body_table() {
         }
     }
 }
-
-// === call_line_render ===

@@ -104,5 +104,3 @@ async fn read_missing_file_returns_runtime_error() {
         super::super::ToolErrorKind::Runtime
     );
 }
-
-// === call_line_render ===

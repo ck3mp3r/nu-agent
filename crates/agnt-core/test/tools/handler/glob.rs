@@ -159,5 +159,3 @@ async fn glob_invalid_pattern_returns_validation_error() {
         Ok(_) => { /* OverrideBuilder accepted it — acceptable */ }
     }
 }
-
-// === call_line_render ===

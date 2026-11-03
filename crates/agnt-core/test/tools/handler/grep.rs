@@ -217,5 +217,3 @@ async fn grep_skips_binary_files_without_error() {
         "should not error on binary files: {result:?}"
     );
 }
-
-// === call_line_render ===
