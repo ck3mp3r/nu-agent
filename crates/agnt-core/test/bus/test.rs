@@ -15,7 +15,11 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// A started call carrying `name`, for the channel-shape assertions below.
 fn tool_call(name: &str) -> ToolCall {
-    ToolCall::new(ToolName(name.to_string()), "user", "{}")
+    ToolCall::new(
+        ToolName(name.to_string()),
+        crate::tools::handler::ToolSource::Unknown,
+        "{}",
+    )
 }
 
 /// A published event reaches every subscriber of its channel.

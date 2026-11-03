@@ -12,14 +12,22 @@ use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolCallId, ToolOutcome
 /// A `ToolStarted` event for `name`/`arguments`.
 fn started(name: &str, arguments: &str) -> SystemEvent {
     SystemEvent::ToolStarted {
-        call: ToolCall::new(ToolName(name.to_string()), "mcp", arguments),
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            agnt_core::tools::handler::ToolSource::Mcp,
+            arguments,
+        ),
     }
 }
 
 /// A successful `ToolCompleted` event for `name`/`arguments`.
 fn completed(name: &str, arguments: &str) -> SystemEvent {
     SystemEvent::ToolCompleted {
-        call: ToolCall::new(ToolName(name.to_string()), "closure", arguments),
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            agnt_core::tools::handler::ToolSource::Closure,
+            arguments,
+        ),
         outcome: ToolOutcome {
             success: true,
             status: ToolStatus::Success,

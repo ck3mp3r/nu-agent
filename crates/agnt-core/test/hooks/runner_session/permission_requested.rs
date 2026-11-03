@@ -129,7 +129,7 @@ async fn test_hooks_runner_permission_requested_ignores_tool_preview() -> Result
         .send(SystemEvent::PreviewRequested {
             call: ToolCall::new(
                 ToolName("nu".to_string()),
-                "builtin",
+                crate::tools::handler::ToolSource::Builtin,
                 "{\"command\":\"ls\"}",
             ),
             display: ToolDisplay {

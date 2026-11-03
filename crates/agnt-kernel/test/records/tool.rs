@@ -13,8 +13,16 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
     // -- Setup & Fixtures
     let bus = Bus::new();
     let mut rx = bus.stream().subscribe();
-    let first = ToolCall::new("nu__shell", "builtin", r#"{"command":"ls"}"#);
-    let second = ToolCall::new("fs__read", "builtin", r#"{"path":"a.txt"}"#);
+    let first = ToolCall::new(
+        "nu__shell",
+        crate::ToolSource::Builtin,
+        r#"{"command":"ls"}"#,
+    );
+    let second = ToolCall::new(
+        "fs__read",
+        crate::ToolSource::Builtin,
+        r#"{"path":"a.txt"}"#,
+    );
     assert_ne!(first.id, second.id, "distinct calls must key distinctly");
 
     // -- Exec
@@ -111,7 +119,11 @@ async fn test_records_denied_call_settles_cancelled_without_running() -> Result<
     // -- Setup & Fixtures
     let bus = Bus::new();
     let mut rx = bus.stream().subscribe();
-    let call = ToolCall::new("nu__shell", "builtin", r#"{"command":"rm -rf /"}"#);
+    let call = ToolCall::new(
+        "nu__shell",
+        crate::ToolSource::Builtin,
+        r#"{"command":"rm -rf /"}"#,
+    );
 
     // -- Exec
     bus.stream()

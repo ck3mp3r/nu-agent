@@ -37,7 +37,11 @@ fn tool_display(title: &str, content: &str) -> ToolDisplay {
 }
 
 fn edit_call(arguments: &str) -> ToolCall {
-    ToolCall::new(ToolName("edit".to_string()), "closure", arguments)
+    ToolCall::new(
+        ToolName("edit".to_string()),
+        agnt_core::tools::handler::ToolSource::Closure,
+        arguments,
+    )
 }
 
 fn usage(input_tokens: u64, output_tokens: u64) -> Usage {

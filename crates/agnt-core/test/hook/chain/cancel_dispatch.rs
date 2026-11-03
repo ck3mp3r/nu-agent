@@ -132,8 +132,12 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
         .map_err(|_| "should publish the cancel")?;
 
     // -- Exec
-    hook.emit_cancelled_dispatch("read", "builtin", "{\"path\":\"/tmp/f\"}")
-        .await;
+    hook.emit_cancelled_dispatch(
+        "read",
+        crate::tools::handler::ToolSource::Builtin,
+        "{\"path\":\"/tmp/f\"}",
+    )
+    .await;
 
     // -- Check
     let started = ui_rx
@@ -144,7 +148,7 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
         SystemEvent::ToolStarted {
             call: ToolCall::new(
                 ir::ToolName("read".to_string()),
-                "builtin",
+                crate::tools::handler::ToolSource::Builtin,
                 "{\"path\":\"/tmp/f\"}",
             ),
         },
@@ -159,7 +163,7 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
         SystemEvent::ToolCompleted {
             call: ToolCall::new(
                 ir::ToolName("read".to_string()),
-                "builtin",
+                crate::tools::handler::ToolSource::Builtin,
                 "{\"path\":\"/tmp/f\"}",
             ),
             outcome: ToolOutcome {

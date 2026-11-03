@@ -409,7 +409,7 @@ fn tool_entry(path: &str, preview: Option<Display>) -> TranscriptEntry {
         kind: ToolKind::Generic,
         call: ToolCall::new(
             ToolName("read".to_string()),
-            "",
+            agnt_core::tools::handler::ToolSource::Unknown,
             format!(r#"{{"path":"{path}"}}"#),
         ),
         preview,

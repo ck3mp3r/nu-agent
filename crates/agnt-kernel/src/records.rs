@@ -105,6 +105,18 @@ pub enum ToolRecord {
     },
 }
 
+/// Where a tool call comes from. The variant is the whole classification: a
+/// consumer that acts on the difference matches it, and the layer that prints
+/// the label owns the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolSource {
+    Closure,
+    Builtin,
+    Mcp,
+    /// The producer could not classify the call.
+    Unknown,
+}
+
 /// One tool call, as the stream identifies it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCall {
@@ -113,21 +125,16 @@ pub struct ToolCall {
     /// live call and a replayed record.
     pub id: ToolCallId,
     pub name: String,
-    /// Where the tool comes from (builtin, closure, or an MCP server name).
-    pub source: String,
+    /// Where the tool comes from.
+    pub source: ToolSource,
     /// The raw arguments JSON — the other half of the call key.
     pub arguments: String,
 }
 
 impl ToolCall {
     /// A call with its id derived by the one derivation.
-    pub fn new(
-        name: impl Into<String>,
-        source: impl Into<String>,
-        arguments: impl Into<String>,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, source: ToolSource, arguments: impl Into<String>) -> Self {
         let name = name.into();
-        let source = source.into();
         let arguments = arguments.into();
         let id = ToolCallId::new(&name, &arguments);
         Self {

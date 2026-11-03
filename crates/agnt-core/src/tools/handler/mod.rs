@@ -30,7 +30,7 @@ pub use dispatch::llm_visible_tool_definitions;
 pub use pre_authorize::{PreAuthorizeOutput, pre_authorize_fs_tool, tool_display_from_arguments};
 pub use result::tool_display_from_result;
 pub(crate) use types::execution_error_for_kind;
-pub use types::{McpToolRegistry, ToolErrorKind, ToolHandlerError, ToolSource};
+pub use types::{McpToolRegistry, ToolErrorKind, ToolHandlerError, ToolSource, tool_source_text};
 
 // Export authz_gate types for permission resolvers
 pub use authz_gate::{AuthorizationFlowContext, AuthzOutcome, enforce_authorization_for_tool_call};

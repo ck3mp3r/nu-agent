@@ -126,14 +126,18 @@ pub(super) fn tool_entry_at(state: &AppState, index: usize) -> Result<&ToolEntry
 
 pub(super) fn started(name: &str, arguments: &str) -> SystemEvent {
     SystemEvent::ToolStarted {
-        call: ToolCall::new(ToolName(name.to_string()), "mcp", arguments),
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            agnt_core::tools::handler::ToolSource::Mcp,
+            arguments,
+        ),
     }
 }
 
 /// A `ToolCompleted` event with an explicit source and outcome.
 pub(super) fn completed_with(
     name: &str,
-    source: &str,
+    source: agnt_core::tools::handler::ToolSource,
     arguments: &str,
     outcome: ToolOutcome,
 ) -> SystemEvent {
@@ -150,7 +154,11 @@ pub(super) fn reduce_ui(state: &mut AppState, event: SystemEvent) -> bool {
 
 /// A tool call for `name`/`arguments` with the shared test source.
 pub(super) fn tool_call(name: &str, arguments: &str) -> ToolCall {
-    ToolCall::new(ToolName(name.to_string()), "mcp", arguments)
+    ToolCall::new(
+        ToolName(name.to_string()),
+        agnt_core::tools::handler::ToolSource::Mcp,
+        arguments,
+    )
 }
 
 /// Reduce a `Completed` event carrying an optional display.
@@ -164,7 +172,7 @@ pub(super) fn complete_with_display(
         state,
         completed_with(
             name,
-            "closure",
+            agnt_core::tools::handler::ToolSource::Closure,
             arguments,
             ToolOutcome {
                 success: true,

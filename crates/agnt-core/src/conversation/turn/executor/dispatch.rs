@@ -192,8 +192,7 @@ where
                     name,
                     &self.tool_infra.closure_registry,
                     &self.tool_infra.mcp_registry,
-                )
-                .as_str();
+                );
                 emit_not_run_dispatch(
                     &self.tool_infra.bus,
                     &self.tool_infra.cwd,

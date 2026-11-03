@@ -86,7 +86,7 @@ impl CoreRuntime for PermissionGateRuntime {
                 .send(SystemEvent::ToolStarted {
                     call: ToolCall::new(
                         ToolName("nu".to_string()),
-                        "closure",
+                        crate::tools::handler::ToolSource::Closure,
                         r#"{"command":"echo hi"}"#,
                     ),
                 })

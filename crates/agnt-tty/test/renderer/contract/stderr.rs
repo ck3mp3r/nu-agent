@@ -242,7 +242,11 @@ fn spinner_omits_arrow_when_call_line_summary_is_empty() {
         renderer.emit(&SystemEvent::Tick);
 
         renderer.emit(&SystemEvent::ToolStarted {
-            call: ToolCall::new(ToolName("nu".to_string()), "builtin", ""),
+            call: ToolCall::new(
+                ToolName("nu".to_string()),
+                agnt_core::tools::handler::ToolSource::Builtin,
+                "",
+            ),
         });
 
         renderer.flush();
@@ -273,10 +277,18 @@ fn default_tool_lifecycle_is_single_completion_line_with_result_block() {
 
     renderer.emit(&SystemEvent::InferenceStarted);
     renderer.emit(&SystemEvent::ToolStarted {
-        call: ToolCall::new(ToolName("gh__list_prs".to_string()), "mcp", "{}"),
+        call: ToolCall::new(
+            ToolName("gh__list_prs".to_string()),
+            agnt_core::tools::handler::ToolSource::Mcp,
+            "{}",
+        ),
     });
     renderer.emit(&SystemEvent::ToolCompleted {
-        call: ToolCall::new(ToolName("gh__list_prs".to_string()), "mcp", "{}"),
+        call: ToolCall::new(
+            ToolName("gh__list_prs".to_string()),
+            agnt_core::tools::handler::ToolSource::Mcp,
+            "{}",
+        ),
         outcome: ToolOutcome {
             success: true,
             status: ToolStatus::Success,
@@ -308,10 +320,18 @@ fn default_tool_lifecycle_prints_non_empty_payloads() {
         );
 
         renderer.emit(&SystemEvent::ToolStarted {
-            call: ToolCall::new(ToolName("gh__list_prs".to_string()), "mcp", "{}"),
+            call: ToolCall::new(
+                ToolName("gh__list_prs".to_string()),
+                agnt_core::tools::handler::ToolSource::Mcp,
+                "{}",
+            ),
         });
         renderer.emit(&SystemEvent::ToolCompleted {
-            call: ToolCall::new(ToolName("gh__list_prs".to_string()), "mcp", "{}"),
+            call: ToolCall::new(
+                ToolName("gh__list_prs".to_string()),
+                agnt_core::tools::handler::ToolSource::Mcp,
+                "{}",
+            ),
             outcome: ToolOutcome {
                 success: true,
                 status: ToolStatus::Success,

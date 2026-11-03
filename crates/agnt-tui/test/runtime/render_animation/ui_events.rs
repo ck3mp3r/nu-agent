@@ -214,7 +214,7 @@ fn ui_event_permission_group() -> Result<()> {
     preview.reduce_system_event(SystemEvent::ToolStarted {
         call: agnt_core::protocol::events::ToolCall::new(
             agnt_core::transcript::ir::ToolName("write".to_string()),
-            "user",
+            agnt_core::tools::handler::ToolSource::Unknown,
             "{}",
         ),
     });

@@ -47,7 +47,7 @@ fn hydrated_call_does_not_steal_finish_from_later_live_call_with_same_key() -> R
         &mut state,
         completed_with(
             "read",
-            "mcp",
+            agnt_core::tools::handler::ToolSource::Mcp,
             r#"{"path":"a.rs"}"#,
             ToolOutcome {
                 success: true,

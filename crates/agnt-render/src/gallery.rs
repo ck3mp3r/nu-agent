@@ -89,7 +89,7 @@ impl Gallery {
                     kind: ToolKind::Generic,
                     call: ToolCall::new(
                         ToolName("read".to_string()),
-                        "",
+                        agnt_core::tools::handler::ToolSource::Unknown,
                         "{\"path\":\"src/render.rs\"}",
                     ),
                     preview: Some(Display {
@@ -112,7 +112,7 @@ impl Gallery {
                     kind: ToolKind::Edit,
                     call: ToolCall::new(
                         ToolName("edit".to_string()),
-                        "",
+                        agnt_core::tools::handler::ToolSource::Unknown,
                         "{\"path\":\"src/render.rs\"}",
                     ),
                     // The gate preview the pending call showed. The result
@@ -170,7 +170,7 @@ impl Gallery {
                     kind: ToolKind::Edit,
                     call: ToolCall::new(
                         ToolName("edit".to_string()),
-                        "",
+                        agnt_core::tools::handler::ToolSource::Unknown,
                         "{\"path\":\"crates/agnt-render/src/plain.rs\"}",
                     ),
                     // The completion display carries the diff: the line-number

@@ -175,7 +175,7 @@ async fn session_grant_override_returns_allow_with_grant_rule() -> Result<()> {
         .insert_allow_always(
             &ask_decision,
             "nu",
-            ToolSource::Builtin.as_str(),
+            tool_source_text(ToolSource::Builtin),
             &tool_call.function.arguments,
         );
 

@@ -76,7 +76,11 @@ impl UiRenderer for FakeRenderer {
 }
 
 fn tool_call(name: &str) -> ToolCall {
-    ToolCall::new(ToolName(name.to_string()), "closure", "{}")
+    ToolCall::new(
+        ToolName(name.to_string()),
+        agnt_core::tools::handler::ToolSource::Closure,
+        "{}",
+    )
 }
 
 fn run_mock_flow<R: UiRenderer>(renderer: &mut R) {

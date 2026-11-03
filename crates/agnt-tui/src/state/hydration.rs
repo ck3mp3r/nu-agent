@@ -248,7 +248,11 @@ fn tool_pair(
 ) -> Option<(ToolCall, Option<ToolDisplay>, ToolOutcome)> {
     let name = message.tool_name()?;
     let arguments = message.tool_arguments()?;
-    let call = ToolCall::new(ToolName(name.to_string()), "", arguments);
+    let call = ToolCall::new(
+        ToolName(name.to_string()),
+        agnt_core::tools::handler::ToolSource::Unknown,
+        arguments,
+    );
     let outcome = ToolOutcome {
         // A row with no persisted verdict was not a success. The removed
         // `Unknown` status was hydration-only; a completion carries a verdict.

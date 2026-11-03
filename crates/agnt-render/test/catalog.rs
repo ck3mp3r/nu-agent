@@ -279,7 +279,7 @@ fn tool_entry() -> TranscriptEntry {
         kind: ToolKind::Generic,
         call: agnt_core::protocol::events::ToolCall::new(
             agnt_core::transcript::ir::ToolName("read".to_string()),
-            "",
+            agnt_core::tools::handler::ToolSource::Unknown,
             r#"{"path":"a.rs"}"#,
         ),
         preview: None,

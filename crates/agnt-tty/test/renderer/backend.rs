@@ -279,7 +279,11 @@ fn tool_entry_with_status(
 ) -> TranscriptEntry {
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::Generic,
-        call: ToolCall::new(ToolName(name.to_string()), "", arguments),
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            agnt_core::tools::handler::ToolSource::Unknown,
+            arguments,
+        ),
         preview,
         result: None,
         status,

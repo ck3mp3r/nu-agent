@@ -227,7 +227,11 @@ pub(crate) fn tool_entry(
 ) -> TranscriptEntry {
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&ToolName(name.to_string())),
-        call: ToolCall::new(ToolName(name.to_string()), "", arguments),
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            agnt_core::tools::handler::ToolSource::Unknown,
+            arguments,
+        ),
         preview,
         result,
         status,

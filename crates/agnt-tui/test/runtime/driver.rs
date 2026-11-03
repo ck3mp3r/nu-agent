@@ -374,7 +374,7 @@ async fn render_loop_driver_routes_tool_event_through_bus_ui_event_arm() -> Resu
             SystemEvent::ToolStarted {
                 call: agnt_core::protocol::events::ToolCall::new(
                     agnt_core::transcript::ir::ToolName("sentinel_tool".to_string()),
-                    "mcp",
+                    agnt_core::tools::handler::ToolSource::Mcp,
                     "{}",
                 ),
             },

@@ -112,7 +112,7 @@ fn edit_display_renders_one_visual_row_per_line_without_blank_rows() -> Result<(
         &mut state,
         completed_with(
             "edit",
-            "closure",
+            agnt_core::tools::handler::ToolSource::Closure,
             r#"{"path":"README.md"}"#,
             ToolOutcome {
                 success: true,

@@ -291,7 +291,7 @@ fn test_translator_tool_preview_produces_none() -> Result<()> {
     let event = SystemEvent::PreviewRequested {
         call: agnt_core::protocol::events::ToolCall::new(
             agnt_core::transcript::ir::ToolName("edit".to_string()),
-            "builtin",
+            agnt_core::tools::handler::ToolSource::Builtin,
             "{}",
         ),
         display: ToolDisplay {

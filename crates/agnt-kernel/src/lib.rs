@@ -12,8 +12,8 @@ pub mod records;
 pub use records::{
     AutoResolution, CompactionRecord, CompactionSource, InferenceRecord, NoticeKind, NoticeRecord,
     PermissionDecision, PermissionRecord, RequestId, SessionId, SessionLifecycle, SessionRecord,
-    StopCause, ToolCall, ToolCallId, ToolErrorKind, ToolOutcome, ToolRecord, ToolStatus,
-    TurnRecord, Usage,
+    StopCause, ToolCall, ToolCallId, ToolErrorKind, ToolOutcome, ToolRecord, ToolSource,
+    ToolStatus, TurnRecord, Usage,
 };
 
 // endregion: --- Modules

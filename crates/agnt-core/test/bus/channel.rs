@@ -125,7 +125,11 @@ async fn bus_default_uses_no_metrics_and_preserves_fifo() -> Result<()> {
     let mut rx = bus.ui_event().subscribe();
     bus.ui_event()
         .send(SystemEvent::ToolStarted {
-            call: ToolCall::new(ToolName("read".to_string()), "user", "{}"),
+            call: ToolCall::new(
+                ToolName("read".to_string()),
+                crate::tools::handler::ToolSource::Unknown,
+                "{}",
+            ),
         })
         .await?;
     let event = rx.recv().await?;

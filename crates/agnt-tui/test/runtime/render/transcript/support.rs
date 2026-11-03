@@ -45,7 +45,11 @@ pub(super) fn assistant_entry(text: &str) -> TranscriptEntry {
 
 /// A plain tool entry: a derived call line with no preview.
 pub(super) fn tool_entry(name: &str, arguments: &str) -> TranscriptEntry {
-    let call = ToolCall::new(ToolName(name.to_string()), "", arguments);
+    let call = ToolCall::new(
+        ToolName(name.to_string()),
+        agnt_core::tools::handler::ToolSource::Unknown,
+        arguments,
+    );
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&call.name),
         call,
@@ -59,7 +63,7 @@ pub(super) fn tool_entry(name: &str, arguments: &str) -> TranscriptEntry {
 pub(super) fn nu_tool_entry(code: &str) -> TranscriptEntry {
     let call = ToolCall::new(
         ToolName("nu".to_string()),
-        "",
+        agnt_core::tools::handler::ToolSource::Unknown,
         format!(r#"{{"command":"{code}"}}"#),
     );
     TranscriptEntry::Tool(ToolEntry {

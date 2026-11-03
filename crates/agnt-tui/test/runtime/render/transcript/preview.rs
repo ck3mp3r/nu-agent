@@ -86,7 +86,11 @@ fn test_transcript_preview_diff_tint_wins_over_code_surface() -> Result<()> {
     let mut coord = RuntimeCoordinator::new(40, 8, None);
     let columns = 40u16;
     let rows = 8u16;
-    let call = ToolCall::new(ToolName("edit".to_string()), "", r#"{"path":"a/a.rs"}"#);
+    let call = ToolCall::new(
+        ToolName("edit".to_string()),
+        agnt_core::tools::handler::ToolSource::Unknown,
+        r#"{"path":"a/a.rs"}"#,
+    );
     let entry = ToolEntry {
         kind: ToolKind::from_name(&call.name),
         call,

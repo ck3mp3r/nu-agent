@@ -132,7 +132,7 @@ fn live_entries(
     let call = || {
         agnt_core::protocol::events::ToolCall::new(
             agnt_core::transcript::ir::ToolName(tool.to_string()),
-            "builtin",
+            agnt_core::tools::handler::ToolSource::Builtin,
             arguments,
         )
     };

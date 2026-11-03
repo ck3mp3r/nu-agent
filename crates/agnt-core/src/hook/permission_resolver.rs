@@ -125,7 +125,7 @@ fn summarize_ask_payload(args: &JsonValue) -> String {
 /// The resolver holds the name, the source, and the raw arguments but no
 /// render registry, so the call line comes from the built-in fallback. The TUI
 /// matches the preview to its pending call by `ToolCallId` only.
-fn event_call(tool_name: &str, source: &str, arguments: &str) -> EventToolCall {
+fn event_call(tool_name: &str, source: ToolSource, arguments: &str) -> EventToolCall {
     EventToolCall::new(ir::ToolName(tool_name.to_string()), source, arguments)
 }
 
@@ -466,7 +466,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
             let outcome = {
                 enforce_authorization_for_tool_call(
                     &tool_call,
-                    source.clone(),
+                    source,
                     &permissions,
                     Arc::clone(&session_grants),
                     &flow_context,
@@ -499,7 +499,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                             let _ = bus
                                 .ui_event()
                                 .send(SystemEvent::PreviewRequested {
-                                    call: event_call(&tool_name, source.as_str(), &arguments),
+                                    call: event_call(&tool_name, source, &arguments),
                                     display,
                                 })
                                 .await;
@@ -638,7 +638,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                         ask_choice,
                         &mut grants,
                         &tool_name,
-                        source.as_str(),
+                        crate::tools::handler::tool_source_text(source),
                         &tool_call.function.arguments,
                     );
                 }

@@ -46,7 +46,11 @@ fn test_translator_tool_started_falls_back_to_name_when_summary_empty() -> Resul
     // -- Setup & Fixtures: empty arguments derive an empty call line, so the
     // name is the whole title.
     let event = SystemEvent::ToolStarted {
-        call: ToolCall::new(ToolName("glob".to_string()), "builtin", ""),
+        call: ToolCall::new(
+            ToolName("glob".to_string()),
+            agnt_core::tools::handler::ToolSource::Builtin,
+            "",
+        ),
     };
 
     // -- Exec
@@ -142,7 +146,11 @@ fn test_translator_tool_completed_failure_produces_failed_update() -> Result<()>
 fn test_translator_tool_completed_message_becomes_content_when_no_display() -> Result<()> {
     // -- Setup & Fixtures
     let event = SystemEvent::ToolCompleted {
-        call: ToolCall::new(ToolName("edit".to_string()), "builtin", "{}"),
+        call: ToolCall::new(
+            ToolName("edit".to_string()),
+            agnt_core::tools::handler::ToolSource::Builtin,
+            "{}",
+        ),
         outcome: ToolOutcome {
             success: false,
             status: ToolStatus::Cancelled,
@@ -178,7 +186,11 @@ fn test_translator_tool_completed_message_becomes_content_when_no_display() -> R
 fn test_translator_tool_completed_text_display_becomes_content() -> Result<()> {
     // -- Setup & Fixtures
     let event = SystemEvent::ToolCompleted {
-        call: ToolCall::new(ToolName("grep".to_string()), "builtin", "{}"),
+        call: ToolCall::new(
+            ToolName("grep".to_string()),
+            agnt_core::tools::handler::ToolSource::Builtin,
+            "{}",
+        ),
         outcome: ToolOutcome {
             success: true,
             status: ToolStatus::Success,
@@ -219,7 +231,11 @@ fn test_translator_tool_completed_diff_display_becomes_diff_content() -> Result<
     let diff =
         "--- a/src/file.txt\n+++ b/src/file.txt\n@@ -1,3 +1,3 @@\n alpha\n-beta\n+omega\n gamma\n";
     let event = SystemEvent::ToolCompleted {
-        call: ToolCall::new(ToolName("edit".to_string()), "builtin", "{}"),
+        call: ToolCall::new(
+            ToolName("edit".to_string()),
+            agnt_core::tools::handler::ToolSource::Builtin,
+            "{}",
+        ),
         outcome: ToolOutcome {
             success: true,
             status: ToolStatus::Success,
@@ -258,7 +274,11 @@ fn test_translator_tool_completed_diff_without_old_side_has_no_old_text() -> Res
     // -- Setup & Fixtures
     let diff = "--- a/src/new.txt\n+++ b/src/new.txt\n@@ -0,0 +1,1 @@\n+first line\n";
     let event = SystemEvent::ToolCompleted {
-        call: ToolCall::new(ToolName("edit".to_string()), "builtin", "{}"),
+        call: ToolCall::new(
+            ToolName("edit".to_string()),
+            agnt_core::tools::handler::ToolSource::Builtin,
+            "{}",
+        ),
         outcome: ToolOutcome {
             success: true,
             status: ToolStatus::Success,

@@ -35,7 +35,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             SystemEvent::ToolStarted {
                 call: ToolCall::new(
                     ToolName("k8s__list_pods".to_string()),
-                    "mcp",
+                    agnt_core::tools::handler::ToolSource::Mcp,
                     r#"{"namespace":"prod"}"#,
                 ),
             },
@@ -67,7 +67,11 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
         Case {
             name: "tool_start_leaves_status_empty",
             event: SystemEvent::ToolStarted {
-                call: ToolCall::new(ToolName("k8s__list_pods".to_string()), "mcp", "{}"),
+                call: ToolCall::new(
+                    ToolName("k8s__list_pods".to_string()),
+                    agnt_core::tools::handler::ToolSource::Mcp,
+                    "{}",
+                ),
             },
             pre: busy_empty_status,
         },
@@ -76,7 +80,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             event: SystemEvent::ToolCompleted {
                 call: ToolCall::new(
                     ToolName("k8s__list_pods".to_string()),
-                    "mcp",
+                    agnt_core::tools::handler::ToolSource::Mcp,
                     r#"{"namespace":"prod"}"#,
                 ),
                 outcome: ToolOutcome {
@@ -251,7 +255,11 @@ fn permission_request_table() -> Result<()> {
     reduce_ui(
         &mut state,
         SystemEvent::ToolStarted {
-            call: ToolCall::new(ToolName("edit".to_string()), "builtin", "{}"),
+            call: ToolCall::new(
+                ToolName("edit".to_string()),
+                agnt_core::tools::handler::ToolSource::Builtin,
+                "{}",
+            ),
         },
     );
     reduce_ui(

@@ -109,8 +109,8 @@ pub(crate) enum NotRunStart {
 pub(crate) struct NotRunCall<'a> {
     /// The tool's name.
     pub tool_name: &'a str,
-    /// The tool's source (`builtin`, `closure`, `mcp`).
-    pub source: &'a str,
+    /// The tool's source.
+    pub source: crate::tools::handler::ToolSource,
     /// The raw JSON arguments.
     pub arguments: &'a str,
     /// How `ToolStarted` reaches the bus.
@@ -371,7 +371,12 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
     /// The cancel arm returns `stop` before the `ToolStarted` send, and rig
     /// fails the dispatch before `on_outcome` fires — so without this sequence
     /// the live transcript renders nothing for the denied call.
-    async fn emit_cancelled_dispatch(&self, tool_name: &str, source: &str, arguments: &str) {
+    async fn emit_cancelled_dispatch(
+        &self,
+        tool_name: &str,
+        source: crate::tools::handler::ToolSource,
+        arguments: &str,
+    ) {
         emit_not_run_dispatch(
             &self.bus,
             &self.cwd,
@@ -599,12 +604,8 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             .and_then(|name| self.circuit.check_server_enabled(name, &self.mcp_registry));
         let source = tool_name
             .as_deref()
-            .map(|name| {
-                resolve_tool_source(name, &self.closure_registry, &self.mcp_registry)
-                    .as_str()
-                    .to_string()
-            })
-            .unwrap_or_default();
+            .map(|name| resolve_tool_source(name, &self.closure_registry, &self.mcp_registry))
+            .unwrap_or(crate::tools::handler::ToolSource::Unknown);
 
         let permission = self.permission.clone();
         let bus = self.bus.clone();
@@ -621,7 +622,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 // The stop lands before the `ToolStarted` send below and rig
                 // fails the dispatch before `on_outcome`, so this pair is the
                 // only host event the denied call produces.
-                self.emit_cancelled_dispatch(&tool_name, &source, &args)
+                self.emit_cancelled_dispatch(&tool_name, source, &args)
                     .await;
                 stop.narrate(&bus, StopCause::UserCancelled, CANCELLED_STOP_REASON);
                 return DispatchAction::stop(CANCELLED_STOP_REASON);
@@ -652,18 +653,14 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             // [`CallLine::from_json_summary`](crate::protocol::tool_args::CallLine::from_json_summary)
             // of the raw arguments. The fallback is display-only: the TUI
             // matches the pending call by `ToolCallId`, never by this text.
-            let call = ToolCall::new(
-                ir::ToolName(tool_name.clone()),
-                source.clone(),
-                args.clone(),
-            );
+            let call = ToolCall::new(ir::ToolName(tool_name.clone()), source, args.clone());
             let _ = bus.ui_event().send(SystemEvent::ToolStarted { call }).await;
             // The record stream opens the pair with the same call as data:
             // identity, name, source, arguments — never the rendered line.
             let _ = bus
                 .stream()
                 .publish(SessionRecord::Tool(ToolRecord::Started {
-                    call: StreamToolCall::new(tool_name.clone(), source.clone(), args.clone()),
+                    call: StreamToolCall::new(tool_name.clone(), source, args.clone()),
                 }));
 
             let decision = permission
@@ -691,7 +688,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                         &self.cwd,
                         NotRunCall {
                             tool_name: tool_name.as_str(),
-                            source: source.as_str(),
+                            source,
                             arguments: args.as_str(),
                             start: NotRunStart::AlreadyPublished,
                         },
@@ -765,9 +762,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
 
                 // 2. Resolve source
                 let source =
-                    resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry)
-                        .as_str()
-                        .to_string();
+                    resolve_tool_source(tool_name, &self.closure_registry, &self.mcp_registry);
 
                 // 3. Classify error kind from raw result
                 let error_kind = result.error().map(|e| e.kind().as_str().to_string());
@@ -801,11 +796,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 let _ = bus
                     .stream()
                     .publish(SessionRecord::Tool(ToolRecord::Completed {
-                        call: StreamToolCall::new(
-                            tool_name.to_string(),
-                            source.to_string(),
-                            args.to_string(),
-                        ),
+                        call: StreamToolCall::new(tool_name.to_string(), source, args.to_string()),
                         outcome: StreamToolOutcome {
                             status,
                             result: result_text.clone(),

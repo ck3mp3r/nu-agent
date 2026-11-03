@@ -67,7 +67,11 @@ pub(super) fn rendered_row_count(markdown: &str, width: usize) -> usize {
 
 /// Minimal tool entry for cap-boundary tests: carries no meaningful content.
 pub(super) fn simple_tool_entry() -> TranscriptEntry {
-    let call = ToolCall::new(ToolName("read".to_string()), "", "");
+    let call = ToolCall::new(
+        ToolName("read".to_string()),
+        agnt_core::tools::handler::ToolSource::Unknown,
+        "",
+    );
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&call.name),
         call,

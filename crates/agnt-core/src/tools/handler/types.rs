@@ -1,22 +1,15 @@
 use rig::tool::ToolExecutionError;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ToolSource {
-    Closure,
-    Mcp,
-    /// Built-in tools compiled into the binary (all built-in tools).
-    Builtin,
-    Unknown,
-}
+pub use agnt_kernel::ToolSource;
 
-impl ToolSource {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Closure => "closure",
-            Self::Mcp => "mcp",
-            Self::Builtin => "builtin",
-            Self::Unknown => "unknown",
-        }
+/// The text a surface prints for a tool source: the label table lives here,
+/// not in the kernel, because only the layer that draws the text owns it.
+pub fn tool_source_text(source: ToolSource) -> &'static str {
+    match source {
+        ToolSource::Closure => "closure",
+        ToolSource::Mcp => "mcp",
+        ToolSource::Builtin => "builtin",
+        ToolSource::Unknown => "unknown",
     }
 }
 

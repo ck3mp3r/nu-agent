@@ -42,7 +42,7 @@ fn test_entry_tool_entry_carries_call_preview_result_and_status() -> Result<()> 
     // -- Setup & Fixtures
     let call = ToolCall::new(
         ToolName("edit".to_string()),
-        "closure",
+        crate::tools::handler::ToolSource::Closure,
         r#"{"path":"a.rs"}"#,
     );
     let entry = TranscriptEntry::Tool(ToolEntry {
@@ -72,7 +72,11 @@ fn test_entry_tool_entry_carries_call_preview_result_and_status() -> Result<()> 
 #[test]
 fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
     // -- Setup & Fixtures
-    let call = ToolCall::new(ToolName("read".to_string()), "", "");
+    let call = ToolCall::new(
+        ToolName("read".to_string()),
+        crate::tools::handler::ToolSource::Unknown,
+        "",
+    );
     let cases = [
         (
             TranscriptEntry::Message(MessageEntry {
@@ -107,7 +111,11 @@ fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
         (
             TranscriptEntry::Tool(ToolEntry {
                 kind: ToolKind::Generic,
-                call: ToolCall::new(ToolName("nu".to_string()), "", ""),
+                call: ToolCall::new(
+                    ToolName("nu".to_string()),
+                    crate::tools::handler::ToolSource::Unknown,
+                    "",
+                ),
                 preview: None,
                 result: Some(Display {
                     title: None,
@@ -127,7 +135,11 @@ fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
         (
             TranscriptEntry::Tool(ToolEntry {
                 kind: ToolKind::Generic,
-                call: ToolCall::new(ToolName("nu".to_string()), "", ""),
+                call: ToolCall::new(
+                    ToolName("nu".to_string()),
+                    crate::tools::handler::ToolSource::Unknown,
+                    "",
+                ),
                 preview: Some(Display {
                     title: None,
                     sections: vec![DisplaySection {
@@ -147,7 +159,11 @@ fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
         (
             TranscriptEntry::Tool(ToolEntry {
                 kind: ToolKind::Generic,
-                call: ToolCall::new(ToolName("edit".to_string()), "", ""),
+                call: ToolCall::new(
+                    ToolName("edit".to_string()),
+                    crate::tools::handler::ToolSource::Unknown,
+                    "",
+                ),
                 preview: None,
                 result: Some(Display {
                     title: None,

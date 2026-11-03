@@ -278,7 +278,7 @@ async fn run_hook<P>(
                             "tool_started",
                             serde_json::json!({
                                 "name": call.name.0,
-                                "source": call.source,
+                                "source": crate::tools::handler::tool_source_text(call.source),
                                 "arguments": call.arguments,
                             }),
                         ));
@@ -290,7 +290,7 @@ async fn run_hook<P>(
                             "tool_completed",
                             serde_json::json!({
                                 "name": call.name.0,
-                                "source": call.source,
+                                "source": crate::tools::handler::tool_source_text(call.source),
                                 "arguments": call.arguments,
                                 "success": outcome.success,
                                 "error_kind": outcome.error_kind,

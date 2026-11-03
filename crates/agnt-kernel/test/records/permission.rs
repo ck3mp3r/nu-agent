@@ -17,7 +17,11 @@ async fn test_records_ask_path_denial_brackets_call_and_permission() -> Result<(
     // -- Setup & Fixtures
     let bus = Bus::new();
     let mut rx = bus.stream().subscribe();
-    let call = ToolCall::new("nu__shell", "builtin", r#"{"command":"rm -rf /"}"#);
+    let call = ToolCall::new(
+        "nu__shell",
+        crate::ToolSource::Builtin,
+        r#"{"command":"rm -rf /"}"#,
+    );
     let request_id = RequestId::new("req-1");
 
     // -- Exec
@@ -119,7 +123,11 @@ async fn test_records_policy_path_narrates_auto_resolution_without_request() -> 
     // -- Setup & Fixtures
     let bus = Bus::new();
     let mut rx = bus.stream().subscribe();
-    let call = ToolCall::new("nu__shell", "builtin", r#"{"command":"ls"}"#);
+    let call = ToolCall::new(
+        "nu__shell",
+        crate::ToolSource::Builtin,
+        r#"{"command":"ls"}"#,
+    );
 
     // -- Exec
     bus.stream()

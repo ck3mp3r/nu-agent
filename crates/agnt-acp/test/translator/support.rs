@@ -50,13 +50,21 @@ pub fn diff_section(label: &str, content: &str) -> ToolDisplaySection {
 
 pub fn tool_started(name: &str, arguments: &str) -> SystemEvent {
     SystemEvent::ToolStarted {
-        call: ToolCall::new(ToolName(name.to_string()), "builtin", arguments),
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            agnt_core::tools::handler::ToolSource::Builtin,
+            arguments,
+        ),
     }
 }
 
 pub fn tool_completed(name: &str, arguments: &str, success: bool) -> SystemEvent {
     SystemEvent::ToolCompleted {
-        call: ToolCall::new(ToolName(name.to_string()), "builtin", arguments),
+        call: ToolCall::new(
+            ToolName(name.to_string()),
+            agnt_core::tools::handler::ToolSource::Builtin,
+            arguments,
+        ),
         outcome: ToolOutcome {
             success,
             status: if success {

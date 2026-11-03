@@ -306,7 +306,7 @@ fn completed_edit_with_diff(state: &mut AppState) {
     let edit_call = || {
         agnt_core::protocol::events::ToolCall::new(
             agnt_core::transcript::ir::ToolName("edit".to_string()),
-            "closure",
+            agnt_core::tools::handler::ToolSource::Closure,
             edit_arguments,
         )
     };

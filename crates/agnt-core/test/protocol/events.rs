@@ -32,12 +32,16 @@ fn test_protocol_events_tool_call_new_derives_id_from_payload() -> Result<()> {
     let arguments = "{\"path\":\"src/main.rs\"}";
 
     // -- Exec
-    let call = ToolCall::new(ToolName("edit".to_string()), "builtin", arguments);
+    let call = ToolCall::new(
+        ToolName("edit".to_string()),
+        crate::tools::handler::ToolSource::Builtin,
+        arguments,
+    );
 
     // -- Check
     assert_eq!(call.id, ToolCallId::of("edit", arguments));
     assert_eq!(call.name, ToolName("edit".to_string()));
-    assert_eq!(call.source, "builtin");
+    assert_eq!(call.source, crate::tools::handler::ToolSource::Builtin);
     assert_eq!(call.arguments, arguments);
     Ok(())
 }
@@ -242,7 +246,7 @@ fn test_protocol_events_payloads_carry_typed_identity() -> Result<()> {
 fn tool_call() -> ToolCall {
     ToolCall::new(
         ToolName("nu".to_string()),
-        "builtin",
+        crate::tools::handler::ToolSource::Builtin,
         "{\"command\":\"ls\"}",
     )
 }

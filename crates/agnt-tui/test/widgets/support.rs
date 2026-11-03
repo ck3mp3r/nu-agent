@@ -143,7 +143,11 @@ pub(super) fn tool_entry(
 ) -> TranscriptEntry {
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::Generic,
-        call: ToolCall::new(ToolName("read".to_string()), "", r#"{"path":"a.rs"}"#),
+        call: ToolCall::new(
+            ToolName("read".to_string()),
+            agnt_core::tools::handler::ToolSource::Unknown,
+            r#"{"path":"a.rs"}"#,
+        ),
         preview,
         result,
         status,
