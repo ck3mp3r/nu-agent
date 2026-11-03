@@ -164,6 +164,11 @@ pub(crate) async fn emit_not_run_dispatch(
             .ui_event()
             .send(SystemEvent::ToolStarted { call: call.clone() })
             .await;
+        let _ = bus
+            .stream()
+            .publish(SessionRecord::Tool(ToolRecord::Started {
+                call: StreamToolCall::new(tool_name, source, arguments),
+            }));
     }
     if preview && let Some(display) = tool_display_from_arguments(tool_name, arguments, cwd) {
         let _ = bus
@@ -194,6 +199,18 @@ pub(crate) async fn emit_not_run_dispatch(
             },
         })
         .await;
+    // The same pair on the record stream: a call the turn never dispatched is
+    // still a dispatched call to every consumer folding records.
+    let _ = bus
+        .stream()
+        .publish(SessionRecord::Tool(ToolRecord::Completed {
+            call: StreamToolCall::new(tool_name, source, arguments),
+            outcome: StreamToolOutcome {
+                status: ToolStatus::Cancelled,
+                result: String::new(),
+                message: Some(message.to_string()),
+            },
+        }));
 }
 
 /// The environment a hook chain publishes into and resolves against.
