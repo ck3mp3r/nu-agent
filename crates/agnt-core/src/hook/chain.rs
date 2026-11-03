@@ -38,11 +38,9 @@ use crate::llm::{PricedOutcome, PricingSkip, computed_cost};
 use crate::protocol::events::{
     SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage, compaction_source_text,
 };
-use crate::protocol::tool_args::CallLine;
 use crate::session::tool_status::{ToolStatus, error_kind_of, status_of_result};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::handler::builtin_tool::call_line_render_for;
 use crate::tools::handler::tool_display_from_arguments;
 use crate::transcript::ir;
 use crate::types::ToolName;
@@ -98,17 +96,13 @@ pub(crate) enum NotRunOutcome<'a> {
 }
 
 /// How the not-run emitter publishes `ToolStarted`.
-///
-/// Both variants carry the call line: the events after `ToolStarted` are
-/// `SystemEvent`s that name the full call, and the caller's line is the only
-/// value the emitter cannot derive.
 pub(crate) enum NotRunStart {
-    /// Publish `ToolStarted` with this call line.
-    Publish(CallLine),
+    /// Publish `ToolStarted` for this call.
+    Publish,
     /// The caller already published `ToolStarted` — the deny arm sends it
     /// before permission resolution so the permission card anchors to the
     /// call.
-    AlreadyPublished(CallLine),
+    AlreadyPublished,
 }
 
 /// The call a not-run emission publishes.
@@ -152,16 +146,8 @@ pub(crate) async fn emit_not_run_dispatch(
         arguments,
         start,
     } = call;
-    let (publish_start, call_line) = match start {
-        NotRunStart::Publish(call_line) => (true, call_line),
-        NotRunStart::AlreadyPublished(call_line) => (false, call_line),
-    };
-    let call = ToolCall::new(
-        ir::ToolName(tool_name.to_string()),
-        source,
-        arguments,
-        call_line,
-    );
+    let publish_start = matches!(start, NotRunStart::Publish);
+    let call = ToolCall::new(ir::ToolName(tool_name.to_string()), source, arguments);
     if publish_start {
         let _ = bus
             .ui_event()
@@ -386,7 +372,6 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
     /// fails the dispatch before `on_outcome` fires — so without this sequence
     /// the live transcript renders nothing for the denied call.
     async fn emit_cancelled_dispatch(&self, tool_name: &str, source: &str, arguments: &str) {
-        let call_line = call_line_render_for(tool_name, arguments);
         emit_not_run_dispatch(
             &self.bus,
             &self.cwd,
@@ -394,7 +379,7 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
                 tool_name,
                 source,
                 arguments,
-                start: NotRunStart::Publish(call_line),
+                start: NotRunStart::Publish,
             },
             NotRunOutcome::Cancelled,
             true,
@@ -667,12 +652,10 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             // [`CallLine::from_json_summary`](crate::protocol::tool_args::CallLine::from_json_summary)
             // of the raw arguments. The fallback is display-only: the TUI
             // matches the pending call by `ToolCallId`, never by this text.
-            let call_line = call_line_render_for(&tool_name, &args);
             let call = ToolCall::new(
                 ir::ToolName(tool_name.clone()),
                 source.clone(),
                 args.clone(),
-                call_line.clone(),
             );
             let _ = bus.ui_event().send(SystemEvent::ToolStarted { call }).await;
             // The record stream opens the pair with the same call as data:
@@ -710,7 +693,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                             tool_name: tool_name.as_str(),
                             source: source.as_str(),
                             arguments: args.as_str(),
-                            start: NotRunStart::AlreadyPublished(call_line),
+                            start: NotRunStart::AlreadyPublished,
                         },
                         NotRunOutcome::Denied { reason: &reason },
                         preview,
@@ -830,9 +813,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                             kind: result.error().map(|e| error_kind_of(e.kind())),
                         },
                     }));
-                let call_line = call_line_render_for(tool_name, args);
-                let call =
-                    ToolCall::new(ir::ToolName(tool_name.to_string()), source, args, call_line);
+                let call = ToolCall::new(ir::ToolName(tool_name.to_string()), source, args);
                 let _ = bus
                     .ui_event()
                     .send(SystemEvent::ToolCompleted {

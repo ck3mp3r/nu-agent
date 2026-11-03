@@ -15,7 +15,6 @@ use agnt_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
 use agnt_core::protocol::event::ToolDisplay;
 use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome, Usage};
 use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::tools::handler::builtin_tool::call_line_render_for;
 use agnt_core::transcript::ir::ToolName;
 
 use super::AppState;
@@ -249,12 +248,7 @@ fn tool_pair(
 ) -> Option<(ToolCall, Option<ToolDisplay>, ToolOutcome)> {
     let name = message.tool_name()?;
     let arguments = message.tool_arguments()?;
-    let call = ToolCall::new(
-        ToolName(name.to_string()),
-        "",
-        arguments,
-        call_line_render_for(name, arguments),
-    );
+    let call = ToolCall::new(ToolName(name.to_string()), "", arguments);
     let outcome = ToolOutcome {
         // A row with no persisted verdict was not a success. The removed
         // `Unknown` status was hydration-only; a completion carries a verdict.

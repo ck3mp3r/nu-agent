@@ -8,7 +8,7 @@ use super::{
 };
 use crate::bus::Bus;
 use crate::protocol::event::{ToolDisplay, ToolDisplaySection};
-use crate::protocol::tool_args::{CallLine, parse_json_string_field};
+use crate::protocol::tool_args::{call_line_from_json, parse_json_string_field};
 use crate::tools::fs::core::apply_search_replace_edit;
 use crate::transcript::ir::ContentKind;
 
@@ -426,13 +426,11 @@ pub struct EditTool;
 impl BuiltinTool for EditTool {
     const NAME: &'static str = "edit";
 
-    fn call_line_render(arguments: &str) -> CallLine {
+    fn call_line_render(arguments: &str) -> String {
         let Some(path) = parse_json_string_field(arguments, "path") else {
-            return CallLine::from_json_summary(arguments);
+            return call_line_from_json(arguments);
         };
-        CallLine {
-            summary: format!("→ {path} (diff)"),
-        }
+        format!("→ {path} (diff)")
     }
 
     async fn execute(

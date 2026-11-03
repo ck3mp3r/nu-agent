@@ -5,7 +5,6 @@
 
 use agnt_core::protocol::event::ToolDisplayStats;
 use agnt_core::protocol::events::ToolCall;
-use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
@@ -92,9 +91,6 @@ impl Gallery {
                         ToolName("read".to_string()),
                         "",
                         "{\"path\":\"src/render.rs\"}",
-                        CallLine {
-                            summary: "→ src/render.rs".to_string(),
-                        },
                     ),
                     preview: Some(Display {
                         title: None,
@@ -118,9 +114,6 @@ impl Gallery {
                         ToolName("edit".to_string()),
                         "",
                         "{\"path\":\"src/render.rs\"}",
-                        CallLine {
-                            summary: "→ src/render.rs".to_string(),
-                        },
                     ),
                     // The gate preview the pending call showed. The result
                     // below takes over once the call completes; the preview
@@ -179,9 +172,6 @@ impl Gallery {
                         ToolName("edit".to_string()),
                         "",
                         "{\"path\":\"crates/agnt-render/src/plain.rs\"}",
-                        CallLine {
-                            summary: "→ crates/agnt-render/src/plain.rs (diff)".to_string(),
-                        },
                     ),
                     // The completion display carries the diff: the line-number
                     // gutter, the hunk header, the file meta, and the tinted

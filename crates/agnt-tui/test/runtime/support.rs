@@ -5,7 +5,6 @@ use crate::runtime::RuntimeCoordinator;
 use crate::runtime::test_driver::{CellProbe, DriveEvent, RenderLoopDriver};
 use crate::state::{AppState, PickerRenderKind, TranscriptRole};
 use agnt_core::protocol::events::ToolCall;
-use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
 use agnt_core::transcript::ir::{MessageRole, NoticeKind, ToolName};
 use agnt_core::transcript::renderer::ItemStatus;
@@ -159,14 +158,7 @@ pub(super) fn key(key: TerminalKey) -> DriveEvent {
 }
 
 pub(super) fn push_entry(coord: &mut RuntimeCoordinator, status: Option<ItemStatus>) {
-    let call = ToolCall::new(
-        ToolName("read".to_string()),
-        "",
-        "{}",
-        CallLine {
-            summary: "hi".to_string(),
-        },
-    );
+    let call = ToolCall::new(ToolName("read".to_string()), "", "{}");
     let entry = TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&call.name),
         call,

@@ -24,6 +24,8 @@ use agnt_core::bus::{Bus, ChannelError, CompactionRx, TryRecvError, UiEventRx};
 use agnt_core::config::defaults;
 use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
 use agnt_core::protocol::events::{SystemEvent, SystemKind};
+use agnt_core::protocol::plain_call_text;
+use agnt_core::tools::handler::builtin_tool::call_line_render_for;
 use agnt_core::transcript::ir::ContentKind;
 
 use crate::error::AcpError;
@@ -116,11 +118,14 @@ impl EventTranslator {
             SystemEvent::ToolStarted { call } => {
                 let name = call.name.0.clone();
                 let id = self.allocate_call_id(&name, &call.arguments);
-                let summary = call.call_line.to_plain_text();
+                // The call line is a derivation, not data: derive it here, once
+                // per event, exactly as the transcript entries do at build time.
+                let call_line = call_line_render_for(&name, &call.arguments);
+                let summary = plain_call_text(&call_line);
                 let title = if summary.is_empty() {
                     name.clone()
                 } else {
-                    summary
+                    summary.to_string()
                 };
                 Some(SessionUpdate::ToolCall(
                     ToolCall::new(id, title)

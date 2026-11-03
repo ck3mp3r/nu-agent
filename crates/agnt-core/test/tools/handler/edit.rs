@@ -20,7 +20,7 @@ mod support;
 
 use super::*;
 use crate::bus::Bus;
-use crate::protocol::tool_args::CallLine;
+use crate::protocol::tool_args::call_line_from_json;
 use crate::tools::handler::builtin_tool::{BuiltinTool, Previewable};
 use crate::transcript::ir::ContentKind;
 

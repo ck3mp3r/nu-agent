@@ -37,7 +37,6 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                     ToolName("k8s__list_pods".to_string()),
                     "mcp",
                     r#"{"namespace":"prod"}"#,
-                    CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
                 ),
             },
         );
@@ -68,12 +67,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
         Case {
             name: "tool_start_leaves_status_empty",
             event: SystemEvent::ToolStarted {
-                call: ToolCall::new(
-                    ToolName("k8s__list_pods".to_string()),
-                    "mcp",
-                    "{}",
-                    CallLine::from_json_summary("{}"),
-                ),
+                call: ToolCall::new(ToolName("k8s__list_pods".to_string()), "mcp", "{}"),
             },
             pre: busy_empty_status,
         },
@@ -84,7 +78,6 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
                     ToolName("k8s__list_pods".to_string()),
                     "mcp",
                     r#"{"namespace":"prod"}"#,
-                    CallLine::from_json_summary(r#"{"namespace":"prod"}"#),
                 ),
                 outcome: ToolOutcome {
                     success: true,
@@ -258,12 +251,7 @@ fn permission_request_table() -> Result<()> {
     reduce_ui(
         &mut state,
         SystemEvent::ToolStarted {
-            call: ToolCall::new(
-                ToolName("edit".to_string()),
-                "builtin",
-                "{}",
-                CallLine::from_json_summary("{}"),
-            ),
+            call: ToolCall::new(ToolName("edit".to_string()), "builtin", "{}"),
         },
     );
     reduce_ui(

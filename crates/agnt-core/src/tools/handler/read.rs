@@ -3,7 +3,9 @@ use std::path::Path;
 
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
 use crate::bus::Bus;
-use crate::protocol::tool_args::{CallLine, parse_json_string_field, parse_json_usize_field};
+use crate::protocol::tool_args::{
+    call_line_from_json, parse_json_string_field, parse_json_usize_field,
+};
 
 #[derive(Debug, serde::Deserialize)]
 struct ReadArgs {
@@ -19,11 +21,11 @@ pub struct ReadTool;
 impl BuiltinTool for ReadTool {
     const NAME: &'static str = "read";
 
-    fn call_line_render(arguments: &str) -> CallLine {
+    fn call_line_render(arguments: &str) -> String {
         let Some(path) = parse_json_string_field(arguments, "path") else {
-            return CallLine::from_json_summary(arguments);
+            return call_line_from_json(arguments);
         };
-        let summary = match (
+        match (
             parse_json_usize_field(arguments, "offset"),
             parse_json_usize_field(arguments, "limit"),
         ) {
@@ -31,8 +33,7 @@ impl BuiltinTool for ReadTool {
                 format!("→ {path}:{offset}-{}", offset.saturating_add(limit))
             }
             _ => format!("→ {path}"),
-        };
-        CallLine { summary }
+        }
     }
 
     async fn execute(

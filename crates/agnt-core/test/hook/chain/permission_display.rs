@@ -181,18 +181,18 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
 }
 
 // ---------------------------------------------------------------------------
-// ToolRenderRegistry wiring: on_dispatch renders the call line via the
-// registry rather than passing raw arguments through.
+// The call line is derived at the point of use: on_dispatch publishes the
+// call's name and raw arguments, and a consumer renders the line from them.
 // ---------------------------------------------------------------------------
 
-/// `HookChain::on_dispatch` falls back to the documented call line when the
-/// registry holds no render fn for the tool: the builtin dispatch (a tailored
-/// render for a builtin name) or, for a name that is not a builtin, the
-/// generic JSON summary of the raw arguments. The summary is display-only —
-/// the TUI matches the pending call by id, never by this text.
+/// Every tool call has a documented call line, derived from the tool name and
+/// the raw arguments: a tailored render for a builtin name, or the generic
+/// JSON summary for a name that is not a builtin. The event carries the data
+/// those derivations read, never the rendered text — the summary is
+/// display-only, and the TUI matches the pending call by id, never by it.
 #[tokio::test]
-async fn on_dispatch_publishes_the_fallback_call_line_for_an_unregistered_tool() -> Result<()> {
-    // -- Setup & Fixtures: an empty render registry, so `add` takes the miss path.
+async fn on_dispatch_publishes_the_call_that_derives_the_fallback_line() -> Result<()> {
+    // -- Setup & Fixtures: `add` is not a builtin, so it takes the fallback path.
     let memory = Arc::new(CachedMemory::new(
         crate::session::RigStoreConfig::in_memory(),
     ));
@@ -275,24 +275,22 @@ async fn on_dispatch_publishes_the_fallback_call_line_for_an_unregistered_tool()
     };
     turn.await.map_err(|_| "turn task should not panic")?;
 
-    // -- Check: the generic JSON summary of the raw arguments.
+    // -- Check: the event carries the call, not a rendered line — the
+    // documented fallback is derived from the raw arguments at the point of
+    // use.
     assert_eq!(
-        call.call_line,
-        crate::protocol::tool_args::CallLine::from_json_summary(&call.arguments),
-        "an unregistered tool must carry the documented fallback call line"
-    );
-    assert_eq!(
-        call.call_line.summary, "→ {\"x\":1, \"y\":2}",
+        crate::protocol::tool_args::call_line_from_json(&call.arguments),
+        "→ {\"x\":1, \"y\":2}",
         "the fallback is the arrow-prefixed JSON summary of the raw arguments"
     );
     Ok(())
 }
 
-/// `HookChain::on_dispatch` derives the call line from the tool name and the
-/// raw arguments and publishes it on `SystemEvent::ToolStarted`. A `read` tool
-/// renders `→ /tmp/f`; the raw JSON arguments never reach the event.
+/// `HookChain::on_dispatch` publishes the tool call's name and raw arguments
+/// on `SystemEvent::ToolStarted`; the call line is derived from them where it
+/// is drawn. A `read` call derives `→ /tmp/f`.
 #[tokio::test]
-async fn on_dispatch_publishes_derived_call_line() -> Result<()> {
+async fn on_dispatch_publishes_the_call_that_derives_its_line() -> Result<()> {
     // -- Setup & Fixtures
     let memory = Arc::new(CachedMemory::new(
         crate::session::RigStoreConfig::in_memory(),
@@ -370,24 +368,23 @@ async fn on_dispatch_publishes_derived_call_line() -> Result<()> {
         let mut stream = agent.prompt("run").max_turns(16).stream();
         while stream.next().await.is_some() {}
     });
-    let call_line = loop {
+    let call = loop {
         let event = tokio::time::timeout(Duration::from_secs(5), ui_rx.recv())
             .await
             .map_err(|_| "should receive a ui_event within timeout")?
             .map_err(|_| "ui_event channel should stay open")?;
         if let SystemEvent::ToolStarted { call } = event {
-            break call.call_line;
+            break call;
         }
     };
     turn.await.map_err(|_| "turn task should not panic")?;
 
-    // -- Check
+    // -- Check: the event carries the call's own data; the line is derived
+    // from it at the point of use.
     assert_eq!(
-        call_line,
-        crate::protocol::tool_args::CallLine {
-            summary: "→ /tmp/f".to_string(),
-        },
-        "ToolStarted must carry the registry-rendered call line"
+        crate::tools::handler::builtin_tool::call_line_render_for(&call.name.0, &call.arguments),
+        "→ /tmp/f",
+        "a read call must derive its line from its own name and arguments"
     );
     Ok(())
 }

@@ -50,8 +50,8 @@ fn test_transcript_preview_tool_entry_renders_one_code_surface() -> Result<()> {
         (0..columns)
             .map(|x| cell_symbol(&terminal, x, 0))
             .collect::<String>()
-            .contains("ls | select name"),
-        "the call line carries the summary"
+            .contains("⏱ 120s"),
+        "the call line carries the derived timeout line"
     );
     assert_eq!(
         cell_bg(&terminal, 1, 0),
@@ -86,14 +86,7 @@ fn test_transcript_preview_diff_tint_wins_over_code_surface() -> Result<()> {
     let mut coord = RuntimeCoordinator::new(40, 8, None);
     let columns = 40u16;
     let rows = 8u16;
-    let call = ToolCall::new(
-        ToolName("edit".to_string()),
-        "",
-        "",
-        CallLine {
-            summary: "→ a/a.rs".to_string(),
-        },
-    );
+    let call = ToolCall::new(ToolName("edit".to_string()), "", r#"{"path":"a/a.rs"}"#);
     let entry = ToolEntry {
         kind: ToolKind::from_name(&call.name),
         call,

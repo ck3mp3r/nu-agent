@@ -11,7 +11,6 @@
 pub use agnt_kernel::CompactionSource;
 
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay};
-use crate::protocol::tool_args::CallLine;
 use crate::session::tool_status::ToolStatus;
 use crate::transcript::ir::ToolName;
 
@@ -159,9 +158,9 @@ pub struct ToolCall {
     pub id: ToolCallId,
     pub name: ToolName,
     pub source: String,
-    /// The raw arguments JSON, the other half of the call key.
+    /// The raw arguments JSON, the other half of the call key, and the input
+    /// every surface derives the call line from.
     pub arguments: String,
-    pub call_line: CallLine,
 }
 
 /// The result of a finished tool call.
@@ -265,12 +264,7 @@ pub fn compaction_source_text(source: CompactionSource) -> &'static str {
 
 impl ToolCall {
     /// Build a call and derive its key from the name and the raw arguments.
-    pub fn new(
-        name: ToolName,
-        source: impl Into<String>,
-        arguments: impl Into<String>,
-        call_line: CallLine,
-    ) -> Self {
+    pub fn new(name: ToolName, source: impl Into<String>, arguments: impl Into<String>) -> Self {
         let arguments = arguments.into();
         let id = ToolCallId::of(&name.0, &arguments);
         Self {
@@ -278,7 +272,6 @@ impl ToolCall {
             name,
             source: source.into(),
             arguments,
-            call_line,
         }
     }
 }

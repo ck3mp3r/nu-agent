@@ -7,7 +7,6 @@ use crate::protocol::events::{
     AutoResolutionAction, Key, RequestId, SystemEvent, SystemKind, ToolCall, ToolCallId,
     ToolOutcome, Usage,
 };
-use crate::protocol::tool_args::CallLine;
 use crate::session::tool_status::ToolStatus;
 use crate::transcript::ir::ToolName;
 
@@ -33,21 +32,13 @@ fn test_protocol_events_tool_call_new_derives_id_from_payload() -> Result<()> {
     let arguments = "{\"path\":\"src/main.rs\"}";
 
     // -- Exec
-    let call = ToolCall::new(
-        ToolName("edit".to_string()),
-        "builtin",
-        arguments,
-        CallLine {
-            summary: "\u{2192} edit src/main.rs".to_string(),
-        },
-    );
+    let call = ToolCall::new(ToolName("edit".to_string()), "builtin", arguments);
 
     // -- Check
     assert_eq!(call.id, ToolCallId::of("edit", arguments));
     assert_eq!(call.name, ToolName("edit".to_string()));
     assert_eq!(call.source, "builtin");
     assert_eq!(call.arguments, arguments);
-    assert_eq!(call.call_line.summary, "\u{2192} edit src/main.rs");
     Ok(())
 }
 
@@ -253,9 +244,6 @@ fn tool_call() -> ToolCall {
         ToolName("nu".to_string()),
         "builtin",
         "{\"command\":\"ls\"}",
-        CallLine {
-            summary: "\u{2192} nu ls".to_string(),
-        },
     )
 }
 

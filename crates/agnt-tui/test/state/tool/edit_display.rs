@@ -56,11 +56,9 @@ fn edit_display_title_and_label_row_matrix() -> Result<()> {
         .flat_map(extract_all_text_from_entry)
         .collect();
     assert!(!lines.iter().any(|line| line.contains("edit notes/todo.md")));
-    assert!(
-        !lines
-            .iter()
-            .any(|line| line.contains("notes/todo.md (diff)"))
-    );
+    // The call line derives `→ notes/todo.md (diff)`, so the label row is
+    // absent when no line equals it exactly.
+    assert!(!lines.contains(&"notes/todo.md (diff)".to_string()));
 
     // -- Exec & Check: title and label → both rows render.
     let mut both = AppState::default();

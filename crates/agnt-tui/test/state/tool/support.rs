@@ -9,7 +9,6 @@ pub(super) use crate::test_support::entry_text;
 pub(super) use agnt_core::protocol::contracts::UiMessageSnapshot;
 pub(super) use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
 pub(super) use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolCallId, ToolOutcome};
-pub(super) use agnt_core::protocol::tool_args::CallLine;
 pub(super) use agnt_core::session::tool_status::ToolStatus;
 pub(super) use agnt_core::transcript::entry::{MessageEntry, ToolEntry, TranscriptEntry};
 pub(super) use agnt_core::transcript::ir::StyleHint;
@@ -85,13 +84,21 @@ pub(super) fn display_lines(display: &Display) -> String {
         .join("\n")
 }
 
+/// The call line the entry's own data derives, as every backend derives it.
+pub(super) fn call_line_of(tool: &ToolEntry) -> String {
+    agnt_core::tools::handler::builtin_tool::call_line_render_for(
+        &tool.call.name.0,
+        &tool.call.arguments,
+    )
+}
+
 /// Flatten one entry's text for assertions. A tool entry contributes its call
-/// summary and its unified display (`result.or(preview)`) — the one slot the
-/// backends render.
+/// line, derived from its own data, and its unified display
+/// (`result.or(preview)`) — the one slot the backends render.
 pub(super) fn extract_all_text_from_entry(entry: &TranscriptEntry) -> Vec<String> {
     match entry {
         TranscriptEntry::Tool(tool) => {
-            let mut lines = vec![tool.call.call_line.summary.clone()];
+            let mut lines = vec![call_line_of(tool)];
             if let Some(display) = unified_display(tool) {
                 lines.extend(display_lines(display).lines().map(str::to_string));
             }
@@ -118,16 +125,8 @@ pub(super) fn tool_entry_at(state: &AppState, index: usize) -> Result<&ToolEntry
 }
 
 pub(super) fn started(name: &str, arguments: &str) -> SystemEvent {
-    started_with_call_line(name, arguments, CallLine::from_json_summary(arguments))
-}
-
-pub(super) fn started_with_call_line(
-    name: &str,
-    arguments: &str,
-    call_line: CallLine,
-) -> SystemEvent {
     SystemEvent::ToolStarted {
-        call: ToolCall::new(ToolName(name.to_string()), "mcp", arguments, call_line),
+        call: ToolCall::new(ToolName(name.to_string()), "mcp", arguments),
     }
 }
 
@@ -139,12 +138,7 @@ pub(super) fn completed_with(
     outcome: ToolOutcome,
 ) -> SystemEvent {
     SystemEvent::ToolCompleted {
-        call: ToolCall::new(
-            ToolName(name.to_string()),
-            source,
-            arguments,
-            CallLine::from_json_summary(arguments),
-        ),
+        call: ToolCall::new(ToolName(name.to_string()), source, arguments),
         outcome,
     }
 }
@@ -156,12 +150,7 @@ pub(super) fn reduce_ui(state: &mut AppState, event: SystemEvent) -> bool {
 
 /// A tool call for `name`/`arguments` with the shared test source.
 pub(super) fn tool_call(name: &str, arguments: &str) -> ToolCall {
-    ToolCall::new(
-        ToolName(name.to_string()),
-        "mcp",
-        arguments,
-        CallLine::from_json_summary(arguments),
-    )
+    ToolCall::new(ToolName(name.to_string()), "mcp", arguments)
 }
 
 /// Reduce a `Completed` event carrying an optional display.

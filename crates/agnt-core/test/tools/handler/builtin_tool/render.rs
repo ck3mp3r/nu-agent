@@ -33,12 +33,11 @@ fn call_line_render_defaults_to_generic_json_summary() -> TestResult<()> {
     // -- Check
     assert_eq!(
         render,
-        crate::protocol::tool_args::CallLine::from_json_summary(arguments)
+        crate::protocol::tool_args::call_line_from_json(arguments)
     );
     assert!(
-        render.summary.starts_with('→'),
-        "generic summary must start with the arrow marker, got: {}",
-        render.summary
+        render.starts_with('→'),
+        "generic summary must start with the arrow marker, got: {render}"
     );
     Ok(())
 }
@@ -84,16 +83,10 @@ fn call_line_render_for_table() -> TestResult<()> {
     for (name, tool_name, arguments, expected) in cases {
         let render = super::super::call_line_render_for(tool_name, arguments);
         match expected {
-            Some(summary) => assert_eq!(
-                render,
-                crate::protocol::tool_args::CallLine {
-                    summary: summary.to_string(),
-                },
-                "case '{name}'"
-            ),
+            Some(summary) => assert_eq!(render, summary, "case '{name}'"),
             None => assert_eq!(
                 render,
-                crate::protocol::tool_args::CallLine::from_json_summary(arguments),
+                crate::protocol::tool_args::call_line_from_json(arguments),
                 "case '{name}'"
             ),
         }

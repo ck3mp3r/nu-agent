@@ -293,7 +293,6 @@ fn test_translator_tool_preview_produces_none() -> Result<()> {
             agnt_core::transcript::ir::ToolName("edit".to_string()),
             "builtin",
             "{}",
-            call_line("→ edit src/file.txt"),
         ),
         display: ToolDisplay {
             title: Some("edit src/file.txt".to_string()),

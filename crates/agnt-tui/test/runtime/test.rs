@@ -75,7 +75,6 @@ use agnt_core::orchestrator::{OrchestratorEvent, UiStateEvent};
 use agnt_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
 use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay};
 use agnt_core::protocol::events::{RequestId, SystemEvent, ToolCall, ToolOutcome};
-use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::ir::MessageRole;
 use agnt_core::transcript::ir::ToolName;
 use agnt_core::transcript::renderer::ItemStatus;

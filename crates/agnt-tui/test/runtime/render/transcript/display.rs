@@ -123,13 +123,7 @@ fn test_transcript_display_completion_remeasures_the_height_index() -> Result<()
 
 /// The fixture tool call: an edit of `a.rs`, started and completed with one key.
 fn fixture_call() -> ToolCall {
-    let arguments = r#"{"path":"a.rs"}"#;
-    ToolCall::new(
-        ToolName("edit".to_string()),
-        "mcp",
-        arguments,
-        CallLine::from_json_summary(arguments),
-    )
+    ToolCall::new(ToolName("edit".to_string()), "mcp", r#"{"path":"a.rs"}"#)
 }
 
 /// The completion display: one plain section carrying the two marker lines.

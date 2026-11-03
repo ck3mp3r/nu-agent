@@ -7,6 +7,7 @@
 //! preview shows while the call is pending, the completion result takes over,
 //! and the preview persists when the completion carries no display.
 
+use agnt_core::tools::handler::builtin_tool::call_line_render_for;
 use agnt_core::transcript::entry::ToolEntry;
 use agnt_core::transcript::ir::{ContentKind, ContentLine, Display, StyleHint};
 use agnt_core::transcript::markdown::{project_code_block_lines, project_diff_lines};
@@ -49,7 +50,7 @@ impl ToolWidget<'_> {
     fn call_line(&self) -> CallLineRow {
         CallLineRow::new(
             self.entry.call.name.0.clone(),
-            self.entry.call.call_line.summary.clone(),
+            call_line_render_for(&self.entry.call.name.0, &self.entry.call.arguments),
             Some(self.entry.status),
         )
     }

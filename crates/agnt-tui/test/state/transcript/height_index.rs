@@ -221,9 +221,6 @@ fn diff_tool_entry() -> TranscriptEntry {
             ToolName("edit".to_string()),
             "",
             r#"{"path":"src/main.rs"}"#,
-            CallLine {
-                summary: "→ src/main.rs".to_string(),
-            },
         ),
         preview: None,
         result: Some(display),

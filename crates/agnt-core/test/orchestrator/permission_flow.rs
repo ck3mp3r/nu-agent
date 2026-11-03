@@ -88,7 +88,6 @@ impl CoreRuntime for PermissionGateRuntime {
                         ToolName("nu".to_string()),
                         "closure",
                         r#"{"command":"echo hi"}"#,
-                        CallLine::from_json_summary(r#"{"command":"echo hi"}"#),
                     ),
                 })
                 .await;

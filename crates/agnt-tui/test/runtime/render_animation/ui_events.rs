@@ -216,7 +216,6 @@ fn ui_event_permission_group() -> Result<()> {
             agnt_core::transcript::ir::ToolName("write".to_string()),
             "user",
             "{}",
-            agnt_core::protocol::tool_args::CallLine::from_json_summary("{}"),
         ),
     });
     let context = PermissionRequestContext {

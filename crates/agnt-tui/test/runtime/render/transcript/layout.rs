@@ -71,15 +71,9 @@ fn test_transcript_layout_tool_code_preview_accounts_surface_margins() -> Result
 /// the pane's last two columns.
 #[test]
 fn test_transcript_layout_status_indicator_wraps_within_pane_width() -> Result<()> {
-    // -- Setup & Fixtures: a summary far wider than the pane.
-    let call = ToolCall::new(
-        ToolName("tool".to_string()),
-        "",
-        "",
-        CallLine {
-            summary: format!("\u{2192} {}", "x".repeat(200)),
-        },
-    );
+    // -- Setup & Fixtures: call arguments far wider than the pane, so the
+    // derived call line wraps.
+    let call = ToolCall::new(ToolName("tool".to_string()), "", "x".repeat(200));
     let entry = TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&call.name),
         call,

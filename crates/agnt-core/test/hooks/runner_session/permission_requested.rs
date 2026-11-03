@@ -131,7 +131,6 @@ async fn test_hooks_runner_permission_requested_ignores_tool_preview() -> Result
                 ToolName("nu".to_string()),
                 "builtin",
                 "{\"command\":\"ls\"}",
-                crate::protocol::tool_args::CallLine::from_json_summary("{}"),
             ),
             display: ToolDisplay {
                 title: Some("preview".to_string()),

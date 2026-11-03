@@ -206,14 +206,9 @@ fn test_renderer_lane_prefix_user_wrapped_rows_carry_rail() -> Result<()> {
 /// marker slot — the icon renders on row 0 only.
 #[test]
 fn test_renderer_lane_prefix_tool_continuation_rows_blank_the_marker() -> Result<()> {
-    // -- Setup & Fixtures: a summary far wider than the pane.
-    let entry = tool_entry(
-        "read",
-        &format!("\u{2192} {}", "x".repeat(200)),
-        None,
-        None,
-        ItemStatus::Done,
-    );
+    // -- Setup & Fixtures: call arguments far wider than the pane, so the
+    // derived call line wraps.
+    let entry = tool_entry("read", &"x".repeat(200), None, None, ItemStatus::Done);
 
     // -- Exec
     let backend = render(&entry)?;

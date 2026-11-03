@@ -18,7 +18,7 @@ use super::tree_sitter::{AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool};
 use super::{ToolHandlerError, execution_error_for_kind};
 use crate::bus::Bus;
 use crate::protocol::event::ToolDisplay;
-use crate::protocol::tool_args::CallLine;
+use crate::protocol::tool_args::call_line_from_json;
 use crate::tools::limits::truncate_tool_output;
 use crate::types::ToolDefinition;
 use rig::tool::server::ToolServerHandle;
@@ -34,8 +34,8 @@ pub trait BuiltinTool: Sized {
 
     /// Render the call line for this tool's arguments. The default is the
     /// generic JSON summary; tools override it to show a tailored summary.
-    fn call_line_render(arguments: &str) -> CallLine {
-        CallLine::from_json_summary(arguments)
+    fn call_line_render(arguments: &str) -> String {
+        call_line_from_json(arguments)
     }
 }
 
@@ -55,9 +55,9 @@ pub trait Previewable: BuiltinTool {
 /// `BuiltinKind` and delegates to that tool's `call_line_render`. Unknown
 /// names and builtins without a tailored render fall back to the generic
 /// JSON summary.
-pub fn call_line_render_for(name: &str, arguments: &str) -> CallLine {
+pub fn call_line_render_for(name: &str, arguments: &str) -> String {
     let Ok(kind) = BuiltinKind::from_str(name) else {
-        return CallLine::from_json_summary(arguments);
+        return call_line_from_json(arguments);
     };
     match kind {
         BuiltinKind::Read => ReadTool::call_line_render(arguments),
@@ -78,7 +78,7 @@ pub fn call_line_render_for(name: &str, arguments: &str) -> CallLine {
         BuiltinKind::SpawnAgent
         | BuiltinKind::TerminateAgent
         | BuiltinKind::SendMessage
-        | BuiltinKind::ListAgents => CallLine::from_json_summary(arguments),
+        | BuiltinKind::ListAgents => call_line_from_json(arguments),
     }
 }
 

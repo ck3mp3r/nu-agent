@@ -5,7 +5,6 @@ use super::tool_call;
 use agnt_core::protocol::events::{
     RequestId, SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage,
 };
-use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::renderer::UiRenderer;
 use agnt_core::session::tool_status::ToolStatus;
 use agnt_core::transcript::ir::ToolName;
@@ -243,14 +242,7 @@ fn spinner_omits_arrow_when_call_line_summary_is_empty() {
         renderer.emit(&SystemEvent::Tick);
 
         renderer.emit(&SystemEvent::ToolStarted {
-            call: ToolCall::new(
-                ToolName("nu".to_string()),
-                "builtin",
-                r#"{"command":"ls"}"#,
-                CallLine {
-                    summary: String::new(),
-                },
-            ),
+            call: ToolCall::new(ToolName("nu".to_string()), "builtin", ""),
         });
 
         renderer.flush();
@@ -281,20 +273,10 @@ fn default_tool_lifecycle_is_single_completion_line_with_result_block() {
 
     renderer.emit(&SystemEvent::InferenceStarted);
     renderer.emit(&SystemEvent::ToolStarted {
-        call: ToolCall::new(
-            ToolName("gh__list_prs".to_string()),
-            "mcp",
-            "{}",
-            CallLine::from_json_summary("{}"),
-        ),
+        call: ToolCall::new(ToolName("gh__list_prs".to_string()), "mcp", "{}"),
     });
     renderer.emit(&SystemEvent::ToolCompleted {
-        call: ToolCall::new(
-            ToolName("gh__list_prs".to_string()),
-            "mcp",
-            "{}",
-            CallLine::from_json_summary("{}"),
-        ),
+        call: ToolCall::new(ToolName("gh__list_prs".to_string()), "mcp", "{}"),
         outcome: ToolOutcome {
             success: true,
             status: ToolStatus::Success,
@@ -326,20 +308,10 @@ fn default_tool_lifecycle_prints_non_empty_payloads() {
         );
 
         renderer.emit(&SystemEvent::ToolStarted {
-            call: ToolCall::new(
-                ToolName("gh__list_prs".to_string()),
-                "mcp",
-                "{}",
-                CallLine::from_json_summary("{}"),
-            ),
+            call: ToolCall::new(ToolName("gh__list_prs".to_string()), "mcp", "{}"),
         });
         renderer.emit(&SystemEvent::ToolCompleted {
-            call: ToolCall::new(
-                ToolName("gh__list_prs".to_string()),
-                "mcp",
-                "{}",
-                CallLine::from_json_summary("{}"),
-            ),
+            call: ToolCall::new(ToolName("gh__list_prs".to_string()), "mcp", "{}"),
             outcome: ToolOutcome {
                 success: true,
                 status: ToolStatus::Success,

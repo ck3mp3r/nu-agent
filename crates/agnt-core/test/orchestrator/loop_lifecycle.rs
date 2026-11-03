@@ -21,24 +21,14 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
             .bus
             .ui_event()
             .send(SystemEvent::ToolStarted {
-                call: ToolCall::new(
-                    ToolName("edit".to_string()),
-                    "closure",
-                    "{}",
-                    CallLine::from_json_summary("{}"),
-                ),
+                call: ToolCall::new(ToolName("edit".to_string()), "closure", "{}"),
             })
             .await;
         let _ = self
             .bus
             .ui_event()
             .send(SystemEvent::ToolCompleted {
-                call: ToolCall::new(
-                    ToolName("edit".to_string()),
-                    "closure",
-                    "{}",
-                    CallLine::from_json_summary("{}"),
-                ),
+                call: ToolCall::new(ToolName("edit".to_string()), "closure", "{}"),
                 outcome: ToolOutcome {
                     success: true,
                     status: ToolStatus::Success,

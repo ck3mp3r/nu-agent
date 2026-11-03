@@ -1,10 +1,8 @@
 #[test]
-fn call_line_stores_summary_string() {
+fn plain_call_text_keeps_text_without_an_arrow() {
     // -- Setup & Fixtures
-    let line = super::tool_args::CallLine {
-        summary: "→ {\"path\":\"a.rs\"}".to_string(),
-    };
+    let line = "{ \"path\": \"a.rs\" }";
 
     // -- Exec & Check
-    assert_eq!(line.summary, "→ {\"path\":\"a.rs\"}");
+    assert_eq!(super::tool_args::plain_call_text(line), line);
 }

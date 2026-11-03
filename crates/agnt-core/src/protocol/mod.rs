@@ -16,7 +16,7 @@ pub use events::{
     AutoResolutionAction, Key, RequestId, SystemEvent, SystemKind, ToolCall, ToolCallId,
     ToolOutcome, Usage,
 };
-pub use tool_args::CallLine;
+pub use tool_args::{call_line_from_json, plain_call_text};
 
 #[cfg(test)]
 #[path = "../../test/protocol/events.rs"]

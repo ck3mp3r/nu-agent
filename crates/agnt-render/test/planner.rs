@@ -3,7 +3,6 @@ use crate::plain::PlainBackend;
 use crate::planner::{EntryFamily, LayoutPlanner};
 use crate::theme::Theme;
 use agnt_core::protocol::events::ToolCall;
-use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
@@ -161,7 +160,7 @@ fn test_planner_entry_family_classification_table() {
     let entry_cases = [
         (user_entry("hi"), EntryFamily::User),
         (assistant_entry("hi"), EntryFamily::Assistant),
-        (tool_entry("→ a.rs", None), EntryFamily::Tool),
+        (tool_entry("a.rs", None), EntryFamily::Tool),
         (
             TranscriptEntry::Task(TaskEntry {
                 name: "Compaction".to_string(),
@@ -206,9 +205,9 @@ fn test_planner_plan_rects_and_gaps() -> Result<()> {
     let entries = vec![
         user_entry("hi"),
         assistant_entry("reply"),
-        tool_entry("→ a.rs", None),
-        tool_entry("→ a2.rs", Some(code_display())),
-        tool_entry("→ b.rs", None),
+        tool_entry("a.rs", None),
+        tool_entry("a2.rs", Some(code_display())),
+        tool_entry("b.rs", None),
         TranscriptEntry::Notice(NoticeEntry {
             kind: NoticeKind::System,
             text: "note".to_string(),
@@ -259,10 +258,10 @@ fn test_planner_plan_rects_and_gaps() -> Result<()> {
 fn test_planner_clips_padding_at_the_frame_edges() -> Result<()> {
     // -- Setup & Fixtures
     let backend = PlainBackend::default();
-    let lone = vec![tool_entry("→ a.rs", Some(code_display()))];
+    let lone = vec![tool_entry("a.rs", Some(code_display()))];
     let pair = vec![
-        tool_entry("→ a.rs", Some(code_display())),
-        tool_entry("→ b.rs", None),
+        tool_entry("a.rs", Some(code_display())),
+        tool_entry("b.rs", None),
     ];
 
     // -- Exec
@@ -305,7 +304,7 @@ fn test_planner_padded_rects_paint_to_the_planned_rows() -> Result<()> {
     let width = 40;
     let entries = vec![
         user_entry("hi"),
-        tool_entry("→ a.rs", Some(code_display())),
+        tool_entry("a.rs", Some(code_display())),
         TranscriptEntry::Notice(NoticeEntry {
             kind: NoticeKind::System,
             text: "note".to_string(),
@@ -349,8 +348,8 @@ fn test_planner_plan_is_pure() -> Result<()> {
     let backend = PlainBackend::default();
     let entries = vec![
         user_entry("hi"),
-        tool_entry("→ a.rs", Some(code_display())),
-        tool_entry("→ b.rs", None),
+        tool_entry("a.rs", Some(code_display())),
+        tool_entry("b.rs", None),
         assistant_entry("done"),
     ];
 
@@ -405,16 +404,13 @@ fn assistant_entry(markdown: &str) -> TranscriptEntry {
     })
 }
 
-fn tool_entry(summary: &str, preview: Option<Display>) -> TranscriptEntry {
+fn tool_entry(path: &str, preview: Option<Display>) -> TranscriptEntry {
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::Generic,
         call: ToolCall::new(
             ToolName("read".to_string()),
             "",
-            "{}",
-            CallLine {
-                summary: summary.to_string(),
-            },
+            format!(r#"{{"path":"{path}"}}"#),
         ),
         preview,
         result: None,

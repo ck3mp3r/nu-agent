@@ -1,5 +1,5 @@
 use crate::bus::{Bus, CancelEvent};
-use crate::protocol::tool_args::CallLine;
+use crate::protocol::tool_args::call_line_from_json;
 use crate::tools::handler::ToolErrorKind;
 use crate::tools::handler::builtin_tool::{BuiltinTool, Previewable};
 use crate::tools::handler::nu::NuTool;
@@ -280,14 +280,8 @@ fn nu_call_line_render_table() -> Result<()> {
     for (name, args, expected) in cases {
         let render = NuTool::call_line_render(args);
         match expected {
-            Some(summary) => assert_eq!(
-                render,
-                CallLine {
-                    summary: summary.to_string(),
-                },
-                "case '{name}'"
-            ),
-            None => assert_eq!(render, CallLine::from_json_summary(args), "case '{name}'"),
+            Some(summary) => assert_eq!(render, summary.to_string(), "case '{name}'"),
+            None => assert_eq!(render, call_line_from_json(args), "case '{name}'"),
         }
     }
     Ok(())

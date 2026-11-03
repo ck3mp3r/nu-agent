@@ -12,7 +12,9 @@ use super::{
 };
 use crate::bus::{Bus, CancelRx};
 use crate::protocol::event::{ToolDisplay, ToolDisplaySection};
-use crate::protocol::tool_args::{CallLine, nu_command_from_args, parse_json_usize_field};
+use crate::protocol::tool_args::{
+    call_line_from_json, nu_command_from_args, parse_json_usize_field,
+};
 use crate::transcript::ir::ContentKind;
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
@@ -29,17 +31,15 @@ pub struct NuTool;
 impl BuiltinTool for NuTool {
     const NAME: &'static str = "nu";
 
-    fn call_line_render(arguments: &str) -> CallLine {
+    fn call_line_render(arguments: &str) -> String {
         if nu_command_from_args(arguments).is_none() {
-            return CallLine::from_json_summary(arguments);
+            return call_line_from_json(arguments);
         }
         // The command renders in the preview block, so the call line carries
         // only the timeout the command is allowed to run for.
         let timeout = parse_json_usize_field(arguments, "timeout_seconds")
             .unwrap_or(DEFAULT_TIMEOUT_SECONDS as usize);
-        CallLine {
-            summary: format!("⏱ {timeout}s"),
-        }
+        format!("⏱ {timeout}s")
     }
 
     async fn execute(

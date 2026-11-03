@@ -91,7 +91,6 @@ async fn test_hooks_runner_tool_started_invokes_with_payload() -> Result<()> {
                 ToolName("read".to_string()),
                 "builtin",
                 "{\"path\":\"a.txt\"}",
-                crate::protocol::tool_args::CallLine::from_json_summary("{}"),
             ),
         })
         .await;
@@ -121,12 +120,7 @@ async fn test_hooks_runner_tool_completed_invokes_with_payload() -> Result<()> {
     let _ = bus
         .ui_event()
         .send(SystemEvent::ToolCompleted {
-            call: ToolCall::new(
-                ToolName("read".to_string()),
-                "builtin",
-                "{}",
-                crate::protocol::tool_args::CallLine::from_json_summary("{}"),
-            ),
+            call: ToolCall::new(ToolName("read".to_string()), "builtin", "{}"),
             outcome: ToolOutcome {
                 success: false,
                 status: ToolStatus::Failed,

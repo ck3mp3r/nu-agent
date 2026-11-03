@@ -7,7 +7,6 @@ mod agent;
 
 use super::*;
 use crate::protocol::events::{SystemEvent, ToolCall};
-use crate::protocol::tool_args::CallLine;
 use crate::transcript::ir::ToolName;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -16,12 +15,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// A started call carrying `name`, for the channel-shape assertions below.
 fn tool_call(name: &str) -> ToolCall {
-    ToolCall::new(
-        ToolName(name.to_string()),
-        "user",
-        "{}",
-        CallLine::from_json_summary("{}"),
-    )
+    ToolCall::new(ToolName(name.to_string()), "user", "{}")
 }
 
 /// A published event reaches every subscriber of its channel.

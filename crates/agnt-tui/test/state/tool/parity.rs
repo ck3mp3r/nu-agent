@@ -3,7 +3,6 @@ use super::*;
 use crate::runtime::RuntimeCoordinator;
 use agnt_core::session::resolver::{StoredEntry, hydrate_transcript_messages};
 use agnt_core::session::tool_status::{ToolStatus, ToolStatusMap};
-use agnt_core::tools::handler::builtin_tool::call_line_render_for;
 use agnt_core::tools::handler::tool_display_from_arguments;
 use agnt_core::transcript::entry::TranscriptEntry;
 use agnt_core::types::{
@@ -135,7 +134,6 @@ fn live_entries(
             agnt_core::transcript::ir::ToolName(tool.to_string()),
             "builtin",
             arguments,
-            call_line_render_for(tool, arguments),
         )
     };
     coordinator.reduce_system_event(SystemEvent::ToolStarted { call: call() });

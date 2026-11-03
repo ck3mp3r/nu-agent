@@ -77,7 +77,7 @@ fn test_gallery_snapshots_golden() -> Result<()> {
     let expected = [
         ("message", "What changed in the render loop?"),
         ("tool", "read → src/render.rs\nseam 2 now plans the gaps"),
-        ("tool-result", "edit → src/render.rs\nresult body"),
+        ("tool-result", "edit → src/render.rs (diff)\nresult body"),
         ("task", "Compaction · auto"),
         ("notice", "Compaction skipped: transcript is short"),
         ("banner", "nu-agent"),

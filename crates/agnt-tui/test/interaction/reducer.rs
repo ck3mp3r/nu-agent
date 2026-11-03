@@ -46,7 +46,6 @@ use crate::{
 };
 use agnt_core::protocol::event::{PermissionRequestContext, ToolDisplay, ToolDisplaySection};
 use agnt_core::protocol::events::{Key, SystemEvent};
-use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
 use agnt_core::transcript::ir::MessageRole;
 

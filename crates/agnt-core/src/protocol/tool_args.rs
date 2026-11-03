@@ -1,31 +1,16 @@
 use serde_json::Value as JsonValue;
 
-/// A tool call's transcript call line: the rendered summary text.
-/// One string — no variants, no language tag. Preview content (diffs, code)
-/// comes through `Previewable::preview()` → `Display`, not from this type.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CallLine {
-    pub summary: String,
+/// The text a line-oriented renderer shows for a call line: the summary with
+/// its leading arrow dropped, so a caller that adds its own arrow does not
+/// double it.
+pub fn plain_call_text(summary: &str) -> &str {
+    summary.strip_prefix("→ ").unwrap_or(summary)
 }
 
-impl CallLine {
-    /// Flatten to the plain text a line-oriented renderer shows. The leading
-    /// arrow is dropped so callers that add their own arrow do not double it
-    /// (behavior carried over from the pre-Block-model enum).
-    pub fn to_plain_text(&self) -> String {
-        self.summary
-            .strip_prefix("→ ")
-            .unwrap_or(&self.summary)
-            .to_string()
-    }
-
-    /// Fallback call line for tools without a tailored summary: the
-    /// arrow-prefixed, truncated JSON arguments.
-    pub fn from_json_summary(arguments: &str) -> Self {
-        Self {
-            summary: format!("→ {}", summarize_tool_arguments(arguments)),
-        }
-    }
+/// Fallback call line for a tool without a tailored summary: the arrow-prefixed,
+/// truncated JSON arguments.
+pub fn call_line_from_json(arguments: &str) -> String {
+    format!("→ {}", summarize_tool_arguments(arguments))
 }
 
 /// Parse `arguments` as JSON and return the named field as a string.

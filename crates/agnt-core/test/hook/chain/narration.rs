@@ -209,9 +209,7 @@ async fn test_narration_not_run_dispatch_narrates_the_pair() -> Result<()> {
             tool_name: "add",
             source: "builtin",
             arguments,
-            start: crate::hook::chain::NotRunStart::Publish(
-                crate::protocol::tool_args::CallLine::from_json_summary(arguments),
-            ),
+            start: crate::hook::chain::NotRunStart::Publish,
         },
         crate::hook::chain::NotRunOutcome::Cancelled,
         false,
@@ -265,9 +263,7 @@ async fn test_narration_denied_dispatch_classifies_as_denied() -> Result<()> {
             tool_name: "add",
             source: "builtin",
             arguments,
-            start: crate::hook::chain::NotRunStart::AlreadyPublished(
-                crate::protocol::tool_args::CallLine::from_json_summary(arguments),
-            ),
+            start: crate::hook::chain::NotRunStart::AlreadyPublished,
         },
         crate::hook::chain::NotRunOutcome::Denied { reason: "blocked" },
         false,

@@ -4,7 +4,6 @@ use super::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
 use crate::protocol::events::ToolCall;
-use crate::protocol::tool_args::CallLine;
 use crate::transcript::ir::{
     ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
 };
@@ -45,9 +44,6 @@ fn test_entry_tool_entry_carries_call_preview_result_and_status() -> Result<()> 
         ToolName("edit".to_string()),
         "closure",
         r#"{"path":"a.rs"}"#,
-        CallLine {
-            summary: "→ a.rs".to_string(),
-        },
     );
     let entry = TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&call.name),
@@ -76,14 +72,7 @@ fn test_entry_tool_entry_carries_call_preview_result_and_status() -> Result<()> 
 #[test]
 fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
     // -- Setup & Fixtures
-    let call = ToolCall::new(
-        ToolName("read".to_string()),
-        "",
-        "",
-        CallLine {
-            summary: "→ a.rs".to_string(),
-        },
-    );
+    let call = ToolCall::new(ToolName("read".to_string()), "", "");
     let cases = [
         (
             TranscriptEntry::Message(MessageEntry {
@@ -118,14 +107,7 @@ fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
         (
             TranscriptEntry::Tool(ToolEntry {
                 kind: ToolKind::Generic,
-                call: ToolCall::new(
-                    ToolName("nu".to_string()),
-                    "",
-                    "",
-                    CallLine {
-                        summary: "→ ls".to_string(),
-                    },
-                ),
+                call: ToolCall::new(ToolName("nu".to_string()), "", ""),
                 preview: None,
                 result: Some(Display {
                     title: None,
@@ -145,14 +127,7 @@ fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
         (
             TranscriptEntry::Tool(ToolEntry {
                 kind: ToolKind::Generic,
-                call: ToolCall::new(
-                    ToolName("nu".to_string()),
-                    "",
-                    "",
-                    CallLine {
-                        summary: "→ ls".to_string(),
-                    },
-                ),
+                call: ToolCall::new(ToolName("nu".to_string()), "", ""),
                 preview: Some(Display {
                     title: None,
                     sections: vec![DisplaySection {
@@ -172,14 +147,7 @@ fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
         (
             TranscriptEntry::Tool(ToolEntry {
                 kind: ToolKind::Generic,
-                call: ToolCall::new(
-                    ToolName("edit".to_string()),
-                    "",
-                    "",
-                    CallLine {
-                        summary: "→ a.rs".to_string(),
-                    },
-                ),
+                call: ToolCall::new(ToolName("edit".to_string()), "", ""),
                 preview: None,
                 result: Some(Display {
                     title: None,

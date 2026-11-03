@@ -7,7 +7,6 @@ pub(super) use crate::state::{AppState, ToolCallLine, ToolCallStatus};
 pub(super) use agnt_core::protocol::contracts::UiMessageSnapshot;
 pub(super) use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
 pub(super) use agnt_core::protocol::events::ToolCall;
-pub(super) use agnt_core::protocol::tool_args::CallLine;
 pub(super) use agnt_core::transcript::entry::{
     MessageEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
@@ -68,14 +67,7 @@ pub(super) fn rendered_row_count(markdown: &str, width: usize) -> usize {
 
 /// Minimal tool entry for cap-boundary tests: carries no meaningful content.
 pub(super) fn simple_tool_entry() -> TranscriptEntry {
-    let call = ToolCall::new(
-        ToolName("read".to_string()),
-        "",
-        "",
-        CallLine {
-            summary: String::new(),
-        },
-    );
+    let call = ToolCall::new(ToolName("read".to_string()), "", "");
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&call.name),
         call,

@@ -1,6 +1,6 @@
 use super::*;
 use crate::bus::Bus;
-use crate::protocol::tool_args::CallLine;
+use crate::protocol::tool_args::call_line_from_json;
 use std::io::Write;
 use tempfile::tempdir;
 
@@ -251,9 +251,7 @@ fn grep_call_line_render_table() -> Result<()> {
     for (name, args, expected) in cases {
         assert_eq!(
             GrepTool::call_line_render(args),
-            CallLine {
-                summary: expected.to_string(),
-            },
+            expected.to_string(),
             "case '{name}'"
         );
     }
@@ -261,7 +259,7 @@ fn grep_call_line_render_table() -> Result<()> {
     let invalid = "not-json";
     assert_eq!(
         GrepTool::call_line_render(invalid),
-        CallLine::from_json_summary(invalid)
+        call_line_from_json(invalid)
     );
     Ok(())
 }

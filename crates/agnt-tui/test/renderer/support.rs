@@ -4,7 +4,6 @@
 //! buffer, so the assertions name pixels, not intermediate line types.
 
 use agnt_core::protocol::events::ToolCall;
-use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
@@ -221,21 +220,14 @@ pub(crate) fn message_entry(role: MessageRole, markdown: &str) -> TranscriptEntr
 /// renders their unified slot, `result.or(preview)`.
 pub(crate) fn tool_entry(
     name: &str,
-    summary: &str,
+    arguments: &str,
     preview: Option<Display>,
     result: Option<Display>,
     status: ItemStatus,
 ) -> TranscriptEntry {
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&ToolName(name.to_string())),
-        call: ToolCall::new(
-            ToolName(name.to_string()),
-            "",
-            "",
-            CallLine {
-                summary: summary.to_string(),
-            },
-        ),
+        call: ToolCall::new(ToolName(name.to_string()), "", arguments),
         preview,
         result,
         status,
@@ -244,7 +236,7 @@ pub(crate) fn tool_entry(
 
 /// A bare tool call: no display body.
 pub(crate) fn bare_tool(status: ItemStatus) -> TranscriptEntry {
-    tool_entry("read", "→ a.rs", None, None, status)
+    tool_entry("read", r#"{"path":"a.rs"}"#, None, None, status)
 }
 
 /// A task call line: the name, the subject it works on, and its status.

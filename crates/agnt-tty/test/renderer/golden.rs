@@ -50,7 +50,7 @@ fn test_golden_decorated_rows_per_family() -> Result<()> {
         ),
         (
             "tool-result",
-            vec!["[tool] ✓ edit → src/render.rs", "result body"],
+            vec!["[tool] ✓ edit → src/render.rs (diff)", "result body"],
         ),
         ("task", vec!["[compaction] ✓ Compaction · auto"]),
         (

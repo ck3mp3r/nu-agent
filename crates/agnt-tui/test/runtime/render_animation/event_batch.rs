@@ -51,12 +51,7 @@ fn tool_entries(coordinator: &RuntimeCoordinator) -> Vec<&TranscriptEntry> {
 
 /// A `read` call for the tool-ordering tests.
 fn read_call() -> ToolCall {
-    ToolCall::new(
-        ToolName("read".to_string()),
-        "user",
-        "{}",
-        CallLine::from_json_summary("{}"),
-    )
+    ToolCall::new(ToolName("read".to_string()), "user", "{}")
 }
 
 /// A permission request for the coalescing-bypass test.

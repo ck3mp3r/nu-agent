@@ -3,7 +3,7 @@ use std::path::Path;
 
 use super::{ToolErrorKind, ToolHandlerError, builtin_tool::BuiltinTool};
 use crate::bus::Bus;
-use crate::protocol::tool_args::{CallLine, parse_json_string_field};
+use crate::protocol::tool_args::{call_line_from_json, parse_json_string_field};
 
 #[derive(Debug, serde::Deserialize)]
 struct GlobArgs {
@@ -17,9 +17,9 @@ pub struct GlobTool;
 impl BuiltinTool for GlobTool {
     const NAME: &'static str = "glob";
 
-    fn call_line_render(arguments: &str) -> CallLine {
+    fn call_line_render(arguments: &str) -> String {
         let Some(pattern) = parse_json_string_field(arguments, "pattern") else {
-            return CallLine::from_json_summary(arguments);
+            return call_line_from_json(arguments);
         };
         let path = parse_json_string_field(arguments, "path").unwrap_or_else(|| ".".to_string());
         let combined = if path == "." {
@@ -27,9 +27,7 @@ impl BuiltinTool for GlobTool {
         } else {
             format!("{path}/{pattern}")
         };
-        CallLine {
-            summary: format!("→ {combined}"),
-        }
+        format!("→ {combined}")
     }
 
     async fn execute(

@@ -8,7 +8,6 @@ pub(super) use crate::state::{AppState, UiPhase};
 pub(super) use crate::test_support::entry_text;
 pub(super) use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
 pub(super) use agnt_core::protocol::events::{SystemEvent, Usage};
-pub(super) use agnt_core::protocol::tool_args::CallLine;
 pub(super) use agnt_core::transcript::entry::TranscriptEntry;
 pub(super) use agnt_core::transcript::ir::MessageRole;
 

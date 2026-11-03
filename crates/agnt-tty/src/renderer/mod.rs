@@ -13,7 +13,9 @@ mod streaming_test;
 
 use agnt_core::protocol::event::ToolDisplay;
 use agnt_core::protocol::events::{SystemEvent, SystemKind};
+use agnt_core::protocol::plain_call_text;
 use agnt_core::renderer::UiRenderer;
+use agnt_core::tools::handler::builtin_tool::call_line_render_for;
 use agnt_core::transcript::ir::{StyleHint, annotate_diff_hint};
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -23,6 +25,13 @@ use crate::formatter::{ToolEndView, format_tool_start};
 use crate::markdown_buffer::StreamingMarkdownBuffer;
 use crate::policy::{UiPolicy, Verbosity};
 use crate::spinner::SpinnerState;
+
+/// The call line the TTY prints for `call`: derived from the call's name and
+/// raw arguments, with the arrow the terminal adds itself stripped.
+fn call_line_for(call: &agnt_core::protocol::events::ToolCall) -> String {
+    let line = call_line_render_for(&call.name.0, &call.arguments);
+    plain_call_text(&line).to_string()
+}
 
 pub struct StderrUiRenderer<W: Write> {
     writer: W,
@@ -183,7 +192,7 @@ impl<W: Write> StderrUiRenderer<W> {
                         self.policy.verbosity,
                         &call.name.0,
                         &call.source,
-                        &call.call_line.to_plain_text(),
+                        &call_line_for(call),
                     ))
                 }
             }
@@ -386,7 +395,7 @@ impl<W: Write> UiRenderer for StderrUiRenderer<W> {
                 if self.spinner.is_enabled() && !self.policy.quiet =>
             {
                 self.active_tool_name = Some(call.name.0.clone());
-                self.active_tool_args = Some(call.call_line.to_plain_text());
+                self.active_tool_args = Some(call_line_for(call));
                 self.spinner.start();
                 self.draw_spinner();
             }

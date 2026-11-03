@@ -4,7 +4,6 @@
 //! Sub-files pull them in with `use super::*;`.
 
 pub(super) use agnt_core::protocol::events::ToolCall;
-pub(super) use agnt_core::protocol::tool_args::CallLine;
 pub(super) use agnt_core::transcript::entry::{
     BannerEntry, MessageEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
@@ -44,16 +43,9 @@ pub(super) fn assistant_entry(text: &str) -> TranscriptEntry {
     })
 }
 
-/// A plain tool entry: a call line with no preview.
-pub(super) fn tool_entry(name: &str, summary: &str) -> TranscriptEntry {
-    let call = ToolCall::new(
-        ToolName(name.to_string()),
-        "",
-        "",
-        CallLine {
-            summary: summary.to_string(),
-        },
-    );
+/// A plain tool entry: a derived call line with no preview.
+pub(super) fn tool_entry(name: &str, arguments: &str) -> TranscriptEntry {
+    let call = ToolCall::new(ToolName(name.to_string()), "", arguments);
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&call.name),
         call,
@@ -68,10 +60,7 @@ pub(super) fn nu_tool_entry(code: &str) -> TranscriptEntry {
     let call = ToolCall::new(
         ToolName("nu".to_string()),
         "",
-        "",
-        CallLine {
-            summary: code.to_string(),
-        },
+        format!(r#"{{"command":"{code}"}}"#),
     );
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::from_name(&call.name),

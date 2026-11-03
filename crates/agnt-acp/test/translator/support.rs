@@ -14,7 +14,6 @@ use agnt_core::protocol::event::{
     PermissionDecision, PermissionRequestContext, ToolDisplaySection,
 };
 use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
-use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::session::tool_status::ToolStatus;
 use agnt_core::transcript::ir::{ContentKind, ToolName};
 
@@ -26,12 +25,6 @@ pub const SESSION: &str = "sess-1";
 
 pub fn translator() -> EventTranslator {
     EventTranslator::new(SESSION)
-}
-
-pub fn call_line(summary: &str) -> CallLine {
-    CallLine {
-        summary: summary.to_string(),
-    }
 }
 
 pub fn text_section(label: &str, content: &str) -> ToolDisplaySection {
@@ -57,23 +50,13 @@ pub fn diff_section(label: &str, content: &str) -> ToolDisplaySection {
 
 pub fn tool_started(name: &str, arguments: &str) -> SystemEvent {
     SystemEvent::ToolStarted {
-        call: ToolCall::new(
-            ToolName(name.to_string()),
-            "builtin",
-            arguments,
-            call_line("→ read src/lib.rs"),
-        ),
+        call: ToolCall::new(ToolName(name.to_string()), "builtin", arguments),
     }
 }
 
 pub fn tool_completed(name: &str, arguments: &str, success: bool) -> SystemEvent {
     SystemEvent::ToolCompleted {
-        call: ToolCall::new(
-            ToolName(name.to_string()),
-            "builtin",
-            arguments,
-            call_line("→ read src/lib.rs"),
-        ),
+        call: ToolCall::new(ToolName(name.to_string()), "builtin", arguments),
         outcome: ToolOutcome {
             success,
             status: if success {

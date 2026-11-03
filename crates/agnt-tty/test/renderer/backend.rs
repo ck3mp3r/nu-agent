@@ -2,7 +2,6 @@
 //! gate, the measure/render contract, and wrap parity with the plain backend.
 
 use agnt_core::protocol::events::ToolCall;
-use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
@@ -37,11 +36,16 @@ fn test_renderer_backend_message_role_decides_the_prefix() -> Result<()> {
 }
 
 /// A tool's first row is the `[tool] ` prefix, the status indicator, the name,
-/// and the call summary; the preview content follows on its own rows.
+/// and the call line derived from its own arguments; the preview content
+/// follows on its own rows.
 #[test]
 fn test_renderer_backend_tool_row_carries_prefix_indicator_and_call_line() -> Result<()> {
     // -- Setup & Fixtures
-    let entry = tool_entry("read", "→ a.rs", Some(plain_display("fn a() {}")));
+    let entry = tool_entry(
+        "read",
+        r#"{"path":"a.rs"}"#,
+        Some(plain_display("fn a() {}")),
+    );
 
     // -- Exec
     let rows = render(&entry, 40, false);
@@ -51,21 +55,19 @@ fn test_renderer_backend_tool_row_carries_prefix_indicator_and_call_line() -> Re
     Ok(())
 }
 
-/// The pre-refactor fallbacks survive: an empty name renders the summary alone,
-/// and an empty summary leaves the name with no trailing space.
+/// The nameless fallback survives: a call with no tool name renders its derived
+/// call line alone, with no leading space.
 #[test]
-fn test_renderer_backend_tool_name_and_summary_fallbacks() -> Result<()> {
-    // -- Setup & Fixtures
-    let nameless = tool_entry("", "→ a.rs", None);
-    let summariless = tool_entry("read", "", None);
+fn test_renderer_backend_tool_nameless_fallback() -> Result<()> {
+    // -- Setup & Fixtures: a name the render table does not know, so the call
+    // line is the generic summary of the raw arguments.
+    let nameless = tool_entry("", "a.rs", None);
 
     // -- Exec
-    let nameless_rows = render(&nameless, 40, false);
-    let summariless_rows = render(&summariless, 40, false);
+    let rows = render(&nameless, 40, false);
 
     // -- Check
-    assert_eq!(nameless_rows, ["[tool] ✓ → a.rs"]);
-    assert_eq!(summariless_rows, ["[tool] ✓ read"]);
+    assert_eq!(rows, ["[tool] ✓ → a.rs"]);
     Ok(())
 }
 
@@ -101,7 +103,7 @@ fn test_renderer_backend_task_notice_and_banner_prefixes() -> Result<()> {
 #[test]
 fn test_renderer_backend_indicator_animates_with_the_clock() -> Result<()> {
     // -- Setup & Fixtures
-    let entry = tool_entry_with_status(ItemStatus::InProgress, "t", "→ t", None);
+    let entry = tool_entry_with_status(ItemStatus::InProgress, "t", "t", None);
 
     // -- Exec
     let first = render_at(&entry, 0);
@@ -265,26 +267,19 @@ fn message_entry(role: MessageRole, markdown: &str) -> TranscriptEntry {
     })
 }
 
-fn tool_entry(name: &str, summary: &str, preview: Option<Display>) -> TranscriptEntry {
-    tool_entry_with_status(ItemStatus::Done, name, summary, preview)
+fn tool_entry(name: &str, arguments: &str, preview: Option<Display>) -> TranscriptEntry {
+    tool_entry_with_status(ItemStatus::Done, name, arguments, preview)
 }
 
 fn tool_entry_with_status(
     status: ItemStatus,
     name: &str,
-    summary: &str,
+    arguments: &str,
     preview: Option<Display>,
 ) -> TranscriptEntry {
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::Generic,
-        call: ToolCall::new(
-            ToolName(name.to_string()),
-            "",
-            "{}",
-            CallLine {
-                summary: summary.to_string(),
-            },
-        ),
+        call: ToolCall::new(ToolName(name.to_string()), "", arguments),
         preview,
         result: None,
         status,

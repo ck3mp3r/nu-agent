@@ -146,12 +146,9 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
                 ir::ToolName("read".to_string()),
                 "builtin",
                 "{\"path\":\"/tmp/f\"}",
-                crate::protocol::tool_args::CallLine {
-                    summary: "→ /tmp/f".to_string(),
-                },
             ),
         },
-        "the denied call must publish ToolStarted with the registry-rendered call line"
+        "the denied call must publish ToolStarted carrying the call's own data"
     );
 
     let completed = ui_rx
@@ -164,9 +161,6 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
                 ir::ToolName("read".to_string()),
                 "builtin",
                 "{\"path\":\"/tmp/f\"}",
-                crate::protocol::tool_args::CallLine {
-                    summary: "→ /tmp/f".to_string(),
-                },
             ),
             outcome: ToolOutcome {
                 success: false,

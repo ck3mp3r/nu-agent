@@ -6,7 +6,6 @@ use super::channel::{
 };
 use crate::bus::create_bus;
 use crate::protocol::events::{SystemEvent, ToolCall};
-use crate::protocol::tool_args::CallLine;
 use crate::transcript::ir::ToolName;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -126,12 +125,7 @@ async fn bus_default_uses_no_metrics_and_preserves_fifo() -> Result<()> {
     let mut rx = bus.ui_event().subscribe();
     bus.ui_event()
         .send(SystemEvent::ToolStarted {
-            call: ToolCall::new(
-                ToolName("read".to_string()),
-                "user",
-                "{}",
-                CallLine::from_json_summary("{}"),
-            ),
+            call: ToolCall::new(ToolName("read".to_string()), "user", "{}"),
         })
         .await?;
     let event = rx.recv().await?;

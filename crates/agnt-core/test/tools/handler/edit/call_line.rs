@@ -18,14 +18,8 @@ fn edit_call_line_render_table() -> Result<()> {
     for (name, args, expected) in cases {
         let render = EditTool::call_line_render(args);
         match expected {
-            Some(summary) => assert_eq!(
-                render,
-                CallLine {
-                    summary: summary.to_string(),
-                },
-                "case '{name}'"
-            ),
-            None => assert_eq!(render, CallLine::from_json_summary(args), "case '{name}'"),
+            Some(summary) => assert_eq!(render, summary.to_string(), "case '{name}'"),
+            None => assert_eq!(render, call_line_from_json(args), "case '{name}'"),
         }
     }
     Ok(())

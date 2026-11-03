@@ -12,7 +12,6 @@ use agnt_core::protocol::event::{
     PermissionDecision, PermissionRequestContext, ToolDisplay, ToolDisplaySection,
 };
 use agnt_core::protocol::events::{Key, RequestId, SystemEvent, ToolCall, ToolOutcome, Usage};
-use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::session::tool_status::ToolStatus;
 use agnt_core::transcript::entry::TranscriptEntry;
 use agnt_core::transcript::ir::{ContentKind, MessageRole, ToolName};
@@ -38,12 +37,7 @@ fn tool_display(title: &str, content: &str) -> ToolDisplay {
 }
 
 fn edit_call(arguments: &str) -> ToolCall {
-    ToolCall::new(
-        ToolName("edit".to_string()),
-        "closure",
-        arguments,
-        CallLine::from_json_summary(arguments),
-    )
+    ToolCall::new(ToolName("edit".to_string()), "closure", arguments)
 }
 
 fn usage(input_tokens: u64, output_tokens: u64) -> Usage {

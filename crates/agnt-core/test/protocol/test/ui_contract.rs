@@ -21,20 +21,10 @@ fn system_event_contract() {
             },
         },
         SystemEvent::ToolStarted {
-            call: ToolCall::new(
-                ToolName("k8s__list_pods".to_string()),
-                "mcp",
-                "{}",
-                super::tool_args::CallLine::from_json_summary("{}"),
-            ),
+            call: ToolCall::new(ToolName("k8s__list_pods".to_string()), "mcp", "{}"),
         },
         SystemEvent::ToolCompleted {
-            call: ToolCall::new(
-                ToolName("k8s__list_pods".to_string()),
-                "mcp",
-                "{}",
-                super::tool_args::CallLine::from_json_summary("{}"),
-            ),
+            call: ToolCall::new(ToolName("k8s__list_pods".to_string()), "mcp", "{}"),
             outcome: ToolOutcome {
                 success: true,
                 status: ToolStatus::Success,
@@ -49,7 +39,6 @@ fn system_event_contract() {
                 ToolName("nu".to_string()),
                 "closure",
                 "{\"command\":\"echo hi\"}",
-                super::tool_args::CallLine::from_json_summary("{}"),
             ),
             display: crate::protocol::event::ToolDisplay {
                 title: Some("nu".to_string()),

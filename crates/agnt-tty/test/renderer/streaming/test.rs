@@ -23,7 +23,6 @@ mod verbosity;
 // endregion: --- Modules
 
 use agnt_core::protocol::events::{SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
-use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::renderer::UiRenderer;
 use agnt_core::transcript::ir::ToolName;
 

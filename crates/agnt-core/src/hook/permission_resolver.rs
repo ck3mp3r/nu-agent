@@ -126,13 +126,7 @@ fn summarize_ask_payload(args: &JsonValue) -> String {
 /// render registry, so the call line comes from the built-in fallback. The TUI
 /// matches the preview to its pending call by `ToolCallId` only.
 fn event_call(tool_name: &str, source: &str, arguments: &str) -> EventToolCall {
-    let call_line = crate::tools::handler::builtin_tool::call_line_render_for(tool_name, arguments);
-    EventToolCall::new(
-        ir::ToolName(tool_name.to_string()),
-        source,
-        arguments,
-        call_line,
-    )
+    EventToolCall::new(ir::ToolName(tool_name.to_string()), source, arguments)
 }
 
 /// Publish the policy-resolved-without-prompting event for `outcome`.

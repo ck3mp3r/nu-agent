@@ -308,7 +308,6 @@ fn completed_edit_with_diff(state: &mut AppState) {
             agnt_core::transcript::ir::ToolName("edit".to_string()),
             "closure",
             edit_arguments,
-            CallLine::from_json_summary(edit_arguments),
         )
     };
     reduce(

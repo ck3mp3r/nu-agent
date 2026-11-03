@@ -1,6 +1,7 @@
-//! Direct tests for the call-line fallback summary on [`CallLine`].
+//! Direct tests for the call-line functions: the JSON fallback summary and the
+//! plain-text form.
 
-use super::tool_args::CallLine;
+use super::tool_args::{call_line_from_json, plain_call_text};
 
 /// The fallback summary is the arrow plus the normalized arguments.
 #[test]
@@ -14,8 +15,11 @@ fn from_json_summary_prefixes_the_arguments_with_the_arrow() {
 
     // -- Exec & Check
     for (arguments, expected) in table {
-        let call = CallLine::from_json_summary(arguments);
-        assert_eq!(call.summary, expected, "summary for {arguments:?}");
+        assert_eq!(
+            call_line_from_json(arguments),
+            expected,
+            "summary for {arguments:?}"
+        );
     }
 }
 
@@ -32,8 +36,11 @@ fn from_json_summary_normalizes_whitespace_and_commas() {
 
     // -- Exec & Check
     for (arguments, expected) in table {
-        let call = CallLine::from_json_summary(arguments);
-        assert_eq!(call.summary, expected, "summary for {arguments:?}");
+        assert_eq!(
+            call_line_from_json(arguments),
+            expected,
+            "summary for {arguments:?}"
+        );
     }
 }
 
@@ -46,23 +53,23 @@ fn from_json_summary_truncates_at_120_characters() {
     let over_limit = "x".repeat(200);
 
     // -- Exec
-    let at_limit_call = CallLine::from_json_summary(&at_limit);
-    let over_limit_call = CallLine::from_json_summary(&over_limit);
+    let at_limit_call = call_line_from_json(&at_limit);
+    let over_limit_call = call_line_from_json(&over_limit);
 
     // -- Check
-    assert_eq!(at_limit_call.summary, format!("→ {at_limit}"));
-    assert_eq!(over_limit_call.summary, format!("→ {}…", "x".repeat(120)));
+    assert_eq!(at_limit_call, format!("→ {at_limit}"));
+    assert_eq!(over_limit_call, format!("→ {}…", "x".repeat(120)));
 }
 
 /// The transcript's plain-text form drops the arrow, so a caller that adds its
 /// own arrow never renders two.
 #[test]
-fn from_json_summary_plain_text_drops_the_arrow() {
+fn plain_call_text_drops_the_arrow() {
     // -- Setup & Fixtures
-    let call = CallLine::from_json_summary("{\"path\":\"a.rs\"}");
+    let call = call_line_from_json("{\"path\":\"a.rs\"}");
 
     // -- Exec
-    let plain = call.to_plain_text();
+    let plain = plain_call_text(&call);
 
     // -- Check
     assert_eq!(plain, "{\"path\":\"a.rs\"}");

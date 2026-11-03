@@ -280,10 +280,7 @@ fn tool_entry() -> TranscriptEntry {
         call: agnt_core::protocol::events::ToolCall::new(
             agnt_core::transcript::ir::ToolName("read".to_string()),
             "",
-            "{}",
-            agnt_core::protocol::tool_args::CallLine {
-                summary: "→ a.rs".to_string(),
-            },
+            r#"{"path":"a.rs"}"#,
         ),
         preview: None,
         result: None,

@@ -7,7 +7,6 @@
 
 use agnt_core::protocol::contracts::UiMessageSnapshot;
 use agnt_core::protocol::events::SystemEvent;
-use agnt_core::protocol::tool_args::CallLine;
 
 use crate::runtime::test_driver::{DriveEvent, RenderLoopDriver};
 
@@ -47,7 +46,6 @@ async fn test_alignment_transcript_gutters_pin_rail_cog_and_right_margin() -> Re
                     agnt_core::transcript::ir::ToolName("tool".to_string()),
                     "mcp",
                     "{}",
-                    CallLine::from_json_summary("{}"),
                 ),
             },
         ))])

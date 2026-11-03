@@ -2,7 +2,6 @@
 
 use agnt_core::protocol::event::ToolDisplayStats;
 use agnt_core::protocol::events::ToolCall;
-use agnt_core::protocol::tool_args::CallLine;
 use agnt_core::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
@@ -144,14 +143,7 @@ pub(super) fn tool_entry(
 ) -> TranscriptEntry {
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::Generic,
-        call: ToolCall::new(
-            ToolName("read".to_string()),
-            "",
-            "{}",
-            CallLine {
-                summary: "→ a.rs".to_string(),
-            },
-        ),
+        call: ToolCall::new(ToolName("read".to_string()), "", r#"{"path":"a.rs"}"#),
         preview,
         result,
         status,

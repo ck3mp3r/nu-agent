@@ -1,6 +1,6 @@
 use super::http::{HttpArgs, HttpTool, process_body};
 use crate::bus::Bus;
-use crate::protocol::tool_args::CallLine;
+use crate::protocol::tool_args::call_line_from_json;
 use crate::tools::handler::builtin_tool::BuiltinTool;
 
 const DEFAULT_MAX_LENGTH: usize = 12000;
@@ -246,14 +246,8 @@ fn http_call_line_render_table() {
     for (name, args, expected) in cases {
         let render = HttpTool::call_line_render(args);
         match expected {
-            Some(summary) => assert_eq!(
-                render,
-                CallLine {
-                    summary: summary.to_string(),
-                },
-                "case '{name}'"
-            ),
-            None => assert_eq!(render, CallLine::from_json_summary(args), "case '{name}'"),
+            Some(summary) => assert_eq!(render, summary.to_string(), "case '{name}'"),
+            None => assert_eq!(render, call_line_from_json(args), "case '{name}'"),
         }
     }
 }

@@ -260,20 +260,10 @@ fn completion_finalize_table() {
         SystemEvent::InferenceStarted,
         SystemEvent::Tick,
         SystemEvent::ToolStarted {
-            call: ToolCall::new(
-                ToolName("k8s__list_pods".to_string()),
-                "mcp",
-                "{}",
-                CallLine::from_json_summary("{}"),
-            ),
+            call: ToolCall::new(ToolName("k8s__list_pods".to_string()), "mcp", "{}"),
         },
         SystemEvent::ToolCompleted {
-            call: ToolCall::new(
-                ToolName("k8s__list_pods".to_string()),
-                "mcp",
-                "{}",
-                CallLine::from_json_summary("{}"),
-            ),
+            call: ToolCall::new(ToolName("k8s__list_pods".to_string()), "mcp", "{}"),
             outcome: ToolOutcome {
                 success: true,
                 status: ToolStatus::Success,

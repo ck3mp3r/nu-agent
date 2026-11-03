@@ -35,7 +35,10 @@ fn permission_request_display_matrix() -> Result<()> {
     let TranscriptEntry::Tool(tool) = entry else {
         return Err("expected Tool entry".into());
     };
-    assert!(tool.call.call_line.summary.contains("foo.rs"));
+    assert!(
+        call_line_of(tool).contains("foo.rs"),
+        "the call line must derive from the call's own arguments"
+    );
     let preview = tool.preview.as_ref().ok_or("should have preview")?;
     assert!(display_lines(preview).contains(diff));
 

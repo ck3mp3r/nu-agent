@@ -16,7 +16,6 @@ use std::time::Duration;
 use agnt_core::bus::Bus;
 use agnt_core::orchestrator::OrchestratorEvent;
 use agnt_core::protocol::events::SystemEvent;
-use agnt_core::protocol::tool_args::CallLine;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -377,7 +376,6 @@ async fn render_loop_driver_routes_tool_event_through_bus_ui_event_arm() -> Resu
                     agnt_core::transcript::ir::ToolName("sentinel_tool".to_string()),
                     "mcp",
                     "{}",
-                    CallLine::from_json_summary("{}"),
                 ),
             },
         ))])
