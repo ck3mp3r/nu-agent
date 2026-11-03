@@ -136,7 +136,7 @@ The order is a dependency claim, to be verified against the assertions rather th
 
 | Decision | Blocks |
 |---|---|
-| The payload-class vocabulary (stream / state / transition / command, or other) | ARCH-2's term list, and the per-channel contract |
+| **Deferred, not settled.** The four class names stand for now — `facts` included — because no agreed wording exists yet. Treat `facts` as a **placeholder, not a ruling**. The per-channel contract is owed, and it is what will settle the names: name each channel after the guarantee it actually provides. Do not invent a vocabulary ahead of that contract | ARCH-2's term list, and the channel split — `ui_state` carries current values *and* operations |
 | Where allocated identifiers are minted — kernel or composition root | ARCH-11's field census |
 | The transcript record's home and shape (the fold belongs to storage) | ARCH-6 and the storage surface |
 | Whether the aggregate runtime keeps five trait impls | ARCH-10's exact form |
