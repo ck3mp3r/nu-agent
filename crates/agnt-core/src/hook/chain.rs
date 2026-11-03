@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex};
 
 use agnt_kernel::{
     InferenceRecord, SessionRecord, StopCause, ToolCall as StreamToolCall,
-    ToolOutcome as StreamToolOutcome, ToolRecord, Usage as StreamUsage,
+    ToolErrorKind as StreamToolErrorKind, ToolOutcome as StreamToolOutcome, ToolRecord,
+    Usage as StreamUsage,
 };
 use rig::agent::{
     AgentHook, CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
@@ -36,7 +37,7 @@ use crate::conversation::turn::token_estimate::estimate_token_count;
 use crate::llm::{PricedOutcome, PricingSkip, computed_cost};
 use crate::protocol::events::{SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
 use crate::protocol::tool_args::CallLine;
-use crate::session::tool_status::{ToolStatus, status_of_result};
+use crate::session::tool_status::{ToolStatus, error_kind_of, status_of_result};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::handler::builtin_tool::ToolRenderRegistry;
@@ -179,9 +180,15 @@ pub(crate) async fn emit_not_run_dispatch(
             })
             .await;
     }
-    let (error_kind, message) = match outcome {
-        NotRunOutcome::Cancelled => (CANCELLED_ERROR_KIND, CANCELLED_DISPATCH_MESSAGE),
-        NotRunOutcome::Denied { reason } => (DENIED_ERROR_KIND, reason),
+    let (error_kind, message, kind) = match outcome {
+        NotRunOutcome::Cancelled => (
+            CANCELLED_ERROR_KIND,
+            CANCELLED_DISPATCH_MESSAGE,
+            StreamToolErrorKind::Cancelled,
+        ),
+        NotRunOutcome::Denied { reason } => {
+            (DENIED_ERROR_KIND, reason, StreamToolErrorKind::Denied)
+        }
     };
     let _ = bus
         .ui_event()
@@ -209,6 +216,7 @@ pub(crate) async fn emit_not_run_dispatch(
                 status: ToolStatus::Cancelled,
                 result: String::new(),
                 message: Some(message.to_string()),
+                kind: Some(kind),
             },
         }));
 }
@@ -822,6 +830,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                             status,
                             result: result_text.clone(),
                             message: None,
+                            kind: result.error().map(|e| error_kind_of(e.kind())),
                         },
                     }));
                 let call_line = self.render_registry.render(tool_name, args);

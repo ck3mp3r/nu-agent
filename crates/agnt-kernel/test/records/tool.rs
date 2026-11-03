@@ -30,6 +30,7 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
                 status: ToolStatus::Success,
                 result: "a.txt".to_string(),
                 message: None,
+                kind: None,
             },
         }))
         .map_err(|e| format!("publish tool completed a: {e:?}"))?;
@@ -45,6 +46,7 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
                 status: ToolStatus::Failed,
                 result: String::new(),
                 message: Some("no such file".to_string()),
+                kind: Some(crate::records::ToolErrorKind::NotFound),
             },
         }))
         .map_err(|e| format!("publish tool completed b: {e:?}"))?;
@@ -124,6 +126,7 @@ async fn test_records_denied_call_settles_cancelled_without_running() -> Result<
                 status: ToolStatus::Cancelled,
                 result: String::new(),
                 message: Some("denied by policy".to_string()),
+                kind: Some(crate::records::ToolErrorKind::Denied),
             },
         }))
         .map_err(|e| format!("publish tool completed: {e:?}"))?;

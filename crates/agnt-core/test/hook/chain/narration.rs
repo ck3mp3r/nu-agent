@@ -241,8 +241,51 @@ async fn test_narration_not_run_dispatch_narrates_the_pair() -> Result<()> {
     if outcome.status != agnt_kernel::ToolStatus::Cancelled {
         return Err(format!("a call that never ran settles as Cancelled, got {outcome:?}").into());
     }
-    if outcome.message.as_deref() != Some(crate::hook::chain::CANCELLED_DISPATCH_MESSAGE) {
-        return Err(format!("the completion carries the why as content, got {outcome:?}").into());
+    if outcome.kind != Some(agnt_kernel::ToolErrorKind::Cancelled) {
+        return Err(format!("the completion classifies itself, got {outcome:?}").into());
+    }
+    Ok(())
+}
+
+/// A gate refusal is a different class from a turn stop: both produce no result,
+/// and the record tells them apart by its enumerated kind — never by the text.
+#[tokio::test]
+async fn test_narration_denied_dispatch_classifies_as_denied() -> Result<()> {
+    // -- Setup & Fixtures
+    let bus = Bus::default();
+    let mut published = bus.stream().subscribe();
+    let cwd = std::path::PathBuf::from("/tmp");
+    let arguments = r#"{"x":1}"#;
+
+    // -- Exec
+    crate::hook::chain::emit_not_run_dispatch(
+        &bus,
+        &cwd,
+        crate::hook::chain::NotRunCall {
+            tool_name: "add",
+            source: "builtin",
+            arguments,
+            start: crate::hook::chain::NotRunStart::AlreadyPublished(
+                crate::protocol::tool_args::CallLine::from_json_summary(arguments),
+            ),
+        },
+        crate::hook::chain::NotRunOutcome::Denied { reason: "blocked" },
+        false,
+    )
+    .await;
+
+    // -- Check
+    let tool = tool_records(&mut published);
+    if tool.len() != 1 {
+        return Err(
+            format!("an already-published start must not be narrated twice, got {tool:?}").into(),
+        );
+    }
+    let agnt_kernel::ToolRecord::Completed { outcome, .. } = &tool[0] else {
+        return Err(format!("the only record must be the completion, got {:?}", tool[0]).into());
+    };
+    if outcome.kind != Some(agnt_kernel::ToolErrorKind::Denied) {
+        return Err(format!("a gate refusal classifies as Denied, got {outcome:?}").into());
     }
     Ok(())
 }

@@ -185,7 +185,57 @@ pub enum ToolStatus {
     Cancelled,
 }
 
-/// One settled call: its disposition plus content.
+/// Why a call has no result — the classification a surface prints beside it.
+///
+/// The variants mirror the labels surfaces already render, one per stable name,
+/// so a record carries what the UI shows and a surface never parses a message to
+/// learn it. [`Cancelled`](ToolErrorKind::Cancelled) is every call that produced
+/// no result at all (a turn stop, a wall clock, a gate refusal of the run); [`Denied`](ToolErrorKind::Denied)
+/// is a gate refusing this call specifically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolErrorKind {
+    /// The call's arguments could not be decoded or validated.
+    InvalidArgs,
+    /// The call exceeded its deadline.
+    Timeout,
+    /// The call produced no result: something stopped it first.
+    Cancelled,
+    /// The requested tool or resource was not found.
+    NotFound,
+    /// An authorization check refused the call.
+    PermissionDenied,
+    /// A rate limit was reached.
+    RateLimited,
+    /// An upstream provider failed.
+    Provider,
+    /// A network operation failed.
+    Network,
+    /// Any other failure.
+    Other,
+    /// The permission gate refused this call.
+    Denied,
+}
+
+impl ToolErrorKind {
+    /// The label a surface prints for this classification — the stable name the
+    /// transcript has always shown, unchanged.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::InvalidArgs => "invalid_args",
+            Self::Timeout => "timeout",
+            Self::Cancelled => "cancelled",
+            Self::NotFound => "not_found",
+            Self::PermissionDenied => "permission_denied",
+            Self::RateLimited => "rate_limited",
+            Self::Provider => "provider",
+            Self::Network => "network",
+            Self::Other => "other",
+            Self::Denied => "denied",
+        }
+    }
+}
+
+/// One settled call: its disposition, its content, and why it has no result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolOutcome {
     pub status: ToolStatus,
@@ -193,6 +243,8 @@ pub struct ToolOutcome {
     pub result: String,
     /// The handler's or gate's own message (a denial reason, a failure detail).
     pub message: Option<String>,
+    /// Why the call has no result. `None` for a call that produced one.
+    pub kind: Option<ToolErrorKind>,
 }
 
 /// Identity of one permission request. Assigned by the producing gate; opaque

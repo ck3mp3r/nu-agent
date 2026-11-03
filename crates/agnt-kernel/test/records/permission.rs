@@ -54,6 +54,7 @@ async fn test_records_ask_path_denial_brackets_call_and_permission() -> Result<(
                 status: ToolStatus::Cancelled,
                 result: String::new(),
                 message: Some("denied by policy".to_string()),
+                kind: Some(crate::records::ToolErrorKind::Denied),
             },
         }))
         .map_err(|e| format!("publish tool completed: {e:?}"))?;
@@ -140,6 +141,7 @@ async fn test_records_policy_path_narrates_auto_resolution_without_request() -> 
                 status: ToolStatus::Success,
                 result: "a.txt".to_string(),
                 message: None,
+                kind: None,
             },
         }))
         .map_err(|e| format!("publish tool completed: {e:?}"))?;

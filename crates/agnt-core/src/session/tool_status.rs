@@ -63,4 +63,25 @@ pub fn status_of_result(result: &ToolExecutionResult) -> ToolStatus {
     }
 }
 
+/// The record's classification for a rig tool-error kind.
+///
+/// One variant per stable name, because those names are exactly what a surface
+/// prints: nothing is re-classified on the way in, so the rendered label cannot
+/// drift between the live row and the record. A function rather than a `From`
+/// impl — neither type belongs to this crate, and the kernel cannot name rig.
+pub fn error_kind_of(kind: RigToolErrorKind) -> agnt_kernel::ToolErrorKind {
+    use agnt_kernel::ToolErrorKind as Record;
+    match kind {
+        RigToolErrorKind::InvalidArgs => Record::InvalidArgs,
+        RigToolErrorKind::Timeout => Record::Timeout,
+        RigToolErrorKind::Cancelled => Record::Cancelled,
+        RigToolErrorKind::NotFound => Record::NotFound,
+        RigToolErrorKind::PermissionDenied => Record::PermissionDenied,
+        RigToolErrorKind::RateLimited => Record::RateLimited,
+        RigToolErrorKind::Provider => Record::Provider,
+        RigToolErrorKind::Network => Record::Network,
+        RigToolErrorKind::Other => Record::Other,
+    }
+}
+
 // endregion: --- Functions
