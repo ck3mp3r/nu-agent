@@ -580,6 +580,10 @@ fn test_module_function_variant() -> Result<()> {
 - Test support functions at the end under `// -- Test Support` (inline) or `// region: --- Test Support` (dedicated file)
 - For temp data files, use paths like `tests-data/.tmp/test_function_name/`
 
+## Design Choices
+
+Before adding a crate, a layer, an event, or a rendering path, read `docs/design-choices.md`. It states the patterns this workspace follows — forbidden edges, the kernel as a data plane, producer-ships-data/drawer-derives-display, text parsed once at the boundary, the builder-gated composition root, the loop owner, the store-owned transcript ETL — and where a new thing belongs. Each rule is marked *enforced* or *direction*; do not cite a direction as if it already exists.
+
 ## Docs Guardrails (Tool/Authz/TUI changes)
 
 When changing tool handler modules, permission UX, or TUI transcript rendering:
