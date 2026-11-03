@@ -216,25 +216,6 @@ pub enum ToolErrorKind {
     Denied,
 }
 
-impl ToolErrorKind {
-    /// The label a surface prints for this classification — the stable name the
-    /// transcript has always shown, unchanged.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::InvalidArgs => "invalid_args",
-            Self::Timeout => "timeout",
-            Self::Cancelled => "cancelled",
-            Self::NotFound => "not_found",
-            Self::PermissionDenied => "permission_denied",
-            Self::RateLimited => "rate_limited",
-            Self::Provider => "provider",
-            Self::Network => "network",
-            Self::Other => "other",
-            Self::Denied => "denied",
-        }
-    }
-}
-
 /// One settled call: its disposition, its content, and why it has no result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolOutcome {
