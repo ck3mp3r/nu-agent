@@ -586,6 +586,17 @@ Before adding a crate, a layer, an event, or a rendering path, read `docs/design
 
 The properties the **target** must satisfy — and the numbered checks (`ARCH-1` … `ARCH-12`) that fail the build when one stops holding — are in `docs/target-architecture.md`. A slice is accepted against those assertions, never against "tests pass".
 
+## Reviewing a change
+
+A review is the judgement the author cannot supply about their own work. It is not a second test run.
+
+- ✅ **Diff against the spec**, including every change the report does not mention — the unreported change is the highest-yield finding.
+- ✅ **Load-bearing claims checked by inspection**: a lockfile delta, a moved import, a count that must be exact. Use a targeted command only where reading cannot answer — `git diff -- <path>`, `cargo metadata --no-deps`, `cargo tree -p <crate> --edges normal`.
+- ✅ **The laws**: no `#[allow(...)]`, no `unwrap()`/`expect()`, no new dependency edge, no test-only code in production, symbol truth from the AST tools.
+- ✅ **Test adequacy**: does a test fail *without* this change? If the behaviour is unpinned, say so — that is a finding.
+- ❌ Re-running the full suite the developer already ran on the same tree. It answers a question the diff already answers, and it makes the reviewer certify behaviour, which a green suite cannot do.
+- ❌ Restating the developer's report as the verdict. A review that agrees with the report has verified nothing.
+
 ## Docs Guardrails (Tool/Authz/TUI changes)
 
 When changing tool handler modules, permission UX, or TUI transcript rendering:
