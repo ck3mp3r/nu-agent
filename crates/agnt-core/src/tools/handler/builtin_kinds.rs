@@ -82,6 +82,27 @@ impl FromStr for BuiltinKind {
     }
 }
 
+/// What kind of tool a call names: a builtin whose line a drawer can tailor, or
+/// a tool from an open set (a closure, an MCP server) that only its name
+/// identifies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToolKind {
+    Builtin(BuiltinKind),
+    Other,
+}
+
+impl ToolKind {
+    /// Classify a tool name. The one place the wire's text becomes a variant:
+    /// every consumer downstream matches the enum, so adding a builtin fails to
+    /// compile wherever a kind is matched exhaustively until it is handled.
+    pub fn of_name(name: &str) -> Self {
+        match BuiltinKind::from_str(name) {
+            Ok(kind) => Self::Builtin(kind),
+            Err(()) => Self::Other,
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "../../../test/tools/handler/builtin_kinds.rs"]
 mod tests;

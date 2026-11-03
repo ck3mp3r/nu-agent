@@ -15,8 +15,8 @@ use agnt_core::protocol::event::ToolDisplay;
 use agnt_core::protocol::events::{SystemEvent, SystemKind};
 use agnt_core::protocol::plain_call_text;
 use agnt_core::renderer::UiRenderer;
-use agnt_core::tools::handler::builtin_tool::call_line_render_for;
 use agnt_core::transcript::ir::{StyleHint, annotate_diff_hint};
+use agnt_render::call_line::render_for;
 use std::io::Write;
 use std::time::{Duration, Instant};
 
@@ -29,7 +29,7 @@ use crate::spinner::SpinnerState;
 /// The call line the TTY prints for `call`: derived from the call's name and
 /// raw arguments, with the arrow the terminal adds itself stripped.
 fn call_line_for(call: &agnt_core::protocol::events::ToolCall) -> String {
-    let line = call_line_render_for(&call.name.0, &call.arguments);
+    let line = render_for(call);
     plain_call_text(&line).to_string()
 }
 

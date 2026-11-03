@@ -86,10 +86,7 @@ pub(super) fn display_lines(display: &Display) -> String {
 
 /// The call line the entry's own data derives, as every backend derives it.
 pub(super) fn call_line_of(tool: &ToolEntry) -> String {
-    agnt_core::tools::handler::builtin_tool::call_line_render_for(
-        &tool.call.name.0,
-        &tool.call.arguments,
-    )
+    agnt_render::call_line::render_for(&tool.call)
 }
 
 /// Flatten one entry's text for assertions. A tool entry contributes its call

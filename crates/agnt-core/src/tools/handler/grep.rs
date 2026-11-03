@@ -3,7 +3,6 @@ use std::path::Path;
 
 use super::{ToolErrorKind, ToolHandlerError, builtin_tool::BuiltinTool};
 use crate::bus::Bus;
-use crate::protocol::tool_args::{call_line_from_json, parse_json_string_field};
 
 #[derive(Debug, serde::Deserialize)]
 struct GrepArgs {
@@ -22,27 +21,6 @@ pub struct GrepTool;
 
 impl BuiltinTool for GrepTool {
     const NAME: &'static str = "grep";
-
-    fn call_line_render(arguments: &str) -> String {
-        let Some(pattern) = parse_json_string_field(arguments, "pattern") else {
-            return call_line_from_json(arguments);
-        };
-        let path = parse_json_string_field(arguments, "path").unwrap_or_else(|| ".".to_string());
-        let glob = parse_json_string_field(arguments, "glob");
-
-        let location = match (glob, path.as_str()) {
-            (Some(glob), ".") => glob,
-            (Some(glob), path) => format!("{path}/{glob}"),
-            (None, ".") => String::new(),
-            (None, path) => path.to_string(),
-        };
-
-        if location.is_empty() {
-            format!("→ \"{pattern}\"")
-        } else {
-            format!("→ \"{pattern}\" {location}")
-        }
-    }
 
     async fn execute(
         args: &JsonValue,

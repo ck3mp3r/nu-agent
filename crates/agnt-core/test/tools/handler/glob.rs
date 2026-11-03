@@ -1,6 +1,5 @@
 use super::*;
 use crate::bus::Bus;
-use crate::protocol::tool_args::call_line_from_json;
 use tempfile::tempdir;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -162,31 +161,3 @@ async fn glob_invalid_pattern_returns_validation_error() {
 }
 
 // === call_line_render ===
-
-#[test]
-fn glob_call_line_render_table() -> Result<()> {
-    // -- Setup & Fixtures
-    let cases: Vec<(&str, &str, Option<&str>)> = vec![
-        (
-            "shows pattern when path is dot",
-            r#"{"pattern":"**/*.rs","path":"."}"#,
-            Some("→ **/*.rs"),
-        ),
-        (
-            "combines path and pattern",
-            r#"{"pattern":"**/*.rs","path":"/src"}"#,
-            Some("→ /src/**/*.rs"),
-        ),
-        ("falls back to generic on invalid json", "not-json", None),
-    ];
-
-    // -- Exec & Check
-    for (name, args, expected) in cases {
-        let render = GlobTool::call_line_render(args);
-        match expected {
-            Some(summary) => assert_eq!(render, summary.to_string(), "case '{name}'"),
-            None => assert_eq!(render, call_line_from_json(args), "case '{name}'"),
-        }
-    }
-    Ok(())
-}

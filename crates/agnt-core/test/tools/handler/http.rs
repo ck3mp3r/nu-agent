@@ -1,6 +1,5 @@
 use super::http::{HttpArgs, HttpTool, process_body};
 use crate::bus::Bus;
-use crate::protocol::tool_args::call_line_from_json;
 use crate::tools::handler::builtin_tool::BuiltinTool;
 
 const DEFAULT_MAX_LENGTH: usize = 12000;
@@ -224,30 +223,3 @@ fn process_body_table() {
 }
 
 // === call_line_render ===
-
-#[test]
-fn http_call_line_render_table() {
-    // -- Setup & Fixtures
-    let cases: Vec<(&str, &str, Option<&str>)> = vec![
-        (
-            "shows explicit method and url",
-            r#"{"url":"https://example.com","method":"POST"}"#,
-            Some("→ POST https://example.com"),
-        ),
-        (
-            "defaults method to get",
-            r#"{"url":"https://example.com"}"#,
-            Some("→ GET https://example.com"),
-        ),
-        ("falls back to generic on invalid json", "not-json", None),
-    ];
-
-    // -- Exec & Check
-    for (name, args, expected) in cases {
-        let render = HttpTool::call_line_render(args);
-        match expected {
-            Some(summary) => assert_eq!(render, summary.to_string(), "case '{name}'"),
-            None => assert_eq!(render, call_line_from_json(args), "case '{name}'"),
-        }
-    }
-}

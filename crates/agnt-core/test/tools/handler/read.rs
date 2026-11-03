@@ -1,6 +1,5 @@
 use super::*;
 use crate::bus::Bus;
-use crate::protocol::tool_args::call_line_from_json;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -107,41 +106,3 @@ async fn read_missing_file_returns_runtime_error() {
 }
 
 // === call_line_render ===
-
-#[test]
-fn read_call_line_render_table() -> Result<()> {
-    // -- Setup & Fixtures
-    let cases: Vec<(&str, &str, Option<&str>)> = vec![
-        (
-            "shows path only",
-            r#"{"path":"/tmp/f.txt"}"#,
-            Some("→ /tmp/f.txt"),
-        ),
-        (
-            "shows offset limit range",
-            r#"{"path":"/tmp/f.txt","offset":50,"limit":50}"#,
-            Some("→ /tmp/f.txt:50-100"),
-        ),
-        (
-            "shows path only when offset without limit",
-            r#"{"path":"/tmp/f.txt","offset":50}"#,
-            Some("→ /tmp/f.txt"),
-        ),
-        (
-            "saturates offset plus limit overflow",
-            r#"{"path":"/tmp/f.txt","offset":18446744073709551615,"limit":10}"#,
-            Some("→ /tmp/f.txt:18446744073709551615-18446744073709551615"),
-        ),
-        ("falls back to generic on invalid json", "not-json", None),
-    ];
-
-    // -- Exec & Check
-    for (name, args, expected) in cases {
-        let render = ReadTool::call_line_render(args);
-        match expected {
-            Some(summary) => assert_eq!(render, summary.to_string(), "case '{name}'"),
-            None => assert_eq!(render, call_line_from_json(args), "case '{name}'"),
-        }
-    }
-    Ok(())
-}

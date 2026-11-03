@@ -36,13 +36,7 @@ fn hydration_reconstructs_tool_entries_and_display() -> Result<()> {
     let TranscriptEntry::Tool(tool_entry) = entry else {
         return Err("expected Tool entry".into());
     };
-    assert!(
-        agnt_core::tools::handler::builtin_tool::call_line_render_for(
-            &tool_entry.call.name.0,
-            &tool_entry.call.arguments
-        )
-        .contains("namespace")
-    );
+    assert!(agnt_render::call_line::render_for(&tool_entry.call).contains("namespace"));
     assert_eq!(tool_entry.status, ItemStatus::Done);
 
     // -- Setup & Fixtures: a tool call plus a standalone persisted display.

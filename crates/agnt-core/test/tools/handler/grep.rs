@@ -1,6 +1,5 @@
 use super::*;
 use crate::bus::Bus;
-use crate::protocol::tool_args::call_line_from_json;
 use std::io::Write;
 use tempfile::tempdir;
 
@@ -220,46 +219,3 @@ async fn grep_skips_binary_files_without_error() {
 }
 
 // === call_line_render ===
-
-#[test]
-fn grep_call_line_render_table() -> Result<()> {
-    // -- Setup & Fixtures
-    let cases: Vec<(&str, &str, &str)> = vec![
-        (
-            "quoted pattern and glob when path is dot",
-            r#"{"pattern":"fn main","path":".","glob":"*.rs"}"#,
-            "→ \"fn main\" *.rs",
-        ),
-        (
-            "combines path and glob",
-            r#"{"pattern":"fn main","path":"/src","glob":"*.rs"}"#,
-            "→ \"fn main\" /src/*.rs",
-        ),
-        (
-            "shows path without glob",
-            r#"{"pattern":"fn main","path":"/src"}"#,
-            "→ \"fn main\" /src",
-        ),
-        (
-            "shows pattern only without location",
-            r#"{"pattern":"fn main"}"#,
-            "→ \"fn main\"",
-        ),
-    ];
-
-    // -- Exec & Check
-    for (name, args, expected) in cases {
-        assert_eq!(
-            GrepTool::call_line_render(args),
-            expected.to_string(),
-            "case '{name}'"
-        );
-    }
-
-    let invalid = "not-json";
-    assert_eq!(
-        GrepTool::call_line_render(invalid),
-        call_line_from_json(invalid)
-    );
-    Ok(())
-}

@@ -379,12 +379,9 @@ async fn on_dispatch_publishes_the_call_that_derives_its_line() -> Result<()> {
     };
     turn.await.map_err(|_| "turn task should not panic")?;
 
-    // -- Check: the event carries the call's own data; the line is derived
-    // from it at the point of use.
-    assert_eq!(
-        crate::tools::handler::builtin_tool::call_line_render_for(&call.name.0, &call.arguments),
-        "→ /tmp/f",
-        "a read call must derive its line from its own name and arguments"
-    );
+    // -- Check: the event carries the call's own data, which is what a drawer
+    // derives the line from.
+    assert_eq!(call.name.0, "read");
+    assert_eq!(call.arguments, r#"{"path":"/tmp/f"}"#);
     Ok(())
 }

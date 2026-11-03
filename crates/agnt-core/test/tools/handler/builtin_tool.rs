@@ -11,8 +11,6 @@ mod dynamic;
 mod edit_noop;
 #[path = "builtin_tool/errors.rs"]
 mod errors;
-#[path = "builtin_tool/render.rs"]
-mod render;
 #[path = "builtin_tool/support.rs"]
 mod support;
 
@@ -20,8 +18,6 @@ mod support;
 
 use crate::types::{EmptyToolName, ToolDefinition, ToolName};
 use std::path::Path;
-
-use super::BuiltinTool;
 
 type TestResult<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

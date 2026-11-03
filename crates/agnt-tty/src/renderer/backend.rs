@@ -7,10 +7,10 @@
 //! backends carry the same rows and differ only in decoration. The
 //! cross-backend golden test pins that agreement.
 
-use agnt_core::tools::handler::builtin_tool::call_line_render_for;
 use agnt_core::transcript::entry::TranscriptEntry;
 use agnt_core::transcript::ir::{ContentLine, MessageRole, NoticeKind, Span, StyleHint};
 use agnt_core::transcript::markdown::{render_markdown_lines, rendered_line_to_plain_text};
+use agnt_render::call_line::render_for;
 use agnt_render::{RenderBackend, RowRect, Theme};
 
 use crate::ansi::style_text;
@@ -160,7 +160,7 @@ fn content_lines(entry: &TranscriptEntry, width: usize) -> Vec<ContentLine> {
         }
         TranscriptEntry::Tool(tool) => {
             let name = tool.call.name.0.as_str();
-            let call_line = call_line_render_for(name, &tool.call.arguments);
+            let call_line = render_for(&tool.call);
             let summary = call_line.as_str();
             let mut spans = Vec::new();
             if name.is_empty() {

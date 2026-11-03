@@ -25,8 +25,8 @@ use agnt_core::config::defaults;
 use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
 use agnt_core::protocol::events::{SystemEvent, SystemKind};
 use agnt_core::protocol::plain_call_text;
-use agnt_core::tools::handler::builtin_tool::call_line_render_for;
 use agnt_core::transcript::ir::ContentKind;
+use agnt_render::call_line::render_for;
 
 use crate::error::AcpError;
 use crate::permission::{AcpPermissionBridge, PermissionRequestSink};
@@ -120,7 +120,7 @@ impl EventTranslator {
                 let id = self.allocate_call_id(&name, &call.arguments);
                 // The call line is a derivation, not data: derive it here, once
                 // per event, exactly as the transcript entries do at build time.
-                let call_line = call_line_render_for(&name, &call.arguments);
+                let call_line = render_for(&call);
                 let summary = plain_call_text(&call_line);
                 let title = if summary.is_empty() {
                     name.clone()

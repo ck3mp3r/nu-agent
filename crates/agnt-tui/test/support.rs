@@ -9,12 +9,7 @@ use crate::state::{ActivePicker, AppState, CommandPaletteAction, PickerOption, P
 pub(crate) fn entry_text(entry: &TranscriptEntry) -> String {
     match entry {
         TranscriptEntry::Message(message) => message.markdown.clone(),
-        TranscriptEntry::Tool(tool) => {
-            agnt_core::tools::handler::builtin_tool::call_line_render_for(
-                &tool.call.name.0,
-                &tool.call.arguments,
-            )
-        }
+        TranscriptEntry::Tool(tool) => agnt_render::call_line::render_for(&tool.call),
         TranscriptEntry::Task(task) => format!("{} · {}", task.name, task.summary),
         TranscriptEntry::Notice(notice) => notice.text.clone(),
         TranscriptEntry::Banner(banner) => banner.text.clone(),

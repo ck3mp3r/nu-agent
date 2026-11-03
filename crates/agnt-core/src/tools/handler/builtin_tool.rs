@@ -18,7 +18,6 @@ use super::tree_sitter::{AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool};
 use super::{ToolHandlerError, execution_error_for_kind};
 use crate::bus::Bus;
 use crate::protocol::event::ToolDisplay;
-use crate::protocol::tool_args::call_line_from_json;
 use crate::tools::limits::truncate_tool_output;
 use crate::types::ToolDefinition;
 use rig::tool::server::ToolServerHandle;
@@ -31,12 +30,6 @@ pub trait BuiltinTool: Sized {
         cwd: &Path,
         bus: &Bus,
     ) -> impl std::future::Future<Output = Result<JsonValue, ToolHandlerError>> + Send;
-
-    /// Render the call line for this tool's arguments. The default is the
-    /// generic JSON summary; tools override it to show a tailored summary.
-    fn call_line_render(arguments: &str) -> String {
-        call_line_from_json(arguments)
-    }
 }
 
 /// Tools that produce a pre-execution preview display. `EditTool` returns
@@ -47,38 +40,6 @@ pub trait Previewable: BuiltinTool {
     fn preview(args: &JsonValue, cwd: &Path) -> Option<ToolDisplay> {
         let _ = (args, cwd);
         None
-    }
-}
-
-/// Render the call line for a builtin tool by name. This is the single
-/// source of truth for builtin call-line rendering: it maps the name to its
-/// `BuiltinKind` and delegates to that tool's `call_line_render`. Unknown
-/// names and builtins without a tailored render fall back to the generic
-/// JSON summary.
-pub fn call_line_render_for(name: &str, arguments: &str) -> String {
-    let Ok(kind) = BuiltinKind::from_str(name) else {
-        return call_line_from_json(arguments);
-    };
-    match kind {
-        BuiltinKind::Read => ReadTool::call_line_render(arguments),
-        BuiltinKind::Edit => EditTool::call_line_render(arguments),
-        BuiltinKind::Skill => SkillTool::call_line_render(arguments),
-        BuiltinKind::Grep => GrepTool::call_line_render(arguments),
-        BuiltinKind::Glob => GlobTool::call_line_render(arguments),
-        BuiltinKind::Http => HttpTool::call_line_render(arguments),
-        BuiltinKind::Nu => NuTool::call_line_render(arguments),
-        BuiltinKind::TmuxSession => TmuxSessionTool::call_line_render(arguments),
-        BuiltinKind::TmuxWindow => TmuxWindowTool::call_line_render(arguments),
-        BuiltinKind::TmuxPane => TmuxPaneTool::call_line_render(arguments),
-        BuiltinKind::TmuxLayout => TmuxLayoutTool::call_line_render(arguments),
-        BuiltinKind::AstQuery => AstQueryTool::call_line_render(arguments),
-        BuiltinKind::AstNodes => AstNodesTool::call_line_render(arguments),
-        BuiltinKind::AstRefs => AstRefsTool::call_line_render(arguments),
-        BuiltinKind::AstTree => AstTreeTool::call_line_render(arguments),
-        BuiltinKind::SpawnAgent
-        | BuiltinKind::TerminateAgent
-        | BuiltinKind::SendMessage
-        | BuiltinKind::ListAgents => call_line_from_json(arguments),
     }
 }
 

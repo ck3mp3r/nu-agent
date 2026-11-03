@@ -7,20 +7,15 @@
 
 #[path = "edit/apply.rs"]
 mod apply;
-#[path = "edit/call_line.rs"]
-mod call_line;
 #[path = "edit/contract_errors.rs"]
 mod contract_errors;
 #[path = "edit/preview.rs"]
 mod preview;
-#[path = "edit/support.rs"]
-mod support;
 
 // endregion: --- Modules
 
 use super::*;
 use crate::bus::Bus;
-use crate::protocol::tool_args::call_line_from_json;
 use crate::tools::handler::builtin_tool::{BuiltinTool, Previewable};
 use crate::transcript::ir::ContentKind;
 
@@ -29,4 +24,3 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 // The monolith resolved `super::<helper>` against `crate::tools::handler::edit`.
 // Sub-files now resolve `super::` against this module root, so the shared
 // fixtures are re-exported here.
-use support::*;

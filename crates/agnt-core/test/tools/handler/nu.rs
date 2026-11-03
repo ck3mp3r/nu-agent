@@ -1,5 +1,4 @@
 use crate::bus::{Bus, CancelEvent};
-use crate::protocol::tool_args::call_line_from_json;
 use crate::tools::handler::ToolErrorKind;
 use crate::tools::handler::builtin_tool::{BuiltinTool, Previewable};
 use crate::tools::handler::nu::NuTool;
@@ -245,44 +244,3 @@ fn nu_preview_table() -> Result<()> {
 }
 
 // === call_line_render ===
-
-#[test]
-fn nu_call_line_render_table() -> Result<()> {
-    // -- Setup & Fixtures
-    // The command renders in the preview block, so the call line carries only
-    // the applied timeout. Args without a usable command keep the generic
-    // summary.
-    let cases: Vec<(&str, &str, Option<&str>)> = vec![
-        (
-            "shows default timeout when omitted",
-            r#"{"command":"ls"}"#,
-            Some("⏱ 120s"),
-        ),
-        (
-            "shows provided timeout",
-            r#"{"command":"ls","timeout_seconds":60}"#,
-            Some("⏱ 60s"),
-        ),
-        ("falls back to generic on invalid json", "not-json", None),
-        (
-            "falls back to generic on missing command",
-            r#"{"timeout_seconds":5}"#,
-            None,
-        ),
-        (
-            "falls back to generic on empty command",
-            r#"{"command":""}"#,
-            None,
-        ),
-    ];
-
-    // -- Exec & Check
-    for (name, args, expected) in cases {
-        let render = NuTool::call_line_render(args);
-        match expected {
-            Some(summary) => assert_eq!(render, summary.to_string(), "case '{name}'"),
-            None => assert_eq!(render, call_line_from_json(args), "case '{name}'"),
-        }
-    }
-    Ok(())
-}

@@ -60,13 +60,7 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
     let TranscriptEntry::Tool(tool) = tool_entry else {
         return Err("expected Tool variant".into());
     };
-    assert!(
-        agnt_core::tools::handler::builtin_tool::call_line_render_for(
-            &tool.call.name.0,
-            &tool.call.arguments
-        )
-        .contains("namespace")
-    );
+    assert!(agnt_render::call_line::render_for(&tool.call).contains("namespace"));
     assert_eq!(tool_status_of(tool_entry), Some(ItemStatus::Done));
 
     // -- Setup & Fixtures: a nu tool call.
@@ -92,13 +86,7 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
     let TranscriptEntry::Tool(tool) = entry else {
         return Err("expected Tool variant".into());
     };
-    assert_eq!(
-        agnt_core::tools::handler::builtin_tool::call_line_render_for(
-            &tool.call.name.0,
-            &tool.call.arguments
-        ),
-        "⏱ 120s"
-    );
+    assert_eq!(agnt_render::call_line::render_for(&tool.call), "⏱ 120s");
 
     // -- Setup & Fixtures: an edit tool call.
     let mut edit = RuntimeCoordinator::new(120, 30, Some(true));
@@ -127,10 +115,7 @@ fn coordinator_hydration_and_tool_rows() -> Result<()> {
         return Err("expected Tool variant".into());
     };
     assert_eq!(
-        agnt_core::tools::handler::builtin_tool::call_line_render_for(
-            &tool.call.name.0,
-            &tool.call.arguments
-        ),
+        agnt_render::call_line::render_for(&tool.call),
         "→ a.rs (diff)"
     );
 

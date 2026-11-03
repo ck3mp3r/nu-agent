@@ -13,6 +13,7 @@ pub use agnt_kernel::CompactionSource;
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay};
 use crate::session::tool_status::ToolStatus;
 use crate::tools::handler::ToolSource;
+use crate::tools::handler::builtin_kinds::ToolKind;
 use crate::transcript::ir::ToolName;
 
 // region:    --- Types
@@ -264,6 +265,15 @@ pub fn compaction_source_text(source: CompactionSource) -> &'static str {
 // region:    --- Impls
 
 impl ToolCall {
+    /// The kind of tool this call names.
+    ///
+    /// Derived from the name, never stored: the name is the identity, and a
+    /// drawer that dispatches on the kind derives it here instead of carrying a
+    /// second copy that could drift from it.
+    pub fn kind(&self) -> ToolKind {
+        ToolKind::of_name(&self.name.0)
+    }
+
     /// Build a call and derive its key from the name and the raw arguments.
     pub fn new(name: ToolName, source: ToolSource, arguments: impl Into<String>) -> Self {
         let arguments = arguments.into();
