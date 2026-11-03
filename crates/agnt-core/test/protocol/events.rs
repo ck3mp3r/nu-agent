@@ -1,5 +1,7 @@
 //! Vocabulary tests for `SystemEvent` (protocol/events.rs).
 
+use agnt_kernel::CompactionSource;
+
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay};
 use crate::protocol::events::{
     AutoResolutionAction, Key, RequestId, SystemEvent, SystemKind, ToolCall, ToolCallId,
@@ -146,7 +148,7 @@ fn test_protocol_events_vocabulary_covers_completeness_trace() -> Result<()> {
             text: "careful".to_string(),
         },
         SystemEvent::CompactionRequested {
-            source: "auto".to_string(),
+            source: CompactionSource::Auto,
         },
         SystemEvent::CompactionStarted {
             source: "auto".to_string(),

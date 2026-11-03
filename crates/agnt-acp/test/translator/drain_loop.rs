@@ -1,7 +1,7 @@
 //! Drain-loop behaviour: streaming, flushing, and transport failure.
 
 use agent_client_protocol::schema::v1::SessionUpdate;
-use agnt_core::protocol::events::SystemEvent;
+use agnt_core::protocol::events::{CompactionSource, SystemEvent};
 
 use super::support::*;
 use crate::translator::{
@@ -194,7 +194,7 @@ async fn test_translator_run_turn_reports_a_compaction_request() -> Result<()> {
             publisher
                 .compaction()
                 .send(SystemEvent::CompactionRequested {
-                    source: "auto".to_string(),
+                    source: CompactionSource::Auto,
                 })
                 .await
                 .ok();

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use agnt_kernel::CompactionSource;
 use nu_protocol::{LabeledError, Span, Value};
 
 use crate::bus::{Bus, SessionEvent};
@@ -710,15 +711,14 @@ where
         self.session_usage.totals()
     }
 
-    async fn run_compaction(&mut self, source: &str) -> Result<(), String> {
+    async fn run_compaction(&mut self, source: CompactionSource) -> Result<(), String> {
         let Some(session_id) = self.final_session_id.clone() else {
             return Ok(());
         };
 
         // Run compaction against the rig-memory store of the session: the splice
-        // `compact()` makes IS what the next run loads. `source` is `"auto"` or
-        // `"slash"`. `run_compaction` emits `Started`/`SummaryChunk`/`Completed`/
-        // `Failed` (via `compact()`).
+        // `compact()` makes IS what the next run loads. `run_compaction` emits
+        // `Started`/`SummaryChunk`/`Completed`/`Failed` (via `compact()`).
         let _ = crate::hook::chain::run_compaction(
             &session_id,
             self.session.inner_memory(),

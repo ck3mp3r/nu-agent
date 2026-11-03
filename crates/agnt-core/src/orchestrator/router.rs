@@ -1,7 +1,7 @@
 use crate::orchestrator::{
     AgentSwitchHook, UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome,
 };
-use crate::protocol::events::SystemEvent;
+use crate::protocol::events::{SystemEvent, compaction_source_text};
 use crate::protocol::{
     contracts::CoreRuntime,
     mcp_management::McpManagement,
@@ -71,11 +71,15 @@ impl CommandRouter {
                 true
             }
             WorkerCommand::RunCompaction { source } => {
-                log::trace!("Router: RunCompaction source={source}");
-                if let Err(e) = runtime.run_compaction(&source).await {
+                let source_text = compaction_source_text(source);
+                log::trace!("Router: RunCompaction source={source_text}");
+                if let Err(e) = runtime.run_compaction(source).await {
                     let _ = bus
                         .compaction()
-                        .send(SystemEvent::CompactionFailed { source, message: e })
+                        .send(SystemEvent::CompactionFailed {
+                            source: source_text.to_string(),
+                            message: e,
+                        })
                         .await;
                 }
                 true

@@ -1,3 +1,5 @@
+use agnt_kernel::CompactionSource;
+
 use crate::bus::CancelEvent;
 use crate::orchestrator::stages::{OrchestrationContext, SlashHandler};
 use crate::orchestrator::{UiStateEvent, WorkerCommand};
@@ -31,7 +33,7 @@ impl SlashHandler for SlashStage {
                     .bus
                     .compaction()
                     .send(SystemEvent::CompactionRequested {
-                        source: "slash".to_string(),
+                        source: CompactionSource::Manual,
                     })
                     .await;
             }

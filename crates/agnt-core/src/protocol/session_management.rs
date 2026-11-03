@@ -1,3 +1,5 @@
+use agnt_kernel::CompactionSource;
+
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::SessionInfo;
 
@@ -47,15 +49,14 @@ pub trait SessionPersistence {
         crate::hook::TurnUsageTotals::default()
     }
 
-    /// Run a compaction of the current session with the given `source`
-    /// (`"auto"` or `"slash"`).
+    /// Run a compaction of the current session for `source`.
     ///
     /// Loads the full history from the store-backed memory and runs the shared
     /// compaction logic, emitting `Started`/`SummaryChunk`/`Completed`/`Failed`
     /// events on the bus. A no-op for runtimes without a persistent session.
     fn run_compaction(
         &mut self,
-        _source: &str,
+        _source: CompactionSource,
     ) -> impl std::future::Future<Output = Result<(), String>> + Send {
         async move { Ok(()) }
     }

@@ -186,7 +186,7 @@ async fn session_usage_survives_a_compaction() -> Result<()> {
     // -- Exec
     fixture
         .runtime
-        .run_compaction("slash")
+        .run_compaction(CompactionSource::Manual)
         .await
         .map_err(|e| format!("run_compaction should succeed: {e}"))?;
 

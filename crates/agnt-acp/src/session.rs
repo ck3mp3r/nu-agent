@@ -24,6 +24,7 @@ use agnt_core::config::Paths;
 use agnt_core::conversation::managers::{PersonaManager, ProviderManager};
 use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::protocol::contracts::CoreRuntime;
+use agnt_core::protocol::events::CompactionSource;
 use agnt_core::protocol::model_switching::ModelSwitching;
 use agnt_core::protocol::session_management::SessionPersistence;
 use agnt_core::session::resolver::generate_session_id;
@@ -43,16 +44,6 @@ use crate::runtime::{
 use crate::translator::{EventTranslator, SessionUpdateSink, run_turn_with_notifications};
 
 // endregion: --- Modules
-
-// region:    --- Consts
-
-/// The source the post-turn compaction dispatcher reports.
-///
-/// The chain's auto rule is the only ACP requester, and it always asks for
-/// `"auto"`. ACP has no `/compact` surface, so no other source exists.
-const AUTO_COMPACTION_SOURCE: &str = "auto";
-
-// endregion: --- Consts
 
 // region:    --- Types
 
@@ -510,7 +501,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                     sink,
                     &mut translator,
                     &mut bridge,
-                    runtime.run_compaction(AUTO_COMPACTION_SOURCE),
+                    runtime.run_compaction(CompactionSource::Auto),
                 )
                 .await;
                 // The compaction's own outcome never reaches the stop reason:

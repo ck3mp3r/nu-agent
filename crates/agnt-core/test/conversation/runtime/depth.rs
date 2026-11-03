@@ -158,7 +158,7 @@ async fn run_compaction_splices_the_rig_store() -> Result<()> {
     // -- Exec
     fixture
         .runtime
-        .run_compaction("slash")
+        .run_compaction(CompactionSource::Manual)
         .await
         .map_err(|e| format!("compaction should succeed: {e}"))?;
 

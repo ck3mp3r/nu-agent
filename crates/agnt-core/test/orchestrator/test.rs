@@ -19,6 +19,8 @@ mod slash_commands;
 
 // endregion: --- Modules
 
+use agnt_kernel::CompactionSource;
+
 use super::test_shared::*;
 use crate::protocol::contracts::ProgressUi;
 use crate::protocol::event::PermissionDecisionSubmission;

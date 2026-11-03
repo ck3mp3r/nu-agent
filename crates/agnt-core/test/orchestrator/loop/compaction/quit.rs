@@ -1,5 +1,6 @@
-use super::*;
+use agnt_kernel::CompactionSource;
 
+use super::*;
 use crate::protocol::events::SystemEvent;
 
 // ---------------------------------------------------------------------------
@@ -68,7 +69,7 @@ async fn quit_waits_while_compaction_active() -> Result<()> {
     bus_driver
         .compaction()
         .send(SystemEvent::CompactionRequested {
-            source: "auto".to_string(),
+            source: CompactionSource::Auto,
         })
         .await
         .unwrap();
@@ -79,7 +80,7 @@ async fn quit_waits_while_compaction_active() -> Result<()> {
         .map_err(|_| "RunCompaction should be dispatched")?
         .ok_or("worker channel should not close")?;
     match cmd {
-        WorkerCommand::RunCompaction { source } => assert_eq!(source, "auto"),
+        WorkerCommand::RunCompaction { source } => assert_eq!(source, CompactionSource::Auto),
         _ => panic!("expected RunCompaction"),
     }
 
@@ -170,7 +171,7 @@ async fn quit_exits_after_compaction_completes() -> Result<()> {
     bus_driver
         .compaction()
         .send(SystemEvent::CompactionRequested {
-            source: "auto".to_string(),
+            source: CompactionSource::Auto,
         })
         .await
         .unwrap();
@@ -181,7 +182,7 @@ async fn quit_exits_after_compaction_completes() -> Result<()> {
         .map_err(|_| "RunCompaction should be dispatched")?
         .ok_or("worker channel should not close")?;
     match cmd {
-        WorkerCommand::RunCompaction { source } => assert_eq!(source, "auto"),
+        WorkerCommand::RunCompaction { source } => assert_eq!(source, CompactionSource::Auto),
         _ => panic!("expected RunCompaction"),
     }
 

@@ -248,8 +248,8 @@ async fn manual_compaction_failure_is_not_surfaced_as_warning() -> TResult {
     );
     assert_eq!(
         runtime.run_compaction_sources,
-        vec!["slash".to_string()],
-        "expected /compact to dispatch RunCompaction with source 'slash'"
+        vec![CompactionSource::Manual],
+        "expected /compact to dispatch RunCompaction with the manual source"
     );
     assert!(
         ui.warnings

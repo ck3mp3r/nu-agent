@@ -5,6 +5,7 @@
 use std::collections::VecDeque;
 
 use agnt_a2a::{A2aCompletionEvent, IncomingTask};
+use agnt_kernel::CompactionSource;
 use nu_protocol::{LabeledError, Value};
 use tokio::sync::mpsc;
 
@@ -353,7 +354,7 @@ where
         ui_request,
         session,
     } = stages;
-    let mut pending_compaction: Option<String> = None;
+    let mut pending_compaction: Option<CompactionSource> = None;
     let mut compaction_active = false;
     let mut quit_pending = false;
     // Completion events that arrived while the worker was busy. Each is drained

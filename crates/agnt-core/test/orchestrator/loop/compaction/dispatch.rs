@@ -1,5 +1,6 @@
-use super::*;
+use agnt_kernel::CompactionSource;
 
+use super::*;
 use crate::protocol::events::SystemEvent;
 
 // ---------------------------------------------------------------------------
@@ -34,7 +35,7 @@ async fn run_compaction_dispatches_when_worker_idle() -> Result<()> {
 
     bus.compaction()
         .send(SystemEvent::CompactionRequested {
-            source: "auto".to_string(),
+            source: CompactionSource::Auto,
         })
         .await
         .unwrap();
@@ -63,7 +64,7 @@ async fn run_compaction_dispatches_when_worker_idle() -> Result<()> {
     let cmd = recv_command(worker_rx).ok_or("RunCompaction should be dispatched")?;
     match cmd {
         WorkerCommand::RunCompaction { source } => {
-            assert_eq!(source, "auto");
+            assert_eq!(source, CompactionSource::Auto);
         }
         _ => panic!("expected RunCompaction"),
     }
@@ -104,7 +105,7 @@ async fn run_compaction_queued_when_worker_busy_then_dispatched_on_idle() -> Res
 
     bus.compaction()
         .send(SystemEvent::CompactionRequested {
-            source: "auto".to_string(),
+            source: CompactionSource::Auto,
         })
         .await
         .unwrap();
@@ -138,7 +139,7 @@ async fn run_compaction_queued_when_worker_busy_then_dispatched_on_idle() -> Res
     let cmd = recv_command(worker_rx).ok_or("queued RunCompaction should be dispatched")?;
     match cmd {
         WorkerCommand::RunCompaction { source } => {
-            assert_eq!(source, "auto");
+            assert_eq!(source, CompactionSource::Auto);
         }
         _ => panic!("expected RunCompaction"),
     }
@@ -174,21 +175,21 @@ async fn run_compaction_queued_replaces_previous_when_busy() -> Result<()> {
     // First request dispatches immediately and marks a compaction active.
     bus.compaction()
         .send(SystemEvent::CompactionRequested {
-            source: "auto".to_string(),
+            source: CompactionSource::Auto,
         })
         .await
         .unwrap();
     // Second request queued while a compaction is active.
     bus.compaction()
         .send(SystemEvent::CompactionRequested {
-            source: "slash".to_string(),
+            source: CompactionSource::Manual,
         })
         .await
         .unwrap();
     // Third request replaces the queued one.
     bus.compaction()
         .send(SystemEvent::CompactionRequested {
-            source: "manual".to_string(),
+            source: CompactionSource::Auto,
         })
         .await
         .unwrap();
@@ -204,7 +205,7 @@ async fn run_compaction_queued_replaces_previous_when_busy() -> Result<()> {
     // The dispatched queued compaction completes too, so the loop can exit.
     bus.compaction()
         .send(SystemEvent::CompactionCompleted {
-            source: "manual".to_string(),
+            source: "auto".to_string(),
             summary_preview: String::new(),
             summary_body: String::new(),
         })
@@ -234,13 +235,17 @@ async fn run_compaction_queued_replaces_previous_when_busy() -> Result<()> {
     assert!(result.is_ok());
     let cmd = recv_command(worker_rx).ok_or("first RunCompaction should be dispatched")?;
     match cmd {
-        WorkerCommand::RunCompaction { source } => assert_eq!(source, "auto"),
+        WorkerCommand::RunCompaction { source } => assert_eq!(source, CompactionSource::Auto),
         _ => panic!("expected RunCompaction"),
     }
     let cmd = recv_command(worker_rx).ok_or("queued RunCompaction should be dispatched")?;
     match cmd {
         WorkerCommand::RunCompaction { source } => {
-            assert_eq!(source, "manual", "newest queued request must win");
+            assert_eq!(
+                source,
+                CompactionSource::Auto,
+                "newest queued request must win"
+            );
         }
         _ => panic!("expected RunCompaction"),
     }
@@ -276,7 +281,7 @@ async fn compaction_requested_while_active_is_queued() -> Result<()> {
     // First request dispatches immediately (worker idle, no compaction active).
     bus.compaction()
         .send(SystemEvent::CompactionRequested {
-            source: "auto".to_string(),
+            source: CompactionSource::Auto,
         })
         .await
         .unwrap();
@@ -284,7 +289,7 @@ async fn compaction_requested_while_active_is_queued() -> Result<()> {
     // not dispatched.
     bus.compaction()
         .send(SystemEvent::CompactionRequested {
-            source: "slash".to_string(),
+            source: CompactionSource::Manual,
         })
         .await
         .unwrap();
@@ -331,13 +336,13 @@ async fn compaction_requested_while_active_is_queued() -> Result<()> {
     // First command: the initial request.
     let cmd = recv_command(worker_rx).ok_or("first RunCompaction should be dispatched")?;
     match cmd {
-        WorkerCommand::RunCompaction { source } => assert_eq!(source, "auto"),
+        WorkerCommand::RunCompaction { source } => assert_eq!(source, CompactionSource::Auto),
         _ => panic!("expected RunCompaction"),
     }
     // Second command: the queued request dispatched after completion.
     let cmd = recv_command(worker_rx).ok_or("queued RunCompaction should be dispatched")?;
     match cmd {
-        WorkerCommand::RunCompaction { source } => assert_eq!(source, "slash"),
+        WorkerCommand::RunCompaction { source } => assert_eq!(source, CompactionSource::Manual),
         _ => panic!("expected RunCompaction"),
     }
     // No third command should be dispatched.

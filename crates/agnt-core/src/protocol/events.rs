@@ -6,6 +6,10 @@
 //! once, with typed payloads. Those three vocabularies are deleted; this enum
 //! replaced them.
 
+/// Re-exported so a surface can name the source `run_compaction` takes
+/// without depending on the kernel crate directly.
+pub use agnt_kernel::CompactionSource;
+
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay};
 use crate::protocol::tool_args::CallLine;
 use crate::session::tool_status::ToolStatus;
@@ -104,7 +108,7 @@ pub enum SystemEvent {
     /// A system message shown to the user.
     SystemMessage { kind: SystemKind, text: String },
     /// Compaction was decided for a turn.
-    CompactionRequested { source: String },
+    CompactionRequested { source: CompactionSource },
     /// Compaction started.
     CompactionStarted { source: String },
     /// One streamed delta of the compaction summary.
@@ -239,6 +243,23 @@ pub enum AutoResolutionAction {
 }
 
 // endregion: --- Types
+
+// region:    --- Fns
+
+/// The text the hub's compaction events carry for `source`.
+///
+/// `CompactionRequested` names the source as an enum, because the orchestrator
+/// acts on the distinction. The started, chunk, completed, and failed events
+/// still carry the text the transcript and the hook envelopes print, so this
+/// one function derives it.
+pub fn compaction_source_text(source: CompactionSource) -> &'static str {
+    match source {
+        CompactionSource::Auto => "auto",
+        CompactionSource::Manual => "slash",
+    }
+}
+
+// endregion: --- Fns
 
 // region:    --- Impls
 

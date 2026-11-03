@@ -274,7 +274,7 @@ fn test_coordinator_reduce_event_batch_unchanged_folds_do_not_mark_the_render() 
 
     // -- Exec
     let changed = coordinator.reduce_event_batch([SystemEvent::CompactionRequested {
-        source: "auto".to_string(),
+        source: agnt_core::protocol::events::CompactionSource::Auto,
     }]);
 
     // -- Check

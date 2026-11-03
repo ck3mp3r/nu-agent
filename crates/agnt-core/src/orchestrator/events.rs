@@ -1,5 +1,6 @@
 //! Event and result types flowing through the orchestrator.
 
+use agnt_kernel::CompactionSource;
 use nu_protocol::LabeledError;
 use tokio::sync::mpsc;
 
@@ -123,7 +124,7 @@ pub enum WorkerCommand {
         response_tx: mpsc::Sender<UiRequestResponse>,
     },
     RunCompaction {
-        source: String,
+        source: CompactionSource,
     },
     /// Attach the session derived from an A2A `contextId`.
     ///

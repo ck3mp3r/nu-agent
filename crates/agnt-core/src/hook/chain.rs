@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use agnt_kernel::{
-    InferenceRecord, SessionRecord, StopCause, ToolCall as StreamToolCall,
+    CompactionSource, InferenceRecord, SessionRecord, StopCause, ToolCall as StreamToolCall,
     ToolErrorKind as StreamToolErrorKind, ToolOutcome as StreamToolOutcome, ToolRecord,
     Usage as StreamUsage,
 };
@@ -35,7 +35,9 @@ use crate::config::defaults;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::turn::token_estimate::estimate_token_count;
 use crate::llm::{PricedOutcome, PricingSkip, computed_cost};
-use crate::protocol::events::{SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
+use crate::protocol::events::{
+    SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage, compaction_source_text,
+};
 use crate::protocol::tool_args::CallLine;
 use crate::session::tool_status::{ToolStatus, error_kind_of, status_of_result};
 use crate::tools::closure::ClosureRegistry;
@@ -1096,7 +1098,7 @@ async fn decide_compaction(
     let _ = bus
         .compaction()
         .send(SystemEvent::CompactionRequested {
-            source: "auto".to_string(),
+            source: CompactionSource::Auto,
         })
         .await;
 }
@@ -1207,10 +1209,12 @@ fn store_refusal_text(error: &crate::session::MemoryError) -> String {
 /// when compaction ran, or `None` when there was nothing to compact.
 ///
 /// Called by the router when the orchestrator dispatches a `RunCompaction`
-/// worker command. `source` is `"auto"` or `"slash"`. `compact()` emits all
-/// `Started`/`SummaryChunk`/`Completed`/`Failed` events; this function emits a
-/// `Completed` with an empty summary when there was nothing to summarize, so the
-/// TUI still gets feedback that the `/compact` command ran.
+/// worker command. The events after the request, the hook envelopes, and the
+/// store carry the source as text, so `compaction_source_text` derives it here
+/// once. `compact()` emits all `Started`/`SummaryChunk`/`Completed`/`Failed`
+/// events; this function emits a `Completed` with an empty summary when there
+/// was nothing to summarize, so the TUI still gets feedback that the `/compact`
+/// command ran.
 ///
 /// The conversation is read from the rig-memory store of the session, which is
 /// what a run loads at its start: the splice `compact()` makes IS the context
@@ -1219,15 +1223,16 @@ pub(crate) async fn run_compaction(
     conversation_id: &str,
     memory: &crate::session::CachedMemory,
     compaction: &CompactionConfig,
-    source: &str,
+    source: CompactionSource,
     last_total_tokens: &Arc<Mutex<Option<u64>>>,
     store_latch: &crate::hook::StoreLatch,
     bus: &Bus,
 ) -> Option<Vec<Message>> {
+    let source_text = compaction_source_text(source);
     let store = match memory.rig_store(conversation_id).await {
         Ok(store) => store,
         Err(e) => {
-            emit_store_dead(store_latch, &e, source, bus).await;
+            emit_store_dead(store_latch, &e, source_text, bus).await;
             return None;
         }
     };
@@ -1240,7 +1245,7 @@ pub(crate) async fn run_compaction(
     let reason = compact_reason(source);
     match compaction
         .compactor
-        .compact(store, conversation_id, &reason, source)
+        .compact(store, conversation_id, &reason, source_text)
         .await
     {
         Ok(Some(outcome)) => {
@@ -1256,7 +1261,7 @@ pub(crate) async fn run_compaction(
             let _ = bus
                 .compaction()
                 .send(SystemEvent::CompactionCompleted {
-                    source: source.to_string(),
+                    source: source_text.to_string(),
                     summary_preview: String::new(),
                     summary_body: String::new(),
                 })
@@ -1271,15 +1276,14 @@ pub(crate) async fn run_compaction(
 
 /// Why a compaction is running, from the command that asked for it.
 ///
-/// `"slash"` is the user asking through `/compact`; anything else is the
-/// automatic path.
-fn compact_reason(source: &str) -> CompactReason {
-    if source == "slash" {
-        CompactReason::Asked {
+/// `Manual` is the user asking through `/compact`; `Auto` is the threshold
+/// path.
+fn compact_reason(source: CompactionSource) -> CompactReason {
+    match source {
+        CompactionSource::Manual => CompactReason::Asked {
             focus: String::new(),
-        }
-    } else {
-        CompactReason::Threshold
+        },
+        CompactionSource::Auto => CompactReason::Threshold,
     }
 }
 

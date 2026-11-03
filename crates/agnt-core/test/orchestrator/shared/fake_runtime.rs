@@ -1,10 +1,13 @@
+use agnt_kernel::CompactionSource;
+
 use super::*;
+use crate::protocol::events::compaction_source_text;
 
 #[derive(Default)]
 pub(crate) struct FakeRuntime {
     pub(crate) prompts: Vec<String>,
     pub(crate) run_compaction_calls: usize,
-    pub(crate) run_compaction_sources: Vec<String>,
+    pub(crate) run_compaction_sources: Vec<CompactionSource>,
     pub(crate) run_compaction_fail: bool,
     pub(crate) switched_models: Vec<String>,
     pub(crate) switch_model_result: Option<Result<String, String>>,
@@ -96,9 +99,9 @@ impl SessionPersistence for FakeRuntime {
         self.session_id.as_deref()
     }
 
-    async fn run_compaction(&mut self, source: &str) -> Result<(), String> {
+    async fn run_compaction(&mut self, source: CompactionSource) -> Result<(), String> {
         self.run_compaction_calls = self.run_compaction_calls.saturating_add(1);
-        self.run_compaction_sources.push(source.to_string());
+        self.run_compaction_sources.push(source);
         if self.run_compaction_fail {
             return Err("auto compaction failed".to_string());
         }
@@ -109,7 +112,7 @@ impl SessionPersistence for FakeRuntime {
             .bus
             .compaction()
             .send(SystemEvent::CompactionCompleted {
-                source: source.to_string(),
+                source: compaction_source_text(source).to_string(),
                 summary_preview: "summary".to_string(),
                 summary_body: "summary".to_string(),
             })

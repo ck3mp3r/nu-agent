@@ -129,7 +129,7 @@ async fn run_compaction_without_a_session_is_a_noop() -> Result<()> {
     // -- Exec
     fixture
         .runtime
-        .run_compaction("slash")
+        .run_compaction(CompactionSource::Manual)
         .await
         .map_err(|e| format!("compaction without a session must succeed: {e}"))?;
 
@@ -146,7 +146,7 @@ async fn run_compaction_on_an_empty_session_is_a_noop() -> Result<()> {
     // -- Exec
     fixture
         .runtime
-        .run_compaction("slash")
+        .run_compaction(CompactionSource::Manual)
         .await
         .map_err(|e| format!("compaction of an empty session must succeed: {e}"))?;
 
@@ -179,7 +179,7 @@ async fn run_compaction_summarizes_a_populated_session() -> Result<()> {
     // -- Exec
     fixture
         .runtime
-        .run_compaction("slash")
+        .run_compaction(CompactionSource::Manual)
         .await
         .map_err(|e| format!("compaction should succeed: {e}"))?;
 

@@ -102,9 +102,9 @@ async fn over_threshold_fires_requested_and_does_not_compact_synchronously() -> 
     assert!(
         matches!(
             &requested,
-            crate::protocol::events::SystemEvent::CompactionRequested { source } if source == "auto"
+            crate::protocol::events::SystemEvent::CompactionRequested { source } if *source == CompactionSource::Auto
         ),
-        "over-threshold turn must fire Requested {{ source: \"auto\" }}, got {requested:?}"
+        "over-threshold turn must fire Requested {{ source: Auto }}, got {requested:?}"
     );
     assert_eq!(
         fx.summary_model.requests().len(),
@@ -138,7 +138,7 @@ async fn decide_compaction_real_tokens_over_threshold_fires() -> Result<()> {
     // -- Check
     let requested = rx.recv().await.map_err(|_| "should receive Requested")?;
     assert!(
-        matches!(&requested, SystemEvent::CompactionRequested { source } if source == "auto"),
+        matches!(&requested, SystemEvent::CompactionRequested { source } if *source == CompactionSource::Auto),
         "real total_tokens over threshold must fire Requested, got {requested:?}"
     );
     Ok(())
@@ -197,7 +197,7 @@ async fn decide_compaction_no_real_tokens_falls_back_to_conversation_estimate() 
     // -- Check
     let requested = rx.recv().await.map_err(|_| "should receive Requested")?;
     assert!(
-        matches!(&requested, SystemEvent::CompactionRequested { source } if source == "auto"),
+        matches!(&requested, SystemEvent::CompactionRequested { source } if *source == CompactionSource::Auto),
         "fallback estimate over threshold must fire Requested, got {requested:?}"
     );
     Ok(())
@@ -257,7 +257,7 @@ async fn decide_compaction_counts_a_turn_saved_after_the_first_read() -> Result<
     // -- Check
     let requested = rx.recv().await.map_err(|_| "should receive Requested")?;
     assert!(
-        matches!(&requested, SystemEvent::CompactionRequested { source } if source == "auto"),
+        matches!(&requested, SystemEvent::CompactionRequested { source } if *source == CompactionSource::Auto),
         "the post-turn-2 conversation is over the threshold, so it must fire; \
          a stale first read would not, got {requested:?}"
     );
@@ -296,7 +296,7 @@ async fn auto_compaction_splices_and_the_next_load_sees_it() -> Result<()> {
     .await;
     let requested = rx.recv().await.map_err(|_| "should receive Requested")?;
     assert!(
-        matches!(&requested, SystemEvent::CompactionRequested { source } if source == "auto"),
+        matches!(&requested, SystemEvent::CompactionRequested { source } if *source == CompactionSource::Auto),
         "the over-threshold turn must schedule the compaction, got {requested:?}"
     );
 
@@ -305,7 +305,7 @@ async fn auto_compaction_splices_and_the_next_load_sees_it() -> Result<()> {
         "conv-1",
         fx.memory.as_ref(),
         &compaction,
-        "auto",
+        CompactionSource::Auto,
         &fx.last_total_tokens,
         &Default::default(),
         &fx.bus,
@@ -348,7 +348,7 @@ async fn run_compaction_empty_history_emits_completed_with_empty_summary() -> Re
         "conv-1",
         fx.memory.as_ref(),
         &fx.compaction,
-        "slash",
+        CompactionSource::Manual,
         &fx.last_total_tokens,
         &Default::default(),
         &fx.bus,
@@ -500,7 +500,7 @@ async fn successful_run_compaction_clears_the_latch() -> Result<()> {
         "conv-1",
         memory.as_ref(),
         &compaction,
-        "slash",
+        CompactionSource::Manual,
         &last_total_tokens,
         &store_latch,
         &bus,

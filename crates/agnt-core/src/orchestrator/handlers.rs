@@ -1,6 +1,7 @@
 //! Handler routines for the orchestrator loop: compaction dispatch, worker
 //! result handling, external (A2A) cancellation, and optional-channel awaits.
 
+use agnt_kernel::CompactionSource;
 use tokio::sync::mpsc;
 
 use crate::bus::CancelEvent;
@@ -22,9 +23,9 @@ pub(crate) const DEFERRED_PROMPT_SUPERSEDED_REASON: &str =
 /// Dispatch a compaction command to the worker, or queue it if a compaction is
 /// already in flight or the worker is busy running a turn.
 pub(crate) async fn dispatch_compaction(
-    source: String,
+    source: CompactionSource,
     ctx: &mut OrchestrationContext<'_>,
-    pending_compaction: &mut Option<String>,
+    pending_compaction: &mut Option<CompactionSource>,
     compaction_active: &mut bool,
 ) {
     if *compaction_active || *ctx.worker_active {
@@ -65,7 +66,7 @@ pub(crate) async fn handle_worker_result<U, Se>(
     ctx: &mut OrchestrationContext<'_>,
     ui_request: &mut U,
     session: &mut Se,
-    pending_compaction: &mut Option<String>,
+    pending_compaction: &mut Option<CompactionSource>,
     quit_pending: &mut bool,
 ) -> bool
 where
