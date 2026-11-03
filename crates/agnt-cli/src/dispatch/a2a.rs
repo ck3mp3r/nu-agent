@@ -258,10 +258,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     let merged_compaction =
         merge_compaction_configs(plugin_config.compaction.as_ref(), &cli_compaction);
 
-    let BuildArtifacts {
-        merged_compaction,
-        render_registry,
-    } = AgentRuntimeBuilder::new(BuildInput {
+    let BuildArtifacts { merged_compaction } = AgentRuntimeBuilder::new(BuildInput {
         tool_server_handle: &tool_server_handle,
         closure_registry: &closure_registry,
         cwd: cwd.clone(),
@@ -324,7 +321,6 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         cwd: cwd.clone(),
         paths,
         bus: bus.clone(),
-        render_registry,
         hook_context,
     })
     .await

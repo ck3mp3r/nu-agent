@@ -147,9 +147,6 @@ where
     pub session_usage: crate::hook::TurnUsage,
     /// Shared cancellation bus threaded through the turn pipeline.
     pub bus: crate::bus::Bus,
-    /// Per-tool call-line render functions, populated at builtin registration
-    /// time and threaded to the hook chain via `ToolInfra`.
-    pub render_registry: crate::tools::handler::builtin_tool::ToolRenderRegistry,
     /// The agent snapshot every hook envelope is stamped with.
     ///
     /// Shared with the hook runners, which read it when they build an envelope.
@@ -256,7 +253,6 @@ where
                     turn_usage: crate::hook::TurnUsage::default(),
                     session_usage: self.session_usage.clone(),
                     bus: self.bus.clone(),
-                    render_registry: self.render_registry.clone(),
                     cwd: self.cwd.clone(),
                 },
                 Arc::clone(&self.dyn_model),

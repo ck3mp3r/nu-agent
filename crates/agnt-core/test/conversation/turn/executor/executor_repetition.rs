@@ -20,7 +20,6 @@ use crate::hook::output_repetition::{OUTPUT_REPETITION_BACKOFF_MESSAGE, Repetiti
 use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::utils::value_ext::extract_response_text_from_value;
 
 // region:    --- Modules

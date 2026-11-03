@@ -61,7 +61,6 @@ async fn cancelled_turn_flushes_undispatched_nu_calls_with_preview_between_pair(
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus,
-            render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,

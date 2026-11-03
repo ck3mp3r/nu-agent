@@ -27,7 +27,6 @@ use crate::session::{RigStoreConfig, StoreType};
 use crate::tools::authz::PermissionsConfig;
 use crate::tools::closure::{ClosureRegistry, CwdEngine};
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -82,7 +81,6 @@ fn make_params(
         paths: crate::test_support::paths_in(&cwd),
         cwd,
         bus: create_bus(),
-        render_registry: ToolRenderRegistry::default(),
         hook_context: crate::hooks::HookAgentContext::default(),
     }
 }

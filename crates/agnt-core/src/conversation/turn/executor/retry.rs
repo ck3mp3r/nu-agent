@@ -130,7 +130,6 @@ where
                     turn_usage: self.tool_infra.turn_usage.clone(),
                     session_usage: self.tool_infra.session_usage.clone(),
                     bus: self.tool_infra.bus.clone(),
-                    render_registry: self.tool_infra.render_registry.clone(),
                     cwd: self.tool_infra.cwd.clone(),
                     store_latch: Arc::clone(&self.tool_infra.store_latch),
                 },

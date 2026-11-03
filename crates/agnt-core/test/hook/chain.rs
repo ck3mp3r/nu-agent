@@ -55,7 +55,6 @@ use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 use crate::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
 use crate::session::CachedMemory;
 use crate::session::tool_status::ToolStatus;
-use crate::tools::handler::builtin_tool::BuiltinTool;
 use crate::transcript::ir;
 use crate::types::{Message, ToolName};
 use futures::StreamExt;

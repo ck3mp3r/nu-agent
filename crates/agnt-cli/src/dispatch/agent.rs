@@ -213,10 +213,7 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
     let merged_compaction =
         merge_compaction_configs(plugin_config.compaction.as_ref(), &cli_compaction);
 
-    let BuildArtifacts {
-        merged_compaction,
-        render_registry,
-    } = AgentRuntimeBuilder::new(BuildInput {
+    let BuildArtifacts { merged_compaction } = AgentRuntimeBuilder::new(BuildInput {
         tool_server_handle: &tool_server_handle,
         closure_registry: &closure_registry,
         cwd: cwd.clone(),
@@ -271,7 +268,6 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
         cwd: cwd.clone(),
         paths,
         bus: bus.clone(),
-        render_registry,
         hook_context,
     })
     .await

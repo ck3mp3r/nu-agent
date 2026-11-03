@@ -21,7 +21,6 @@ pub(super) fn tool_infra(bus: crate::bus::Bus) -> executor::ToolInfra {
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus,
-        render_registry: ToolRenderRegistry::default(),
         cwd: std::path::PathBuf::from("/tmp"),
     }
 }
@@ -126,7 +125,6 @@ where
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus,
-        render_registry: ToolRenderRegistry::default(),
         cwd: std::path::PathBuf::from("/tmp"),
     };
     Ok(TurnContext::new(

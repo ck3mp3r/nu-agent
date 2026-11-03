@@ -44,36 +44,6 @@ fn call_line_render_defaults_to_generic_json_summary() -> TestResult<()> {
 }
 
 // ================================================================
-// ToolRenderRegistry
-// ================================================================
-
-/// A registered tool's render fn is looked up by name and produces the
-/// tool's tailored `CallLine`; an unknown name falls back to the generic
-/// JSON summary.
-#[test]
-fn tool_render_registry_table() -> TestResult<()> {
-    // -- Setup & Fixtures
-    let arguments = r#"{"path":"/tmp/f"}"#;
-    let mut registry = super::super::ToolRenderRegistry::default();
-    registry.register("read", super::super::ReadTool::call_line_render);
-
-    // -- Exec & Check
-    assert_eq!(
-        registry.render("read", arguments),
-        crate::protocol::tool_args::CallLine {
-            summary: "→ /tmp/f".to_string(),
-        },
-        "a registered tool must use its tailored render"
-    );
-    assert_eq!(
-        registry.render("not_registered", arguments),
-        crate::protocol::tool_args::CallLine::from_json_summary(arguments),
-        "an unknown tool name must fall back to the generic summary"
-    );
-    Ok(())
-}
-
-// ================================================================
 // call_line_render_for: name-based dispatch
 // ================================================================
 

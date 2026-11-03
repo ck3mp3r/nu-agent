@@ -11,7 +11,6 @@ use super::super::test::{
 use super::executor_test_support::*;
 use super::test_utils::{MockResolver, message_text, test_compaction_config, test_config};
 use super::*;
-use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 
 // ---------------------------------------------------------------------------
 // Cancelled and failed turns persist a closed delta
@@ -79,7 +78,6 @@ async fn cancelled_turn_with_a_tool_call_persists_the_closed_delta() -> Result<(
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus,
-            render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,

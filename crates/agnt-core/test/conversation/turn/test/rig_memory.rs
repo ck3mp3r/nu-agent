@@ -59,7 +59,6 @@ fn tool_infra(
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus,
-        render_registry: ToolRenderRegistry::default(),
         cwd: std::path::PathBuf::from("/tmp"),
     }
 }

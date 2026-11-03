@@ -34,7 +34,6 @@ pub(super) use agnt_core::session::{RigStoreConfig, StoreType};
 pub(super) use agnt_core::tools::authz::{PermissionsConfig, SessionGrantCache};
 pub(super) use agnt_core::tools::closure::ClosureRegistry;
 pub(super) use agnt_core::tools::handler::McpToolRegistry;
-pub(super) use agnt_core::tools::handler::builtin_tool::ToolRenderRegistry;
 pub(super) use agnt_core::tools::mcp::circuit_breaker::McpCircuitBreaker;
 pub(super) use agnt_core::types::{Message, MockCompletionModel};
 pub(super) use rig::test_utils::MockStreamEvent;
@@ -216,7 +215,6 @@ impl RuntimeBuilder for MockRuntimeBuilder {
             last_total_tokens: Arc::new(Mutex::new(None)),
             session_usage,
             bus,
-            render_registry: ToolRenderRegistry::default(),
             hook_context,
             dyn_model: Arc::new(Mutex::new(dyn_model)),
             compaction: CompactionConfig {

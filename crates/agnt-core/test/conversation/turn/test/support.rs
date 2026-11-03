@@ -10,7 +10,6 @@ use crate::hook::output_repetition::RepetitionState;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 pub(crate) fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreaker>> {
@@ -137,7 +136,6 @@ pub(super) fn make_turn_context<'a>(
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus,
-        render_registry: ToolRenderRegistry::default(),
         cwd: std::path::PathBuf::from("/tmp"),
     };
     TurnContext::new(conversation, input, tool_infra, config)

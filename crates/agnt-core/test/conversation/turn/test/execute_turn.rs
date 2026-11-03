@@ -105,7 +105,6 @@ async fn execute_turn_cancel_returns_cancelled_true() -> Result<()> {
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus: bus.clone(),
-        render_registry: ToolRenderRegistry::default(),
         cwd: std::path::PathBuf::from("/tmp"),
     };
     let ctx = make_turn_context(shared_handle(model), &config, bus);

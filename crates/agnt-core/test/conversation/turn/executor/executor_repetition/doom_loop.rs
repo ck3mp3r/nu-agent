@@ -59,7 +59,6 @@ async fn doom_stop_surfaces_reason_in_response_warning_and_assistant_message() -
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus,
-            render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,

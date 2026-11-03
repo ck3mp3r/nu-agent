@@ -103,7 +103,6 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
         resolver,
         Arc::new(crate::tools::closure::ClosureRegistry::default()),
         Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-        crate::tools::handler::builtin_tool::ToolRenderRegistry::default(),
         None,
         HookState {
             circuit_breaker: Arc::new(Mutex::new(
@@ -224,7 +223,6 @@ async fn on_dispatch_publishes_the_fallback_call_line_for_an_unregistered_tool()
         },
         Arc::new(crate::tools::closure::ClosureRegistry::default()),
         Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-        crate::tools::handler::builtin_tool::ToolRenderRegistry::default(),
         None,
         HookState {
             circuit_breaker: Arc::new(Mutex::new(
@@ -290,22 +288,16 @@ async fn on_dispatch_publishes_the_fallback_call_line_for_an_unregistered_tool()
     Ok(())
 }
 
-/// `HookChain::on_dispatch` consults its `ToolRenderRegistry` and publishes
-/// the tailored `CallLine` on `SystemEvent::ToolStarted`. A registered
-/// `read` tool renders `→ /tmp/f`; the raw JSON arguments never reach the
-/// event.
+/// `HookChain::on_dispatch` derives the call line from the tool name and the
+/// raw arguments and publishes it on `SystemEvent::ToolStarted`. A `read` tool
+/// renders `→ /tmp/f`; the raw JSON arguments never reach the event.
 #[tokio::test]
-async fn on_dispatch_publishes_registry_rendered_call_line() -> Result<()> {
+async fn on_dispatch_publishes_derived_call_line() -> Result<()> {
     // -- Setup & Fixtures
     let memory = Arc::new(CachedMemory::new(
         crate::session::RigStoreConfig::in_memory(),
     ));
     let bus = Bus::default();
-    let mut render_registry = crate::tools::handler::builtin_tool::ToolRenderRegistry::default();
-    render_registry.register(
-        "read",
-        crate::tools::handler::read::ReadTool::call_line_render,
-    );
     let shared_model = Arc::new(Mutex::new(
         MockCompletionModel::from_stream_turns([
             vec![
@@ -332,7 +324,6 @@ async fn on_dispatch_publishes_registry_rendered_call_line() -> Result<()> {
         },
         Arc::new(crate::tools::closure::ClosureRegistry::default()),
         Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-        render_registry,
         None,
         HookState {
             circuit_breaker: Arc::new(Mutex::new(

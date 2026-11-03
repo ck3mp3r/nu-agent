@@ -39,7 +39,6 @@ use crate::hook::turn_usage::TurnUsage;
 use crate::session::CachedMemory;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::ToolDefinition;
 
@@ -101,9 +100,6 @@ pub struct ToolInfra {
     pub session_usage: TurnUsage,
     /// Shared cancellation bus threaded through the turn pipeline.
     pub bus: Bus,
-    /// Per-tool call-line render functions, populated at builtin registration
-    /// time and consulted by the hook chain to build the transcript call line.
-    pub render_registry: ToolRenderRegistry,
     /// The session working directory. The hook chain reads it to build the
     /// argument-sourced preview for a call the turn stopped before it ran.
     pub cwd: PathBuf,

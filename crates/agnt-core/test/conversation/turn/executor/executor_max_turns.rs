@@ -14,7 +14,6 @@ use super::*;
 use crate::config::Config;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 
 /// A MaxTurnsExceeded failure on a session turn must append exactly one
 /// user-role steering message and re-run the turn with a fresh budget —
@@ -77,7 +76,6 @@ async fn max_turns_failure_appends_steering_message_and_reruns_turn() -> Result<
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus: crate::bus::create_bus(),
-            render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
@@ -238,7 +236,6 @@ async fn max_turns_cap_one_produces_one_steering_message_then_hard_error() -> Re
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus: crate::bus::create_bus(),
-            render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
@@ -378,7 +375,6 @@ async fn no_session_max_turns_failure_steers_once_then_hard_errors() -> Result<(
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus: crate::bus::create_bus(),
-            render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,

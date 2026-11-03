@@ -122,7 +122,6 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus: bus.clone(),
-        render_registry: ToolRenderRegistry::default(),
         cwd: std::path::PathBuf::from("/tmp"),
     };
 
@@ -233,7 +232,6 @@ async fn user_cancel_stays_silent_with_empty_response() -> Result<()> {
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus,
-            render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,

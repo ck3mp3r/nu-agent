@@ -262,28 +262,26 @@ pub(super) fn run_command(
         // Signal bus shared by tool registration and the runtime.
         let bus = agnt_core::bus::create_bus();
 
-        let agnt_core::conversation::builder::BuildArtifacts {
-            merged_compaction,
-            render_registry,
-        } = super::setup::register_tools(
-            call,
-            BuildInput {
-                tool_server_handle: &tool_server_handle,
-                closure_registry: &closure_registry,
-                cwd: cwd.clone(),
-                engine: engine_arc.clone(),
-                span: call.head,
-                tool_timeout,
-                session: session_resolution.session.as_mut(),
-                max_tool_result_bytes: config
-                    .max_tool_result_bytes
-                    .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
-                bus: bus.clone(),
-                merged_compaction: agnt_core::config::CompactionConfig::default(),
-                audit_log_path: paths.audit_log_path.clone(),
-            },
-        )
-        .await?;
+        let agnt_core::conversation::builder::BuildArtifacts { merged_compaction } =
+            super::setup::register_tools(
+                call,
+                BuildInput {
+                    tool_server_handle: &tool_server_handle,
+                    closure_registry: &closure_registry,
+                    cwd: cwd.clone(),
+                    engine: engine_arc.clone(),
+                    span: call.head,
+                    tool_timeout,
+                    session: session_resolution.session.as_mut(),
+                    max_tool_result_bytes: config
+                        .max_tool_result_bytes
+                        .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
+                    bus: bus.clone(),
+                    merged_compaction: agnt_core::config::CompactionConfig::default(),
+                    audit_log_path: paths.audit_log_path.clone(),
+                },
+            )
+            .await?;
 
         let mcp_caller_cwd = cwd.clone();
 
@@ -325,7 +323,6 @@ pub(super) fn run_command(
             cwd: cwd.clone(),
             paths,
             bus: bus.clone(),
-            render_registry,
             hook_context,
         })
         .await?;

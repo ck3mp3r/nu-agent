@@ -47,7 +47,6 @@ use crate::config::Config;
 use crate::hook::permission_resolver::PermissionDecision;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::types::{ToolDefinition, ToolName};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

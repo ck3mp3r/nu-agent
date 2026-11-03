@@ -26,9 +26,7 @@ use agnt_core::session::RigStoreConfig;
 use agnt_core::tools::authz::{PermissionsConfig, SessionGrantCache};
 use agnt_core::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use agnt_core::tools::handler::McpToolRegistry;
-use agnt_core::tools::handler::builtin_tool::{BuiltinTool, ToolRenderRegistry, register_builtin};
-use agnt_core::tools::handler::edit::EditTool;
-use agnt_core::tools::handler::read::ReadTool;
+use agnt_core::tools::handler::builtin_tool::register_builtin;
 use agnt_core::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use agnt_core::tools::mcp::client::McpToolDefinition;
 use agnt_core::tools::mcp::config::{McpConfig, McpServerConfig};
@@ -259,7 +257,6 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             .is_some_and(|s| s.capabilities.write_text_file),
     );
 
-    let mut render_registry = ToolRenderRegistry::default();
     let mut acp_read_def: Option<ToolDefinition> = None;
     let mut acp_edit_def: Option<ToolDefinition> = None;
     for def in builtin_tool_definitions()
@@ -279,13 +276,11 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             max_tool_result_bytes,
             bus.clone(),
             &tool_server_handle,
-            &mut render_registry,
         )
         .await;
     }
 
     if let (Some(def), Some(state)) = (acp_read_def, client_fs.as_ref()) {
-        render_registry.register(&def.name, ReadTool::call_line_render);
         let tool = make_acp_read_tool(
             def,
             cwd.clone(),
@@ -297,7 +292,6 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     }
 
     if let (Some(def), Some(state)) = (acp_edit_def, client_fs.as_ref()) {
-        render_registry.register(&def.name, EditTool::call_line_render);
         let tool = make_acp_edit_tool(
             def,
             cwd.clone(),
@@ -456,7 +450,6 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
         repetition_guard,
         last_total_tokens: Arc::new(Mutex::new(None)),
         bus,
-        render_registry,
         hook_context,
         session_usage: agnt_core::hook::TurnUsage::default(),
         dyn_model,

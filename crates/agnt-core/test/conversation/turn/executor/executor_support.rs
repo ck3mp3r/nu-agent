@@ -15,7 +15,6 @@ use crate::conversation::state::memory::MemoryState;
 use crate::session::{CachedMemory, RigStoreConfig};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 
 pub(super) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -49,7 +48,6 @@ pub(super) fn default_tool_infra(bus: Bus) -> ToolInfra {
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus,
-        render_registry: ToolRenderRegistry::default(),
         cwd: std::path::PathBuf::from("/tmp"),
     }
 }

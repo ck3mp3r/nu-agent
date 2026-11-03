@@ -51,7 +51,6 @@ async fn transient_turn_does_not_write_jsonl() -> Result<()> {
         turn_usage: crate::hook::TurnUsage::default(),
         session_usage: crate::hook::TurnUsage::default(),
         bus: crate::bus::create_bus(),
-        render_registry: ToolRenderRegistry::default(),
         cwd: std::path::PathBuf::from("/tmp"),
     };
     let config = Config::default();

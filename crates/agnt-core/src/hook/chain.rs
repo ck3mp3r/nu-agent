@@ -42,7 +42,7 @@ use crate::protocol::tool_args::CallLine;
 use crate::session::tool_status::{ToolStatus, error_kind_of, status_of_result};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::handler::builtin_tool::ToolRenderRegistry;
+use crate::tools::handler::builtin_tool::call_line_render_for;
 use crate::tools::handler::tool_display_from_arguments;
 use crate::transcript::ir;
 use crate::types::ToolName;
@@ -262,9 +262,6 @@ pub struct HookChain<P: AsyncPermissionResolver> {
     cwd: PathBuf,
     closure_registry: Arc<ClosureRegistry>,
     mcp_registry: Arc<McpToolRegistry>,
-    /// Per-tool call-line render functions, populated at builtin registration
-    /// time. Consulted in `on_dispatch` to build the transcript call line.
-    render_registry: ToolRenderRegistry,
     /// Memory backing the conversation, used to read markers and (optionally) reset
     /// the cache after compaction. Shared with the turn executor via `Arc`.
     memory: crate::conversation::state::memory::MemoryOf,
@@ -305,7 +302,6 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         permission_resolver: P,
         closure_registry: Arc<ClosureRegistry>,
         mcp_registry: Arc<McpToolRegistry>,
-        render_registry: ToolRenderRegistry,
         max_tool_calls_per_subturn: Option<usize>,
         hook_state: HookState,
     ) -> Self {
@@ -330,7 +326,6 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
             cwd: env.cwd,
             closure_registry,
             mcp_registry,
-            render_registry,
             memory: hook_state.memory,
             conversation_id: hook_state.conversation_id,
             compaction: hook_state.compaction,
@@ -391,7 +386,7 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
     /// fails the dispatch before `on_outcome` fires — so without this sequence
     /// the live transcript renders nothing for the denied call.
     async fn emit_cancelled_dispatch(&self, tool_name: &str, source: &str, arguments: &str) {
-        let call_line = self.render_registry.render(tool_name, arguments);
+        let call_line = call_line_render_for(tool_name, arguments);
         emit_not_run_dispatch(
             &self.bus,
             &self.cwd,
@@ -672,7 +667,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             // [`CallLine::from_json_summary`](crate::protocol::tool_args::CallLine::from_json_summary)
             // of the raw arguments. The fallback is display-only: the TUI
             // matches the pending call by `ToolCallId`, never by this text.
-            let call_line = self.render_registry.render(&tool_name, &args);
+            let call_line = call_line_render_for(&tool_name, &args);
             let call = ToolCall::new(
                 ir::ToolName(tool_name.clone()),
                 source.clone(),
@@ -835,7 +830,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                             kind: result.error().map(|e| error_kind_of(e.kind())),
                         },
                     }));
-                let call_line = self.render_registry.render(tool_name, args);
+                let call_line = call_line_render_for(tool_name, args);
                 let call =
                     ToolCall::new(ir::ToolName(tool_name.to_string()), source, args, call_line);
                 let _ = bus

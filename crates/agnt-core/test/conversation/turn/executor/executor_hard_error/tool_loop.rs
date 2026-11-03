@@ -140,7 +140,6 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus: crate::bus::create_bus(),
-            render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,

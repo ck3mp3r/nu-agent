@@ -50,9 +50,6 @@ pub trait Previewable: BuiltinTool {
     }
 }
 
-/// A tool's call-line render function.
-pub type RenderFn = fn(&str) -> CallLine;
-
 /// Render the call line for a builtin tool by name. This is the single
 /// source of truth for builtin call-line rendering: it maps the name to its
 /// `BuiltinKind` and delegates to that tool's `call_line_render`. Unknown
@@ -82,31 +79,6 @@ pub fn call_line_render_for(name: &str, arguments: &str) -> CallLine {
         | BuiltinKind::TerminateAgent
         | BuiltinKind::SendMessage
         | BuiltinKind::ListAgents => CallLine::from_json_summary(arguments),
-    }
-}
-
-/// Maps tool names to their call-line render functions. Populated at
-/// registration time, where the concrete tool type is known, and consulted
-/// when a tool call starts to build the transcript call line.
-#[derive(Clone, Default)]
-pub struct ToolRenderRegistry {
-    fns: std::collections::HashMap<String, RenderFn>,
-}
-
-impl ToolRenderRegistry {
-    /// Register `f` as the render function for `name`.
-    pub fn register(&mut self, name: &str, f: RenderFn) {
-        self.fns.insert(name.to_string(), f);
-    }
-
-    /// Render the call line for `name` with `arguments`. A registered render
-    /// function wins; otherwise the shared [`call_line_render_for`] dispatch
-    /// resolves the builtin render, falling back to the generic JSON summary.
-    pub fn render(&self, name: &str, arguments: &str) -> CallLine {
-        match self.fns.get(name) {
-            Some(f) => f(arguments),
-            None => call_line_render_for(name, arguments),
-        }
     }
 }
 
@@ -165,73 +137,27 @@ pub async fn register_builtin(
     max_bytes: usize,
     bus: Bus,
     tool_server: &ToolServerHandle,
-    render_registry: &mut ToolRenderRegistry,
 ) {
     let kind = match BuiltinKind::from_str(&def.name) {
         Ok(k) => k,
         Err(_) => return,
     };
     let tool = match kind {
-        BuiltinKind::Read => {
-            render_registry.register(&def.name, ReadTool::call_line_render);
-            make_dynamic_tool::<ReadTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::Edit => {
-            render_registry.register(&def.name, EditTool::call_line_render);
-            make_dynamic_tool::<EditTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::Skill => {
-            render_registry.register(&def.name, SkillTool::call_line_render);
-            make_dynamic_tool::<SkillTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::Grep => {
-            render_registry.register(&def.name, GrepTool::call_line_render);
-            make_dynamic_tool::<GrepTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::Glob => {
-            render_registry.register(&def.name, GlobTool::call_line_render);
-            make_dynamic_tool::<GlobTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::Http => {
-            render_registry.register(&def.name, HttpTool::call_line_render);
-            make_dynamic_tool::<HttpTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::Nu => {
-            render_registry.register(&def.name, NuTool::call_line_render);
-            make_dynamic_tool::<NuTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::TmuxSession => {
-            render_registry.register(&def.name, TmuxSessionTool::call_line_render);
-            make_dynamic_tool::<TmuxSessionTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::TmuxWindow => {
-            render_registry.register(&def.name, TmuxWindowTool::call_line_render);
-            make_dynamic_tool::<TmuxWindowTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::TmuxPane => {
-            render_registry.register(&def.name, TmuxPaneTool::call_line_render);
-            make_dynamic_tool::<TmuxPaneTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::TmuxLayout => {
-            render_registry.register(&def.name, TmuxLayoutTool::call_line_render);
-            make_dynamic_tool::<TmuxLayoutTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::AstQuery => {
-            render_registry.register(&def.name, AstQueryTool::call_line_render);
-            make_dynamic_tool::<AstQueryTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::AstNodes => {
-            render_registry.register(&def.name, AstNodesTool::call_line_render);
-            make_dynamic_tool::<AstNodesTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::AstRefs => {
-            render_registry.register(&def.name, AstRefsTool::call_line_render);
-            make_dynamic_tool::<AstRefsTool>(def, cwd, max_bytes, bus)
-        }
-        BuiltinKind::AstTree => {
-            render_registry.register(&def.name, AstTreeTool::call_line_render);
-            make_dynamic_tool::<AstTreeTool>(def, cwd, max_bytes, bus)
-        }
+        BuiltinKind::Read => make_dynamic_tool::<ReadTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::Edit => make_dynamic_tool::<EditTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::Skill => make_dynamic_tool::<SkillTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::Grep => make_dynamic_tool::<GrepTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::Glob => make_dynamic_tool::<GlobTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::Http => make_dynamic_tool::<HttpTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::Nu => make_dynamic_tool::<NuTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::TmuxSession => make_dynamic_tool::<TmuxSessionTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::TmuxWindow => make_dynamic_tool::<TmuxWindowTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::TmuxPane => make_dynamic_tool::<TmuxPaneTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::TmuxLayout => make_dynamic_tool::<TmuxLayoutTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::AstQuery => make_dynamic_tool::<AstQueryTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::AstNodes => make_dynamic_tool::<AstNodesTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::AstRefs => make_dynamic_tool::<AstRefsTool>(def, cwd, max_bytes, bus),
+        BuiltinKind::AstTree => make_dynamic_tool::<AstTreeTool>(def, cwd, max_bytes, bus),
         _ => return,
     };
     tool_server.add_dynamic_tool(tool);

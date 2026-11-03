@@ -12,7 +12,6 @@ use crate::protocol::persona::PersonaSummary;
 use crate::tools::authz::{PermissionsConfig, PermissionsOverlay};
 use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::tools::mcp::config::McpServerConfig;
 use crate::tools::mcp::runtime::{McpRuntime, McpServerLifecycle};
@@ -59,7 +58,6 @@ pub struct RuntimeBuildParams {
     /// a config or persona directory.
     pub paths: crate::config::Paths,
     pub bus: Bus,
-    pub render_registry: ToolRenderRegistry,
     /// The agent snapshot every hook envelope is stamped with.
     ///
     /// The caller creates it and clones it into the hook runners. The runtime
@@ -246,7 +244,6 @@ pub async fn build_runtime(
         repetition_guard,
         last_total_tokens: Arc::new(Mutex::new(None)),
         bus: params.bus,
-        render_registry: params.render_registry,
         hook_context,
         session_usage: crate::hook::TurnUsage::default(),
         store_latch: Default::default(),

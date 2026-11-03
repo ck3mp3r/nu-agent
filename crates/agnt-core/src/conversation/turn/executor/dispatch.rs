@@ -16,6 +16,7 @@ use crate::hook::chain::{NotRunCall, NotRunOutcome, NotRunStart, emit_not_run_di
 use crate::hook::permission_resolver::resolve_tool_source;
 use crate::hook::turn_tools::undispatched_streamed_calls;
 use crate::protocol::events::{SystemEvent, SystemKind};
+use crate::tools::handler::builtin_tool::call_line_render_for;
 use crate::types::Message;
 
 use super::TurnRecovery;
@@ -194,7 +195,7 @@ where
                     &self.tool_infra.mcp_registry,
                 )
                 .as_str();
-                let call_line = self.tool_infra.render_registry.render(name, &arguments);
+                let call_line = call_line_render_for(name, &arguments);
                 emit_not_run_dispatch(
                     &self.tool_infra.bus,
                     &self.tool_infra.cwd,

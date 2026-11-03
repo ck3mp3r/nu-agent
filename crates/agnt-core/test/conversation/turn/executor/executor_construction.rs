@@ -12,7 +12,6 @@ use super::executor_test_support::*;
 use super::test_utils::{MockResolver, test_compaction_config, test_config};
 use super::*;
 use crate::conversation::state::memory::MemoryState;
-use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 
 #[test]
 fn turn_executor_new_constructs_without_panic() {
@@ -187,7 +186,6 @@ async fn last_total_tokens_updated_on_completed_turn() -> Result<()> {
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus: crate::bus::create_bus(),
-            render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
@@ -316,7 +314,6 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus: bus.clone(),
-            render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,
@@ -413,7 +410,6 @@ async fn on_outcome_stores_total_tokens() -> Result<()> {
             turn_usage: crate::hook::TurnUsage::default(),
             session_usage: crate::hook::TurnUsage::default(),
             bus: crate::bus::create_bus(),
-            render_registry: ToolRenderRegistry::default(),
             cwd: std::path::PathBuf::from("/tmp"),
         },
         shared_model,

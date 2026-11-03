@@ -104,7 +104,6 @@ pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissi
         permission,
         Arc::new(crate::tools::closure::ClosureRegistry::default()),
         Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-        crate::tools::handler::builtin_tool::ToolRenderRegistry::default(),
         None,
         HookState {
             circuit_breaker: Arc::new(Mutex::new(
@@ -228,7 +227,6 @@ impl RepetitionTurnFixture {
             },
             Arc::new(crate::tools::closure::ClosureRegistry::default()),
             Arc::new(crate::tools::handler::McpToolRegistry::empty()),
-            crate::tools::handler::builtin_tool::ToolRenderRegistry::default(),
             None,
             HookState {
                 circuit_breaker: self.hook_state.circuit_breaker.clone(),

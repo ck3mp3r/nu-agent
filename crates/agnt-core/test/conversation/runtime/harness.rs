@@ -27,7 +27,6 @@ use crate::hook::output_repetition::RepetitionState;
 use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
 use crate::tools::closure::{ClosureRegistry, CwdEngine};
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::handler::builtin_tool::ToolRenderRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 /// A constructed runtime plus the tempdir backing its session store.
@@ -163,7 +162,6 @@ fn build_fixture(
         last_total_tokens: Arc::new(Mutex::new(None)),
         session_usage: crate::hook::TurnUsage::default(),
         bus: bus.clone(),
-        render_registry: ToolRenderRegistry::default(),
         provider,
         tools: ToolState::new(
             tool_definitions.clone(),
