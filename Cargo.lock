@@ -210,6 +210,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "agnt-plugin"
+version = "0.1.0"
+dependencies = [
+ "agnt-core",
+ "chrono",
+ "env_logger",
+ "log",
+ "nu-parser",
+ "nu-plugin",
+ "nu-protocol",
+ "oauth2",
+ "open",
+ "reqwest 0.13.5",
+ "rmcp",
+ "rustls",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+ "url",
+]
+
+[[package]]
 name = "agnt-render"
 version = "0.1.0"
 dependencies = [
@@ -3707,29 +3730,6 @@ dependencies = [
  "sys-locale",
  "unicase",
  "web-time",
-]
-
-[[package]]
-name = "nu_plugin_agent"
-version = "0.1.0"
-dependencies = [
- "agnt-core",
- "chrono",
- "env_logger",
- "log",
- "nu-parser",
- "nu-plugin",
- "nu-protocol",
- "oauth2",
- "open",
- "reqwest 0.13.5",
- "rmcp",
- "rustls",
- "serde_json",
- "tempfile",
- "tokio",
- "toml",
- "url",
 ]
 
 [[package]]

@@ -27,6 +27,7 @@ agnt-acp = { path = "crates/agnt-acp" }
 agnt-cli = { path = "crates/agnt-cli" }
 agnt-core = { path = "crates/agnt-core" }
 agnt-kernel = { path = "crates/agnt-kernel" }
+agnt-plugin = { path = "crates/agnt-plugin" }
 agnt-render = { path = "crates/agnt-render" }
 agnt-runtime = { path = "crates/agnt-runtime" }
 agnt-storage = { path = "crates/agnt-storage" }

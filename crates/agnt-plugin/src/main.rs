@@ -1,5 +1,5 @@
+use agnt_plugin::AgentPlugin;
 use nu_plugin::{JsonSerializer, serve_plugin};
-use nu_plugin_agent::AgentPlugin;
 
 fn main() {
     // install_default returns Err(Arc<CryptoProvider>) only when a provider is

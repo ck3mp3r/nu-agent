@@ -1,5 +1,5 @@
 [package]
-name = "nu_plugin_agent"
+name = "agnt-plugin"
 edition.workspace = true
 version.workspace = true
 
