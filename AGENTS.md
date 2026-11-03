@@ -293,10 +293,13 @@ These laws bind every crate; they record the architecture rulings D2/D7/D8/D11 p
 - ✅ YES: the producer emits its own result data (the tool's payload) plus the enumerated disposition; the layer that draws owns `Section`, `ContentKind`, `DisplayStats` and derives them from that payload. A tool is identity, input, output, and a possible side effect — nothing about it is drawn.
 - ✅ YES: the drawer's vocabulary lives in the drawer. When two crates each need a shape, they each own one and the seam converts between them; the kernel is for what is genuinely shared and data — identity and enumerated classification.
 
-**One dispatch, then methods.**
+**One trait impl for the data; static dispatch.**
 - ❌ NO: a bare free function that takes a name or a kind and matches to pick behaviour — `tool_display_from_result(name, payload)`, `render_for(call)` over a `match kind`. Every call site re-decides what the type already knew.
-- ✅ YES: resolve the implementation once, at construction (`view_for(call)`), then call methods on the value being passed around (`view.sections(payload)`). Adding a tool is `struct XView; impl Trait for XView` plus one table row; nothing downstream learns a new branch.
-- ✅ YES: the single match is construction, not a recurring switch. A lookup table mapping identity to an implementation is data; a function that re-matches on every call is not.
+- ❌ NO: a `&dyn Trait` / `Box<dyn Trait>` table of per-tool implementations. A runtime discriminator does not justify a vtable: it makes the dispatch dynamic, and the workspace bans trait objects outside the named boundaries.
+- ✅ YES: the behaviour lives in a trait the drawer owns, implemented **for the data type** — `impl ToolView for ToolCall`, where the trait is local and the type is foreign (orphan-legal). Call sites are extension methods: `call.call_line()`, `call.result_body(payload)`, `call.preview_body(content)`. The concrete type is known at every call site, so dispatch is **static**.
+- ✅ YES: the match happens inside the impl, on use. Resolution is derivation, and derivation may not be stored — a `ToolView { call, kind }` cache, or a wrapper whose `new(call)` resolves nothing, is the same defect as any other cached derivative.
+- ✅ YES: adding a tool that draws something is one arm in `call_line` and, when it draws one, one arm in `result_body`/`preview_body`; the drawer's view module is the only file that changes, and nothing downstream learns a new branch.
+- ✅ YES: the *event* that announces a drawable thing carries only what a surface cannot derive. `PreviewRequested` is published for a call whose gate has a card — an `edit` always, a `nu` command when the arguments name one — and never for a tool that draws none; whether a card exists is a flag on the gate context (`shows_preview`), and the content beside it is optional.
 
 **No string sniffing, ever.**
 - ❌ NO: deciding behavior by parsing text — `reason.starts_with(PREFIX)`, suffix checks, pattern matches over message/result strings, sentinel strings.
