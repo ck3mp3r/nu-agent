@@ -9,6 +9,23 @@ cargo clippy --workspace --tests -- -D warnings   # warnings are errors
 cargo fmt -- --check
 ```
 
+## Tool Discipline
+
+**Symbol truth comes from the AST tools. `grep` is for discovering files, nothing else.**
+
+| Question | Tool |
+|---|---|
+| Which files are involved? | `glob` |
+| Where is `X` declared? What impls does it have? | `ast_nodes` (`struct_item`, `enum_item`, `impl_item`, `function_item`) |
+| Who calls `obj.method(…)`? | `ast_query` over `call_expression` + `field_expression` |
+| Where does the identifier `X` appear? | `ast_refs` |
+| What is this file's shape? | `ast_tree` |
+| What does this line say? | `read` |
+
+- `ast_query` / `ast_nodes` / `ast_refs` / `ast_tree` take **one file**. Discover the file set with `glob`, never with a recursive `grep`.
+- A recursive `grep` for a symbol answers "which files mention this text" and nothing more: it misses type positions, macro-generated names and re-export paths, and cannot tell a definition from a comment.
+- Query gotchas: a `#eq?` predicate must sit **last** inside the node pattern; the grammar rejects `value:` on `field_expression` as an impossible pattern; a predicate on a bare `(identifier)` is silently ignored and returns every identifier in the file.
+
 ## Testing Philosophy
 
 ### Test-Driven Development (TDD)
