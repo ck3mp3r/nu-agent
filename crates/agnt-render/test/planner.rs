@@ -2,14 +2,14 @@ use crate::RenderBackend;
 use crate::plain::PlainBackend;
 use crate::planner::{EntryFamily, LayoutPlanner};
 use crate::theme::Theme;
-use agnt_core::protocol::events::ToolCall;
-use agnt_core::transcript::entry::{
+use crate::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
-use agnt_core::transcript::ir::{
+use crate::transcript::ir::{
     ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
 };
-use agnt_core::transcript::renderer::ItemStatus;
+use crate::transcript::renderer::ItemStatus;
+use agnt_kernel::ToolCall;
 
 // ---------------------------------------------------------------------------
 // Gap rules — the SpacerStateMachine's transition rules, table-driven
@@ -409,7 +409,7 @@ fn tool_entry(path: &str, preview: Option<Display>) -> TranscriptEntry {
         kind: ToolKind::Generic,
         call: ToolCall::new(
             ToolName("read".to_string()),
-            agnt_core::tools::handler::ToolSource::Unknown,
+            agnt_kernel::ToolSource::Unknown,
             format!(r#"{{"path":"{path}"}}"#),
         ),
         preview,

@@ -1,43 +1,3 @@
-use crate::transcript::ir::ContentKind;
-use serde::{Deserialize, Serialize};
-
-/// A tool display embedded in a persisted tool result. Serialized with the
-/// `kind` discriminator its sections carry, so the payload round-trips into
-/// [`ToolDisplay`] without a second shape.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolDisplay {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    pub sections: Vec<ToolDisplaySection>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolDisplaySection {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(flatten)]
-    pub kind: ContentKind,
-    pub content: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stats: Option<ToolDisplayStats>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct ToolDisplayStats {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub files_changed: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub insertions: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deletions: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub diff_truncated: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub omitted_files: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub omitted_hunks: Option<usize>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionDecision {
     AllowOnce,
@@ -69,7 +29,10 @@ pub struct PermissionRequestContext {
     pub target_field: Option<String>,
     pub pattern: String,
     pub summary: String,
-    pub pre_authorize_display: Option<ToolDisplay>,
+    /// The preview content only the producer can supply — an edit's proposed
+    /// diff, computed against the file on disk. How it is drawn is the
+    /// surface's business.
+    pub preview: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

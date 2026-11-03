@@ -37,7 +37,6 @@ fn system_event_contract() {
                 success: true,
                 status: ToolStatus::Success,
                 result: "[]".to_string(),
-                display: None,
                 error_kind: None,
                 message: None,
             },
@@ -48,10 +47,7 @@ fn system_event_contract() {
                 crate::tools::handler::ToolSource::Closure,
                 "{\"command\":\"echo hi\"}",
             ),
-            display: crate::protocol::event::ToolDisplay {
-                title: Some("nu".to_string()),
-                sections: vec![],
-            },
+            preview: Some("echo hi".to_string()),
         },
         SystemEvent::PermissionRequested {
             request_id: RequestId::new("ask-0000000000000001"),
@@ -65,7 +61,7 @@ fn system_event_contract() {
                 target_field: Some("command".to_string()),
                 pattern: "*".to_string(),
                 summary: "→ {\"command\":\"echo hi\"}".to_string(),
-                pre_authorize_display: None,
+                preview: None,
             },
         },
         SystemEvent::PermissionDecisionSubmitted {

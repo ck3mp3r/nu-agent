@@ -294,39 +294,3 @@ pub(super) fn inference_chunks(rx: &mut crate::bus::UiEventRx) -> Vec<(String, S
     }
     out
 }
-
-// ---------------------------------------------------------------------------
-// suppress_previewed_display: the race-free gate between a pre-authorize
-// preview shown before the tool ran and the completion event's own display.
-// ---------------------------------------------------------------------------
-
-/// Stub resolver whose `take_previewed` answer is fixed at construction, so
-/// `suppress_previewed_display` can be tested as a pure function without
-/// rig's opaque `OutcomeEvent` type or a real permission flow.
-#[derive(Clone)]
-pub(super) struct StubPreviewResolver {
-    pub(super) previewed: bool,
-}
-
-impl crate::hook::permission_resolver::AsyncPermissionResolver for StubPreviewResolver {
-    async fn resolve(
-        &self,
-        _tool_name: &str,
-        _arguments: &str,
-        _tool_call_id: Option<String>,
-        _bus: &Bus,
-    ) -> crate::hook::permission_resolver::PermissionDecision {
-        crate::hook::permission_resolver::PermissionDecision::Allow
-    }
-
-    fn take_previewed(&self, _tool_name: &str, _arguments: &str) -> bool {
-        self.previewed
-    }
-}
-
-pub(super) fn sample_display() -> crate::protocol::event::ToolDisplay {
-    crate::protocol::event::ToolDisplay {
-        title: Some("edit foo.rs".to_string()),
-        sections: vec![],
-    }
-}

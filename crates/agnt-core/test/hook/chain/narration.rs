@@ -134,7 +134,7 @@ async fn test_narration_tool_call_narrates_the_started_completed_pair() -> Resul
             _ => None,
         })
         .ok_or("the turn must narrate a completed tool record")?;
-    if call.id != started.id || call.name != "add" {
+    if call.id != started.id || call.name.0 != "add" {
         return Err(
             format!("the pair must name the same call, started {started:?}, got {call:?}").into(),
         );

@@ -2,12 +2,12 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use agnt_core::protocol::event::ToolDisplay;
 use agnt_core::protocol::events::{ToolCall, ToolCallId, ToolOutcome};
 use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::entry::{ToolEntry, ToolKind, TranscriptEntry};
-use agnt_core::transcript::ir::Display;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::entry::{ToolEntry, ToolKind, TranscriptEntry};
+use agnt_render::transcript::ir::Display;
+use agnt_render::transcript::renderer::ItemStatus;
 
 use super::transcript_store::TranscriptStore;
 use super::{ToolCallLine, ToolCallStatus};
@@ -56,10 +56,12 @@ impl ToolState {
     ) -> bool {
         let block_index = self.finish_tool_call(store, &call.id, Some(outcome.status));
 
-        if let Some(display) = &outcome.display
+        // The drawer derives the completion body from the call and its result
+        // data; nothing about the display travels on the event.
+        if let Some(display) = call.result_body(Some(&outcome.result))
             && let Some(block_index) = block_index
         {
-            store.set_tool_result_at(block_index, preview_to_display(display));
+            store.set_tool_result_at(block_index, display);
         }
 
         true
@@ -166,20 +168,8 @@ impl ToolState {
     }
 }
 
-/// Convert a protocol event display into the IR display type. The shapes are
-/// identical; the IR type keeps the renderer independent of the event layer.
-pub(crate) fn preview_to_display(display: &ToolDisplay) -> Display {
-    Display {
-        title: display.title.clone(),
-        sections: display
-            .sections
-            .iter()
-            .map(|section| agnt_core::transcript::ir::DisplaySection {
-                label: section.label.clone(),
-                kind: section.kind.clone(),
-                content: section.content.clone(),
-                stats: section.stats.clone(),
-            })
-            .collect(),
-    }
+/// The gate card's body: the drawer derives it from the call and from the
+/// preview content only the producer could compute.
+pub(crate) fn preview_to_display(call: &ToolCall, preview: Option<&str>) -> Option<Display> {
+    call.preview_body(preview)
 }

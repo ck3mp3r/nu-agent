@@ -9,12 +9,12 @@
 /// Re-exported so a surface can name the source `run_compaction` takes
 /// without depending on the kernel crate directly.
 pub use agnt_kernel::CompactionSource;
+/// Re-exported so the transcript, the permission gate, and every surface share
+/// one call identity with the kernel's stream records.
+pub use agnt_kernel::{ToolCall, ToolCallId, ToolName};
 
-use crate::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay};
+use crate::protocol::event::{PermissionDecision, PermissionRequestContext};
 use crate::session::tool_status::ToolStatus;
-use crate::tools::handler::ToolSource;
-use crate::tools::handler::builtin_kinds::ToolKind;
-use crate::transcript::ir::ToolName;
 
 // region:    --- Types
 
@@ -63,10 +63,11 @@ pub enum SystemEvent {
     // tools
     /// A tool call started.
     ToolStarted { call: ToolCall },
-    /// The permission gate produced a preview for a tool call.
+    /// The permission gate produced a preview for a tool call: the content only
+    /// the producer could compute (an edit's proposed diff). The surface draws it.
     PreviewRequested {
         call: ToolCall,
-        display: ToolDisplay,
+        preview: Option<String>,
     },
     /// A tool call finished.
     ToolCompleted {
@@ -147,24 +148,6 @@ pub enum SystemEvent {
     Tick,
 }
 
-/// The exact key of a tool call: `{tool_name}\n{raw_arguments}`.
-///
-/// One constructor derives it, so the call key cannot drift between the
-/// permission path, the hook chain, and the transcript.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ToolCallId(String);
-
-/// One tool call, as the transcript and the permission gate identify it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolCall {
-    pub id: ToolCallId,
-    pub name: ToolName,
-    pub source: ToolSource,
-    /// The raw arguments JSON, the other half of the call key, and the input
-    /// every surface derives the call line from.
-    pub arguments: String,
-}
-
 /// The result of a finished tool call.
 ///
 /// `status` is the structural classification the transcript renders by; the
@@ -174,8 +157,9 @@ pub struct ToolCall {
 pub struct ToolOutcome {
     pub success: bool,
     pub status: ToolStatus,
+    /// The tool's result, exactly as the model received it. The surface derives
+    /// the display from it; nothing here is drawn.
     pub result: String,
-    pub display: Option<ToolDisplay>,
     pub error_kind: Option<String>,
     pub message: Option<String>,
 }
@@ -263,40 +247,6 @@ pub fn compaction_source_text(source: CompactionSource) -> &'static str {
 // endregion: --- Fns
 
 // region:    --- Impls
-
-impl ToolCall {
-    /// The kind of tool this call names.
-    ///
-    /// Derived from the name, never stored: the name is the identity, and a
-    /// drawer that dispatches on the kind derives it here instead of carrying a
-    /// second copy that could drift from it.
-    pub fn kind(&self) -> ToolKind {
-        ToolKind::of_name(&self.name.0)
-    }
-
-    /// Build a call and derive its key from the name and the raw arguments.
-    pub fn new(name: ToolName, source: ToolSource, arguments: impl Into<String>) -> Self {
-        let arguments = arguments.into();
-        let id = ToolCallId::of(&name.0, &arguments);
-        Self {
-            id,
-            name,
-            source,
-            arguments,
-        }
-    }
-}
-
-impl ToolCallId {
-    /// Derive the key of a call from its tool name and raw arguments.
-    pub fn of(tool_name: &str, raw_arguments: &str) -> Self {
-        Self(format!("{tool_name}\n{raw_arguments}"))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
 
 impl RequestId {
     pub fn new(id: impl Into<String>) -> Self {

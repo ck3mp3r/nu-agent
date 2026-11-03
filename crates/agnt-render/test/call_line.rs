@@ -5,10 +5,10 @@
 //! every other name and for arguments that do not carry the field the tailored
 //! line reads.
 
-use crate::call_line::render_for;
-use agnt_core::protocol::events::ToolCall;
-use agnt_core::tools::handler::ToolSource;
-use agnt_core::transcript::ir::ToolName;
+use crate::tool_view::ToolView;
+use crate::transcript::ir::ToolName;
+use agnt_kernel::ToolCall;
+use agnt_kernel::ToolSource;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -96,7 +96,7 @@ fn test_call_line_render_for_table() -> Result<()> {
     // -- Exec & Check
     for (case, name, arguments, expected) in cases {
         let call = ToolCall::new(ToolName(name.to_string()), ToolSource::Builtin, arguments);
-        assert_eq!(render_for(&call), expected, "case '{case}'");
+        assert_eq!(call.call_line(), expected, "case '{case}'");
     }
     Ok(())
 }

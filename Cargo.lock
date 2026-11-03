@@ -213,8 +213,14 @@ dependencies = [
 name = "agnt-render"
 version = "0.1.0"
 dependencies = [
- "agnt-core",
+ "agnt-kernel",
+ "log",
+ "pulldown-cmark",
+ "serde_json",
+ "syntect",
  "textwrap",
+ "unicode-width 0.2.2",
+ "unicodeit",
 ]
 
 [[package]]

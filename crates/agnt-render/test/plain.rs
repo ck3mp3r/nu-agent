@@ -3,10 +3,10 @@ use crate::backend::RowRect;
 use crate::gallery::Gallery;
 use crate::plain::PlainBackend;
 use crate::theme::Theme;
-use agnt_core::protocol::events::ToolCall;
-use agnt_core::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
-use agnt_core::transcript::ir::{ContentKind, Display, DisplaySection, MessageRole, ToolName};
-use agnt_core::transcript::renderer::ItemStatus;
+use crate::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
+use crate::transcript::ir::{ContentKind, Display, DisplaySection, MessageRole, ToolName};
+use crate::transcript::renderer::ItemStatus;
+use agnt_kernel::ToolCall;
 
 // ---------------------------------------------------------------------------
 // Flat output
@@ -137,7 +137,7 @@ fn tool_entry(path: &str, preview: Display) -> TranscriptEntry {
         kind: ToolKind::Generic,
         call: ToolCall::new(
             ToolName("read".to_string()),
-            agnt_core::tools::handler::ToolSource::Unknown,
+            agnt_kernel::ToolSource::Unknown,
             format!(r#"{{"path":"{path}"}}"#),
         ),
         preview: Some(preview),

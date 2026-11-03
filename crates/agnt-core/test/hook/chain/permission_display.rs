@@ -2,52 +2,6 @@ use super::*;
 
 use crate::hook::permission_resolver::permission_resolver_test::submit_decision;
 
-#[test]
-fn suppress_previewed_display_drops_it_when_already_shown() {
-    // -- Setup & Fixtures
-    let resolver = StubPreviewResolver { previewed: true };
-
-    // -- Exec
-    let result = suppress_previewed_display(&resolver, "edit", "{}", Some(sample_display()));
-
-    // -- Check
-    assert!(
-        result.is_none(),
-        "a display already shown via pre-authorize preview must be suppressed"
-    );
-}
-
-#[test]
-fn suppress_previewed_display_passes_through_when_not_previewed() {
-    // -- Setup & Fixtures
-    let resolver = StubPreviewResolver { previewed: false };
-    let display = Some(sample_display());
-
-    // -- Exec
-    let result = suppress_previewed_display(&resolver, "edit", "{}", display.clone());
-
-    // -- Check
-    assert_eq!(
-        result, display,
-        "a display that was never previewed must pass through unchanged"
-    );
-}
-
-#[test]
-fn suppress_previewed_display_none_input_stays_none_either_way() {
-    // -- Setup & Fixtures
-    let previewed = StubPreviewResolver { previewed: true };
-    let not_previewed = StubPreviewResolver { previewed: false };
-
-    // -- Exec & Check
-    for resolver in [previewed, not_previewed] {
-        assert!(
-            suppress_previewed_display(&resolver, "nu", "{}", None).is_none(),
-            "a tool with no display to begin with must stay None regardless of previewed state"
-        );
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Producer-side FIFO invariant: ToolStarted must be published before
 // PermissionRequested on the single ui_event channel.
@@ -275,13 +229,11 @@ async fn on_dispatch_publishes_the_call_that_derives_the_fallback_line() -> Resu
     };
     turn.await.map_err(|_| "turn task should not panic")?;
 
-    // -- Check: the event carries the call, not a rendered line — the
-    // documented fallback is derived from the raw arguments at the point of
-    // use.
+    // -- Check: the event carries the call's raw arguments, not a rendered
+    // line — the line is derived where it is drawn.
     assert_eq!(
-        crate::protocol::tool_args::call_line_from_json(&call.arguments),
-        "→ {\"x\":1, \"y\":2}",
-        "the fallback is the arrow-prefixed JSON summary of the raw arguments"
+        call.arguments, r#"{"x":1,"y":2}"#,
+        "the event carries the raw arguments; the call line is derived at the drawer"
     );
     Ok(())
 }

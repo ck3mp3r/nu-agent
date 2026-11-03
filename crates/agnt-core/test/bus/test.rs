@@ -7,7 +7,7 @@ mod agent;
 
 use super::*;
 use crate::protocol::events::{SystemEvent, ToolCall};
-use crate::transcript::ir::ToolName;
+use agnt_kernel::ToolName;
 use std::time::Duration;
 use tokio::time::timeout;
 

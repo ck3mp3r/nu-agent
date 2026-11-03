@@ -114,8 +114,7 @@ async fn cancelled_turn_flushes_undispatched_nu_calls_with_preview_between_pair(
             FlushEvent::Started("nu".to_string()),
             FlushEvent::Preview {
                 tool_key: format!("nu\n{ls_json}"),
-                content: "ls".to_string(),
-                language: "nu".to_string(),
+                content: None,
             },
             FlushEvent::Completed {
                 name: "nu".to_string(),
@@ -125,8 +124,7 @@ async fn cancelled_turn_flushes_undispatched_nu_calls_with_preview_between_pair(
             FlushEvent::Started("nu".to_string()),
             FlushEvent::Preview {
                 tool_key: format!("nu\n{pwd_json}"),
-                content: "pwd".to_string(),
-                language: "nu".to_string(),
+                content: None,
             },
             FlushEvent::Completed {
                 name: "nu".to_string(),

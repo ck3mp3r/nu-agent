@@ -33,7 +33,7 @@ pub(crate) use crate::protocol::{
         CoreRuntime, McpToggleRequest, McpUsabilityState, SharedUiAction, UiMessageSnapshot,
         UiMessageUsageSnapshot, UserInputUi,
     },
-    event::{PermissionDecision, ToolDisplay, ToolDisplaySection},
+    event::PermissionDecision,
     events::SystemEvent,
     mcp_management::McpManagement,
     model_switching::ModelSwitching,

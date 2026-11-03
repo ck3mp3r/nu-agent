@@ -26,7 +26,7 @@ fn start_finish_and_preview_mutate_one_entry_in_place() -> Result<()> {
     // -- Exec
     state.tool.finish_tool_call(
         &mut state.transcript,
-        &ToolCallId::of("read", "{}"),
+        &ToolCallId::new("read", "{}"),
         Some(ToolStatus::Success),
     );
 
@@ -52,7 +52,7 @@ fn start_finish_and_preview_mutate_one_entry_in_place() -> Result<()> {
     let preview = edit_preview();
     preview_state.tool.set_tool_preview(
         &mut preview_state.transcript,
-        &ToolCallId::of("edit", EDIT_ARGUMENTS),
+        &ToolCallId::new("edit", EDIT_ARGUMENTS),
         &preview,
     );
 
@@ -98,7 +98,7 @@ fn set_tool_preview_remeasures_to_a_wholesale_index() -> Result<()> {
     // -- Exec: the preview lands on the tail entry.
     state.tool.set_tool_preview(
         &mut state.transcript,
-        &ToolCallId::of("edit", EDIT_ARGUMENTS),
+        &ToolCallId::new("edit", EDIT_ARGUMENTS),
         &edit_preview(),
     );
 
@@ -132,7 +132,7 @@ fn set_tool_preview_remeasures_to_a_wholesale_index() -> Result<()> {
     // -- Exec: the preview lands on the first entry, before the user entry.
     mid.tool.set_tool_preview(
         &mut mid.transcript,
-        &ToolCallId::of("edit", EDIT_ARGUMENTS),
+        &ToolCallId::new("edit", EDIT_ARGUMENTS),
         &edit_preview(),
     );
 

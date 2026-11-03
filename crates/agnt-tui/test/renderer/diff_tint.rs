@@ -2,12 +2,12 @@
 //! the foregrounds they keep on top.
 
 use super::support::*;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
 
 // region:    --- Fixtures
 
 /// A tool entry whose preview is the one-hunk diff.
-fn diff_entry() -> agnt_core::transcript::entry::TranscriptEntry {
+fn diff_entry() -> agnt_render::transcript::entry::TranscriptEntry {
     tool_entry(
         "edit",
         r#"{"path":"a.rs"}"#,

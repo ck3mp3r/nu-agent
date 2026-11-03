@@ -3,16 +3,16 @@
 //! The snapshots double as the golden-fixture source for the cross-backend
 //! tests (design §3.4/§4.3). Adding a family adds one sample here.
 
-use agnt_core::protocol::event::ToolDisplayStats;
-use agnt_core::protocol::events::ToolCall;
-use agnt_core::transcript::entry::{
+use crate::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
-use agnt_core::transcript::ir::{
-    ContentKind, ContentLine, Display, DisplaySection, MessageRole, NoticeKind, StyleHint, ToolName,
+use crate::transcript::ir::{
+    ContentKind, ContentLine, Display, DisplaySection, DisplayStats, MessageRole, NoticeKind,
+    StyleHint, ToolName,
 };
-use agnt_core::transcript::markdown::project_diff_lines;
-use agnt_core::transcript::renderer::ItemStatus;
+use crate::transcript::markdown::project_diff_lines;
+use crate::transcript::renderer::ItemStatus;
+use agnt_kernel::{ToolCall, ToolSource};
 
 use crate::backend::{RenderBackend, RowRect};
 use crate::catalog::{
@@ -89,7 +89,7 @@ impl Gallery {
                     kind: ToolKind::Generic,
                     call: ToolCall::new(
                         ToolName("read".to_string()),
-                        agnt_core::tools::handler::ToolSource::Unknown,
+                        ToolSource::Unknown,
                         "{\"path\":\"src/render.rs\"}",
                     ),
                     preview: Some(Display {
@@ -112,7 +112,7 @@ impl Gallery {
                     kind: ToolKind::Edit,
                     call: ToolCall::new(
                         ToolName("edit".to_string()),
-                        agnt_core::tools::handler::ToolSource::Unknown,
+                        ToolSource::Unknown,
                         "{\"path\":\"src/render.rs\"}",
                     ),
                     // The gate preview the pending call showed. The result
@@ -170,7 +170,7 @@ impl Gallery {
                     kind: ToolKind::Edit,
                     call: ToolCall::new(
                         ToolName("edit".to_string()),
-                        agnt_core::tools::handler::ToolSource::Unknown,
+                        ToolSource::Unknown,
                         "{\"path\":\"crates/agnt-render/src/plain.rs\"}",
                     ),
                     // The completion display carries the diff: the line-number
@@ -202,11 +202,11 @@ impl Gallery {
 }
 "
                             .to_string(),
-                            stats: Some(ToolDisplayStats {
+                            stats: Some(DisplayStats {
                                 files_changed: Some(1),
                                 insertions: Some(2),
                                 deletions: Some(1),
-                                ..ToolDisplayStats::default()
+                                ..DisplayStats::default()
                             }),
                         }],
                     }),
@@ -269,11 +269,11 @@ impl Gallery {
             },
             GalleryComponentSample {
                 name: "stat-row",
-                component: CatalogComponent::StatRow(StatRow::new(ToolDisplayStats {
+                component: CatalogComponent::StatRow(StatRow::new(DisplayStats {
                     files_changed: Some(1),
                     insertions: Some(2),
                     deletions: Some(0),
-                    ..ToolDisplayStats::default()
+                    ..DisplayStats::default()
                 })),
             },
             GalleryComponentSample {

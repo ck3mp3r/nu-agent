@@ -8,12 +8,6 @@
 #[path = "test/agents.rs"]
 mod agents;
 
-#[path = "test/call_line.rs"]
-mod call_line;
-
-#[path = "test/json_fields.rs"]
-mod json_fields;
-
 #[path = "test/skills.rs"]
 mod skills;
 
@@ -41,10 +35,9 @@ use super::slash::{
     SLASH_COMMAND_ORDER, SlashCommand, SlashParseResult, extract_session_id,
     filter_inline_slash_suggestions, parse_slash_command,
 };
-use super::tool_args;
 
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext};
 use crate::protocol::events::{RequestId, SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
-use crate::transcript::ir::ToolName;
+use agnt_kernel::ToolName;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

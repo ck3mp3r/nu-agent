@@ -20,7 +20,10 @@ use agent_client_protocol::{Client, ConnectionTo};
 use agnt_core::bus::UiEventTx;
 use agnt_core::conversation::runtime::PendingPermissions;
 use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
-use agnt_core::protocol::events::{RequestId, SystemEvent};
+use agnt_core::protocol::events::{RequestId, SystemEvent, ToolCall};
+use agnt_core::tools::handler::ToolSource;
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::ir::ToolName;
 
 use crate::error::Result;
 use crate::translator::content_from_display;
@@ -234,8 +237,19 @@ fn build_tool_call(context: &PermissionRequestContext) -> ToolCallUpdate {
     let mut fields = ToolCallUpdateFields::new()
         .title(context.summary.clone())
         .status(ToolCallStatus::Pending);
-    if let Some(display) = &context.pre_authorize_display {
-        fields = fields.content(content_from_display(display));
+    // The card is the drawer's derivation: the call names the tool and its
+    // arguments, and the context adds only the content the producer alone can
+    // compute. The drawn sections map onto ACP's own content blocks.
+    let (name, arguments) = context
+        .tool_key
+        .split_once('\n')
+        .unwrap_or((context.tool_key.as_str(), ""));
+    let call = ToolCall::new(ToolName(name.to_string()), ToolSource::Unknown, arguments);
+    if let Some(display) = call.preview_body(context.preview.as_deref()) {
+        let content = content_from_display(&display);
+        if !content.is_empty() {
+            fields = fields.content(content);
+        }
     }
     ToolCallUpdate::new(context.tool_key.clone(), fields)
 }

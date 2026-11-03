@@ -3,8 +3,8 @@
 //! scroll math.
 
 use super::support::*;
-use agnt_core::transcript::ir::MessageRole;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::ir::MessageRole;
+use agnt_render::transcript::renderer::ItemStatus;
 
 /// WHEN a short markdown entry is measured and painted, THE painted row count
 /// SHALL equal the measured one.

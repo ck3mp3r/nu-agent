@@ -1,5 +1,4 @@
 mod authz_gate;
-pub mod builtin_kinds;
 pub mod builtin_tool;
 mod conversion;
 mod dispatch;
@@ -11,7 +10,6 @@ pub mod nu;
 pub mod pre_authorize;
 pub mod read;
 mod resolve;
-mod result;
 pub mod skill;
 pub mod tmux_common;
 pub mod tmux_layout;
@@ -27,8 +25,7 @@ mod http_test;
 
 pub use conversion::{json_to_nu_value, nu_value_to_json};
 pub use dispatch::llm_visible_tool_definitions;
-pub use pre_authorize::{PreAuthorizeOutput, pre_authorize_fs_tool, tool_display_from_arguments};
-pub use result::tool_display_from_result;
+pub use pre_authorize::{PreAuthorizeOutput, pre_authorize_fs_tool};
 pub(crate) use types::execution_error_for_kind;
 pub use types::{McpToolRegistry, ToolErrorKind, ToolHandlerError, ToolSource, tool_source_text};
 

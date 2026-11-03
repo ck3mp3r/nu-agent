@@ -108,7 +108,6 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
                     success: matches!(status, ToolStatus::Success),
                     status,
                     result: "ok".to_string(),
-                    display: None,
                     error_kind: None,
                     message: None,
                 },
@@ -131,7 +130,7 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
         );
         state.tool.finish_tool_call(
             &mut state.transcript,
-            &ToolCallId::of("k8s__list_pods", r#"{"namespace":"prod"}"#),
+            &ToolCallId::new("k8s__list_pods", r#"{"namespace":"prod"}"#),
             status,
         );
         assert_eq!(state.transcript.len(), 1, "{label}");
@@ -154,7 +153,6 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
                 success: true,
                 status: ToolStatus::Success,
                 result: r#"[{"name":"api-0","ns":"prod"}]"#.to_string(),
-                display: None,
                 error_kind: None,
                 message: None,
             },
@@ -197,7 +195,6 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
                     success: true,
                     status: ToolStatus::Success,
                     result: "ok".to_string(),
-                    display: None,
                     error_kind: None,
                     message: None,
                 },
@@ -234,12 +231,12 @@ fn concurrent_same_name_tool_calls_get_correct_statuses() -> Result<()> {
     // Finish out of order: each call gets its own status.
     state.tool.finish_tool_call(
         &mut state.transcript,
-        &ToolCallId::of("k8s__get_pod", r#"{"name":"api-1"}"#),
+        &ToolCallId::new("k8s__get_pod", r#"{"name":"api-1"}"#),
         Some(ToolStatus::Success),
     );
     state.tool.finish_tool_call(
         &mut state.transcript,
-        &ToolCallId::of("k8s__get_pod", r#"{"name":"api-0"}"#),
+        &ToolCallId::new("k8s__get_pod", r#"{"name":"api-0"}"#),
         Some(ToolStatus::Failed),
     );
     assert_eq!(tool_entry_at(&state, 0)?.status, ItemStatus::Failed);
@@ -273,7 +270,6 @@ fn cancelled_completed_renders_glyph_only() -> Result<()> {
                     success: false,
                     status: ToolStatus::Cancelled,
                     result: String::new(),
-                    display: None,
                     error_kind: None,
                     message: Some(reason.to_string()),
                 },
@@ -301,7 +297,6 @@ fn cancelled_completed_renders_glyph_only() -> Result<()> {
                 success: false,
                 status: ToolStatus::Failed,
                 result: String::new(),
-                display: None,
                 error_kind: Some("tool_error".to_string()),
                 message: Some("boom".to_string()),
             },

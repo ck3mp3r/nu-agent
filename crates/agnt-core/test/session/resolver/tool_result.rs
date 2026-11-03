@@ -37,25 +37,12 @@ fn test_tool_result_edit_creates_display_snapshot() {
 
     let snapshots = hydrate(&entries, std::path::Path::new("."));
 
-    assert_eq!(snapshots.len(), 2);
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "one snapshot per call: the surface derives the display from the data"
+    );
     assert_eq!(snapshots[0].role(), "tool");
-
-    let display = snapshots[1].tool_display();
-    assert!(
-        display.is_some(),
-        "Expected tool_display on second snapshot"
-    );
-    let display = display.unwrap();
-    assert_eq!(display.title, None);
-    assert_eq!(display.sections.len(), 1);
-    assert!(
-        matches!(
-            display.sections[0].kind,
-            crate::transcript::ir::ContentKind::Diff { .. }
-        ),
-        "section kind must be Diff, got {:?}",
-        display.sections[0].kind
-    );
 }
 
 #[test]
@@ -90,27 +77,17 @@ fn test_tool_result_nu_creates_display_snapshot_from_arguments() -> Result<()> {
 
     assert_eq!(
         snapshots.len(),
-        2,
-        "expected tool call + tool_display snapshots, got {}",
+        1,
+        "one snapshot per call, got {}",
         snapshots.len()
     );
     assert_eq!(snapshots[0].role(), "tool");
-    assert_eq!(snapshots[1].role(), "tool_display");
-
-    let display = snapshots[1]
-        .tool_display()
-        .ok_or("should be tool_display on second snapshot")?;
-    assert_eq!(display.title, None);
-    assert_eq!(display.sections.len(), 1);
-    assert!(
-        matches!(
-            display.sections[0].kind,
-            crate::transcript::ir::ContentKind::Code { ref language } if language == "nu"
-        ),
-        "section kind must be Code with language nu, got {:?}",
-        display.sections[0].kind
+    assert_eq!(snapshots[0].tool_name(), Some("nu"));
+    assert_eq!(
+        snapshots[0].tool_arguments(),
+        Some(r#"{"command":"ls | sort"}"#),
+        "the snapshot carries the call's raw arguments; the drawer derives the code block"
     );
-    assert_eq!(display.sections[0].content, "ls | sort");
     Ok(())
 }
 
@@ -156,18 +133,11 @@ fn test_tool_result_nu_explicit_display_wins_over_fallback() -> Result<()> {
 
     let snapshots = hydrate(&entries, std::path::Path::new("."));
 
-    assert_eq!(snapshots.len(), 2);
-    assert_eq!(snapshots[1].role(), "tool_display");
-
-    let display = snapshots[1]
-        .tool_display()
-        .ok_or("should be tool_display on second snapshot")?;
     assert_eq!(
-        display.title,
-        Some("custom".to_string()),
-        "explicit display must win over the argument-sourced fallback"
+        snapshots.len(),
+        1,
+        "a `display` key in the result is data the drawer ignores: one snapshot per call"
     );
-    assert_eq!(display.sections[0].content, "embedded result");
     Ok(())
 }
 
@@ -272,15 +242,11 @@ fn test_tool_result_with_explicit_display_key() {
 
     let snapshots = hydrate(&entries, std::path::Path::new("."));
 
-    assert_eq!(snapshots.len(), 2);
-
-    let display = snapshots[1].tool_display();
-    assert!(
-        display.is_some(),
-        "Expected tool_display on second snapshot"
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "one snapshot per call: an embedded title is data the drawer ignores"
     );
-    let display = display.unwrap();
-    assert_eq!(display.title, Some("custom output".to_string()));
 }
 
 /// A cancelled row rehydrates as the ⊘ class with the args preview under it —
@@ -331,8 +297,8 @@ fn test_tool_result_cancelled_rows_rehydrate_as_cancelled() -> Result<()> {
 
         assert_eq!(
             snapshots.len(),
-            2,
-            "{name}: the tool snapshot and its args preview are expected"
+            1,
+            "{name}: one snapshot per row — the preview is derived, never persisted"
         );
         assert_eq!(snapshots[0].role(), "tool", "{name}");
         assert_eq!(
@@ -340,20 +306,9 @@ fn test_tool_result_cancelled_rows_rehydrate_as_cancelled() -> Result<()> {
             Some(ToolStatus::Cancelled),
             "{name}: the row carries the store's variant"
         );
-        assert_eq!(snapshots[1].role(), "tool_display", "{name}");
-        let display = snapshots[1]
-            .tool_display()
-            .ok_or("should be tool_display on second snapshot")?;
-        assert_eq!(display.sections.len(), 1, "{name}");
-        assert!(
-            matches!(
-                display.sections[0].kind,
-                crate::transcript::ir::ContentKind::Code { ref language } if language == "nu"
-            ),
-            "{name}: the preview block is a nu code section, got {:?}",
-            display.sections[0].kind
-        );
-        assert_eq!(display.sections[0].content, "ls | sort", "{name}");
+        // The display is derived by the surface from these fields; the fold
+        // carries data only, so the cancelled class is the single verdict.
+        assert_eq!(snapshots.len(), 1, "{name}: one snapshot per call");
     }
 
     // A non-Previewable tool emits no display snapshot.

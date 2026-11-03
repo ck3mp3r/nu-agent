@@ -5,9 +5,9 @@ use crate::runtime::RuntimeCoordinator;
 use crate::runtime::test_driver::{CellProbe, DriveEvent, RenderLoopDriver};
 use crate::state::{AppState, PickerRenderKind, TranscriptRole};
 use agnt_core::protocol::events::ToolCall;
-use agnt_core::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
-use agnt_core::transcript::ir::{MessageRole, NoticeKind, ToolName};
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
+use agnt_render::transcript::ir::{MessageRole, NoticeKind, ToolName};
+use agnt_render::transcript::renderer::ItemStatus;
 
 /// Push one message entry via the store's sole push API.
 pub(super) fn push_message_line(

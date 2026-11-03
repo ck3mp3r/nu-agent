@@ -36,7 +36,8 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
             call: first.clone(),
             outcome: ToolOutcome {
                 status: ToolStatus::Success,
-                result: "a.txt".to_string(),
+                payload: None,
+                text: "a.txt".to_string(),
                 message: None,
                 kind: None,
             },
@@ -52,7 +53,8 @@ async fn test_records_tool_windows_narrate_started_then_completed_per_call() -> 
             call: second.clone(),
             outcome: ToolOutcome {
                 status: ToolStatus::Failed,
-                result: String::new(),
+                payload: None,
+                text: String::new(),
                 message: Some("no such file".to_string()),
                 kind: Some(crate::records::ToolErrorKind::NotFound),
             },
@@ -136,7 +138,8 @@ async fn test_records_denied_call_settles_cancelled_without_running() -> Result<
             call: call.clone(),
             outcome: ToolOutcome {
                 status: ToolStatus::Cancelled,
-                result: String::new(),
+                payload: None,
+                text: String::new(),
                 message: Some("denied by policy".to_string()),
                 kind: Some(crate::records::ToolErrorKind::Denied),
             },

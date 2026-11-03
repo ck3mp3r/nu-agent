@@ -4,9 +4,9 @@
 //! paints itself with the backend's own styles. The family widgets compose
 //! these components; the catalog fixes structure, the backend owns pixels.
 
-use agnt_core::transcript::ir::Span;
-use agnt_core::transcript::renderer::ItemStatus;
 use agnt_render::catalog::{CodeSurface, DiffView, LaneKind, SurfaceRow};
+use agnt_render::transcript::ir::Span;
+use agnt_render::transcript::renderer::ItemStatus;
 use agnt_render::{Color, Theme};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;

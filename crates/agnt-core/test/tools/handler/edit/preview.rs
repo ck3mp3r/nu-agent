@@ -11,7 +11,6 @@ fn edit_preview_diff_table() -> Result<()> {
         mode: Option<&'static str>,
         operation: serde_json::Value,
         expected_diff: (&'static str, &'static str),
-        expected_files_changed: Option<usize>,
     }
 
     let cases = vec![
@@ -21,7 +20,6 @@ fn edit_preview_diff_table() -> Result<()> {
             mode: None,
             operation: serde_json::json!({"type": "create", "content": "hello\n"}),
             expected_diff: ("+hello", "+hello"),
-            expected_files_changed: Some(1),
         },
         Case {
             name: "search_replace returns a diff display",
@@ -33,7 +31,6 @@ fn edit_preview_diff_table() -> Result<()> {
                 "replacement": "there"
             }),
             expected_diff: ("-world", "+there"),
-            expected_files_changed: None,
         },
     ];
 
@@ -52,41 +49,14 @@ fn edit_preview_diff_table() -> Result<()> {
             args["mode"] = serde_json::json!(mode);
         }
 
-        let display = EditTool::preview(&args, dir.path())
-            .ok_or("preview must produce a display for a valid plan")?;
-        assert_eq!(display.title, None, "case '{}': title", case.name);
-        assert_eq!(
-            display.sections.len(),
-            1,
-            "case '{}': section count",
-            case.name
-        );
-        let section = &display.sections[0];
-        assert!(
-            matches!(section.kind, ContentKind::Diff { .. }),
-            "case '{}': section kind must be Diff, got {:?}",
-            case.name,
-            section.kind
-        );
+        let diff_text = EditTool::preview(&args, dir.path())
+            .ok_or("preview must produce the proposed diff for a valid plan")?;
         let (removed, added) = case.expected_diff;
         assert!(
-            section.content.contains(removed) && section.content.contains(added),
-            "case '{}': diff must contain {removed} and {added}, got: {:?}",
-            case.name,
-            section.content
+            diff_text.contains(removed) && diff_text.contains(added),
+            "case '{}': diff must contain {removed} and {added}, got: {diff_text:?}",
+            case.name
         );
-        if let Some(files_changed) = case.expected_files_changed {
-            let stats = section
-                .stats
-                .clone()
-                .ok_or("diff section must carry stats")?;
-            assert_eq!(
-                stats.files_changed,
-                Some(files_changed),
-                "case '{}': files_changed",
-                case.name
-            );
-        }
     }
     Ok(())
 }

@@ -9,10 +9,7 @@ use agent_client_protocol::schema::v1::{
 };
 use agnt_core::bus::{OneshotRx, OneshotTx};
 use agnt_core::conversation::runtime::PendingPermissions;
-use agnt_core::protocol::event::{
-    PermissionDecision, PermissionRequestContext, ToolDisplay, ToolDisplaySection,
-};
-use agnt_core::transcript::ir::ContentKind;
+use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
 
 use crate::permission::PermissionRequestSink;
 
@@ -86,29 +83,20 @@ pub fn context_for(tool_key: &str) -> PermissionRequestContext {
         target_field: None,
         pattern: "*".to_string(),
         summary: "→ edit src/lib.rs".to_string(),
-        pre_authorize_display: None,
+        preview: None,
     }
 }
 
-pub fn context_with_display(display: ToolDisplay) -> PermissionRequestContext {
+/// A request whose preview carries the producer-computed content.
+pub fn context_with_preview(content: &str) -> PermissionRequestContext {
     let mut context = context();
-    context.pre_authorize_display = Some(display);
+    context.preview = Some(content.to_string());
     context
 }
 
-pub fn diff_display() -> ToolDisplay {
-    ToolDisplay {
-        title: None,
-        sections: vec![ToolDisplaySection {
-            label: Some("src/lib.rs".to_string()),
-            kind: ContentKind::Diff {
-                language: "rust".to_string(),
-                path: "src/lib.rs".to_string(),
-            },
-            content: "@@ -1,2 +1,2 @@\n-old line\n+new line\n context\n".to_string(),
-            stats: None,
-        }],
-    }
+/// The preview content an `edit` gate supplies: the diff it would make.
+pub fn diff_content() -> String {
+    "@@ -1,2 +1,2 @@\n-old line\n+new line\n context\n".to_string()
 }
 
 pub fn empty_pending() -> PendingPermissions {

@@ -1,8 +1,9 @@
-use super::{ToolErrorKind, ToolHandlerError, builtin_kinds};
+use super::{ToolErrorKind, ToolHandlerError};
 use crate::tools::closure::EngineInterfaceLike;
+use agnt_kernel::BuiltinKind;
 
 pub fn is_builtin_tool_name(tool_name: &str) -> bool {
-    tool_name.parse::<builtin_kinds::BuiltinKind>().is_ok()
+    tool_name.parse::<BuiltinKind>().is_ok()
 }
 
 pub fn resolve_fs_path_for_cwd(path: &str, cwd: &std::path::Path) -> std::path::PathBuf {

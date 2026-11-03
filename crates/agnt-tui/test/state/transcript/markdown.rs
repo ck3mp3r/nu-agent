@@ -73,7 +73,7 @@ fn push_transcript_item_markdown_projection() -> Result<()> {
     let bold = crate::markdown::render_markdown_lines(&markdown, None)
         .into_iter()
         .flat_map(|l| l.spans.into_iter())
-        .find(|s| matches!(s.hint, agnt_core::transcript::ir::StyleHint::MdBold))
+        .find(|s| matches!(s.hint, agnt_render::transcript::ir::StyleHint::MdBold))
         .ok_or("should have MdBold span")?;
     assert_eq!(bold.text, "world");
 
@@ -86,7 +86,7 @@ fn push_transcript_item_markdown_projection() -> Result<()> {
     let bold = crate::markdown::render_markdown_lines(&markdown, None)
         .into_iter()
         .flat_map(|l| l.spans.into_iter())
-        .find(|s| matches!(s.hint, agnt_core::transcript::ir::StyleHint::MdBold))
+        .find(|s| matches!(s.hint, agnt_render::transcript::ir::StyleHint::MdBold))
         .ok_or("should have MdBold span")?;
     assert_eq!(bold.text, "world");
 

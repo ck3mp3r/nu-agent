@@ -1,8 +1,6 @@
-use serde_json::Value as JsonValue;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use super::builtin_kinds::BuiltinKind;
 use super::edit::EditTool;
 use super::glob::GlobTool;
 use super::grep::GrepTool;
@@ -17,11 +15,12 @@ use super::tmux_window::TmuxWindowTool;
 use super::tree_sitter::{AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool};
 use super::{ToolHandlerError, execution_error_for_kind};
 use crate::bus::Bus;
-use crate::protocol::event::ToolDisplay;
 use crate::tools::limits::truncate_tool_output;
 use crate::types::ToolDefinition;
+use agnt_kernel::BuiltinKind;
 use rig::tool::server::ToolServerHandle;
 use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
+use serde_json::Value as JsonValue;
 
 pub trait BuiltinTool: Sized {
     const NAME: &'static str;
@@ -32,12 +31,11 @@ pub trait BuiltinTool: Sized {
     ) -> impl std::future::Future<Output = Result<JsonValue, ToolHandlerError>> + Send;
 }
 
-/// Tools that produce a pre-execution preview display. `EditTool` returns
-/// `Some` with `ContentKind::Diff`; `NuTool` returns `Some` with
-/// `ContentKind::Code`; all other tools use the default (`None`). The
-/// preview is shown at the permission gate before the tool runs.
+/// Tools whose pre-execution preview needs IO nobody else can do. `EditTool`
+/// returns the proposed diff; every other tool's preview is derived from its
+/// arguments by the surface, so it keeps the default (`None`).
 pub trait Previewable: BuiltinTool {
-    fn preview(args: &JsonValue, cwd: &Path) -> Option<ToolDisplay> {
+    fn preview(args: &JsonValue, cwd: &Path) -> Option<String> {
         let _ = (args, cwd);
         None
     }

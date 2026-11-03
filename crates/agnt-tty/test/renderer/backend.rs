@@ -2,13 +2,13 @@
 //! gate, the measure/render contract, and wrap parity with the plain backend.
 
 use agnt_core::protocol::events::ToolCall;
-use agnt_core::transcript::entry::{
+use agnt_render::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
-use agnt_core::transcript::ir::{
+use agnt_render::transcript::ir::{
     ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
 };
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
 use agnt_render::{Gallery, PlainBackend, RenderBackend, RowRect, Theme};
 
 use crate::renderer::backend::TtyBackend;

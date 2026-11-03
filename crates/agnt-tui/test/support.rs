@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::tool_view::ToolView;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 use crate::state::{ActivePicker, AppState, CommandPaletteAction, PickerOption, PickerPayload};
 
@@ -9,7 +10,7 @@ use crate::state::{ActivePicker, AppState, CommandPaletteAction, PickerOption, P
 pub(crate) fn entry_text(entry: &TranscriptEntry) -> String {
     match entry {
         TranscriptEntry::Message(message) => message.markdown.clone(),
-        TranscriptEntry::Tool(tool) => agnt_render::call_line::render_for(&tool.call),
+        TranscriptEntry::Tool(tool) => tool.call.call_line(),
         TranscriptEntry::Task(task) => format!("{} · {}", task.name, task.summary),
         TranscriptEntry::Notice(notice) => notice.text.clone(),
         TranscriptEntry::Banner(banner) => banner.text.clone(),
@@ -18,7 +19,7 @@ pub(crate) fn entry_text(entry: &TranscriptEntry) -> String {
 
 pub(crate) fn markdown_fixture(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../agnt-core/src/fixtures/markdown")
+        .join("../agnt-render/src/fixtures/markdown")
         .join(name);
     std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(

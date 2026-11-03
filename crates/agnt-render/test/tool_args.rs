@@ -1,7 +1,7 @@
 //! Direct tests for the call-line functions: the JSON fallback summary and the
 //! plain-text form.
 
-use super::tool_args::{call_line_from_json, plain_call_text};
+use super::{call_line_from_json, plain_call_text};
 
 /// The fallback summary is the arrow plus the normalized arguments.
 #[test]

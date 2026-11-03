@@ -4,7 +4,6 @@ use nu_protocol::Span;
 use serde_json::json;
 
 use super::*;
-use crate::transcript::ir::ContentKind;
 use crate::types::{CallId, ToolCall, ToolFunction, ToolName};
 
 // Test-support nu_plugin::EngineInterface implementation. The real
@@ -38,20 +37,21 @@ fn make_tool_call(name: &str, arguments: serde_json::Value) -> Result<ToolCall> 
 }
 
 #[test]
-fn test_pre_authorize_tool_call_nu_table() -> Result<()> {
-    // -- Setup & Fixtures
-    let cases: Vec<(&str, serde_json::Value, Option<&str>)> = vec![
+fn test_pre_authorize_tool_call_nu_carries_no_producer_preview() -> Result<()> {
+    // -- Setup & Fixtures: a nu call whose command is in the arguments. The
+    // code block a gate card shows is derived by the surface from that
+    // command, so the producer owes no preview for it.
+    let cases: Vec<(&str, serde_json::Value)> = vec![
         (
-            "string command produces a code preview",
+            "string command",
             json!({"command": "ls | where size > 1mb"}),
-            Some("ls | where size > 1mb"),
         ),
-        ("missing command defaults", json!({}), None),
-        ("non-string command defaults", json!({"command": 42}), None),
+        ("missing command", json!({})),
+        ("non-string command", json!({"command": 42})),
     ];
 
     // -- Exec & Check
-    for (name, arguments, expected_command) in cases {
+    for (name, arguments) in cases {
         let tool_call = make_tool_call("nu", arguments)?;
         let output = pre_authorize_tool_call(
             &tool_call,
@@ -61,41 +61,14 @@ fn test_pre_authorize_tool_call_nu_table() -> Result<()> {
             },
         );
 
-        match expected_command {
-            Some(command) => {
-                let display = output
-                    .display
-                    .ok_or("nu with a command must produce a pre-authorize display")?;
-                assert_eq!(display.title, None, "case '{name}': title");
-                let section = display.sections.first().ok_or("should have one section")?;
-                assert_eq!(
-                    section.kind,
-                    ContentKind::Code {
-                        language: "nu".to_string()
-                    },
-                    "case '{name}': section kind"
-                );
-                assert_eq!(section.content, command, "case '{name}': section content");
-                let ask_display = output
-                    .ask_context
-                    .pre_authorize_display
-                    .ok_or("nu must populate ask_context.pre_authorize_display")?;
-                assert_eq!(
-                    ask_display, display,
-                    "case '{name}': ask display mirrors display"
-                );
-            }
-            None => {
-                assert!(
-                    output.display.is_none(),
-                    "case '{name}': display must be None"
-                );
-                assert!(
-                    output.ask_context.pre_authorize_display.is_none(),
-                    "case '{name}': ask_context must stay empty"
-                );
-            }
-        }
+        assert!(
+            output.preview.is_none(),
+            "case '{name}': nu carries no producer preview"
+        );
+        assert!(
+            output.ask_context.preview.is_none(),
+            "case '{name}': the ask context carries none either"
+        );
     }
     Ok(())
 }
@@ -120,10 +93,10 @@ fn test_pre_authorize_tool_call_edit_path_unchanged_missing_command() -> Result<
 
     // -- Check
     assert!(
-        output.display.is_none(),
+        output.preview.is_none(),
         "edit path behavior must stay unchanged (no preview for a non-applicable edit)"
     );
-    assert!(output.ask_context.pre_authorize_display.is_none());
+    assert!(output.ask_context.preview.is_none());
     Ok(())
 }
 
@@ -146,11 +119,11 @@ fn test_pre_authorize_tool_call_source_defaults_table() -> Result<()> {
             },
         );
         assert!(
-            output.display.is_none(),
+            output.preview.is_none(),
             "case '{name}': display must be None"
         );
         assert!(
-            output.ask_context.pre_authorize_display.is_none(),
+            output.ask_context.preview.is_none(),
             "case '{name}': ask_context must stay empty"
         );
     }
@@ -249,90 +222,37 @@ fn test_pre_authorize_fs_tool_edit_preview_table() -> Result<()> {
 
         match case.expected_diff {
             Some((removed, added)) => {
-                let display = output
-                    .display
-                    .ok_or("a valid edit plan must produce a pre-authorize display")?;
-                let section = display.sections.first().ok_or("should have one section")?;
+                let preview = output
+                    .preview
+                    .ok_or("a valid edit plan must produce the proposed diff")?;
                 assert!(
-                    matches!(section.kind, ContentKind::Diff { .. }),
-                    "case '{}': section kind must be Diff, got {:?}",
-                    case.name,
-                    section.kind
+                    preview.contains(removed) && preview.contains(added),
+                    "case '{}': diff must contain {removed} and {added}, got: {preview:?}",
+                    case.name
                 );
-                assert!(
-                    section.content.contains(removed) && section.content.contains(added),
-                    "case '{}': diff must contain {removed} and {added}, got: {:?}",
-                    case.name,
-                    section.content
-                );
-                let ask_display = output
+                let ask_preview = output
                     .ask_context
-                    .pre_authorize_display
-                    .ok_or("edit apply must populate ask_context.pre_authorize_display")?;
+                    .preview
+                    .ok_or("edit apply must populate ask_context.preview")?;
                 assert_eq!(
-                    ask_display, display,
-                    "case '{}': ask display mirrors display",
+                    ask_preview, preview,
+                    "case '{}': the ask context mirrors the preview",
                     case.name
                 );
             }
             None => {
                 assert!(
-                    output.display.is_none(),
-                    "case '{}': no diff to approve; pre-authorize must produce no display",
+                    output.preview.is_none(),
+                    "case '{}': no diff to approve; pre-authorize must produce no preview",
                     case.name
                 );
                 assert!(
-                    output.ask_context.pre_authorize_display.is_none(),
+                    output.ask_context.preview.is_none(),
                     "case '{}': ask_context must stay empty",
                     case.name
                 );
             }
         }
-    }
-    Ok(())
-}
-
-#[test]
-fn test_tool_display_from_arguments_nu_command() -> Result<()> {
-    // -- Setup & Fixtures
-    let cwd = PathBuf::from("/tmp");
-
-    // -- Exec
-    let display = tool_display_from_arguments("nu", r#"{"command":"ls"}"#, &cwd)
-        .ok_or("nu with a command must produce a display")?;
-
-    // -- Check
-    assert_eq!(display.title, None, "title");
-    assert_eq!(display.sections.len(), 1, "must have exactly one section");
-    let section = display.sections.first().ok_or("should have one section")?;
-    assert_eq!(
-        section.kind,
-        ContentKind::Code {
-            language: "nu".to_string()
-        },
-        "section kind"
-    );
-    assert_eq!(section.content, "ls", "section content");
-    Ok(())
-}
-
-#[test]
-fn test_tool_display_from_arguments_none_table() -> Result<()> {
-    // -- Setup & Fixtures
-    let cwd = PathBuf::from("/tmp");
-    let cases = [
-        ("non-builtin name", "not_a_builtin", r#"{"command":"ls"}"#),
-        ("unparseable json", "nu", "not json"),
-        ("non-object json", "nu", "[1, 2]"),
-    ];
-
-    // -- Exec & Check
-    for (name, tool_name, arguments_json) in cases {
-        let display = tool_display_from_arguments(tool_name, arguments_json, &cwd);
-        assert!(
-            display.is_none(),
-            "case '{name}': display must be None, got {display:?}"
-        );
     }
     Ok(())
 }

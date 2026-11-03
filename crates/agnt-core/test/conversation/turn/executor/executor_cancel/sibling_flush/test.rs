@@ -108,8 +108,9 @@ enum FlushEvent {
     Started(String),
     Preview {
         tool_key: String,
-        content: String,
-        language: String,
+        /// The content only the producer can compute; `None` when the gate had
+        /// none to give. How it is drawn is the surface's business.
+        content: Option<String>,
     },
     Completed {
         name: String,
@@ -123,18 +124,10 @@ enum FlushEvent {
 fn flush_event(event: &SystemEvent) -> Option<FlushEvent> {
     match event {
         SystemEvent::ToolStarted { call } => Some(FlushEvent::Started(call.name.0.clone())),
-        SystemEvent::PreviewRequested { call, display } => {
-            let section = display.sections.first()?;
-            let language = match &section.kind {
-                crate::transcript::ir::ContentKind::Code { language } => language.clone(),
-                _ => String::new(),
-            };
-            Some(FlushEvent::Preview {
-                tool_key: call.id.as_str().to_string(),
-                content: section.content.clone(),
-                language,
-            })
-        }
+        SystemEvent::PreviewRequested { call, preview } => Some(FlushEvent::Preview {
+            tool_key: call.id.as_str().to_string(),
+            content: preview.clone(),
+        }),
         SystemEvent::ToolCompleted { call, outcome } => Some(FlushEvent::Completed {
             name: call.name.0.clone(),
             success: outcome.success,

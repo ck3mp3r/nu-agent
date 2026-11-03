@@ -1,8 +1,8 @@
 use crate::state::*;
 use agnt_core::protocol::event::PermissionDecision;
 use agnt_core::protocol::events::ToolCall;
-use agnt_core::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
-use agnt_core::transcript::ir::{MessageRole, ToolName};
+use agnt_render::transcript::entry::{MessageEntry, ToolEntry, ToolKind, TranscriptEntry};
+use agnt_render::transcript::ir::{MessageRole, ToolName};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -39,7 +39,7 @@ fn push_tool_entry(state: &mut AppState, arguments: &str) {
         call,
         preview: None,
         result: None,
-        status: agnt_core::transcript::renderer::ItemStatus::Done,
+        status: agnt_render::transcript::renderer::ItemStatus::Done,
     });
     state.transcript.push_entry(entry);
 }

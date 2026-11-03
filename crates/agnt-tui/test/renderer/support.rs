@@ -4,13 +4,13 @@
 //! buffer, so the assertions name pixels, not intermediate line types.
 
 use agnt_core::protocol::events::ToolCall;
-use agnt_core::transcript::entry::{
+use agnt_render::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
-use agnt_core::transcript::ir::{
+use agnt_render::transcript::ir::{
     ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
 };
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
 use agnt_render::{Color, RenderBackend, RowRect, Theme};
 
 use crate::widgets::RatatuiBackend;

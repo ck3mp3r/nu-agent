@@ -288,6 +288,16 @@ These laws bind every crate; they record the architecture rulings D2/D7/D8/D11 p
 - ❌ NO: rendered lines, display blocks, preview blobs, style/layout hints, or call-line summaries inside records and data types (kernel or adapter layer).
 - ✅ YES: data granular enough that a consumer which has never seen the producer's code derives every display state from the record's presence + content: identity (stable, derived handles), classification (enumerated kind), payload (raw arguments, result text, deltas, counts), enumerated disposition, causal anchors, order. The record's variant IS the display instruction; how to render it is the consumer's business.
 
+**A producer ships data; the drawer derives the display.**
+- ❌ NO: a rendered payload built by the producer and carried outward — a display block, a section list, stats rows, a language tag, a preview a surface only has to paste. A type that exists so producer and drawer can share a picture is the defect, and moving it to a third crate is not a fix: there is no crate both may see, and that is the design saying the payload is wrong.
+- ✅ YES: the producer emits its own result data (the tool's payload) plus the enumerated disposition; the layer that draws owns `Section`, `ContentKind`, `DisplayStats` and derives them from that payload. A tool is identity, input, output, and a possible side effect — nothing about it is drawn.
+- ✅ YES: the drawer's vocabulary lives in the drawer. When two crates each need a shape, they each own one and the seam converts between them; the kernel is for what is genuinely shared and data — identity and enumerated classification.
+
+**One dispatch, then methods.**
+- ❌ NO: a bare free function that takes a name or a kind and matches to pick behaviour — `tool_display_from_result(name, payload)`, `render_for(call)` over a `match kind`. Every call site re-decides what the type already knew.
+- ✅ YES: resolve the implementation once, at construction (`view_for(call)`), then call methods on the value being passed around (`view.sections(payload)`). Adding a tool is `struct XView; impl Trait for XView` plus one table row; nothing downstream learns a new branch.
+- ✅ YES: the single match is construction, not a recurring switch. A lookup table mapping identity to an implementation is data; a function that re-matches on every call is not.
+
 **No string sniffing, ever.**
 - ❌ NO: deciding behavior by parsing text — `reason.starts_with(PREFIX)`, suffix checks, pattern matches over message/result strings, sentinel strings.
 - ✅ YES: the producer that knows a distinction emits an enum variant (`StopCause::DoomLoop`, `ToolStatus::Cancelled`); text fields are content for display only. A distinction no consumer acts on does not get an enum.

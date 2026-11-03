@@ -1,9 +1,9 @@
 //! Lane gutters: the marker slot, its spacing, and the rail's continuity.
 
 use super::support::*;
-use agnt_core::transcript::ir::{MessageRole, NoticeKind};
-use agnt_core::transcript::renderer::ItemStatus;
 use agnt_render::catalog::LaneKind;
+use agnt_render::transcript::ir::{MessageRole, NoticeKind};
+use agnt_render::transcript::renderer::ItemStatus;
 
 use crate::widgets::RatatuiBackend;
 

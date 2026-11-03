@@ -53,7 +53,6 @@ fn hydrated_call_does_not_steal_finish_from_later_live_call_with_same_key() -> R
                 success: true,
                 status: ToolStatus::Success,
                 result: "contents".to_string(),
-                display: None,
                 error_kind: None,
                 message: None,
             },
@@ -96,17 +95,6 @@ fn hydrated_not_run_row_renders_cancelled_with_the_gate_preview() -> Result<()> 
                     Some(false),
                 )
                 .with_tool_status(ToolStatus::Cancelled),
-            UiMessageSnapshot::new("tool_display", String::new()).with_tool_display(ToolDisplay {
-                title: None,
-                sections: vec![ToolDisplaySection {
-                    label: None,
-                    kind: ContentKind::Code {
-                        language: "nu".to_string(),
-                    },
-                    content: "ls | sort".to_string(),
-                    stats: None,
-                }],
-            }),
         ],
         None,
     );
@@ -173,19 +161,6 @@ fn hydrated_cancelled_census_keeps_the_gate_preview_for_every_shape() -> Result<
                         Some(false),
                     )
                     .with_tool_status(ToolStatus::Cancelled),
-                UiMessageSnapshot::new("tool_display", String::new()).with_tool_display(
-                    ToolDisplay {
-                        title: None,
-                        sections: vec![ToolDisplaySection {
-                            label: None,
-                            kind: ContentKind::Code {
-                                language: "nu".to_string(),
-                            },
-                            content: "ls | sort".to_string(),
-                            stats: None,
-                        }],
-                    },
-                ),
             ],
             None,
         );
@@ -213,14 +188,22 @@ fn hydrated_cancelled_census_keeps_the_gate_preview_for_every_shape() -> Result<
     );
 
     // -- Check: the wave's replay rule, not the retired hydration-only Unknown:
-    // a completion carries a verdict, and no display is invented.
+    // a completion carries a verdict, the gate card is derived from the call's
+    // own arguments, and no completion body is invented.
     let entry = tool_entry_at(&unanswered, 0)?;
     assert_eq!(
         entry.status,
         ItemStatus::Failed,
         "no verdict is not a success"
     );
-    assert!(entry.preview.is_none(), "nothing to show");
+    let card = entry
+        .preview
+        .as_ref()
+        .ok_or("the nu card derives from the call's arguments")?;
+    assert!(
+        display_lines(card).contains("ls"),
+        "the card carries the command"
+    );
     assert!(entry.result.is_none(), "no completion body");
     Ok(())
 }

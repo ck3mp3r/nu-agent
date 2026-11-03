@@ -73,22 +73,15 @@ fn hydrate_multi_call_turn_pairs_display_with_owning_call() {
     // -- Exec
     let snapshots = hydrate(&entries, std::path::Path::new("."));
 
-    // -- Check
+    // -- Check: one snapshot per call, in call order. The display is derived by
+    // the surface from each row's data, so the fold carries no display rows.
     let roles: Vec<&str> = snapshots.iter().map(|snapshot| snapshot.role()).collect();
     assert_eq!(
         roles,
-        vec!["tool", "tool_display", "tool", "tool"],
-        "the nu display must dock under its own call, before the get_task rows"
+        vec!["tool", "tool", "tool"],
+        "the nu call keeps its place ahead of the get_task rows"
     );
-    let display_content = snapshots[1]
-        .tool_display()
-        .and_then(|display| display.sections.first())
-        .map(|section| section.content.as_str());
-    assert_eq!(
-        display_content,
-        Some("ls"),
-        "the display under the nu call must be its command preview"
-    );
+    assert_eq!(snapshots[0].tool_name(), Some("nu"));
 }
 
 /// Every display-yielding call in one assistant message interleaves with its
@@ -105,34 +98,22 @@ fn hydrate_multi_call_turn_interleaves_every_display() {
     // -- Exec
     let snapshots = hydrate(&entries, std::path::Path::new("."));
 
-    // -- Check
+    // -- Check: one snapshot per call, in call order. The fold carries data; the
+    // surface derives each display from the call it belongs to.
     let roles: Vec<&str> = snapshots.iter().map(|snapshot| snapshot.role()).collect();
     assert_eq!(
         roles,
-        vec![
-            "tool",
-            "tool_display",
-            "tool",
-            "tool_display",
-            "tool",
-            "tool_display"
-        ],
-        "each display must follow its own tool snapshot"
+        vec!["tool", "tool", "tool"],
+        "one row per call, in call order"
     );
-    let display_contents: Vec<Option<&str>> = snapshots
+    let names: Vec<Option<&str>> = snapshots
         .iter()
-        .filter(|snapshot| snapshot.role() == "tool_display")
-        .map(|snapshot| {
-            snapshot
-                .tool_display()
-                .and_then(|display| display.sections.first())
-                .map(|section| section.content.as_str())
-        })
+        .map(|snapshot| snapshot.tool_name())
         .collect();
     assert_eq!(
-        display_contents,
-        vec![Some("ls"), Some("pwd"), Some("date")],
-        "displays must follow call order"
+        names,
+        vec![Some("nu"), Some("nu"), Some("nu")],
+        "every call keeps its own identity"
     );
 }
 

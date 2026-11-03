@@ -8,10 +8,11 @@ use crate::{
 };
 use agnt_core::protocol::contracts::SharedUiAction;
 use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
-use agnt_core::protocol::events::{Key, SystemEvent, SystemKind};
+use agnt_core::protocol::events::{Key, SystemEvent, SystemKind, ToolCall};
 use agnt_core::protocol::slash::{SlashParseResult, extract_session_id, parse_slash_command};
-use agnt_core::transcript::entry::{NoticeEntry, TranscriptEntry};
-use agnt_core::transcript::ir::NoticeKind;
+use agnt_core::tools::handler::ToolSource;
+use agnt_render::transcript::entry::{NoticeEntry, TranscriptEntry};
+use agnt_render::transcript::ir::NoticeKind;
 
 use std::time::Instant;
 
@@ -94,8 +95,10 @@ fn reduce_event(
             &reason,
         ),
         SystemEvent::ToolStarted { call } => state.tool.start_call(&mut state.transcript, &call),
-        SystemEvent::PreviewRequested { call, display } => {
-            let display = crate::state::preview_to_display(&display);
+        SystemEvent::PreviewRequested { call, preview } => {
+            let Some(display) = crate::state::preview_to_display(&call, preview.as_deref()) else {
+                return false;
+            };
             state
                 .tool
                 .set_tool_preview(&mut state.transcript, &call.id, &display)
@@ -820,17 +823,22 @@ fn handle_escape_confirm(
     false
 }
 
-/// Attach a permission request's pre-authorize display to the pending call it
-/// refers to. The request carries the exact call key, so the pending call is
-/// matched byte-for-byte; a decorated display name never equals a key.
+/// Attach a permission request's preview to the pending call it refers to. The
+/// request carries the exact call key — `{name}\n{arguments}` — so the card is
+/// derived from the same two facts the live path uses; a decorated display name
+/// never equals a key and is never matched.
 pub(crate) fn apply_permission_request_display(
     state: &mut AppState,
     context: &PermissionRequestContext,
 ) {
-    let Some(display) = &context.pre_authorize_display else {
+    let (name, arguments) = context
+        .tool_key
+        .split_once('\n')
+        .unwrap_or((context.tool_key.as_str(), ""));
+    let call = ToolCall::new(name, ToolSource::Unknown, arguments);
+    let Some(display) = crate::state::preview_to_display(&call, context.preview.as_deref()) else {
         return;
     };
-    let display = crate::state::preview_to_display(display);
     state
         .tool
         .set_preview_for_key(&mut state.transcript, &context.tool_key, &display);

@@ -25,10 +25,10 @@ use crate::tools::authz::{
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::{
     AuthorizationFlowContext, AuthzOutcome, McpToolRegistry, ToolSource,
-    builtin_kinds::BuiltinKind, enforce_authorization_for_tool_call, pre_authorize_fs_tool,
+    enforce_authorization_for_tool_call, pre_authorize_fs_tool,
 };
-use crate::transcript::ir;
 use crate::types::{CallId, ToolCall, ToolFunction, ToolName};
+use agnt_kernel::BuiltinKind;
 
 pub(crate) fn resolve_tool_source(
     name: &str,
@@ -126,7 +126,7 @@ fn summarize_ask_payload(args: &JsonValue) -> String {
 /// render registry, so the call line comes from the built-in fallback. The TUI
 /// matches the preview to its pending call by `ToolCallId` only.
 fn event_call(tool_name: &str, source: ToolSource, arguments: &str) -> EventToolCall {
-    EventToolCall::new(ir::ToolName(tool_name.to_string()), source, arguments)
+    EventToolCall::new(tool_name.to_string(), source, arguments)
 }
 
 /// Publish the policy-resolved-without-prompting event for `outcome`.
@@ -295,7 +295,7 @@ impl AskApprovalHook for AskContextCapture {
         ask_context: &AskContext,
     ) -> AskChoice {
         self.was_called = true;
-        let call_id = ToolCallId::of(tool_name, &self.raw_arguments);
+        let call_id = ToolCallId::new(tool_name, &self.raw_arguments);
         self.captured_context = Some(PermissionRequestContext {
             tool: display_tool_name(tool_name, args),
             tool_key: call_id.as_str().to_string(),
@@ -309,7 +309,7 @@ impl AskApprovalHook for AskContextCapture {
             target_field: decision.matched_rule.target_field.clone(),
             pattern: decision.matched_rule.pattern.clone(),
             summary: summarize_ask_payload(args),
-            pre_authorize_display: ask_context.pre_authorize_display.clone(),
+            preview: ask_context.preview.clone(),
         });
         self.captured_auth_decision = Some(decision.clone());
         // AskContextCapture only captures context for the TUI oneshot flow.
@@ -344,7 +344,7 @@ pub struct InteractivePermissionResolver {
     /// `std::env::current_dir()` is the plugin process cwd, which is frozen at
     /// plugin spawn and diverges from the Nushell session cwd after a `cd`.
     cwd: std::path::PathBuf,
-    /// Keys (`ToolCallId::of(tool_name, arguments)`) for which a pre-authorize
+    /// Keys (`ToolCallId::new(tool_name, arguments)`) for which a pre-authorize
     /// preview was published to the user during `resolve()`. Consumed (removed)
     /// by [`AsyncPermissionResolver::take_previewed`] once `HookChain` checks
     /// it, so `on_outcome` never attaches the same display twice.
@@ -489,18 +489,25 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                         // Only UIs that render previews (the TUI) get this. A
                         // UI that drops `ToolPreview` (ACP) must keep the
                         // completion display, so nothing is recorded for it.
-                        if renders_tool_previews
-                            && let Some(display) = flow_context.ask_context.pre_authorize_display
-                        {
+                        // Auto-approved: the user never sees a prompt, so the
+                        // preview signal built above has no other way to reach
+                        // the UI. Publish it and record the key so
+                        // `take_previewed` suppresses the completion copy. The
+                        // event carries only content a surface cannot derive.
+                        //
+                        // Only UIs that render previews (the TUI) get this. A
+                        // UI that drops `ToolPreview` (ACP) must keep the
+                        // completion display, so nothing is recorded for it.
+                        if renders_tool_previews && flow_context.ask_context.shows_preview {
                             previewed
                                 .lock()
                                 .expect("previewed lock")
-                                .insert(ToolCallId::of(&tool_name, &arguments));
+                                .insert(ToolCallId::new(&tool_name, &arguments));
                             let _ = bus
                                 .ui_event()
                                 .send(SystemEvent::PreviewRequested {
                                     call: event_call(&tool_name, source, &arguments),
-                                    display,
+                                    preview: flow_context.ask_context.preview.clone(),
                                 })
                                 .await;
                         }
@@ -511,7 +518,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 // Policy said Ask — publish event on the bus and await user decision.
                 // The request's key is the call id: the same typed value the
                 // previewed set keys on below.
-                let call_id = ToolCallId::of(&tool_name, &arguments);
+                let call_id = ToolCallId::new(&tool_name, &arguments);
                 let context =
                     capture_hook
                         .captured_context
@@ -525,16 +532,15 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                             target_field: None,
                             pattern: "*".to_string(),
                             summary: "→".to_string(),
-                            pre_authorize_display: None,
+                            preview: None,
                         });
 
-                // A preview was shown to the user for this exact call iff
-                // `pre_authorize_display` is populated here AND the UI renders
-                // previews. Record it now, synchronously, in the same call chain
-                // that will later ask `take_previewed` — no cross-channel event
-                // ordering involved. A UI that drops `ToolPreview` (ACP) records
-                // nothing, so the completion display is preserved.
-                if renders_tool_previews && context.pre_authorize_display.is_some() {
+                // A preview is shown for this exact call whenever the UI renders
+                // previews: the card is the surface's derivation from the call, and
+                // the context adds only the content a surface cannot compute.
+                // Recorded synchronously in the same call chain that later asks
+                // `take_previewed`, so no cross-channel event ordering is involved.
+                if renders_tool_previews && flow_context.ask_context.shows_preview {
                     previewed.lock().expect("previewed lock").insert(call_id);
                 }
 
@@ -665,7 +671,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
         self.previewed
             .lock()
             .expect("previewed lock")
-            .remove(&ToolCallId::of(tool_name, arguments))
+            .remove(&ToolCallId::new(tool_name, arguments))
     }
 }
 

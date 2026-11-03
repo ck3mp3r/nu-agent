@@ -35,7 +35,7 @@ use agnt_core::protocol::events::Key;
 use agnt_core::protocol::events::SystemEvent;
 use agnt_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
 use agnt_core::tools::mcp::runtime::McpServerLifecycle;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
 
 /// The runtime coordinator that owns the TUI application state and the render
 /// bookkeeping for the interactive render loop.
@@ -863,7 +863,7 @@ impl RuntimeCoordinator {
             || self.state.transcript.entries().iter().any(|entry| {
                 matches!(
                     entry,
-                    agnt_core::transcript::entry::TranscriptEntry::Tool(tool)
+                    agnt_render::transcript::entry::TranscriptEntry::Tool(tool)
                         if tool.status == ItemStatus::InProgress
                 )
             })

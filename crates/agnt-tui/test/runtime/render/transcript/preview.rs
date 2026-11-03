@@ -1,9 +1,9 @@
 use super::*;
 
 use agnt_core::protocol::contracts::UiMessageSnapshot;
-use agnt_core::protocol::event::{ToolDisplay, ToolDisplaySection};
 use agnt_core::session::tool_status::ToolStatus;
 use agnt_render::RenderBackend;
+use agnt_render::transcript::ir::{Display, DisplaySection};
 
 use crate::widgets::RatatuiBackend;
 
@@ -168,35 +168,18 @@ fn test_transcript_preview_hydrated_rows_paint_the_gate_band_per_status() -> Res
 
     for (label, status, glyph) in cases {
         let mut coord = RuntimeCoordinator::new(40, 8, None);
-        let snapshot = UiMessageSnapshot::new("tool", "→ ⏱ 120s")
+        let snapshot = UiMessageSnapshot::new("tool", "out")
             .with_tool_name("nu".to_string())
             .with_tool_details(
                 Some(r#"{"command":"ls | select name"}"#.to_string()),
-                None,
+                Some("out".to_string()),
                 Some(matches!(status, ToolStatus::Success)),
             )
             .with_tool_status(status);
 
-        // -- Exec: hydrate the pair, then render a viewport exactly as tall.
-        coord.hydrate_transcript_from_messages(
-            vec![
-                snapshot,
-                UiMessageSnapshot::new("tool_display", String::new()).with_tool_display(
-                    ToolDisplay {
-                        title: None,
-                        sections: vec![ToolDisplaySection {
-                            label: None,
-                            kind: ContentKind::Code {
-                                language: "nu".to_string(),
-                            },
-                            content: "ls | select name".to_string(),
-                            stats: None,
-                        }],
-                    },
-                ),
-            ],
-            None,
-        );
+        // -- Exec: hydrate the row, then render a viewport exactly as tall. The
+        // gate-preview band is derived from the call's own arguments.
+        coord.hydrate_transcript_from_messages(vec![snapshot], None);
         assert_eq!(
             coord.state.transcript.len(),
             1,

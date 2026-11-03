@@ -6,9 +6,9 @@
 //! task produces (a compaction's streamed summary) renders below it as its own
 //! entries. The line is pushed once and never rewritten; only the glyph moves.
 
-use agnt_core::transcript::entry::TaskEntry;
-use agnt_core::transcript::ir::ContentLine;
 use agnt_render::catalog::{CallLineRow, LaneKind, LaneLine};
+use agnt_render::transcript::entry::TaskEntry;
+use agnt_render::transcript::ir::ContentLine;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 

@@ -219,13 +219,13 @@ fn started_arguments(events: &[SystemEvent], name: &str) -> Option<String> {
     })
 }
 
-/// The `(tool_key, display)` pairs of every `ToolPreview` the turn published.
-fn previews(events: &[SystemEvent]) -> Vec<(String, crate::protocol::event::ToolDisplay)> {
+/// The `(tool_key, preview)` pairs of every `ToolPreview` the turn published.
+fn previews(events: &[SystemEvent]) -> Vec<(String, Option<String>)> {
     events
         .iter()
         .filter_map(|event| match event {
-            SystemEvent::PreviewRequested { call, display } => {
-                Some((call.id.as_str().to_string(), display.clone()))
+            SystemEvent::PreviewRequested { call, preview } => {
+                Some((call.id.as_str().to_string(), preview.clone()))
             }
             _ => None,
         })
@@ -266,15 +266,18 @@ async fn on_dispatch_deny_arm_emits_preview_for_previewable_call() -> Result<()>
         "the deny branch must publish the preview between Started and Completed"
     );
 
-    // -- Check: the preview carries the flush path's event shape.
+    // -- Check: the preview carries the diff the gate computed, as data.
     let started_args = started_arguments(&events, "edit")
         .ok_or("the denied call must publish ToolStarted with its arguments")?;
-    let expected = crate::tools::handler::tool_display_from_arguments(
-        "edit",
-        &started_args,
+    let args: serde_json::Value = serde_json::from_str(&started_args)?;
+    let expected = crate::tools::handler::pre_authorize_fs_tool(
+        Some(agnt_kernel::BuiltinKind::Edit),
+        args.as_object()
+            .ok_or("the fixture args must be a JSON object")?,
         std::path::Path::new("/tmp"),
     )
-    .ok_or("the fixture args must form a valid apply-mode preview")?;
+    .ok_or("the fixture args must form a valid apply-mode preview")?
+    .preview;
     let previews = previews(&events);
     assert_eq!(
         previews.len(),

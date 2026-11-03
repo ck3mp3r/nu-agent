@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use agnt_core::orchestrator::{OrchestratorEvent, UiRequest, UiStateEvent};
 use agnt_core::protocol::contracts::SharedUiAction;
-use agnt_core::transcript::entry::{BannerEntry, TranscriptEntry};
+use agnt_render::transcript::entry::{BannerEntry, TranscriptEntry};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 

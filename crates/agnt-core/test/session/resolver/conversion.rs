@@ -70,7 +70,10 @@ fn test_convert_tool_call() {
     let snapshots = convert_rig_messages_to_snapshots(&messages);
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");
-    assert!(snapshots[0].content().starts_with("→ "));
+    assert!(
+        !snapshots[0].content().starts_with("→ "),
+        "the snapshot carries result data, not a derived call line"
+    );
     assert_eq!(snapshots[0].tool_name(), Some("read_file"));
     assert!(snapshots[0].tool_arguments().is_some());
     assert_eq!(
@@ -92,7 +95,10 @@ fn test_convert_tool_call() {
     let snapshots = convert_rig_messages_to_snapshots(&messages);
     assert_eq!(snapshots.len(), 1);
     assert_eq!(snapshots[0].role(), "tool");
-    assert!(snapshots[0].content().starts_with("→ "));
+    assert!(
+        !snapshots[0].content().starts_with("→ "),
+        "the snapshot carries result data, not a derived call line"
+    );
     assert_eq!(snapshots[0].tool_name(), Some("k8s__list_pods"));
     let args = snapshots[0].tool_arguments().unwrap();
     assert!(args.contains("namespace"));
@@ -113,9 +119,10 @@ fn test_convert_tool_call() {
     let snapshots = convert_rig_messages_to_snapshots(&messages);
     assert_eq!(snapshots.len(), 1);
     let content = snapshots[0].content();
-    assert!(content.starts_with("→ "));
-    assert_eq!(snapshots[0].tool_name(), Some("write_file"));
-    assert!(content.len() < 200, "summary must be truncated");
+    assert!(
+        content.is_empty(),
+        "the row carries result data only; the call line is derived"
+    );
     let args = snapshots[0].tool_arguments().unwrap();
     assert!(args.contains(&long_content));
 }
@@ -140,7 +147,10 @@ fn test_convert_mixed_assistant_content() {
     assert_eq!(snapshots[0].role(), "assistant");
     assert_eq!(snapshots[0].content(), "Let me help you.");
     assert_eq!(snapshots[1].role(), "tool");
-    assert!(snapshots[1].content().starts_with("→ "));
+    assert!(
+        snapshots[1].content().is_empty(),
+        "the row carries result data only; the call line is derived"
+    );
     assert_eq!(snapshots[1].tool_name(), Some("get_weather"));
 }
 

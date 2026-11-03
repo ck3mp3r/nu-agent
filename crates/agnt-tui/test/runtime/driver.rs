@@ -26,8 +26,8 @@ use crate::interaction::input::TerminalEvent;
 use crate::interactive::run_render_loop;
 use crate::runtime::RuntimeCoordinator;
 use crate::state::AppState;
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::renderer::ItemStatus;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -373,7 +373,7 @@ async fn render_loop_driver_routes_tool_event_through_bus_ui_event_arm() -> Resu
         .advance(&[DriveEvent::SystemEvent(Box::new(
             SystemEvent::ToolStarted {
                 call: agnt_core::protocol::events::ToolCall::new(
-                    agnt_core::transcript::ir::ToolName("sentinel_tool".to_string()),
+                    agnt_render::transcript::ir::ToolName("sentinel_tool".to_string()),
                     agnt_core::tools::handler::ToolSource::Mcp,
                     "{}",
                 ),

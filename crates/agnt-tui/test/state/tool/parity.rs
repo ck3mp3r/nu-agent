@@ -3,12 +3,11 @@ use super::*;
 use crate::runtime::RuntimeCoordinator;
 use agnt_core::session::resolver::{StoredEntry, hydrate_transcript_messages};
 use agnt_core::session::tool_status::{ToolStatus, ToolStatusMap};
-use agnt_core::tools::handler::tool_display_from_arguments;
-use agnt_core::transcript::entry::TranscriptEntry;
 use agnt_core::types::{
     AssistantContent, AssistantMessage, CallId, Message, Text, ToolCall, ToolFunction, ToolName,
     ToolResult, ToolResultContent, UserContent,
 };
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// The determinism pin, per variant: a call's row has one shape whether the
 /// live event plane finished it or the store replayed it. For each of the
@@ -124,32 +123,29 @@ fn entry_status(entry: &TranscriptEntry) -> Option<ItemStatus> {
 fn live_entries(
     tool: &str,
     arguments: &str,
-    cwd: &std::path::Path,
+    _cwd: &std::path::Path,
     status: ToolStatus,
     message: Option<&str>,
 ) -> Result<Vec<TranscriptEntry>> {
     let mut coordinator = RuntimeCoordinator::new(120, 30, Some(true));
     let call = || {
         agnt_core::protocol::events::ToolCall::new(
-            agnt_core::transcript::ir::ToolName(tool.to_string()),
+            agnt_render::transcript::ir::ToolName(tool.to_string()),
             agnt_core::tools::handler::ToolSource::Builtin,
             arguments,
         )
     };
     coordinator.reduce_system_event(SystemEvent::ToolStarted { call: call() });
-    if let Some(display) = tool_display_from_arguments(tool, arguments, cwd) {
-        coordinator.reduce_system_event(SystemEvent::PreviewRequested {
-            call: call(),
-            display,
-        });
-    }
+    coordinator.reduce_system_event(SystemEvent::PreviewRequested {
+        call: call(),
+        preview: None,
+    });
     coordinator.reduce_system_event(SystemEvent::ToolCompleted {
         call: call(),
         outcome: agnt_core::protocol::events::ToolOutcome {
             success: matches!(status, ToolStatus::Success),
             status,
             result: String::new(),
-            display: None,
             error_kind: None,
             message: message.map(str::to_string),
         },

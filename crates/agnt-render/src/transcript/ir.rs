@@ -1,5 +1,35 @@
-use crate::protocol::event::ToolDisplayStats;
-use serde::{Deserialize, Serialize};
+pub use agnt_kernel::ToolName;
+
+/// What kind of content a section carries. The drawer's own classification:
+/// how a section is projected and styled is this crate's business, not the
+/// producer's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContentKind {
+    Diff { language: String, path: String },
+    Code { language: String },
+    Plain,
+}
+
+impl ContentKind {
+    /// The language marker this content kind carries; empty for plain content.
+    pub fn language(&self) -> &str {
+        match self {
+            Self::Diff { language, .. } | Self::Code { language } => language,
+            Self::Plain => "",
+        }
+    }
+}
+
+/// The counters a display section reports, as the drawer reads them.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DisplayStats {
+    pub files_changed: Option<usize>,
+    pub insertions: Option<usize>,
+    pub deletions: Option<usize>,
+    pub diff_truncated: Option<bool>,
+    pub omitted_files: Option<usize>,
+    pub omitted_hunks: Option<usize>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageRole {
@@ -11,10 +41,6 @@ pub enum MessageRole {
 pub enum NoticeKind {
     System,
 }
-
-/// A tool's name. Newtype so tool identity stays typed at the block level.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolName(pub String);
 
 /// A pre-execution preview display (edit diff, nu code). Produced by
 /// `Previewable::preview()` on the tool type.
@@ -32,58 +58,30 @@ pub struct DisplaySection {
     pub stats: Option<DisplayStats>,
 }
 
-/// What kind of content a display section carries. Determines how the
-/// renderer projects and styles it. Serialized with a `kind` discriminator so
-/// a persisted display round-trips without a second shape.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ContentKind {
-    Diff { language: String, path: String },
-    Code { language: String },
-    Plain,
-}
-
-impl ContentKind {
-    pub fn language(&self) -> &str {
-        match self {
-            Self::Diff { language, .. } | Self::Code { language } => language,
-            Self::Plain => "",
-        }
+/// The stats row a display section renders: one line, or `None` when no field
+/// carries a value. The row renders from this one formatting, so the restored
+/// preview rows match the live completion path.
+pub fn format_stats_line(stats: &DisplayStats) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(files_changed) = stats.files_changed {
+        parts.push(format!("files={files_changed}"));
     }
-}
-
-/// Section statistics on a display. Alias over the protocol stats type so
-/// the renderer does not depend on the event layer; subtask 2a decides
-/// whether this stays an alias or becomes a standalone struct.
-pub type DisplayStats = ToolDisplayStats;
-
-impl DisplayStats {
-    /// Format these stats into one row, or `None` when no field carries a
-    /// value. The stats row renders from this one formatting, so the restored
-    /// preview rows match the live completion path. The stats type owns its
-    /// own formatting — the caller only decides whether to render the row.
-    pub fn format_stats_line(&self) -> Option<String> {
-        let mut parts = Vec::new();
-        if let Some(files_changed) = self.files_changed {
-            parts.push(format!("files={files_changed}"));
-        }
-        if let Some(insertions) = self.insertions {
-            parts.push(format!("+{insertions}"));
-        }
-        if let Some(deletions) = self.deletions {
-            parts.push(format!("-{deletions}"));
-        }
-        if let Some(true) = self.diff_truncated {
-            parts.push("truncated=true".to_string());
-        }
-        if let Some(omitted_files) = self.omitted_files {
-            parts.push(format!("omitted={omitted_files}"));
-        }
-        if let Some(omitted_hunks) = self.omitted_hunks {
-            parts.push(format!("hunks_omitted={omitted_hunks}"));
-        }
-        (!parts.is_empty()).then(|| parts.join(" "))
+    if let Some(insertions) = stats.insertions {
+        parts.push(format!("+{insertions}"));
     }
+    if let Some(deletions) = stats.deletions {
+        parts.push(format!("-{deletions}"));
+    }
+    if let Some(true) = stats.diff_truncated {
+        parts.push("truncated=true".to_string());
+    }
+    if let Some(omitted_files) = stats.omitted_files {
+        parts.push(format!("omitted={omitted_files}"));
+    }
+    if let Some(omitted_hunks) = stats.omitted_hunks {
+        parts.push(format!("hunks_omitted={omitted_hunks}"));
+    }
+    (!parts.is_empty()).then(|| parts.join(" "))
 }
 
 impl Display {
@@ -126,11 +124,7 @@ impl Display {
                     StyleHint::Normal,
                 ));
             }
-            if let Some(stats_line) = section
-                .stats
-                .as_ref()
-                .and_then(|stats| stats.format_stats_line())
-            {
+            if let Some(stats_line) = section.stats.as_ref().and_then(format_stats_line) {
                 lines.push(ContentLine::single(stats_line, StyleHint::Muted));
             }
             match &section.kind {

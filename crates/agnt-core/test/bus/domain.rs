@@ -21,7 +21,7 @@ fn permission_context() -> PermissionRequestContext {
         target_field: None,
         pattern: "edit".to_string(),
         summary: "→ {...}".to_string(),
-        pre_authorize_display: None,
+        preview: None,
     }
 }
 

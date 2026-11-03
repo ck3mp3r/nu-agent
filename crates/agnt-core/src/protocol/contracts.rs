@@ -2,7 +2,6 @@ use nu_protocol::{LabeledError, Span, Value};
 
 use crate::bus::Bus;
 use crate::orchestrator::OrchestratorEvent;
-use crate::protocol::event::ToolDisplay;
 use crate::protocol::events::SystemEvent;
 use crate::session::tool_status::ToolStatus;
 
@@ -40,7 +39,6 @@ pub struct UiMessageSnapshot {
     /// variant the store wrote; a row built without one carries the verdict its
     /// `tool_success` states.
     tool_status: Option<ToolStatus>,
-    tool_display: Option<ToolDisplay>,
     /// The submit instant the entry's turn recorded, when the entry is a user
     /// row whose key joined a settled turn. The recorded value, never a
     /// re-derivation.
@@ -69,7 +67,6 @@ impl UiMessageSnapshot {
             tool_result: None,
             tool_success: None,
             tool_status: None,
-            tool_display: None,
             stamp_millis: None,
             stamp_model: None,
             stamp_agent: None,
@@ -124,11 +121,6 @@ impl UiMessageSnapshot {
         self
     }
 
-    pub fn with_tool_display(mut self, display: ToolDisplay) -> Self {
-        self.tool_display = Some(display);
-        self
-    }
-
     pub fn role(&self) -> &str {
         &self.role
     }
@@ -152,14 +144,6 @@ impl UiMessageSnapshot {
     /// The call's structural status, when the row carries one.
     pub fn tool_status(&self) -> Option<ToolStatus> {
         self.tool_status
-    }
-
-    pub fn take_tool_display(&mut self) -> Option<ToolDisplay> {
-        self.tool_display.take()
-    }
-
-    pub fn tool_display(&self) -> Option<&ToolDisplay> {
-        self.tool_display.as_ref()
     }
 
     pub fn usage(&self) -> Option<UiMessageUsageSnapshot> {

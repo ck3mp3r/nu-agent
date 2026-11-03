@@ -1,10 +1,10 @@
 //! The code surface: margins, the untinted call line, and the surface body.
 
 use super::support::*;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::renderer::ItemStatus;
 
 /// The code preview under test: a titled, labelled nu body.
-fn code_preview() -> agnt_core::transcript::entry::TranscriptEntry {
+fn code_preview() -> agnt_render::transcript::entry::TranscriptEntry {
     tool_entry(
         "nu",
         r#"{"command":"ls | select name"}"#,

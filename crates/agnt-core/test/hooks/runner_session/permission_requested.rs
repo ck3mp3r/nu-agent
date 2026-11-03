@@ -132,10 +132,7 @@ async fn test_hooks_runner_permission_requested_ignores_tool_preview() -> Result
                 crate::tools::handler::ToolSource::Builtin,
                 "{\"command\":\"ls\"}",
             ),
-            display: ToolDisplay {
-                title: Some("preview".to_string()),
-                sections: Vec::new(),
-            },
+            preview: Some("preview".to_string()),
         })
         .await;
     drop(bus);
@@ -164,10 +161,7 @@ fn permission_context() -> PermissionRequestContext {
         target_field: Some("command".to_string()),
         pattern: "ls*".to_string(),
         summary: "run ls".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: Some("preview".to_string()),
-            sections: Vec::new(),
-        }),
+        preview: Some("preview".to_string()),
     }
 }
 

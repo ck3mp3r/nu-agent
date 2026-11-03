@@ -167,7 +167,7 @@ fn permission_event_requested_opens_permission_prompt() -> Result<()> {
             target_field: Some("command".to_string()),
             pattern: "*".to_string(),
             summary: "→ {\"command\":\"echo hi\"}".to_string(),
-            pre_authorize_display: None,
+            preview: None,
         },
     };
     assert!(ui.renderer.coordinator.reduce_system_event(event));

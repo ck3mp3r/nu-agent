@@ -8,8 +8,7 @@ use std::str::FromStr;
 
 use super::ir::{Display, MessageRole, NoticeKind, ToolName};
 use super::renderer::ItemStatus;
-use crate::protocol::events::ToolCall;
-use crate::tools::handler::builtin_kinds::BuiltinKind;
+use agnt_kernel::{BuiltinKind, ToolCall};
 
 // region:    --- Types
 

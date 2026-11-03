@@ -2,13 +2,13 @@
 
 use agnt_kernel::CompactionSource;
 
-use crate::protocol::event::{PermissionDecision, PermissionRequestContext, ToolDisplay};
+use crate::protocol::event::{PermissionDecision, PermissionRequestContext};
 use crate::protocol::events::{
     AutoResolutionAction, Key, RequestId, SystemEvent, SystemKind, ToolCall, ToolCallId,
     ToolOutcome, Usage,
 };
 use crate::session::tool_status::ToolStatus;
-use crate::transcript::ir::ToolName;
+use agnt_kernel::ToolName;
 
 // region:    --- Tests
 
@@ -17,8 +17,8 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 #[test]
 fn test_protocol_events_tool_call_id_of_derives_call_key() -> Result<()> {
     // -- Exec
-    let id = ToolCallId::of("nu", "{\"command\":\"ls\"}");
-    let other = ToolCallId::of("nu", "{\"command\":\"ls -la\"}");
+    let id = ToolCallId::new("nu", "{\"command\":\"ls\"}");
+    let other = ToolCallId::new("nu", "{\"command\":\"ls -la\"}");
 
     // -- Check
     assert_eq!(id.as_str(), "nu\n{\"command\":\"ls\"}");
@@ -39,7 +39,7 @@ fn test_protocol_events_tool_call_new_derives_id_from_payload() -> Result<()> {
     );
 
     // -- Check
-    assert_eq!(call.id, ToolCallId::of("edit", arguments));
+    assert_eq!(call.id, ToolCallId::new("edit", arguments));
     assert_eq!(call.name, ToolName("edit".to_string()));
     assert_eq!(call.source, crate::tools::handler::ToolSource::Builtin);
     assert_eq!(call.arguments, arguments);
@@ -50,10 +50,7 @@ fn test_protocol_events_tool_call_new_derives_id_from_payload() -> Result<()> {
 fn test_protocol_events_vocabulary_covers_completeness_trace() -> Result<()> {
     // -- Setup & Fixtures
     let call = tool_call();
-    let display = ToolDisplay {
-        title: Some("edit src/main.rs".to_string()),
-        sections: Vec::new(),
-    };
+    let preview = "--- a/src/main.rs\n+++ b/src/main.rs\n".to_string();
     let request_id = RequestId::new("req-1");
 
     let events = vec![
@@ -100,7 +97,7 @@ fn test_protocol_events_vocabulary_covers_completeness_trace() -> Result<()> {
         SystemEvent::ToolStarted { call: call.clone() },
         SystemEvent::PreviewRequested {
             call: call.clone(),
-            display: display.clone(),
+            preview: Some(preview.clone()),
         },
         SystemEvent::ToolCompleted {
             call: call.clone(),
@@ -108,7 +105,6 @@ fn test_protocol_events_vocabulary_covers_completeness_trace() -> Result<()> {
                 success: true,
                 status: ToolStatus::Success,
                 result: "{}".to_string(),
-                display: Some(display),
                 error_kind: None,
                 message: None,
             },
@@ -262,7 +258,7 @@ fn permission_context() -> PermissionRequestContext {
         target_field: None,
         pattern: "nu".to_string(),
         summary: "run nu".to_string(),
-        pre_authorize_display: None,
+        preview: None,
     }
 }
 

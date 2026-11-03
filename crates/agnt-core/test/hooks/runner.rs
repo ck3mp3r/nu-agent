@@ -129,7 +129,6 @@ async fn test_hooks_runner_tool_completed_invokes_with_payload() -> Result<()> {
                 success: false,
                 status: ToolStatus::Failed,
                 result: "denied".to_string(),
-                display: None,
                 error_kind: Some("permission".to_string()),
                 message: Some("not allowed".to_string()),
             },

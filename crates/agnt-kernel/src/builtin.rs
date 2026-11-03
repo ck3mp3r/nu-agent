@@ -1,7 +1,19 @@
+//! The built-in tool inventory: which tools the runtime ships, and the one
+//! place their wire names become variants.
+//!
+//! Both the runtime's dispatch and the drawers' call-line table classify calls
+//! through this module, so neither owns the list and neither can drift from
+//! the other: adding a builtin fails to compile at every exhaustive match.
+
 use std::str::FromStr;
 
-/// Enum of all built-in tool names.
-/// Exactly matches the set used by `is_builtin_tool_name()` in handler/mod.rs.
+/// The `nu` tool's default run time, in seconds. It is inventory: the tool's own
+/// default and the drawer's call line both read it from here.
+pub const NU_DEFAULT_TIMEOUT_SECONDS: u64 = 120;
+
+// region:    --- Types
+
+/// Every built-in tool name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinKind {
     Read,
@@ -25,8 +37,21 @@ pub enum BuiltinKind {
     AstTree,
 }
 
+/// What kind of tool a call names: a builtin whose line a drawer can tailor, or
+/// a tool from an open set (a closure, an MCP server) that only its name
+/// identifies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToolKind {
+    Builtin(BuiltinKind),
+    Other,
+}
+
+// endregion: --- Types
+
+// region:    --- Impls
+
 impl BuiltinKind {
-    /// Canonical name for registry lookup and display.
+    /// The canonical wire name: the tool's identity, not a label.
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Read => "read",
@@ -52,10 +77,25 @@ impl BuiltinKind {
     }
 }
 
+impl ToolKind {
+    /// Classify a tool name. The one place the wire's text becomes a variant:
+    /// every consumer downstream matches the enum, so adding a builtin fails to
+    /// compile wherever a kind is matched exhaustively until it is handled.
+    pub fn of_name(name: &str) -> Self {
+        match BuiltinKind::from_str(name) {
+            Ok(kind) => Self::Builtin(kind),
+            Err(()) => Self::Other,
+        }
+    }
+}
+
+// endregion: --- Impls
+
+// region:    --- Froms
+
 impl FromStr for BuiltinKind {
     type Err = ();
 
-    /// Reverse lookup: "read" → Ok(BuiltinKind::Read), "foo" → Err(()).
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "read" => Ok(Self::Read),
@@ -82,27 +122,4 @@ impl FromStr for BuiltinKind {
     }
 }
 
-/// What kind of tool a call names: a builtin whose line a drawer can tailor, or
-/// a tool from an open set (a closure, an MCP server) that only its name
-/// identifies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ToolKind {
-    Builtin(BuiltinKind),
-    Other,
-}
-
-impl ToolKind {
-    /// Classify a tool name. The one place the wire's text becomes a variant:
-    /// every consumer downstream matches the enum, so adding a builtin fails to
-    /// compile wherever a kind is matched exhaustively until it is handled.
-    pub fn of_name(name: &str) -> Self {
-        match BuiltinKind::from_str(name) {
-            Ok(kind) => Self::Builtin(kind),
-            Err(()) => Self::Other,
-        }
-    }
-}
-
-#[cfg(test)]
-#[path = "../../../test/tools/handler/builtin_kinds.rs"]
-mod tests;
+// endregion: --- Froms

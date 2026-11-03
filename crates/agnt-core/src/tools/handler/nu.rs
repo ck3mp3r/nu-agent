@@ -6,13 +6,8 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::time::Instant;
 
-use super::{
-    ToolHandlerError,
-    builtin_tool::{BuiltinTool, Previewable},
-};
+use super::{ToolHandlerError, builtin_tool::BuiltinTool};
 use crate::bus::{Bus, CancelRx};
-use crate::protocol::event::{ToolDisplay, ToolDisplaySection};
-use crate::transcript::ir::ContentKind;
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
 
@@ -25,13 +20,7 @@ struct NuArgs {
 
 pub struct NuTool;
 
-impl NuTool {
-    /// The timeout a command runs for when the call names none. The call line
-    /// shows it, so the drawer reads it from here instead of copying the value.
-    pub fn default_timeout_seconds() -> u64 {
-        DEFAULT_TIMEOUT_SECONDS
-    }
-}
+impl NuTool {}
 
 impl BuiltinTool for NuTool {
     const NAME: &'static str = "nu";
@@ -131,30 +120,6 @@ impl BuiltinTool for NuTool {
             "stderr": stderr,
             "exit_code": exit_code,
         }))
-    }
-}
-
-impl Previewable for NuTool {
-    /// Pre-execution code preview for the permission gate: the nu command
-    /// the call is about to run, tagged as `ContentKind::Code` with the
-    /// `nu` language. Returns `None` when the command is missing or empty.
-    fn preview(args: &JsonValue, _cwd: &Path) -> Option<ToolDisplay> {
-        let command = args.get("command")?.as_str()?;
-        if command.is_empty() {
-            return None;
-        }
-        let command = command.replace("\r\n", "\n").replace('\r', "\n");
-        Some(ToolDisplay {
-            title: None,
-            sections: vec![ToolDisplaySection {
-                label: None,
-                kind: ContentKind::Code {
-                    language: "nu".to_string(),
-                },
-                content: command,
-                stats: None,
-            }],
-        })
     }
 }
 

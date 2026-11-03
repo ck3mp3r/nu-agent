@@ -1,21 +1,18 @@
 use super::*;
-
 // ---------------------------------------------------------------------------
-// Nu preview (task 69af3012): nu Ask-path requests carry a pre_authorize_display
-// code block built from the tool-call arguments alone.
+// Nu preview: a nu Ask-path request carries NO producer-side preview. The code
+// block a gate card shows is derived by the surface from the command in the
+// call's own arguments.
 // ---------------------------------------------------------------------------
 
-/// A nu Builtin call on the Ask path publishes a context whose
-/// pre_authorize_display is a single `ContentKind::Code { language: "nu" }`
-/// section carrying the command.
+/// A nu Builtin call on the Ask path publishes a context with no preview: the
+/// command is already data in the arguments, so the drawer derives the block.
 #[tokio::test]
-async fn interactive_resolver_nu_call_carries_pre_authorize_display() -> Result<()> {
+async fn interactive_resolver_nu_call_carries_no_producer_preview() -> Result<()> {
     // -- Setup & Fixtures
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
     let mut permission_rx = bus.ui_event().subscribe();
     let resolver_clone = resolver.clone();
-    let command = "ls | where size > 1mb";
-
     // -- Exec
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
@@ -50,22 +47,12 @@ async fn interactive_resolver_nu_call_carries_pre_authorize_display() -> Result<
     let SystemEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
-    let display = context
-        .pre_authorize_display
-        .as_ref()
-        .ok_or("nu Ask-path context must carry a pre-authorize display")?;
-    assert_eq!(display.title, None);
-    let section = display
-        .sections
-        .first()
-        .ok_or("pre-authorize display should have one section")?;
-    assert_eq!(
-        section.kind,
-        crate::transcript::ir::ContentKind::Code {
-            language: "nu".to_string()
-        }
+    // A nu call's card is derived by the surface from the command in the
+    // arguments, so the context carries no producer-side preview.
+    assert!(
+        context.preview.is_none(),
+        "nu carries no producer preview; the drawer derives the code block"
     );
-    assert_eq!(section.content, command);
     Ok(())
 }
 
@@ -158,7 +145,7 @@ async fn interactive_resolver_other_ask_tool_has_no_pre_authorize_display() -> R
         panic!("Expected PermissionRequested event")
     };
     assert!(
-        context.pre_authorize_display.is_none(),
+        context.preview.is_none(),
         "non-nu Ask-path context must not carry a pre-authorize display"
     );
     Ok(())
@@ -201,7 +188,7 @@ async fn interactive_resolver_nu_missing_command_prompts_without_display() -> Re
         panic!("Expected PermissionRequested event")
     };
     assert!(
-        context.pre_authorize_display.is_none(),
+        context.preview.is_none(),
         "nu with missing command must prompt without a preview"
     );
     Ok(())
@@ -259,26 +246,13 @@ async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display(
     let SystemEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
-    let display = context
-        .pre_authorize_display
-        .as_ref()
-        .ok_or("edit apply Ask-path context must carry a pre-authorize display")?;
-    let section = display
-        .sections
-        .first()
-        .ok_or("pre-authorize display should have one section")?;
+    let preview = context
+        .preview
+        .as_deref()
+        .ok_or("edit apply Ask-path context must carry the proposed diff")?;
     assert!(
-        matches!(
-            section.kind,
-            crate::transcript::ir::ContentKind::Diff { .. }
-        ),
-        "section kind must be Diff, got {:?}",
-        section.kind
-    );
-    assert!(
-        section.content.contains("+hello"),
-        "diff must contain the created content, got: {:?}",
-        section.content
+        preview.contains("+hello"),
+        "diff must contain the created content, got: {preview:?}"
     );
     Ok(())
 }
@@ -334,26 +308,13 @@ async fn interactive_resolver_edit_apply_search_replace_without_expected_version
     let SystemEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
-    let display = context
-        .pre_authorize_display
-        .as_ref()
-        .ok_or("search_replace Ask-path context must carry a pre-authorize display")?;
-    let section = display
-        .sections
-        .first()
-        .ok_or("pre-authorize display should have one section")?;
+    let preview = context
+        .preview
+        .as_deref()
+        .ok_or("search_replace Ask-path context must carry the proposed diff")?;
     assert!(
-        matches!(
-            section.kind,
-            crate::transcript::ir::ContentKind::Diff { .. }
-        ),
-        "section kind must be Diff, got {:?}",
-        section.kind
-    );
-    assert!(
-        section.content.contains("-world") && section.content.contains("+there"),
-        "diff must contain the replacement, got: {:?}",
-        section.content
+        preview.contains("-world") && preview.contains("+there"),
+        "diff must contain the replacement, got: {preview:?}"
     );
     Ok(())
 }

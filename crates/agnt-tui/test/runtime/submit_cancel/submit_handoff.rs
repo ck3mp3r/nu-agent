@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// Idle startup does not show a spinner; a submit handoff keeps input editable
 /// and preserves the transcript preview.

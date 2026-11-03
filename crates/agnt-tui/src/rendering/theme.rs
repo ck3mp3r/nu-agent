@@ -1,4 +1,4 @@
-use agnt_core::transcript::ir::DiffTint;
+use agnt_render::transcript::ir::DiffTint;
 use ratatui::style::{Color, Modifier, Style};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -7,7 +7,7 @@ use agnt_core::protocol::events::{
 };
 use agnt_core::renderer::UiRenderer;
 use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::ToolName;
+use agnt_render::transcript::ir::ToolName;
 
 use crate::policy::{UiPolicy, Verbosity};
 
@@ -293,7 +293,6 @@ fn default_tool_lifecycle_is_single_completion_line_with_result_block() {
             success: true,
             status: ToolStatus::Success,
             result: "[]".to_string(),
-            display: None,
             error_kind: None,
             message: None,
         },
@@ -336,7 +335,6 @@ fn default_tool_lifecycle_prints_non_empty_payloads() {
                 success: true,
                 status: ToolStatus::Success,
                 result: payload.to_string(),
-                display: None,
                 error_kind: None,
                 message: None,
             },

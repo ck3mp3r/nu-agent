@@ -1,5 +1,5 @@
 use super::*;
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// The main pane vertical split reserves the status target height and the
 /// input minimum height, leaving the transcript the remaining space with no

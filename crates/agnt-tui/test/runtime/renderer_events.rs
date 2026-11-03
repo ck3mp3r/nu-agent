@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// An assistant message event is appended as one raw-markdown block, projects
 /// its markdown, and flows after a user turn without a separator.

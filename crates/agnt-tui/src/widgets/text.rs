@@ -6,7 +6,7 @@
 //! `paint` agree row for row by construction. Styling is resolved here from the
 //! backend-neutral theme, so every widget paints through one vocabulary.
 
-use agnt_core::transcript::ir::{ContentLine, DiffTint, Span, StyleHint};
+use agnt_render::transcript::ir::{ContentLine, DiffTint, Span, StyleHint};
 use agnt_render::{Color, Theme};
 use ratatui::buffer::Buffer;
 use ratatui::style::{Modifier, Style};

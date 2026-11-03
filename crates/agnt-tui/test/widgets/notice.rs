@@ -1,6 +1,6 @@
 use super::support::*;
-use agnt_core::transcript::ir::NoticeKind;
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::ir::NoticeKind;
+use agnt_render::transcript::renderer::ItemStatus;
 
 // ---------------------------------------------------------------------------
 // System notices

@@ -17,7 +17,6 @@ mod preview;
 use super::*;
 use crate::bus::Bus;
 use crate::tools::handler::builtin_tool::{BuiltinTool, Previewable};
-use crate::transcript::ir::ContentKind;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

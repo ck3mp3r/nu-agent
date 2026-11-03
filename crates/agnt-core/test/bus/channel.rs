@@ -6,7 +6,7 @@ use super::channel::{
 };
 use crate::bus::create_bus;
 use crate::protocol::events::{SystemEvent, ToolCall};
-use crate::transcript::ir::ToolName;
+use agnt_kernel::ToolName;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

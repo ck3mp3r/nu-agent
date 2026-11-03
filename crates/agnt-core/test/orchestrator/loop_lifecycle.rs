@@ -42,18 +42,6 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
                     status: ToolStatus::Success,
                     result: r#"{"path":"file.txt","diff":"--- a/file.txt\n+++ b/file.txt\n"}"#
                         .to_string(),
-                    display: Some(ToolDisplay {
-                        title: Some("edit file.txt".to_string()),
-                        sections: vec![ToolDisplaySection {
-                            label: Some("file.txt".to_string()),
-                            kind: ContentKind::Diff {
-                                language: "diff".to_string(),
-                                path: "test.rs".to_string(),
-                            },
-                            content: "--- a/file.txt\n+++ b/file.txt\n".to_string(),
-                            stats: None,
-                        }],
-                    }),
                     error_kind: None,
                     message: None,
                 },
@@ -242,10 +230,7 @@ async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() -> 
     assert!(events.iter().any(|event| matches!(
         event,
         SystemEvent::ToolCompleted {
-            outcome: ToolOutcome {
-                display: Some(_),
-                ..
-            },
+            outcome: ToolOutcome { .. },
             ..
         }
     )));

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use crate::protocol::event::{PermissionDecision as UiPermissionDecision, ToolDisplay};
+use crate::protocol::event::PermissionDecision as UiPermissionDecision;
 use crate::tools::handler::builtin_tool::BuiltinTool;
 use crate::tools::handler::glob::GlobTool;
 use crate::tools::handler::grep::GrepTool;
@@ -62,7 +62,13 @@ impl From<UiPermissionDecision> for AskChoice {
 
 #[derive(Debug, Clone, Default)]
 pub struct AskContext {
-    pub pre_authorize_display: Option<ToolDisplay>,
+    /// The preview content only the producer can supply — an edit's proposed
+    /// diff. Data, not a picture: the surface decides how to draw it.
+    pub preview: Option<String>,
+    /// Whether the gate has a card to show for this call at all. A tool whose
+    /// card the drawer derives from the call's arguments (a `nu` command) shows
+    /// one with no producer content; a tool with no card shows none.
+    pub shows_preview: bool,
 }
 
 pub trait AskApprovalHook: Send + Sync {

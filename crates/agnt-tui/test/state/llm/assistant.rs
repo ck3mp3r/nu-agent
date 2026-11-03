@@ -305,7 +305,7 @@ fn completed_edit_with_diff(state: &mut AppState) {
     let edit_arguments = r#"{"path":"sample.txt"}"#;
     let edit_call = || {
         agnt_core::protocol::events::ToolCall::new(
-            agnt_core::transcript::ir::ToolName("edit".to_string()),
+            agnt_render::transcript::ir::ToolName("edit".to_string()),
             agnt_core::tools::handler::ToolSource::Closure,
             edit_arguments,
         )
@@ -322,20 +322,8 @@ fn completed_edit_with_diff(state: &mut AppState) {
             outcome: agnt_core::protocol::events::ToolOutcome {
                 success: true,
                 status: ToolStatus::Success,
-                result: "{}".to_string(),
-                display: Some(ToolDisplay {
-                    title: Some("edit sample.txt".to_string()),
-                    sections: vec![ToolDisplaySection {
-                        label: Some("sample.txt".to_string()),
-                        kind: agnt_core::transcript::ir::ContentKind::Diff {
-                            language: "diff".to_string(),
-                            path: "test.rs".to_string(),
-                        },
-                        content: "--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"
-                            .to_string(),
-                        stats: None,
-                    }],
-                }),
+                result: r#"{"path":"sample.txt","diff":"--- a/sample.txt\n+++ b/sample.txt\n@@ -1 +1 @@\n-old\n+new\n"}"#
+                    .to_string(),
                 error_kind: None,
                 message: None,
             },

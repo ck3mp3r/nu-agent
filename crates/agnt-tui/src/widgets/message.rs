@@ -1,9 +1,9 @@
 //! The message family widget: user and assistant prose on the prose lanes.
 
-use agnt_core::transcript::entry::MessageEntry;
-use agnt_core::transcript::ir::{ContentLine, MessageRole, Span};
-use agnt_core::transcript::markdown::render_markdown_lines;
 use agnt_render::catalog::{LaneKind, LaneLine};
+use agnt_render::transcript::entry::MessageEntry;
+use agnt_render::transcript::ir::{ContentLine, MessageRole, Span};
+use agnt_render::transcript::markdown::render_markdown_lines;
 use agnt_render::{Color, Theme};
 use chrono::{DateTime, Local};
 use ratatui::buffer::Buffer;

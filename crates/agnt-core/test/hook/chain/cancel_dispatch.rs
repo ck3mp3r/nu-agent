@@ -147,7 +147,7 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
         started,
         SystemEvent::ToolStarted {
             call: ToolCall::new(
-                ir::ToolName("read".to_string()),
+                agnt_kernel::ToolName("read".to_string()),
                 crate::tools::handler::ToolSource::Builtin,
                 "{\"path\":\"/tmp/f\"}",
             ),
@@ -162,7 +162,7 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
         completed,
         SystemEvent::ToolCompleted {
             call: ToolCall::new(
-                ir::ToolName("read".to_string()),
+                agnt_kernel::ToolName("read".to_string()),
                 crate::tools::handler::ToolSource::Builtin,
                 "{\"path\":\"/tmp/f\"}",
             ),
@@ -170,7 +170,6 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
                 success: false,
                 status: ToolStatus::Cancelled,
                 result: String::new(),
-                display: None,
                 error_kind: Some("cancelled".to_string()),
                 message: Some("Interrupted: the turn stopped before this call ran".to_string()),
             },

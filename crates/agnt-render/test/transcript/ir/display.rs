@@ -46,7 +46,7 @@ fn display_stats_format_line_table() {
     // -- Exec & Check
     for (label, stats, expected) in cases {
         assert_eq!(
-            stats.format_stats_line().as_deref(),
+            format_stats_line(&stats).as_deref(),
             expected,
             "{label} formatted wrong"
         );

@@ -3,7 +3,7 @@
 //! stays intact.
 
 use super::support::*;
-use agnt_core::transcript::ir::MessageRole;
+use agnt_render::transcript::ir::MessageRole;
 
 use crate::widgets::RatatuiBackend;
 

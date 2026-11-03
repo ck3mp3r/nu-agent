@@ -143,7 +143,7 @@ async fn test_hooks_runner_permission_auto_resolved_ignores_prompt_events() -> R
                 target_field: None,
                 pattern: "*".to_string(),
                 summary: "→ {}".to_string(),
-                pre_authorize_display: None,
+                preview: None,
             },
         })
         .await;

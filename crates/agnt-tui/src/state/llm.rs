@@ -4,8 +4,8 @@
 
 use agnt_core::conversation::turn::executor::TURN_STOPPED_NOTICE;
 use agnt_core::protocol::events::Usage;
-use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
-use agnt_core::transcript::ir::{ContentKind, ContentLine, MessageRole};
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::{ContentKind, ContentLine, MessageRole};
 
 use super::transcript_store::TranscriptStore;
 use super::{ScrollState, StatusMessageKind, StatusState, UiPhase};

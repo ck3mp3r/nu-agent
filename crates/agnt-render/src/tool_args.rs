@@ -63,3 +63,19 @@ pub fn nu_command_from_args(arguments: &str) -> Option<String> {
     }
     Some(command.replace("\r\n", "\n").replace('\r', "\n"))
 }
+
+// region:    --- Tests
+
+#[cfg(test)]
+#[path = "../test/tool_args.rs"]
+mod tool_args_test;
+
+#[cfg(test)]
+#[path = "../test/tool_args/json_fields.rs"]
+mod json_fields_test;
+
+#[cfg(test)]
+#[path = "../test/tool_args/call_line.rs"]
+mod plain_call_text_test;
+
+// endregion: --- Tests

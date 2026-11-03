@@ -41,8 +41,6 @@ use crate::protocol::events::{
 use crate::session::tool_status::{ToolStatus, error_kind_of, status_of_result};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::handler::tool_display_from_arguments;
-use crate::transcript::ir;
 use crate::types::ToolName;
 
 use super::agent_hook::{HookState, StopLedger};
@@ -147,7 +145,7 @@ pub(crate) async fn emit_not_run_dispatch(
         start,
     } = call;
     let publish_start = matches!(start, NotRunStart::Publish);
-    let call = ToolCall::new(ir::ToolName(tool_name.to_string()), source, arguments);
+    let call = ToolCall::new(tool_name.to_string(), source, arguments);
     if publish_start {
         let _ = bus
             .ui_event()
@@ -159,12 +157,15 @@ pub(crate) async fn emit_not_run_dispatch(
                 call: StreamToolCall::new(tool_name, source, arguments),
             }));
     }
-    if preview && let Some(display) = tool_display_from_arguments(tool_name, arguments, cwd) {
+    if preview && let Some(card) = gate_card_for(tool_name, arguments, cwd) {
+        // The gate has a card for this call. The event is the signal; `card`
+        // carries only the content a surface cannot derive (an edit's proposed
+        // diff). A surface derives the rest from the call's arguments.
         let _ = bus
             .ui_event()
             .send(SystemEvent::PreviewRequested {
                 call: call.clone(),
-                display,
+                preview: card,
             })
             .await;
     }
@@ -188,7 +189,6 @@ pub(crate) async fn emit_not_run_dispatch(
                 // reached a result. The kind and the message stay content.
                 status: ToolStatus::Cancelled,
                 result: String::new(),
-                display: None,
                 error_kind: Some(error_kind.to_string()),
                 message: Some(message.to_string()),
             },
@@ -202,7 +202,8 @@ pub(crate) async fn emit_not_run_dispatch(
             call: StreamToolCall::new(tool_name, source, arguments),
             outcome: StreamToolOutcome {
                 status: ToolStatus::Cancelled,
-                result: String::new(),
+                payload: None,
+                text: String::new(),
                 message: Some(message.to_string()),
                 kind: Some(kind),
             },
@@ -653,7 +654,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             // [`CallLine::from_json_summary`](crate::protocol::tool_args::CallLine::from_json_summary)
             // of the raw arguments. The fallback is display-only: the TUI
             // matches the pending call by `ToolCallId`, never by this text.
-            let call = ToolCall::new(ir::ToolName(tool_name.clone()), source, args.clone());
+            let call = ToolCall::new(tool_name.clone(), source, args.clone());
             let _ = bus.ui_event().send(SystemEvent::ToolStarted { call }).await;
             // The record stream opens the pair with the same call as data:
             // identity, name, source, arguments — never the rendered line.
@@ -745,20 +746,8 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                     log::trace!("  result_body: {preview}");
                 }
 
-                // 1. Parse result JSON and extract display
-                let display = serde_json::from_str::<serde_json::Value>(&result_text)
-                    .ok()
-                    .and_then(|json| {
-                        crate::tools::handler::tool_display_from_result(tool_name, &json)
-                    });
-
-                // Suppress the display if a pre-authorize preview of it was already
-                // shown to the user before the tool ran (the Ask-path edit diff).
-                // `take_previewed` is the single, synchronous source of truth for
-                // this — resolved deterministically inside the same before/after
-                // hook call chain, so there is no event-ordering race to get wrong.
-                let display =
-                    suppress_previewed_display(&self.permission, tool_name, args, display);
+                // 1. The result text is what the model saw; the record carries it
+                // as data. No display is derived here — the surface derives it.
 
                 // 2. Resolve source
                 let source =
@@ -793,18 +782,24 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 // 5. Emit ToolCompleted (success was computed structurally above)
                 // The pair closes on the record stream first: the disposition is
                 // the enum the settle site built, and the result text is content.
+                // The structured result, when the tool produced one, so a surface
+                // derives the display from data instead of parsing a picture.
+                let payload = serde_json::from_str::<serde_json::Value>(&result_text)
+                    .ok()
+                    .map(|value| value.to_string());
                 let _ = bus
                     .stream()
                     .publish(SessionRecord::Tool(ToolRecord::Completed {
                         call: StreamToolCall::new(tool_name.to_string(), source, args.to_string()),
                         outcome: StreamToolOutcome {
                             status,
-                            result: result_text.clone(),
+                            payload,
+                            text: result_text.clone(),
                             message: None,
                             kind: result.error().map(|e| error_kind_of(e.kind())),
                         },
                     }));
-                let call = ToolCall::new(ir::ToolName(tool_name.to_string()), source, args);
+                let call = ToolCall::new(tool_name.to_string(), source, args);
                 let _ = bus
                     .ui_event()
                     .send(SystemEvent::ToolCompleted {
@@ -813,7 +808,6 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                             success,
                             status,
                             result: result_text,
-                            display,
                             error_kind,
                             message: None,
                         },
@@ -1254,24 +1248,19 @@ fn compact_reason(source: CompactionSource) -> CompactReason {
     }
 }
 
-/// Decide whether a tool-completion `display` should still be attached, or
-/// suppressed because a pre-authorize preview of it was already shown to the
-/// user before the tool ran.
-///
-/// Pulled out as a pure function (rather than inlined in `on_outcome`'s
-/// async block) so it's directly unit-testable against a stub resolver,
-/// without needing rig's opaque `OutcomeEvent` type.
-fn suppress_previewed_display<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
-    permission: &P,
+/// The gate card a call has, as its preview content: `Some(Some(diff))` for an
+/// edit (the producer plans the diff against the file on disk), `Some(None)` for
+/// a tool whose card the drawer derives from the arguments (a `nu` command), and
+/// `None` when the tool has no card at all.
+fn gate_card_for(
     tool_name: &str,
-    args: &str,
-    display: Option<crate::protocol::event::ToolDisplay>,
-) -> Option<crate::protocol::event::ToolDisplay> {
-    if permission.take_previewed(tool_name, args) {
-        None
-    } else {
-        display
-    }
+    arguments: &str,
+    cwd: &std::path::Path,
+) -> Option<Option<String>> {
+    let arguments: serde_json::Value = serde_json::from_str(arguments).ok()?;
+    let kind = tool_name.parse::<agnt_kernel::BuiltinKind>().ok();
+    crate::tools::handler::pre_authorize_fs_tool(kind, arguments.as_object()?, cwd)
+        .map(|output| output.preview)
 }
 
 // endregion: --- Compaction

@@ -12,10 +12,9 @@
 //! replayed effects.
 
 use agnt_core::protocol::contracts::{UiMessageSnapshot, UiMessageUsageSnapshot};
-use agnt_core::protocol::event::ToolDisplay;
 use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome, Usage};
 use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::ir::ToolName;
+use agnt_render::transcript::ir::ToolName;
 
 use super::AppState;
 use crate::interaction::cancel::CancelController;
@@ -98,7 +97,7 @@ pub(crate) fn project_snapshots(
     let mut steps = Vec::new();
     let mut turn_open = false;
 
-    for (index, message) in messages.iter().enumerate() {
+    for message in &messages {
         match message.role() {
             "user" => {
                 if message.content().trim().is_empty() {
@@ -133,34 +132,27 @@ pub(crate) fn project_snapshots(
                 turn_open = true;
             }
             "tool" => {
-                let display = messages
-                    .get(index + 1)
-                    .filter(|next| next.role() == "tool_display")
-                    .and_then(|next| next.tool_display().cloned());
-                let Some((call, preview, outcome)) = tool_pair(message, display) else {
+                let Some((call, outcome)) = tool_pair(message) else {
                     continue;
                 };
                 steps.push(ReplayStep::event(SystemEvent::ToolStarted {
                     call: call.clone(),
                 }));
-                // The display docks in the entry's preview slot through the same
-                // event the live permission gate emits, so a replayed row keeps
-                // main's hydrated arrangement: the banded gate-preview block,
-                // whatever the persisted verdict.
-                if let Some(display) = preview {
-                    steps.push(ReplayStep::event(SystemEvent::PreviewRequested {
-                        call: call.clone(),
-                        display,
-                    }));
-                }
+                // A replayed row carries no gate preview: the diff the gate
+                // computed was never persisted. The surface derives whatever the
+                // call alone supports, so the event carries no content.
+                steps.push(ReplayStep::event(SystemEvent::PreviewRequested {
+                    call: call.clone(),
+                    preview: None,
+                }));
                 steps.push(ReplayStep::event(SystemEvent::ToolCompleted {
                     call,
                     outcome,
                 }));
                 turn_open = true;
             }
-            // The display snapshot is consumed by the call it follows; a stray
-            // one names no call and no transcript fact.
+            // A persisted display row names no call and no transcript fact: the
+            // surface derives every display from the call it belongs to.
             "tool_display" => {}
             "compaction" => {
                 let body = message.content().to_string();
@@ -234,18 +226,14 @@ fn usage_of(content: &str, persisted: Option<UiMessageUsageSnapshot>) -> Usage {
 /// The replayed call one tool snapshot describes: the call, the display that
 /// docks in its PREVIEW slot, and its displayless completion outcome.
 ///
-/// The display is the gate preview, never a completion body: main's hydration
-/// docked every persisted display in the preview slot and left `result` empty,
-/// and the tool widget keys its code-surface band on that slot. The outcome
-/// carries the status semantics only — the persisted verdict, and the not-run
-/// kind the reducer classifies as a cancelled call.
+/// The snapshot carries the call and its result as data — the same two facts a
+/// live turn narrates — so the surface derives the display exactly as it does
+/// live. The outcome carries the status semantics only: the persisted verdict,
+/// and the not-run kind the reducer classifies as a cancelled call.
 ///
 /// A snapshot without a name or without arguments names no call: the persisted
 /// status line is no longer parsed, so such a row is dropped.
-fn tool_pair(
-    message: &UiMessageSnapshot,
-    display: Option<ToolDisplay>,
-) -> Option<(ToolCall, Option<ToolDisplay>, ToolOutcome)> {
+fn tool_pair(message: &UiMessageSnapshot) -> Option<(ToolCall, ToolOutcome)> {
     let name = message.tool_name()?;
     let arguments = message.tool_arguments()?;
     let call = ToolCall::new(
@@ -262,11 +250,10 @@ fn tool_pair(
         // completion, the same rule the resolver applies.
         status: message.tool_status().unwrap_or(ToolStatus::Failed),
         result: message.content().trim().to_string(),
-        display: None,
         error_kind: None,
         message: None,
     };
-    Some((call, display, outcome))
+    Some((call, outcome))
 }
 
 // endregion: --- Support

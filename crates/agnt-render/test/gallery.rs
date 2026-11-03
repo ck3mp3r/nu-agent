@@ -1,6 +1,6 @@
 use crate::gallery::{Gallery, GallerySnapshot};
 use crate::planner::EntryFamily;
-use agnt_core::transcript::entry::TranscriptEntry;
+use crate::transcript::entry::TranscriptEntry;
 
 // ---------------------------------------------------------------------------
 // Every family

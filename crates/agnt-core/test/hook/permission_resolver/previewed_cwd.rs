@@ -318,26 +318,13 @@ async fn interactive_resolver_uses_passed_cwd_not_process_cwd() -> Result<()> {
     let SystemEvent::PermissionRequested { context, .. } = &event else {
         panic!("Expected PermissionRequested event")
     };
-    let display = context
-        .pre_authorize_display
-        .as_ref()
+    let preview = context
+        .preview
+        .as_deref()
         .ok_or("relative-path edit must resolve against the resolver's cwd")?;
-    let section = display
-        .sections
-        .first()
-        .ok_or("pre-authorize display should have one section")?;
     assert!(
-        matches!(
-            section.kind,
-            crate::transcript::ir::ContentKind::Diff { .. }
-        ),
-        "section kind must be Diff, got {:?}",
-        section.kind
-    );
-    assert!(
-        section.content.contains("-world") && section.content.contains("+there"),
-        "diff must contain the replacement, got: {:?}",
-        section.content
+        preview.contains("-world") && preview.contains("+there"),
+        "diff must contain the replacement, got: {preview:?}"
     );
     Ok(())
 }

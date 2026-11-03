@@ -7,9 +7,7 @@ use super::{
     builtin_tool::{BuiltinTool, Previewable},
 };
 use crate::bus::Bus;
-use crate::protocol::event::{ToolDisplay, ToolDisplaySection};
 use crate::tools::fs::core::apply_search_replace_edit;
-use crate::transcript::ir::ContentKind;
 
 #[derive(Debug, serde::Deserialize)]
 pub(super) struct EditArgs {
@@ -108,54 +106,25 @@ fn make_edit_diagnostic(class: &str, message: impl Into<String>) -> JsonValue {
 
 // region:    --- Support
 
-/// Embed a tool display into a tool result JSON under the `display` key, so
-/// the TUI/TTY layers can project it without re-deriving it from the raw
-/// result payload. The display serializes with its `kind` discriminator, the
-/// same shape [`tool_display_from_result`](super::result::tool_display_from_result)
-/// reads back on rehydration.
-fn embed_display_payload(response: &mut JsonValue, display: &ToolDisplay) {
-    let Ok(value) = serde_json::to_value(display) else {
-        return;
-    };
+// endregion: --- Support
+
+/// Attach the proposed diff to the tool result as data, under the `diff` key a
+/// surface reads to draw the change. Nothing here is drawn.
+fn embed_diff(response: &mut JsonValue, diff: &str) {
     if let Some(obj) = response.as_object_mut() {
-        obj.insert("display".to_string(), value);
+        obj.insert("diff".to_string(), JsonValue::String(diff.to_string()));
     }
 }
 
-// endregion: --- Support
-
-/// Build the edit diff preview display from an edit plan. Shared by the
-/// permission-gate preview (`Previewable::preview`) and the tool response
-/// payload.
-pub(super) fn edit_preview_display(
-    path: &str,
-    plan: &crate::tools::fs::core::EditPlan,
-) -> ToolDisplay {
-    let diff = crate::tools::fs::diff::compute_edit_unified_diff(
+/// The proposed unified diff of an edit plan, as text. The permission gate
+/// carries it as data; how a diff is drawn belongs to the surface.
+pub(super) fn edit_preview_diff(path: &str, plan: &crate::tools::fs::core::EditPlan) -> String {
+    crate::tools::fs::diff::compute_edit_unified_diff(
         std::path::Path::new(path),
         &plan.previous_content,
         &plan.new_content,
-    );
-
-    ToolDisplay {
-        title: None,
-        sections: vec![ToolDisplaySection {
-            label: None,
-            kind: ContentKind::Diff {
-                language: "diff".to_string(),
-                path: path.to_string(),
-            },
-            content: diff.text,
-            stats: Some(crate::protocol::event::ToolDisplayStats {
-                files_changed: Some(diff.stats.files_changed),
-                insertions: Some(diff.stats.insertions),
-                deletions: Some(diff.stats.deletions),
-                diff_truncated: Some(diff.truncated),
-                omitted_files: Some(diff.omitted_files),
-                omitted_hunks: Some(diff.omitted_hunks),
-            }),
-        }],
-    }
+    )
+    .text
 }
 
 pub(super) fn resolve_edit_operation(
@@ -494,17 +463,7 @@ impl BuiltinTool for EditTool {
                             return Err(noop_or_conflict_error(&edit_args.path, mode, plan));
                         }
 
-                        let preview_display = args
-                            .as_object()
-                            .and_then(|args| {
-                                super::pre_authorize::pre_authorize_fs_tool(
-                                    Some(super::builtin_kinds::BuiltinKind::Edit),
-                                    args,
-                                    cwd,
-                                )
-                            })
-                            .and_then(|output| output.display)
-                            .unwrap_or_else(|| edit_preview_display(&edit_args.path, &plan));
+                        let preview_diff = edit_preview_diff(&edit_args.path, &plan);
 
                         let summary = match apply_search_replace_edit(
                             &resolved_path,
@@ -522,13 +481,12 @@ impl BuiltinTool for EditTool {
                                         Ok(refreshed_plan) => refreshed_plan,
                                         Err(err) => {
                                             let mapped = map_mutate_error(err);
-                                            let mut response = build_edit_contract_error_response(
+                                            let response = build_edit_contract_error_response(
                                                 &edit_args.path,
                                                 mode,
                                                 map_edit_contract_error(&mapped),
                                                 mapped.message,
                                             );
-                                            embed_display_payload(&mut response, &preview_display);
                                             return Ok(response);
                                         }
                                     };
@@ -540,13 +498,12 @@ impl BuiltinTool for EditTool {
                             }
                             Err(err) => {
                                 let mapped = map_mutate_error(err);
-                                let mut response = build_edit_contract_error_response(
+                                let response = build_edit_contract_error_response(
                                     &edit_args.path,
                                     mode,
                                     map_edit_contract_error(&mapped),
                                     mapped.message,
                                 );
-                                embed_display_payload(&mut response, &preview_display);
                                 return Ok(response);
                             }
                         };
@@ -561,13 +518,12 @@ impl BuiltinTool for EditTool {
                                     Ok(refreshed_plan) => refreshed_plan,
                                     Err(err) => {
                                         let mapped = map_mutate_error(err);
-                                        let mut response = build_edit_contract_error_response(
+                                        let response = build_edit_contract_error_response(
                                             &edit_args.path,
                                             mode,
                                             map_edit_contract_error(&mapped),
                                             mapped.message,
                                         );
-                                        embed_display_payload(&mut response, &preview_display);
                                         return Ok(response);
                                     }
                                 };
@@ -585,7 +541,7 @@ impl BuiltinTool for EditTool {
                             true,
                             Some(&summary),
                         );
-                        embed_display_payload(&mut response, &preview_display);
+                        embed_diff(&mut response, &preview_diff);
                         Ok(response)
                     }
                 }
@@ -627,17 +583,7 @@ impl BuiltinTool for EditTool {
                             return Err(create_conflict_error(&edit_args.path, mode, plan));
                         }
 
-                        let preview_display = args
-                            .as_object()
-                            .and_then(|args| {
-                                super::pre_authorize::pre_authorize_fs_tool(
-                                    Some(super::builtin_kinds::BuiltinKind::Edit),
-                                    args,
-                                    cwd,
-                                )
-                            })
-                            .and_then(|output| output.display)
-                            .unwrap_or_else(|| edit_preview_display(&edit_args.path, &plan));
+                        let preview_diff = edit_preview_diff(&edit_args.path, &plan);
 
                         let summary = match crate::tools::fs::core::apply_create_file(
                             &resolved_path,
@@ -646,13 +592,12 @@ impl BuiltinTool for EditTool {
                             Ok(summary) => summary,
                             Err(err) => {
                                 let mapped = map_mutate_error(err);
-                                let mut response = build_edit_contract_error_response(
+                                let response = build_edit_contract_error_response(
                                     &edit_args.path,
                                     mode,
                                     map_edit_contract_error(&mapped),
                                     mapped.message,
                                 );
-                                embed_display_payload(&mut response, &preview_display);
                                 return Ok(response);
                             }
                         };
@@ -665,13 +610,12 @@ impl BuiltinTool for EditTool {
                                 Ok(refreshed_plan) => refreshed_plan,
                                 Err(err) => {
                                     let mapped = map_mutate_error(err);
-                                    let mut response = build_edit_contract_error_response(
+                                    let response = build_edit_contract_error_response(
                                         &edit_args.path,
                                         mode,
                                         map_edit_contract_error(&mapped),
                                         mapped.message,
                                     );
-                                    embed_display_payload(&mut response, &preview_display);
                                     return Ok(response);
                                 }
                             };
@@ -689,7 +633,7 @@ impl BuiltinTool for EditTool {
                             true,
                             Some(&summary),
                         );
-                        embed_display_payload(&mut response, &preview_display);
+                        embed_diff(&mut response, &preview_diff);
                         Ok(response)
                     }
                 }
@@ -705,7 +649,7 @@ impl Previewable for EditTool {
     /// that do not form a valid apply-mode operation, and for plans that
     /// would not change the file (no-op or version conflict) — there is no
     /// diff to approve, so the gate prompts bare.
-    fn preview(args: &JsonValue, cwd: &Path) -> Option<ToolDisplay> {
+    fn preview(args: &JsonValue, cwd: &Path) -> Option<String> {
         let edit_args: EditArgs = serde_json::from_value(args.clone()).ok()?;
         let mode = parse_edit_mode(edit_args.mode.as_deref()).ok()?;
         if mode != EditToolMode::Apply {
@@ -741,7 +685,7 @@ impl Previewable for EditTool {
             return None;
         }
 
-        Some(edit_preview_display(&edit_args.path, &plan))
+        Some(edit_preview_diff(&edit_args.path, &plan))
     }
 }
 

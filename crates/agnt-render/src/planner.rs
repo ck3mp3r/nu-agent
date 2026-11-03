@@ -5,8 +5,8 @@
 //! decide the row count between two neighbours. The state machine's seeding and
 //! mutation collapse into the caller tracking the previous family.
 
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::ir::MessageRole;
+use crate::transcript::entry::TranscriptEntry;
+use crate::transcript::ir::MessageRole;
 
 use crate::backend::{RenderBackend, RowRect};
 

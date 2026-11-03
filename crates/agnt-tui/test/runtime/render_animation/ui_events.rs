@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 use agnt_core::protocol::events::{AutoResolutionAction, RequestId, SystemKind};
 
@@ -152,7 +152,7 @@ fn ui_event_permission_group() -> Result<()> {
             target_field: Some("command".to_string()),
             pattern: "*".to_string(),
             summary: "→ {\"command\":\"echo hi\"}".to_string(),
-            pre_authorize_display: None,
+            preview: None,
         },
     };
 
@@ -213,25 +213,22 @@ fn ui_event_permission_group() -> Result<()> {
     let mut preview = RuntimeCoordinator::new(120, 40, Some(false));
     preview.reduce_system_event(SystemEvent::ToolStarted {
         call: agnt_core::protocol::events::ToolCall::new(
-            agnt_core::transcript::ir::ToolName("write".to_string()),
+            agnt_render::transcript::ir::ToolName("edit".to_string()),
             agnt_core::tools::handler::ToolSource::Unknown,
-            "{}",
+            r#"{"path":"a.rs"}"#,
         ),
     });
     let context = PermissionRequestContext {
-        tool: "write".to_string(),
-        tool_key: "write\n{}".to_string(),
+        tool: "edit".to_string(),
+        tool_key: "edit\n{\"path\":\"a.rs\"}".to_string(),
         source: "user".to_string(),
-        mode: Some("edit".to_string()),
+        mode: Some("apply".to_string()),
         matched_rule_identity: "identity".to_string(),
         scope: "scope".to_string(),
         target_field: Some("target".to_string()),
         pattern: "pattern".to_string(),
         summary: "summary".to_string(),
-        pre_authorize_display: Some(ToolDisplay {
-            title: Some("preview-title".to_string()),
-            sections: vec![],
-        }),
+        preview: Some("--- a\n+++ b\n".to_string()),
     };
 
     // -- Exec
@@ -246,7 +243,7 @@ fn ui_event_permission_group() -> Result<()> {
     let preview_pushed = preview.state.transcript.entries().iter().any(|entry| {
         matches!(
             entry,
-            agnt_core::transcript::entry::TranscriptEntry::Tool(tool)
+            agnt_render::transcript::entry::TranscriptEntry::Tool(tool)
                 if tool.preview.is_some()
         )
     });

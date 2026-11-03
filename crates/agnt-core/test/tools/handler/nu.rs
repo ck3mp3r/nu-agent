@@ -1,8 +1,7 @@
 use crate::bus::{Bus, CancelEvent};
 use crate::tools::handler::ToolErrorKind;
-use crate::tools::handler::builtin_tool::{BuiltinTool, Previewable};
+use crate::tools::handler::builtin_tool::BuiltinTool;
 use crate::tools::handler::nu::NuTool;
-use crate::transcript::ir::ContentKind;
 use std::path::Path;
 use std::time::Duration;
 
@@ -198,48 +197,6 @@ async fn nu_cancellation_kills_process_quickly() -> Result<()> {
     // The turn's cancel stopped the call before it produced a result: the same
     // not-run kind the timeout arm carries, so both rehydrate and render ⊘.
     assert_eq!(err.kind, ToolErrorKind::NotRun, "cancel kind: {err:?}");
-    Ok(())
-}
-
-// === Previewable ===
-
-#[test]
-fn nu_preview_table() -> Result<()> {
-    // -- Setup & Fixtures
-    let cases: Vec<(&str, serde_json::Value, Option<&str>)> = vec![
-        (
-            "valid command returns a code display",
-            serde_json::json!({"command": "ls | select name"}),
-            Some("ls | select name"),
-        ),
-        ("empty command", serde_json::json!({"command": ""}), None),
-        ("missing command", serde_json::json!({}), None),
-    ];
-
-    // -- Exec & Check
-    for (name, args, expected_command) in cases {
-        let display = NuTool::preview(&args, Path::new("/tmp"));
-        match expected_command {
-            Some(command) => {
-                let display =
-                    display.ok_or("preview must produce a display for a valid command")?;
-                assert_eq!(display.title, None, "case '{name}': title");
-                assert_eq!(display.sections.len(), 1, "case '{name}': section count");
-                let section = &display.sections[0];
-                assert!(
-                    matches!(section.kind, ContentKind::Code { ref language } if language == "nu"),
-                    "case '{name}': section kind must be Code(nu), got {:?}",
-                    section.kind
-                );
-                assert_eq!(section.content, command, "case '{name}': section content");
-                assert!(
-                    section.stats.is_none(),
-                    "case '{name}': code preview carries no stats"
-                );
-            }
-            None => assert!(display.is_none(), "case '{name}': preview must return None"),
-        }
-    }
     Ok(())
 }
 

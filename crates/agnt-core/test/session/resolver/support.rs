@@ -19,7 +19,6 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// Delegates to the actual hydrate_single_message function in resolver.rs.
 pub(super) fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiMessageSnapshot> {
     let tool_success_map = std::collections::HashMap::new();
-    let tool_displays = std::collections::HashMap::new();
     let call_statuses = ToolStatusMap::new();
     let turns = std::collections::HashMap::new();
     messages
@@ -28,7 +27,6 @@ pub(super) fn convert_rig_messages_to_snapshots(messages: &[Message]) -> Vec<UiM
             super::resolver::hydrate_single_message(
                 &StoredEntry::from(m.clone()),
                 &tool_success_map,
-                &tool_displays,
                 &call_statuses,
                 &turns,
             )

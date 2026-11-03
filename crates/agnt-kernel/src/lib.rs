@@ -6,8 +6,13 @@
 
 // region:    --- Modules
 
+pub mod builtin;
 pub mod bus;
 pub mod records;
+pub mod vocabulary;
+
+pub use builtin::{BuiltinKind, ToolKind};
+pub use vocabulary::ToolName;
 
 pub use records::{
     AutoResolution, CompactionRecord, CompactionSource, InferenceRecord, NoticeKind, NoticeRecord,
@@ -23,6 +28,10 @@ pub use records::{
 #[cfg(test)]
 #[path = "../test/support.rs"]
 pub(crate) mod test_support;
+
+#[cfg(test)]
+#[path = "../test/builtin.rs"]
+mod builtin_test;
 
 #[cfg(test)]
 #[path = "../test/bus/test.rs"]

@@ -1,7 +1,7 @@
 use super::*;
 
 use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::entry::TranscriptEntry;
 
 /// Build a chunk with the producer's two facts kept apart: `delta` is the new
 /// suffix, `aggregated` the accumulated text.
@@ -72,7 +72,7 @@ fn permission_requested(request_id: &str) -> SystemEvent {
             target_field: Some("command".to_string()),
             pattern: "*".to_string(),
             summary: "→ {\"command\":\"echo hi\"}".to_string(),
-            pre_authorize_display: None,
+            preview: None,
         },
     }
 }
@@ -200,7 +200,6 @@ fn test_coordinator_reduce_event_batch_reduces_non_chunk_events_in_order() -> Re
                 success: true,
                 status: ToolStatus::Success,
                 result: "{}".to_string(),
-                display: None,
                 error_kind: None,
                 message: None,
             },

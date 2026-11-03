@@ -10,13 +10,11 @@ pub mod preamble;
 pub mod session_management;
 pub mod skills;
 pub mod slash;
-pub mod tool_args;
 
 pub use events::{
     AutoResolutionAction, Key, RequestId, SystemEvent, SystemKind, ToolCall, ToolCallId,
     ToolOutcome, Usage,
 };
-pub use tool_args::{call_line_from_json, plain_call_text};
 
 #[cfg(test)]
 #[path = "../../test/protocol/events.rs"]
@@ -29,7 +27,3 @@ mod session_management_test;
 #[cfg(test)]
 #[path = "../../test/protocol/test.rs"]
 mod test;
-
-#[cfg(test)]
-#[path = "../../test/protocol/tool_args.rs"]
-mod tool_args_test;

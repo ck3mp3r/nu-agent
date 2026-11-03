@@ -11,7 +11,6 @@ pub mod renderer;
 pub mod session;
 pub mod theme_pref;
 pub mod tools;
-pub mod transcript;
 pub mod types;
 pub mod utils;
 

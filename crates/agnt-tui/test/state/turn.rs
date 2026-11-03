@@ -7,8 +7,8 @@ use crate::interaction::reducer::reduce;
 use crate::state::{AppState, StatusMessageKind, UiPhase};
 use agnt_core::conversation::turn::executor::TURN_STOPPED_NOTICE;
 use agnt_core::protocol::events::SystemEvent;
-use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
-use agnt_core::transcript::ir::MessageRole;
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::MessageRole;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

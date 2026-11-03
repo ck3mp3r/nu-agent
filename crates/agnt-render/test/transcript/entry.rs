@@ -3,11 +3,11 @@
 use super::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
-use crate::protocol::events::ToolCall;
 use crate::transcript::ir::{
     ContentKind, Display, DisplaySection, MessageRole, NoticeKind, ToolName,
 };
 use crate::transcript::renderer::ItemStatus;
+use agnt_kernel::{ToolCall, ToolSource};
 
 pub(crate) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -42,7 +42,7 @@ fn test_entry_tool_entry_carries_call_preview_result_and_status() -> Result<()> 
     // -- Setup & Fixtures
     let call = ToolCall::new(
         ToolName("edit".to_string()),
-        crate::tools::handler::ToolSource::Closure,
+        ToolSource::Closure,
         r#"{"path":"a.rs"}"#,
     );
     let entry = TranscriptEntry::Tool(ToolEntry {
@@ -72,11 +72,7 @@ fn test_entry_tool_entry_carries_call_preview_result_and_status() -> Result<()> 
 #[test]
 fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
     // -- Setup & Fixtures
-    let call = ToolCall::new(
-        ToolName("read".to_string()),
-        crate::tools::handler::ToolSource::Unknown,
-        "",
-    );
+    let call = ToolCall::new(ToolName("read".to_string()), ToolSource::Unknown, "");
     let cases = [
         (
             TranscriptEntry::Message(MessageEntry {
@@ -111,11 +107,7 @@ fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
         (
             TranscriptEntry::Tool(ToolEntry {
                 kind: ToolKind::Generic,
-                call: ToolCall::new(
-                    ToolName("nu".to_string()),
-                    crate::tools::handler::ToolSource::Unknown,
-                    "",
-                ),
+                call: ToolCall::new(ToolName("nu".to_string()), ToolSource::Unknown, ""),
                 preview: None,
                 result: Some(Display {
                     title: None,
@@ -135,11 +127,7 @@ fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
         (
             TranscriptEntry::Tool(ToolEntry {
                 kind: ToolKind::Generic,
-                call: ToolCall::new(
-                    ToolName("nu".to_string()),
-                    crate::tools::handler::ToolSource::Unknown,
-                    "",
-                ),
+                call: ToolCall::new(ToolName("nu".to_string()), ToolSource::Unknown, ""),
                 preview: Some(Display {
                     title: None,
                     sections: vec![DisplaySection {
@@ -159,11 +147,7 @@ fn test_entry_padding_belongs_to_the_entry() -> Result<()> {
         (
             TranscriptEntry::Tool(ToolEntry {
                 kind: ToolKind::Generic,
-                call: ToolCall::new(
-                    ToolName("edit".to_string()),
-                    crate::tools::handler::ToolSource::Unknown,
-                    "",
-                ),
+                call: ToolCall::new(ToolName("edit".to_string()), ToolSource::Unknown, ""),
                 preview: None,
                 result: Some(Display {
                     title: None,

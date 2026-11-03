@@ -56,7 +56,7 @@ impl CoreRuntime for PermissionGateRuntime {
             target_field: Some("command".to_string()),
             pattern: "*".to_string(),
             summary: "→ {\"command\":\"echo hi\"}".to_string(),
-            pre_authorize_display: None,
+            preview: None,
         };
         let (tx, rx) = crate::bus::OneshotTx::channel("permission");
         self.pending

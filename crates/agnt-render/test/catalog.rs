@@ -1,12 +1,12 @@
 use crate::catalog::{
     CallLineRow, CatalogComponent, CodeSurface, DiffView, LaneKind, LaneLine, StatRow, SurfaceRow,
 };
-use agnt_core::protocol::event::ToolDisplayStats;
-use agnt_core::transcript::entry::{
+use crate::transcript::entry::{
     BannerEntry, MessageEntry, NoticeEntry, TaskEntry, ToolEntry, ToolKind, TranscriptEntry,
 };
-use agnt_core::transcript::ir::{ContentLine, DiffTint, MessageRole, NoticeKind, StyleHint};
-use agnt_core::transcript::renderer::ItemStatus;
+use crate::transcript::ir::DisplayStats;
+use crate::transcript::ir::{ContentLine, DiffTint, MessageRole, NoticeKind, StyleHint};
+use crate::transcript::renderer::ItemStatus;
 
 // ---------------------------------------------------------------------------
 // LaneLine
@@ -146,14 +146,14 @@ fn test_catalog_call_line_row_indicator_follows_status() -> Result<()> {
 #[test]
 fn test_catalog_stat_row_renders_formatted_stats() -> Result<()> {
     // -- Setup & Fixtures
-    let stats = ToolDisplayStats {
+    let stats = DisplayStats {
         files_changed: Some(1),
         insertions: Some(2),
         deletions: Some(0),
-        ..ToolDisplayStats::default()
+        ..DisplayStats::default()
     };
     let row = StatRow::new(stats);
-    let empty = StatRow::new(ToolDisplayStats::default());
+    let empty = StatRow::new(DisplayStats::default());
 
     // -- Exec & Check
     assert_eq!(row.text().as_deref(), Some("files=1 +2 -0"));
@@ -231,7 +231,7 @@ fn test_catalog_component_bundles_every_kind() -> Result<()> {
     let components = [
         CatalogComponent::LaneLine(LaneLine::new(LaneKind::Tool)),
         CatalogComponent::CallLineRow(CallLineRow::new("read", "→ a.rs", None)),
-        CatalogComponent::StatRow(StatRow::new(ToolDisplayStats::default())),
+        CatalogComponent::StatRow(StatRow::new(DisplayStats::default())),
         CatalogComponent::DiffView(DiffView::new(Vec::new())),
         CatalogComponent::CodeSurface(CodeSurface::new(Vec::new())),
     ];
@@ -257,7 +257,7 @@ fn test_catalog_component_bundles_every_kind() -> Result<()> {
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-fn hints(spans: &[agnt_core::transcript::ir::Span]) -> Vec<(&str, StyleHint)> {
+fn hints(spans: &[crate::transcript::ir::Span]) -> Vec<(&str, StyleHint)> {
     spans
         .iter()
         .map(|span| (span.text.as_str(), span.hint.clone()))
@@ -277,9 +277,9 @@ fn message_entry(role: MessageRole) -> TranscriptEntry {
 fn tool_entry() -> TranscriptEntry {
     TranscriptEntry::Tool(ToolEntry {
         kind: ToolKind::Generic,
-        call: agnt_core::protocol::events::ToolCall::new(
-            agnt_core::transcript::ir::ToolName("read".to_string()),
-            agnt_core::tools::handler::ToolSource::Unknown,
+        call: agnt_kernel::ToolCall::new(
+            crate::transcript::ir::ToolName("read".to_string()),
+            agnt_kernel::ToolSource::Unknown,
             r#"{"path":"a.rs"}"#,
         ),
         preview: None,

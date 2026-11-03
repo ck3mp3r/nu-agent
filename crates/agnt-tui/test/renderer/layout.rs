@@ -2,9 +2,9 @@
 
 use super::support::*;
 use crate::state::code_block::content_wrap_width;
-use agnt_core::transcript::ir::MessageRole;
-use agnt_core::transcript::renderer::ItemStatus;
 use agnt_render::catalog::LaneKind;
+use agnt_render::transcript::ir::MessageRole;
+use agnt_render::transcript::renderer::ItemStatus;
 
 // region:    --- Prose
 

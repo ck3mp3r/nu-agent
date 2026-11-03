@@ -24,7 +24,7 @@ mod verbosity;
 
 use agnt_core::protocol::events::{SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
 use agnt_core::renderer::UiRenderer;
-use agnt_core::transcript::ir::ToolName;
+use agnt_render::transcript::ir::ToolName;
 
 use super::StderrUiRenderer;
 use crate::policy::{UiPolicy, Verbosity};

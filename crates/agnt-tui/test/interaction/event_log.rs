@@ -8,33 +8,16 @@
 use crate::interaction::{cancel::CancelController, reducer::reduce};
 use crate::state::{AppState, InputMode, UiPhase};
 use agnt_core::orchestrator::OrchestratorEvent;
-use agnt_core::protocol::event::{
-    PermissionDecision, PermissionRequestContext, ToolDisplay, ToolDisplaySection,
-};
+use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
 use agnt_core::protocol::events::{Key, RequestId, SystemEvent, ToolCall, ToolOutcome, Usage};
 use agnt_core::session::tool_status::ToolStatus;
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::ir::{ContentKind, MessageRole, ToolName};
-use agnt_core::transcript::renderer::ItemStatus;
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::ir::{MessageRole, ToolName};
+use agnt_render::transcript::renderer::ItemStatus;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // region:    --- Fixtures
-
-fn tool_display(title: &str, content: &str) -> ToolDisplay {
-    ToolDisplay {
-        title: Some(title.to_string()),
-        sections: vec![ToolDisplaySection {
-            label: Some(title.to_string()),
-            kind: ContentKind::Diff {
-                language: "diff".to_string(),
-                path: "test.rs".to_string(),
-            },
-            content: content.to_string(),
-            stats: None,
-        }],
-    }
-}
 
 fn edit_call(arguments: &str) -> ToolCall {
     ToolCall::new(
@@ -191,7 +174,7 @@ fn golden_log_tool_with_preview_keeps_one_entry_shape() -> Result<()> {
         SystemEvent::ToolStarted { call: call.clone() },
         SystemEvent::PreviewRequested {
             call: call.clone(),
-            display: tool_display("edit README.md", "--- a\n+++ b\n"),
+            preview: Some("--- a\n+++ b\n".to_string()),
         },
         SystemEvent::ToolCompleted {
             call,
@@ -199,7 +182,6 @@ fn golden_log_tool_with_preview_keeps_one_entry_shape() -> Result<()> {
                 success: true,
                 status: ToolStatus::Success,
                 result: "{}".to_string(),
-                display: None,
                 error_kind: None,
                 message: None,
             },
@@ -240,15 +222,14 @@ fn golden_log_tool_lifecycle_holds_one_entry_with_preview_and_result() -> Result
         SystemEvent::ToolStarted { call: call.clone() },
         SystemEvent::PreviewRequested {
             call: call.clone(),
-            display: tool_display("edit README.md", "--- a\n+++ b\n"),
+            preview: Some("--- a\n+++ b\n".to_string()),
         },
         SystemEvent::ToolCompleted {
             call,
             outcome: ToolOutcome {
                 success: true,
                 status: ToolStatus::Success,
-                result: "{}".to_string(),
-                display: Some(tool_display("edit README.md", "--- a\n+++ b\n")),
+                result: r#"{"path":"README.md","diff":"--- a\n+++ b\n"}"#.to_string(),
                 error_kind: None,
                 message: None,
             },
@@ -304,7 +285,7 @@ fn golden_log_permission_decision_writes_one_effect() -> Result<()> {
                 target_field: None,
                 pattern: "edit".to_string(),
                 summary: "→ {...}".to_string(),
-                pre_authorize_display: Some(tool_display("edit a.rs", "--- a\n+++ b\n")),
+                preview: Some("--- a\n+++ b\n".to_string()),
             },
         },
         Some(&cancel_controller),
@@ -484,7 +465,7 @@ fn golden_key_permission_card_decision() -> Result<()> {
                 target_field: None,
                 pattern: "edit".to_string(),
                 summary: "→ {...}".to_string(),
-                pre_authorize_display: None,
+                preview: None,
             },
         },
         Some(&cancel_controller),

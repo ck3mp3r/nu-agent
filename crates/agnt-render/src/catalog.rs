@@ -5,10 +5,9 @@
 //! family widgets and styles them itself; the contract fixes what each
 //! component means so the backends cannot drift apart on structure.
 
-use agnt_core::protocol::event::ToolDisplayStats;
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::ir::{ContentLine, DiffTint, MessageRole, NoticeKind, Span};
-use agnt_core::transcript::renderer::ItemStatus;
+use crate::transcript::entry::TranscriptEntry;
+use crate::transcript::ir::{ContentLine, DiffTint, DisplayStats, MessageRole, NoticeKind, Span};
+use crate::transcript::renderer::ItemStatus;
 
 // region:    --- Types
 
@@ -199,16 +198,16 @@ impl CallLineRow {
 /// muted, and no row when the stats carry no value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatRow {
-    pub stats: ToolDisplayStats,
+    pub stats: DisplayStats,
 }
 
 impl StatRow {
-    pub fn new(stats: ToolDisplayStats) -> Self {
+    pub fn new(stats: DisplayStats) -> Self {
         Self { stats }
     }
 
     pub fn text(&self) -> Option<String> {
-        self.stats.format_stats_line()
+        crate::transcript::ir::format_stats_line(&self.stats)
     }
 
     pub fn spans(&self) -> Vec<Span> {

@@ -2,7 +2,7 @@
 //! ACP equivalent.
 
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
-use agnt_core::protocol::event::{PermissionDecision, ToolDisplay};
+use agnt_core::protocol::event::PermissionDecision;
 use agnt_core::protocol::events::{RequestId, SystemEvent, SystemKind, Usage};
 
 use super::support::*;
@@ -290,14 +290,11 @@ fn test_translator_tool_preview_produces_none() -> Result<()> {
     // -- Setup & Fixtures
     let event = SystemEvent::PreviewRequested {
         call: agnt_core::protocol::events::ToolCall::new(
-            agnt_core::transcript::ir::ToolName("edit".to_string()),
+            agnt_render::transcript::ir::ToolName("edit".to_string()),
             agnt_core::tools::handler::ToolSource::Builtin,
             "{}",
         ),
-        display: ToolDisplay {
-            title: Some("edit src/file.txt".to_string()),
-            sections: vec![diff_section("src/file.txt", "--- a\n+++ b\n")],
-        },
+        preview: None,
     };
 
     // -- Exec & Check

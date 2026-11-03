@@ -4,8 +4,8 @@ use super::*;
 
 use std::time::Instant;
 
-use agnt_core::transcript::entry::{MessageEntry, TranscriptEntry};
-use agnt_core::transcript::ir::MessageRole;
+use agnt_render::transcript::entry::{MessageEntry, TranscriptEntry};
+use agnt_render::transcript::ir::MessageRole;
 
 pub(crate) const CTRL_C_QUIT_CONFIRM_STATUS: &str = "Ctrl-C again to quit";
 

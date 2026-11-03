@@ -4,10 +4,10 @@
 //! Two uses: plain logging output, and the baseline for cross-backend golden
 //! tests — its output is the content every styled backend must carry.
 
-use crate::call_line::render_for;
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::ir::{ContentLine, Span, StyleHint};
-use agnt_core::transcript::markdown::{render_markdown_lines, rendered_line_to_plain_text};
+use crate::tool_view::ToolView;
+use crate::transcript::entry::TranscriptEntry;
+use crate::transcript::ir::{ContentLine, Span, StyleHint};
+use crate::transcript::markdown::{render_markdown_lines, rendered_line_to_plain_text};
 
 use crate::backend::{RenderBackend, RowRect};
 use crate::catalog::{CatalogComponent, SurfaceRow};
@@ -137,7 +137,7 @@ fn content_lines(entry: &TranscriptEntry, width: usize) -> Vec<ContentLine> {
         }
         TranscriptEntry::Tool(tool) => {
             let name = tool.call.name.0.as_str();
-            let call_line = render_for(&tool.call);
+            let call_line = tool.call.call_line();
             let summary = call_line.as_str();
             let mut spans = Vec::new();
             if name.is_empty() {

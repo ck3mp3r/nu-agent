@@ -7,8 +7,8 @@
 //! assertions, because `agnt-tui` does not depend on `agnt-tty` and `agnt-tty`
 //! must not depend on `agnt-tui`.
 
-use agnt_core::transcript::entry::TranscriptEntry;
-use agnt_core::transcript::ir::{MessageRole, NoticeKind};
+use agnt_render::transcript::entry::TranscriptEntry;
+use agnt_render::transcript::ir::{MessageRole, NoticeKind};
 use agnt_render::{Gallery, PlainBackend, RenderBackend, RowRect, Theme};
 
 use crate::renderer::backend::TtyBackend;

@@ -68,11 +68,12 @@ async fn interactive_auto_approve_publishes_tool_preview() -> Result<()> {
         .map_err(|_| "timed out waiting for a ToolPreview event")?
         .map_err(|_| "expected a ToolPreview event")?;
     match event {
-        SystemEvent::PreviewRequested { call, display } => {
+        SystemEvent::PreviewRequested { call, preview } => {
             assert_eq!(call.id.as_str(), format!("nu\n{arguments}"));
-            assert_eq!(display.title, None);
-            assert_eq!(display.sections.len(), 1);
-            assert_eq!(display.sections[0].content, "ls");
+            assert_eq!(
+                preview, None,
+                "the drawer paints the command from the call's arguments; no producer content crosses"
+            );
         }
         other => panic!("expected ToolPreview, got {other:?}"),
     }
@@ -150,8 +151,8 @@ async fn interactive_ask_path_publishes_permission_requested_not_tool_preview() 
             context,
         } => {
             assert!(
-                context.pre_authorize_display.is_some(),
-                "the Ask path must carry the pre-authorize display"
+                context.preview.is_none(),
+                "the card is the surface's derivation; the Ask path adds no content it cannot compute"
             );
             request_id
         }

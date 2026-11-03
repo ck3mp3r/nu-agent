@@ -4,6 +4,9 @@
 //! current-truth publications. Records are never commands and never render
 //! instructions: surfaces project whichever records they care about.
 
+use crate::builtin::ToolKind;
+use crate::vocabulary::ToolName;
+
 // region:    --- Types
 
 /// The typed envelope of the session stream. The stream ring delivers these
@@ -124,7 +127,9 @@ pub struct ToolCall {
     /// so consumers never recompute the anchor: the id cannot drift between a
     /// live call and a replayed record.
     pub id: ToolCallId,
-    pub name: String,
+    /// The tool's identity. Text, because a name identifies a tool and is not a
+    /// distinction any consumer branches on — [`ToolCall::kind`] is.
+    pub name: ToolName,
     /// Where the tool comes from.
     pub source: ToolSource,
     /// The raw arguments JSON — the other half of the call key.
@@ -133,10 +138,14 @@ pub struct ToolCall {
 
 impl ToolCall {
     /// A call with its id derived by the one derivation.
-    pub fn new(name: impl Into<String>, source: ToolSource, arguments: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<ToolName>,
+        source: ToolSource,
+        arguments: impl Into<String>,
+    ) -> Self {
         let name = name.into();
         let arguments = arguments.into();
-        let id = ToolCallId::new(&name, &arguments);
+        let id = ToolCallId::new(&name.0, &arguments);
         Self {
             id,
             name,
@@ -144,19 +153,28 @@ impl ToolCall {
             arguments,
         }
     }
+
+    /// The kind of tool this call names.
+    ///
+    /// Derived from the name, never stored: the name is the identity, and a
+    /// drawer that dispatches on the kind derives it here instead of carrying a
+    /// second copy that could drift from it.
+    pub fn kind(&self) -> ToolKind {
+        ToolKind::of_name(&self.name.0)
+    }
 }
 
 /// The exact key of a tool call: `{name}\n{arguments}`.
 ///
 /// One constructor derives it, so the key cannot drift between producers, the
 /// permission gate, and a replayed transcript.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ToolCallId(String);
 
 impl ToolCallId {
-    /// The key of the call with `name` and `arguments`.
-    pub fn new(name: &str, arguments: &str) -> Self {
-        Self(format!("{name}\n{arguments}"))
+    /// The key of the call with `tool_name` and `raw_arguments`.
+    pub fn new(tool_name: &str, raw_arguments: &str) -> Self {
+        Self(format!("{tool_name}\n{raw_arguments}"))
     }
 
     /// Adopt a canonical key a producer already holds (the permission gate
@@ -223,12 +241,20 @@ pub enum ToolErrorKind {
     Denied,
 }
 
-/// One settled call: its disposition, its content, and why it has no result.
+/// One settled call: its disposition, its data, and why it has no result.
+///
+/// A tool's output has two faces, and they answer different questions: `payload`
+/// is the structured result the handler produced, which a drawer derives its own
+/// display from, and `text` is what the model actually received. Neither is a
+/// picture — how a payload is drawn is the drawing layer's business.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolOutcome {
     pub status: ToolStatus,
-    /// The call's result content.
-    pub result: String,
+    /// The tool's structured result — the JSON its handler returned — when it
+    /// produced one. `None` for a tool whose output is plain text.
+    pub payload: Option<String>,
+    /// The result as the model received it.
+    pub text: String,
     /// The handler's or gate's own message (a denial reason, a failure detail).
     pub message: Option<String>,
     /// Why the call has no result. `None` for a call that produced one.

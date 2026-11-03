@@ -5,16 +5,12 @@ use std::sync::Arc;
 use rig::conversation::{Author, EntryRef};
 
 use crate::protocol::contracts::UiMessageSnapshot;
-use crate::protocol::event::ToolDisplay;
 use crate::session::settle::{FactStore, SessionFacts};
 use crate::session::tool_status::{ToolStatus, ToolStatusMap};
 use crate::session::{RigStoreConfig, Session};
-use crate::types::{AssistantContent, CallId, Message, ToolResultContent, UserContent};
+use crate::types::{AssistantContent, CallId, Message, UserContent};
 use agnt_storage::TurnFacts;
 use std::collections::HashMap;
-
-use crate::tools::handler::tool_display_from_arguments;
-use crate::tools::handler::tool_display_from_result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionRequest {
@@ -285,7 +281,7 @@ pub fn resolve_session_request(use_tui: bool, session_id: Option<String>) -> Ses
 /// Iterator of UiMessageSnapshot ready for transcript hydration
 pub fn hydrate_transcript_messages(
     entries: &[StoredEntry],
-    cwd: &Path,
+    _cwd: &Path,
     statuses: &ToolStatusMap,
     turns: &[TurnFacts],
 ) -> Vec<UiMessageSnapshot> {
@@ -327,7 +323,6 @@ pub fn hydrate_transcript_messages(
     //          stored `is_error` verdict. A cancelled
     //          call carries the ⊘ mark and the args preview of what the turn
     //          would have run, the same preview the live permission gate shows.
-    let mut tool_displays: HashMap<CallId, ToolDisplay> = HashMap::new();
     let mut call_statuses: ToolStatusMap = HashMap::new();
     for entry in entries {
         let Message::User { content } = &entry.message else {
@@ -337,7 +332,7 @@ pub fn hydrate_transcript_messages(
             let UserContent::ToolResult(tr) = item else {
                 continue;
             };
-            let Some(tool_name) = tool_names.get(&tr.call) else {
+            let Some(_tool_name) = tool_names.get(&tr.call) else {
                 continue;
             };
             let status = match statuses.get(&tr.call.to_string()).copied() {
@@ -346,57 +341,16 @@ pub fn hydrate_transcript_messages(
                 None => ToolStatus::Success,
             };
             call_statuses.insert(tr.call.to_string(), status);
-            match status {
-                ToolStatus::Success | ToolStatus::Failed => {
-                    let result_text: String = tr
-                        .content
-                        .iter()
-                        .filter_map(|c| match c {
-                            ToolResultContent::Text(t) => Some(t.text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let Ok(json) = serde_json::from_str::<serde_json::Value>(&result_text) else {
-                        continue;
-                    };
-                    // Result-sourced display wins (an embedded `display` object, or
-                    // the edit diff). When the result carries none, fall back to the
-                    // argument-sourced preview the live path shows at the permission
-                    // gate — this is what makes a `nu` call render its command code
-                    // block after rehydration.
-                    let display = tool_display_from_result(tool_name, &json).or_else(|| {
-                        tool_arguments.get(&tr.call).and_then(|args_json| {
-                            tool_display_from_arguments(tool_name, args_json, cwd)
-                        })
-                    });
-                    if let Some(display) = display {
-                        tool_displays.insert(tr.call.clone(), display);
-                    }
-                }
-                ToolStatus::Cancelled => {
-                    if let Some(display) = tool_arguments.get(&tr.call).and_then(|args_json| {
-                        tool_display_from_arguments(tool_name, args_json, cwd)
-                    }) {
-                        tool_displays.insert(tr.call.clone(), display);
-                    }
-                }
-            }
         }
     }
-    // Pass 2: generate snapshots with tool display reconstruction
+    // Pass 2: generate snapshots. A snapshot carries the call and its result as
+    // data; the surface derives the display, exactly as it does for a live turn.
     let turns_by_seq: HashMap<i64, &TurnFacts> =
         turns.iter().map(|turn| (turn.turn_seq, turn)).collect();
     entries
         .iter()
         .flat_map(|entry| {
-            hydrate_single_message(
-                entry,
-                &tool_success_map,
-                &tool_displays,
-                &call_statuses,
-                &turns_by_seq,
-            )
+            hydrate_single_message(entry, &tool_success_map, &call_statuses, &turns_by_seq)
         })
         .collect()
 }
@@ -414,7 +368,6 @@ pub fn hydrate_transcript_messages(
 pub(crate) fn hydrate_single_message(
     entry: &StoredEntry,
     tool_success_map: &HashMap<CallId, bool>,
-    tool_displays: &HashMap<CallId, ToolDisplay>,
     call_statuses: &ToolStatusMap,
     turns: &HashMap<i64, &TurnFacts>,
 ) -> Vec<UiMessageSnapshot> {
@@ -455,10 +408,8 @@ pub(crate) fn hydrate_single_message(
                         let args_json = serde_json::to_string(&tool_call.function.arguments)
                             .unwrap_or_else(|_| "{}".to_string());
 
-                        let args_summary =
-                            crate::protocol::tool_args::summarize_tool_arguments(&args_json);
-
-                        let display_content = format!("→ {args_summary}");
+                        // The snapshot carries the call as data. The surface derives
+                        // its call line and its sections, exactly as it does live.
 
                         // A call with no result at all carries no recorded
                         // status; the replay rule makes it a failed completion.
@@ -466,7 +417,7 @@ pub(crate) fn hydrate_single_message(
                             .get(&tool_call.id.to_string())
                             .copied()
                             .unwrap_or(ToolStatus::Failed);
-                        let snapshot = UiMessageSnapshot::new("tool", display_content)
+                        let snapshot = UiMessageSnapshot::new("tool", String::new())
                             .with_tool_name(tool_call.function.name.to_string())
                             .with_tool_details(
                                 Some(args_json),
@@ -475,15 +426,6 @@ pub(crate) fn hydrate_single_message(
                             )
                             .with_tool_status(status);
                         snapshots.push(snapshot);
-                        // The display snapshot follows its own call's snapshot,
-                        // so the TUI docks it under this header rather than
-                        // under the last Tool block of the turn.
-                        if let Some(display) = tool_displays.get(&tool_call.id) {
-                            snapshots.push(
-                                UiMessageSnapshot::new("tool_display", String::new())
-                                    .with_tool_display(display.clone()),
-                            );
-                        }
                     }
                     _ => {} // Reasoning, Image, etc.
                 }

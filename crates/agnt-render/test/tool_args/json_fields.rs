@@ -1,5 +1,7 @@
 use super::*;
 
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 // === Tests: tool_args ===
 
 #[test]
@@ -20,7 +22,7 @@ fn nu_command_from_args_table() {
     // -- Exec & Check
     for (args, expected) in cases {
         assert_eq!(
-            super::tool_args::nu_command_from_args(args).as_deref(),
+            nu_command_from_args(args).as_deref(),
             *expected,
             "args={args}"
         );
@@ -34,28 +36,13 @@ fn parse_json_field_table() -> Result<()> {
 
     // -- Exec & Check
     assert_eq!(
-        super::tool_args::parse_json_string_field(args, "path").as_deref(),
+        parse_json_string_field(args, "path").as_deref(),
         Some("a.rs")
     );
-    assert_eq!(
-        super::tool_args::parse_json_string_field(r#"{"path":42}"#, "path"),
-        None
-    );
-    assert_eq!(
-        super::tool_args::parse_json_usize_field(args, "limit"),
-        Some(10)
-    );
-    assert_eq!(
-        super::tool_args::parse_json_usize_field(r#"{"limit":"ten"}"#, "limit"),
-        None
-    );
-    assert_eq!(
-        super::tool_args::parse_json_array_len(args, "paths"),
-        Some(3)
-    );
-    assert_eq!(
-        super::tool_args::parse_json_array_len(r#"{"paths":"a.rs"}"#, "paths"),
-        None
-    );
+    assert_eq!(parse_json_string_field(r#"{"path":42}"#, "path"), None);
+    assert_eq!(parse_json_usize_field(args, "limit"), Some(10));
+    assert_eq!(parse_json_usize_field(r#"{"limit":"ten"}"#, "limit"), None);
+    assert_eq!(parse_json_array_len(args, "paths"), Some(3));
+    assert_eq!(parse_json_array_len(r#"{"paths":"a.rs"}"#, "paths"), None);
     Ok(())
 }

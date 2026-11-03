@@ -2,7 +2,7 @@
 //!
 //! Four bans pin what a production file may not carry: no `#[cfg(test)]`
 //! function, no killed string-sniffing shape, no status derived from a result's
-//! text, and the call-key derivation nowhere but `ToolCallId::of`. Each is a
+//! text, and the call-key derivation nowhere but `ToolCallId::new`. Each is a
 //! workspace-wide source grep — a backdoor, a sniff, or a second derivation is a
 //! defect wherever it lands.
 //!
@@ -29,13 +29,13 @@
 //! write needs stays mechanical; it never feeds a status.
 //!
 //! Call-key derivation: a key built from a tool name and its arguments is
-//! derived in exactly one place, `ToolCallId::of`
-//! (`agnt-core/src/protocol/events.rs`). Every other site routes through that
+//! derived in exactly one place, `ToolCallId::new`
+//! (`agnt-kernel/src/records.rs`). Every other site routes through that
 //! constructor.
 //!
 //! Scoped out, and deliberately staying:
 //! - `PermissionRequestContext.tool_key`: the `String` wire key. Its sites route
-//!   through `ToolCallId::of`, so it is not a re-derivation.
+//!   through `ToolCallId::new`, so it is not a re-derivation.
 //! - `context.tool`: the display-formatted tool name the prompt carries.
 //! - `UiMessageSnapshot`'s role strings (`"user"`, `"tool"`, `"tool_display"`):
 //!   the transport's role tags, matched once when a snapshot is projected.
@@ -57,7 +57,7 @@ const CFG_TEST: &str = "#[cfg(test)]";
 const CRATES_DIR: &str = "../..";
 
 /// The one module allowed to derive a call key from a tool name.
-const CALL_KEY_CONSTRUCTOR: &str = "agnt-core/src/protocol/events.rs";
+const CALL_KEY_CONSTRUCTOR: &str = "agnt-kernel/src/records.rs";
 
 /// The call-key derivation expression, split so this file does not match its
 /// own ban.
@@ -93,8 +93,9 @@ const KILLED_STATUS_SNIFFING: [&str; 6] = [
 /// the typed read exists where the rows are built.
 const STATUS_READER: &str = "agnt-core/src/session/resolver.rs";
 
-/// The status variant the resolver must match on: the cancelled class's arm.
-const STATUS_VARIANT: &str = "ToolStatus::Cancelled";
+/// The typed status read the resolver must perform: hydration takes the
+/// variant the store recorded, never a reading of the row's text.
+const STATUS_READ: &str = "ToolStatusMap";
 
 // endregion: --- Fixtures
 
@@ -102,7 +103,7 @@ const STATUS_VARIANT: &str = "ToolStatus::Cancelled";
 
 /// WHEN the workspace's production sources are scanned, THE code SHALL carry no
 /// `#[cfg(test)]` function, SHALL contain no killed sniffing shape, and SHALL
-/// derive a call key only in `ToolCallId::of`.
+/// derive a call key only in `ToolCallId::new`.
 #[test]
 fn test_architecture_production_sources_carry_no_test_only_hooks() -> Result<()> {
     // -- Setup & Fixtures
@@ -146,8 +147,8 @@ fn test_architecture_production_sources_carry_no_test_only_hooks() -> Result<()>
         "the status reader must be scanned: {STATUS_READER}"
     );
     assert!(
-        status_reads[0].1.contains(STATUS_VARIANT),
-        "the resolver must match the status variant: {STATUS_VARIANT}"
+        status_reads[0].1.contains(STATUS_READ),
+        "the resolver must read the typed status map: {STATUS_READ}"
     );
     assert_eq!(
         derivations.len(),
@@ -156,7 +157,7 @@ fn test_architecture_production_sources_carry_no_test_only_hooks() -> Result<()>
     );
     assert!(
         derivations[0].starts_with(CALL_KEY_CONSTRUCTOR),
-        "the call-key derivation belongs to `ToolCallId::of`: {derivations:#?}"
+        "the call-key derivation belongs to `ToolCallId::new`: {derivations:#?}"
     );
     Ok(())
 }
