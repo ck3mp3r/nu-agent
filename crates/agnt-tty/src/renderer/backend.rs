@@ -167,9 +167,7 @@ fn content_lines(entry: &TranscriptEntry, width: usize) -> Vec<ContentLine> {
                 spans.push(Span::new(summary.to_string(), StyleHint::Muted));
             } else {
                 spans.push(Span::new(name.to_string(), StyleHint::Emphasis));
-                if !summary.is_empty() {
-                    spans.push(Span::new(format!(" {summary}"), StyleHint::Muted));
-                }
+                spans.push(Span::new(format!(" {summary}"), StyleHint::Muted));
             }
             let mut lines = vec![ContentLine::from_spans(spans)];
             if let Some(display) = tool.result.as_ref().or(tool.preview.as_ref()) {
