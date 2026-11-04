@@ -5,7 +5,7 @@
 //! path reads this log after the turn to keep the calls and their settled
 //! results that the history no longer carries.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::session::tool_status::ToolStatus;
 use crate::types::{CallId, ToolCall, ToolName};
@@ -92,7 +92,7 @@ impl TurnToolLog {
     /// A call already recorded keeps its record: one call id is one record,
     /// so a dispatch that fires twice for the same call cannot duplicate it.
     pub fn record_call(&self, call_id: CallId, name: ToolName, arguments: impl Into<String>) {
-        let mut records = self.records.lock().expect("turn tool log mutex poisoned");
+        let mut records = self.lock_records();
         if records.iter().any(|record| record.call_id == call_id) {
             return;
         }
@@ -119,7 +119,7 @@ impl TurnToolLog {
         arguments: impl Into<String>,
         settled: SettledToolCall,
     ) {
-        let mut records = self.records.lock().expect("turn tool log mutex poisoned");
+        let mut records = self.lock_records();
         if let Some(record) = records.iter_mut().find(|record| record.call_id == call_id) {
             record.result = Some(settled.result);
             record.success = Some(settled.success);
@@ -140,10 +140,12 @@ impl TurnToolLog {
 
     /// The turn's records, in dispatch order.
     pub fn records(&self) -> Vec<TurnToolRecord> {
-        self.records
-            .lock()
-            .expect("turn tool log mutex poisoned")
-            .clone()
+        self.lock_records().clone()
+    }
+
+    /// The record log, recovered if a recorder panicked mid-push.
+    fn lock_records(&self) -> MutexGuard<'_, Vec<TurnToolRecord>> {
+        self.records.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

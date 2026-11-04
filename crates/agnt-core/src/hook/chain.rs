@@ -13,7 +13,7 @@
 //! 4. Nothing else changes.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use agnt_kernel::{
     CompactionSource, InferenceRecord, SessionRecord, StopCause, ToolCall as StreamToolCall,
@@ -359,11 +359,25 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
     /// because the cancel channel is capacity-bounded and an overflowed buffer means
     /// the turn must stop.
     fn is_cancelled(&self) -> bool {
-        let mut rx = self.cancel_rx.lock().expect("cancel_rx mutex poisoned");
+        let mut rx = self.lock_cancel_rx();
         matches!(
             rx.try_recv(),
             Ok(CancelEvent::Requested) | Err(TryRecvError::Lagged(_))
         )
+    }
+
+    /// The cancel receiver, recovered if a drainer panicked mid-receive.
+    fn lock_cancel_rx(&self) -> MutexGuard<'_, CancelRx> {
+        self.cancel_rx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The last completion's token count, recovered if a writer panicked.
+    fn lock_last_total_tokens(&self) -> MutexGuard<'_, Option<u64>> {
+        self.last_total_tokens
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Publish the not-run sequence for a call the cancel arm denied before it
@@ -848,7 +862,6 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                     // omit `total_tokens` (ollama-cloud's OpenAI-compatible
                     // endpoint does), and the switch gate and the threshold
                     // check both need a real count.
-                    // Mutex poison is a fatal internal inconsistency — panicking is correct.
                     let total_tokens =
                         match (usage.total_tokens, usage.input_tokens, usage.output_tokens) {
                             (Some(total), _, _) => Some(total),
@@ -856,7 +869,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                             _ => None,
                         };
                     if let Some(total_tokens) = total_tokens {
-                        *self.last_total_tokens.lock().unwrap() = Some(total_tokens);
+                        *self.lock_last_total_tokens() = Some(total_tokens);
                     }
                     let (cost, cost_complete) = match usage.cost {
                         Some(cost) => (Some(cost.total), cost.is_complete()),
@@ -1042,10 +1055,7 @@ async fn decide_compaction(
     // which already includes the prior prompt), plus a chars/4 estimate for the
     // current prompt. When no real count exists (first turn, or after a
     // compaction reset) fall back to the chars/4 estimate for the conversation.
-    // Mutex poison is a fatal internal inconsistency — panicking is correct.
-    let base_tokens = last_total_tokens
-        .lock()
-        .unwrap()
+    let base_tokens = lock_last_total_tokens_arc(last_total_tokens)
         .and_then(|n| u64::try_into(n).ok())
         .unwrap_or_else(|| estimate_token_count(&conversation));
     let prompt_estimate = estimate_token_count(std::slice::from_ref(prompt));
@@ -1213,9 +1223,8 @@ pub(crate) async fn run_compaction(
             // Compaction succeeded: the real token count from the previous turn no
             // longer reflects the (now summarized) context. Reset it so the next
             // turn falls back to the estimate (small — just the summary), then
-            // picks up the real count after its first completion. Mutex poison is
-            // fatal — panicking is correct.
-            *last_total_tokens.lock().unwrap() = None;
+            // picks up the real count after its first completion.
+            *lock_last_total_tokens_arc(last_total_tokens) = None;
             Some(outcome.messages)
         }
         Ok(None) => {
@@ -1264,6 +1273,20 @@ fn gate_card_for(
 }
 
 // endregion: --- Compaction
+
+// region:    --- Support
+
+/// The shared token count a compaction path carries by reference, recovered if
+/// a writer panicked mid-update.
+fn lock_last_total_tokens_arc(
+    last_total_tokens: &Arc<Mutex<Option<u64>>>,
+) -> MutexGuard<'_, Option<u64>> {
+    last_total_tokens
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+// endregion: --- Support
 
 #[cfg(test)]
 #[path = "../../test/hook/chain.rs"]

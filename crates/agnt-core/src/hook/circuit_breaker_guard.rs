@@ -4,7 +4,7 @@
 //! once the failure threshold is reached.
 
 use std::error::Error as _;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rig::agent::DispatchAction;
 use rig::tool::{ToolExecutionError, ToolResult};
@@ -84,7 +84,7 @@ impl CircuitBreakerGuard {
 
         if raw_result.error().is_some_and(source_is_transport) {
             let tripped = {
-                let mut cb = self.breaker.lock().expect("circuit breaker mutex poisoned");
+                let mut cb = self.lock_breaker();
                 cb.record_failure(server_name)
             };
             if tripped {
@@ -107,9 +107,14 @@ impl CircuitBreakerGuard {
                     .await;
             }
         } else if success {
-            let mut cb = self.breaker.lock().expect("circuit breaker mutex poisoned");
+            let mut cb = self.lock_breaker();
             cb.record_success(server_name);
         }
+    }
+
+    /// The breaker, recovered if a call panicked mid-record.
+    fn lock_breaker(&self) -> MutexGuard<'_, McpCircuitBreaker> {
+        self.breaker.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

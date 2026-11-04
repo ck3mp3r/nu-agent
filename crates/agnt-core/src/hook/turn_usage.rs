@@ -6,7 +6,7 @@
 //! runner-side sum would undercount under channel lag, so the accumulation
 //! lives where the calls are observed.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 // region:    --- Types
 
@@ -86,8 +86,8 @@ impl TurnUsage {
     /// `total` is the call's total per the chain fallback: the wire's total
     /// when it reported one, else input + output. `cost` is `None` for a call
     /// nothing priced; `cost_complete` says whether that cost is the whole
-    /// charge. Mutex poison is a fatal internal inconsistency — panicking is
-    /// correct.
+    /// charge. A poisoned cell is recovered: the cells are counters, still
+    /// valid after a mid-update panic.
     pub fn add_call(
         &self,
         input_tokens: u64,
@@ -96,28 +96,28 @@ impl TurnUsage {
         cost: Option<f64>,
         cost_complete: bool,
     ) {
-        *self.input_tokens.lock().unwrap() += input_tokens;
-        *self.output_tokens.lock().unwrap() += output_tokens;
+        *self.lock_input_tokens() += input_tokens;
+        *self.lock_output_tokens() += output_tokens;
         if let Some(total) = total {
-            let mut sum = self.total_tokens.lock().unwrap();
+            let mut sum = self.lock_total_tokens();
             *sum = Some(sum.unwrap_or(0) + total);
         }
         if let Some(cost) = cost {
-            let mut sum = self.cost.lock().unwrap();
+            let mut sum = self.lock_cost();
             *sum = Some(sum.unwrap_or(0.0) + cost);
         }
-        let mut complete = self.cost_complete.lock().unwrap();
+        let mut complete = self.lock_cost_complete();
         *complete = *complete && cost_complete;
     }
 
     /// The sums of every call added so far.
     pub fn totals(&self) -> TurnUsageTotals {
         TurnUsageTotals {
-            input_tokens: *self.input_tokens.lock().unwrap(),
-            output_tokens: *self.output_tokens.lock().unwrap(),
-            total_tokens: *self.total_tokens.lock().unwrap(),
-            cost: *self.cost.lock().unwrap(),
-            cost_complete: *self.cost_complete.lock().unwrap(),
+            input_tokens: *self.lock_input_tokens(),
+            output_tokens: *self.lock_output_tokens(),
+            total_tokens: *self.lock_total_tokens(),
+            cost: *self.lock_cost(),
+            cost_complete: *self.lock_cost_complete(),
         }
     }
 
@@ -125,13 +125,45 @@ impl TurnUsage {
     ///
     /// The cells are shared with every clone, so a reset is visible to a
     /// handle taken before it. `cost_complete` returns to the AND identity.
-    /// Mutex poison is a fatal internal inconsistency — panicking is correct.
     pub fn reset(&self) {
-        *self.input_tokens.lock().unwrap() = 0;
-        *self.output_tokens.lock().unwrap() = 0;
-        *self.total_tokens.lock().unwrap() = None;
-        *self.cost.lock().unwrap() = None;
-        *self.cost_complete.lock().unwrap() = true;
+        *self.lock_input_tokens() = 0;
+        *self.lock_output_tokens() = 0;
+        *self.lock_total_tokens() = None;
+        *self.lock_cost() = None;
+        *self.lock_cost_complete() = true;
+    }
+
+    /// The input-token cell, recovered if a writer panicked mid-update.
+    fn lock_input_tokens(&self) -> MutexGuard<'_, u64> {
+        self.input_tokens
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The output-token cell, recovered if a writer panicked mid-update.
+    fn lock_output_tokens(&self) -> MutexGuard<'_, u64> {
+        self.output_tokens
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The total-token cell, recovered if a writer panicked mid-update.
+    fn lock_total_tokens(&self) -> MutexGuard<'_, Option<u64>> {
+        self.total_tokens
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The cost cell, recovered if a writer panicked mid-update.
+    fn lock_cost(&self) -> MutexGuard<'_, Option<f64>> {
+        self.cost.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The completeness cell, recovered if a writer panicked mid-update.
+    fn lock_cost_complete(&self) -> MutexGuard<'_, bool> {
+        self.cost_complete
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 

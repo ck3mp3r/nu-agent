@@ -2,7 +2,7 @@
 //!
 //! All implementation lives in the concern modules and `chain.rs`.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use agnt_kernel::{InferenceRecord, SessionRecord, StopCause};
 
@@ -37,8 +37,7 @@ impl StopLedger {
     /// Record the cause. The first stop of a turn wins: a stopped stream ends
     /// the run, so a later record would describe work that never happened.
     pub fn record(&self, cause: StopCause) {
-        // Mutex poison is a fatal internal inconsistency — panicking is correct.
-        let mut slot = self.cause.lock().unwrap();
+        let mut slot = self.lock_cause();
         if slot.is_none() {
             *slot = Some(cause);
         }
@@ -46,8 +45,12 @@ impl StopLedger {
 
     /// Take the recorded cause, leaving the ledger empty.
     pub fn take(&self) -> Option<StopCause> {
-        // Mutex poison is a fatal internal inconsistency — panicking is correct.
-        self.cause.lock().unwrap().take()
+        self.lock_cause().take()
+    }
+
+    /// The cause cell, recovered if a recorder panicked mid-update.
+    fn lock_cause(&self) -> MutexGuard<'_, Option<StopCause>> {
+        self.cause.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Record the stop and narrate it on the record stream.

@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use serde_json::Value as JsonValue;
 
@@ -47,7 +47,7 @@ pub async fn enforce_authorization_for_tool_call(
 
     // Lock, check session grants, unlock — no .await while holding the lock.
     {
-        let grants = grant_cache.lock().expect("grant_cache lock");
+        let grants = lock_grant_cache(&grant_cache);
         auth_decision = apply_session_grant_override(
             auth_decision,
             &grants,
@@ -79,7 +79,7 @@ pub async fn enforce_authorization_for_tool_call(
 
         // Lock again to write the result — no .await while holding the lock.
         {
-            let mut grants = grant_cache.lock().expect("grant_cache lock");
+            let mut grants = lock_grant_cache(&grant_cache);
             auth_decision = apply_ask_choice(
                 auth_decision,
                 choice,
@@ -111,6 +111,13 @@ pub async fn enforce_authorization_for_tool_call(
         decision: auth_decision,
         deny_reason: None,
     }
+}
+
+/// The session grant cache, recovered if a grant write panicked mid-update.
+fn lock_grant_cache(
+    grant_cache: &Arc<Mutex<SessionGrantCache>>,
+) -> MutexGuard<'_, SessionGrantCache> {
+    grant_cache.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 #[cfg(test)]

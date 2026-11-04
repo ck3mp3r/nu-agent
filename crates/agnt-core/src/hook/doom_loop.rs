@@ -3,7 +3,7 @@
 //! Detects when the agent calls the same tool with identical arguments
 //! repeatedly, indicating an infinite loop.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rig::agent::DispatchAction;
 use serde_json::Value;
@@ -148,7 +148,7 @@ impl DoomLoopDetector {
         stop: &StopLedger,
     ) -> Option<DispatchAction> {
         let detected = {
-            let mut state = self.state.lock().expect("doom loop mutex poisoned");
+            let mut state = self.lock_state();
             state.check_and_record(tool_name, args)
         };
         match detected {
@@ -195,6 +195,11 @@ impl DoomLoopDetector {
             }
             None => None,
         }
+    }
+
+    /// The detector's state, recovered if a check panicked mid-record.
+    fn lock_state(&self) -> MutexGuard<'_, DoomLoopState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

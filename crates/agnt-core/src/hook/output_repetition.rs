@@ -4,7 +4,7 @@
 //! repeatedly with no tool calls, indicating a doom loop where the model
 //! keeps producing the same text instead of taking a different action.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use super::doom_loop::DOOM_LOOP_BACKOFF_LIMIT;
 
@@ -122,7 +122,7 @@ impl OutputRepetitionDetector {
     ) -> Option<RepetitionDetection> {
         let normalized = normalize(text);
 
-        let mut state = state.lock().expect("output repetition mutex poisoned");
+        let mut state = lock_state(state);
 
         if had_tool_calls {
             state.last_segment = None;
@@ -191,7 +191,7 @@ impl OutputRepetitionDetector {
         content: &[rig::message::AssistantContent],
     ) -> Option<RepetitionDetection> {
         let detected = {
-            let mut state = state.lock().expect("output repetition mutex poisoned");
+            let mut state = lock_state(state);
             let detected = state.intra_stream_detected;
             state.intra_stream_detected = false;
             if detected {
@@ -236,7 +236,7 @@ impl OutputRepetitionDetector {
         state: &Arc<Mutex<RepetitionState>>,
         aggregated: &str,
     ) -> Option<RepetitionAction> {
-        let mut state = state.lock().expect("output repetition mutex poisoned");
+        let mut state = lock_state(state);
         // Growth throttle: skip until the aggregated text has grown enough to
         // plausibly contain a new full repetition window. The mark is not
         // updated when the gate stays closed.
@@ -284,6 +284,11 @@ impl OutputRepetitionDetector {
 }
 
 // region:    --- Support
+
+/// The repetition state, recovered if a detector panicked mid-update.
+fn lock_state(state: &Arc<Mutex<RepetitionState>>) -> MutexGuard<'_, RepetitionState> {
+    state.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Normalizes assistant text: trims surrounding whitespace, lowercases, and
 /// collapses all whitespace runs (spaces, tabs, newlines) to single spaces.

@@ -4,7 +4,7 @@
 //! it on every call would bury the log, so the first report is the only one.
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// The model ids already reported as unpriced.
 ///
@@ -19,8 +19,12 @@ impl UnpricedWarnings {
     ///
     /// Returns `false` for a model already reported, so the caller logs once.
     pub fn first_time(&self, model_id: &str) -> bool {
-        // Mutex poison is a fatal internal inconsistency — panicking is correct.
-        self.warned.lock().unwrap().insert(model_id.to_string())
+        self.lock_warned().insert(model_id.to_string())
+    }
+
+    /// The reported set, recovered if a reporter panicked mid-insert.
+    fn lock_warned(&self) -> MutexGuard<'_, HashSet<String>> {
+        self.warned.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

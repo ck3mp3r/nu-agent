@@ -3,7 +3,7 @@
 //! Limits the number of tool calls per LLM sub-turn (one LLM response cycle).
 //! The counter is reset by [`SubTurnCap::reset`] when a new LLM request fires.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rig::agent::DispatchAction;
 
@@ -27,7 +27,12 @@ impl SubTurnCap {
 
     /// Reset the counter — call this at the start of each new sub-turn.
     pub fn reset(&self) {
-        *self.count.lock().expect("subturn cap mutex poisoned") = 0;
+        *self.lock_count() = 0;
+    }
+
+    /// The counter, recovered if a checker panicked mid-increment.
+    fn lock_count(&self) -> MutexGuard<'_, usize> {
+        self.count.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Check and increment the counter.
@@ -37,7 +42,7 @@ impl SubTurnCap {
         if self.max == 0 {
             return None;
         }
-        let mut count = self.count.lock().expect("subturn cap mutex poisoned");
+        let mut count = self.lock_count();
         if *count >= self.max {
             log::warn!(
                 "Tool call cap: tool={tool_name} count={} max={}",

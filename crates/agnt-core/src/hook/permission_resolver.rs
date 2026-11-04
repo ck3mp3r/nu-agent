@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
 
 use serde_json::Value as JsonValue;
 
@@ -499,9 +499,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                         // UI that drops `ToolPreview` (ACP) must keep the
                         // completion display, so nothing is recorded for it.
                         if renders_tool_previews && flow_context.ask_context.shows_preview {
-                            previewed
-                                .lock()
-                                .expect("previewed lock")
+                            lock_previewed(&previewed)
                                 .insert(ToolCallId::new(&tool_name, &arguments));
                             let _ = bus
                                 .ui_event()
@@ -541,7 +539,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 // Recorded synchronously in the same call chain that later asks
                 // `take_previewed`, so no cross-channel event ordering is involved.
                 if renders_tool_previews && flow_context.ask_context.shows_preview {
-                    previewed.lock().expect("previewed lock").insert(call_id);
+                    lock_previewed(&previewed).insert(call_id);
                 }
 
                 let (tx, mut rx) = OneshotTx::<ProtocolPermissionDecision>::channel("permission");
@@ -554,10 +552,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                     .request_permission(context)
                     .await
                     .unwrap_or_else(|_| RequestId::new(next_request_id()));
-                pending
-                    .lock()
-                    .unwrap()
-                    .insert(request_id.as_str().to_string(), tx);
+                lock_pending(&pending).insert(request_id.as_str().to_string(), tx);
 
                 // Await the TUI's decision, but stop waiting the moment the
                 // turn is cancelled or the decision timeout elapses: neither a
@@ -572,7 +567,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                         }
                         event = cancel_rx.recv() => {
                             if matches!(event, Ok(CancelEvent::Requested)) {
-                                pending.lock().unwrap().remove(request_id.as_str());
+                                lock_pending(&pending).remove(request_id.as_str());
                                 let matched_rule_identity = capture_hook
                                     .captured_auth_decision
                                     .as_ref()
@@ -591,7 +586,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                             }
                         }
                         () = wait_for_decision_timeout(timeout_deadline) => {
-                            pending.lock().unwrap().remove(request_id.as_str());
+                            lock_pending(&pending).remove(request_id.as_str());
                             let _ = bus
                                 .ui_event()
                                 .send(SystemEvent::PermissionDecisionTimedOut {
@@ -638,7 +633,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                 // Use the authz::PermissionDecision captured during the sentinel run.
                 // This is the same decision the user was shown — no second evaluation needed.
                 if let Some(auth_decision) = capture_hook.captured_auth_decision {
-                    let mut grants = session_grants.lock().expect("session_grants lock");
+                    let mut grants = lock_session_grants(&session_grants);
                     apply_ask_choice(
                         auth_decision,
                         ask_choice,
@@ -668,12 +663,36 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
     }
 
     fn take_previewed(&self, tool_name: &str, arguments: &str) -> bool {
-        self.previewed
-            .lock()
-            .expect("previewed lock")
-            .remove(&ToolCallId::new(tool_name, arguments))
+        lock_previewed(&self.previewed).remove(&ToolCallId::new(tool_name, arguments))
     }
 }
+
+// region:    --- Support
+
+/// The previewed-key set, recovered if a resolver panicked mid-insert.
+fn lock_previewed(
+    previewed: &Arc<StdMutex<HashSet<ToolCallId>>>,
+) -> MutexGuard<'_, HashSet<ToolCallId>> {
+    previewed.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The pending-request map, recovered if a submitter panicked mid-insert.
+fn lock_pending(
+    pending: &Arc<StdMutex<HashMap<String, OneshotTx<ProtocolPermissionDecision>>>>,
+) -> MutexGuard<'_, HashMap<String, OneshotTx<ProtocolPermissionDecision>>> {
+    pending.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The session grant cache, recovered if a grant write panicked mid-update.
+fn lock_session_grants(
+    session_grants: &Arc<StdMutex<SessionGrantCache>>,
+) -> MutexGuard<'_, SessionGrantCache> {
+    session_grants
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+// endregion: --- Support
 
 #[cfg(test)]
 #[path = "../../test/hook/permission_resolver.rs"]

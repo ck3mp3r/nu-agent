@@ -3,7 +3,7 @@
 //! Captures the conversation history just before each LLM HTTP call so that
 //! callers can recover it after a `ProviderError`.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rig::message::Message;
 
@@ -22,10 +22,12 @@ impl HistorySnapshot {
     pub fn update(&self, history: &[Message], prompt: &Message) {
         let mut snapshot = history.to_vec();
         snapshot.push(prompt.clone());
-        *self
-            .history
-            .lock()
-            .expect("history snapshot mutex poisoned") = snapshot;
+        *self.lock_history() = snapshot;
+    }
+
+    /// The snapshot, recovered if an updater panicked mid-overwrite.
+    fn lock_history(&self) -> MutexGuard<'_, Vec<Message>> {
+        self.history.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Return a clone of the Arc holding the snapshot.

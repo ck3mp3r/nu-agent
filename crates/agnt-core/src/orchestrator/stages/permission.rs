@@ -1,5 +1,12 @@
+use std::collections::HashMap;
+use std::sync::{MutexGuard, PoisonError};
+
+use crate::bus::OneshotTx;
+use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::{OrchestrationContext, PermissionHandler};
-use crate::protocol::event::PermissionDecisionSubmission;
+use crate::protocol::event::{
+    PermissionDecision as ProtocolPermissionDecision, PermissionDecisionSubmission,
+};
 use crate::protocol::events::{RequestId, SystemEvent};
 
 /// The only reason a submitted decision is ignored in v1.
@@ -24,10 +31,7 @@ impl PermissionHandler for PermissionStage {
         let Some(pending) = ctx.pending else {
             return;
         };
-        let removed = pending
-            .lock()
-            .expect("pending permissions lock")
-            .remove(&submission.request_id);
+        let removed = lock_pending(pending).remove(&submission.request_id);
         match removed {
             Some(tx) => {
                 let _ = tx.send(submission.decision);
@@ -49,6 +53,17 @@ impl PermissionHandler for PermissionStage {
         }
     }
 }
+
+// region:    --- Support
+
+/// The pending map, recovered if a submitter panicked mid-insert.
+fn lock_pending(
+    pending: &PendingPermissions,
+) -> MutexGuard<'_, HashMap<String, OneshotTx<ProtocolPermissionDecision>>> {
+    pending.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+// endregion: --- Support
 
 // region:    --- Tests
 
