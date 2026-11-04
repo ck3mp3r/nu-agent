@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -221,10 +221,10 @@ impl AgentBuilder {
                     }
                     _ = interval.tick() => {
                         let card = match &card_handle_clone {
-                            Some(handle) => handle.read().expect("card lock").clone(),
+                            Some(handle) => read_card(handle).clone(),
                             None => return,
                         };
-                        let mut discovery = discovery_clone.lock().expect("discovery lock");
+                        let mut discovery = lock_discovery(&discovery_clone);
                         discovery.reregister(&card);
                     }
                 }
@@ -313,6 +313,16 @@ impl AgentBuilder {
 }
 
 // region:    --- Support
+
+/// The server's live card, recovered if a writer panicked mid-swap.
+fn read_card(handle: &Arc<RwLock<AgentCard>>) -> RwLockReadGuard<'_, AgentCard> {
+    handle.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The discovery backend, recovered if a caller panicked mid-restart.
+fn lock_discovery(discovery: &Arc<Mutex<PeerDiscoveryImpl>>) -> MutexGuard<'_, PeerDiscoveryImpl> {
+    discovery.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Interval between peer health sweeps.
 pub(crate) const SWEEP_INTERVAL: Duration = Duration::from_secs(30);

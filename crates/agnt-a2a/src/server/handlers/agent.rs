@@ -12,7 +12,7 @@ pub async fn handle_agent_card(State(state): State<AppState>) -> impl IntoRespon
     // fallible work (serialization, header parsing) so concurrent writers are
     // not blocked while we assemble the response.
     let (card_value, version) = {
-        let card = state.agent_card.read().expect("agent_card lock");
+        let card = state.read_agent_card();
         ((*card).clone(), card.version.clone())
     };
 
@@ -54,7 +54,7 @@ pub async fn handle_agent_card(State(state): State<AppState>) -> impl IntoRespon
 }
 
 pub async fn handle_extended_agent_card(State(state): State<AppState>) -> impl IntoResponse {
-    let card = state.agent_card.read().expect("agent_card lock");
+    let card = state.read_agent_card();
     let card_value = serde_json::to_value(&*card).unwrap_or_default();
     drop(card);
     let extended = serde_json::json!({

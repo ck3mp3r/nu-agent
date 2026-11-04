@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Instant;
 
 use crate::AgentCard;
@@ -51,7 +51,7 @@ pub struct PeerCache {
 
 impl Clone for PeerCache {
     fn clone(&self) -> Self {
-        let peers = self.peers.read().expect("PeerCache read lock poisoned");
+        let peers = self.read();
         Self {
             peers: RwLock::new(peers.clone()),
         }
@@ -68,27 +68,37 @@ impl Default for PeerCache {
 
 impl PeerCache {
     pub fn add_or_update(&self, peer: Peer) {
-        let mut peers = self.peers.write().expect("PeerCache write lock poisoned");
+        let mut peers = self.write();
         peers.insert(peer.name.clone(), peer);
     }
 
     pub fn remove(&self, name: &str) {
-        let mut peers = self.peers.write().expect("PeerCache write lock poisoned");
+        let mut peers = self.write();
         peers.remove(name);
     }
 
     pub fn get(&self, name: &str) -> Option<Peer> {
-        let peers = self.peers.read().expect("PeerCache read lock poisoned");
+        let peers = self.read();
         peers.get(name).cloned()
     }
 
     pub fn list(&self) -> Vec<Peer> {
-        let peers = self.peers.read().expect("PeerCache read lock poisoned");
+        let peers = self.read();
         peers.values().cloned().collect()
     }
 
     pub fn card(&self, name: &str) -> Option<AgentCard> {
-        let peers = self.peers.read().expect("PeerCache read lock poisoned");
+        let peers = self.read();
         peers.get(name).and_then(|p| p.card.clone())
+    }
+
+    /// The peer map, recovered if a writer panicked mid-update.
+    fn read(&self) -> RwLockReadGuard<'_, HashMap<String, Peer>> {
+        self.peers.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The peer map, recovered if a reader panicked mid-read.
+    fn write(&self) -> RwLockWriteGuard<'_, HashMap<String, Peer>> {
+        self.peers.write().unwrap_or_else(|e| e.into_inner())
     }
 }
