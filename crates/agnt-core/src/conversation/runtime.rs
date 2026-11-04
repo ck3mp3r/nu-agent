@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use agnt_kernel::CompactionSource;
 use nu_protocol::{LabeledError, Span, Value};
@@ -176,6 +176,31 @@ pub type AgentConversationRuntime = AgentRuntime<
     super::state::persona::PersonaState,
     super::state::multi_agent::MultiAgentState,
 >;
+
+impl<Prov, Tools, Sess, Persona, Multi> AgentRuntime<Prov, Tools, Sess, Persona, Multi>
+where
+    Prov: ProviderManager,
+    Tools: ToolManager,
+    Sess: SessionManager,
+    Persona: PersonaManager,
+    Multi: MultiAgentManager,
+{
+    /// The shared model slot, recovered if a switch panicked mid-swap.
+    pub(crate) fn lock_dyn_model(
+        &self,
+    ) -> MutexGuard<'_, rig::DynModel<rig::operation::Completion>> {
+        self.dyn_model
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The last completion's token count, recovered if a writer panicked.
+    pub(crate) fn lock_last_total_tokens(&self) -> MutexGuard<'_, Option<u64>> {
+        self.last_total_tokens
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+}
 
 impl<Prov, Tools, Sess, Persona, Multi> CoreRuntime
     for AgentRuntime<Prov, Tools, Sess, Persona, Multi>
@@ -422,7 +447,7 @@ where
         // A session that already consumed the target's whole window cannot fit
         // the next turn, so the switch is refused rather than breaking it. An
         // unknown consumed count or window means nothing to protect.
-        let consumed = *self.last_total_tokens.lock().expect("model mutex poisoned");
+        let consumed = *self.lock_last_total_tokens();
         if let Some(consumed) = consumed
             && let Some(window) = self.max_context_tokens()
             && consumed >= window
@@ -442,7 +467,7 @@ where
             .build_dyn_model()
             .await
             .map_err(|e| e.to_string())?;
-        *self.dyn_model.lock().expect("model mutex poisoned") = new_model;
+        *self.lock_dyn_model() = new_model;
         // The threshold is an absolute token count, so it must follow the new
         // model's context window.
         self.refresh_compaction_threshold();
@@ -512,7 +537,7 @@ where
             let previous_config = self.provider.provider_config().clone();
             let pre_override_model = self.active_model_identity();
             let switched = self.provider.switch_model(&model).is_ok();
-            let consumed = *self.last_total_tokens.lock().expect("model mutex poisoned");
+            let consumed = *self.lock_last_total_tokens();
             let blocked = match (switched, consumed, self.max_context_tokens()) {
                 (true, Some(consumed), Some(window)) if consumed >= window => {
                     Some((consumed, window))
@@ -529,7 +554,7 @@ where
             } else if let Ok(new_model) = self.provider.build_dyn_model().await {
                 // Rebuild the shared model from the bare model name so the
                 // persona's model serves the next turn (mirrors switch_model).
-                *self.dyn_model.lock().expect("model mutex poisoned") = new_model;
+                *self.lock_dyn_model() = new_model;
                 self.refresh_compaction_threshold();
             }
             // The override took effect when the provider accepted it and the

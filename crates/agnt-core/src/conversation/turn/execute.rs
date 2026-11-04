@@ -6,7 +6,7 @@
 //! the shared `Bus`; core never threads a `ProgressUi` through the turn.
 
 use futures::StreamExt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use agnt_kernel::StopCause;
@@ -192,12 +192,7 @@ where
     let bus = ctx.tool_infra.bus.clone();
     // Read the turn's model once: the hook prices with it and the agent is
     // built from it, so a switch landing mid-turn cannot split the two.
-    let dyn_model = ctx
-        .conversation
-        .dyn_model
-        .lock()
-        .expect("model mutex poisoned")
-        .clone();
+    let dyn_model = ctx.conversation.lock_dyn_model().clone();
 
     let hook = HookChain::new(
         HookEnv {
@@ -318,10 +313,7 @@ where
             kind: executor::CompletionErrorKind::Unknown,
         };
         let ctx = Box::new(error::TurnContext {
-            last_known_history: last_known_history_arc
-                .lock()
-                .expect("mutex poisoned")
-                .clone(),
+            last_known_history: lock_last_known_history(&last_known_history_arc).clone(),
             pre_turn_message_count,
             tool_records: turn_tools_arc.records(),
         });
@@ -331,10 +323,7 @@ where
     let response = join_result.map_err(|e| {
         let err = TurnError::from(*e);
         let ctx = Box::new(error::TurnContext {
-            last_known_history: last_known_history_arc
-                .lock()
-                .expect("mutex poisoned")
-                .clone(),
+            last_known_history: lock_last_known_history(&last_known_history_arc).clone(),
             pre_turn_message_count,
             tool_records: turn_tools_arc.records(),
         });
@@ -357,7 +346,7 @@ where
         cancel_reason: response.cancel_reason,
         stop_cause: response.stop_cause,
         last_total_tokens: response.last_total_tokens,
-        last_known_history: last_known_history_arc.lock().unwrap().clone(),
+        last_known_history: lock_last_known_history(&last_known_history_arc).clone(),
         pre_turn_message_count: response.pre_turn_message_count,
         tool_records: turn_tools_arc.records(),
         streamed_tool_calls: response.streamed_tool_calls,
@@ -762,6 +751,15 @@ where
         pre_turn_message_count,
     })
 }
+
+// region:    --- Support
+
+/// The turn's last known history, recovered if a writer panicked mid-update.
+fn lock_last_known_history(history: &Arc<Mutex<Vec<Message>>>) -> MutexGuard<'_, Vec<Message>> {
+    history.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+// endregion: --- Support
 
 // region:    --- Tests
 

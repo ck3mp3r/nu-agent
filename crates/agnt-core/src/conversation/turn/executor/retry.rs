@@ -90,11 +90,7 @@ where
             }
 
             // Reset doom loop state at the start of every turn attempt
-            self.tool_infra
-                .doom_state
-                .lock()
-                .expect("doom loop mutex poisoned")
-                .reset();
+            self.tool_infra.lock_doom_state().reset();
             let attempt_cfg = attempt_config.as_ref();
             let turn_ctx = TurnContext::new(
                 TurnConversation {
@@ -401,11 +397,7 @@ where
                             })
                             .await;
                         steering = Some(OUTPUT_REPETITION_BACKOFF_MESSAGE.to_string());
-                        self.tool_infra
-                            .output_repetition
-                            .lock()
-                            .expect("output repetition mutex poisoned")
-                            .reset_ladder();
+                        self.tool_infra.lock_output_repetition().reset_ladder();
                         // The stopped attempt's delta is persisted before the retry:
                         // the retry's fresh agent loads the session store and must
                         // see the work this attempt committed.

@@ -305,7 +305,7 @@ where
 
         // Successful turn: reset doom loop state so accumulated signatures
         // from prior turns don't carry over into the next healthy turn.
-        self.tool_infra.doom_state.lock().unwrap().reset();
+        self.tool_infra.lock_doom_state().reset();
 
         // Emit UI events via bus
         if !turn_result.deltas_emitted {

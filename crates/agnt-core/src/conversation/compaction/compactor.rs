@@ -5,7 +5,7 @@
 //! owns the `CompactionPolicy` and the `ModelSpec` the policy plans against, and
 //! it emits TUI events on the bus while the summary streams.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::bus::Bus;
 use crate::config::{Config, defaults};
@@ -157,7 +157,7 @@ impl NuCompactor {
     /// call keeps the model clone it already took, so it finishes with the old
     /// model; the next call uses the new one.
     pub fn set_model(&self, model: DynModel<Completion>) {
-        *self.model.lock().expect("model mutex poisoned") = model;
+        *self.lock_model() = model;
     }
 
     /// The policy this compactor plans with.
@@ -177,7 +177,12 @@ impl NuCompactor {
     /// and carries no pricing. This model's own `spec()` is the catalog-bound
     /// one, priced.
     pub fn model(&self) -> DynModel<Completion> {
-        self.model.lock().expect("model mutex poisoned").clone()
+        self.lock_model().clone()
+    }
+
+    /// The shared model slot, recovered if a swap panicked mid-write.
+    fn lock_model(&self) -> MutexGuard<'_, DynModel<Completion>> {
+        self.model.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Compact `conversation_id` in `store` for `reason`.
@@ -306,7 +311,7 @@ impl NuCompactor {
         // stable model; a concurrent `set_model()` then only affects the next
         // call. The model is constructed eagerly at startup, so it is always
         // present here.
-        let model = self.model.lock().expect("model mutex poisoned").clone();
+        let model = self.lock_model().clone();
 
         // `DynModel::stream` opens the reply synchronously; a failure to open
         // (transport, auth, malformed request) surfaces here rather than as a

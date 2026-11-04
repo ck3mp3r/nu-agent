@@ -31,6 +31,17 @@ pub struct TurnConversation {
     pub compaction: CompactionConfig,
 }
 
+impl TurnConversation {
+    /// The shared model slot, recovered if a switch panicked mid-swap.
+    pub(crate) fn lock_dyn_model(
+        &self,
+    ) -> std::sync::MutexGuard<'_, rig::DynModel<rig::operation::Completion>> {
+        self.dyn_model
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 pub struct TurnInput<'a> {
     pub prompt: String,
     pub preamble: Option<&'a str>,

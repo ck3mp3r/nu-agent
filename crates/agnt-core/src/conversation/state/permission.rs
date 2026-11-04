@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::tools::authz::{PermissionsConfig, PermissionsOverlay, SessionGrantCache};
 
@@ -83,19 +83,20 @@ impl PermissionState {
     /// Clear all session grants. Used when switching agents so that
     /// "Allow always" grants from the previous agent do not persist.
     pub fn clear_session_grants(&self) {
-        self.session_grants
-            .lock()
-            .expect("session_grants lock")
-            .clear();
+        self.lock_session_grants().clear();
     }
 
     /// Clear session grants for tools belonging to a specific MCP server.
     /// Used when disabling an MCP server so that its tool grants are revoked.
     pub fn clear_session_grants_for_server(&self, server_name: &str) {
+        self.lock_session_grants().clear_for_server(server_name);
+    }
+
+    /// The session grant cache, recovered if a grant write panicked mid-update.
+    fn lock_session_grants(&self) -> MutexGuard<'_, SessionGrantCache> {
         self.session_grants
             .lock()
-            .expect("session_grants lock")
-            .clear_for_server(server_name);
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn emit_startup_summary_once(&mut self) {

@@ -2,7 +2,7 @@ use libloading::Library;
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::SystemTime;
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
 use tree_sitter_language::LanguageFn;
@@ -83,6 +83,11 @@ impl<V> BoundedTreeCache<V> {
 
 static TREE_CACHE: LazyLock<Mutex<BoundedTreeCache<TreeCacheEntry>>> =
     LazyLock::new(|| Mutex::new(BoundedTreeCache::new()));
+
+/// The compiled-tree cache, recovered if a parser panicked mid-insert.
+fn lock_tree_cache() -> MutexGuard<'static, BoundedTreeCache<TreeCacheEntry>> {
+    TREE_CACHE.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Shared-library file extensions for the current platform.
 fn shared_library_extensions() -> &'static [&'static str] {
@@ -287,7 +292,7 @@ fn get_or_parse(path: &Path, language: &str) -> Result<(Arc<String>, Tree), Tool
     let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
 
     {
-        let mut cache = TREE_CACHE.lock().unwrap();
+        let mut cache = lock_tree_cache();
         if let Some((cached_mtime, source, tree)) = cache.get(path)
             && *cached_mtime == mtime
         {
@@ -306,7 +311,7 @@ fn get_or_parse(path: &Path, language: &str) -> Result<(Arc<String>, Tree), Tool
         .parse(&source, None)
         .ok_or_else(|| ToolHandlerError::runtime(format!("Failed to parse {}", path.display())))?;
     let source = Arc::new(source);
-    let mut cache = TREE_CACHE.lock().unwrap();
+    let mut cache = lock_tree_cache();
     cache.insert(path.to_path_buf(), (mtime, source.clone(), tree.clone()));
     Ok((source, tree))
 }

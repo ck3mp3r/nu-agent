@@ -24,7 +24,7 @@ pub const REPETITION_STEERING_NOTICE: &str =
 pub const TURN_STOPPED_NOTICE: &str = "Turn stopped";
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use nu_protocol::{LabeledError, Span, Value};
 
@@ -107,6 +107,22 @@ pub struct ToolInfra {
     /// once the session store could not be opened, `None` while it opens. The
     /// runtime clears it when the session changes.
     pub store_latch: crate::hook::StoreLatch,
+}
+
+impl ToolInfra {
+    /// The doom-loop state, recovered if a detector panicked mid-record.
+    pub(crate) fn lock_doom_state(&self) -> MutexGuard<'_, DoomLoopState> {
+        self.doom_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The output-repetition state, recovered if a detector panicked.
+    pub(crate) fn lock_output_repetition(&self) -> MutexGuard<'_, RepetitionState> {
+        self.output_repetition
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 pub struct TurnExecutor<'a, S: SessionManager> {
