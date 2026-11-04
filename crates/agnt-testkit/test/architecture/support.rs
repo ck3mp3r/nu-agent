@@ -10,6 +10,9 @@ pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 /// The assertion ARCH-4, one type per distinction.
 pub const ARCH_4: &str = "ARCH-4";
 
+/// The assertion ARCH-8, components take channels, not the whole bus.
+pub const ARCH_8: &str = "ARCH-8";
+
 /// The assertion ARCH-11.a, a kernel identity is not publicly settable.
 pub const ARCH_11A: &str = "ARCH-11.a";
 
@@ -35,7 +38,11 @@ pub const ARCH_12: &str = "ARCH-12";
 /// carries: seven distinctions, sixteen declarations. Merging any pair is a
 /// later slice's claim (`7e4f330c` drains `ToolErrorKind`), and its baseline
 /// entry is removed with it.
-pub const BASELINES: [(&str, &[&str]); 4] = [
+///
+/// ARCH-8's row holds every production site that takes or hands out the whole
+/// bus: thirty-nine signatures and fields that a later slice narrows to the
+/// channel each component actually uses.
+pub const BASELINES: [(&str, &[&str]); 5] = [
     (
         ARCH_4,
         &[
@@ -55,6 +62,50 @@ pub const BASELINES: [(&str, &[&str]); 4] = [
             "ARCH-4 agnt-core/src/orchestrator/turn_outcome.rs:21: `TurnOutcome` is declared 3 times in the workspace",
             "ARCH-4 agnt-core/src/conversation/turn/executor/core.rs:49: `TurnOutcome` is declared 3 times in the workspace",
             "ARCH-4 agnt-acp/src/session.rs:56: `TurnOutcome` is declared 3 times in the workspace",
+        ],
+    ),
+    (
+        ARCH_8,
+        &[
+            "ARCH-8 agnt-cli/src/mode/mod.rs:102: `&Bus` is a parameter",
+            "ARCH-8 agnt-cli/src/mode/mod.rs:174: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/conversation/runtime.rs:194: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hook/agent_hook.rs:57: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hook/chain.rs:135: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hook/chain.rs:1010: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hook/chain.rs:1075: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hook/chain.rs:1126: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hook/chain.rs:1190: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hook/circuit_breaker_guard.rs:67: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hook/doom_loop.rs:147: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hook/permission_resolver.rs:136: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hook/permission_resolver.rs:176: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hook/permission_resolver.rs:221: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hook/permission_resolver.rs:415: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/hooks/runner.rs:32: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/orchestrator/loop_impl.rs:284: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/orchestrator/router.rs:35: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/orchestrator/stages/context.rs:44: `&Bus` is a struct field",
+            "ARCH-8 agnt-core/src/protocol/contracts.rs:212: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/builtin_tool.rs:30: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/grep.rs:28: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/edit.rs:400: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/tree_sitter.rs:363: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/tree_sitter.rs:380: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/tree_sitter.rs:397: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/tree_sitter.rs:414: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/tmux_session.rs:31: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/tmux_layout.rs:24: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/tmux_pane.rs:44: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/tmux_window.rs:40: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/skill.rs:20: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/read.rs:24: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/nu.rs:31: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/http.rs:96: `&Bus` is a parameter",
+            "ARCH-8 agnt-core/src/tools/handler/glob.rs:22: `&Bus` is a parameter",
+            "ARCH-8 agnt-tui/src/interactive.rs:288: `&Bus` is a parameter",
+            "ARCH-8 agnt-acp/src/session.rs:108: `&Bus` is a return type",
+            "ARCH-8 agnt-acp/src/translator.rs:248: `&Bus` is a parameter",
         ],
     ),
     (

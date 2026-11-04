@@ -11,6 +11,7 @@ mod enums;
 mod graph;
 mod identity;
 mod report;
+mod signatures;
 mod sources;
 mod support;
 
