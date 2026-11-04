@@ -141,7 +141,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
             {
                 let client_fs = Arc::clone(&client_fs);
                 async move |request: InitializeRequest, responder, connection| {
-                    *client_fs.lock().unwrap() = Some(ClientFsState {
+                    *lock_client_fs(&client_fs) = Some(ClientFsState {
                         connection,
                         capabilities: request.client_capabilities.fs.clone(),
                     });
@@ -330,6 +330,13 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
 // endregion: --- Public Functions
 
 // region:    --- Support
+
+/// The client's filesystem state, recovered if its writer panicked.
+fn lock_client_fs(
+    client_fs: &Arc<StdMutex<Option<ClientFsState>>>,
+) -> std::sync::MutexGuard<'_, Option<ClientFsState>> {
+    client_fs.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn agent_info() -> Implementation {
     Implementation::new("nu-agent", env!("CARGO_PKG_VERSION")).title("nu-agent")

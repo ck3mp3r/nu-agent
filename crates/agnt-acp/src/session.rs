@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
 
 use agent_client_protocol::schema::v1::{
     ContentBlock, ContentChunk, FileSystemCapabilities, LoadSessionResponse, SessionConfigKind,
@@ -380,7 +380,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                 )));
             }
         };
-        *runtime.dyn_model.lock().unwrap() = dyn_model;
+        *lock_cell(&runtime.dyn_model) = dyn_model;
         let to = format!(
             "{}/{}",
             runtime.provider.provider_config().provider,
@@ -543,7 +543,19 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
 
     /// The live session with `id`, if any.
     pub fn get_session(&self, id: &str) -> Option<Arc<AcpSession>> {
-        self.sessions.lock().unwrap().get(id).cloned()
+        self.sessions().get(id).cloned()
+    }
+
+    /// The live-session registry, recovered if a holder panicked mid-update.
+    fn sessions(&self) -> MutexGuard<'_, HashMap<String, Arc<AcpSession>>> {
+        self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The client's filesystem state, recovered if its writer panicked.
+    fn client_fs(&self) -> MutexGuard<'_, Option<ClientFsState>> {
+        self.client_fs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Drop the live session with `id`, freeing its runtime and closing its bus.
@@ -555,9 +567,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     /// drops, so a session-lifecycle hook sees the close.
     pub async fn close_session(&self, id: &str) -> Result<()> {
         let session = self
-            .sessions
-            .lock()
-            .unwrap()
+            .sessions()
             .remove(id)
             .ok_or_else(|| AcpError::SessionNotFound(id.to_string()))?;
         let usage = session.usage();
@@ -586,7 +596,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     /// session was removed; a session that was never live has no bus to
     /// publish on.
     pub async fn delete_session(&self, id: &str) -> Result<()> {
-        let live = self.sessions.lock().unwrap().remove(id);
+        let live = self.sessions().remove(id);
         if let Some(session) = &live {
             let usage = session.usage();
             let _ = session
@@ -625,9 +635,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     /// persisted sessions is the store's job.
     pub fn list_sessions(&self) -> Vec<SessionInfo> {
         let mut sessions: Vec<SessionInfo> = self
-            .sessions
-            .lock()
-            .unwrap()
+            .sessions()
             .values()
             .map(|session| SessionInfo {
                 id: session.id.clone(),
@@ -646,9 +654,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     /// The registry lock is released before this returns, so the caller can
     /// hold the session for as long as it likes without blocking the registry.
     fn session(&self, session_id: &str) -> Result<Arc<AcpSession>> {
-        self.sessions
-            .lock()
-            .unwrap()
+        self.sessions()
             .get(session_id)
             .cloned()
             .ok_or_else(|| AcpError::SessionNotFound(session_id.to_string()))
@@ -663,7 +669,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         cwd: PathBuf,
         mcp_servers: Vec<McpServerConfig>,
     ) -> Result<()> {
-        let client_fs = self.client_fs.lock().unwrap().clone();
+        let client_fs = self.client_fs().clone();
         // One agent snapshot per session: the runtime writes it on construction
         // and on every persona or model switch; the session's hook runner reads
         // it when it builds an envelope.
@@ -684,7 +690,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             .await?;
         let bus = runtime.bus.clone();
         let usage = runtime.session_usage.clone();
-        self.sessions.lock().unwrap().insert(
+        self.sessions().insert(
             session_id.to_string(),
             Arc::new(AcpSession {
                 id: session_id.to_string(),
@@ -759,6 +765,14 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
 // endregion: --- AcpSessionManager Impl
 
 // region:    --- Support
+
+/// The lock behind `cell`, recovered if its holder panicked mid-update.
+///
+/// The guarded model type belongs to a crate this one only sees through
+/// `agnt-core`, so the helper stays generic over it.
+fn lock_cell<T>(cell: &StdMutex<T>) -> MutexGuard<'_, T> {
+    cell.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// The agent config options of a locked session runtime.
 fn agent_options(runtime: &AgentConversationRuntime) -> Vec<SessionConfigOption> {

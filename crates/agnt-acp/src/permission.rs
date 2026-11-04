@@ -9,15 +9,16 @@
 
 // region:    --- Modules
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::sync::{MutexGuard, PoisonError};
 
 use agent_client_protocol::schema::v1::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionRequest,
     SessionId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::bus::UiEventTx;
+use agnt_core::bus::{OneshotTx, UiEventTx};
 use agnt_core::conversation::runtime::PendingPermissions;
 use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
 use agnt_core::protocol::events::{RequestId, SystemEvent, ToolCall};
@@ -148,7 +149,7 @@ impl<S: PermissionRequestSink> AcpPermissionBridge<S> {
             }
             decision
         };
-        if let Some(tx) = self.pending.lock().unwrap().remove(request_id) {
+        if let Some(tx) = self.lock_pending().remove(request_id) {
             let _ = tx.send(decision);
         } else if let Some(ui_events) = &self.ui_events {
             // The request timed out, was cancelled, or was already resolved.
@@ -177,10 +178,15 @@ impl<S: PermissionRequestSink> AcpPermissionBridge<S> {
     /// [`Self::handle_permission_request`] are gone from the map and are left
     /// untouched.
     pub fn deny_all_pending(&mut self) {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.lock_pending();
         for (_, tx) in pending.drain() {
             let _ = tx.send(PermissionDecision::Deny);
         }
+    }
+
+    /// The pending-request map, recovered if a submitter panicked mid-insert.
+    fn lock_pending(&self) -> MutexGuard<'_, HashMap<String, OneshotTx<PermissionDecision>>> {
+        self.pending.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

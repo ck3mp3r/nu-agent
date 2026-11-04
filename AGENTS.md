@@ -380,8 +380,9 @@ build failures. `#[allow(...)]` is never acceptable — fix the code instead.
 - ❌ NO: `unwrap()` or `expect("...")` in production code
 - ❌ NO: `unwrap()` or `expect("...")` in test or example code
 - ✅ YES: `unwrap_or`, `unwrap_or_else`, `if let`, `?`, `.ok_or("should have ...")?`
-- ✅ YES: `mutex.lock().unwrap()` — mutex poison is a fatal internal
-  inconsistency and panicking is correct (the ONLY exception)
+- ✅ YES: locking a `std` mutex or `RwLock` through an owner method or a file-private helper
+  containing `.lock().unwrap_or_else(|e| e.into_inner())`; production code recovers from
+  poison and SHALL NOT `.unwrap()` or `.expect()` a lock result
 - For tests, use `.ok_or("should be ...")?` with `type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>`
 
 ### Nested `if` Statements
