@@ -7,6 +7,12 @@ pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // region:    --- Fixtures
 
+/// The assertion ARCH-11.a, a kernel identity is not publicly settable.
+pub const ARCH_11A: &str = "ARCH-11.a";
+
+/// The assertion ARCH-11.b, the kernel names no display type.
+pub const ARCH_11B: &str = "ARCH-11.b";
+
 /// The assertion ARCH-12, the kernel's dependency boundary.
 pub const ARCH_12: &str = "ARCH-12";
 
@@ -15,7 +21,23 @@ pub const ARCH_12: &str = "ARCH-12";
 /// An empty row is a property that holds everywhere in today's tree. A row that
 /// is not empty is a counted defect: the assertion passes while its set of
 /// violations equals the row exactly.
-pub const BASELINES: [(&str, &[&str]); 1] = [(ARCH_12, &[])];
+///
+/// ARCH-11.a's row holds both records whose identity is publicly settable:
+/// `ToolCall` publishes the id its constructor derived, so a caller can replace
+/// an anchor with one the arguments do not produce, and `ToolCallLine` publishes
+/// the key of the call it represents, so a row can be built for a call it did
+/// not come from.
+pub const BASELINES: [(&str, &[&str]); 3] = [
+    (
+        ARCH_11A,
+        &[
+            "ARCH-11.a agnt-kernel/src/records.rs:129: pub id: ToolCallId",
+            "ARCH-11.a agnt-tui/src/state/app_state.rs:249: pub key: ToolCallId",
+        ],
+    ),
+    (ARCH_11B, &[]),
+    (ARCH_12, &[]),
+];
 
 /// The scratch directory fixture trees are built in, relative to this crate.
 const FIXTURE_ROOT: &str = "../../tmp/architecture";
@@ -49,6 +71,17 @@ pub fn write_manifest(root: &Path, krate: &str, text: &str) -> Result<()> {
     let dir = root.join("crates").join(krate);
     fs::create_dir_all(&dir)?;
     fs::write(dir.join("Cargo.toml"), text)?;
+    Ok(())
+}
+
+/// Write `text` as the source at `relative` inside `krate`'s `src` directory in
+/// the fixture workspace `root`.
+pub fn write_source(root: &Path, krate: &str, relative: &str, text: &str) -> Result<()> {
+    let path = root.join("crates").join(krate).join("src").join(relative);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, text)?;
     Ok(())
 }
 

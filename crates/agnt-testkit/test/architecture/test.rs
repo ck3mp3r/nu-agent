@@ -8,6 +8,7 @@
 // region:    --- Modules
 
 mod graph;
+mod identity;
 mod report;
 mod sources;
 mod support;
