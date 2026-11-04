@@ -7,6 +7,9 @@ pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 // region:    --- Fixtures
 
+/// The assertion ARCH-4, one type per distinction.
+pub const ARCH_4: &str = "ARCH-4";
+
 /// The assertion ARCH-11.a, a kernel identity is not publicly settable.
 pub const ARCH_11A: &str = "ARCH-11.a";
 
@@ -27,7 +30,33 @@ pub const ARCH_12: &str = "ARCH-12";
 /// an anchor with one the arguments do not produce, and `ToolCallLine` publishes
 /// the key of the call it represents, so a row can be built for a call it did
 /// not come from.
-pub const BASELINES: [(&str, &[&str]); 3] = [
+///
+/// ARCH-4's row holds every `pub enum` whose name another `pub enum` also
+/// carries: seven distinctions, sixteen declarations. Merging any pair is a
+/// later slice's claim (`7e4f330c` drains `ToolErrorKind`), and its baseline
+/// entry is removed with it.
+pub const BASELINES: [(&str, &[&str]); 4] = [
+    (
+        ARCH_4,
+        &[
+            "ARCH-4 agnt-kernel/src/bus/cancel.rs:15: `CancelEvent` is declared 2 times in the workspace",
+            "ARCH-4 agnt-core/src/bus/events.rs:3: `CancelEvent` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:356: `NoticeKind` is declared 2 times in the workspace",
+            "ARCH-4 agnt-render/src/transcript/ir.rs:41: `NoticeKind` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:333: `PermissionDecision` is declared 3 times in the workspace",
+            "ARCH-4 agnt-core/src/protocol/event.rs:2: `PermissionDecision` is declared 3 times in the workspace",
+            "ARCH-4 agnt-core/src/hook/permission_resolver.rs:56: `PermissionDecision` is declared 3 times in the workspace",
+            "ARCH-4 agnt-tui/src/state/app_state.rs:59: `ToolCallStatus` is declared 2 times in the workspace",
+            "ARCH-4 agnt-storage/src/services/tool_calls.rs:20: `ToolCallStatus` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:221: `ToolErrorKind` is declared 2 times in the workspace",
+            "ARCH-4 agnt-core/src/tools/handler/types.rs:17: `ToolErrorKind` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/builtin.rs:44: `ToolKind` is declared 2 times in the workspace",
+            "ARCH-4 agnt-render/src/transcript/entry.rs:18: `ToolKind` is declared 2 times in the workspace",
+            "ARCH-4 agnt-core/src/orchestrator/turn_outcome.rs:21: `TurnOutcome` is declared 3 times in the workspace",
+            "ARCH-4 agnt-core/src/conversation/turn/executor/core.rs:49: `TurnOutcome` is declared 3 times in the workspace",
+            "ARCH-4 agnt-acp/src/session.rs:56: `TurnOutcome` is declared 3 times in the workspace",
+        ],
+    ),
     (
         ARCH_11A,
         &[
