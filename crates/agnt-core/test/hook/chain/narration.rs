@@ -203,7 +203,8 @@ async fn test_narration_not_run_dispatch_narrates_the_pair() -> Result<()> {
 
     // -- Exec
     crate::hook::chain::emit_not_run_dispatch(
-        &bus,
+        bus.ui_event(),
+        bus.stream(),
         &cwd,
         crate::hook::chain::NotRunCall {
             tool_name: "add",
@@ -257,7 +258,8 @@ async fn test_narration_denied_dispatch_classifies_as_denied() -> Result<()> {
 
     // -- Exec
     crate::hook::chain::emit_not_run_dispatch(
-        &bus,
+        bus.ui_event(),
+        bus.stream(),
         &cwd,
         crate::hook::chain::NotRunCall {
             tool_name: "add",

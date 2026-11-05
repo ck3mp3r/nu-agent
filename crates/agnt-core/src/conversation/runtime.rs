@@ -747,7 +747,7 @@ where
             source,
             &self.last_total_tokens,
             &self.store_latch,
-            &self.bus,
+            self.bus.compaction(),
         )
         .await;
         Ok(())

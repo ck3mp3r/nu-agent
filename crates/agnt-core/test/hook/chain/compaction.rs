@@ -47,7 +47,7 @@ async fn decide_compaction_surfaces_store_error_as_failed() -> Result<()> {
         &compaction,
         &last_total_tokens,
         &Default::default(),
-        &bus,
+        bus.compaction(),
     )
     .await;
 
@@ -90,7 +90,7 @@ async fn over_threshold_fires_requested_and_does_not_compact_synchronously() -> 
         &compaction,
         &fx.last_total_tokens,
         &Default::default(),
-        &fx.bus,
+        fx.bus.compaction(),
     )
     .await;
 
@@ -131,7 +131,7 @@ async fn decide_compaction_real_tokens_over_threshold_fires() -> Result<()> {
         &fx.compaction,
         &fx.last_total_tokens,
         &Default::default(),
-        &fx.bus,
+        fx.bus.compaction(),
     )
     .await;
 
@@ -161,7 +161,7 @@ async fn decide_compaction_real_tokens_under_threshold_does_not_fire() -> Result
         &fx.compaction,
         &fx.last_total_tokens,
         &Default::default(),
-        &fx.bus,
+        fx.bus.compaction(),
     )
     .await;
 
@@ -190,7 +190,7 @@ async fn decide_compaction_no_real_tokens_falls_back_to_conversation_estimate() 
         &fx.compaction,
         &fx.last_total_tokens,
         &Default::default(),
-        &fx.bus,
+        fx.bus.compaction(),
     )
     .await;
 
@@ -250,7 +250,7 @@ async fn decide_compaction_counts_a_turn_saved_after_the_first_read() -> Result<
         &compaction,
         &fx.last_total_tokens,
         &Default::default(),
-        &fx.bus,
+        fx.bus.compaction(),
     )
     .await;
 
@@ -291,7 +291,7 @@ async fn auto_compaction_splices_and_the_next_load_sees_it() -> Result<()> {
         &compaction,
         &fx.last_total_tokens,
         &Default::default(),
-        &fx.bus,
+        fx.bus.compaction(),
     )
     .await;
     let requested = rx.recv().await.map_err(|_| "should receive Requested")?;
@@ -308,7 +308,7 @@ async fn auto_compaction_splices_and_the_next_load_sees_it() -> Result<()> {
         CompactionSource::Auto,
         &fx.last_total_tokens,
         &Default::default(),
-        &fx.bus,
+        fx.bus.compaction(),
     )
     .await
     .ok_or("the scheduled compaction should have run")?;
@@ -351,7 +351,7 @@ async fn run_compaction_empty_history_emits_completed_with_empty_summary() -> Re
         CompactionSource::Manual,
         &fx.last_total_tokens,
         &Default::default(),
-        &fx.bus,
+        fx.bus.compaction(),
     )
     .await;
 
@@ -422,7 +422,7 @@ async fn store_dead_latch_makes_one_clean_line_and_no_further_attempt() -> Resul
         &compaction,
         &last_total_tokens,
         &store_latch,
-        &bus,
+        bus.compaction(),
     )
     .await;
     decide_compaction(
@@ -432,7 +432,7 @@ async fn store_dead_latch_makes_one_clean_line_and_no_further_attempt() -> Resul
         &compaction,
         &last_total_tokens,
         &store_latch,
-        &bus,
+        bus.compaction(),
     )
     .await;
 
@@ -503,7 +503,7 @@ async fn successful_run_compaction_clears_the_latch() -> Result<()> {
         CompactionSource::Manual,
         &last_total_tokens,
         &store_latch,
-        &bus,
+        bus.compaction(),
     )
     .await;
 

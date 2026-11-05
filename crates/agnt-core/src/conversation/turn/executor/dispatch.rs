@@ -194,7 +194,8 @@ where
                     &self.tool_infra.mcp_registry,
                 );
                 emit_not_run_dispatch(
-                    &self.tool_infra.bus,
+                    self.tool_infra.bus.ui_event(),
+                    self.tool_infra.bus.stream(),
                     &self.tool_infra.cwd,
                     NotRunCall {
                         tool_name: name,

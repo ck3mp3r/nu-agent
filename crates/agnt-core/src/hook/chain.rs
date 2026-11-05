@@ -15,6 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use agnt_kernel::bus::Stream;
 use agnt_kernel::{
     CompactionSource, InferenceRecord, SessionRecord, StopCause, ToolCall as StreamToolCall,
     ToolErrorKind as StreamToolErrorKind, ToolOutcome as StreamToolOutcome, ToolRecord,
@@ -30,7 +31,7 @@ use rig::message::Message;
 use rig::wasm_compat::WasmCompatSend;
 use rig_memory::CompactReason;
 
-use crate::bus::{Bus, CancelEvent, CancelRx, TryRecvError};
+use crate::bus::{Bus, CancelEvent, CancelRx, CompactionTx, TryRecvError, UiEventTx};
 use crate::config::defaults;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::turn::token_estimate::estimate_token_count;
@@ -132,7 +133,8 @@ pub(crate) struct NotRunCall<'a> {
 /// land after `ToolStarted` and before `ToolCompleted` — the same order the
 /// deny path and rehydration produce.
 pub(crate) async fn emit_not_run_dispatch(
-    bus: &Bus,
+    ui_event: &UiEventTx,
+    stream: &Stream,
     cwd: &Path,
     call: NotRunCall<'_>,
     outcome: NotRunOutcome<'_>,
@@ -147,22 +149,18 @@ pub(crate) async fn emit_not_run_dispatch(
     let publish_start = matches!(start, NotRunStart::Publish);
     let call = ToolCall::new(tool_name.to_string(), source, arguments);
     if publish_start {
-        let _ = bus
-            .ui_event()
+        let _ = ui_event
             .send(SystemEvent::ToolStarted { call: call.clone() })
             .await;
-        let _ = bus
-            .stream()
-            .publish(SessionRecord::Tool(ToolRecord::Started {
-                call: StreamToolCall::new(tool_name, source, arguments),
-            }));
+        let _ = stream.publish(SessionRecord::Tool(ToolRecord::Started {
+            call: StreamToolCall::new(tool_name, source, arguments),
+        }));
     }
     if preview && let Some(card) = gate_card_for(tool_name, arguments, cwd) {
         // The gate has a card for this call. The event is the signal; `card`
         // carries only the content a surface cannot derive (an edit's proposed
         // diff). A surface derives the rest from the call's arguments.
-        let _ = bus
-            .ui_event()
+        let _ = ui_event
             .send(SystemEvent::PreviewRequested {
                 call: call.clone(),
                 preview: card,
@@ -179,8 +177,7 @@ pub(crate) async fn emit_not_run_dispatch(
             (DENIED_ERROR_KIND, reason, StreamToolErrorKind::Denied)
         }
     };
-    let _ = bus
-        .ui_event()
+    let _ = ui_event
         .send(SystemEvent::ToolCompleted {
             call,
             outcome: ToolOutcome {
@@ -196,18 +193,16 @@ pub(crate) async fn emit_not_run_dispatch(
         .await;
     // The same pair on the record stream: a call the turn never dispatched is
     // still a dispatched call to every consumer folding records.
-    let _ = bus
-        .stream()
-        .publish(SessionRecord::Tool(ToolRecord::Completed {
-            call: StreamToolCall::new(tool_name, source, arguments),
-            outcome: StreamToolOutcome {
-                status: ToolStatus::Cancelled,
-                payload: None,
-                text: String::new(),
-                message: Some(message.to_string()),
-                kind: Some(kind),
-            },
-        }));
+    let _ = stream.publish(SessionRecord::Tool(ToolRecord::Completed {
+        call: StreamToolCall::new(tool_name, source, arguments),
+        outcome: StreamToolOutcome {
+            status: ToolStatus::Cancelled,
+            payload: None,
+            text: String::new(),
+            message: Some(message.to_string()),
+            kind: Some(kind),
+        },
+    }));
 }
 
 /// The environment a hook chain publishes into and resolves against.
@@ -393,7 +388,8 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
         arguments: &str,
     ) {
         emit_not_run_dispatch(
-            &self.bus,
+            self.bus.ui_event(),
+            self.bus.stream(),
             &self.cwd,
             NotRunCall {
                 tool_name,
@@ -511,7 +507,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 &compaction,
                 &last_total_tokens,
                 &store_latch,
-                &bus,
+                self.bus.compaction(),
             )
             .await;
 
@@ -699,7 +695,8 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                     // suppresses the emission and no duplicate appears.
                     let preview = !permission.take_previewed(&tool_name, &args);
                     emit_not_run_dispatch(
-                        &bus,
+                        bus.ui_event(),
+                        bus.stream(),
                         &self.cwd,
                         NotRunCall {
                             tool_name: tool_name.as_str(),
@@ -1020,7 +1017,7 @@ async fn decide_compaction(
     compaction: &CompactionConfig,
     last_total_tokens: &Arc<Mutex<Option<u64>>>,
     store_latch: &crate::hook::StoreLatch,
-    bus: &Bus,
+    compaction_tx: &CompactionTx,
 ) {
     // A store that already refused to open makes no further attempt: the
     // conversation cannot be read, so no decision can be made from it, and the
@@ -1042,7 +1039,8 @@ async fn decide_compaction(
         return;
     }
 
-    let Some(conversation) = current_conversation(memory, conversation_id, store_latch, bus).await
+    let Some(conversation) =
+        current_conversation(memory, conversation_id, store_latch, compaction_tx).await
     else {
         return;
     };
@@ -1063,11 +1061,10 @@ async fn decide_compaction(
         return;
     }
 
-    // Compaction is needed. Fire a `SystemEvent::CompactionRequested` on the bus
-    // so the orchestrator schedules the compaction on the worker; the splice it
-    // makes is what the next run loads.
-    let _ = bus
-        .compaction()
+    // Compaction is needed. Fire a `SystemEvent::CompactionRequested` on the
+    // channel so the orchestrator schedules the compaction on the worker; the
+    // splice it makes is what the next run loads.
+    let _ = compaction_tx
         .send(SystemEvent::CompactionRequested {
             source: CompactionSource::Auto,
         })
@@ -1076,18 +1073,19 @@ async fn decide_compaction(
 
 /// The conversation the session's rig-memory store holds right now.
 ///
-/// Store errors are surfaced as a `SystemEvent::CompactionFailed` on `bus` and yield
-/// `None` so the turn proceeds without a compaction decision.
+/// Store errors are surfaced as a `SystemEvent::CompactionFailed` on the
+/// compaction channel and yield `None` so the turn proceeds without a
+/// compaction decision.
 async fn current_conversation(
     memory: &crate::session::CachedMemory,
     conversation_id: &str,
     store_latch: &crate::hook::StoreLatch,
-    bus: &Bus,
+    compaction_tx: &CompactionTx,
 ) -> Option<Vec<Message>> {
     let store = match memory.rig_store(conversation_id).await {
         Ok(store) => store,
         Err(e) => {
-            emit_store_dead(store_latch, &e, "auto", bus).await;
+            emit_store_dead(store_latch, &e, "auto", compaction_tx).await;
             return None;
         }
     };
@@ -1102,8 +1100,7 @@ async fn current_conversation(
                 .collect(),
         ),
         Ok(Err(e)) => {
-            let _ = bus
-                .compaction()
+            let _ = compaction_tx
                 .send(SystemEvent::CompactionFailed {
                     source: "auto".to_string(),
                     message: format!("Failed to load the session: {e}"),
@@ -1112,8 +1109,7 @@ async fn current_conversation(
             None
         }
         Err(e) => {
-            let _ = bus
-                .compaction()
+            let _ = compaction_tx
                 .send(SystemEvent::CompactionFailed {
                     source: "auto".to_string(),
                     message: format!("Failed to load the session: {e}"),
@@ -1133,7 +1129,7 @@ async fn emit_store_dead(
     store_latch: &crate::hook::StoreLatch,
     error: &crate::session::MemoryError,
     source: &str,
-    bus: &Bus,
+    compaction_tx: &CompactionTx,
 ) {
     let message = store_refusal_text(error);
     let first = {
@@ -1148,8 +1144,7 @@ async fn emit_store_dead(
         }
     };
     if first {
-        let _ = bus
-            .compaction()
+        let _ = compaction_tx
             .send(SystemEvent::CompactionFailed {
                 source: source.to_string(),
                 message,
@@ -1197,13 +1192,13 @@ pub(crate) async fn run_compaction(
     source: CompactionSource,
     last_total_tokens: &Arc<Mutex<Option<u64>>>,
     store_latch: &crate::hook::StoreLatch,
-    bus: &Bus,
+    compaction_tx: &CompactionTx,
 ) -> Option<Vec<Message>> {
     let source_text = compaction_source_text(source);
     let store = match memory.rig_store(conversation_id).await {
         Ok(store) => store,
         Err(e) => {
-            emit_store_dead(store_latch, &e, source_text, bus).await;
+            emit_store_dead(store_latch, &e, source_text, compaction_tx).await;
             return None;
         }
     };
@@ -1228,8 +1223,7 @@ pub(crate) async fn run_compaction(
             Some(outcome.messages)
         }
         Ok(None) => {
-            let _ = bus
-                .compaction()
+            let _ = compaction_tx
                 .send(SystemEvent::CompactionCompleted {
                     source: source_text.to_string(),
                     summary_preview: String::new(),
