@@ -25,8 +25,8 @@ use agnt_core::bus::{AgentEvent, AgentTx, Bus, TurnEvent};
 use agnt_core::config::{PluginConfig, ResolvedHook};
 use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::hooks::{
-    HOOK_DRAIN_TIMEOUT, HookAgentContext, HookProcess, NuProcess, spawn_agent_hook_runner,
-    spawn_hook_runner,
+    HOOK_DRAIN_TIMEOUT, HookAgentContext, HookProcess, HookSources, NuProcess,
+    spawn_agent_hook_runner, spawn_hook_runner,
 };
 use agnt_core::protocol::contracts::UiMessageSnapshot;
 use agnt_core::protocol::session_management::SessionPersistence;
@@ -113,7 +113,18 @@ where
         return Vec::new();
     }
     log::debug!("Starting {} hook runner(s)", hooks.len());
-    spawn_hook_runner(bus, &hooks, cwd, context, process)
+    spawn_hook_runner(
+        HookSources {
+            turn: bus.turn(),
+            ui_event: bus.ui_event(),
+            compaction_tx: bus.compaction(),
+            session: bus.session(),
+        },
+        &hooks,
+        cwd,
+        context,
+        process,
+    )
 }
 
 /// Resolve the configured hooks, or an empty list when the config is absent or

@@ -706,7 +706,12 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         // runner. Zero hooks spawns nothing.
         if !self.hooks.is_empty() {
             let _handles = agnt_core::hooks::spawn_hook_runner(
-                &bus,
+                agnt_core::hooks::HookSources {
+                    turn: bus.turn(),
+                    ui_event: bus.ui_event(),
+                    compaction_tx: bus.compaction(),
+                    session: bus.session(),
+                },
                 &self.hooks,
                 &cwd,
                 &hook_context,

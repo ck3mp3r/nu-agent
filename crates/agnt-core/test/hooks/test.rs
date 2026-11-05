@@ -60,8 +60,8 @@ use std::time::Duration;
 use crate::bus::{AgentEvent, AgentTx, Bus, SessionEvent, TurnEvent, create_bus};
 use crate::config::{HookEvent, ResolvedHook};
 use crate::hooks::{
-    HookAgentContext, HookProcess, HookProcessError, build_envelope, spawn_agent_hook_runner,
-    spawn_hook_runner,
+    HookAgentContext, HookProcess, HookProcessError, HookSources, build_envelope,
+    spawn_agent_hook_runner, spawn_hook_runner,
 };
 use crate::protocol::event::{PermissionDecision, PermissionRequestContext};
 use crate::protocol::events::{
@@ -210,7 +210,12 @@ pub(super) fn spawn(
     process: &MockProcess,
 ) -> Vec<tokio::task::JoinHandle<()>> {
     spawn_hook_runner(
-        bus,
+        HookSources {
+            turn: bus.turn(),
+            ui_event: bus.ui_event(),
+            compaction_tx: bus.compaction(),
+            session: bus.session(),
+        },
         hooks,
         &session_cwd(),
         &agent_context(),

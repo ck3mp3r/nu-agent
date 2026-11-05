@@ -14,7 +14,7 @@ mod runner;
 pub use context::HookAgentContext;
 pub use envelope::{ENVELOPE_VERSION, build_envelope};
 pub use process::{HookProcess, HookProcessError, NuProcess};
-pub use runner::{failure_warning, spawn_agent_hook_runner, spawn_hook_runner};
+pub use runner::{HookSources, failure_warning, spawn_agent_hook_runner, spawn_hook_runner};
 
 #[cfg(test)]
 #[path = "../../test/hooks/test.rs"]

@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use tokio::task::JoinHandle;
 
 use crate::bus::{
-    AgentEvent, AgentRx, AgentTx, BroadcastRx, Bus, ChannelError, CompactionRx, SessionEvent,
-    SessionRx, TurnEvent, TurnRx, UiEventRx,
+    AgentEvent, AgentRx, AgentTx, BroadcastRx, ChannelError, CompactionRx, CompactionTx,
+    SessionEvent, SessionRx, SessionTx, TurnEvent, TurnRx, TurnTx, UiEventRx, UiEventTx,
 };
 use crate::config::{HookEvent, HookEventClass, ResolvedHook};
 use crate::protocol::events::SystemEvent;
@@ -21,6 +21,18 @@ use super::process::{HookProcess, HookProcessError};
 
 // region:    --- Runner
 
+/// The bus channels the session-class hook runner fans out to.
+///
+/// Named fields, one per channel the runner's consumers read: the runner hands
+/// each hook the channels it declares events on, so it never needs the hub it
+/// was built from.
+pub struct HookSources<'a> {
+    pub turn: &'a TurnTx,
+    pub ui_event: &'a UiEventTx,
+    pub compaction_tx: &'a CompactionTx,
+    pub session: &'a SessionTx,
+}
+
 /// Spawn one observe-only subscriber task per session-class hook.
 ///
 /// A hook that subscribes only to agent-class events is skipped: those events
@@ -29,7 +41,7 @@ use super::process::{HookProcess, HookProcessError};
 /// envelope, so a persona or model switch reaches the next envelope. The
 /// returned handles complete when the bus channels close.
 pub fn spawn_hook_runner<P>(
-    bus: &Bus,
+    sources: HookSources<'_>,
     hooks: &[ResolvedHook],
     session_cwd: &Path,
     context: &HookAgentContext,
@@ -52,10 +64,10 @@ where
             let context = context.clone();
             // Subscribe before spawning so no event published after this call
             // is missed.
-            let turn_rx = needs_turn(&hook).then(|| bus.turn().subscribe());
-            let ui_rx = needs_ui(&hook).then(|| bus.ui_event().subscribe());
-            let compaction_rx = needs_compaction(&hook).then(|| bus.compaction().subscribe());
-            let session_rx = Some(bus.session().subscribe());
+            let turn_rx = needs_turn(&hook).then(|| sources.turn.subscribe());
+            let ui_rx = needs_ui(&hook).then(|| sources.ui_event.subscribe());
+            let compaction_rx = needs_compaction(&hook).then(|| sources.compaction_tx.subscribe());
+            let session_rx = Some(sources.session.subscribe());
             tokio::spawn(async move {
                 run_hook(
                     hook,
