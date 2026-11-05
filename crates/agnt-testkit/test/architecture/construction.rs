@@ -24,6 +24,9 @@ const AUTH_CLIENT: &str = "pub fn f() {\n    let _ = rmcp::transport::AuthClient
 const TLS_INSTALL: &str =
     "pub fn f() {\n    crate::discovery::card::ensure_crypto_provider();\n}\n";
 
+/// A client built through the method-call half of the match.
+const CLIENT_METHOD: &str = "pub fn f() {\n    let _ = Client.new();\n}\n";
+
 /// The installer's own definition: a definition is not a call.
 const TLS_DEFINITION: &str = "pub(crate) fn ensure_crypto_provider() {\n    let _ = 1;\n}\n";
 
@@ -106,6 +109,25 @@ fn test_construction_arch_9b_flags_an_unrecorded_tls_install() -> Result<()> {
         found[0].detail,
         "crate::discovery::card::ensure_crypto_provider"
     );
+    Ok(())
+}
+
+/// WHEN a client is built through a method call on `Client`, THEN the assertion
+/// SHALL report that site: the method-call half matches the same rule.
+#[test]
+fn test_construction_arch_9b_flags_a_client_method_call() -> Result<()> {
+    // -- Setup & Fixtures
+    let root = support::fixture_root("arch-9b-client-method")?;
+    support::write_source(&root, CRATE, UNRECORDED, CLIENT_METHOD)?;
+    let ws = Workspace::from_root(&root)?;
+
+    // -- Exec
+    let found = arch_9b_infrastructure_construction(&ws);
+
+    // -- Check
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].site, "agnt-core/src/tools/rogue.rs:2");
+    assert_eq!(found[0].detail, "Client::new");
     Ok(())
 }
 
