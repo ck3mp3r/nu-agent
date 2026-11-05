@@ -1,7 +1,7 @@
 //! Interactive TUI execution mode for the `agent` CLI.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 
 use agnt_a2a::{
     AgentCard, Peer, PeerCache, PeerDiscoveryImpl, mdns_name_for_switch, rebuild_card_for_switch,
@@ -53,7 +53,7 @@ impl AgentSwitchHook for TuiAgentSwitchHook {
             // No A2A card to update; nothing further to do here.
             return;
         };
-        let mut card = card_handle.write().expect("agent_card lock");
+        let mut card = lock_card(card_handle);
         let old_name = card.name.clone();
         let skill = skill_from_persona(&name, description.as_deref());
         let new_card = rebuild_card_for_switch(&card, &name, description.as_deref(), vec![skill]);
@@ -73,7 +73,7 @@ impl AgentSwitchHook for TuiAgentSwitchHook {
         // Re-register mDNS with the new name so other agents discover the change.
         if let (Some(discovery), Some(mesh_key)) = (self.discovery.as_ref(), self.mesh_key.as_ref())
         {
-            let mut d = discovery.lock().expect("discovery lock");
+            let mut d = lock_discovery(discovery);
             let old_fullname = d.fullname().map(|s| s.to_string());
             if let Some(old_fullname) = &old_fullname
                 && let Some(port) = self.self_port
@@ -325,3 +325,17 @@ async fn run_tui_mode_inner(
     let _ = terminal_lifecycle.restore();
     result
 }
+
+// region:    --- Support
+
+/// The server's live card, recovered if a writer panicked mid-swap.
+fn lock_card(card_handle: &Arc<RwLock<AgentCard>>) -> RwLockWriteGuard<'_, AgentCard> {
+    card_handle.write().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The discovery backend, recovered if a caller panicked mid-restart.
+fn lock_discovery(discovery: &Arc<Mutex<PeerDiscoveryImpl>>) -> MutexGuard<'_, PeerDiscoveryImpl> {
+    discovery.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+// endregion: --- Support
