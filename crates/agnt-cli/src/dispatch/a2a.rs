@@ -322,6 +322,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         paths,
         bus: bus.clone(),
         hook_context,
+        compactor_model: None,
     })
     .await
     .map_err(Error::from)?;

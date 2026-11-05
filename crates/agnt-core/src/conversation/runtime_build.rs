@@ -4,15 +4,15 @@ use nu_protocol::LabeledError;
 
 use crate::bus::Bus;
 use crate::config::{
-    AgentsConfig, CompactionConfig, Config, ModelRoleConfig, PluginConfig, defaults, vault::Vault,
+    AgentsConfig, CompactionConfig, Config, ModelRoleConfig, PluginConfig, vault::Vault,
 };
 use crate::conversation::runtime::AgentConversationRuntime;
+use crate::conversation::runtime_parts::RuntimeParts;
 use crate::hooks::HookAgentContext;
 use crate::protocol::persona::PersonaSummary;
 use crate::tools::authz::{PermissionsConfig, PermissionsOverlay};
 use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use crate::tools::handler::McpToolRegistry;
-use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::tools::mcp::config::McpServerConfig;
 use crate::tools::mcp::runtime::{McpRuntime, McpServerLifecycle};
 use crate::types::ToolDefinition;
@@ -64,192 +64,51 @@ pub struct RuntimeBuildParams {
     /// writes the model identity here on construction and refreshes both cells
     /// on every persona or model switch.
     pub hook_context: HookAgentContext,
+    /// The compactor's erased model, when the composition root builds it itself.
+    ///
+    /// `None` derives it: the `[models.light]` role when it resolves, else the
+    /// startup active model. A caller that supplies one builds it from the
+    /// active model, so the compaction identity and its planning spec are the
+    /// active model's.
+    pub compactor_model: Option<Arc<Mutex<DynModel<Completion>>>>,
 }
 
 pub async fn build_runtime(
     params: RuntimeBuildParams,
 ) -> Result<AgentConversationRuntime, LabeledError> {
-    use crate::conversation::compaction::compactor::NuCompactor;
-    use crate::conversation::{
-        state::mcp::McpState, state::memory::MemoryState, state::multi_agent::MultiAgentState,
-        state::permission::PermissionState, state::persona::PersonaState,
-        state::provider::ProviderState, state::tool::ToolState,
+    use crate::conversation::state::{
+        memory::MemoryState, multi_agent::MultiAgentState, persona::PersonaState,
+        provider::ProviderState, tool::ToolState,
     };
 
-    // Extract max_tool_result_bytes before params.config is moved.
-    let max_tool_result_bytes = params
-        .config
-        .max_tool_result_bytes
-        .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES);
-    // The hook envelopes stamp the model the runtime starts on. Every switch
-    // refreshes it from the post-switch state.
-    let hook_context = params.hook_context;
-    hook_context.set_model(crate::protocol::picker::format_active_model_identity(
-        &params.config.provider,
-        &params.config.model,
-    ));
-    // Resolve the context-window limit before params.config is moved. Used to
-    // compute the hook's compaction threshold.
-    let max_context_tokens = params
-        .config
-        .model_context_tokens
-        .or_else(|| params.config.max_context_tokens.map(|t| t as usize))
-        .unwrap_or(defaults::MAX_CONTEXT_TOKENS as usize);
-    // Resolve the repetition-guard flag before params.config is moved: when
-    // unset, the guard defaults to enabled.
-    let repetition_guard = params
-        .config
-        .repetition_guard
-        .unwrap_or(defaults::REPETITION_GUARD_ENABLED);
-    // The compaction (summarizer) model: the `[models.light]` role when it
-    // resolves, else the startup active model. It is chosen once, here, and
-    // never follows a model switch.
-    let light_config = resolve_light_config(params.plugin_config.as_ref());
-    // The planning spec describes the COMPACTION model: rig-memory sizes each
-    // summarized portion to its context window.
-    let compaction_config = light_config.as_ref().unwrap_or(&params.config);
-    let compaction_source = if light_config.is_some() {
-        "[models.light]"
-    } else {
-        "the startup active model"
-    };
-    log::info!(
-        "compaction model: {}/{} ({compaction_source})",
-        compaction_config.provider,
-        compaction_config.model
-    );
-    let compaction_spec =
-        crate::conversation::compaction::compactor::resolve_model_spec_for(compaction_config);
-    // The compactor's provider needs the plugin config after the agent provider
-    // takes ownership of it.
-    let compactor_plugin_config = params.plugin_config.clone();
-    // The compaction policy: rig-memory's default with the `[compaction]`
-    // block's overrides on top. Read from the plugin config before the provider
-    // takes ownership of it.
-    let compaction_config = params
-        .plugin_config
-        .as_ref()
-        .and_then(|plugin_config| plugin_config.compaction.clone())
-        .unwrap_or_default();
-    let compaction_policy = build_compaction_policy(&compaction_config);
-
-    // The shared model is the single point of model identity: the agent is
-    // built from it on every turn. It is constructed eagerly at startup so it
-    // is ready for any operation (including `/compact` before the first turn),
-    // and rewritten by every `switch_model()`.
-    let mut provider = ProviderState::new(params.config, params.plugin_config)
-        .with_copilot_token_dir(params.paths.copilot_token_dir.clone());
-    let dyn_model = provider
-        .build_dyn_model()
-        .await
-        .map_err(|e| LabeledError::new(format!("Failed to build model: {e}")))?;
-    let dyn_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(dyn_model));
-
-    // Compactor summarizes evicted messages with its own erased model: the
-    // light role's when configured, else the startup active model. It is
-    // startup-fixed — no model switch touches it — and it is a standalone
-    // service invoked directly by the hook's compaction logic.
-    let compactor_model = match light_config {
-        Some(light_config) => {
-            let mut light_provider = ProviderState::new(light_config, compactor_plugin_config)
-                .with_copilot_token_dir(params.paths.copilot_token_dir.clone());
-            light_provider
-                .build_dyn_model()
-                .await
-                .map_err(|e| LabeledError::new(format!("Failed to build compactor model: {e}")))?
-        }
-        None => provider
-            .build_dyn_model()
-            .await
-            .map_err(|e| LabeledError::new(format!("Failed to build compactor model: {e}")))?,
-    };
-    let compactor_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(compactor_model));
-    let compactor = NuCompactor::from_shared_model(
-        Arc::clone(&compactor_model),
-        params.bus.clone(),
-        compaction_policy,
-        compaction_spec,
-    );
-
-    // The memory state holds the `CachedMemory` backend directly; all compaction
-    // logic lives in the hook. The rig-memory store of each session is made on
-    // first use from the configured backend.
-    let session = MemoryState::new(params.rig);
-
-    // Surface what reading the session repaired, such as an image whose blob is
-    // gone. A session that cannot be read still opens; the next save reports it.
-    if let Some(session_id) = params.final_session_id.as_deref() {
-        session.warn_repairs(session_id).await;
-    }
-
-    // Threshold used by the hook to decide when to compact: proactive_threshold_pct
-    // (default 0.8) of model_context_tokens (falling back to max_context_tokens).
-    let threshold_pct = params
-        .proactive_threshold_pct
-        .unwrap_or(defaults::PROACTIVE_THRESHOLD_PCT);
-    let threshold_tokens = Some((max_context_tokens as f64 * threshold_pct) as usize);
-
-    let compaction = crate::conversation::compaction::CompactionConfig {
-        compactor,
-        threshold_tokens,
-        threshold_pct,
-    };
-
-    Ok(AgentConversationRuntime {
-        runtime: params.runtime,
-        tool_server_handle: params.tool_server_handle,
-        provider,
+    // The parts own their state; the record below keeps the values `compose`
+    // derives from. Every copy is taken once, at startup.
+    let parts = RuntimeParts {
+        provider: ProviderState::new(params.config.clone(), params.plugin_config.clone())
+            .with_copilot_token_dir(params.paths.copilot_token_dir.clone()),
         tools: ToolState::new(
-            params.tool_definitions,
-            params.baseline_tool_definitions,
-            params.closure_registry,
+            params.tool_definitions.clone(),
+            params.baseline_tool_definitions.clone(),
+            params.closure_registry.clone(),
         ),
-        mcp_state: McpState::new(
-            params.mcp_runtime,
-            params.mcp_lifecycle_projection,
-            params.mcp_server_configs,
-            params.mcp_caller_cwd,
-            params.mcp_registry,
-            max_tool_result_bytes,
-            params.vault,
-        ),
-        engine: params.engine,
-        final_session_id: params.final_session_id,
-        permission_state: PermissionState::new(
-            params.base_permissions,
-            params.effective_permissions,
-            params.cli_permissions_overlay,
-            crate::tools::authz::SessionGrantCache::default(),
-            params.permissions_startup_summary,
-        ),
-        session,
+        session: MemoryState::new(params.rig.clone()),
         persona: PersonaState::new(
-            params.persona_body,
-            params.agent_identity,
-            params.agent_description,
-            params.agent_icon,
-            params.cached_agents_chain,
-            params.cached_available_skills,
+            params.persona_body.clone(),
+            params.agent_identity.clone(),
+            params.agent_description.clone(),
+            params.agent_icon.clone(),
+            params.cached_agents_chain.clone(),
+            params.cached_available_skills.clone(),
         ),
-        multi_agent: MultiAgentState::new(params.available_agents, params.agents_config),
-        cwd: params.cwd,
-        paths: params.paths,
-        interactive_pending: None,
-        renders_tool_previews: false,
-        circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
-        doom_state: Arc::new(Mutex::new(crate::hook::DoomLoopState::default())),
-        output_repetition: Arc::new(Mutex::new(
-            crate::hook::output_repetition::RepetitionState::default(),
-        )),
-        repetition_guard,
-        last_total_tokens: Arc::new(Mutex::new(None)),
-        bus: params.bus,
-        hook_context,
-        session_usage: crate::hook::TurnUsage::default(),
-        store_latch: Default::default(),
-        dyn_model,
-        compaction,
-    })
+        multi: MultiAgentState::new(
+            params.available_agents.clone(),
+            params.agents_config.clone(),
+        ),
+        engine: Arc::clone(&params.engine),
+        bus: params.bus.clone(),
+    };
+
+    AgentConversationRuntime::compose(parts, params).await
 }
 
 /// The config the compaction (summarizer) model is built from: the
@@ -258,7 +117,7 @@ pub async fn build_runtime(
 ///
 /// Every fallback names itself in the debug log, so a session that summarizes
 /// with the active model is explainable.
-fn resolve_light_config(plugin_config: Option<&PluginConfig>) -> Option<Config> {
+pub(crate) fn resolve_light_config(plugin_config: Option<&PluginConfig>) -> Option<Config> {
     let Some(plugin_config) = plugin_config else {
         log::debug!("compaction model: no plugin config; using the startup active model");
         return None;

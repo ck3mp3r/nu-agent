@@ -269,6 +269,7 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
         paths,
         bus: bus.clone(),
         hook_context,
+        compactor_model: None,
     })
     .await
     .map_err(Error::from)?;

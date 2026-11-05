@@ -22,7 +22,9 @@ use super::*;
 
 use crate::bus::create_bus;
 use crate::config::models_cache::{ModelCost, ModelLimit, ModelSpec, ProviderSpec};
-use crate::config::{AgentsConfig, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
+use crate::config::{
+    AgentsConfig, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig, defaults,
+};
 use crate::session::{RigStoreConfig, StoreType};
 use crate::tools::authz::PermissionsConfig;
 use crate::tools::closure::{ClosureRegistry, CwdEngine};
@@ -82,6 +84,7 @@ fn make_params(
         cwd,
         bus: create_bus(),
         hook_context: crate::hooks::HookAgentContext::default(),
+        compactor_model: None,
     }
 }
 

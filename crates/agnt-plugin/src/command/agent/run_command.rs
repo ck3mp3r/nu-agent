@@ -324,6 +324,7 @@ pub(super) fn run_command(
             paths,
             bus: bus.clone(),
             hook_context,
+            compactor_model: None,
         })
         .await?;
         log::debug!(

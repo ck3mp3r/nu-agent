@@ -1071,6 +1071,226 @@ where
     // ── End Phase I accessor methods ────────────────────────────────
 }
 
+// region:    --- Constructors
+
+use super::runtime_build::RuntimeBuildParams;
+use super::runtime_parts::RuntimeParts;
+
+impl AgentConversationRuntime {
+    /// Compose the runtime from the parts a composition root supplies and the
+    /// configuration only this constructor knows how to apply.
+    ///
+    /// `parts` carries what cannot be derived — provider, tools, session,
+    /// persona, multi-agent state, engine, bus — one named field each, so a
+    /// composition site that omits a part does not compile. Everything else is
+    /// built here: the erased models, the MCP and permission state, the hook
+    /// context and the compaction config.
+    pub async fn compose(
+        parts: RuntimeParts,
+        config: RuntimeBuildParams,
+    ) -> Result<Self, LabeledError> {
+        use super::compaction::compactor::NuCompactor;
+        use super::runtime_build::{build_compaction_policy, resolve_light_config};
+        use super::state::mcp::McpState;
+        use super::state::permission::PermissionState;
+        use super::state::provider::ProviderState;
+        use crate::config::defaults;
+        use rig::DynModel;
+        use rig::operation::Completion;
+
+        let RuntimeParts {
+            mut provider,
+            tools,
+            session,
+            persona,
+            multi,
+            engine,
+            bus,
+        } = parts;
+        // The active model configuration. `RuntimeBuildParams` carries it in its
+        // own `config` field; every model identity below is derived from it.
+        let active_config = config.config;
+
+        // Extract max_tool_result_bytes before the config is consumed below.
+        let max_tool_result_bytes = active_config
+            .max_tool_result_bytes
+            .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES);
+        // The hook envelopes stamp the model the runtime starts on. Every switch
+        // refreshes it from the post-switch state.
+        let hook_context = config.hook_context;
+        hook_context.set_model(crate::protocol::picker::format_active_model_identity(
+            &active_config.provider,
+            &active_config.model,
+        ));
+        // Resolve the context-window limit before the config is consumed below.
+        // Used to compute the hook's compaction threshold.
+        let max_context_tokens = active_config
+            .model_context_tokens
+            .or_else(|| active_config.max_context_tokens.map(|t| t as usize))
+            .unwrap_or(defaults::MAX_CONTEXT_TOKENS as usize);
+        // Resolve the repetition-guard flag before the config is consumed below:
+        // when unset, the guard defaults to enabled.
+        let repetition_guard = active_config
+            .repetition_guard
+            .unwrap_or(defaults::REPETITION_GUARD_ENABLED);
+        // The compaction (summarizer) model: the `[models.light]` role when it
+        // resolves, else the startup active model. A caller that builds the
+        // compactor itself hands it in `compactor_model`, and the compaction
+        // identity is then the active model. It is chosen once, here, and never
+        // follows a model switch.
+        let supplied_compactor = config.compactor_model;
+        let light_config = if supplied_compactor.is_some() {
+            None
+        } else {
+            resolve_light_config(config.plugin_config.as_ref())
+        };
+        // The planning spec describes the COMPACTION model: rig-memory sizes each
+        // summarized portion to its context window.
+        let compaction_config = light_config.as_ref().unwrap_or(&active_config);
+        let compaction_source = if light_config.is_some() {
+            "[models.light]"
+        } else {
+            "the startup active model"
+        };
+        log::info!(
+            "compaction model: {}/{} ({compaction_source})",
+            compaction_config.provider,
+            compaction_config.model
+        );
+        let compaction_spec =
+            crate::conversation::compaction::compactor::resolve_model_spec_for(compaction_config);
+        // The compactor's provider needs the plugin config after the agent
+        // provider takes ownership of it.
+        let compactor_plugin_config = config.plugin_config.clone();
+        // The compaction policy: rig-memory's default with the `[compaction]`
+        // block's overrides on top.
+        let compaction_config = config
+            .plugin_config
+            .as_ref()
+            .and_then(|plugin_config| plugin_config.compaction.clone())
+            .unwrap_or_default();
+        let compaction_policy = build_compaction_policy(&compaction_config);
+
+        // The shared model is the single point of model identity: the agent is
+        // built from it on every turn. It is constructed eagerly at startup so it
+        // is ready for any operation (including `/compact` before the first turn),
+        // and rewritten by every `switch_model()`.
+        let dyn_model = provider
+            .build_dyn_model()
+            .await
+            .map_err(|e| LabeledError::new(format!("Failed to build model: {e}")))?;
+        let dyn_model: Arc<Mutex<DynModel<Completion>>> = Arc::new(Mutex::new(dyn_model));
+
+        // Compactor summarizes evicted messages with its own erased model: the
+        // light role's when configured, else the startup active model. It is
+        // startup-fixed — no model switch touches it — and it is a standalone
+        // service invoked directly by the hook's compaction logic.
+        let compactor_model: Arc<Mutex<DynModel<Completion>>> = match supplied_compactor {
+            Some(compactor_model) => compactor_model,
+            None => {
+                let compactor_model = match light_config {
+                    Some(light_config) => {
+                        let mut light_provider =
+                            ProviderState::new(light_config, compactor_plugin_config)
+                                .with_copilot_token_dir(config.paths.copilot_token_dir.clone());
+                        light_provider.build_dyn_model().await.map_err(|e| {
+                            LabeledError::new(format!("Failed to build compactor model: {e}"))
+                        })?
+                    }
+                    None => provider.build_dyn_model().await.map_err(|e| {
+                        LabeledError::new(format!("Failed to build compactor model: {e}"))
+                    })?,
+                };
+                Arc::new(Mutex::new(compactor_model))
+            }
+        };
+        let compactor = NuCompactor::from_shared_model(
+            Arc::clone(&compactor_model),
+            bus.clone(),
+            compaction_policy,
+            compaction_spec,
+        );
+
+        // Surface what reading the session repaired, such as an image whose blob is
+        // gone. A session that cannot be read still opens; the next save reports it.
+        if let Some(session_id) = config.final_session_id.as_deref() {
+            session.warn_repairs(session_id).await;
+        }
+
+        // Threshold used by the hook to decide when to compact: proactive_threshold_pct
+        // (default 0.8) of model_context_tokens (falling back to max_context_tokens).
+        let threshold_pct = config
+            .proactive_threshold_pct
+            .unwrap_or(defaults::PROACTIVE_THRESHOLD_PCT);
+        let threshold_tokens = Some((max_context_tokens as f64 * threshold_pct) as usize);
+
+        let compaction = crate::conversation::compaction::CompactionConfig {
+            compactor,
+            threshold_tokens,
+            threshold_pct,
+        };
+
+        Ok(Self {
+            runtime: config.runtime,
+            tool_server_handle: config.tool_server_handle,
+            provider,
+            tools,
+            mcp_state: McpState::new(
+                config.mcp_runtime,
+                config.mcp_lifecycle_projection,
+                config.mcp_server_configs,
+                config.mcp_caller_cwd,
+                config.mcp_registry,
+                max_tool_result_bytes,
+                config.vault,
+            ),
+            engine,
+            final_session_id: config.final_session_id,
+            permission_state: PermissionState::new(
+                config.base_permissions,
+                config.effective_permissions,
+                config.cli_permissions_overlay,
+                crate::tools::authz::SessionGrantCache::default(),
+                config.permissions_startup_summary,
+            ),
+            session,
+            persona,
+            multi_agent: multi,
+            cwd: config.cwd,
+            paths: config.paths,
+            interactive_pending: None,
+            renders_tool_previews: false,
+            circuit_breaker: Arc::new(Mutex::new(McpCircuitBreaker::default())),
+            doom_state: Arc::new(Mutex::new(crate::hook::DoomLoopState::default())),
+            output_repetition: Arc::new(Mutex::new(
+                crate::hook::output_repetition::RepetitionState::default(),
+            )),
+            repetition_guard,
+            last_total_tokens: Arc::new(Mutex::new(None)),
+            bus,
+            hook_context,
+            session_usage: crate::hook::TurnUsage::default(),
+            store_latch: Default::default(),
+            dyn_model,
+            compaction,
+        })
+    }
+
+    /// Set the permission decision source of the composed runtime.
+    ///
+    /// `Some` installs the interactive surface's bridge: the gate publishes a
+    /// request and parks the call until the surface answers on the map. `None`
+    /// keeps the pre-determined policy, where `ask` resolves to deny.
+    pub fn with_decision_source(self, resolver: Option<PendingPermissions>) -> Self {
+        Self {
+            interactive_pending: resolver,
+            ..self
+        }
+    }
+}
+
+// endregion: --- Constructors
+
 #[cfg(test)]
 #[path = "../../test/conversation/runtime.rs"]
 mod runtime_test;
