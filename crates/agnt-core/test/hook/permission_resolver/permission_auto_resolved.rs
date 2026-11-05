@@ -17,7 +17,9 @@ async fn test_hook_permission_resolver_permission_auto_resolved_policy_allow() -
     let mut ui_rx = bus.ui_event().subscribe();
 
     // -- Exec
-    let decision = resolver.resolve(ALLOW_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ALLOW_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
@@ -42,7 +44,9 @@ async fn test_hook_permission_resolver_permission_auto_resolved_policy_deny() ->
     let mut ui_rx = bus.ui_event().subscribe();
 
     // -- Exec
-    let decision = resolver.resolve(ASK_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
 
     // -- Check
     let deny_reason = match decision {
@@ -71,7 +75,9 @@ async fn test_hook_permission_resolver_permission_auto_resolved_interactive_auto
     let mut ui_rx = bus.ui_event().subscribe();
 
     // -- Exec
-    let decision = resolver.resolve(ALLOW_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ALLOW_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
@@ -102,7 +108,9 @@ async fn test_hook_permission_resolver_permission_auto_resolved_interactive_auto
     let mut ui_rx = bus.ui_event().subscribe();
 
     // -- Exec
-    let decision = resolver.resolve(ASK_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
 
     // -- Check
     let deny_reason = match decision {
@@ -137,7 +145,13 @@ async fn test_hook_permission_resolver_permission_auto_resolved_absent_on_ask() 
     let bus_for_task = bus.clone();
     let resolve_task = tokio::spawn(async move {
         resolver_for_task
-            .resolve(ASK_TOOL, "{}", None, &bus_for_task)
+            .resolve(
+                ASK_TOOL,
+                "{}",
+                None,
+                bus_for_task.ui_event(),
+                bus_for_task.cancel(),
+            )
             .await
     });
 

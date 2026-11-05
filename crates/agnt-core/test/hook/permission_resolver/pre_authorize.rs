@@ -18,7 +18,13 @@ async fn interactive_resolver_nu_call_carries_no_producer_preview() -> Result<()
         let bus = bus.clone();
         async move {
             resolver
-                .resolve("nu", r#"{"command": "ls | where size > 1mb"}"#, None, &bus)
+                .resolve(
+                    "nu",
+                    r#"{"command": "ls | where size > 1mb"}"#,
+                    None,
+                    bus.ui_event(),
+                    bus.cancel(),
+                )
                 .await
         }
     });
@@ -72,7 +78,11 @@ async fn interactive_resolver_ask_path_context_carries_exact_tool_key() -> Resul
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
         let arguments = arguments.to_string();
-        async move { resolver.resolve("nu", &arguments, None, &bus).await }
+        async move {
+            resolver
+                .resolve("nu", &arguments, None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
 
     let event = permission_rx
@@ -119,7 +129,11 @@ async fn interactive_resolver_other_ask_tool_has_no_pre_authorize_display() -> R
     // -- Exec
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
-        async move { resolver.resolve(ASK_TOOL, "{}", None, &bus).await }
+        async move {
+            resolver
+                .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
 
     let event = permission_rx
@@ -162,7 +176,11 @@ async fn interactive_resolver_nu_missing_command_prompts_without_display() -> Re
     // -- Exec
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
-        async move { resolver.resolve("nu", "{}", None, &bus).await }
+        async move {
+            resolver
+                .resolve("nu", "{}", None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
 
     let event = permission_rx
@@ -222,7 +240,11 @@ async fn interactive_resolver_edit_apply_ask_path_carries_pre_authorize_display(
     // -- Exec
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
-        async move { resolver.resolve("edit", &args, None, &bus).await }
+        async move {
+            resolver
+                .resolve("edit", &args, None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
 
     let event = permission_rx
@@ -284,7 +306,11 @@ async fn interactive_resolver_edit_apply_search_replace_without_expected_version
     // -- Exec
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
-        async move { resolver.resolve("edit", &args, None, &bus).await }
+        async move {
+            resolver
+                .resolve("edit", &args, None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
 
     let event = permission_rx

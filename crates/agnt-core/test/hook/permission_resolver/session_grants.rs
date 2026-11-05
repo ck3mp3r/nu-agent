@@ -15,7 +15,11 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
     let resolve_fut = tokio::spawn({
         let resolver = resolver.clone();
         let bus = bus.clone();
-        async move { resolver.resolve(ASK_TOOL, "{}", None, &bus).await }
+        async move {
+            resolver
+                .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
 
     // Wait for the PermissionRequested event
@@ -48,7 +52,7 @@ async fn interactive_allow_always_writes_grant_and_auto_allows_subsequent_call()
     // --- Second call: must return Allow WITHOUT emitting another PermissionRequested ---
     let decision2 = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        resolver.resolve(ASK_TOOL, "{}", None, &bus),
+        resolver.resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel()),
     )
     .await
     .map_err(|_| "second resolve timed out — AllowAlways grant not persisted to session cache")?;
@@ -108,7 +112,9 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
 
     // Before any grant: resolver1 sees Deny (global Ask → NoOpAskHook → Deny).
     let bus = Bus::default();
-    let before = resolver1.resolve(ASK_TOOL, "{}", None, &bus).await;
+    let before = resolver1
+        .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
     assert!(
         matches!(before, PermissionDecision::Deny { .. }),
         "expected Deny before any session grant is inserted, got {before:?}"
@@ -142,7 +148,9 @@ async fn session_grant_arc_is_shared_across_resolver_instances() {
 
     // resolver2 must now return Allow — the cache hit via apply_session_grant_override
     // upgrades Ask → Allow before the NoOpAskHook is even consulted.
-    let after = resolver2.resolve(ASK_TOOL, "{}", None, &bus).await;
+    let after = resolver2
+        .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
     assert_eq!(
         after,
         PermissionDecision::Allow,
@@ -214,12 +222,18 @@ async fn shared_bus_resolver_clones_observe_ordering_and_submit_unblocks_other_f
     let fut1 = tokio::spawn({
         let r = resolver_a.clone();
         let bus = bus.clone();
-        async move { r.resolve(ASK_TOOL, "{}", None, &bus).await }
+        async move {
+            r.resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
     let fut2 = tokio::spawn({
         let r = resolver_a.clone();
         let bus = bus.clone();
-        async move { r.resolve(ASK_TOOL, "{}", None, &bus).await }
+        async move {
+            r.resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
 
     // Collect both Requested events; each has a distinct request_id.

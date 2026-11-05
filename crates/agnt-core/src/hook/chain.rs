@@ -687,7 +687,13 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 }));
 
             let decision = permission
-                .resolve(&tool_name, &args, tool_call_id, &bus)
+                .resolve(
+                    &tool_name,
+                    &args,
+                    tool_call_id,
+                    bus.ui_event(),
+                    bus.cancel(),
+                )
                 .await;
             match decision {
                 PermissionDecision::Allow => DispatchAction::proceed(),

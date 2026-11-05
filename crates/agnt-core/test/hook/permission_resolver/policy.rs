@@ -9,7 +9,9 @@ use super::*;
 async fn policy_resolver_explicit_allow_returns_allow() {
     let resolver = make_policy(ask_global_with_read_allowed_config());
     let bus = Bus::default();
-    let decision = resolver.resolve(ALLOW_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ALLOW_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
     assert_eq!(decision, PermissionDecision::Allow);
 }
 
@@ -19,7 +21,9 @@ async fn policy_resolver_explicit_deny_returns_deny() {
     let resolver = make_policy(deny_all_config());
     let bus = Bus::default();
     // "some_mcp_tool" not in the allow list, and global is Deny
-    let decision = resolver.resolve(ASK_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
     assert!(
         matches!(decision, PermissionDecision::Deny { .. }),
         "expected Deny, got {decision:?}"
@@ -32,7 +36,9 @@ async fn policy_resolver_ask_config_returns_deny_without_interaction() {
     let resolver = make_policy(ask_global_with_read_allowed_config());
     let bus = Bus::default();
     // ASK_TOOL falls through to global Ask → NoOpAskHook returns Deny
-    let decision = resolver.resolve(ASK_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
     assert!(
         matches!(decision, PermissionDecision::Deny { .. }),
         "expected Deny, got {decision:?}"

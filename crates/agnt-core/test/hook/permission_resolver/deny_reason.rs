@@ -13,7 +13,9 @@ async fn policy_resolver_deny_reason_carries_rule_identity_and_scope() {
     let bus = Bus::default();
 
     // -- Exec
-    let decision = resolver.resolve(ASK_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
 
     // -- Check
     let reason = match decision {
@@ -45,7 +47,11 @@ async fn interactive_resolver_ask_deny_reason_carries_rule_identity() -> Result<
 
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
-        async move { resolver.resolve(ASK_TOOL, "{}", None, &bus).await }
+        async move {
+            resolver
+                .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
 
     // -- Exec
@@ -91,7 +97,9 @@ async fn policy_resolver_allow_decision_has_no_reason_payload() {
     let bus = Bus::default();
 
     // -- Exec
-    let decision = resolver.resolve(ALLOW_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ALLOW_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
 
     // -- Check
     assert!(

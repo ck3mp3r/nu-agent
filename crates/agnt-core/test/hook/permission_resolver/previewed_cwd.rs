@@ -9,7 +9,9 @@ async fn interactive_resolver_allowed_tool_emits_no_permission_event_with_displa
     let mut permission_rx = bus.ui_event().subscribe();
 
     // -- Exec
-    let decision = resolver.resolve(ALLOW_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ALLOW_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
@@ -51,7 +53,11 @@ async fn interactive_resolver_take_previewed_is_true_once_after_edit_preview() -
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
         let args = args.clone();
-        async move { resolver.resolve("edit", &args, None, &bus).await }
+        async move {
+            resolver
+                .resolve("edit", &args, None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
     let event = permission_rx
         .recv()
@@ -97,7 +103,13 @@ async fn interactive_resolver_take_previewed_is_true_once_after_nu_preview() -> 
         let bus = bus.clone();
         async move {
             resolver
-                .resolve("nu", r#"{"command": "ls"}"#, None, &bus)
+                .resolve(
+                    "nu",
+                    r#"{"command": "ls"}"#,
+                    None,
+                    bus.ui_event(),
+                    bus.cancel(),
+                )
                 .await
         }
     });
@@ -142,7 +154,11 @@ async fn interactive_resolver_take_previewed_is_false_without_a_nu_preview() -> 
     // -- Exec
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
-        async move { resolver.resolve("nu", "{}", None, &bus).await }
+        async move {
+            resolver
+                .resolve("nu", "{}", None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
     let event = permission_rx
         .recv()
@@ -188,7 +204,9 @@ async fn interactive_resolver_without_preview_rendering_keeps_completion_display
     let arguments = r#"{"command":"ls"}"#;
 
     // -- Exec
-    let decision = resolver.resolve("nu", arguments, None, &bus).await;
+    let decision = resolver
+        .resolve("nu", arguments, None, bus.ui_event(), bus.cancel())
+        .await;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
@@ -222,7 +240,11 @@ async fn interactive_resolver_without_preview_rendering_keeps_completion_display
     // -- Exec
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
-        async move { resolver.resolve("nu", arguments, None, &bus).await }
+        async move {
+            resolver
+                .resolve("nu", arguments, None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
     let event = permission_rx
         .recv()
@@ -294,7 +316,11 @@ async fn interactive_resolver_uses_passed_cwd_not_process_cwd() -> Result<()> {
     // -- Exec
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
-        async move { resolver.resolve("edit", &args, None, &bus).await }
+        async move {
+            resolver
+                .resolve("edit", &args, None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
 
     let event = permission_rx

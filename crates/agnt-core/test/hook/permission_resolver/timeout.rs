@@ -15,7 +15,13 @@ async fn test_hook_permission_resolver_timeout_while_awaiting_denies() -> Result
     let bus_for_task = bus.clone();
     let resolve_task = tokio::spawn(async move {
         resolver_for_task
-            .resolve(ASK_TOOL, "{}", None, &bus_for_task)
+            .resolve(
+                ASK_TOOL,
+                "{}",
+                None,
+                bus_for_task.ui_event(),
+                bus_for_task.cancel(),
+            )
             .await
     });
 
@@ -86,7 +92,13 @@ async fn test_hook_permission_resolver_timeout_disabled_waits() -> Result<()> {
     let bus_for_task = bus.clone();
     let mut resolve_task = tokio::spawn(async move {
         resolver_for_task
-            .resolve(ASK_TOOL, "{}", None, &bus_for_task)
+            .resolve(
+                ASK_TOOL,
+                "{}",
+                None,
+                bus_for_task.ui_event(),
+                bus_for_task.cancel(),
+            )
             .await
     });
 

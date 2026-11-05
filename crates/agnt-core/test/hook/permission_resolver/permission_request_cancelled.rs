@@ -21,7 +21,13 @@ async fn test_hook_permission_resolver_permission_request_cancelled_publishes_on
     let bus_for_task = bus.clone();
     let resolve_task = tokio::spawn(async move {
         resolver_for_task
-            .resolve(ASK_TOOL, "{}", None, &bus_for_task)
+            .resolve(
+                ASK_TOOL,
+                "{}",
+                None,
+                bus_for_task.ui_event(),
+                bus_for_task.cancel(),
+            )
             .await
     });
 
@@ -89,7 +95,13 @@ async fn test_hook_permission_resolver_permission_request_cancelled_absent_witho
     let bus_for_task = bus.clone();
     let resolve_task = tokio::spawn(async move {
         resolver_for_task
-            .resolve(ASK_TOOL, "{}", None, &bus_for_task)
+            .resolve(
+                ASK_TOOL,
+                "{}",
+                None,
+                bus_for_task.ui_event(),
+                bus_for_task.cancel(),
+            )
             .await
     });
 

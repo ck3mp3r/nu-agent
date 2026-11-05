@@ -9,7 +9,9 @@ use super::*;
 async fn interactive_resolver_explicit_allow_returns_allow_no_prompt() {
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
     let mut permission_rx = bus.ui_event().subscribe();
-    let decision = resolver.resolve(ALLOW_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ALLOW_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
     assert_eq!(decision, PermissionDecision::Allow);
     let events = drain(&mut permission_rx);
     assert!(
@@ -25,7 +27,9 @@ async fn interactive_resolver_explicit_allow_returns_allow_no_prompt() {
 async fn interactive_resolver_explicit_deny_returns_deny_no_prompt() {
     let (resolver, bus) = make_interactive(deny_all_config());
     let mut permission_rx = bus.ui_event().subscribe();
-    let decision = resolver.resolve(ASK_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
     assert!(
         matches!(decision, PermissionDecision::Deny { .. }),
         "expected Deny, got {decision:?}"
@@ -49,7 +53,9 @@ async fn interactive_auto_approve_publishes_tool_preview() -> Result<()> {
     let arguments = r#"{"command":"ls"}"#;
 
     // -- Exec
-    let decision = resolver.resolve("nu", arguments, None, &bus).await;
+    let decision = resolver
+        .resolve("nu", arguments, None, bus.ui_event(), bus.cancel())
+        .await;
 
     // -- Check
     assert_eq!(decision, PermissionDecision::Allow);
@@ -93,7 +99,9 @@ async fn interactive_auto_approve_publishes_tool_preview() -> Result<()> {
 async fn interactive_auto_approve_non_previewable_tool_publishes_no_tool_preview() {
     let (resolver, bus) = make_interactive(ask_global_with_read_allowed_config());
     let mut ui_rx = bus.ui_event().subscribe();
-    let decision = resolver.resolve(ALLOW_TOOL, "{}", None, &bus).await;
+    let decision = resolver
+        .resolve(ALLOW_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+        .await;
     assert_eq!(decision, PermissionDecision::Allow);
     let events = drain(&mut ui_rx);
     assert!(
@@ -110,7 +118,13 @@ async fn interactive_deny_publishes_no_tool_preview() {
     let (resolver, bus) = make_interactive(deny_all_toml_config());
     let mut ui_rx = bus.ui_event().subscribe();
     let decision = resolver
-        .resolve("nu", r#"{"command":"ls"}"#, None, &bus)
+        .resolve(
+            "nu",
+            r#"{"command":"ls"}"#,
+            None,
+            bus.ui_event(),
+            bus.cancel(),
+        )
         .await;
     assert!(
         matches!(decision, PermissionDecision::Deny { .. }),
@@ -138,7 +152,11 @@ async fn interactive_ask_path_publishes_permission_requested_not_tool_preview() 
     // -- Exec
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
-        async move { resolver.resolve("nu", arguments, None, &bus).await }
+        async move {
+            resolver
+                .resolve("nu", arguments, None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
 
     let event = ui_rx
@@ -195,7 +213,11 @@ async fn interactive_resolver_ask_config_submit_allow_returns_allow() -> Result<
     // Spawn resolve() — it will block until the decision is submitted
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
-        async move { resolver.resolve(ASK_TOOL, "{}", None, &bus).await }
+        async move {
+            resolver
+                .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
 
     // Wait for the PermissionRequested event
@@ -233,7 +255,11 @@ async fn interactive_resolver_ask_config_submit_deny_returns_deny() -> Result<()
 
     let resolve_fut = tokio::spawn({
         let bus = bus.clone();
-        async move { resolver.resolve(ASK_TOOL, "{}", None, &bus).await }
+        async move {
+            resolver
+                .resolve(ASK_TOOL, "{}", None, bus.ui_event(), bus.cancel())
+                .await
+        }
     });
 
     // Wait for the PermissionRequested event

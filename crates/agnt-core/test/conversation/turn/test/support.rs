@@ -91,7 +91,8 @@ impl AsyncPermissionResolver for MockResolver {
         _tool_name: &str,
         _arguments: &str,
         _tool_call_id: Option<String>,
-        _bus: &crate::bus::Bus,
+        _ui_event: &crate::bus::UiEventTx,
+        _cancel: &crate::bus::CancelTx,
     ) -> impl std::future::Future<Output = PermissionDecision> + Send {
         let decision = self.0.clone();
         async move { decision }

@@ -15,7 +15,8 @@ impl AsyncPermissionResolver for AllowAllResolver {
         _tool_name: &str,
         _arguments: &str,
         _tool_call_id: Option<String>,
-        _bus: &Bus,
+        _ui_event: &crate::bus::UiEventTx,
+        _cancel: &crate::bus::CancelTx,
     ) -> PermissionDecision {
         PermissionDecision::Allow
     }
