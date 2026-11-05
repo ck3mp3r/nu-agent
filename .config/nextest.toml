@@ -8,6 +8,15 @@ fail-fast = true
 slow-timeout = { period = "10s", terminate-after = 2, grace-period = "2s" }
 final-status-level = "slow"
 
+# The nine tree-sitter grammar tests each pay a per-process grammar load
+# (solo ~11-13 s). Nine-way machine contention stretches loads nonlinearly
+# (staircase 11.3 → 57.1 s, tail past the 60 s wall); threads-required = 2
+# caps that contention, and 2 x 30 s bounds a true hang.
+[[profile.default.overrides]]
+filter = 'package(agnt-core) and test(grammar_tests)'
+slow-timeout = { period = "30s", terminate-after = 2, grace-period = "5s" }
+threads-required = 2
+
 # All tests (--features integration): lower parallelism for server tests.
 # Deterministic crates fail fast; only the timing-sensitive crates retry.
 [profile.integration]
