@@ -1,7 +1,5 @@
 //! Construction: what `build_runtime` puts on the runtime from its params.
 
-use crate::conversation::managers::PersonaManager;
-
 use super::*;
 
 #[tokio::test]
@@ -18,16 +16,20 @@ async fn test_runtime_build_build_runtime_constructs_runtime_from_params() -> Re
         .map_err(|e| format!("should build runtime: {e:?}"))?;
 
     // -- Check
-    assert_eq!(runtime.cwd, cwd, "runtime cwd must come from params");
+    assert_eq!(
+        runtime.cwd(),
+        cwd.as_path(),
+        "runtime cwd must come from params"
+    );
     assert!(
-        runtime.final_session_id.is_none(),
+        runtime.current_session_id().is_none(),
         "a fresh session has no persisted session id"
     );
-    assert_eq!(runtime.provider.config().provider, "ollama");
-    assert_eq!(runtime.provider.config().model, "llama3");
-    assert_eq!(runtime.persona.agent_identity(), Some("test-agent"));
-    assert_eq!(runtime.persona.agent_persona_body(), Some("persona body"));
-    assert_eq!(runtime.persona.cached_agents_chain(), Some("agents chain"));
+    assert_eq!(runtime.provider_config().provider, "ollama");
+    assert_eq!(runtime.provider_config().model, "llama3");
+    assert_eq!(runtime.agent_identity(), Some("test-agent"));
+    assert_eq!(runtime.agent_persona_body(), Some("persona body"));
+    assert_eq!(runtime.cached_agents_chain(), Some("agents chain"));
     Ok(())
 }
 
@@ -52,7 +54,7 @@ async fn test_runtime_build_build_runtime_stamps_the_hook_context_model() -> Res
 
     // -- Check
     assert_eq!(
-        runtime.hook_context.model(),
+        runtime.hook_context().model(),
         "ollama/llama3",
         "the runtime stamps the model identity it starts on"
     );
@@ -87,7 +89,7 @@ async fn test_runtime_build_build_runtime_uses_default_compaction_threshold() ->
     .map_err(|e| format!("should build runtime: {e:?}"))?;
 
     // -- Check
-    assert_eq!(runtime.compaction.threshold_tokens, Some(expected));
+    assert_eq!(runtime.compaction().threshold_tokens, Some(expected));
     Ok(())
 }
 

@@ -25,6 +25,7 @@ use crate::config::models_cache::{ModelCost, ModelLimit, ModelSpec, ProviderSpec
 use crate::config::{
     AgentsConfig, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig, defaults,
 };
+use crate::protocol::session_management::SessionPersistence;
 use crate::session::{RigStoreConfig, StoreType};
 use crate::tools::authz::PermissionsConfig;
 use crate::tools::closure::{ClosureRegistry, CwdEngine};

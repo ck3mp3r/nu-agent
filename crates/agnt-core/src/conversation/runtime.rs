@@ -89,19 +89,19 @@ where
     Multi: MultiAgentManager,
 {
     // ── Concrete infrastructure ──────────────────────────────────────────────
-    pub runtime: tokio::runtime::Handle,
-    pub tool_server_handle: rig::tool::server::ToolServerHandle,
-    pub mcp_state: super::state::mcp::McpState,
-    pub permission_state: super::state::permission::PermissionState,
-    pub engine: Arc<dyn EngineInterfaceLike>,
-    pub final_session_id: Option<String>,
-    pub cwd: PathBuf,
+    runtime: tokio::runtime::Handle,
+    tool_server_handle: rig::tool::server::ToolServerHandle,
+    mcp_state: super::state::mcp::McpState,
+    permission_state: super::state::permission::PermissionState,
+    engine: Arc<dyn EngineInterfaceLike>,
+    final_session_id: Option<String>,
+    cwd: PathBuf,
     /// The resolved application paths.
     ///
     /// Carried from [`RuntimeBuildParams`](crate::conversation::runtime_build::RuntimeBuildParams)
     /// so an agent switch and the hook runners read the persona and config
     /// directories instead of deriving them.
-    pub paths: crate::config::Paths,
+    paths: crate::config::Paths,
     /// Shared pending-decision map for interactive (TUI) mode.
     ///
     /// When `Some`, `execute_turn` constructs an `InteractivePermissionResolver` instead
@@ -109,8 +109,9 @@ where
     /// a clone of this Arc and calls the map's `remove` + oneshot `send` to unblock the
     /// resolver's awaiting future after the user makes a permission decision.
     ///
-    /// Set to `None` in TTY mode (default from `build_runtime`).
-    pub interactive_pending: Option<PendingPermissions>,
+    /// `None` in the composed runtime; the interactive surface installs its map
+    /// with [`Self::with_decision_source`].
+    interactive_pending: Option<PendingPermissions>,
     /// Whether the UI renders pre-authorize previews (`SystemEvent::PreviewRequested`).
     ///
     /// The TUI renders them and relies on the completion display being
@@ -118,54 +119,55 @@ where
     /// translator drops `ToolPreview` — so the completion display must be
     /// preserved for the client to receive the diff.
     ///
-    /// Defaults to `false` in `build_runtime`; TUI mode sets it to `true`.
-    pub renders_tool_previews: bool,
+    /// `false` in the composed runtime; a surface that renders them says so with
+    /// [`Self::with_tool_previews`].
+    renders_tool_previews: bool,
     /// Circuit breaker for MCP transport failures. Shared across turns so that
     /// consecutive failures within a session accumulate correctly.
-    pub circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
+    circuit_breaker: Arc<Mutex<McpCircuitBreaker>>,
     /// Doom loop state shared across turns so that repetitive tool call patterns
     /// are detected even when they span multiple consecutive turns.
-    pub doom_state: Arc<Mutex<DoomLoopState>>,
+    doom_state: Arc<Mutex<DoomLoopState>>,
     /// Assistant-output repetition state shared across turns so that consecutive
     /// text-only completions are detected even when they span multiple turns.
-    pub output_repetition: Arc<Mutex<crate::hook::output_repetition::RepetitionState>>,
+    output_repetition: Arc<Mutex<crate::hook::output_repetition::RepetitionState>>,
     /// Enable/disable the repetition guard (doom-loop + output-repetition
     /// detection). Resolved from config; when `false`, the hook skips all
     /// detector calls.
-    pub repetition_guard: bool,
+    repetition_guard: bool,
     /// Real token count from the last LLM completion, shared across turns: the
     /// wire's total when it reports one, else input + output. Used by the
     /// hook's compaction threshold check and the model-switch gate.
-    pub last_total_tokens: Arc<Mutex<Option<u64>>>,
+    last_total_tokens: Arc<Mutex<Option<u64>>>,
     /// The session's store-dead latch: set when a session-store open fails, so
     /// the compaction path stops attempting a store it knows is broken. Cleared
     /// by the session switch and by a `run_compaction` that opened the store.
-    pub store_latch: crate::hook::StoreLatch,
+    store_latch: crate::hook::StoreLatch,
     /// The session's cumulative LLM usage: every turn's calls accumulate here,
     /// and the cells reset only when the runtime switches sessions. The
     /// `session_ended` event reports these totals.
-    pub session_usage: crate::hook::TurnUsage,
+    session_usage: crate::hook::TurnUsage,
     /// Shared cancellation bus threaded through the turn pipeline.
-    pub bus: crate::bus::Bus,
+    bus: crate::bus::Bus,
     /// The agent snapshot every hook envelope is stamped with.
     ///
     /// Shared with the hook runners, which read it when they build an envelope.
     /// The constructor writes the model identity; `switch_model` and
     /// `switch_agent` refresh both cells from the post-switch state.
-    pub hook_context: crate::hooks::HookAgentContext,
+    hook_context: crate::hooks::HookAgentContext,
     // ── Domain managers ──────────────────────────────────────────────────────
-    pub provider: Prov,
-    pub tools: Tools,
-    pub session: Sess,
-    pub persona: Persona,
-    pub multi_agent: Multi,
+    provider: Prov,
+    tools: Tools,
+    session: Sess,
+    persona: Persona,
+    multi_agent: Multi,
     /// Shared runtime model. The single point of model identity: the agent is
     /// built from this model on every turn. It is constructed eagerly at
     /// startup and swapped on every `switch_model()` call. The compactor has
     /// its own startup-fixed model and never reads this one.
-    pub dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
+    dyn_model: Arc<Mutex<rig::DynModel<rig::operation::Completion>>>,
     /// Hook-driven compaction machinery: compactor, policy, force flag, threshold.
-    pub compaction: crate::conversation::compaction::CompactionConfig,
+    compaction: crate::conversation::compaction::CompactionConfig,
 }
 
 /// Concrete production runtime: all managers use their default state types.
@@ -1068,6 +1070,160 @@ where
         self.multi_agent.available_agent_summaries()
     }
 
+    // ── Model identity and switching ────────────────────────────────
+
+    /// The active model configuration.
+    pub fn provider_config(&self) -> &crate::config::Config {
+        self.provider.provider_config()
+    }
+
+    /// The active model configuration, mutably.
+    ///
+    /// The primitive the model-switch paths are built from:
+    /// [`Self::rename_model`] changes the name through it, and a surface that
+    /// simulates a provider it cannot reach (the session selector's failure
+    /// path) rewrites the block here.
+    pub fn provider_config_mut(&mut self) -> &mut crate::config::Config {
+        self.provider.provider_config_mut()
+    }
+
+    /// Drop the cached provider client, so the next build creates a new one.
+    ///
+    /// [`Self::rename_model`] leaves the cache alone on purpose: the erased
+    /// model is rebuilt from the cached client, which no model name changes.
+    pub fn invalidate_provider_cache(&mut self) {
+        self.provider.invalidate_cache();
+    }
+
+    /// Rename the active model, returning the name it replaced.
+    ///
+    /// A surface that swaps the model without the core switch — ACP's session
+    /// selector does — rebuilds from the cached client with
+    /// [`Self::build_dyn_model`] and installs the result with
+    /// [`Self::replace_dyn_model`]. A failed rebuild restores the previous name
+    /// with a second call. The context-window gate and the session record are
+    /// deliberately absent here: [`ModelSwitching::switch_model`] is the gated
+    /// switch.
+    pub fn rename_model(&mut self, model: &str) -> String {
+        std::mem::replace(
+            &mut self.provider.provider_config_mut().model,
+            model.to_string(),
+        )
+    }
+
+    /// Build the erased completion model from the cached client.
+    pub async fn build_dyn_model(
+        &mut self,
+    ) -> Result<rig::DynModel<rig::operation::Completion>, LabeledError> {
+        self.provider.build_dyn_model().await
+    }
+
+    /// Install `model` as the runtime's shared model.
+    pub fn replace_dyn_model(&self, model: rig::DynModel<rig::operation::Completion>) {
+        *self.lock_dyn_model() = model;
+    }
+
+    /// The engine handle the composition root installed.
+    ///
+    /// The part is carried for the surfaces that execute Nu closures against it;
+    /// no path in this crate reads it back.
+    pub fn engine(&self) -> Arc<dyn EngineInterfaceLike> {
+        Arc::clone(&self.engine)
+    }
+
+    /// The agent snapshot every hook envelope is stamped with.
+    pub fn hook_context(&self) -> &crate::hooks::HookAgentContext {
+        &self.hook_context
+    }
+
+    // ── Session surface ──────────────────────────────────────────────
+
+    /// A handle on the runtime's bus.
+    ///
+    /// The ACP session manager holds it to publish and subscribe on the
+    /// session's channels without locking the runtime. Handing the whole bus
+    /// out is the shape ARCH-8 counts; a session manager that took only the
+    /// channels it uses would not need this accessor, so narrowing it belongs
+    /// to the bus slice.
+    pub fn bus_handle(&self) -> crate::bus::Bus {
+        self.bus.clone()
+    }
+
+    /// The session's cumulative usage cells, shared with the runtime.
+    ///
+    /// A clone of the handle reads the same cells; unlike
+    /// [`SessionPersistence::session_usage`] it needs no runtime lock.
+    pub fn session_usage_handle(&self) -> crate::hook::TurnUsage {
+        self.session_usage.clone()
+    }
+
+    /// The persona directory the agent selector reads.
+    pub fn agents_dir(&self) -> &std::path::Path {
+        &self.paths.agents_dir
+    }
+
+    /// The resolved application paths.
+    pub fn paths(&self) -> &crate::config::Paths {
+        &self.paths
+    }
+
+    /// The agents config the persona resolver reads.
+    pub fn agents_config(&self) -> &crate::config::AgentsConfig {
+        self.multi_agent.agents_config()
+    }
+
+    // ── Tools and permissions ────────────────────────────────────────
+
+    /// The tool definitions the model can see: registered tools filtered by the
+    /// MCP registry and the permission policy.
+    pub fn visible_tool_definitions(&self) -> Vec<crate::types::ToolDefinition> {
+        self.tools.active_definitions(
+            self.mcp_state.mcp_registry(),
+            self.permission_state.permissions(),
+        )
+    }
+
+    /// The permission policy in force.
+    pub fn permissions(&self) -> &crate::tools::authz::PermissionsConfig {
+        self.permission_state.permissions()
+    }
+
+    /// The session's grant cache, shared with the policy in force.
+    pub fn session_grants(&self) -> Arc<Mutex<crate::tools::authz::SessionGrantCache>> {
+        self.permission_state.session_grants_arc()
+    }
+
+    /// Every tool definition registered with the runtime, before the MCP and
+    /// permission filters.
+    pub fn tool_definitions(&self) -> &[crate::types::ToolDefinition] {
+        self.tools.tool_definitions()
+    }
+
+    /// Log the permission policy summary once for this session.
+    ///
+    /// [`CoreRuntime::execute_turn`] calls it before the first turn; a surface
+    /// that reports the policy before any turn runs calls it itself.
+    pub fn emit_permission_summary(&mut self) {
+        self.permission_state.emit_startup_summary_once();
+    }
+
+    // ── Compaction and persona ───────────────────────────────────────
+
+    /// The hook-driven compaction machinery: compactor, policy and threshold.
+    pub fn compaction(&self) -> &crate::conversation::compaction::CompactionConfig {
+        &self.compaction
+    }
+
+    /// The persona body the active agent resolved, when it has one.
+    pub fn agent_persona_body(&self) -> Option<&str> {
+        self.persona.agent_persona_body()
+    }
+
+    /// The cached `AGENTS.md` chain the preamble carries, when loaded.
+    pub fn cached_agents_chain(&self) -> Option<&str> {
+        self.persona.cached_agents_chain()
+    }
+
     // ── End Phase I accessor methods ────────────────────────────────
 }
 
@@ -1284,6 +1440,19 @@ impl AgentConversationRuntime {
     pub fn with_decision_source(self, resolver: Option<PendingPermissions>) -> Self {
         Self {
             interactive_pending: resolver,
+            ..self
+        }
+    }
+
+    /// Declare that this surface renders pre-authorize previews.
+    ///
+    /// A surface that draws them says so here, at composition time, so the turn
+    /// can publish `SystemEvent::PreviewRequested` and suppress the duplicate
+    /// completion display. Surfaces with no preview phase leave the composed
+    /// default (`false`).
+    pub fn with_tool_previews(self, renders: bool) -> Self {
+        Self {
+            renders_tool_previews: renders,
             ..self
         }
     }

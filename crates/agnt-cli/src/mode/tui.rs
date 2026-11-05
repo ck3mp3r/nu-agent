@@ -106,8 +106,8 @@ pub async fn run_tui_mode(
         runtime_impl
             .mcp_caller_cwd()
             .unwrap_or(std::path::Path::new(".")),
-        runtime_impl.paths.config_dir(),
-        &runtime_impl.hook_context,
+        runtime_impl.paths().config_dir(),
+        runtime_impl.hook_context(),
     )
     .await;
 
@@ -131,10 +131,11 @@ async fn run_tui_mode_inner(
     // and the main thread (via the orchestrator's permission poll loop).
     let pending: Arc<Mutex<HashMap<String, OneshotTx<PermissionDecision>>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    runtime_impl.interactive_pending = Some(Arc::clone(&pending));
-    // The TUI renders pre-authorize previews and relies on the completion
-    // display being suppressed to avoid showing the same diff twice.
-    runtime_impl.renders_tool_previews = true;
+    runtime_impl = runtime_impl
+        .with_decision_source(Some(Arc::clone(&pending)))
+        // The TUI renders pre-authorize previews and relies on the completion
+        // display being suppressed to avoid showing the same diff twice.
+        .with_tool_previews(true);
 
     let mut terminal_lifecycle =
         TerminalLifecycle::new(AnsiTerminalBackend::new(std::io::stderr()));
@@ -150,7 +151,7 @@ async fn run_tui_mode_inner(
     // selections over this channel; the receiving task saves them fire-and-forget.
     let (theme_persist_tx, mut theme_persist_rx) = tokio::sync::mpsc::channel::<String>(8);
     tui_ui.set_theme_persist_tx(theme_persist_tx);
-    let theme_path = runtime_impl.paths.theme_path.clone();
+    let theme_path = runtime_impl.paths().theme_path.clone();
     tokio::spawn(async move {
         while let Some(name) = theme_persist_rx.recv().await {
             // Normalize to the canonical kebab-case form so the preference file
@@ -244,7 +245,7 @@ async fn run_tui_mode_inner(
     // the task ID. A background task reads these and transitions the task.
     if let Some(store) = &options.a2a.task_store {
         let store = Arc::clone(store);
-        let bus = runtime_impl.bus.clone();
+        let bus = runtime_impl.bus_handle();
         tokio::spawn(async move {
             let mut turn_rx = bus.turn().subscribe();
             loop {
@@ -273,12 +274,12 @@ async fn run_tui_mode_inner(
     // are observed. Zero hooks spawns nothing.
     let _hook_handles = spawn_configured_hooks_with_nu(
         runtime_impl.startup_plugin_config(),
-        &runtime_impl.bus,
+        &runtime_impl.bus_handle(),
         runtime_impl
             .mcp_caller_cwd()
             .unwrap_or(std::path::Path::new(".")),
-        runtime_impl.paths.config_dir(),
-        &runtime_impl.hook_context,
+        runtime_impl.paths().config_dir(),
+        runtime_impl.hook_context(),
     );
 
     terminal_lifecycle
@@ -295,27 +296,27 @@ async fn run_tui_mode_inner(
             hydration.last_total_tokens,
         );
         let config = InteractiveLoopConfig::new(Span::unknown())
-            .with_bus(runtime_impl.bus.clone())
+            .with_bus(runtime_impl.bus_handle())
             .with_hydration(hydration.initial_messages, hydration.last_total_tokens)
             .with_interactive_pending(Some(Arc::clone(&pending)))
             .with_task_cancel_rx(task_cancel_rx)
             .with_a2a_task_rx(a2a_task_rx)
             .with_a2a_completion_rx(a2a_completion_rx)
             .with_task_store(a2a_task_store.clone())
-            .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()))
+            .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus_handle()))
             .with_on_agent_switch(on_agent_switch);
         run_hydrated_interactive_loop_with_external_prompts(runtime_impl, config)
             .await
             .map_err(Error::from)
     } else {
         let config = InteractiveLoopConfig::new(Span::unknown())
-            .with_bus(runtime_impl.bus.clone())
+            .with_bus(runtime_impl.bus_handle())
             .with_interactive_pending(Some(Arc::clone(&pending)))
             .with_task_cancel_rx(task_cancel_rx)
             .with_a2a_task_rx(a2a_task_rx)
             .with_a2a_completion_rx(a2a_completion_rx)
             .with_task_store(a2a_task_store.clone())
-            .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus.clone()))
+            .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus_handle()))
             .with_on_agent_switch(on_agent_switch);
         run_interactive_loop_with_external_prompts(runtime_impl, config)
             .await

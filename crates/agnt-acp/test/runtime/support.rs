@@ -100,11 +100,7 @@ pub(super) fn disabled_http_server(name: &str) -> McpServerConfig {
 
 pub(super) fn visible_tool_names(runtime: &AgentConversationRuntime) -> Vec<String> {
     runtime
-        .tools
-        .active_definitions(
-            runtime.mcp_state.mcp_registry(),
-            runtime.permission_state.permissions(),
-        )
+        .visible_tool_definitions()
         .into_iter()
         .map(|def| def.name.to_string())
         .collect()
@@ -112,7 +108,6 @@ pub(super) fn visible_tool_names(runtime: &AgentConversationRuntime) -> Vec<Stri
 
 pub(super) fn lifecycle_names(runtime: &AgentConversationRuntime) -> Vec<String> {
     runtime
-        .mcp_state
         .mcp_lifecycle_projection()
         .iter()
         .map(|server| server.name.clone())

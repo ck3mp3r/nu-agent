@@ -43,7 +43,6 @@ async fn test_runtime_build_acp_runtime_agent_flag_overrides_default_agent() -> 
         .await
         .map_err(|e| format!("should build runtime: {e:?}"))?;
     let decision = runtime
-        .permission_state
         .permissions()
         .evaluate("http", &serde_json::Map::new());
 

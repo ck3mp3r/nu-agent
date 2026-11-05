@@ -24,7 +24,7 @@ async fn test_runtime_build_compaction_model_uses_the_light_role() -> Result<()>
 
     // -- Check
     let spec = runtime
-        .compaction
+        .compaction()
         .spec()
         .ok_or("the planning spec must resolve")?;
     assert_eq!(
@@ -36,7 +36,7 @@ async fn test_runtime_build_compaction_model_uses_the_light_role() -> Result<()>
         Some(262_000),
         "the planning spec must carry the light row's context limit"
     );
-    let wire = runtime.compaction.model();
+    let wire = runtime.compaction().model();
     assert_eq!(
         wire.id(),
         Some("light-model"),
@@ -74,7 +74,7 @@ async fn test_runtime_build_compaction_model_falls_back_to_the_startup_model() -
 
     // -- Check
     let spec = runtime
-        .compaction
+        .compaction()
         .spec()
         .ok_or("the planning spec must resolve")?;
     assert_eq!(
@@ -87,7 +87,7 @@ async fn test_runtime_build_compaction_model_falls_back_to_the_startup_model() -
         "the startup model's default context window must reach the spec"
     );
     assert_eq!(
-        runtime.compaction.model().id(),
+        runtime.compaction().model().id(),
         Some("llama3"),
         "the compactor's wire must be the startup model"
     );
@@ -117,7 +117,7 @@ async fn test_runtime_build_compaction_model_resolves_a_custom_named_light_provi
 
     // -- Check
     let spec = runtime
-        .compaction
+        .compaction()
         .spec()
         .ok_or("the planning spec must resolve for a custom-named provider")?;
     assert_eq!(
@@ -129,7 +129,7 @@ async fn test_runtime_build_compaction_model_resolves_a_custom_named_light_provi
         Some(262_000),
         "the planning spec must carry the light row's context limit"
     );
-    let wire = runtime.compaction.model();
+    let wire = runtime.compaction().model();
     assert_eq!(
         wire.id(),
         Some("light-model"),
@@ -170,7 +170,7 @@ async fn test_runtime_build_compaction_model_resolves_a_custom_named_startup_pro
 
     // -- Check
     let spec = runtime
-        .compaction
+        .compaction()
         .spec()
         .ok_or("the planning spec must resolve for a custom-named provider")?;
     assert_eq!(
@@ -183,7 +183,7 @@ async fn test_runtime_build_compaction_model_resolves_a_custom_named_startup_pro
         "the startup model's default context window must reach the spec"
     );
     assert_eq!(
-        runtime.compaction.model().id(),
+        runtime.compaction().model().id(),
         Some("llama3"),
         "the compactor's wire must be the startup model"
     );

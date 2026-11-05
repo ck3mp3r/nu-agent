@@ -1,7 +1,6 @@
 use super::*;
 
 use super::config_options::{current_value, select_values};
-use agnt_core::conversation::managers::PersonaManager;
 use agnt_core::tools::authz::PermissionAction;
 
 // ---------------------------------------------------------------------------
@@ -126,7 +125,7 @@ async fn test_session_manager_set_agent_switches_identity() -> Result<()> {
         .ok_or("session must exist")?;
     let runtime = session.runtime().lock().await;
     assert_eq!(
-        runtime.persona.agent_identity(),
+        runtime.agent_identity(),
         Some("dev"),
         "the switch must set the agent identity"
     );
@@ -156,7 +155,6 @@ async fn test_session_manager_set_agent_applies_permissions_overlay() -> Result<
         .ok_or("session must exist")?;
     let runtime = session.runtime().lock().await;
     let decision = runtime
-        .permission_state
         .permissions()
         .evaluate("http", &serde_json::Map::new());
     assert_eq!(
@@ -182,13 +180,9 @@ async fn test_session_manager_set_agent_clears_session_grants() -> Result<()> {
     {
         let runtime = session.runtime().lock().await;
         let args = serde_json::Map::new();
-        let decision = runtime
-            .permission_state
-            .permissions()
-            .evaluate("http", &args);
+        let decision = runtime.permissions().evaluate("http", &args);
         runtime
-            .permission_state
-            .session_grants_arc()
+            .session_grants()
             .lock()
             .unwrap()
             .insert_allow_always(&decision, "http", "closure", &args);
@@ -200,13 +194,9 @@ async fn test_session_manager_set_agent_clears_session_grants() -> Result<()> {
     // -- Check
     let runtime = session.runtime().lock().await;
     let args = serde_json::Map::new();
-    let decision = runtime
-        .permission_state
-        .permissions()
-        .evaluate("http", &args);
+    let decision = runtime.permissions().evaluate("http", &args);
     let held = runtime
-        .permission_state
-        .session_grants_arc()
+        .session_grants()
         .lock()
         .unwrap()
         .get(&decision, "http", "closure", &args);
@@ -243,7 +233,7 @@ async fn test_session_manager_set_agent_unknown_agent_returns_error_and_keeps_ag
         .ok_or("session must exist")?;
     let runtime = session.runtime().lock().await;
     assert_eq!(
-        runtime.persona.agent_identity(),
+        runtime.agent_identity(),
         Some("dev"),
         "a rejected switch must leave the agent unchanged"
     );

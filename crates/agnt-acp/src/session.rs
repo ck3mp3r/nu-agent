@@ -21,7 +21,6 @@ use agent_client_protocol::{Client, ConnectionTo};
 use agnt_core::bus::{Bus, ChannelError, SessionEvent, TurnEvent};
 use agnt_core::config::ModelsCache;
 use agnt_core::config::Paths;
-use agnt_core::conversation::managers::{PersonaManager, ProviderManager};
 use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::protocol::contracts::CoreRuntime;
 use agnt_core::protocol::events::CompactionSource;
@@ -362,29 +361,28 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         // identity the core switch publishes.
         let from = format!(
             "{}/{}",
-            runtime.provider.provider_config().provider,
-            runtime.provider.provider_config().model
+            runtime.provider_config().provider,
+            runtime.provider_config().model
         );
         let model = model_value
             .split_once('/')
             .map(|(_, model)| model)
             .unwrap_or(model_value);
-        let previous_model = runtime.provider.provider_config().model.clone();
-        runtime.provider.provider_config_mut().model = model.to_string();
-        let dyn_model = match runtime.provider.build_dyn_model().await {
+        let previous_model = runtime.rename_model(model);
+        let dyn_model = match runtime.build_dyn_model().await {
             Ok(dyn_model) => dyn_model,
             Err(e) => {
-                runtime.provider.provider_config_mut().model = previous_model;
+                runtime.rename_model(&previous_model);
                 return Err(AcpError::Runtime(format!(
                     "failed to build model '{model_value}': {e}"
                 )));
             }
         };
-        *lock_cell(&runtime.dyn_model) = dyn_model;
+        runtime.replace_dyn_model(dyn_model);
         let to = format!(
             "{}/{}",
-            runtime.provider.provider_config().provider,
-            runtime.provider.provider_config().model
+            runtime.provider_config().provider,
+            runtime.provider_config().model
         );
         // Hook envelopes follow the active model, and the switch publishes the
         // event that tells a hook it moved. This path swaps the model without
@@ -393,8 +391,8 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         // stay deliberately absent here — no context-window gate, no
         // compaction-threshold refresh, no session state record — which is
         // pre-existing behavior, not an omission of this publish.
-        runtime.hook_context.set_model(to.clone());
-        let _ = runtime
+        runtime.hook_context().set_model(to.clone());
+        let _ = session
             .bus
             .session()
             .send(agnt_core::bus::SessionEvent::ModelSwitched { from, to })
@@ -688,8 +686,8 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                 hook_context: hook_context.clone(),
             })
             .await?;
-        let bus = runtime.bus.clone();
-        let usage = runtime.session_usage.clone();
+        let bus = runtime.bus_handle();
+        let usage = runtime.session_usage_handle();
         self.sessions().insert(
             session_id.to_string(),
             Arc::new(AcpSession {
@@ -771,21 +769,13 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
 
 // region:    --- Support
 
-/// The lock behind `cell`, recovered if its holder panicked mid-update.
-///
-/// The guarded model type belongs to a crate this one only sees through
-/// `agnt-core`, so the helper stays generic over it.
-fn lock_cell<T>(cell: &StdMutex<T>) -> MutexGuard<'_, T> {
-    cell.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
 /// The agent config options of a locked session runtime.
 fn agent_options(runtime: &AgentConversationRuntime) -> Vec<SessionConfigOption> {
     build_agent_config_options(
-        runtime.multi_agent.agents_config(),
-        &runtime.cwd,
-        &runtime.paths.agents_dir,
-        runtime.persona.agent_identity(),
+        runtime.agents_config(),
+        runtime.cwd(),
+        runtime.agents_dir(),
+        runtime.agent_identity(),
     )
 }
 
@@ -794,7 +784,7 @@ fn model_options(
     runtime: &AgentConversationRuntime,
     models_cache: Option<&ModelsCache>,
 ) -> Vec<SessionConfigOption> {
-    build_model_config_options(runtime.provider.provider_config(), models_cache)
+    build_model_config_options(runtime.provider_config(), models_cache)
 }
 
 /// Replay the stored conversation of `session_id` to `sink`.

@@ -27,6 +27,10 @@ impl ToolState {
         &self.closure_registry
     }
 
+    pub fn tool_definitions(&self) -> &[ToolDefinition] {
+        &self.tool_definitions
+    }
+
     pub fn tool_definitions_mut(&mut self) -> &mut Vec<ToolDefinition> {
         &mut self.tool_definitions
     }
@@ -45,6 +49,10 @@ impl ToolState {
 }
 
 impl ToolManager for ToolState {
+    fn tool_definitions(&self) -> &[ToolDefinition] {
+        &self.tool_definitions
+    }
+
     fn closure_registry(&self) -> &ClosureRegistry {
         &self.closure_registry
     }

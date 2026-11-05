@@ -67,7 +67,7 @@ async fn test_runtime_build_acp_runtime_client_mcp_server_wins_on_collision() ->
     ))
     .await
     .map_err(|e| format!("should build runtime: {e:?}"))?;
-    let projection = runtime.mcp_state.mcp_lifecycle_projection();
+    let projection = runtime.mcp_lifecycle_projection();
 
     // -- Check
     assert_eq!(

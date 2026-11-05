@@ -1,6 +1,5 @@
 //! Agent permissions overlay tests for `build_acp_runtime()`.
 
-use agnt_core::conversation::managers::PersonaManager;
 use agnt_core::tools::authz::PermissionAction;
 
 use super::runtime_support::*;
@@ -36,7 +35,6 @@ async fn test_runtime_build_acp_runtime_applies_agent_permissions_overlay() -> R
         .await
         .map_err(|e| format!("should build runtime: {e:?}"))?;
     let decision = runtime
-        .permission_state
         .permissions()
         .evaluate("http", &serde_json::Map::new());
 
@@ -69,7 +67,6 @@ async fn test_runtime_build_acp_runtime_agent_without_permissions_keeps_base() -
         .await
         .map_err(|e| format!("should build runtime: {e:?}"))?;
     let decision = runtime
-        .permission_state
         .permissions()
         .evaluate("http", &serde_json::Map::new());
 
@@ -168,7 +165,7 @@ async fn test_runtime_build_acp_runtime_overlay_active_in_startup_summary() -> R
     let mut runtime = build_acp_runtime(make_params(cwd.clone(), config_path, Vec::new(), store))
         .await
         .map_err(|e| format!("should build runtime: {e:?}"))?;
-    runtime.permission_state.emit_startup_summary_once();
+    runtime.emit_permission_summary();
 
     // -- Check
     let logs = CAPTURED_LOGS
@@ -202,7 +199,7 @@ async fn test_runtime_build_acp_runtime_populates_effective_agent_identity() -> 
 
     // -- Check
     assert_eq!(
-        runtime.persona.agent_identity(),
+        runtime.agent_identity(),
         Some("dev"),
         "the startup switch must populate the effective agent identity"
     );

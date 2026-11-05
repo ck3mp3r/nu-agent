@@ -97,7 +97,7 @@ A display payload built by the producer is the defect. Relocating it to a third 
 
 ## 5. The composition root is builder-gated
 
-**Status:** direction — `AgentRuntime` still exposes public fields.
+**Status:** enforced — `AgentRuntime` declares no public field; `compose` is the one way in, and ARCH-9.a's baseline is empty.
 
 Completeness is a compile-time property: every required part is a constructor parameter, so omitting one does not compile.
 

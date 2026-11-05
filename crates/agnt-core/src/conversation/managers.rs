@@ -56,6 +56,10 @@ pub trait ProviderManager {
 
 /// Manages tool definitions and the closure registry.
 pub trait ToolManager {
+    /// Return every registered tool definition, before the MCP and permission
+    /// filters.
+    fn tool_definitions(&self) -> &[ToolDefinition];
+
     /// Return a reference to the closure registry.
     fn closure_registry(&self) -> &ClosureRegistry;
 

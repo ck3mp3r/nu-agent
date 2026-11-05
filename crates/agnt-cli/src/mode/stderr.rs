@@ -44,17 +44,17 @@ pub async fn run_stderr_mode(
     // Zero hooks spawns nothing.
     let hook_handles = spawn_configured_hooks_with_nu(
         config,
-        &runtime_impl.bus,
+        &runtime_impl.bus_handle(),
         cwd,
-        runtime_impl.paths.config_dir(),
-        &runtime_impl.hook_context,
+        runtime_impl.paths().config_dir(),
+        runtime_impl.hook_context(),
     );
     let agent_lifecycle = AgentLifecycle::start_configured(
         "stderr",
         config,
         cwd,
-        runtime_impl.paths.config_dir(),
-        &runtime_impl.hook_context,
+        runtime_impl.paths().config_dir(),
+        runtime_impl.hook_context(),
     )
     .await;
 
@@ -145,7 +145,7 @@ async fn run_stderr_turn<R: agnt_core::renderer::UiRenderer + Send + 'static>(
 ) -> Result<Value> {
     use std::sync::atomic::Ordering as AtomicOrdering;
 
-    let bus = runtime_impl.bus.clone();
+    let bus = runtime_impl.bus_handle();
     // The renderer is shared between the drain task and the final flush.
     let shared = Arc::new(std::sync::Mutex::new(renderer));
     let stop = Arc::new(AtomicBool::new(false));

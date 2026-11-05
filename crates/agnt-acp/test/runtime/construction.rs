@@ -1,5 +1,6 @@
 //! Construction and tool-registration tests for `build_acp_runtime()`.
 
+use agnt_core::protocol::session_management::SessionPersistence;
 use agnt_core::tools::handler::is_builtin_tool_name;
 
 use super::runtime_support::*;
@@ -27,9 +28,13 @@ async fn test_runtime_build_acp_runtime_valid_config_returns_ok() -> Result<()> 
         .map_err(|e| format!("should build runtime: {e:?}"))?;
 
     // -- Check
-    assert_eq!(runtime.cwd, cwd, "runtime cwd must come from params");
+    assert_eq!(
+        runtime.cwd(),
+        cwd.as_path(),
+        "runtime cwd must come from params"
+    );
     assert!(
-        runtime.final_session_id.is_none(),
+        runtime.current_session_id().is_none(),
         "a fresh session has no persisted session id"
     );
     Ok(())
@@ -183,13 +188,20 @@ async fn test_runtime_build_acp_runtime_has_no_closure_tools() -> Result<()> {
     ))
     .await
     .map_err(|e| format!("should build runtime: {e:?}"))?;
-    let closure_count = runtime.tools.closure_registry().names().count();
+    // ACP mode registers its own tool set: built-ins only, no closure tools
+    // (there is no Nushell engine to resolve them against).
+    let registered_non_builtin: Vec<String> = runtime
+        .tool_definitions()
+        .iter()
+        .map(|def| def.name.to_string())
+        .filter(|name| !is_builtin_tool_name(name))
+        .collect();
     let names = visible_tool_names(&runtime);
 
     // -- Check
-    assert_eq!(
-        closure_count, 0,
-        "ACP mode has no Nushell engine, so the closure registry must be empty"
+    assert!(
+        registered_non_builtin.is_empty(),
+        "ACP mode has no Nushell engine, so every registered tool must be a built-in; got: {registered_non_builtin:?}"
     );
     let non_builtin: Vec<&str> = names
         .iter()
