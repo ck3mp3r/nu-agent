@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use rig::agent::DispatchAction;
 use rig::tool::{ToolExecutionError, ToolResult};
 
-use crate::bus::Bus;
+use crate::bus::UiEventTx;
 use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::auth_error::McpAuthError;
@@ -64,7 +64,7 @@ impl CircuitBreakerGuard {
         raw_result: &ToolResult,
         success: bool,
         mcp_registry: &McpToolRegistry,
-        bus: &Bus,
+        ui_event: &UiEventTx,
     ) {
         let Some(server_name) = mcp_registry.server_name_for(tool_name) else {
             return;
@@ -95,8 +95,7 @@ impl CircuitBreakerGuard {
                 if let Err(e) = mcp_registry.set_server_enabled(server_name, false) {
                     log::error!("Failed to disable MCP server '{}': {}", server_name, e);
                 }
-                let _ = bus
-                    .ui_event()
+                let _ = ui_event
                     .send(SystemEvent::SystemMessage {
                         kind: SystemKind::Warning,
                         text: format!(

@@ -55,7 +55,7 @@ async fn record_result_non_mcp_tool_is_noop() {
             &transport_closed_result(),
             true,
             &registry,
-            &bus,
+            bus.ui_event(),
         )
         .await;
 }
@@ -86,7 +86,13 @@ async fn transport_source_variant_records_failure_and_trips_breaker() -> Result<
         let bus = create_bus();
 
         guard
-            .record_result("mcp__srv__ping", &raw_result, false, &registry, &bus)
+            .record_result(
+                "mcp__srv__ping",
+                &raw_result,
+                false,
+                &registry,
+                bus.ui_event(),
+            )
             .await;
 
         assert!(
@@ -120,7 +126,13 @@ async fn transport_source_found_through_error_source_chain() -> Result<()> {
 
     // -- Exec
     guard
-        .record_result("mcp__srv__ping", &raw_result, false, &registry, &bus)
+        .record_result(
+            "mcp__srv__ping",
+            &raw_result,
+            false,
+            &registry,
+            bus.ui_event(),
+        )
         .await;
 
     // -- Check
@@ -146,7 +158,13 @@ async fn auth_http_status_bypasses_breaker_without_recording() -> Result<()> {
 
         for _ in 0..3 {
             guard
-                .record_result("mcp__srv__ping", &raw_result, false, &registry, &bus)
+                .record_result(
+                    "mcp__srv__ping",
+                    &raw_result,
+                    false,
+                    &registry,
+                    bus.ui_event(),
+                )
                 .await;
         }
 
@@ -191,11 +209,17 @@ async fn unclassified_error_records_nothing() -> Result<()> {
             &ToolResult::failed(ToolExecutionError::provider("boom")),
             false,
             &registry,
-            &bus,
+            bus.ui_event(),
         )
         .await;
     guard
-        .record_result("mcp__srv__ping", &timeout_result, false, &registry, &bus)
+        .record_result(
+            "mcp__srv__ping",
+            &timeout_result,
+            false,
+            &registry,
+            bus.ui_event(),
+        )
         .await;
 
     // -- Check
@@ -227,13 +251,13 @@ async fn success_resets_failure_count() -> Result<()> {
             &transport_closed_result(),
             false,
             &registry,
-            &bus,
+            bus.ui_event(),
         )
         .await;
     // ...a success must reset the counter...
     let ok = ToolResult::success(rig::tool::ToolOutput::text("ok"));
     guard
-        .record_result("mcp__srv__ping", &ok, true, &registry, &bus)
+        .record_result("mcp__srv__ping", &ok, true, &registry, bus.ui_event())
         .await;
     // ...so the next transport failure starts from 1 again and must not trip.
     guard
@@ -242,7 +266,7 @@ async fn success_resets_failure_count() -> Result<()> {
             &transport_closed_result(),
             false,
             &registry,
-            &bus,
+            bus.ui_event(),
         )
         .await;
 

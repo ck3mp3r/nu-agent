@@ -839,7 +839,13 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
 
                 // 6. Circuit breaker — track transport failures per server
                 self.circuit
-                    .record_result(tool_name, result, success, &self.mcp_registry, &bus)
+                    .record_result(
+                        tool_name,
+                        result,
+                        success,
+                        &self.mcp_registry,
+                        bus.ui_event(),
+                    )
                     .await;
             }
 
