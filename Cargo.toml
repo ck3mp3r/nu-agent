@@ -111,6 +111,6 @@ serial_test = "4.0.1"
 # Architecture assertion suite: Rust sources are parsed, never line-scanned.
 # `printing` is what exposes `syn::spanned::Spanned`; `span-locations` is what
 # makes a parsed span report a real line number.
-syn = { version = "2.0.119", default-features = false, features = ["clone-impls", "full", "parsing", "printing"] }
+syn = { version = "2.0.119", default-features = false, features = ["clone-impls", "full", "parsing", "printing", "visit"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 

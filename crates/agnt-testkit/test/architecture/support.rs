@@ -16,6 +16,9 @@ pub const ARCH_8: &str = "ARCH-8";
 /// The assertion ARCH-9.a, the aggregate runtime exposes no public field.
 pub const ARCH_9A: &str = "ARCH-9.a";
 
+/// The assertion ARCH-9.b, construction sits at its recorded homes.
+pub const ARCH_9B: &str = "ARCH-9.b";
+
 /// The assertion ARCH-11.a, a kernel identity is not publicly settable.
 pub const ARCH_11A: &str = "ARCH-11.a";
 
@@ -45,7 +48,7 @@ pub const ARCH_12: &str = "ARCH-12";
 /// ARCH-8's row holds every production site that takes or hands out the whole
 /// bus: thirty-nine signatures and fields that a later slice narrows to the
 /// channel each component actually uses.
-pub const BASELINES: [(&str, &[&str]); 6] = [
+pub const BASELINES: [(&str, &[&str]); 7] = [
     (
         ARCH_4,
         &[
@@ -90,6 +93,25 @@ pub const BASELINES: [(&str, &[&str]); 6] = [
         ],
     ),
     (ARCH_9A, &[]),
+    (
+        ARCH_9B,
+        &[
+            "ARCH-9.b agnt-a2a/src/client/a2a_client.rs:359: ensure_crypto_provider",
+            "ARCH-9.b agnt-a2a/src/client/a2a_client.rs:365: reqwest::Client::builder",
+            "ARCH-9.b agnt-a2a/src/discovery/card.rs:28: ensure_crypto_provider",
+            "ARCH-9.b agnt-a2a/src/discovery/card.rs:29: Client::builder",
+            "ARCH-9.b agnt-a2a/src/task_store/memory.rs:762: ensure_crypto_provider",
+            "ARCH-9.b agnt-a2a/src/task_store/memory.rs:763: reqwest::Client::new",
+            "ARCH-9.b agnt-a2a/src/tools/get_card.rs:18: ensure_crypto_provider",
+            "ARCH-9.b agnt-a2a/src/tools/get_card.rs:19: reqwest::Client::builder",
+            "ARCH-9.b agnt-core/src/config/models_cache.rs:105: reqwest::blocking::Client::new",
+            "ARCH-9.b agnt-core/src/conversation/providers.rs:30: ensure_crypto_provider",
+            "ARCH-9.b agnt-core/src/conversation/providers.rs:32: reqwest::Client::builder",
+            "ARCH-9.b agnt-core/src/tools/handler/http.rs:62: reqwest::Client::builder",
+            "ARCH-9.b agnt-core/src/tools/mcp/runtime.rs:263: ensure_crypto_provider",
+            "ARCH-9.b agnt-core/src/tools/mcp/runtime.rs:264: reqwest::Client::builder",
+        ],
+    ),
     (ARCH_11B, &[]),
     (ARCH_12, &[]),
 ];
