@@ -9,8 +9,9 @@ use rig::agent::DispatchAction;
 use serde_json::Value;
 
 use agnt_kernel::StopCause;
+use agnt_kernel::bus::Stream;
 
-use crate::bus::Bus;
+use crate::bus::UiEventTx;
 use crate::hook::agent_hook::StopLedger;
 use crate::protocol::events::{SystemEvent, SystemKind};
 
@@ -144,7 +145,8 @@ impl DoomLoopDetector {
         &self,
         tool_name: &str,
         args: &str,
-        bus: &Bus,
+        ui_event: &UiEventTx,
+        stream: &Stream,
         stop: &StopLedger,
     ) -> Option<DispatchAction> {
         let detected = {
@@ -159,8 +161,7 @@ impl DoomLoopDetector {
                      Are you really sure you need so many tool calls? Reconsider your approach.",
                     tool, DOOM_LOOP_THRESHOLD
                 );
-                let _ = bus
-                    .ui_event()
+                let _ = ui_event
                     .send(SystemEvent::SystemMessage {
                         kind: SystemKind::Warning,
                         text: message.clone(),
@@ -175,8 +176,7 @@ impl DoomLoopDetector {
                      Change your approach: use different arguments, a different tool, or ask the user for guidance.",
                     tool
                 );
-                let _ = bus
-                    .ui_event()
+                let _ = ui_event
                     .send(SystemEvent::SystemMessage {
                         kind: SystemKind::Warning,
                         text: message.clone(),
@@ -190,7 +190,7 @@ impl DoomLoopDetector {
                     "{DOOM_LOOP_STOP_PREFIX} '{}' kept looping after repeated steering. The run was stopped.",
                     tool
                 );
-                stop.narrate(bus.stream(), StopCause::DoomLoop, &message);
+                stop.narrate(stream, StopCause::DoomLoop, &message);
                 Some(DispatchAction::stop(message))
             }
             None => None,

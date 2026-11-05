@@ -655,7 +655,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             }
             let doom_action = if self.repetition_guard {
                 self.doom
-                    .check_and_record(&tool_name, &args, &bus, &stop)
+                    .check_and_record(&tool_name, &args, bus.ui_event(), bus.stream(), &stop)
                     .await
             } else {
                 None

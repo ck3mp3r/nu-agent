@@ -59,7 +59,8 @@ async fn reordered_json_args_trip_doom_loop() {
             .check_and_record(
                 "read_file",
                 args,
-                &bus,
+                bus.ui_event(),
+                bus.stream(),
                 &crate::hook::agent_hook::StopLedger::default(),
             )
             .await;
@@ -96,7 +97,8 @@ async fn whitespace_only_args_trip_doom_loop() {
             .check_and_record(
                 "read_file",
                 args,
-                &bus,
+                bus.ui_event(),
+                bus.stream(),
                 &crate::hook::agent_hook::StopLedger::default(),
             )
             .await;
@@ -126,7 +128,8 @@ async fn non_json_args_use_raw_signature() {
             .check_and_record(
                 "read_file",
                 "raw args",
-                &bus,
+                bus.ui_event(),
+                bus.stream(),
                 &crate::hook::agent_hook::StopLedger::default(),
             )
             .await;

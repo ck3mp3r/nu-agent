@@ -56,7 +56,8 @@ async fn second_detection_backoff_skips_naming_tool() -> TestResult<()> {
         .check_and_record(
             "read_file",
             "{\"path\": \"same\"}",
-            &bus,
+            bus.ui_event(),
+            bus.stream(),
             &crate::hook::agent_hook::StopLedger::default(),
         )
         .await;
@@ -93,7 +94,8 @@ async fn fourth_detection_stops_run() -> TestResult<()> {
         .check_and_record(
             "read_file",
             "{\"path\": \"same\"}",
-            &bus,
+            bus.ui_event(),
+            bus.stream(),
             &crate::hook::agent_hook::StopLedger::default(),
         )
         .await;
@@ -105,7 +107,8 @@ async fn fourth_detection_stops_run() -> TestResult<()> {
         .check_and_record(
             "read_file",
             "{\"path\": \"same\"}",
-            &bus,
+            bus.ui_event(),
+            bus.stream(),
             &crate::hook::agent_hook::StopLedger::default(),
         )
         .await;
@@ -114,7 +117,8 @@ async fn fourth_detection_stops_run() -> TestResult<()> {
         .check_and_record(
             "read_file",
             "{\"path\": \"same\"}",
-            &bus,
+            bus.ui_event(),
+            bus.stream(),
             &crate::hook::agent_hook::StopLedger::default(),
         )
         .await;
@@ -155,7 +159,8 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
         .check_and_record(
             "read_file",
             "{\"path\": \"same\"}",
-            &bus,
+            bus.ui_event(),
+            bus.stream(),
             &crate::hook::agent_hook::StopLedger::default(),
         )
         .await;
@@ -169,7 +174,8 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
         .check_and_record(
             "read_file",
             "{\"path\": \"same\"}",
-            &bus,
+            bus.ui_event(),
+            bus.stream(),
             &crate::hook::agent_hook::StopLedger::default(),
         )
         .await;
@@ -180,7 +186,8 @@ async fn stop_detection_emits_no_warning() -> TestResult<()> {
         .check_and_record(
             "read_file",
             "{\"path\": \"same\"}",
-            &bus,
+            bus.ui_event(),
+            bus.stream(),
             &crate::hook::agent_hook::StopLedger::default(),
         )
         .await;
@@ -214,7 +221,8 @@ async fn reset_clears_escalation_counter() -> TestResult<()> {
         .check_and_record(
             "read_file",
             "{\"path\": \"same\"}",
-            &bus,
+            bus.ui_event(),
+            bus.stream(),
             &crate::hook::agent_hook::StopLedger::default(),
         )
         .await;

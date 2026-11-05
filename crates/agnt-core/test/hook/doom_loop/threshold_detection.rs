@@ -13,7 +13,8 @@ async fn no_doom_loop_under_threshold() {
             .check_and_record(
                 "read_file",
                 "{\"path\": \"same\"}",
-                &bus,
+                bus.ui_event(),
+                bus.stream(),
                 &crate::hook::agent_hook::StopLedger::default(),
             )
             .await;
@@ -34,7 +35,8 @@ async fn doom_loop_fires_at_threshold() {
             .check_and_record(
                 "read_file",
                 "{\"path\": \"same\"}",
-                &bus,
+                bus.ui_event(),
+                bus.stream(),
                 &crate::hook::agent_hook::StopLedger::default(),
             )
             .await;
@@ -73,7 +75,8 @@ async fn different_args_does_not_trip_doom_loop() {
             .check_and_record(
                 "read_file",
                 &format!("{{\"path\": \"{i}\"}}"),
-                &bus,
+                bus.ui_event(),
+                bus.stream(),
                 &crate::hook::agent_hook::StopLedger::default(),
             )
             .await;

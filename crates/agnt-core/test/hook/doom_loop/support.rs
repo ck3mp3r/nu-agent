@@ -26,7 +26,8 @@ pub(super) async fn drive_to_first_detection(
             .check_and_record(
                 "read_file",
                 "{\"path\": \"same\"}",
-                bus,
+                bus.ui_event(),
+                bus.stream(),
                 &crate::hook::agent_hook::StopLedger::default(),
             )
             .await;
