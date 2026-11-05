@@ -92,7 +92,7 @@ async fn glob_execute_table() -> Result<()> {
             "pattern": case.pattern,
             "path": dir.path().to_str().ok_or("temp path must be UTF-8")?,
         });
-        let result = GlobTool::execute(&args, dir.path(), &Bus::default())
+        let result = GlobTool::execute(&args, dir.path(), Bus::default().cancel())
             .await
             .map_err(|e| format!("{e:?}"))?;
 
@@ -153,7 +153,7 @@ async fn glob_invalid_pattern_returns_validation_error() {
     let dir = tempdir().unwrap();
 
     let args = serde_json::json!({"pattern": "!", "path": dir.path().to_str().unwrap()});
-    let result = GlobTool::execute(&args, dir.path(), &Bus::default()).await;
+    let result = GlobTool::execute(&args, dir.path(), Bus::default().cancel()).await;
     match result {
         Err(e) => assert_eq!(e.kind, ToolErrorKind::Validation),
         Ok(_) => { /* OverrideBuilder accepted it — acceptable */ }

@@ -13,7 +13,7 @@ impl super::super::BuiltinTool for FailingDetailsTool {
     async fn execute(
         _args: &serde_json::Value,
         _cwd: &Path,
-        _bus: &crate::bus::Bus,
+        _cancel: &crate::bus::CancelTx,
     ) -> core::result::Result<serde_json::Value, super::super::super::ToolHandlerError> {
         Err(
             super::super::super::ToolHandlerError::runtime("boom").with_details(
@@ -34,7 +34,7 @@ impl super::super::BuiltinTool for FailingPlainTool {
     async fn execute(
         _args: &serde_json::Value,
         _cwd: &Path,
-        _bus: &crate::bus::Bus,
+        _cancel: &crate::bus::CancelTx,
     ) -> core::result::Result<serde_json::Value, super::super::super::ToolHandlerError> {
         Err(super::super::super::ToolHandlerError::runtime("boom"))
     }
@@ -146,7 +146,7 @@ macro_rules! failing_kind_tool {
             async fn execute(
                 _args: &serde_json::Value,
                 _cwd: &Path,
-                _bus: &crate::bus::Bus,
+                _cancel: &crate::bus::CancelTx,
             ) -> core::result::Result<serde_json::Value, super::super::super::ToolHandlerError>
             {
                 Err($error)

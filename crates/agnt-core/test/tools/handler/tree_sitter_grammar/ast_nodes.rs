@@ -22,7 +22,7 @@ async fn ast_nodes_end_to_end_against_a_compiled_grammar() -> Result<()> {
             "include_text": true
         }),
         dir.path(),
-        &Bus::default(),
+        Bus::default().cancel(),
     )
     .await
     .map_err(|e| format!("nodes must succeed: {e:?}"))?;
@@ -34,7 +34,7 @@ async fn ast_nodes_end_to_end_against_a_compiled_grammar() -> Result<()> {
             "max_matches": 1
         }),
         dir.path(),
-        &Bus::default(),
+        Bus::default().cancel(),
     )
     .await
     .map_err(|e| format!("nodes must succeed: {e:?}"))?;

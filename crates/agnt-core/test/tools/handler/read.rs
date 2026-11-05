@@ -58,7 +58,7 @@ async fn read_execute_table() -> Result<()> {
         let mut args = case.args.clone();
         args["path"] = serde_json::json!(path.to_str().ok_or("temp path must be UTF-8")?);
 
-        let result = ReadTool::execute(&args, dir.path(), &Bus::default())
+        let result = ReadTool::execute(&args, dir.path(), Bus::default().cancel())
             .await
             .map_err(|e| format!("{e:?}"))?;
 
@@ -97,7 +97,7 @@ async fn read_execute_table() -> Result<()> {
 async fn read_missing_file_returns_runtime_error() {
     let dir = tempfile::tempdir().unwrap();
     let args = serde_json::json!({ "path": "/nonexistent/path/file.txt" });
-    let result = ReadTool::execute(&args, dir.path(), &Bus::default()).await;
+    let result = ReadTool::execute(&args, dir.path(), Bus::default().cancel()).await;
     assert!(result.is_err());
     assert_eq!(
         result.unwrap_err().kind,

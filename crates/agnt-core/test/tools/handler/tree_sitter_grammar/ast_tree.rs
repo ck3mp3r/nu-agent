@@ -17,14 +17,14 @@ async fn ast_tree_end_to_end_against_a_compiled_grammar() -> Result<()> {
     let full = AstTreeTool::execute(
         &serde_json::json!({"path": path, "language": "rust"}),
         dir.path(),
-        &Bus::default(),
+        Bus::default().cancel(),
     )
     .await
     .map_err(|e| format!("tree must succeed: {e:?}"))?;
     let shallow = AstTreeTool::execute(
         &serde_json::json!({"path": path, "language": "rust", "max_depth": 1}),
         dir.path(),
-        &Bus::default(),
+        Bus::default().cancel(),
     )
     .await
     .map_err(|e| format!("tree must succeed: {e:?}"))?;
@@ -67,7 +67,7 @@ async fn ast_tree_with_a_deep_max_depth_renders_leaf_nodes() -> Result<()> {
     let deep = AstTreeTool::execute(
         &serde_json::json!({"path": path, "language": "rust", "max_depth": 64}),
         dir.path(),
-        &Bus::default(),
+        Bus::default().cancel(),
     )
     .await
     .map_err(|e| format!("tree must succeed: {e:?}"))?;

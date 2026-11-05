@@ -3,7 +3,7 @@ use std::path::Path;
 
 use super::tmux_common::{parse_args, run_tmux};
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::Bus;
+use crate::bus::CancelTx;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct LayoutArgs {
@@ -21,7 +21,7 @@ impl BuiltinTool for TmuxLayoutTool {
     async fn execute(
         arguments: &JsonValue,
         _cwd: &Path,
-        _bus: &Bus,
+        _cancel: &CancelTx,
     ) -> Result<JsonValue, ToolHandlerError> {
         let args: LayoutArgs = parse_args(arguments)?;
 

@@ -78,7 +78,7 @@ async fn edit_apply_and_preview_table() -> Result<()> {
                 serde_json::json!(crate::tools::fs::core::version_token(seed));
         }
 
-        let result = EditTool::execute(&args, dir.path(), &Bus::default())
+        let result = EditTool::execute(&args, dir.path(), Bus::default().cancel())
             .await
             .map_err(|e| format!("{e:?}"))?;
 
@@ -217,7 +217,7 @@ async fn edit_error_table() -> Result<()> {
             VersionSpec::Omitted => {}
         }
 
-        let error = EditTool::execute(&args, dir.path(), &Bus::default())
+        let error = EditTool::execute(&args, dir.path(), Bus::default().cancel())
             .await
             .err()
             .ok_or("this edit must fail the tool call")?;
@@ -266,7 +266,7 @@ async fn edit_missing_file_returns_error() -> Result<()> {
     });
 
     // -- Exec
-    let result = EditTool::execute(&args, dir.path(), &Bus::default())
+    let result = EditTool::execute(&args, dir.path(), Bus::default().cancel())
         .await
         .map_err(|e| format!("{e:?}"))?;
 
@@ -306,7 +306,7 @@ async fn edit_json_shape_preserved() -> Result<()> {
             "replacement": "there"
         }
     });
-    let result = EditTool::execute(&args, dir.path(), &Bus::default())
+    let result = EditTool::execute(&args, dir.path(), Bus::default().cancel())
         .await
         .map_err(|e| format!("{e:?}"))?;
     for field in [

@@ -30,7 +30,7 @@ fn diagnostic_message(response: &serde_json::Value) -> core::result::Result<Stri
 
 /// Run the edit tool against a seeded file and return the contract response.
 async fn execute(dir: &std::path::Path, args: serde_json::Value) -> Result<serde_json::Value> {
-    Ok(EditTool::execute(&args, dir, &Bus::default())
+    Ok(EditTool::execute(&args, dir, Bus::default().cancel())
         .await
         .map_err(|e| format!("the edit tool must answer with a contract response: {e:?}"))?)
 }
@@ -212,7 +212,7 @@ async fn edit_missing_required_arguments_fail_the_tool_call() -> Result<()> {
 
     // -- Exec & Check
     for (name, args) in cases {
-        let error = EditTool::execute(&args, dir.path(), &Bus::default())
+        let error = EditTool::execute(&args, dir.path(), Bus::default().cancel())
             .await
             .err()
             .ok_or("a request without the required fields must fail the tool call")?;

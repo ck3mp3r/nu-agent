@@ -18,7 +18,7 @@ async fn ast_tools_report_validation_errors_for_unknown_language_and_bad_query()
     let unknown_language = AstTreeTool::execute(
         &serde_json::json!({"path": path, "language": "cobol"}),
         dir.path(),
-        &Bus::default(),
+        Bus::default().cancel(),
     )
     .await
     .err()
@@ -26,7 +26,7 @@ async fn ast_tools_report_validation_errors_for_unknown_language_and_bad_query()
     let bad_query = AstQueryTool::execute(
         &serde_json::json!({"path": path, "language": "rust", "query": "(not_a_node"}),
         dir.path(),
-        &Bus::default(),
+        Bus::default().cancel(),
     )
     .await
     .err()

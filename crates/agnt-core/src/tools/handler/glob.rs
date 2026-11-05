@@ -2,7 +2,7 @@ use serde_json::Value as JsonValue;
 use std::path::Path;
 
 use super::{ToolErrorKind, ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::Bus;
+use crate::bus::CancelTx;
 
 #[derive(Debug, serde::Deserialize)]
 struct GlobArgs {
@@ -19,7 +19,7 @@ impl BuiltinTool for GlobTool {
     async fn execute(
         args: &JsonValue,
         cwd: &Path,
-        _bus: &Bus,
+        _cancel: &CancelTx,
     ) -> Result<JsonValue, ToolHandlerError> {
         let args: GlobArgs =
             serde_json::from_value(args.clone()).map_err(|e| ToolHandlerError {

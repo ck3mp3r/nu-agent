@@ -59,7 +59,8 @@ async fn http_execute_error_table() -> core::result::Result<(), Box<dyn std::err
 
     // -- Exec & Check
     for (name, args, expected_fragments) in cases {
-        let result = HttpTool::execute(&args, std::path::Path::new("/tmp"), &Bus::default()).await;
+        let result =
+            HttpTool::execute(&args, std::path::Path::new("/tmp"), Bus::default().cancel()).await;
         let err = result.err().ok_or("expected an error for this url")?;
         assert_eq!(
             err.kind,

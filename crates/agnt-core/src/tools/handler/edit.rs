@@ -6,7 +6,7 @@ use super::{
     ToolErrorKind, ToolHandlerError,
     builtin_tool::{BuiltinTool, Previewable},
 };
-use crate::bus::Bus;
+use crate::bus::CancelTx;
 use crate::tools::fs::core::apply_search_replace_edit;
 
 #[derive(Debug, serde::Deserialize)]
@@ -397,7 +397,7 @@ impl BuiltinTool for EditTool {
     async fn execute(
         args: &JsonValue,
         cwd: &Path,
-        _bus: &Bus,
+        _cancel: &CancelTx,
     ) -> Result<JsonValue, ToolHandlerError> {
         let edit_args: EditArgs =
             serde_json::from_value(args.clone()).map_err(|e| ToolHandlerError {

@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde_json::Value as JsonValue;
 
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::Bus;
+use crate::bus::CancelTx;
 
 const DEFAULT_MAX_LENGTH: usize = 12000;
 const DEFAULT_MODE: &str = "markdown";
@@ -93,7 +93,7 @@ impl BuiltinTool for HttpTool {
     async fn execute(
         arguments: &JsonValue,
         _cwd: &Path,
-        _bus: &Bus,
+        _cancel: &CancelTx,
     ) -> Result<JsonValue, ToolHandlerError> {
         let args: HttpArgs = serde_json::from_value(arguments.clone())
             .map_err(|e| ToolHandlerError::validation(format!("Invalid http arguments: {e}")))?;

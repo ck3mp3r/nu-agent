@@ -7,7 +7,7 @@ use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::time::Instant;
 
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::{Bus, CancelRx};
+use crate::bus::{CancelRx, CancelTx};
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
 
@@ -28,7 +28,7 @@ impl BuiltinTool for NuTool {
     async fn execute(
         args: &JsonValue,
         cwd: &Path,
-        bus: &Bus,
+        cancel: &CancelTx,
     ) -> Result<JsonValue, ToolHandlerError> {
         let nu_args: NuArgs = serde_json::from_value(args.clone())
             .map_err(|e| ToolHandlerError::validation(format!("Invalid nu arguments: {e}")))?;
@@ -74,7 +74,7 @@ impl BuiltinTool for NuTool {
             stderr_handle,
             process_group,
             deadline,
-            bus.cancel().subscribe(),
+            cancel.subscribe(),
         ));
 
         let (status, stdout, stderr) = match guard

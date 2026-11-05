@@ -19,7 +19,7 @@ async fn skill_lookup_table() -> Result<()> {
     // -- Exec & Check
     for (name, skill_name, expected_found) in cases {
         let args = serde_json::json!({ "name": skill_name });
-        let result = SkillTool::execute(&args, dir.path(), &Bus::default())
+        let result = SkillTool::execute(&args, dir.path(), Bus::default().cancel())
             .await
             .map_err(|e| format!("{e:?}"))?;
 
@@ -41,7 +41,7 @@ async fn skill_lookup_table() -> Result<()> {
 async fn skill_missing_name_arg_returns_validation_error() {
     let dir = tempfile::tempdir().unwrap();
     let args = serde_json::json!({});
-    let result = SkillTool::execute(&args, dir.path(), &Bus::default()).await;
+    let result = SkillTool::execute(&args, dir.path(), Bus::default().cancel()).await;
     assert!(result.is_err());
     assert_eq!(
         result.unwrap_err().kind,

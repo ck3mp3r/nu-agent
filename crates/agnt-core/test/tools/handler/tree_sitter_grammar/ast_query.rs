@@ -22,7 +22,7 @@ async fn ast_query_end_to_end_against_a_compiled_grammar() -> Result<()> {
             "query": "(function_item name: (identifier) @fn-name)"
         }),
         dir.path(),
-        &Bus::default(),
+        Bus::default().cancel(),
     )
     .await
     .map_err(|e| format!("query must succeed: {e:?}"))?;
@@ -72,7 +72,7 @@ async fn ast_query_honours_max_matches_include_text_and_capture_filter() -> Resu
             "include_text": false
         }),
         dir.path(),
-        &Bus::default(),
+        Bus::default().cancel(),
     )
     .await
     .map_err(|e| format!("query must succeed: {e:?}"))?;
@@ -84,7 +84,7 @@ async fn ast_query_honours_max_matches_include_text_and_capture_filter() -> Resu
             "captures": ["not-a-capture"]
         }),
         dir.path(),
-        &Bus::default(),
+        Bus::default().cancel(),
     )
     .await
     .map_err(|e| format!("query must succeed: {e:?}"))?;

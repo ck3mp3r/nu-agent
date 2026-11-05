@@ -28,7 +28,8 @@ async fn nu_cancel_kills_process_tree() -> Result<()> {
     let bus_for_tool = bus.clone();
 
     // -- Exec
-    let call = tokio::spawn(async move { NuTool::execute(&args, &cwd, &bus_for_tool).await });
+    let call =
+        tokio::spawn(async move { NuTool::execute(&args, &cwd, bus_for_tool.cancel()).await });
     let child_pid = wait_for_child_pid(&pid_file).await?;
     cancel_when_subscribed(&bus).await;
     let err = call
@@ -57,7 +58,7 @@ async fn nu_timeout_kills_process_tree() -> Result<()> {
     let bus = Bus::default();
 
     // -- Exec
-    let call = tokio::spawn(async move { NuTool::execute(&args, &cwd, &bus).await });
+    let call = tokio::spawn(async move { NuTool::execute(&args, &cwd, bus.cancel()).await });
     let child_pid = wait_for_child_pid(&pid_file).await?;
     let err = call
         .await?
@@ -91,7 +92,8 @@ async fn nu_early_wrapper_exit_still_honours_the_timeout() -> Result<()> {
 
     // -- Exec
     let started = Instant::now();
-    let call = tokio::spawn(async move { NuTool::execute(&args, &cwd, &bus_for_tool).await });
+    let call =
+        tokio::spawn(async move { NuTool::execute(&args, &cwd, bus_for_tool.cancel()).await });
     let child_pid = wait_for_child_pid(&pid_file).await?;
     let err = call
         .await?
@@ -125,7 +127,7 @@ async fn nu_cancel_kills_process_tree_after_call_future_dropped() -> Result<()> 
     let args = tree_args(&pid_file);
     let cwd = temp.path().to_path_buf();
     let bus = Bus::default();
-    let mut call = Box::pin(NuTool::execute(&args, &cwd, &bus));
+    let mut call = Box::pin(NuTool::execute(&args, &cwd, bus.cancel()));
 
     // -- Exec
     let child_pid = tokio::select! {

@@ -14,7 +14,7 @@ async fn nu_executes_simple_command() -> Result<()> {
     let result = NuTool::execute(
         &serde_json::json!({"command": "echo hello"}),
         Path::new("/tmp"),
-        &bus,
+        bus.cancel(),
     )
     .await
     .map_err(|e| format!("{e:?}"))?;
@@ -32,7 +32,7 @@ async fn nu_captures_stdout_and_stderr() -> Result<()> {
     let err = NuTool::execute(
         &serde_json::json!({"command": "print \"out\"; error make {msg: \"err\"}"}),
         Path::new("/tmp"),
-        &bus,
+        bus.cancel(),
     )
     .await
     .err()
@@ -60,7 +60,7 @@ async fn nu_invalid_command_table() {
     // -- Exec & Check
     let bus = Bus::default();
     for (name, args) in cases {
-        let err = NuTool::execute(&args, Path::new("/tmp"), &bus)
+        let err = NuTool::execute(&args, Path::new("/tmp"), bus.cancel())
             .await
             .unwrap_err();
         assert_eq!(err.kind, ToolErrorKind::Validation, "case '{name}': kind");
@@ -77,7 +77,7 @@ async fn nu_nonzero_exit_preserved() -> Result<()> {
     let err = NuTool::execute(
         &serde_json::json!({"command": "exit 3"}),
         Path::new("/tmp"),
-        &bus,
+        bus.cancel(),
     )
     .await
     .err()
@@ -104,7 +104,7 @@ async fn nu_empty_output_handled() -> Result<()> {
     let result = NuTool::execute(
         &serde_json::json!({"command": "null"}),
         Path::new("/tmp"),
-        &bus,
+        bus.cancel(),
     )
     .await
     .map_err(|e| format!("{e:?}"))?;
@@ -122,7 +122,7 @@ async fn nu_handles_large_output_without_deadlock() -> Result<()> {
     let result = NuTool::execute(
         &serde_json::json!({"command": "1..10000 | each { |_| 'xxxxxxxxxxxxxxxxxxxx' } | str join (char newline)"}),
         Path::new("/tmp"),
-        &bus,
+        bus.cancel(),
     )
     .await
     .map_err(|e| format!("{e:?}"))?;
@@ -144,7 +144,7 @@ async fn nu_timeout_kills_process_and_returns_error() -> Result<()> {
     let result = NuTool::execute(
         &serde_json::json!({"command": "sleep 2sec", "timeout_seconds": 1}),
         Path::new("/tmp"),
-        &bus,
+        bus.cancel(),
     )
     .await;
     let elapsed = start.elapsed();
@@ -186,7 +186,7 @@ async fn nu_cancellation_kills_process_quickly() -> Result<()> {
     let result = NuTool::execute(
         &serde_json::json!({"command": "sleep 2sec"}),
         Path::new("/tmp"),
-        &bus,
+        bus.cancel(),
     )
     .await;
     handle.await?;

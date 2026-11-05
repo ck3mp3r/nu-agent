@@ -155,10 +155,10 @@ async fn ast_tools_missing_required_arg_table() {
         args["path"] = serde_json::json!(path.to_str().unwrap());
 
         let err = match tool {
-            Tool::Query => AstQueryTool::execute(&args, dir.path(), &Bus::default()).await,
-            Tool::Nodes => AstNodesTool::execute(&args, dir.path(), &Bus::default()).await,
-            Tool::Refs => AstRefsTool::execute(&args, dir.path(), &Bus::default()).await,
-            Tool::Tree => AstTreeTool::execute(&args, dir.path(), &Bus::default()).await,
+            Tool::Query => AstQueryTool::execute(&args, dir.path(), Bus::default().cancel()).await,
+            Tool::Nodes => AstNodesTool::execute(&args, dir.path(), Bus::default().cancel()).await,
+            Tool::Refs => AstRefsTool::execute(&args, dir.path(), Bus::default().cancel()).await,
+            Tool::Tree => AstTreeTool::execute(&args, dir.path(), Bus::default().cancel()).await,
         }
         .unwrap_err();
         assert_eq!(err.kind, ToolErrorKind::Validation, "case '{name}': kind");
@@ -179,7 +179,7 @@ async fn missing_config_returns_runtime_error() {
     let missing_dir = dir.path().join("nonexistent-tree-sitter-dir");
     let previous = std::env::var_os("TREE_SITTER_DIR");
     unsafe { std::env::set_var("TREE_SITTER_DIR", &missing_dir) };
-    let result = AstTreeTool::execute(&args, dir.path(), &Bus::default()).await;
+    let result = AstTreeTool::execute(&args, dir.path(), Bus::default().cancel()).await;
     match previous {
         Some(v) => unsafe { std::env::set_var("TREE_SITTER_DIR", v) },
         None => unsafe { std::env::remove_var("TREE_SITTER_DIR") },
@@ -215,7 +215,7 @@ async fn e2e_nonexistent_file_returns_runtime_error() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("nonexistent.rs");
     let args = serde_json::json!({ "path": path.to_str().unwrap(), "language": "rust", "query": "(function_item)" });
-    let err = AstQueryTool::execute(&args, dir.path(), &Bus::default())
+    let err = AstQueryTool::execute(&args, dir.path(), Bus::default().cancel())
         .await
         .unwrap_err();
     assert_eq!(err.kind, ToolErrorKind::Runtime);
@@ -334,10 +334,14 @@ async fn ast_tools_end_to_end_table() -> Result<()> {
         args["path"] = serde_json::json!(path.to_str().ok_or("path must be UTF-8")?);
 
         let result = match &case.expect {
-            Expect::QueryNames(_) => AstQueryTool::execute(&args, cwd, &Bus::default()).await,
-            Expect::NodeType(_) => AstNodesTool::execute(&args, cwd, &Bus::default()).await,
-            Expect::RefTexts(_) => AstRefsTool::execute(&args, cwd, &Bus::default()).await,
-            Expect::TreeContains(_) => AstTreeTool::execute(&args, cwd, &Bus::default()).await,
+            Expect::QueryNames(_) => {
+                AstQueryTool::execute(&args, cwd, Bus::default().cancel()).await
+            }
+            Expect::NodeType(_) => AstNodesTool::execute(&args, cwd, Bus::default().cancel()).await,
+            Expect::RefTexts(_) => AstRefsTool::execute(&args, cwd, Bus::default().cancel()).await,
+            Expect::TreeContains(_) => {
+                AstTreeTool::execute(&args, cwd, Bus::default().cancel()).await
+            }
         }
         .map_err(|e| format!("{e:?}"))?;
 

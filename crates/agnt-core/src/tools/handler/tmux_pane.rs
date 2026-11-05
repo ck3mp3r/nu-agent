@@ -5,7 +5,7 @@ use super::tmux_common::{
     pane_target, parse_args, parse_panes, parse_panes_find, require_force, resolve_dir, run_tmux,
 };
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::Bus;
+use crate::bus::CancelTx;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct PaneArgs {
@@ -41,7 +41,7 @@ impl BuiltinTool for TmuxPaneTool {
     async fn execute(
         arguments: &JsonValue,
         cwd: &Path,
-        _bus: &Bus,
+        _cancel: &CancelTx,
     ) -> Result<JsonValue, ToolHandlerError> {
         let args: PaneArgs = parse_args(arguments)?;
 

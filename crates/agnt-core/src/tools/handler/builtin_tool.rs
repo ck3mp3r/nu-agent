@@ -14,7 +14,7 @@ use super::tmux_session::TmuxSessionTool;
 use super::tmux_window::TmuxWindowTool;
 use super::tree_sitter::{AstNodesTool, AstQueryTool, AstRefsTool, AstTreeTool};
 use super::{ToolHandlerError, execution_error_for_kind};
-use crate::bus::Bus;
+use crate::bus::{Bus, CancelTx};
 use crate::tools::limits::truncate_tool_output;
 use crate::types::ToolDefinition;
 use agnt_kernel::BuiltinKind;
@@ -27,7 +27,7 @@ pub trait BuiltinTool: Sized {
     fn execute(
         args: &JsonValue,
         cwd: &Path,
-        bus: &Bus,
+        cancel: &CancelTx,
     ) -> impl std::future::Future<Output = Result<JsonValue, ToolHandlerError>> + Send;
 }
 
@@ -54,7 +54,7 @@ pub fn make_dynamic_tool<T: BuiltinTool>(
         let cwd = cwd.clone();
         let bus = bus.clone();
         Box::pin(async move {
-            let result = match T::execute(&args, &cwd, &bus).await {
+            let result = match T::execute(&args, &cwd, bus.cancel()).await {
                 Ok(result) => result,
                 Err(e) => {
                     // Handler failures keep the failure shape: the details

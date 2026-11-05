@@ -18,7 +18,7 @@ async fn ast_refs_end_to_end_against_a_compiled_grammar() -> Result<()> {
     let all = AstRefsTool::execute(
         &serde_json::json!({"path": path, "language": "rust", "name": "Status"}),
         dir.path(),
-        &Bus::default(),
+        Bus::default().cancel(),
     )
     .await
     .map_err(|e| format!("refs must succeed: {e:?}"))?;
@@ -30,7 +30,7 @@ async fn ast_refs_end_to_end_against_a_compiled_grammar() -> Result<()> {
             "max_matches": 1
         }),
         dir.path(),
-        &Bus::default(),
+        Bus::default().cancel(),
     )
     .await
     .map_err(|e| format!("refs must succeed: {e:?}"))?;

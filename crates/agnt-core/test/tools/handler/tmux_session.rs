@@ -35,7 +35,7 @@ async fn validation_table() {
     // -- Exec & Check
     let bus = Bus::default();
     for (name, args, expected_message) in cases {
-        let err = TmuxSessionTool::execute(&args, Path::new("/tmp"), &bus)
+        let err = TmuxSessionTool::execute(&args, Path::new("/tmp"), bus.cancel())
             .await
             .unwrap_err();
         assert_eq!(err.kind, ToolErrorKind::Validation, "case '{name}': kind");

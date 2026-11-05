@@ -123,7 +123,7 @@ async fn grep_search_behavior_table() -> Result<()> {
         let mut args = case.args.clone();
         args["path"] = serde_json::json!(dir.path().to_str().ok_or("temp path must be UTF-8")?);
 
-        let result = GrepTool::execute(&args, dir.path(), &Bus::default())
+        let result = GrepTool::execute(&args, dir.path(), Bus::default().cancel())
             .await
             .map_err(|e| format!("{e:?}"))?;
 
@@ -173,7 +173,7 @@ async fn grep_search_behavior_table() -> Result<()> {
 async fn grep_invalid_regex_returns_validation_error() {
     let dir = tempdir().unwrap();
     let args = serde_json::json!({"pattern": "[invalid", "path": dir.path().to_str().unwrap()});
-    let err = GrepTool::execute(&args, dir.path(), &Bus::default())
+    let err = GrepTool::execute(&args, dir.path(), Bus::default().cancel())
         .await
         .unwrap_err();
     assert_eq!(err.kind, ToolErrorKind::Validation);
@@ -188,7 +188,7 @@ async fn grep_searches_subdirectories_recursively() -> Result<()> {
     std::fs::write(sub.join("nested.rs"), "deep_match\n").unwrap();
 
     let args = serde_json::json!({"pattern": "deep_match", "path": dir.path().to_str().unwrap()});
-    let result = GrepTool::execute(&args, dir.path(), &Bus::default())
+    let result = GrepTool::execute(&args, dir.path(), Bus::default().cancel())
         .await
         .map_err(|e| format!("{e:?}"))?;
 
@@ -211,7 +211,7 @@ async fn grep_skips_binary_files_without_error() {
     std::fs::write(dir.path().join("normal.rs"), "no match here\n").unwrap();
 
     let args = serde_json::json!({"pattern": "anything", "path": dir.path().to_str().unwrap()});
-    let result = GrepTool::execute(&args, dir.path(), &Bus::default()).await;
+    let result = GrepTool::execute(&args, dir.path(), Bus::default().cancel()).await;
     assert!(
         result.is_ok(),
         "should not error on binary files: {result:?}"

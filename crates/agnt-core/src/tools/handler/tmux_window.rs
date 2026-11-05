@@ -3,7 +3,7 @@ use std::path::Path;
 
 use super::tmux_common::{parse_args, require_force, resolve_dir, run_tmux};
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::Bus;
+use crate::bus::CancelTx;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct WindowArgs {
@@ -37,7 +37,7 @@ impl BuiltinTool for TmuxWindowTool {
     async fn execute(
         arguments: &JsonValue,
         cwd: &Path,
-        _bus: &Bus,
+        _cancel: &CancelTx,
     ) -> Result<JsonValue, ToolHandlerError> {
         let args: WindowArgs = parse_args(arguments)?;
 

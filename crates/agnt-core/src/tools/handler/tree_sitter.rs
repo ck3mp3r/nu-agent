@@ -8,7 +8,7 @@ use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree}
 use tree_sitter_language::LanguageFn;
 
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::Bus;
+use crate::bus::CancelTx;
 
 /// A loaded grammar. The shared library must stay alive for the lifetime of the
 /// `Language` it produced, so both are stored together.
@@ -365,7 +365,7 @@ impl BuiltinTool for AstQueryTool {
     async fn execute(
         args: &JsonValue,
         cwd: &Path,
-        _bus: &Bus,
+        _cancel: &CancelTx,
     ) -> Result<JsonValue, ToolHandlerError> {
         let args: QueryArgs = serde_json::from_value(args.clone()).map_err(|e| {
             ToolHandlerError::validation(format!("Invalid ast_query arguments: {e}"))
@@ -382,7 +382,7 @@ impl BuiltinTool for AstNodesTool {
     async fn execute(
         args: &JsonValue,
         cwd: &Path,
-        _bus: &Bus,
+        _cancel: &CancelTx,
     ) -> Result<JsonValue, ToolHandlerError> {
         let args: NodesArgs = serde_json::from_value(args.clone()).map_err(|e| {
             ToolHandlerError::validation(format!("Invalid ast_nodes arguments: {e}"))
@@ -399,7 +399,7 @@ impl BuiltinTool for AstRefsTool {
     async fn execute(
         args: &JsonValue,
         cwd: &Path,
-        _bus: &Bus,
+        _cancel: &CancelTx,
     ) -> Result<JsonValue, ToolHandlerError> {
         let args: RefsArgs = serde_json::from_value(args.clone()).map_err(|e| {
             ToolHandlerError::validation(format!("Invalid ast_refs arguments: {e}"))
@@ -416,7 +416,7 @@ impl BuiltinTool for AstTreeTool {
     async fn execute(
         args: &JsonValue,
         cwd: &Path,
-        _bus: &Bus,
+        _cancel: &CancelTx,
     ) -> Result<JsonValue, ToolHandlerError> {
         let args: TreeArgs = serde_json::from_value(args.clone()).map_err(|e| {
             ToolHandlerError::validation(format!("Invalid ast_tree arguments: {e}"))
