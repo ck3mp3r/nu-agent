@@ -12,6 +12,7 @@ mod construction;
 mod enums;
 mod graph;
 mod identity;
+mod naming;
 mod report;
 mod signatures;
 mod sources;

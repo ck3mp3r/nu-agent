@@ -19,6 +19,9 @@ pub const ARCH_9A: &str = "ARCH-9.a";
 /// The assertion ARCH-9.b, construction sits at its recorded homes.
 pub const ARCH_9B: &str = "ARCH-9.b";
 
+/// The assertion ARCH-10, no consumer names the aggregate runtime.
+pub const ARCH_10: &str = "ARCH-10";
+
 /// The assertion ARCH-11.a, a kernel identity is not publicly settable.
 pub const ARCH_11A: &str = "ARCH-11.a";
 
@@ -48,7 +51,7 @@ pub const ARCH_12: &str = "ARCH-12";
 /// ARCH-8's row holds every production site that takes or hands out the whole
 /// bus: thirty-nine signatures and fields that a later slice narrows to the
 /// channel each component actually uses.
-pub const BASELINES: [(&str, &[&str]); 7] = [
+pub const BASELINES: [(&str, &[&str]); 8] = [
     (
         ARCH_4,
         &[
@@ -110,6 +113,29 @@ pub const BASELINES: [(&str, &[&str]); 7] = [
             "ARCH-9.b agnt-core/src/tools/handler/http.rs:62: reqwest::Client::builder",
             "ARCH-9.b agnt-core/src/tools/mcp/runtime.rs:263: ensure_crypto_provider",
             "ARCH-9.b agnt-core/src/tools/mcp/runtime.rs:264: reqwest::Client::builder",
+        ],
+    ),
+    (
+        ARCH_10,
+        &[
+            "ARCH-10 agnt-acp/src/runtime.rs:14: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/runtime.rs:185: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:112: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:132: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:139: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:24: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:773: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:784: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:87: AgentConversationRuntime",
+            "ARCH-10 agnt-cli/src/mode/mod.rs:255: AgentConversationRuntime",
+            "ARCH-10 agnt-cli/src/mode/mod.rs:26: AgentConversationRuntime",
+            "ARCH-10 agnt-cli/src/mode/stderr.rs:140: AgentConversationRuntime",
+            "ARCH-10 agnt-cli/src/mode/stderr.rs:32: AgentConversationRuntime",
+            "ARCH-10 agnt-cli/src/mode/stderr.rs:78: AgentConversationRuntime",
+            "ARCH-10 agnt-cli/src/mode/stderr.rs:7: AgentConversationRuntime",
+            "ARCH-10 agnt-cli/src/mode/tui.rs:11: AgentConversationRuntime",
+            "ARCH-10 agnt-cli/src/mode/tui.rs:122: AgentConversationRuntime",
+            "ARCH-10 agnt-cli/src/mode/tui.rs:94: AgentConversationRuntime",
         ],
     ),
     (ARCH_11B, &[]),
