@@ -190,7 +190,7 @@ impl DoomLoopDetector {
                     "{DOOM_LOOP_STOP_PREFIX} '{}' kept looping after repeated steering. The run was stopped.",
                     tool
                 );
-                stop.narrate(bus, StopCause::DoomLoop, &message);
+                stop.narrate(bus.stream(), StopCause::DoomLoop, &message);
                 Some(DispatchAction::stop(message))
             }
             None => None,

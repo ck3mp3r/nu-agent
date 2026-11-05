@@ -70,7 +70,6 @@ pub const BASELINES: [(&str, &[&str]); 5] = [
             "ARCH-8 agnt-cli/src/mode/mod.rs:102: `&Bus` is a parameter",
             "ARCH-8 agnt-cli/src/mode/mod.rs:174: `&Bus` is a parameter",
             "ARCH-8 agnt-core/src/conversation/runtime.rs:219: `&Bus` is a parameter",
-            "ARCH-8 agnt-core/src/hook/agent_hook.rs:60: `&Bus` is a parameter",
             "ARCH-8 agnt-core/src/hook/circuit_breaker_guard.rs:67: `&Bus` is a parameter",
             "ARCH-8 agnt-core/src/hook/doom_loop.rs:147: `&Bus` is a parameter",
             "ARCH-8 agnt-core/src/hook/permission_resolver.rs:136: `&Bus` is a parameter",

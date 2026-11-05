@@ -487,7 +487,11 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
 
         async move {
             if cancelled {
-                stop.narrate(&bus, StopCause::UserCancelled, CANCELLED_STOP_REASON);
+                stop.narrate(
+                    bus.stream(),
+                    StopCause::UserCancelled,
+                    CANCELLED_STOP_REASON,
+                );
                 return CompletionCallAction::stop(CANCELLED_STOP_REASON);
             }
             let _ = bus.ui_event().send(SystemEvent::InferenceStarted).await;
@@ -541,7 +545,11 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
 
         async move {
             if cancelled {
-                stop.narrate(&bus, StopCause::UserCancelled, CANCELLED_STOP_REASON);
+                stop.narrate(
+                    bus.stream(),
+                    StopCause::UserCancelled,
+                    CANCELLED_STOP_REASON,
+                );
                 return ObservationAction::stop(CANCELLED_STOP_REASON);
             }
             // Every intra-stream detection stops the stream: `check_aggregated`
@@ -557,7 +565,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                     "{OUTPUT_REPETITION_STOP_PREFIX} the assistant kept repeating the same \
                      output after repeated steering. The run was stopped."
                 );
-                stop.narrate(&bus, StopCause::OutputRepetition, &reason);
+                stop.narrate(bus.stream(), StopCause::OutputRepetition, &reason);
                 return ObservationAction::stop(reason);
             }
             let _ = bus
@@ -635,7 +643,11 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                 // only host event the denied call produces.
                 self.emit_cancelled_dispatch(&tool_name, source, &args)
                     .await;
-                stop.narrate(&bus, StopCause::UserCancelled, CANCELLED_STOP_REASON);
+                stop.narrate(
+                    bus.stream(),
+                    StopCause::UserCancelled,
+                    CANCELLED_STOP_REASON,
+                );
                 return DispatchAction::stop(CANCELLED_STOP_REASON);
             }
             if let Some(action) = subturn_action {
@@ -964,7 +976,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
                         // reason, mirroring the tool doom loop. This is the
                         // repetition ladder's terminal stop, not the doom loop:
                         // the cause is what the steering retry keys on.
-                        stop.narrate(&bus, StopCause::OutputRepetition, &message);
+                        stop.narrate(bus.stream(), StopCause::OutputRepetition, &message);
                         return ModelTurnAction::stop(message);
                     }
                 }

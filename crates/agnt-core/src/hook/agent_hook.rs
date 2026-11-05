@@ -4,9 +4,9 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use agnt_kernel::bus::Stream;
 use agnt_kernel::{InferenceRecord, SessionRecord, StopCause};
 
-use crate::bus::Bus;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::state::memory::MemoryOf;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
@@ -57,14 +57,12 @@ impl StopLedger {
     ///
     /// One place, so a stop's cause and its record can never disagree. A failed
     /// publish means no subscriber is attached (zero retention), not an error.
-    pub fn narrate(&self, bus: &Bus, cause: StopCause, reason: &str) {
+    pub fn narrate(&self, stream: &Stream, cause: StopCause, reason: &str) {
         self.record(cause);
-        let _ = bus
-            .stream()
-            .publish(SessionRecord::Inference(InferenceRecord::Stopped {
-                cause,
-                reason: reason.to_string(),
-            }));
+        let _ = stream.publish(SessionRecord::Inference(InferenceRecord::Stopped {
+            cause,
+            reason: reason.to_string(),
+        }));
     }
 }
 
