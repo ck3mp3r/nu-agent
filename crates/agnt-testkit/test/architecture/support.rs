@@ -13,6 +13,9 @@ pub const ARCH_4: &str = "ARCH-4";
 /// The assertion ARCH-8, components take channels, not the whole bus.
 pub const ARCH_8: &str = "ARCH-8";
 
+/// The assertion ARCH-9.a, the aggregate runtime exposes no public field.
+pub const ARCH_9A: &str = "ARCH-9.a";
+
 /// The assertion ARCH-11.a, a kernel identity is not publicly settable.
 pub const ARCH_11A: &str = "ARCH-11.a";
 
@@ -42,7 +45,7 @@ pub const ARCH_12: &str = "ARCH-12";
 /// ARCH-8's row holds every production site that takes or hands out the whole
 /// bus: thirty-nine signatures and fields that a later slice narrows to the
 /// channel each component actually uses.
-pub const BASELINES: [(&str, &[&str]); 5] = [
+pub const BASELINES: [(&str, &[&str]); 6] = [
     (
         ARCH_4,
         &[
@@ -84,6 +87,37 @@ pub const BASELINES: [(&str, &[&str]); 5] = [
         &[
             "ARCH-11.a agnt-kernel/src/records.rs:129: pub id: ToolCallId",
             "ARCH-11.a agnt-tui/src/state/app_state.rs:249: pub key: ToolCallId",
+        ],
+    ),
+    (
+        ARCH_9A,
+        &[
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:104: pub paths",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:113: pub interactive_pending",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:122: pub renders_tool_previews",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:125: pub circuit_breaker",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:128: pub doom_state",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:131: pub output_repetition",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:135: pub repetition_guard",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:139: pub last_total_tokens",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:143: pub store_latch",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:147: pub session_usage",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:149: pub bus",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:155: pub hook_context",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:157: pub provider",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:158: pub tools",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:159: pub session",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:160: pub persona",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:161: pub multi_agent",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:166: pub dyn_model",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:168: pub compaction",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:92: pub runtime",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:93: pub tool_server_handle",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:94: pub mcp_state",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:95: pub permission_state",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:96: pub engine",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:97: pub final_session_id",
+            "ARCH-9.a agnt-core/src/conversation/runtime.rs:98: pub cwd",
         ],
     ),
     (ARCH_11B, &[]),

@@ -7,6 +7,7 @@
 
 // region:    --- Modules
 
+mod composition;
 mod enums;
 mod graph;
 mod identity;

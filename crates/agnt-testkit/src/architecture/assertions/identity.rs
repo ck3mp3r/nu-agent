@@ -1,10 +1,11 @@
 //! ARCH-11: identity reachability and the kernel's display vocabulary.
 
-use syn::spanned::Spanned;
-use syn::{Field, Ident, Item, Type, Visibility};
+use syn::{Ident, Item, Type, Visibility};
 
 use crate::architecture::report::Violation;
 use crate::architecture::sources::Workspace;
+
+use super::support::{field_line, field_name, labels, walk};
 
 // region:    --- Functions
 
@@ -100,25 +101,6 @@ const DISPLAY_TYPES: [&str; 7] = [
     "CallLine",
 ];
 
-/// Every loaded source label, in the loader's order.
-fn labels(ws: &Workspace) -> impl Iterator<Item = &str> {
-    ws.sources().iter().map(|(label, _)| label.as_str())
-}
-
-/// Every item in `items`, with the items of inline modules included.
-fn walk(items: &[Item]) -> Vec<&Item> {
-    let mut out = Vec::new();
-    for item in items {
-        out.push(item);
-        if let Item::Mod(item_mod) = item
-            && let Some((_, nested)) = &item_mod.content
-        {
-            out.extend(walk(nested));
-        }
-    }
-    out
-}
-
 /// The identity newtype `ty` names, when it names one outright.
 fn identity_type(ty: &Type) -> Option<&Ident> {
     let Type::Path(path) = ty else {
@@ -128,23 +110,6 @@ fn identity_type(ty: &Type) -> Option<&Ident> {
     IDENTITY_TYPES
         .contains(&ident.to_string().as_str())
         .then_some(ident)
-}
-
-/// The field's name, or its position when it is unnamed.
-fn field_name(field: &Field, index: usize) -> String {
-    field
-        .ident
-        .as_ref()
-        .map_or_else(|| index.to_string(), |ident| ident.to_string())
-}
-
-/// The line the field declares, not the line its attributes start on.
-fn field_line(field: &Field) -> usize {
-    let span = field
-        .ident
-        .as_ref()
-        .map_or_else(|| field.ty.span(), |ident| ident.span());
-    span.start().line
 }
 
 /// The kind and name a declaration carries, when it declares a type.
