@@ -48,9 +48,8 @@ pub const ARCH_12: &str = "ARCH-12";
 /// later slice's claim (`7e4f330c` drains `ToolErrorKind`), and its baseline
 /// entry is removed with it.
 ///
-/// ARCH-8's row holds every production site that takes or hands out the whole
-/// bus: thirty-nine signatures and fields that a later slice narrows to the
-/// channel each component actually uses.
+/// ARCH-8's row is empty: no production site outside the composition root
+/// takes or hands out the whole bus.
 pub const BASELINES: [(&str, &[&str]); 8] = [
     (
         ARCH_4,
@@ -70,19 +69,10 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
             "ARCH-4 agnt-render/src/transcript/entry.rs:18: `ToolKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-core/src/orchestrator/turn_outcome.rs:21: `TurnOutcome` is declared 3 times in the workspace",
             "ARCH-4 agnt-core/src/conversation/turn/executor/core.rs:49: `TurnOutcome` is declared 3 times in the workspace",
-            "ARCH-4 agnt-acp/src/session.rs:55: `TurnOutcome` is declared 3 times in the workspace",
+            "ARCH-4 agnt-acp/src/session.rs:58: `TurnOutcome` is declared 3 times in the workspace",
         ],
     ),
-    (
-        ARCH_8,
-        &[
-            "ARCH-8 agnt-cli/src/mode/mod.rs:101: `&Bus` is a parameter",
-            "ARCH-8 agnt-cli/src/mode/mod.rs:184: `&Bus` is a parameter",
-            "ARCH-8 agnt-tui/src/interactive.rs:288: `&Bus` is a parameter",
-            "ARCH-8 agnt-acp/src/session.rs:107: `&Bus` is a return type",
-            "ARCH-8 agnt-acp/src/translator.rs:248: `&Bus` is a parameter",
-        ],
-    ),
+    (ARCH_8, &[]),
     (
         ARCH_11A,
         &[
@@ -115,13 +105,13 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
         &[
             "ARCH-10 agnt-acp/src/runtime.rs:14: AgentConversationRuntime",
             "ARCH-10 agnt-acp/src/runtime.rs:186: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:112: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:132: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:139: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:24: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:773: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:784: AgentConversationRuntime",
-            "ARCH-10 agnt-acp/src/session.rs:87: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:133: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:153: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:160: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:27: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:794: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:805: AgentConversationRuntime",
+            "ARCH-10 agnt-acp/src/session.rs:90: AgentConversationRuntime",
         ],
     ),
     (ARCH_11B, &[]),

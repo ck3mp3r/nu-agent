@@ -18,7 +18,10 @@ use agent_client_protocol::schema::v1::{
     SessionConfigOption, SessionConfigSelectOptions, SessionUpdate, StopReason, TextContent,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::bus::{Bus, ChannelError, SessionEvent, TurnEvent};
+use agnt_core::bus::{
+    Bus, CancelTx, ChannelError, CompactionTx, SessionEvent, SessionTx, TurnEvent, TurnTx,
+    UiEventTx,
+};
 use agnt_core::config::ModelsCache;
 use agnt_core::config::Paths;
 use agnt_core::conversation::runtime::AgentConversationRuntime;
@@ -92,6 +95,18 @@ pub struct AcpSession {
     usage: agnt_core::hook::TurnUsage,
 }
 
+/// The channel hands of one live ACP session.
+///
+/// A caller that publishes to or subscribes to a session channel takes the one
+/// it needs; the session's bus stays private to the session.
+pub struct SessionChannels<'a> {
+    pub turn: &'a TurnTx,
+    pub session: &'a SessionTx,
+    pub ui_event: &'a UiEventTx,
+    pub compaction: &'a CompactionTx,
+    pub cancel: &'a CancelTx,
+}
+
 impl AcpSession {
     /// The session id handed to the ACP client.
     pub fn id(&self) -> &str {
@@ -103,9 +118,15 @@ impl AcpSession {
         &self.cwd
     }
 
-    /// The session's event bus, reachable without locking the runtime.
-    pub fn bus(&self) -> &Bus {
-        &self.bus
+    /// The session's channel hands, reachable without locking the runtime.
+    pub fn channels(&self) -> SessionChannels<'_> {
+        SessionChannels {
+            turn: self.bus.turn(),
+            session: self.bus.session(),
+            ui_event: self.bus.ui_event(),
+            compaction: self.bus.compaction(),
+            cancel: self.bus.cancel(),
+        }
     }
 
     /// The conversation runtime that drives this session.
@@ -570,8 +591,8 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
             .ok_or_else(|| AcpError::SessionNotFound(id.to_string()))?;
         let usage = session.usage();
         let _ = session
-            .bus()
-            .session()
+            .channels()
+            .session
             .send(SessionEvent::Ended {
                 session_id: id.to_string(),
                 input_tokens: usage.input_tokens,
@@ -598,8 +619,8 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
         if let Some(session) = &live {
             let usage = session.usage();
             let _ = session
-                .bus()
-                .session()
+                .channels()
+                .session
                 .send(SessionEvent::Ended {
                     session_id: id.to_string(),
                     input_tokens: usage.input_tokens,

@@ -40,8 +40,8 @@ fn subscribe(
     Ok(manager
         .get_session(session_id)
         .ok_or("session must exist")?
-        .bus()
-        .session()
+        .channels()
+        .session
         .subscribe())
 }
 

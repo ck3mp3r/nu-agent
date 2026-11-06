@@ -46,9 +46,15 @@ where
         .unwrap_or(std::path::Path::new("."));
 
     // Zero hooks spawns nothing.
+    let hook_bus = runtime_impl.bus_handle();
     let hook_handles = spawn_configured_hooks_with_nu(
         config,
-        &runtime_impl.bus_handle(),
+        agnt_core::hooks::HookSources {
+            turn: hook_bus.turn(),
+            ui_event: hook_bus.ui_event(),
+            compaction_tx: hook_bus.compaction(),
+            session: hook_bus.session(),
+        },
         cwd,
         runtime_impl.paths().config_dir(),
         runtime_impl.hook_context(),

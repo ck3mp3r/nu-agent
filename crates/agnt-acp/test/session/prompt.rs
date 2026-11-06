@@ -30,8 +30,8 @@ async fn test_session_manager_prompt_publishes_turn_started() -> Result<()> {
     let mut turn_rx = manager
         .get_session(&session_id)
         .ok_or("session must exist")?
-        .bus()
-        .turn()
+        .channels()
+        .turn
         .subscribe();
 
     // -- Exec
@@ -66,14 +66,14 @@ async fn test_session_manager_prompt_publishes_turn_started_before_completed() -
     let mut turn_rx = manager
         .get_session(&session_id)
         .ok_or("session must exist")?
-        .bus()
-        .turn()
+        .channels()
+        .turn
         .subscribe();
     let mut ui_rx = manager
         .get_session(&session_id)
         .ok_or("session must exist")?
-        .bus()
-        .ui_event()
+        .channels()
+        .ui_event
         .subscribe();
 
     // -- Exec

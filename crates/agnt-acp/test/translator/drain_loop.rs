@@ -282,7 +282,7 @@ async fn test_translator_drain_bus_subscribes_and_forwards_events() -> Result<()
         let mut translator = EventTranslator::new(SESSION);
         let mut bridge = permission_bridge(selected("allow-once"), empty_pending());
         drain_bus_to_notifications(
-            &publisher,
+            publisher.ui_event(),
             drain_sink.as_ref(),
             &mut translator,
             &mut bridge,

@@ -191,7 +191,6 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
     let loop_handle = tokio::spawn(async move {
         run_render_loop(
             &mut coordinator,
-            &bus_for_loop,
             &cancel_controller,
             event_tx,
             terminal_rx,
@@ -199,6 +198,10 @@ async fn turn_completion_drains_stacked_prompts_without_terminal_input() -> Resu
             crate::interactive::RenderLoopChannels {
                 branch_rx,
                 theme_persist_tx: None,
+                ui_event: bus_for_loop.ui_event(),
+                compaction: bus_for_loop.compaction(),
+                session: bus_for_loop.session(),
+                ui_state: bus_for_loop.ui_state(),
             },
         )
         .await;

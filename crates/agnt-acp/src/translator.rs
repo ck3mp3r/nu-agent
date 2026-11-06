@@ -20,7 +20,7 @@ use agent_client_protocol::schema::v1::{
     ToolCallUpdate, ToolCallUpdateFields, ToolKind, UsageUpdate,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::bus::{Bus, ChannelError, CompactionRx, TryRecvError, UiEventRx};
+use agnt_core::bus::{ChannelError, CompactionRx, TryRecvError, UiEventRx, UiEventTx};
 use agnt_core::config::defaults;
 use agnt_core::protocol::events::{SystemEvent, SystemKind};
 use agnt_render::tool_args::plain_call_text;
@@ -245,7 +245,7 @@ impl EventTranslator {
 /// receiver, so it can flush the events published just before the turn
 /// completes.
 pub async fn drain_bus_to_notifications<S, P>(
-    bus: &Bus,
+    ui_event: &UiEventTx,
     sink: &S,
     translator: &mut EventTranslator,
     bridge: &mut AcpPermissionBridge<P>,
@@ -253,7 +253,7 @@ pub async fn drain_bus_to_notifications<S, P>(
     S: SessionUpdateSink,
     P: PermissionRequestSink,
 {
-    let mut rx = bus.ui_event().subscribe();
+    let mut rx = ui_event.subscribe();
     drain_receiver_to_notifications(&mut rx, sink, translator, bridge).await;
 }
 

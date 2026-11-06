@@ -12,7 +12,12 @@ fn test_mode_spawn_configured_hooks_without_a_config_spawns_nothing() -> Result<
     // -- Exec
     let handles = spawn_configured_hooks(
         None,
-        &bus,
+        agnt_core::hooks::HookSources {
+            turn: bus.turn(),
+            ui_event: bus.ui_event(),
+            compaction_tx: bus.compaction(),
+            session: bus.session(),
+        },
         std::path::Path::new("/tmp"),
         std::path::Path::new("/tmp"),
         &agent_context(),
@@ -38,7 +43,12 @@ fn test_mode_spawn_configured_hooks_with_empty_hooks_spawns_nothing() -> Result<
     // -- Exec
     let handles = spawn_configured_hooks(
         Some(&config),
-        &bus,
+        agnt_core::hooks::HookSources {
+            turn: bus.turn(),
+            ui_event: bus.ui_event(),
+            compaction_tx: bus.compaction(),
+            session: bus.session(),
+        },
         std::path::Path::new("/tmp"),
         std::path::Path::new("/tmp"),
         &agent_context(),

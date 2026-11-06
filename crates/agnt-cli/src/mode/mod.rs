@@ -21,7 +21,7 @@ use std::sync::Arc;
 use agnt_a2a::{
     A2aCompletionEvent, AgentCard, InMemoryTaskStore, IncomingTask, PeerCache, PeerDiscoveryImpl,
 };
-use agnt_core::bus::{AgentEvent, AgentTx, Bus, TurnEvent};
+use agnt_core::bus::{AgentEvent, AgentTx, TurnEvent};
 use agnt_core::config::{PluginConfig, ResolvedHook};
 use agnt_core::hooks::{
     HOOK_DRAIN_TIMEOUT, HookAgentContext, HookProcess, HookSources, NuProcess,
@@ -98,7 +98,7 @@ pub struct TuiModeOptions {
 /// script joins it.
 pub fn spawn_configured_hooks<P>(
     config: Option<&PluginConfig>,
-    bus: &Bus,
+    sources: HookSources<'_>,
     cwd: &Path,
     config_dir: &Path,
     context: &HookAgentContext,
@@ -112,18 +112,7 @@ where
         return Vec::new();
     }
     log::debug!("Starting {} hook runner(s)", hooks.len());
-    spawn_hook_runner(
-        HookSources {
-            turn: bus.turn(),
-            ui_event: bus.ui_event(),
-            compaction_tx: bus.compaction(),
-            session: bus.session(),
-        },
-        &hooks,
-        cwd,
-        context,
-        process,
-    )
+    spawn_hook_runner(sources, &hooks, cwd, context, process)
 }
 
 /// Resolve the configured hooks, or an empty list when the config is absent or
@@ -181,12 +170,12 @@ where
 /// Start the configured hooks with the production [`NuProcess`].
 pub fn spawn_configured_hooks_with_nu(
     config: Option<&PluginConfig>,
-    bus: &Bus,
+    sources: HookSources<'_>,
     cwd: &Path,
     config_dir: &Path,
     context: &HookAgentContext,
 ) -> Vec<JoinHandle<()>> {
-    spawn_configured_hooks(config, bus, cwd, config_dir, context, NuProcess)
+    spawn_configured_hooks(config, sources, cwd, config_dir, context, NuProcess)
 }
 
 /// Auto-complete an A2A task based on the LLM execution result.
