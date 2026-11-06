@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 
 use agnt_a2a::{A2aCompletionEvent, IncomingTask};
 use agnt_kernel::CompactionSource;
-use nu_protocol::{LabeledError, Value};
+use nu_protocol::{LabeledError, Span, Value};
 use tokio::sync::mpsc;
 
 use crate::bus::{Bus, ChannelError, CompactionRx, ExternalEvent, ExternalRx, SessionEvent};
@@ -18,9 +18,10 @@ use crate::orchestrator::stages::{
 };
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{
-    AgentSwitchHook, DeferredPrompt, InteractiveLoopConfig, OrchestratorEvent, UiRequestResponse,
-    UiStateEvent, WorkerCommand, dispatch_compaction, handle_external_cancel, handle_worker_result,
-    recv_or_pending, reject_busy_task, reject_superseded_task, submit_deferred_prompt,
+    AgentSwitchHook, DeferredPrompt, LoopConfig, OrchestratorEvent, UiRequestResponse,
+    UiStateEvent, WorkerCommand, config::LoopParts, dispatch_compaction, handle_external_cancel,
+    handle_worker_result, recv_or_pending, reject_busy_task, reject_superseded_task,
+    submit_deferred_prompt,
 };
 use crate::protocol::events::SystemEvent;
 use crate::protocol::{
@@ -37,7 +38,8 @@ pub(crate) const WORKER_CMD_CAPACITY: usize = 256;
 
 pub(crate) async fn run_interactive_loop_impl<R, F, H>(
     mut runtime: R,
-    config: InteractiveLoopConfig<F, H>,
+    config: LoopConfig<F, H>,
+    span: Span,
 ) -> (R, Result<Value, LabeledError>)
 where
     R: CoreRuntime
@@ -50,8 +52,7 @@ where
     F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static,
     H: AgentSwitchHook + Clone + Send + 'static,
 {
-    let InteractiveLoopConfig {
-        span,
+    let LoopParts {
         interactive_pending,
         task_cancel_rx,
         a2a_task_rx,
@@ -60,8 +61,8 @@ where
         bus,
         hydration,
         on_agent_switch,
-        spawn_render_loop,
-    } = config;
+        event_sink,
+    } = config.into_parts();
 
     if let Some(hydration) = hydration {
         let _ = bus
@@ -161,8 +162,8 @@ where
     let mut external_rx = bus.external().subscribe();
     let mut compaction_rx = bus.compaction().subscribe();
 
-    if let Some(spawn) = spawn_render_loop {
-        spawn(event_tx.clone());
+    if let Some(sink) = event_sink {
+        sink(event_tx.clone());
     }
 
     // Stages
@@ -241,7 +242,7 @@ where
 /// priority than regular user input.
 pub async fn run_interactive_loop_with_external_prompts<R, F, H>(
     runtime: R,
-    config: InteractiveLoopConfig<F, H>,
+    config: LoopConfig<F, H>,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -254,7 +255,7 @@ where
     F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static,
     H: AgentSwitchHook + Clone + Send + 'static,
 {
-    let (_runtime, result) = run_interactive_loop_impl(runtime, config).await;
+    let (_runtime, result) = run_interactive_loop_impl(runtime, config, Span::unknown()).await;
     result
 }
 
@@ -262,7 +263,7 @@ where
 /// A2A tasks) before each iteration.
 pub async fn run_hydrated_interactive_loop_with_external_prompts<R, F, H>(
     runtime: R,
-    config: InteractiveLoopConfig<F, H>,
+    config: LoopConfig<F, H>,
 ) -> Result<Value, LabeledError>
 where
     R: CoreRuntime
@@ -275,7 +276,7 @@ where
     F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static,
     H: AgentSwitchHook + Clone + Send + 'static,
 {
-    let (_runtime, result) = run_interactive_loop_impl(runtime, config).await;
+    let (_runtime, result) = run_interactive_loop_impl(runtime, config, Span::unknown()).await;
     result
 }
 

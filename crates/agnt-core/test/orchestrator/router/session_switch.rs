@@ -87,13 +87,13 @@ async fn on_agent_switch_callback_invoked_after_successful_switch()
     let ui = AgentSwitchUi::new(&["research-agent"]).with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    let config = InteractiveLoopConfig::new(Span::test_data())
+    let config = LoopConfig::default()
         .with_on_agent_switch(hook)
         .with_bus(bus)
-        .with_spawn_render_loop(spawner);
+        .with_event_sink(spawner);
 
     // -- Exec
-    let (_runtime, result) = run_interactive_loop_impl(runtime, config).await;
+    let (_runtime, result) = run_interactive_loop_impl(runtime, config, Span::test_data()).await;
 
     // -- Check
     let value = result.map_err(|e| format!("interactive loop: {e:?}"))?;

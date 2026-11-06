@@ -108,9 +108,8 @@ async fn interactive_loop_processes_input_while_first_turn_is_running() -> TResu
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop should stay responsive: {e}"))?;
@@ -154,9 +153,8 @@ async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() -> TR
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     result.map_err(|e| format!("interactive loop should complete queued prompts: {e}"))?;
@@ -188,9 +186,8 @@ async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_pr
 
     let (rt, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result
@@ -223,9 +220,8 @@ async fn interactive_loop_startup_hydration_initializes_per_server_visible_count
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop: {e}"))?;
@@ -336,9 +332,8 @@ async fn run_loop_session_events(
     let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     result.map_err(|e| format!("interactive loop: {e}"))?;
@@ -404,10 +399,11 @@ async fn hydrated_interactive_loop_started_carries_the_runtime_session_id() -> T
     // -- Exec
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
+        LoopConfig::default()
             .with_hydration(messages, None)
             .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+            .with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     result.map_err(|e| format!("interactive loop with hydration: {e}"))?;

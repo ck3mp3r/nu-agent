@@ -221,7 +221,7 @@ impl FakeInteractiveUi {
 
     /// Returns a closure that feeds this mock's queued inputs into the
     /// orchestrator's event channel, replacing the removed pull-based bridge.
-    /// Wire it via `InteractiveLoopConfig::with_spawn_render_loop`.
+    /// Wire it via `LoopConfig::with_event_sink`.
     ///
     /// Feeds turn-producing prompts one at a time: a regular prompt is sent
     /// only after the previous turn completed, mirroring a user submitting the

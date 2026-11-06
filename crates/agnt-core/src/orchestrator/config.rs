@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use agnt_a2a::{A2aCompletionEvent, InMemoryTaskStore, IncomingTask};
-use nu_protocol::Span;
 use tokio::sync::mpsc;
 
 use crate::bus::Bus;
@@ -11,42 +10,39 @@ use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::OrchestratorEvent;
 use crate::protocol::contracts::UiMessageSnapshot;
 
-/// Configuration for the interactive loop.
+/// Configuration for the orchestrator loop.
 ///
-/// Groups common arguments that would otherwise be passed individually,
-/// keeping function signatures under clippy's `too_many_arguments` threshold.
-pub struct InteractiveLoopConfig<F = fn(mpsc::Sender<OrchestratorEvent>), H = NoAgentSwitchHook> {
-    /// The span to use for values created during the loop.
-    pub span: Span,
+/// Every seam has a typed default, so [`LoopConfig::default`] takes nothing and
+/// the `with_…` builders are the only way to set one.
+pub struct LoopConfig<F = fn(mpsc::Sender<OrchestratorEvent>), H = NoAgentSwitchHook> {
     /// Pending permission requests awaiting user decisions.
-    pub interactive_pending: Option<PendingPermissions>,
+    interactive_pending: Option<PendingPermissions>,
     /// Optional channel for receiving task IDs to cancel (e.g., A2A tasks).
-    pub task_cancel_rx: Option<mpsc::UnboundedReceiver<String>>,
+    task_cancel_rx: Option<mpsc::UnboundedReceiver<String>>,
     /// Optional channel for receiving incoming A2A tasks directly.
-    pub a2a_task_rx: Option<mpsc::Receiver<IncomingTask>>,
+    a2a_task_rx: Option<mpsc::Receiver<IncomingTask>>,
     /// Optional channel for receiving A2A completion events directly.
-    pub a2a_completion_rx: Option<mpsc::Receiver<A2aCompletionEvent>>,
+    a2a_completion_rx: Option<mpsc::Receiver<A2aCompletionEvent>>,
     /// Optional A2A task store. When present, tasks that arrive while the
     /// worker is busy are rejected or failed instead of dispatched.
-    pub task_store: Option<Arc<InMemoryTaskStore>>,
+    task_store: Option<Arc<InMemoryTaskStore>>,
     /// Shared cancellation bus.
-    pub bus: Bus,
+    bus: Bus,
     /// Optional hydration config for resuming a prior session.
-    pub hydration: Option<HydrationConfig>,
+    hydration: Option<HydrationConfig>,
     /// Optional hook invoked after a successful agent switch.
     /// Receives the new agent's identity (name), optional description, and
     /// optional icon. Used by the binary layer to update the A2A agent card.
-    pub on_agent_switch: Option<H>,
-    /// Optional closure that spawns the TUI render loop.
-    /// Receives the orchestrator event sender.
-    pub spawn_render_loop: Option<F>,
+    on_agent_switch: Option<H>,
+    /// Optional sink for the loop's event stream. Receives the orchestrator
+    /// event sender; the drawing surface subscribes through it.
+    event_sink: Option<F>,
 }
 
-impl InteractiveLoopConfig<fn(mpsc::Sender<OrchestratorEvent>), NoAgentSwitchHook> {
-    /// Create a new config with the given span and all other fields set to `None`.
-    pub fn new(span: Span) -> Self {
+impl Default for LoopConfig<fn(mpsc::Sender<OrchestratorEvent>), NoAgentSwitchHook> {
+    /// A configuration with a fresh bus and every seam unset.
+    fn default() -> Self {
         Self {
-            span,
             interactive_pending: None,
             task_cancel_rx: None,
             a2a_task_rx: None,
@@ -55,12 +51,12 @@ impl InteractiveLoopConfig<fn(mpsc::Sender<OrchestratorEvent>), NoAgentSwitchHoo
             bus: crate::bus::create_bus(),
             hydration: None,
             on_agent_switch: None,
-            spawn_render_loop: None,
+            event_sink: None,
         }
     }
 }
 
-impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static, H> InteractiveLoopConfig<F, H> {
+impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static, H> LoopConfig<F, H> {
     /// Set the interactive pending permissions.
     pub fn with_interactive_pending(mut self, pending: Option<PendingPermissions>) -> Self {
         self.interactive_pending = pending;
@@ -118,12 +114,8 @@ impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static, H> Interactive
     /// The hook receives the new agent's identity (name), optional description,
     /// and optional icon after a successful switch. Used by the binary layer to
     /// update the A2A agent card.
-    pub fn with_on_agent_switch<H2: AgentSwitchHook>(
-        self,
-        hook: H2,
-    ) -> InteractiveLoopConfig<F, H2> {
-        let InteractiveLoopConfig {
-            span,
+    pub fn with_on_agent_switch<H2: AgentSwitchHook>(self, hook: H2) -> LoopConfig<F, H2> {
+        let LoopConfig {
             interactive_pending,
             task_cancel_rx,
             a2a_task_rx,
@@ -132,10 +124,9 @@ impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static, H> Interactive
             bus,
             hydration,
             on_agent_switch: _,
-            spawn_render_loop,
+            event_sink,
         } = self;
-        InteractiveLoopConfig {
-            span,
+        LoopConfig {
             interactive_pending,
             task_cancel_rx,
             a2a_task_rx,
@@ -144,17 +135,16 @@ impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static, H> Interactive
             bus,
             hydration,
             on_agent_switch: Some(hook),
-            spawn_render_loop,
+            event_sink,
         }
     }
 
-    /// Set the render-loop spawner closure.
-    pub fn with_spawn_render_loop<F2: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static>(
+    /// Set the loop's event sink.
+    pub fn with_event_sink<F2: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static>(
         self,
         f: F2,
-    ) -> InteractiveLoopConfig<F2, H> {
-        let InteractiveLoopConfig {
-            span,
+    ) -> LoopConfig<F2, H> {
+        let LoopConfig {
             interactive_pending,
             task_cancel_rx,
             a2a_task_rx,
@@ -163,10 +153,9 @@ impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static, H> Interactive
             bus,
             hydration,
             on_agent_switch,
-            spawn_render_loop: _,
+            event_sink: _,
         } = self;
-        InteractiveLoopConfig {
-            span,
+        LoopConfig {
             interactive_pending,
             task_cancel_rx,
             a2a_task_rx,
@@ -175,7 +164,41 @@ impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static, H> Interactive
             bus,
             hydration,
             on_agent_switch,
-            spawn_render_loop: Some(f),
+            event_sink: Some(f),
+        }
+    }
+}
+
+/// The seams a loop consumes from a [`LoopConfig`].
+///
+/// The configuration keeps its fields private, so consumption goes through
+/// [`LoopConfig::into_parts`] and the loop reads a named view instead of a
+/// field pattern.
+pub(crate) struct LoopParts<F, H> {
+    pub(crate) interactive_pending: Option<PendingPermissions>,
+    pub(crate) task_cancel_rx: Option<mpsc::UnboundedReceiver<String>>,
+    pub(crate) a2a_task_rx: Option<mpsc::Receiver<IncomingTask>>,
+    pub(crate) a2a_completion_rx: Option<mpsc::Receiver<A2aCompletionEvent>>,
+    pub(crate) task_store: Option<Arc<InMemoryTaskStore>>,
+    pub(crate) bus: Bus,
+    pub(crate) hydration: Option<HydrationConfig>,
+    pub(crate) on_agent_switch: Option<H>,
+    pub(crate) event_sink: Option<F>,
+}
+
+impl<F, H> LoopConfig<F, H> {
+    /// Consume the configuration into the seams the loop reads.
+    pub(crate) fn into_parts(self) -> LoopParts<F, H> {
+        LoopParts {
+            interactive_pending: self.interactive_pending,
+            task_cancel_rx: self.task_cancel_rx,
+            a2a_task_rx: self.a2a_task_rx,
+            a2a_completion_rx: self.a2a_completion_rx,
+            task_store: self.task_store,
+            bus: self.bus,
+            hydration: self.hydration,
+            on_agent_switch: self.on_agent_switch,
+            event_sink: self.event_sink,
         }
     }
 }
@@ -192,7 +215,7 @@ pub struct HydrationConfig {
 ///
 /// Receives the new agent's identity (name), optional description, and optional
 /// icon. Implementors are statically dispatched through
-/// [`InteractiveLoopConfig`].
+/// [`LoopConfig`].
 pub trait AgentSwitchHook: Send + Sync + 'static {
     /// Called after a switch succeeded, with the switched-to agent's details.
     fn on_agent_switch(

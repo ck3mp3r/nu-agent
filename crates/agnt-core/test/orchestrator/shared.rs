@@ -25,7 +25,7 @@ pub(crate) use std::time::Duration;
 
 pub(crate) use crate::bus::{ExternalEvent, create_bus};
 pub(crate) use crate::orchestrator::{
-    InteractiveLoopConfig, OrchestratorEvent, UiRequest, UiStateEvent, run_interactive_loop_impl,
+    LoopConfig, OrchestratorEvent, UiRequest, UiStateEvent, run_interactive_loop_impl,
     run_single_turn,
 };
 pub(crate) use crate::protocol::{

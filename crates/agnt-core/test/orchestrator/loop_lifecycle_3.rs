@@ -32,9 +32,8 @@ async fn interactive_loop_publishes_exactly_one_turn_started_per_turn() -> TResu
     // -- Exec
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     result.map_err(|e| format!("interactive loop: {e}"))?;

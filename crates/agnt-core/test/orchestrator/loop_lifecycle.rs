@@ -274,9 +274,8 @@ async fn run_interactive_loop_uses_interactive_ui_trait_boundary() -> TResult {
     let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop: {e}"))?;
@@ -298,9 +297,8 @@ async fn interactive_loop_does_not_return_per_turn_values_to_stdout() -> TResult
     let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop: {e}"))?;
@@ -322,9 +320,8 @@ async fn interactive_loop_treats_llm_cancellation_as_non_fatal_and_continues() -
     let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value =
@@ -350,9 +347,8 @@ async fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() -> TR
     let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop should continue after error: {e}"))?;
@@ -390,10 +386,11 @@ async fn run_hydrated_interactive_loop_hydrates_before_first_pump() -> TResult {
     let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
+        LoopConfig::default()
             .with_hydration(messages, None)
             .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+            .with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     result.map_err(|e| format!("interactive loop with hydration: {e}"))?;
@@ -427,10 +424,11 @@ async fn run_hydrated_interactive_loop_hydrates_exactly_once() -> TResult {
     let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
+        LoopConfig::default()
             .with_hydration(messages.clone(), None)
             .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+            .with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     result.map_err(|e| format!("interactive loop with hydration: {e}"))?;

@@ -8,7 +8,7 @@ pub mod turn_outcome;
 
 pub use router::CommandRouter;
 
-pub use config::{AgentSwitchHook, HydrationConfig, InteractiveLoopConfig, NoAgentSwitchHook};
+pub use config::{AgentSwitchHook, HydrationConfig, LoopConfig, NoAgentSwitchHook};
 pub use events::{
     AgentSwitchResult, McpToggleResult, ModelSwitchResult, OrchestratorEvent,
     RefreshSessionPickerResult, SessionSwitchResult, UiRequest, UiRequestResponse, UiStateEvent,

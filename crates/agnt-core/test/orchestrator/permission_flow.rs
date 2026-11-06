@@ -415,10 +415,11 @@ async fn permission_requested_emits_before_execution_and_waits_for_decision_befo
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
+        LoopConfig::default()
             .with_bus(bus)
             .with_interactive_pending(Some(pending))
-            .with_spawn_render_loop(spawner),
+            .with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop: {e}"))?;
@@ -459,10 +460,11 @@ async fn deny_decision_resumes_deterministically_without_pre_decision_handler_si
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
+        LoopConfig::default()
             .with_bus(bus)
             .with_interactive_pending(Some(pending))
-            .with_spawn_render_loop(spawner),
+            .with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop: {e}"))?;

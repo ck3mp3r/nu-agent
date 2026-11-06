@@ -302,9 +302,8 @@ async fn agent_switch_sends_command_and_updates_ui_identity()
 
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop: {e:?}"))?;
@@ -340,9 +339,8 @@ async fn agent_switch_failure_warns_and_keeps_previous_agent()
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop: {e:?}"))?;
@@ -386,9 +384,8 @@ async fn agent_switch_while_worker_active_is_queued_for_next_turn()
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop: {e:?}"))?;
@@ -434,9 +431,8 @@ async fn queued_agent_switch_last_write_wins()
 
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop: {e:?}"))?;

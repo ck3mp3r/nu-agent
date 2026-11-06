@@ -153,10 +153,11 @@ async fn matching_a2a_task_cancel_sets_cancel_requested() -> TResult {
     let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
+        LoopConfig::default()
             .with_bus(bus)
             .with_task_cancel_rx(Some(cancel_rx))
-            .with_spawn_render_loop(spawner),
+            .with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     result.map_err(|e| format!("interactive loop: {e}"))?;
@@ -210,10 +211,11 @@ async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() -> TResult
     let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
+        LoopConfig::default()
             .with_bus(bus)
             .with_task_cancel_rx(Some(cancel_rx))
-            .with_spawn_render_loop(spawner),
+            .with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     result.map_err(|e| format!("interactive loop: {e}"))?;
@@ -266,10 +268,11 @@ async fn matching_a2a_task_cancel_stops_running_turn() -> TResult {
     let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
+        LoopConfig::default()
             .with_bus(bus)
             .with_task_cancel_rx(Some(cancel_rx))
-            .with_spawn_render_loop(spawner),
+            .with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     result.map_err(|e| format!("interactive loop: {e}"))?;

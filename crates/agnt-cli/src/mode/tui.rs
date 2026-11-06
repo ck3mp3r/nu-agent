@@ -9,7 +9,7 @@ use agnt_a2a::{
 };
 use agnt_core::bus::OneshotTx;
 use agnt_core::orchestrator::{
-    AgentSwitchHook, InteractiveLoopConfig, run_hydrated_interactive_loop_with_external_prompts,
+    AgentSwitchHook, LoopConfig, run_hydrated_interactive_loop_with_external_prompts,
     run_interactive_loop_with_external_prompts,
 };
 use agnt_core::protocol::contracts::{CoreRuntime, DecisionSource, RuntimeAccess};
@@ -26,7 +26,7 @@ use agnt_tui::TuiInteractiveUi;
 use agnt_tui::platform::terminal::TerminalLifecycle;
 use agnt_tui::runtime::{AnsiTerminalBackend, TuiRuntimeRenderer};
 use agnt_tui::state::ActivePicker;
-use nu_protocol::{Span, Value};
+use nu_protocol::Value;
 
 use crate::error::{Error, Result};
 
@@ -254,7 +254,7 @@ where
     tui_ui.push_startup_logo();
 
     // The incoming A2A task, completion-event, and cancel channels are all
-    // `tokio::sync` receivers. They are passed directly into `InteractiveLoopConfig`,
+    // `tokio::sync` receivers. They are passed directly into `LoopConfig`,
     // and the orchestrator `select!`s over them. No std-bridge forwarder threads
     // are needed.
     let task_cancel_rx = options.a2a.task_cancel_rx;
@@ -318,7 +318,7 @@ where
             hydration.initial_messages.clone(),
             hydration.last_total_tokens,
         );
-        let config = InteractiveLoopConfig::new(Span::unknown())
+        let config = LoopConfig::default()
             .with_bus(runtime_impl.bus_handle())
             .with_hydration(hydration.initial_messages, hydration.last_total_tokens)
             .with_interactive_pending(Some(Arc::clone(&pending)))
@@ -326,20 +326,20 @@ where
             .with_a2a_task_rx(a2a_task_rx)
             .with_a2a_completion_rx(a2a_completion_rx)
             .with_task_store(a2a_task_store.clone())
-            .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus_handle()))
+            .with_event_sink(tui_ui.make_render_loop_spawner(runtime_impl.bus_handle()))
             .with_on_agent_switch(on_agent_switch);
         run_hydrated_interactive_loop_with_external_prompts(runtime_impl, config)
             .await
             .map_err(Error::from)
     } else {
-        let config = InteractiveLoopConfig::new(Span::unknown())
+        let config = LoopConfig::default()
             .with_bus(runtime_impl.bus_handle())
             .with_interactive_pending(Some(Arc::clone(&pending)))
             .with_task_cancel_rx(task_cancel_rx)
             .with_a2a_task_rx(a2a_task_rx)
             .with_a2a_completion_rx(a2a_completion_rx)
             .with_task_store(a2a_task_store.clone())
-            .with_spawn_render_loop(tui_ui.make_render_loop_spawner(runtime_impl.bus_handle()))
+            .with_event_sink(tui_ui.make_render_loop_spawner(runtime_impl.bus_handle()))
             .with_on_agent_switch(on_agent_switch);
         run_interactive_loop_with_external_prompts(runtime_impl, config)
             .await

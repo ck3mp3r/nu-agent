@@ -270,9 +270,8 @@ async fn context_window_max_tokens_set_on_ui_at_startup() -> TResult {
     let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     result.map_err(|e| format!("interactive loop: {e}"))?;
@@ -297,9 +296,8 @@ async fn model_switch_updates_context_window_max_tokens_in_ui() -> TResult {
     let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop: {e}"))?;
@@ -330,9 +328,8 @@ async fn model_switch_updates_context_window_max_tokens_none_when_unset() -> TRe
     let spawner = ui.make_event_spawner();
     let (_runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
-            .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+        LoopConfig::default().with_bus(bus).with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     let value = result.map_err(|e| format!("interactive loop: {e}"))?;
@@ -358,10 +355,11 @@ async fn session_resume_seeds_last_total_tokens() -> TResult {
     let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
+        LoopConfig::default()
             .with_hydration(vec![], Some(90_000))
             .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+            .with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     result.map_err(|e| format!("hydrated interactive loop: {e}"))?;
@@ -386,10 +384,11 @@ async fn session_resume_seeds_last_total_tokens_none_when_no_prior_session() -> 
     let spawner = ui.make_event_spawner();
     let (runtime, result) = run_interactive_loop_impl(
         runtime,
-        InteractiveLoopConfig::new(Span::test_data())
+        LoopConfig::default()
             .with_hydration(vec![], None)
             .with_bus(bus)
-            .with_spawn_render_loop(spawner),
+            .with_event_sink(spawner),
+        Span::test_data(),
     )
     .await;
     result.map_err(|e| format!("hydrated interactive loop: {e}"))?;
