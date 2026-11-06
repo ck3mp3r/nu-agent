@@ -13,6 +13,7 @@ use agnt_core::orchestrator::{
     AgentSwitchHook, InteractiveLoopConfig, run_hydrated_interactive_loop_with_external_prompts,
     run_interactive_loop_with_external_prompts,
 };
+use agnt_core::protocol::contracts::DecisionSource;
 use agnt_core::protocol::event::PermissionDecision;
 use agnt_core::protocol::mcp_management::McpManagement;
 use agnt_core::protocol::picker::{

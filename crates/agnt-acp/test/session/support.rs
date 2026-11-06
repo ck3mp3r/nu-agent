@@ -25,6 +25,7 @@ pub(super) use agnt_core::conversation::runtime_parts::RuntimeParts;
 pub(super) use agnt_core::conversation::state::{
     MemoryState, MultiAgentState, PersonaState, ProviderState, ToolState,
 };
+pub(super) use agnt_core::protocol::contracts::DecisionSource;
 pub(super) use agnt_core::protocol::event::PermissionDecision;
 pub(super) use agnt_core::protocol::events::SystemEvent;
 pub(super) use agnt_core::session::{RigStoreConfig, StoreType};

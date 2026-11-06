@@ -18,6 +18,7 @@ use agnt_core::conversation::state::{
     MemoryState, MultiAgentState, PersonaState, ProviderState, ToolState,
 };
 use agnt_core::hooks::HookAgentContext;
+use agnt_core::protocol::contracts::DecisionSource;
 use agnt_core::protocol::model_switching::ModelSwitching;
 use agnt_core::protocol::persona::{FsPersonaResolver, PersonaLister};
 use agnt_core::session::RigStoreConfig;

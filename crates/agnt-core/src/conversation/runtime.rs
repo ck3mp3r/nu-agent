@@ -1431,13 +1431,19 @@ impl AgentConversationRuntime {
             compaction,
         })
     }
+}
 
+// endregion: --- Constructors
+
+// region:    --- Seams
+
+impl crate::protocol::contracts::DecisionSource for AgentConversationRuntime {
     /// Set the permission decision source of the composed runtime.
     ///
     /// `Some` installs the interactive surface's bridge: the gate publishes a
     /// request and parks the call until the surface answers on the map. `None`
     /// keeps the pre-determined policy, where `ask` resolves to deny.
-    pub fn with_decision_source(self, resolver: Option<PendingPermissions>) -> Self {
+    fn with_decision_source(self, resolver: Option<PendingPermissions>) -> Self {
         Self {
             interactive_pending: resolver,
             ..self
@@ -1450,7 +1456,7 @@ impl AgentConversationRuntime {
     /// can publish `SystemEvent::PreviewRequested` and suppress the duplicate
     /// completion display. Surfaces with no preview phase leave the composed
     /// default (`false`).
-    pub fn with_tool_previews(self, renders: bool) -> Self {
+    fn with_tool_previews(self, renders: bool) -> Self {
         Self {
             renders_tool_previews: renders,
             ..self
@@ -1458,7 +1464,37 @@ impl AgentConversationRuntime {
     }
 }
 
-// endregion: --- Constructors
+impl crate::protocol::contracts::RuntimeAccess for AgentConversationRuntime {
+    fn paths(&self) -> &crate::config::Paths {
+        Self::paths(self)
+    }
+
+    fn hook_context(&self) -> &crate::hooks::HookAgentContext {
+        Self::hook_context(self)
+    }
+
+    fn bus_handle(&self) -> crate::bus::Bus {
+        Self::bus_handle(self)
+    }
+
+    fn provider_name(&self) -> &str {
+        Self::provider_name(self)
+    }
+
+    fn model(&self) -> &str {
+        Self::model(self)
+    }
+
+    fn mcp_caller_cwd(&self) -> Option<&std::path::Path> {
+        Self::mcp_caller_cwd(self)
+    }
+
+    fn mcp_lifecycle_projection(&self) -> &[crate::tools::mcp::runtime::McpServerLifecycle] {
+        Self::mcp_lifecycle_projection(self)
+    }
+}
+
+// endregion: --- Seams
 
 #[cfg(test)]
 #[path = "../../test/conversation/runtime.rs"]

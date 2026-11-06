@@ -1,6 +1,7 @@
 use nu_protocol::{LabeledError, Span, Value};
 
 use crate::bus::Bus;
+use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::OrchestratorEvent;
 use crate::protocol::events::SystemEvent;
 use crate::session::tool_status::ToolStatus;
@@ -203,6 +204,45 @@ pub trait TranscriptUi {
     );
     fn clear_transcript(&mut self) {}
     fn push_startup_logo(&mut self) {}
+}
+
+/// The composition-time choices a surface makes about its runtime.
+///
+/// Both are settled before the first turn and never change during a run: which
+/// decision source the permission gate asks, and whether the surface draws
+/// pre-authorize previews. They live on a trait so a surface's mode functions
+/// can configure the runtime without naming the aggregate it was composed into.
+pub trait DecisionSource {
+    fn with_decision_source(self, resolver: Option<PendingPermissions>) -> Self;
+    fn with_tool_previews(self, renders: bool) -> Self;
+}
+
+/// The runtime facts a surface reads before it drives a turn.
+///
+/// Separate from [`CoreRuntime`] on purpose: the loop's doubles implement a
+/// turn and nothing else, and a supertrait here would make every one of them
+/// stub seven capabilities it never calls (ARCH-7).
+pub trait RuntimeAccess {
+    /// The resolved application paths.
+    fn paths(&self) -> &crate::config::Paths;
+
+    /// The agent snapshot every hook envelope is stamped with.
+    fn hook_context(&self) -> &crate::hooks::HookAgentContext;
+
+    /// The shared cancellation bus, cloned for a turn or a surface.
+    fn bus_handle(&self) -> crate::bus::Bus;
+
+    /// The provider serving this runtime.
+    fn provider_name(&self) -> &str;
+
+    /// The model serving this runtime.
+    fn model(&self) -> &str;
+
+    /// The session working directory the MCP servers were configured against.
+    fn mcp_caller_cwd(&self) -> Option<&std::path::Path>;
+
+    /// The MCP servers' lifecycle projection.
+    fn mcp_lifecycle_projection(&self) -> &[crate::tools::mcp::runtime::McpServerLifecycle];
 }
 
 /// Minimal runtime required for a single turn. Used by run_single_turn.
