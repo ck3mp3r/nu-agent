@@ -1508,6 +1508,14 @@ impl crate::protocol::contracts::RuntimeAccess for AgentConversationRuntime {
     fn startup_plugin_config(&self) -> Option<&crate::config::PluginConfig> {
         Self::startup_plugin_config(self)
     }
+
+    fn spawn<F>(&self, future: F) -> tokio::task::JoinHandle<F::Output>
+    where
+        F: std::future::Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.spawn(future)
+    }
 }
 
 // endregion: --- Seams

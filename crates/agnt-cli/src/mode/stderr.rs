@@ -4,9 +4,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use agnt_core::bus::CancelEvent;
-use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::orchestrator::run_single_turn;
+use agnt_core::protocol::contracts::{CoreRuntime, RuntimeAccess};
 use agnt_core::protocol::events::SystemEvent;
+use agnt_core::protocol::session_management::SessionPersistence;
 use agnt_tty::policy::UiPolicy;
 use agnt_tty::{StderrUiFactory, UiRendererFactory};
 use nu_protocol::{Span, Value};
@@ -28,14 +29,17 @@ use super::{
 /// best-effort: the hook tasks are detached and the process exits as soon as
 /// this returns, so an in-flight hook subprocess gets a bounded moment to
 /// finish.
-pub async fn run_stderr_mode(
-    runtime_impl: &mut AgentConversationRuntime,
+pub async fn run_stderr_mode<R>(
+    runtime_impl: &mut R,
     prompt: Option<String>,
     context: Option<String>,
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
     a2a: A2aContext,
-) -> Result<Value> {
+) -> Result<Value>
+where
+    R: CoreRuntime + RuntimeAccess + SessionPersistence,
+{
     let config = runtime_impl.startup_plugin_config();
     let cwd = runtime_impl
         .mcp_caller_cwd()
@@ -74,14 +78,17 @@ pub async fn run_stderr_mode(
 }
 
 /// The stderr-mode body, without the hook runner setup and drain.
-async fn run_stderr_mode_inner(
-    runtime_impl: &mut AgentConversationRuntime,
+async fn run_stderr_mode_inner<R>(
+    runtime_impl: &mut R,
     prompt: Option<String>,
     context: Option<String>,
     ui_policy: UiPolicy,
     stderr_is_tty: bool,
     mut a2a: A2aContext,
-) -> Result<Value> {
+) -> Result<Value>
+where
+    R: CoreRuntime + RuntimeAccess + SessionPersistence,
+{
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
     // Build the stderr renderer. In stderr mode core emits domain events on the
@@ -136,8 +143,11 @@ async fn run_stderr_mode_inner(
 /// `compaction`, emits each event on the stderr renderer while the turn runs,
 /// and bridges the user's Ctrl+C (via `cancel_flag`) into a `CancelEvent` on
 /// `bus.cancel()`.
-async fn run_stderr_turn<R: agnt_core::renderer::UiRenderer + Send + 'static>(
-    runtime_impl: &mut AgentConversationRuntime,
+async fn run_stderr_turn<
+    RU: CoreRuntime + RuntimeAccess,
+    R: agnt_core::renderer::UiRenderer + Send + 'static,
+>(
+    runtime_impl: &mut RU,
     renderer: R,
     cancel_flag: &Arc<AtomicBool>,
     prompt: String,

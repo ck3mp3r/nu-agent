@@ -23,7 +23,6 @@ use agnt_a2a::{
 };
 use agnt_core::bus::{AgentEvent, AgentTx, Bus, TurnEvent};
 use agnt_core::config::{PluginConfig, ResolvedHook};
-use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::hooks::{
     HOOK_DRAIN_TIMEOUT, HookAgentContext, HookProcess, HookSources, NuProcess,
     spawn_agent_hook_runner, spawn_hook_runner,
@@ -251,8 +250,8 @@ pub fn apply_a2a_turn_result(store: &InMemoryTaskStore, task_id: &str, result: &
 /// the path-hash prefix of the runtime's working directory) and attaches that
 /// session, creating it when it does not exist yet. Logs a warning when the
 /// attach fails; the turn still runs against the current session.
-pub async fn attach_a2a_context_session(
-    runtime_impl: &mut AgentConversationRuntime,
+pub async fn attach_a2a_context_session<R: SessionPersistence>(
+    runtime_impl: &mut R,
     context_id: &str,
 ) {
     let prefix = agnt_core::session::prefix::dir_prefix(runtime_impl.cwd());

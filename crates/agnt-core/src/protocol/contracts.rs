@@ -255,6 +255,17 @@ pub trait RuntimeAccess {
 
     /// The plugin configuration this runtime started from.
     fn startup_plugin_config(&self) -> Option<&crate::config::PluginConfig>;
+
+    /// Spawn a future on the runtime's tokio runtime.
+    ///
+    /// The member exists so a mode that drives a turn through these seams never
+    /// names the aggregate to reach the tokio handle it owns. Its production
+    /// callers are the two `run_stderr_turn` drain spawns; the aggregate's impl
+    /// is one delegate to the inherent twin.
+    fn spawn<F>(&self, future: F) -> tokio::task::JoinHandle<F::Output>
+    where
+        F: std::future::Future + Send + 'static,
+        F::Output: Send + 'static;
 }
 
 /// Minimal runtime required for a single turn. Used by run_single_turn.
