@@ -10,7 +10,7 @@ use nu_protocol::{LabeledError, Value};
 use tokio::sync::mpsc;
 
 use super::SourceChannels;
-use crate::bus::{Bus, ChannelError, ExternalEvent};
+use crate::bus::{ChannelError, ExternalEvent, TurnEvent, TurnTx};
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
 };
@@ -29,7 +29,7 @@ pub(crate) const WORKER_CMD_CAPACITY: usize = 256;
 
 pub async fn run_single_turn<R>(
     runtime: &mut R,
-    bus: &Bus,
+    turn: &TurnTx,
     prompt: String,
     context: Option<String>,
     span: nu_protocol::Span,
@@ -37,12 +37,12 @@ pub async fn run_single_turn<R>(
 where
     R: CoreRuntime,
 {
-    // Control-plane turn-start event: stays on `bus.turn()`, not rendered. The
-    // single-turn path has no A2A attribution at dispatch — the task store is
-    // updated after the turn — so the attribution is always `None`.
-    let _ = bus
-        .turn()
-        .send(crate::bus::TurnEvent::Started {
+    // Control-plane turn-start event: published on the turn channel, not
+    // rendered. The single-turn path has no A2A attribution at dispatch — the
+    // task store is updated after the turn — so the attribution is always
+    // `None`.
+    let _ = turn
+        .send(TurnEvent::Started {
             prompt: prompt.clone(),
             task_id: None,
         })

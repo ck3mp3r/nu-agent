@@ -214,7 +214,7 @@ async fn run_stderr_turn<
 
     // Drive the turn. Core publishes events on the bus; the drain task forwards
     // them to the renderer as they arrive.
-    let result = run_single_turn(runtime_impl, &bus, prompt, context, Span::unknown())
+    let result = run_single_turn(runtime_impl, bus.turn(), prompt, context, Span::unknown())
         .await
         .map_err(Error::from);
 

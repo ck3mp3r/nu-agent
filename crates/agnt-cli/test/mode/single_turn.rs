@@ -30,7 +30,7 @@ async fn test_mode_run_single_turn_publishes_exactly_one_started() -> Result<()>
     // -- Exec
     agnt_core::orchestrator::run_single_turn(
         &mut runtime,
-        &bus,
+        bus.turn(),
         "hello".to_string(),
         None,
         Span::unknown(),

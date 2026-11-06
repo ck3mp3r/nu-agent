@@ -338,7 +338,7 @@ pub(super) fn run_command(
         let (prompt, context) = super::input::extract_prompt_and_context(input)?;
         agnt_core::orchestrator::run_single_turn(
             &mut runtime_impl,
-            &bus,
+            bus.turn(),
             prompt,
             context,
             call.head,

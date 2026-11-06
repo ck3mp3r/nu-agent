@@ -203,7 +203,7 @@ async fn tool_display_path_does_not_require_assistant_synthesis_round_trip() -> 
 
     let value = run_single_turn(
         &mut runtime,
-        &bus,
+        bus.turn(),
         "show me diff".to_string(),
         None,
         Span::test_data(),
@@ -246,7 +246,7 @@ async fn run_single_turn_uses_progress_ui_trait_boundary() -> TResult {
 
     let value = run_single_turn(
         &mut runtime,
-        &bus,
+        bus.turn(),
         "hello".to_string(),
         Some("ctx".to_string()),
         Span::test_data(),
