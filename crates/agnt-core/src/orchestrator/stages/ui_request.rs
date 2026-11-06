@@ -1,10 +1,10 @@
 use std::collections::VecDeque;
 
-use crate::bus::SessionEvent;
 use crate::orchestrator::stages::{OrchestrationContext, UiRequestHandler};
 use crate::orchestrator::{UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand};
 use crate::protocol::contracts::McpUsabilityState;
 use crate::protocol::events::{SystemEvent, SystemKind};
+use agnt_kernel::bus::SessionEvent;
 
 /// Handles UI requests (model/agent/session switch, MCP toggle, session refresh)
 /// with a concurrency policy: blocking requests (model/agent/session) require an

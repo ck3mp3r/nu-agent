@@ -8,12 +8,13 @@ use std::path::{Path, PathBuf};
 
 use tokio::task::JoinHandle;
 
-use crate::bus::{
-    AgentEvent, AgentRx, AgentTx, BroadcastRx, ChannelError, CompactionRx, CompactionTx,
-    SessionEvent, SessionRx, SessionTx, TurnEvent, TurnRx, TurnTx, UiEventRx, UiEventTx,
-};
+use crate::bus::{CompactionRx, CompactionTx, UiEventRx, UiEventTx};
 use crate::config::{HookEvent, HookEventClass, ResolvedHook};
 use crate::protocol::events::SystemEvent;
+use agnt_kernel::bus::{
+    AgentEvent, AgentRx, AgentTx, BroadcastRx, ChannelError, SessionEvent, SessionRx, SessionTx,
+    TurnEvent, TurnRx, TurnTx,
+};
 
 use super::context::HookAgentContext;
 use super::envelope::build_envelope;

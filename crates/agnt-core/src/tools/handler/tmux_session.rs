@@ -5,7 +5,7 @@ use super::tmux_common::{
     parse_args, parse_sessions, parse_windows, require_force, resolve_dir, run_tmux,
 };
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::CancelTx;
+use agnt_kernel::bus::CancelTx;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct SessionArgs {

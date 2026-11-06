@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
 
 use serde_json::Value as JsonValue;
 
-use crate::bus::{CancelEvent, CancelTx, OneshotTx, UiEventTx};
+use agnt_kernel::bus::{CancelEvent, CancelTx, OneshotTx};
+
+use crate::bus::{RequestPermission, UiEventTx};
 
 use crate::protocol::event::{
     PermissionDecision as ProtocolPermissionDecision, PermissionRequestContext,

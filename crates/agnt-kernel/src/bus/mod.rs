@@ -11,10 +11,18 @@
 // region:    --- Modules
 
 mod cancel;
+mod channel;
+mod events;
 mod ring;
 mod stream;
 
 pub use cancel::{Cancel, CancelEvent};
+pub use channel::{
+    AgentRx, AgentTx, BroadcastRx, BroadcastTx, CancelRx, CancelTx, ChannelError, ChannelResult,
+    ExternalRx, ExternalTx, Metrics, MpscRx, MpscTx, NoMetrics, OneshotRx, OneshotTx, SessionRx,
+    SessionTx, TryRecvError, TurnRx, TurnTx,
+};
+pub use events::{AgentEvent, ExternalEvent, SessionEvent, TurnEvent};
 pub use ring::{PublishError, ReceiveError, Subscription, TryReceiveError};
 pub use stream::Stream;
 

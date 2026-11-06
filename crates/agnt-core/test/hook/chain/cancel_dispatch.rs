@@ -7,6 +7,7 @@
 
 use super::*;
 
+use crate::bus::RequestCancel;
 use rig::tool::Tool;
 
 /// Resolver that allows every call: the wiring test drives the cancel arm, not

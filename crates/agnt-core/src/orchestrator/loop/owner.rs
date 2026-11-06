@@ -4,7 +4,6 @@
 use nu_protocol::{LabeledError, Span, Value};
 use tokio::sync::mpsc;
 
-use crate::bus::SessionEvent;
 use crate::orchestrator::config::LoopParts;
 use crate::orchestrator::loop_impl::{WORKER_CMD_CAPACITY, run_orchestrator_loop};
 use crate::orchestrator::router::{CommandRouter, DispatchSources};
@@ -18,6 +17,7 @@ use crate::protocol::contracts::CoreRuntime;
 use crate::protocol::mcp_management::McpManagement;
 use crate::protocol::model_switching::ModelSwitching;
 use crate::protocol::session_management::{SessionPersistence, SessionState};
+use agnt_kernel::bus::SessionEvent;
 
 use super::sources::{LoopContext, LoopSources, SourceChannels};
 

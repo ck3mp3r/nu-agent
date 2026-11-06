@@ -1,10 +1,3 @@
-// region:    --- Modules
-
-#[path = "agent.rs"]
-mod agent;
-
-// endregion: --- Modules
-
 use super::*;
 use crate::protocol::events::{SystemEvent, ToolCall};
 use agnt_kernel::ToolName;

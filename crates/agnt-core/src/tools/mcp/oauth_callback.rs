@@ -14,7 +14,7 @@ use tokio::net::TcpSocket;
 use tokio::sync::Mutex;
 use url::form_urlencoded;
 
-use crate::bus::OneshotTx;
+use agnt_kernel::bus::OneshotTx;
 
 /// Path for the OAuth callback endpoint.
 pub const CALLBACK_PATH: &str = "/mcp/oauth/callback";

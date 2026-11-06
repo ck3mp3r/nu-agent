@@ -8,6 +8,8 @@ use std::time::Duration;
 
 use super::*;
 
+use crate::bus::RequestCancel;
+
 /// A confirmed cancel must publish the cancelled event with the pending
 /// request's id and the rule identity shown on the card, and must still return
 /// the turn-cancelled denial.

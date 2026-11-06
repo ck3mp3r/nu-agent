@@ -10,7 +10,7 @@ use nu_protocol::{LabeledError, Value};
 use tokio::sync::mpsc;
 
 use super::SourceChannels;
-use crate::bus::{ChannelError, ExternalEvent, TurnEvent, TurnTx};
+use crate::bus::RequestCancel;
 use crate::orchestrator::stages::{
     OrchestrationContext, PermissionHandler, SessionHandler, SlashHandler, UiRequestHandler,
 };
@@ -21,6 +21,7 @@ use crate::orchestrator::{
 };
 use crate::protocol::contracts::CoreRuntime;
 use crate::protocol::events::SystemEvent;
+use agnt_kernel::bus::{ChannelError, ExternalEvent, TurnEvent, TurnTx};
 
 /// Capacity of the worker command channel. The test harness builds its worker
 /// channel from this constant, so a saturation test fills the real production

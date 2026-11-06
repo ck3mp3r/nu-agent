@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde_json::Value as JsonValue;
 
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::CancelTx;
+use agnt_kernel::bus::CancelTx;
 
 const DEFAULT_MAX_LENGTH: usize = 12000;
 const DEFAULT_MODE: &str = "markdown";

@@ -1,4 +1,4 @@
-use crate::bus::{CompactionTx, SessionTx, TurnTx, UiStateTx};
+use crate::bus::{CompactionTx, UiStateTx};
 use crate::orchestrator::{
     AgentSwitchHook, UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome,
 };
@@ -9,6 +9,7 @@ use crate::protocol::{
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
 };
+use agnt_kernel::bus::{SessionTx, TurnTx};
 
 use tokio::sync::mpsc;
 

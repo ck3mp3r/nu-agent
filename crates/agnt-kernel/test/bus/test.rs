@@ -3,8 +3,12 @@
 
 // region:    --- Modules
 
+#[path = "agent.rs"]
+mod agent;
 #[path = "cancel.rs"]
 mod cancel;
+#[path = "channel.rs"]
+mod channel;
 #[path = "stream.rs"]
 mod stream;
 

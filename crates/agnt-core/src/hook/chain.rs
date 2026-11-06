@@ -31,7 +31,7 @@ use rig::message::Message;
 use rig::wasm_compat::WasmCompatSend;
 use rig_memory::CompactReason;
 
-use crate::bus::{Bus, CancelEvent, CancelRx, CompactionTx, TryRecvError, UiEventTx};
+use crate::bus::{Bus, CompactionTx, UiEventTx};
 use crate::config::defaults;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::turn::token_estimate::estimate_token_count;
@@ -43,6 +43,7 @@ use crate::session::tool_status::{ToolStatus, error_kind_of, status_of_result};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::types::ToolName;
+use agnt_kernel::bus::{CancelEvent, CancelRx, TryRecvError};
 
 use super::agent_hook::{HookState, StopLedger};
 use super::circuit_breaker_guard::CircuitBreakerGuard;

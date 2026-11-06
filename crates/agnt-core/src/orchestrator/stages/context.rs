@@ -5,10 +5,11 @@ use tokio::sync::mpsc;
 use agnt_a2a::InMemoryTaskStore;
 use nu_protocol::Span;
 
-use crate::bus::{CancelTx, CompactionTx, SessionTx, TurnTx, UiEventTx, UiStateTx};
+use crate::bus::{CompactionTx, UiEventTx, UiStateTx};
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::{UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome};
 use crate::protocol::event::PermissionDecisionSubmission;
+use agnt_kernel::bus::{CancelTx, SessionTx, TurnTx};
 
 /// Shared state passed to every stage on each poll iteration.
 pub(crate) struct OrchestrationContext<'a> {

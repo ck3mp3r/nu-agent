@@ -5,19 +5,17 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use agnt_kernel::CompactionSource;
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::bus::SessionEvent;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::SessionInfo;
 use crate::tools::closure::EngineInterfaceLike;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
+use agnt_kernel::bus::{OneshotTx, SessionEvent};
 
 use super::managers::{
     MultiAgentManager, PersonaManager, ProviderManager, SessionManager, ToolManager,
 };
 use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
-
-use crate::bus::OneshotTx;
 
 /// Shared pending-permission map for TUI mode: maps request IDs to oneshot senders
 /// that unblock the `InteractivePermissionResolver` awaiting a user decision.

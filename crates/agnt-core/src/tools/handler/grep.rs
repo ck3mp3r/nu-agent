@@ -2,7 +2,7 @@ use serde_json::Value as JsonValue;
 use std::path::Path;
 
 use super::{ToolErrorKind, ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::CancelTx;
+use agnt_kernel::bus::CancelTx;
 
 #[derive(Debug, serde::Deserialize)]
 struct GrepArgs {

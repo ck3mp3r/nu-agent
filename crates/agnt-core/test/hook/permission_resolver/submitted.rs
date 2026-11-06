@@ -8,6 +8,8 @@ use std::time::Duration;
 
 use super::*;
 
+use crate::bus::RequestCancel;
+
 /// A submitted decision must reach the bus with the request id, the decision,
 /// and the identity of the rule that produced the prompt.
 #[tokio::test]

@@ -1,8 +1,12 @@
 //! The standalone process-wide agent event channel.
 
-use super::*;
 use std::time::Duration;
+
 use tokio::time::timeout;
+
+use crate::bus::{AgentEvent, AgentTx, TurnTx};
+
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 #[tokio::test]
 async fn test_bus_agent_channel_round_trips_started_and_shutdown() -> Result<()> {
@@ -45,10 +49,10 @@ async fn test_bus_agent_channel_round_trips_started_and_shutdown() -> Result<()>
 #[tokio::test]
 async fn test_bus_agent_channel_is_independent_of_the_bus() -> Result<()> {
     // -- Setup & Fixtures
-    let bus = create_bus();
     let tx = AgentTx::new("agent", 16);
     let mut agent_rx = tx.subscribe();
-    let mut turn_rx = bus.turn().subscribe();
+    let turn_tx = TurnTx::new("turn", 64);
+    let mut turn_rx = turn_tx.subscribe();
 
     // -- Exec
     tx.send(AgentEvent::Started {
@@ -65,7 +69,7 @@ async fn test_bus_agent_channel_is_independent_of_the_bus() -> Result<()> {
     assert!(matches!(received, AgentEvent::Started { .. }));
     assert!(
         turn_rx.try_recv().is_err(),
-        "an agent event must not reach a bus channel"
+        "an agent event must not reach a turn channel"
     );
     Ok(())
 }

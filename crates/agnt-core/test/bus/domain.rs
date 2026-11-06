@@ -2,11 +2,10 @@ use std::time::Duration;
 
 use tokio::time::timeout;
 
-use super::channel::CancelTx;
-use super::events::CancelEvent;
-use crate::bus::create_bus;
+use crate::bus::{RequestCancel, RequestPermission, UiEventTx, create_bus};
 use crate::protocol::event::PermissionRequestContext;
 use crate::protocol::events::SystemEvent;
+use agnt_kernel::bus::{CancelEvent, CancelTx, ChannelError};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -69,11 +68,11 @@ async fn ui_event_request_permission() -> Result<()> {
     // NoReceiver. `InteractivePermissionResolver::resolve` relies on this
     // error to fall back to a generated request ID
     // (`unwrap_or_else(|_| next_request_id())`).
-    let tx = super::channel::UiEventTx::new("ui_event", 64);
+    let tx = UiEventTx::new("ui_event", 64);
     let result = tx.request_permission(permission_context()).await;
     assert_eq!(
         result,
-        Err(super::channel::ChannelError::NoReceiver),
+        Err(ChannelError::NoReceiver),
         "send with no active receiver must return NoReceiver"
     );
     Ok(())

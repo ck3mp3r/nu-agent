@@ -7,7 +7,7 @@ use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::time::Instant;
 
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::{CancelRx, CancelTx};
+use agnt_kernel::bus::{CancelRx, CancelTx};
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
 

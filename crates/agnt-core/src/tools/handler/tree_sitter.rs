@@ -8,7 +8,7 @@ use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree}
 use tree_sitter_language::LanguageFn;
 
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::CancelTx;
+use agnt_kernel::bus::CancelTx;
 
 /// A loaded grammar. The shared library must stay alive for the lifetime of the
 /// `Language` it produced, so both are stored together.

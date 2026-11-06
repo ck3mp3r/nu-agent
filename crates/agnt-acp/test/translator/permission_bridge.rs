@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use agnt_core::bus::RequestPermission;
 use agnt_core::protocol::event::PermissionDecision;
 use agnt_core::protocol::events::SystemEvent;
 

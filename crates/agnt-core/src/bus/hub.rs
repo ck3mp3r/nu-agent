@@ -1,6 +1,6 @@
-use agnt_kernel::bus::Stream;
+use agnt_kernel::bus::{CancelTx, ExternalTx, SessionTx, Stream, TurnTx};
 
-use super::channel::{CancelTx, CompactionTx, ExternalTx, SessionTx, TurnTx, UiEventTx, UiStateTx};
+use super::channel::{CompactionTx, UiEventTx, UiStateTx};
 
 /// Typed broadcast channels, one per event category.
 ///

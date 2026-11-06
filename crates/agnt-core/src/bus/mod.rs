@@ -10,13 +10,13 @@ mod domain_test;
 mod test;
 
 mod domain;
-mod events;
 mod hub;
 
-pub use channel::{
-    AgentRx, AgentTx, BroadcastRx, BroadcastTx, CancelRx, CancelTx, ChannelError, ChannelResult,
-    CompactionRx, CompactionTx, ExternalRx, ExternalTx, MpscRx, MpscTx, OneshotRx, OneshotTx,
-    SessionRx, SessionTx, TryRecvError, TurnRx, TurnTx, UiEventRx, UiEventTx, UiStateRx, UiStateTx,
+pub use agnt_kernel::bus::{
+    AgentEvent, AgentRx, AgentTx, BroadcastRx, BroadcastTx, CancelEvent, CancelRx, CancelTx,
+    ChannelError, ChannelResult, ExternalEvent, ExternalRx, ExternalTx, MpscRx, MpscTx, OneshotRx,
+    OneshotTx, SessionEvent, SessionRx, SessionTx, TryRecvError, TurnEvent, TurnRx, TurnTx,
 };
-pub use events::{AgentEvent, CancelEvent, ExternalEvent, SessionEvent, TurnEvent};
+pub use channel::{CompactionRx, CompactionTx, UiEventRx, UiEventTx, UiStateRx, UiStateTx};
+pub use domain::{RequestCancel, RequestPermission};
 pub use hub::{Bus, create_bus};

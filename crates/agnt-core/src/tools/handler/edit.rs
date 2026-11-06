@@ -6,8 +6,8 @@ use super::{
     ToolErrorKind, ToolHandlerError,
     builtin_tool::{BuiltinTool, Previewable},
 };
-use crate::bus::CancelTx;
 use crate::tools::fs::core::apply_search_replace_edit;
+use agnt_kernel::bus::CancelTx;
 
 #[derive(Debug, serde::Deserialize)]
 pub(super) struct EditArgs {

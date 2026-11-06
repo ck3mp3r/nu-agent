@@ -1,8 +1,8 @@
-use crate::bus::TurnEvent;
 use crate::orchestrator::stages::{OrchestrationContext, SessionHandler};
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::utils::value_ext::extract_response_text_from_value;
+use agnt_kernel::bus::TurnEvent;
 
 /// Applies turn outcomes (success, cancel, error).
 #[derive(Default)]

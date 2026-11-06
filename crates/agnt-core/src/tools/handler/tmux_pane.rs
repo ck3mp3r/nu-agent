@@ -5,7 +5,7 @@ use super::tmux_common::{
     pane_target, parse_args, parse_panes, parse_panes_find, require_force, resolve_dir, run_tmux,
 };
 use super::{ToolHandlerError, builtin_tool::BuiltinTool};
-use crate::bus::CancelTx;
+use agnt_kernel::bus::CancelTx;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct PaneArgs {

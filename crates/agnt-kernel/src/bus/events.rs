@@ -1,15 +1,17 @@
-/// A request to cancel the current task.
-#[derive(Debug, Clone)]
-pub enum CancelEvent {
-    Requested,
-}
+//! The lifecycle event vocabulary the bus channels carry.
+//!
+//! Each enum names one lifecycle class: process, turn, session, external. The
+//! channel that carries a class is declared beside the facade in
+//! [`super::channel`].
+
+// region:    --- Types
 
 /// A process-wide agent lifecycle event.
 ///
 /// Agent events are per-process, not per-session: one `Started`/`Shutdown` pair
 /// per process lifetime. They ride a standalone channel created at mode entry,
-/// never the per-runtime [`Bus`](crate::bus::Bus) — in ACP the bus is cloned per
-/// session, so a process-scoped event on it would be a category error.
+/// never the per-runtime `Bus` — a bus is cloned per session, so a
+/// process-scoped event on it would be a category error.
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     /// The agent process started. `mode` is "tui", "stderr", or "acp".
@@ -46,9 +48,7 @@ pub enum SessionEvent {
     },
     /// The session ended. Carries the session's cumulative LLM usage: the
     /// sums across every turn the session ran, with the same fallback and
-    /// completeness conventions as [`SystemEvent::TurnCompleted`].
-    ///
-    /// [`SystemEvent::TurnCompleted`]: crate::protocol::events::SystemEvent::TurnCompleted
+    /// completeness conventions as `SystemEvent::TurnCompleted`.
     Ended {
         session_id: String,
         input_tokens: u64,
@@ -94,3 +94,5 @@ pub enum ExternalEvent {
         context_id: Option<String>,
     },
 }
+
+// endregion: --- Types

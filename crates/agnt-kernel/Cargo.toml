@@ -6,7 +6,9 @@ description = "Eventing substrate — one ordered session-record stream per sess
 
 [dependencies]
 serde = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

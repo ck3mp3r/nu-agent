@@ -19,8 +19,8 @@ use agent_client_protocol::schema::v1::{
 };
 use agent_client_protocol::{Client, ConnectionTo};
 use agnt_core::bus::{
-    Bus, CancelTx, ChannelError, CompactionTx, SessionEvent, SessionTx, TurnEvent, TurnTx,
-    UiEventTx,
+    Bus, CancelTx, ChannelError, CompactionTx, RequestCancel, SessionEvent, SessionTx, TurnEvent,
+    TurnTx, UiEventTx,
 };
 use agnt_core::config::ModelsCache;
 use agnt_core::config::Paths;

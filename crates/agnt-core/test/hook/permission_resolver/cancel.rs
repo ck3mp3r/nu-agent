@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use super::*;
 
+use crate::bus::RequestCancel;
+
 /// A cancel confirmed while a permission request is pending must resolve the
 /// request as a denial instead of waiting for a decision that never comes.
 #[tokio::test]
