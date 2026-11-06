@@ -30,8 +30,7 @@ impl SlashHandler for SlashStage {
                 // single subscriber) receives it and dispatches compaction to
                 // the worker asynchronously.
                 let _ = ctx
-                    .bus
-                    .compaction()
+                    .compaction
                     .send(SystemEvent::CompactionRequested {
                         source: CompactionSource::Manual,
                     })
@@ -39,48 +38,42 @@ impl SlashHandler for SlashStage {
             }
             SlashParseResult::Command(SlashCommand::New) => {
                 let _ = ctx.worker_tx.send(WorkerCommand::NewSession).await;
-                let _ = ctx.bus.ui_state().send(UiStateEvent::ClearTranscript).await;
-                let _ = ctx.bus.ui_state().send(UiStateEvent::PushStartupLogo).await;
+                let _ = ctx.ui_state.send(UiStateEvent::ClearTranscript).await;
+                let _ = ctx.ui_state.send(UiStateEvent::PushStartupLogo).await;
             }
             SlashParseResult::Command(SlashCommand::Help) => {
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Help))
                     .await;
             }
             SlashParseResult::Command(SlashCommand::Status) => {
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Status))
                     .await;
             }
             SlashParseResult::Command(SlashCommand::Mcp) => {
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Mcps))
                     .await;
             }
             SlashParseResult::Command(SlashCommand::Models) => {
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Models))
                     .await;
             }
             SlashParseResult::Command(SlashCommand::Agent) => {
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Agents))
                     .await;
             }
             SlashParseResult::Command(SlashCommand::Session) => {
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::ExecuteSharedUiAction(
                         SharedUiAction::Sessions,
                     ))
@@ -88,22 +81,19 @@ impl SlashHandler for SlashStage {
             }
             SlashParseResult::Command(SlashCommand::Theme) => {
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Themes))
                     .await;
             }
             SlashParseResult::Command(SlashCommand::Skills) => {
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::ExecuteSharedUiAction(SharedUiAction::Skills))
                     .await;
             }
             SlashParseResult::Unknown(command) => {
                 let _ = ctx
-                    .bus
-                    .ui_event()
+                    .ui_event
                     .send(SystemEvent::SystemMessage {
                         kind: SystemKind::Warning,
                         text: format!("Unknown slash command: {command}"),
@@ -119,7 +109,7 @@ impl SlashHandler for SlashStage {
                     *ctx.active_external_task_id = Some(task_id.to_string());
                     if ctx.pending_external_cancel.as_deref() == Some(task_id) {
                         *ctx.pending_external_cancel = None;
-                        let _ = ctx.bus.cancel().send(CancelEvent::Requested).await;
+                        let _ = ctx.cancel.send(CancelEvent::Requested).await;
                     }
                 }
                 // Control-plane turn-start event is published by the worker

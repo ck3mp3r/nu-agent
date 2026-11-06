@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use agnt_a2a::InMemoryTaskStore;
 use nu_protocol::Span;
 
-use crate::bus::Bus;
+use crate::bus::{CancelTx, CompactionTx, SessionTx, TurnTx, UiEventTx, UiStateTx};
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::{UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome};
 use crate::protocol::event::PermissionDecisionSubmission;
@@ -40,8 +40,16 @@ pub(crate) struct OrchestrationContext<'a> {
     /// consumes it when the matching `PromptSubmitted` fires and passes it to
     /// the slash stage, so the turn is attributed to the A2A task, not a user submit.
     pub pending_a2a_task_id: &'a mut Option<String>,
-    /// Shared signal bus. The session stage publishes turn-completion events.
-    pub bus: &'a Bus,
+    /// The channels the stages publish to, one hand per channel they write:
+    /// the control-plane turn lifecycle, the cancel signal, the session
+    /// lifecycle, the compaction lifecycle, and the two surface channels
+    /// (rendered events and UI state).
+    pub turn: &'a TurnTx,
+    pub cancel: &'a CancelTx,
+    pub session: &'a SessionTx,
+    pub compaction: &'a CompactionTx,
+    pub ui_event: &'a UiEventTx,
+    pub ui_state: &'a UiStateTx,
     /// Optional A2A task store. When present, the loop rejects or fails tasks
     /// that arrive while the worker is busy instead of dispatching them.
     pub task_store: Option<&'a Arc<InMemoryTaskStore>>,

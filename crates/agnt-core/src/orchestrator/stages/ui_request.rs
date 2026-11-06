@@ -49,8 +49,7 @@ impl UiRequestStage {
                 _ => "Worker channel closed".to_string(),
             };
             let _ = ctx
-                .bus
-                .ui_event()
+                .ui_event
                 .send(SystemEvent::SystemMessage {
                     kind: SystemKind::Warning,
                     text: message,
@@ -79,8 +78,7 @@ impl UiRequestStage {
             match &request {
                 UiRequest::ToggleMcp { server, .. } => {
                     let _ = ctx
-                        .bus
-                        .ui_state()
+                        .ui_state
                         .send(UiStateEvent::SetMcpServerState {
                             server: server.clone(),
                             state: McpUsabilityState::Failed,
@@ -91,8 +89,7 @@ impl UiRequestStage {
                 }
                 _ => {
                     let _ = ctx
-                        .bus
-                        .ui_event()
+                        .ui_event
                         .send(SystemEvent::SystemMessage {
                             kind: SystemKind::Warning,
                             text: "Worker channel closed".to_string(),
@@ -130,8 +127,7 @@ impl UiRequestHandler for UiRequestStage {
             UiRequest::SwitchSession { id } => {
                 if *ctx.worker_active {
                     let _ = ctx
-                        .bus
-                        .ui_event()
+                        .ui_event
                         .send(SystemEvent::SystemMessage {
                             kind: SystemKind::Warning,
                             text: "Cannot switch session while worker is active".to_string(),
@@ -180,20 +176,17 @@ impl UiRequestHandler for UiRequestStage {
         match response {
             UiRequestResponse::ModelSwitch(Ok((identity, max_tokens))) => {
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::SetActiveModelIdentity(identity.clone()))
                     .await;
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::SetContextWindowMaxTokens(max_tokens))
                     .await;
             }
             UiRequestResponse::ModelSwitch(Err(msg)) => {
                 let _ = ctx
-                    .bus
-                    .ui_event()
+                    .ui_event
                     .send(SystemEvent::SystemMessage {
                         kind: SystemKind::Warning,
                         text: msg,
@@ -207,30 +200,25 @@ impl UiRequestHandler for UiRequestStage {
                 icon,
             ))) => {
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::SetActiveAgentIdentity(agent_identity.clone()))
                     .await;
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::SetActivePersonaIcon(icon))
                     .await;
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::SetActiveModelIdentity(model_identity))
                     .await;
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::SetContextWindowMaxTokens(max_tokens))
                     .await;
             }
             UiRequestResponse::AgentSwitch(Err(msg)) => {
                 let _ = ctx
-                    .bus
-                    .ui_event()
+                    .ui_event
                     .send(SystemEvent::SystemMessage {
                         kind: SystemKind::Warning,
                         text: msg,
@@ -241,19 +229,17 @@ impl UiRequestHandler for UiRequestStage {
                 id,
                 result: Ok(snapshots),
             } => {
-                let _ = ctx.bus.ui_state().send(UiStateEvent::ClearTranscript).await;
-                let _ = ctx.bus.ui_state().send(UiStateEvent::PushStartupLogo).await;
+                let _ = ctx.ui_state.send(UiStateEvent::ClearTranscript).await;
+                let _ = ctx.ui_state.send(UiStateEvent::PushStartupLogo).await;
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::HydrateTranscript {
                         messages: snapshots,
                         last_total_tokens: None,
                     })
                     .await;
                 let _ = ctx
-                    .bus
-                    .session()
+                    .session
                     .send(SessionEvent::Switched {
                         from_session_id: None,
                         to_session_id: id,
@@ -264,8 +250,7 @@ impl UiRequestHandler for UiRequestStage {
                 result: Err(msg), ..
             } => {
                 let _ = ctx
-                    .bus
-                    .ui_event()
+                    .ui_event
                     .send(SystemEvent::SystemMessage {
                         kind: SystemKind::Warning,
                         text: msg,
@@ -298,8 +283,7 @@ impl UiRequestHandler for UiRequestStage {
             } => {
                 self.last_authoritative_visible_count = total;
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::SetMcpVisibleToolCount {
                         server: server.clone(),
                         count: server_count,
@@ -307,14 +291,12 @@ impl UiRequestHandler for UiRequestStage {
                     .await;
                 for (srv, names) in names_by_server {
                     let _ = ctx
-                        .bus
-                        .ui_state()
+                        .ui_state
                         .send(UiStateEvent::SetMcpVisibleToolNames { server: srv, names })
                         .await;
                 }
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::SetMcpServerState {
                         server,
                         state,
@@ -332,8 +314,7 @@ impl UiRequestHandler for UiRequestStage {
             } => {
                 self.last_authoritative_visible_count = total;
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::SetMcpVisibleToolCount {
                         server: server.clone(),
                         count: server_count,
@@ -341,14 +322,12 @@ impl UiRequestHandler for UiRequestStage {
                     .await;
                 for (srv, names) in names_by_server {
                     let _ = ctx
-                        .bus
-                        .ui_state()
+                        .ui_state
                         .send(UiStateEvent::SetMcpVisibleToolNames { server: srv, names })
                         .await;
                 }
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::SetMcpServerState {
                         server,
                         state: McpUsabilityState::Failed,
@@ -359,15 +338,13 @@ impl UiRequestHandler for UiRequestStage {
             }
             UiRequestResponse::SessionRefresh(Ok(sessions)) => {
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::SetSessionPickerOptions(sessions))
                     .await;
             }
             UiRequestResponse::SessionRefresh(Err(msg)) => {
                 let _ = ctx
-                    .bus
-                    .ui_event()
+                    .ui_event
                     .send(SystemEvent::SystemMessage {
                         kind: SystemKind::Warning,
                         text: msg,
@@ -376,15 +353,13 @@ impl UiRequestHandler for UiRequestStage {
             }
             UiRequestResponse::AgentRefresh(Ok(summaries)) => {
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::SetAgentPickerOptions(summaries))
                     .await;
             }
             UiRequestResponse::AgentRefresh(Err(msg)) => {
                 let _ = ctx
-                    .bus
-                    .ui_event()
+                    .ui_event
                     .send(SystemEvent::SystemMessage {
                         kind: SystemKind::Warning,
                         text: msg,

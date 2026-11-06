@@ -131,8 +131,7 @@ where
                             }
                             None => {
                                 let _ = ctx
-                                    .bus
-                                    .ui_state()
+                                    .ui_state
                                     .send(UiStateEvent::EnqueueExternalPrompt { text: prompt })
                                     .await;
                             }
@@ -176,12 +175,12 @@ where
                         ui_request.handle_incoming(req, ctx).await;
                     }
                     OrchestratorEvent::CancelRequested => {
-                        let _ = ctx.bus.cancel().request_cancel().await;
+                        let _ = ctx.cancel.request_cancel().await;
                     }
                     OrchestratorEvent::Quit => {
                         if *ctx.worker_active {
                             quit_pending = true;
-                            let _ = ctx.bus.cancel().request_cancel().await;
+                            let _ = ctx.cancel.request_cancel().await;
                             continue;
                         }
                         if ui_request.has_pending() {
@@ -223,8 +222,7 @@ where
                     // so it carries no local task attribution.
                     let prompt = event.to_prompt();
                     let _ = ctx
-                        .bus
-                        .ui_state()
+                        .ui_state
                         .send(UiStateEvent::EnqueueExternalPrompt { text: prompt })
                         .await;
                     continue;
@@ -338,8 +336,7 @@ where
                 // is requested here. The event is a notification about a REMOTE
                 // task, so it carries no local task attribution.
                 let _ = ctx
-                    .bus
-                    .ui_state()
+                    .ui_state
                     .send(UiStateEvent::EnqueueExternalPrompt { text: prompt })
                     .await;
             }

@@ -315,7 +315,12 @@ pub(crate) fn make_ctx<'a>(
         active_external_task_id: &mut state.active_external_task_id,
         pending_external_cancel: &mut state.pending_external_cancel,
         pending_a2a_task_id: &mut state.pending_a2a_task_id,
-        bus,
+        turn: bus.turn(),
+        cancel: bus.cancel(),
+        session: bus.session(),
+        compaction: bus.compaction(),
+        ui_event: bus.ui_event(),
+        ui_state: bus.ui_state(),
         task_store: state.task_store.as_ref(),
     }
 }

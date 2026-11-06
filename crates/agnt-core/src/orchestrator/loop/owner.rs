@@ -274,7 +274,12 @@ where
             active_external_task_id: &mut self.ctx.active_external_task_id,
             pending_external_cancel: &mut self.ctx.pending_external_cancel,
             pending_a2a_task_id: &mut self.ctx.pending_a2a_task_id,
-            bus: &self.config.bus,
+            turn: self.config.bus.turn(),
+            cancel: self.config.bus.cancel(),
+            session: self.config.bus.session(),
+            compaction: self.config.bus.compaction(),
+            ui_event: self.config.bus.ui_event(),
+            ui_state: self.config.bus.ui_state(),
             task_store: self.config.task_store.as_ref(),
         };
 

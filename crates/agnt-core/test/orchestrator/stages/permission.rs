@@ -74,7 +74,12 @@ impl Fixture {
             active_external_task_id: &mut self.active_external_task_id,
             pending_external_cancel: &mut self.pending_external_cancel,
             pending_a2a_task_id: &mut self.pending_a2a_task_id,
-            bus: &self.bus,
+            turn: self.bus.turn(),
+            cancel: self.bus.cancel(),
+            session: self.bus.session(),
+            compaction: self.bus.compaction(),
+            ui_event: self.bus.ui_event(),
+            ui_state: self.bus.ui_state(),
             task_store: None,
         };
         self.stage.handle(submission, &mut ctx).await;

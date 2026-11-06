@@ -42,8 +42,7 @@ impl PermissionHandler for PermissionStage {
             // earlier `permission_requested` event by `request_id`.
             None => {
                 let _ = ctx
-                    .bus
-                    .ui_event()
+                    .ui_event
                     .send(SystemEvent::PermissionDecisionIgnored {
                         request_id: RequestId::new(submission.request_id),
                         reason: REASON_REQUEST_NOT_PENDING.to_string(),

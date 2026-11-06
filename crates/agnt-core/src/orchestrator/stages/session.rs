@@ -27,8 +27,7 @@ impl SessionStage {
             return;
         };
         let _ = ctx
-            .bus
-            .turn()
+            .turn
             .send(TurnEvent::TaskFailed { task_id, error })
             .await;
     }
@@ -49,8 +48,7 @@ impl SessionHandler for SessionStage {
                     let task_id = ctx.active_external_task_id.take();
                     if let Some(task_id) = task_id {
                         let _ = ctx
-                            .bus
-                            .turn()
+                            .turn
                             .send(TurnEvent::TaskCompleted {
                                 output: response_text,
                                 task_id,
@@ -74,8 +72,7 @@ impl SessionHandler for SessionStage {
                 // listener needs the task id to transition the task.
                 self.publish_task_failed(error.msg.clone(), ctx).await;
                 let _ = ctx
-                    .bus
-                    .ui_event()
+                    .ui_event
                     .send(SystemEvent::SystemMessage {
                         kind: SystemKind::TurnError,
                         text: error.msg,

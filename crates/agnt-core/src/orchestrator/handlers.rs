@@ -46,8 +46,7 @@ pub(crate) async fn dispatch_compaction(
         .is_err()
     {
         let _ = ctx
-            .bus
-            .compaction()
+            .compaction
             .send(SystemEvent::CompactionFailed {
                 source: "auto".to_string(),
                 message: "Worker channel closed".to_string(),
@@ -87,8 +86,7 @@ where
             .is_err()
     {
         let _ = ctx
-            .bus
-            .compaction()
+            .compaction
             .send(SystemEvent::CompactionFailed {
                 source: "auto".to_string(),
                 message: "Worker channel closed".to_string(),
@@ -135,7 +133,7 @@ pub(crate) async fn submit_deferred_prompt<S, U>(
 /// Handle an external (A2A) task cancellation.
 pub(crate) async fn handle_external_cancel(task_id: String, ctx: &mut OrchestrationContext<'_>) {
     if ctx.active_external_task_id.as_deref() == Some(task_id.as_str()) {
-        let _ = ctx.bus.cancel().send(CancelEvent::Requested).await;
+        let _ = ctx.cancel.send(CancelEvent::Requested).await;
     } else {
         *ctx.pending_external_cancel = Some(task_id);
     }
