@@ -120,9 +120,9 @@ async fn grep_via_builtin_adapter(
     max_tool_result_bytes: usize,
     cwd: std::path::PathBuf,
 ) -> Result<ToolInfra> {
-    use crate::tools::handler::builtin_tool::make_dynamic_tool;
-    use crate::tools::handler::grep::GrepTool;
     use crate::types::ToolDefinition;
+    use agnt_runtime::tools::handler::builtin_tool::make_dynamic_tool;
+    use agnt_runtime::tools::handler::grep::GrepTool;
 
     let tool_def = ToolDefinition {
         annotations: crate::types::ToolAnnotations::default(),
@@ -142,7 +142,7 @@ async fn grep_via_builtin_adapter(
         tool_def,
         cwd.clone(),
         max_tool_result_bytes,
-        bus,
+        bus.cancel(),
     ));
     Ok(default_tool_infra(
         handle,

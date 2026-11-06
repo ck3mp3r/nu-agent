@@ -1,7 +1,7 @@
 //! Permission request content: the diff forwarded to the client.
 
 use agent_client_protocol::schema::v1::ToolCallContent;
-use agnt_core::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;

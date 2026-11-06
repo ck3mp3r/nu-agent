@@ -238,7 +238,7 @@ fn tool_pair(message: &UiMessageSnapshot) -> Option<(ToolCall, ToolOutcome)> {
     let arguments = message.tool_arguments()?;
     let call = ToolCall::new(
         ToolName(name.to_string()),
-        agnt_core::tools::handler::ToolSource::Unknown,
+        agnt_runtime::tools::handler::ToolSource::Unknown,
         arguments,
     );
     let outcome = ToolOutcome {

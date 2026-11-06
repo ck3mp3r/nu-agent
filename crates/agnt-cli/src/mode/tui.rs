@@ -10,7 +10,6 @@ use agnt_a2a::{
 use agnt_core::bus::OneshotTx;
 use agnt_core::orchestrator::{AgentSwitchHook, LoopConfig, run};
 use agnt_core::protocol::contracts::{CoreRuntime, DecisionSource, RuntimeAccess};
-use agnt_core::protocol::event::PermissionDecision;
 use agnt_core::protocol::mcp_management::McpManagement;
 use agnt_core::protocol::model_switching::ModelSwitching;
 use agnt_core::protocol::picker::{
@@ -18,6 +17,7 @@ use agnt_core::protocol::picker::{
     model_picker_catalog_from_cached_startup_plugin_config,
 };
 use agnt_core::protocol::session_management::{SessionPersistence, SessionState};
+use agnt_runtime::protocol::event::PermissionDecision;
 use agnt_tty::policy::UiPolicy;
 use agnt_tui::TuiInteractiveUi;
 use agnt_tui::platform::terminal::TerminalLifecycle;

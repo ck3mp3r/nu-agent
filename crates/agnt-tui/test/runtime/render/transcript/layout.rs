@@ -75,7 +75,7 @@ fn test_transcript_layout_status_indicator_wraps_within_pane_width() -> Result<(
     // derived call line wraps.
     let call = ToolCall::new(
         ToolName("tool".to_string()),
-        agnt_core::tools::handler::ToolSource::Unknown,
+        agnt_runtime::tools::handler::ToolSource::Unknown,
         "x".repeat(200),
     );
     let entry = TranscriptEntry::Tool(ToolEntry {

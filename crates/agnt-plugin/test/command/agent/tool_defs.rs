@@ -183,7 +183,7 @@ fn builtin_edit_definition_uses_mode_and_operation_contract_with_compat_fields()
 
 #[test]
 fn a2a_tools_absent_when_disabled() -> Result<()> {
-    let closure_registry = agnt_core::tools::closure::ClosureRegistry::default();
+    let closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
     let agents_config = agnt_runtime::config::AgentsConfig::default();
     let cwd = std::path::Path::new("/tmp");
 
@@ -237,7 +237,7 @@ fn a2a_tools_absent_when_disabled() -> Result<()> {
 
 #[test]
 fn a2a_tools_present_when_enabled() -> Result<()> {
-    let closure_registry = agnt_core::tools::closure::ClosureRegistry::default();
+    let closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
     let agents_config = agnt_runtime::config::AgentsConfig::default();
     let cwd = std::path::Path::new("/tmp");
 

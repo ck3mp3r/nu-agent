@@ -1,8 +1,8 @@
 //! The ignored-decision event: a decision for a request that is not pending.
 
 use agnt_core::bus::create_bus;
-use agnt_core::protocol::event::PermissionDecision;
 use agnt_core::protocol::events::SystemEvent;
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;

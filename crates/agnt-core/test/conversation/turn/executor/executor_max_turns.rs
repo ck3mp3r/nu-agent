@@ -11,9 +11,9 @@ use super::super::test::{
 use super::executor_test_support::*;
 use super::test_utils::{MockResolver, message_text, test_compaction_config, test_config};
 use super::*;
-use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::McpToolRegistry;
 use agnt_runtime::config::Config;
+use agnt_runtime::tools::closure::ClosureRegistry;
+use agnt_runtime::tools::handler::McpToolRegistry;
 
 /// A MaxTurnsExceeded failure on a session turn must append exactly one
 /// user-role steering message and re-run the turn with a fresh budget —

@@ -1,6 +1,6 @@
 use super::super::managers::PersonaManager;
-use crate::tools::authz::PermissionsOverlay;
 use agnt_runtime::config::Config;
+use agnt_runtime::tools::authz::PermissionsOverlay;
 
 pub struct PersonaState {
     agent_persona_body: Option<String>,

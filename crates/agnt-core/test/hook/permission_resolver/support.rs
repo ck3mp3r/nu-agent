@@ -11,14 +11,14 @@ pub(super) use crate::bus::Bus;
 pub(super) use crate::hook::permission_resolver::{
     AsyncPermissionResolver, InteractivePermissionResolver, PolicyPermissionResolver,
 };
-pub(super) use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 pub(super) use crate::protocol::events::SystemEvent;
-pub(super) use crate::tools::authz::{
+pub(super) use agnt_runtime::protocol::event::PermissionDecision as ProtocolPermissionDecision;
+pub(super) use agnt_runtime::tools::authz::{
     PermissionAction, PermissionDecision as AuthzPermissionDecision, PermissionRuleMatch,
     PermissionsConfig, SessionGrantCache,
 };
-pub(super) use crate::tools::closure::ClosureRegistry;
-pub(super) use crate::tools::handler::McpToolRegistry;
+pub(super) use agnt_runtime::tools::closure::ClosureRegistry;
+pub(super) use agnt_runtime::tools::handler::McpToolRegistry;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

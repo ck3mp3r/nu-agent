@@ -38,12 +38,12 @@ use crate::protocol::events::{
     SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage, compaction_source_text,
 };
 use crate::session::tool_status::{ToolStatus, error_kind_of, status_of_result};
-use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::McpToolRegistry;
 use crate::types::ToolName;
 use agnt_kernel::bus::{CancelEvent, CancelRx, TryRecvError};
 use agnt_runtime::config::defaults;
 use agnt_runtime::llm::{PricedOutcome, PricingSkip, computed_cost};
+use agnt_runtime::tools::closure::ClosureRegistry;
+use agnt_runtime::tools::handler::McpToolRegistry;
 
 use super::agent_hook::{HookState, StopLedger};
 use super::circuit_breaker_guard::CircuitBreakerGuard;
@@ -110,7 +110,7 @@ pub(crate) struct NotRunCall<'a> {
     /// The tool's name.
     pub tool_name: &'a str,
     /// The tool's source.
-    pub source: crate::tools::handler::ToolSource,
+    pub source: agnt_runtime::tools::handler::ToolSource,
     /// The raw JSON arguments.
     pub arguments: &'a str,
     /// How `ToolStarted` reaches the bus.
@@ -385,7 +385,7 @@ impl<P: AsyncPermissionResolver> HookChain<P> {
     async fn emit_cancelled_dispatch(
         &self,
         tool_name: &str,
-        source: crate::tools::handler::ToolSource,
+        source: agnt_runtime::tools::handler::ToolSource,
         arguments: &str,
     ) {
         emit_not_run_dispatch(
@@ -625,7 +625,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
         let source = tool_name
             .as_deref()
             .map(|name| resolve_tool_source(name, &self.closure_registry, &self.mcp_registry))
-            .unwrap_or(crate::tools::handler::ToolSource::Unknown);
+            .unwrap_or(agnt_runtime::tools::handler::ToolSource::Unknown);
 
         let permission = self.permission.clone();
         let bus = self.bus.clone();
@@ -671,7 +671,7 @@ impl<P: AsyncPermissionResolver> AgentHook for HookChain<P> {
             // The call line comes from the render registry. A tool without a
             // registered render fn — a dynamic or MCP tool, or a builtin whose
             // fn was never registered — takes the documented fallback
-            // [`call_line_render_for`](crate::tools::handler::builtin_tool::call_line_render_for):
+            // [`call_line_render_for`](agnt_runtime::tools::handler::builtin_tool::call_line_render_for):
             // the builtin's tailored render when the name parses as a builtin
             // kind, otherwise the generic JSON summary
             // [`CallLine::from_json_summary`](crate::protocol::tool_args::CallLine::from_json_summary)
@@ -1287,7 +1287,7 @@ fn gate_card_for(
 ) -> Option<Option<String>> {
     let arguments: serde_json::Value = serde_json::from_str(arguments).ok()?;
     let kind = tool_name.parse::<agnt_kernel::BuiltinKind>().ok();
-    crate::tools::handler::pre_authorize_fs_tool(kind, arguments.as_object()?, cwd)
+    agnt_runtime::tools::handler::pre_authorize_fs_tool(kind, arguments.as_object()?, cwd)
         .map(|output| output.preview)
 }
 

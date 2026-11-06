@@ -43,7 +43,7 @@ fn test_construction_arch_9b_on_baseline() -> Result<()> {
     let loaded = ws
         .sources()
         .iter()
-        .any(|(label, _)| label == "agnt-core/src/tools/handler/http.rs");
+        .any(|(label, _)| label == "agnt-runtime/src/tools/handler/http.rs");
 
     // -- Exec
     let found = arch_9b_infrastructure_construction(&ws);

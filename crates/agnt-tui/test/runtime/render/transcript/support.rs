@@ -47,7 +47,7 @@ pub(super) fn assistant_entry(text: &str) -> TranscriptEntry {
 pub(super) fn tool_entry(name: &str, arguments: &str) -> TranscriptEntry {
     let call = ToolCall::new(
         ToolName(name.to_string()),
-        agnt_core::tools::handler::ToolSource::Unknown,
+        agnt_runtime::tools::handler::ToolSource::Unknown,
         arguments,
     );
     TranscriptEntry::Tool(ToolEntry {
@@ -63,7 +63,7 @@ pub(super) fn tool_entry(name: &str, arguments: &str) -> TranscriptEntry {
 pub(super) fn nu_tool_entry(code: &str) -> TranscriptEntry {
     let call = ToolCall::new(
         ToolName("nu".to_string()),
-        agnt_core::tools::handler::ToolSource::Unknown,
+        agnt_runtime::tools::handler::ToolSource::Unknown,
         format!(r#"{{"command":"{code}"}}"#),
     );
     TranscriptEntry::Tool(ToolEntry {

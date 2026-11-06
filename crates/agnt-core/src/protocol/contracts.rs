@@ -241,7 +241,7 @@ pub trait RuntimeAccess {
     fn mcp_caller_cwd(&self) -> Option<&std::path::Path>;
 
     /// The MCP servers' lifecycle projection.
-    fn mcp_lifecycle_projection(&self) -> &[crate::tools::mcp::runtime::McpServerLifecycle];
+    fn mcp_lifecycle_projection(&self) -> &[agnt_runtime::tools::mcp::runtime::McpServerLifecycle];
 
     /// The personas an agent switch can pick from.
     fn available_agent_summaries(&self) -> &[crate::protocol::persona::PersonaSummary];

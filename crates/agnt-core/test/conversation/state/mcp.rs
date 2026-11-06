@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::conversation::test_helpers::{mcp_server_config, mcp_tool, tool_definition_named};
-use crate::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::handler::McpToolRegistry;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

@@ -114,7 +114,7 @@ GIT_PAGER = ""
 "#,
         )
         .unwrap();
-        let parsed = agnt_core::tools::mcp::config::McpConfig::from_toml(&mcp_value)
+        let parsed = agnt_runtime::tools::mcp::config::McpConfig::from_toml(&mcp_value)
             .map_err(|e| format!("{e:?}"))?;
         assert_eq!(parsed.mcp.len(), 2);
 

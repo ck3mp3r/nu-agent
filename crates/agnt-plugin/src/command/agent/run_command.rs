@@ -18,9 +18,9 @@ use agnt_core::{
     },
     hooks::HookAgentContext,
     session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
-    tools::{closure::EngineInterfaceLike, handler::McpToolRegistry},
 };
 use agnt_runtime::config::defaults;
+use agnt_runtime::tools::{closure::EngineInterfaceLike, handler::McpToolRegistry};
 
 /// Run the `agent` command in pipeline mode.
 ///
@@ -110,7 +110,7 @@ pub(super) fn run_command(
     // pre-load window logged to the derived default, and the grammar cache
     // keeps the OS default until this install.
     agnt_runtime::logging::retarget_process_sink(&paths.log_path);
-    agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
+    agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
     let rig = agnt_core::session::RigStoreConfig::new(store_type)
         .with_store_path(paths.store_path.clone());
 
@@ -125,18 +125,18 @@ pub(super) fn run_command(
 
     // Extract tools from --tools flag and build ClosureRegistry
     let tools_map = extract_tools_from_call(call)?;
-    let mut closure_registry = agnt_core::tools::closure::ClosureRegistry::default();
+    let mut closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
     for (name, closure) in tools_map {
-        let params = agnt_core::tools::closure::resolve_closure_params(&closure, engine);
+        let params = agnt_runtime::tools::closure::resolve_closure_params(&closure, engine);
         closure_registry.register(
             name,
-            agnt_core::tools::closure::ResolvedClosure { closure, params },
+            agnt_runtime::tools::closure::ResolvedClosure { closure, params },
         );
     }
 
     let agents_config = plugin_config.agents.clone();
 
-    let mcp_config = agnt_core::tools::mcp::config::McpConfig::from_toml_config(&plugin_config)
+    let mcp_config = agnt_runtime::tools::mcp::config::McpConfig::from_toml_config(&plugin_config)
         .map_err(|err| LabeledError::new("Failed to load MCP config").with_label(err, call.head))?;
 
     // Load agent persona and resolve identity
@@ -203,7 +203,7 @@ pub(super) fn run_command(
             let caller_cwd_path = cwd.as_path();
 
             Some(
-                agnt_core::tools::mcp::runtime::connect_servers(
+                agnt_runtime::tools::mcp::runtime::connect_servers(
                     &tool_server_handle,
                     &mcp_config.mcp,
                     Some(caller_cwd_path),

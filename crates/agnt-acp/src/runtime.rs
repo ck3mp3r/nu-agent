@@ -21,17 +21,17 @@ use agnt_core::protocol::contracts::DecisionSource;
 use agnt_core::protocol::model_switching::ModelSwitching;
 use agnt_core::protocol::persona::{FsPersonaResolver, PersonaLister};
 use agnt_core::session::RigStoreConfig;
-use agnt_core::tools::authz::PermissionsConfig;
-use agnt_core::tools::closure::{ClosureRegistry, EngineInterfaceLike};
-use agnt_core::tools::handler::McpToolRegistry;
-use agnt_core::tools::handler::builtin_tool::register_builtin;
-use agnt_core::tools::mcp::client::McpToolDefinition;
-use agnt_core::tools::mcp::config::{McpConfig, McpServerConfig};
-use agnt_core::tools::mcp::runtime::connect_servers;
 use agnt_core::types::{
     Completion, DynModel, EmptyToolName, ToolAnnotations, ToolDefinition, ToolName,
 };
 use agnt_runtime::config::{AgentsConfig, Config, ModelsCache, defaults, load_and_resolve_config};
+use agnt_runtime::tools::authz::PermissionsConfig;
+use agnt_runtime::tools::closure::{ClosureRegistry, EngineInterfaceLike};
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::handler::builtin_tool::register_builtin;
+use agnt_runtime::tools::mcp::client::McpToolDefinition;
+use agnt_runtime::tools::mcp::config::{McpConfig, McpServerConfig};
+use agnt_runtime::tools::mcp::runtime::connect_servers;
 
 use crate::engine_stub::AcpEngineStub;
 use crate::error::{AcpError, Result};
@@ -260,7 +260,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
             def,
             cwd.clone(),
             max_tool_result_bytes,
-            bus.clone(),
+            bus.cancel(),
             &tool_server_handle,
         )
         .await;

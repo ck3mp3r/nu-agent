@@ -1,5 +1,5 @@
-use agnt_core::protocol::event::PermissionDecision;
 use agnt_core::protocol::events::{Key, SystemEvent};
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use crate::{
     interaction::{cancel::CancelController, input::TerminalEvent},

@@ -6,6 +6,7 @@ version.workspace = true
 [dependencies]
 agnt-core = { workspace = true }
 agnt-render = { workspace = true }
+agnt-runtime = { workspace = true }
 nu-protocol = { workspace = true }
 log = { workspace = true }
 textwrap = { workspace = true }

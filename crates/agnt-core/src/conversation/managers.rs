@@ -8,11 +8,11 @@
 use nu_protocol::LabeledError;
 
 use crate::conversation::providers::CachedProviderClient;
-use crate::tools::authz::PermissionsConfig;
-use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::McpToolRegistry;
 use crate::types::ToolDefinition;
 use agnt_runtime::config::{Config, PluginConfig};
+use agnt_runtime::tools::authz::PermissionsConfig;
+use agnt_runtime::tools::closure::ClosureRegistry;
+use agnt_runtime::tools::handler::McpToolRegistry;
 
 // ── ProviderManager ──────────────────────────────────────────────────────────
 

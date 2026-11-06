@@ -219,7 +219,7 @@ fn diff_tool_entry() -> TranscriptEntry {
         kind: ToolKind::Edit,
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            agnt_core::tools::handler::ToolSource::Unknown,
+            agnt_runtime::tools::handler::ToolSource::Unknown,
             r#"{"path":"src/main.rs"}"#,
         ),
         preview: None,

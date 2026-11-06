@@ -1,7 +1,7 @@
 //! Decision mapping: client outcome → `PermissionDecision`.
 
 use agent_client_protocol::schema::v1::RequestPermissionOutcome;
-use agnt_core::protocol::event::PermissionDecision;
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use super::support::*;
 use crate::permission::AcpPermissionBridge;

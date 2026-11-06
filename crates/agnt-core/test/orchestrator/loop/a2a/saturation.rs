@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::orchestrator::handlers::WORKER_BUSY_REASON;
-use crate::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
+use agnt_runtime::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
 
 // ---------------------------------------------------------------------------
 // Saturated worker command channel

@@ -7,15 +7,15 @@ use crate::conversation::runtime::AgentConversationRuntime;
 use crate::conversation::runtime_parts::RuntimeParts;
 use crate::hooks::HookAgentContext;
 use crate::protocol::persona::PersonaSummary;
-use crate::tools::authz::{PermissionsConfig, PermissionsOverlay};
-use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
-use crate::tools::handler::McpToolRegistry;
-use crate::tools::mcp::config::McpServerConfig;
-use crate::tools::mcp::runtime::{McpRuntime, McpServerLifecycle};
 use crate::types::ToolDefinition;
 use agnt_runtime::config::{
     AgentsConfig, CompactionConfig, Config, ModelRoleConfig, PluginConfig, vault::Vault,
 };
+use agnt_runtime::tools::authz::{PermissionsConfig, PermissionsOverlay};
+use agnt_runtime::tools::closure::{ClosureRegistry, EngineInterfaceLike};
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::mcp::config::McpServerConfig;
+use agnt_runtime::tools::mcp::runtime::{McpRuntime, McpServerLifecycle};
 use rig::DynModel;
 use rig::operation::Completion;
 use rig::tool::server::ToolServerHandle;

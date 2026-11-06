@@ -63,10 +63,12 @@ impl rig::tool::Tool for CancelSenderTool {
 /// The policy resolver the direct helper test builds its chain with.
 fn policy_resolver() -> PolicyPermissionResolver {
     PolicyPermissionResolver {
-        permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
-        session_grants: Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),
-        closure_registry: Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        mcp_registry: Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        permissions: Arc::new(agnt_runtime::tools::authz::PermissionsConfig::safe_defaults(false)),
+        session_grants: Arc::new(Mutex::new(
+            agnt_runtime::tools::authz::SessionGrantCache::default(),
+        )),
+        closure_registry: Arc::new(agnt_runtime::tools::closure::ClosureRegistry::default()),
+        mcp_registry: Arc::new(agnt_runtime::tools::handler::McpToolRegistry::empty()),
     }
 }
 
@@ -85,12 +87,12 @@ fn build_hook<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
             cwd: std::path::PathBuf::from("/tmp"),
         },
         permission,
-        Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        Arc::new(agnt_runtime::tools::closure::ClosureRegistry::default()),
+        Arc::new(agnt_runtime::tools::handler::McpToolRegistry::empty()),
         None,
         HookState {
             circuit_breaker: Arc::new(Mutex::new(
-                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
+                agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
             )),
             doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
             output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
@@ -136,7 +138,7 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
     // -- Exec
     hook.emit_cancelled_dispatch(
         "read",
-        crate::tools::handler::ToolSource::Builtin,
+        agnt_runtime::tools::handler::ToolSource::Builtin,
         "{\"path\":\"/tmp/f\"}",
     )
     .await;
@@ -150,7 +152,7 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
         SystemEvent::ToolStarted {
             call: ToolCall::new(
                 agnt_kernel::ToolName("read".to_string()),
-                crate::tools::handler::ToolSource::Builtin,
+                agnt_runtime::tools::handler::ToolSource::Builtin,
                 "{\"path\":\"/tmp/f\"}",
             ),
         },
@@ -165,7 +167,7 @@ async fn emit_cancelled_dispatch_publishes_started_then_failed_completed() -> Re
         SystemEvent::ToolCompleted {
             call: ToolCall::new(
                 agnt_kernel::ToolName("read".to_string()),
-                crate::tools::handler::ToolSource::Builtin,
+                agnt_runtime::tools::handler::ToolSource::Builtin,
                 "{\"path\":\"/tmp/f\"}",
             ),
             outcome: ToolOutcome {

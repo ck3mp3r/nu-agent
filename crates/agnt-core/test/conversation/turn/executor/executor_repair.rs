@@ -53,8 +53,8 @@ async fn cancelled_turn_with_a_tool_call_persists_the_closed_delta() -> Result<(
     let handle = rig::tool::server::ToolServer::new()
         .tool(super::test_utils::CancellingTool::new(bus.clone()))
         .run();
-    let closure_registry = crate::tools::closure::ClosureRegistry::default();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
+    let closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
+    let mcp_registry = agnt_runtime::tools::handler::McpToolRegistry::empty();
 
     let mut executor = TurnExecutor::new(
         &config,

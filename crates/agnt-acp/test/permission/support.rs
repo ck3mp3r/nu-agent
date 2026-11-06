@@ -9,7 +9,7 @@ use agent_client_protocol::schema::v1::{
 };
 use agnt_core::bus::{OneshotRx, OneshotTx};
 use agnt_core::conversation::runtime::PendingPermissions;
-use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
+use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
 
 use crate::permission::PermissionRequestSink;
 

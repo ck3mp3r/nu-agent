@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use crate::bus::Bus;
-use crate::tools::closure::EngineInterfaceLike;
+use agnt_runtime::tools::closure::EngineInterfaceLike;
 
 use super::state::{MemoryState, MultiAgentState, PersonaState, ProviderState, ToolState};
 

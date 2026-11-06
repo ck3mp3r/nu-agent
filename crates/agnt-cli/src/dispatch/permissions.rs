@@ -1,7 +1,7 @@
 //! clap-based permissions resolution for the CLI.
 
-use agnt_core::tools::authz::{PermissionsConfig, PermissionsOverlay};
 use agnt_runtime::config::PluginConfig;
+use agnt_runtime::tools::authz::{PermissionsConfig, PermissionsOverlay};
 
 // region:    --- Functions
 
@@ -20,12 +20,13 @@ pub fn resolve_effective_permissions_from_clap(
     Option<PermissionsOverlay>,
     String,
 ) {
-    let (base, effective, startup_message) = agnt_core::tools::authz::resolve_effective_permissions(
-        plugin_config,
-        agent_overlay,
-        None,
-        interactive,
-    );
+    let (base, effective, startup_message) =
+        agnt_runtime::tools::authz::resolve_effective_permissions(
+            plugin_config,
+            agent_overlay,
+            None,
+            interactive,
+        );
     (base, effective, None, startup_message)
 }
 

@@ -16,7 +16,7 @@ async fn bus_default_uses_no_metrics_and_preserves_fifo() -> Result<()> {
         .send(SystemEvent::ToolStarted {
             call: ToolCall::new(
                 ToolName("read".to_string()),
-                crate::tools::handler::ToolSource::Unknown,
+                agnt_runtime::tools::handler::ToolSource::Unknown,
                 "{}",
             ),
         })

@@ -15,8 +15,8 @@ use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::stages::permission::PermissionStage;
 use crate::orchestrator::stages::{OrchestrationContext, PermissionHandler};
 use crate::orchestrator::{UiRequestResponse, WorkerCommand};
-use crate::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
 use crate::protocol::events::SystemEvent;
+use agnt_runtime::protocol::event::{PermissionDecision, PermissionDecisionSubmission};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

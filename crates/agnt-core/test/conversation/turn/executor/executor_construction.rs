@@ -165,8 +165,8 @@ async fn last_total_tokens_updated_on_completed_turn() -> Result<()> {
 
     let shared_model = super::test_utils::shared_model_handle(model);
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::default();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
+    let closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
+    let mcp_registry = agnt_runtime::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let mut executor = TurnExecutor::new(
@@ -285,8 +285,8 @@ async fn compaction_fires_when_conversation_exceeds_window() -> Result<()> {
     let model_spy = model.clone();
     let shared_model = super::test_utils::shared_model_handle(model);
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::default();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
+    let closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
+    let mcp_registry = agnt_runtime::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
 
     let compaction_config = crate::conversation::compaction::CompactionConfig {
@@ -388,8 +388,8 @@ async fn on_outcome_stores_total_tokens() -> Result<()> {
     ]]);
     let shared_model = super::test_utils::shared_model_handle(model);
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::default();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
+    let closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
+    let mcp_registry = agnt_runtime::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new().run();
     let last_total_tokens = default_last_total_tokens();
 

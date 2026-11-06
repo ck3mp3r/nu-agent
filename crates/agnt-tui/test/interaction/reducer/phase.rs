@@ -262,14 +262,14 @@ fn completion_finalize_table() {
         SystemEvent::ToolStarted {
             call: ToolCall::new(
                 ToolName("k8s__list_pods".to_string()),
-                agnt_core::tools::handler::ToolSource::Mcp,
+                agnt_runtime::tools::handler::ToolSource::Mcp,
                 "{}",
             ),
         },
         SystemEvent::ToolCompleted {
             call: ToolCall::new(
                 ToolName("k8s__list_pods".to_string()),
-                agnt_core::tools::handler::ToolSource::Mcp,
+                agnt_runtime::tools::handler::ToolSource::Mcp,
                 "{}",
             ),
             outcome: ToolOutcome {

@@ -37,8 +37,8 @@ use crate::{
     },
 };
 use agnt_core::protocol::contracts::SharedUiAction;
-use agnt_core::protocol::event::PermissionDecision;
 use agnt_core::protocol::events::SystemEvent;
+use agnt_runtime::protocol::event::PermissionDecision;
 use ratatui::layout::Rect;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

@@ -9,7 +9,7 @@ fn active_tool_definitions_returns_empty_when_no_tools() {
     // Characterise active_tool_definitions (runtime.rs:753-759).
     // Delegates to handler::llm_visible_tool_definitions with the runtime's
     // tool_definitions, mcp_registry, and permissions.
-    use crate::tools::{
+    use agnt_runtime::tools::{
         authz::PermissionsConfig,
         handler::{self, McpToolRegistry},
     };
@@ -33,7 +33,7 @@ fn tool_state_active_definitions_empty_when_no_tools() {
     // Characterise active_tool_definitions: with empty tool_definitions,
     // the method delegates to handler::llm_visible_tool_definitions
     // and returns an empty Vec.
-    use crate::tools::{
+    use agnt_runtime::tools::{
         authz::PermissionsConfig,
         handler::{self, McpToolRegistry},
     };

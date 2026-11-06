@@ -160,7 +160,7 @@ pub(super) fn key(key: TerminalKey) -> DriveEvent {
 pub(super) fn push_entry(coord: &mut RuntimeCoordinator, status: Option<ItemStatus>) {
     let call = ToolCall::new(
         ToolName("read".to_string()),
-        agnt_core::tools::handler::ToolSource::Unknown,
+        agnt_runtime::tools::handler::ToolSource::Unknown,
         "{}",
     );
     let entry = TranscriptEntry::Tool(ToolEntry {

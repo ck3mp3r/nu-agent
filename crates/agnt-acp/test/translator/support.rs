@@ -10,10 +10,10 @@ use agent_client_protocol::schema::v1::{
 };
 use agnt_core::bus::{OneshotRx, OneshotTx};
 use agnt_core::conversation::runtime::PendingPermissions;
-use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
 use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolOutcome};
 use agnt_core::session::tool_status::ToolStatus;
 use agnt_render::transcript::ir::ToolName;
+use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
 
 use crate::error::AcpError;
 use crate::permission::{AcpPermissionBridge, PermissionRequestSink};
@@ -29,7 +29,7 @@ pub fn tool_started(name: &str, arguments: &str) -> SystemEvent {
     SystemEvent::ToolStarted {
         call: ToolCall::new(
             ToolName(name.to_string()),
-            agnt_core::tools::handler::ToolSource::Builtin,
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             arguments,
         ),
     }
@@ -39,7 +39,7 @@ pub fn tool_completed(name: &str, arguments: &str, success: bool) -> SystemEvent
     SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName(name.to_string()),
-            agnt_core::tools::handler::ToolSource::Builtin,
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             arguments,
         ),
         outcome: ToolOutcome {

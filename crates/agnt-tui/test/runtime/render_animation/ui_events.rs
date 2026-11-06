@@ -214,7 +214,7 @@ fn ui_event_permission_group() -> Result<()> {
     preview.reduce_system_event(SystemEvent::ToolStarted {
         call: agnt_core::protocol::events::ToolCall::new(
             agnt_render::transcript::ir::ToolName("edit".to_string()),
-            agnt_core::tools::handler::ToolSource::Unknown,
+            agnt_runtime::tools::handler::ToolSource::Unknown,
             r#"{"path":"a.rs"}"#,
         ),
     });

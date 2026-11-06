@@ -1,7 +1,7 @@
 use super::*;
 
 use agnt_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
-use agnt_core::tools::mcp::runtime::McpServerLifecycle;
+use agnt_runtime::tools::mcp::runtime::McpServerLifecycle;
 
 /// The TUI renderer surface for the command layer: owns the runtime coordinator
 /// and the live terminal, and forwards the projections the startup path pushes

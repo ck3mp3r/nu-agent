@@ -15,8 +15,8 @@ use super::executor_test_support::*;
 use super::test_utils::{MockResolver, message_text, test_compaction_config, test_config};
 use super::*;
 use crate::protocol::events::{SystemEvent, SystemKind};
-use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::closure::ClosureRegistry;
+use agnt_runtime::tools::handler::McpToolRegistry;
 use agnt_runtime::utils::value_ext::extract_response_text_from_value;
 
 // region:    --- Modules

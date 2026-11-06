@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::tools::authz::{PermissionAction, PermissionDecision, PermissionRuleMatch};
+use agnt_runtime::tools::authz::{PermissionAction, PermissionDecision, PermissionRuleMatch};
 
 /// Tool-call arguments as rig 0.44 carries them: a JSON object map.
 macro_rules! args_map {

@@ -37,8 +37,8 @@ async fn path_b_cancel_preserves_tool_calls_via_last_known_history() -> Result<(
     use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
     use crate::bus::CancelEvent;
-    use crate::tools::closure::ClosureRegistry;
-    use crate::tools::handler::McpToolRegistry;
+    use agnt_runtime::tools::closure::ClosureRegistry;
+    use agnt_runtime::tools::handler::McpToolRegistry;
 
     // -- cancelling tool (fires cancel after producing its result) ----------
     struct CancellingTool {

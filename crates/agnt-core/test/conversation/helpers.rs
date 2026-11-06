@@ -1,8 +1,8 @@
-use crate::tools::mcp::{
+use crate::types::{EmptyToolName, ToolDefinition, ToolName};
+use agnt_runtime::tools::mcp::{
     client::McpToolDefinition,
     config::{McpAuthConfig, McpServerConfig, McpTransportType},
 };
-use crate::types::{EmptyToolName, ToolDefinition, ToolName};
 
 pub fn mcp_tool(server: &str, name: &str, raw_name: &str) -> McpToolDefinition {
     McpToolDefinition {

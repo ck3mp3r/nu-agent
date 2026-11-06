@@ -102,12 +102,12 @@ pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissi
             cwd: std::path::PathBuf::from("/tmp"),
         },
         permission,
-        Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        Arc::new(agnt_runtime::tools::closure::ClosureRegistry::default()),
+        Arc::new(agnt_runtime::tools::handler::McpToolRegistry::empty()),
         None,
         HookState {
             circuit_breaker: Arc::new(Mutex::new(
-                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
+                agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
             )),
             doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
             output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
@@ -165,7 +165,7 @@ impl RepetitionTurnFixture {
             dyn_model: dyn_model.clone(),
             hook_state: HookState {
                 circuit_breaker: Arc::new(std::sync::Mutex::new(
-                    crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
+                    agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
                 )),
                 doom_state: Arc::new(std::sync::Mutex::new(DoomLoopState::default())),
                 output_repetition: Arc::new(std::sync::Mutex::new(RepetitionState::default())),
@@ -218,15 +218,17 @@ impl RepetitionTurnFixture {
                 cwd: std::path::PathBuf::from("/tmp"),
             },
             PolicyPermissionResolver {
-                permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
+                permissions: Arc::new(
+                    agnt_runtime::tools::authz::PermissionsConfig::safe_defaults(false),
+                ),
                 session_grants: Arc::new(std::sync::Mutex::new(
-                    crate::tools::authz::SessionGrantCache::default(),
+                    agnt_runtime::tools::authz::SessionGrantCache::default(),
                 )),
-                closure_registry: Arc::new(crate::tools::closure::ClosureRegistry::default()),
-                mcp_registry: Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+                closure_registry: Arc::new(agnt_runtime::tools::closure::ClosureRegistry::default()),
+                mcp_registry: Arc::new(agnt_runtime::tools::handler::McpToolRegistry::empty()),
             },
-            Arc::new(crate::tools::closure::ClosureRegistry::default()),
-            Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+            Arc::new(agnt_runtime::tools::closure::ClosureRegistry::default()),
+            Arc::new(agnt_runtime::tools::handler::McpToolRegistry::empty()),
             None,
             HookState {
                 circuit_breaker: self.hook_state.circuit_breaker.clone(),

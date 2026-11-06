@@ -2,8 +2,8 @@
 //! ACP equivalent.
 
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
-use agnt_core::protocol::event::PermissionDecision;
 use agnt_core::protocol::events::{RequestId, SystemEvent, SystemKind, Usage};
+use agnt_runtime::protocol::event::PermissionDecision;
 
 use super::support::*;
 use crate::translator::EventTranslator;
@@ -291,7 +291,7 @@ fn test_translator_tool_preview_produces_none() -> Result<()> {
     let event = SystemEvent::PreviewRequested {
         call: agnt_core::protocol::events::ToolCall::new(
             agnt_render::transcript::ir::ToolName("edit".to_string()),
-            agnt_core::tools::handler::ToolSource::Builtin,
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             "{}",
         ),
         preview: None,

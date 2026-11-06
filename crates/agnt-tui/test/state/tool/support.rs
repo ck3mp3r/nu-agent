@@ -7,7 +7,6 @@ pub(super) use crate::interaction::reducer::{apply_permission_request_display, r
 pub(super) use crate::state::{AppState, PermissionPrompt};
 pub(super) use crate::test_support::entry_text;
 pub(super) use agnt_core::protocol::contracts::UiMessageSnapshot;
-pub(super) use agnt_core::protocol::event::PermissionRequestContext;
 pub(super) use agnt_core::protocol::events::{SystemEvent, ToolCall, ToolCallId, ToolOutcome};
 pub(super) use agnt_core::session::tool_status::ToolStatus;
 pub(super) use agnt_render::tool_view::ToolView;
@@ -18,6 +17,7 @@ pub(super) use agnt_render::transcript::ir::{
     ContentKind, DiffTint, Display, DisplaySection, MessageRole,
 };
 pub(super) use agnt_render::transcript::renderer::ItemStatus;
+pub(super) use agnt_runtime::protocol::event::PermissionRequestContext;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -127,7 +127,7 @@ pub(super) fn started(name: &str, arguments: &str) -> SystemEvent {
     SystemEvent::ToolStarted {
         call: ToolCall::new(
             ToolName(name.to_string()),
-            agnt_core::tools::handler::ToolSource::Mcp,
+            agnt_runtime::tools::handler::ToolSource::Mcp,
             arguments,
         ),
     }
@@ -136,7 +136,7 @@ pub(super) fn started(name: &str, arguments: &str) -> SystemEvent {
 /// A `ToolCompleted` event with an explicit source and outcome.
 pub(super) fn completed_with(
     name: &str,
-    source: agnt_core::tools::handler::ToolSource,
+    source: agnt_runtime::tools::handler::ToolSource,
     arguments: &str,
     outcome: ToolOutcome,
 ) -> SystemEvent {
@@ -155,7 +155,7 @@ pub(super) fn reduce_ui(state: &mut AppState, event: SystemEvent) -> bool {
 pub(super) fn tool_call(name: &str, arguments: &str) -> ToolCall {
     ToolCall::new(
         ToolName(name.to_string()),
-        agnt_core::tools::handler::ToolSource::Mcp,
+        agnt_runtime::tools::handler::ToolSource::Mcp,
         arguments,
     )
 }
@@ -189,7 +189,7 @@ pub(super) fn complete_with_result(
         state,
         completed_with(
             name,
-            agnt_core::tools::handler::ToolSource::Closure,
+            agnt_runtime::tools::handler::ToolSource::Closure,
             arguments,
             outcome_of(ToolStatus::Success, result, None),
         ),

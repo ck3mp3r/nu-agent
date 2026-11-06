@@ -1,6 +1,6 @@
 //! MCP merge and MCP tool-definition mapping tests for `build_acp_runtime()`.
 
-use agnt_core::tools::mcp::client::McpToolDefinition;
+use agnt_runtime::tools::mcp::client::McpToolDefinition;
 
 use super::runtime_support::*;
 use super::*;

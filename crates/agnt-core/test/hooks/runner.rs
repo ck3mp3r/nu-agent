@@ -89,7 +89,7 @@ async fn test_hooks_runner_tool_started_invokes_with_payload() -> Result<()> {
         .send(SystemEvent::ToolStarted {
             call: ToolCall::new(
                 ToolName("read".to_string()),
-                crate::tools::handler::ToolSource::Builtin,
+                agnt_runtime::tools::handler::ToolSource::Builtin,
                 "{\"path\":\"a.txt\"}",
             ),
         })
@@ -122,7 +122,7 @@ async fn test_hooks_runner_tool_completed_invokes_with_payload() -> Result<()> {
         .send(SystemEvent::ToolCompleted {
             call: ToolCall::new(
                 ToolName("read".to_string()),
-                crate::tools::handler::ToolSource::Builtin,
+                agnt_runtime::tools::handler::ToolSource::Builtin,
                 "{}",
             ),
             outcome: ToolOutcome {

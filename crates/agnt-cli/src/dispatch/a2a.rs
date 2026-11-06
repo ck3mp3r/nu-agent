@@ -21,11 +21,11 @@ use agnt_core::hooks::HookAgentContext;
 use agnt_core::session::resolver::{
     DefaultSessionResolver, SessionResolutionInput, SessionResolver,
 };
-use agnt_core::tools::closure::{ClosureRegistry, CwdEngine};
-use agnt_core::tools::handler::McpToolRegistry;
-use agnt_core::tools::mcp::config::McpConfig;
 use agnt_core::types::ToolServer;
 use agnt_runtime::config::defaults;
+use agnt_runtime::tools::closure::{ClosureRegistry, CwdEngine};
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::mcp::config::McpConfig;
 use nu_protocol::Span;
 
 use crate::A2aArgs;
@@ -88,7 +88,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
     // pre-load window logged to the derived default, and the grammar cache
     // keeps the OS default until this install.
     agnt_runtime::logging::retarget_process_sink(&paths.log_path);
-    agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
+    agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
     let theme_path = paths.theme_path.clone();
     let rig = agnt_core::session::RigStoreConfig::new(store_type)
         .with_store_path(paths.store_path.clone());
@@ -196,7 +196,7 @@ pub async fn run_a2a(args: &AgentArgs, a2a: &A2aArgs) -> Result<()> {
         None
     } else {
         Some(
-            agnt_core::tools::mcp::runtime::connect_servers(
+            agnt_runtime::tools::mcp::runtime::connect_servers(
                 &tool_server_handle,
                 &mcp_config.mcp,
                 Some(cwd.as_path()),

@@ -24,8 +24,8 @@ use agnt_kernel::CompactionSource;
 
 use super::test_shared::*;
 use crate::protocol::contracts::ProgressUi;
-use crate::protocol::event::PermissionDecisionSubmission;
 use crate::protocol::events::{RequestId, SystemEvent, ToolCall, ToolOutcome};
 use agnt_kernel::ToolName;
+use agnt_runtime::protocol::event::PermissionDecisionSubmission;
 
 type TResult = core::result::Result<(), Box<dyn std::error::Error>>;

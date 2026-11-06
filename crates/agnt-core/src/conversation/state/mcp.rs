@@ -1,13 +1,13 @@
 use crate::protocol::contracts::McpUsabilityState;
 use std::sync::Arc;
 
-use crate::tools::handler::McpToolRegistry;
-use crate::tools::mcp::{
+use crate::types::ToolDefinition;
+use agnt_runtime::config::vault::Vault;
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::mcp::{
     config::McpServerConfig,
     runtime::{McpRuntime, McpServerLifecycle},
 };
-use crate::types::ToolDefinition;
-use agnt_runtime::config::vault::Vault;
 
 use super::super::mcp_helpers::{
     rebuild_mcp_lifecycle_projection, stage_enabled_mcp_runtime_state,
@@ -134,7 +134,7 @@ impl McpState {
             })
             .collect();
 
-        match crate::tools::mcp::runtime::connect_servers(
+        match agnt_runtime::tools::mcp::runtime::connect_servers(
             tool_server_handle,
             &single_server_config,
             self.mcp_caller_cwd.as_deref(),

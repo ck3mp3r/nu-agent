@@ -157,7 +157,7 @@ fn permission_event_requested_opens_permission_prompt() -> Result<()> {
     let mut ui = make_ui();
     let event = SystemEvent::PermissionRequested {
         request_id: agnt_core::protocol::events::RequestId::new("ask-0000000000000001"),
-        context: agnt_core::protocol::event::PermissionRequestContext {
+        context: agnt_runtime::protocol::event::PermissionRequestContext {
             tool: "nu(command=echo hi)".to_string(),
             tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
             source: "closure".to_string(),

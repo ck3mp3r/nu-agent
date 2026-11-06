@@ -102,7 +102,7 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
             &mut completed,
             completed_with(
                 "gh__get_pr",
-                agnt_core::tools::handler::ToolSource::Mcp,
+                agnt_runtime::tools::handler::ToolSource::Mcp,
                 r#"{"number":1}"#,
                 ToolOutcome {
                     success: matches!(status, ToolStatus::Success),
@@ -147,7 +147,7 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
         &mut summary,
         completed_with(
             "k8s__list_pods",
-            agnt_core::tools::handler::ToolSource::Mcp,
+            agnt_runtime::tools::handler::ToolSource::Mcp,
             r#"{"namespace":"prod"}"#,
             ToolOutcome {
                 success: true,
@@ -189,7 +189,7 @@ fn tool_row_lifecycle_and_status_bookkeeping() -> Result<()> {
             &mut state,
             completed_with(
                 name,
-                agnt_core::tools::handler::ToolSource::Builtin,
+                agnt_runtime::tools::handler::ToolSource::Builtin,
                 "{}",
                 ToolOutcome {
                     success: true,
@@ -264,7 +264,7 @@ fn cancelled_completed_renders_glyph_only() -> Result<()> {
             &mut state,
             completed_with(
                 "read",
-                agnt_core::tools::handler::ToolSource::Builtin,
+                agnt_runtime::tools::handler::ToolSource::Builtin,
                 r#"{"path":"/tmp/f"}"#,
                 ToolOutcome {
                     success: false,
@@ -291,7 +291,7 @@ fn cancelled_completed_renders_glyph_only() -> Result<()> {
         &mut state,
         completed_with(
             "read",
-            agnt_core::tools::handler::ToolSource::Builtin,
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             r#"{"path":"/tmp/f"}"#,
             ToolOutcome {
                 success: false,

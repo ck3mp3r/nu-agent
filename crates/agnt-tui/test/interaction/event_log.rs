@@ -8,12 +8,12 @@
 use crate::interaction::{cancel::CancelController, reducer::reduce};
 use crate::state::{AppState, InputMode, UiPhase};
 use agnt_core::orchestrator::OrchestratorEvent;
-use agnt_core::protocol::event::{PermissionDecision, PermissionRequestContext};
 use agnt_core::protocol::events::{Key, RequestId, SystemEvent, ToolCall, ToolOutcome, Usage};
 use agnt_core::session::tool_status::ToolStatus;
 use agnt_render::transcript::entry::TranscriptEntry;
 use agnt_render::transcript::ir::{MessageRole, ToolName};
 use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -22,7 +22,7 @@ pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 fn edit_call(arguments: &str) -> ToolCall {
     ToolCall::new(
         ToolName("edit".to_string()),
-        agnt_core::tools::handler::ToolSource::Closure,
+        agnt_runtime::tools::handler::ToolSource::Closure,
         arguments,
     )
 }

@@ -281,7 +281,7 @@ fn tool_entry_with_status(
         kind: ToolKind::Generic,
         call: ToolCall::new(
             ToolName(name.to_string()),
-            agnt_core::tools::handler::ToolSource::Unknown,
+            agnt_runtime::tools::handler::ToolSource::Unknown,
             arguments,
         ),
         preview,

@@ -248,7 +248,7 @@ fn accessor_mcp_caller_cwd_returns_none_when_default() {
 
 #[test]
 fn accessor_mcp_lifecycle_projection_returns_empty_when_default() {
-    use crate::tools::mcp::runtime::McpServerLifecycle;
+    use agnt_runtime::tools::mcp::runtime::McpServerLifecycle;
 
     let projection: Vec<McpServerLifecycle> = vec![];
     assert!(projection.is_empty());

@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use crate::tools::authz::{PermissionsConfig, PermissionsOverlay, SessionGrantCache};
+use agnt_runtime::tools::authz::{PermissionsConfig, PermissionsOverlay, SessionGrantCache};
 
 /// Tracks effective permissions state, the base config (without persona overlays),
 /// and the CLI overlay so that agent persona switches preserve the correct precedence:

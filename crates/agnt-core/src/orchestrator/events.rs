@@ -6,10 +6,10 @@ use tokio::sync::mpsc;
 
 use crate::protocol::{
     contracts::{McpUsabilityState, SharedUiAction, UiMessageSnapshot},
-    event::PermissionDecisionSubmission,
     persona::PersonaSummary,
 };
 use crate::session::SessionInfo;
+use agnt_runtime::protocol::event::PermissionDecisionSubmission;
 
 pub type McpToggleResult = (
     Result<McpUsabilityState, String>,

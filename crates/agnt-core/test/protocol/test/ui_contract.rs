@@ -23,14 +23,14 @@ fn system_event_contract() {
         SystemEvent::ToolStarted {
             call: ToolCall::new(
                 ToolName("k8s__list_pods".to_string()),
-                crate::tools::handler::ToolSource::Mcp,
+                agnt_runtime::tools::handler::ToolSource::Mcp,
                 "{}",
             ),
         },
         SystemEvent::ToolCompleted {
             call: ToolCall::new(
                 ToolName("k8s__list_pods".to_string()),
-                crate::tools::handler::ToolSource::Mcp,
+                agnt_runtime::tools::handler::ToolSource::Mcp,
                 "{}",
             ),
             outcome: ToolOutcome {
@@ -44,7 +44,7 @@ fn system_event_contract() {
         SystemEvent::PreviewRequested {
             call: ToolCall::new(
                 ToolName("nu".to_string()),
-                crate::tools::handler::ToolSource::Closure,
+                agnt_runtime::tools::handler::ToolSource::Closure,
                 "{\"command\":\"echo hi\"}",
             ),
             preview: Some("echo hi".to_string()),

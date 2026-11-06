@@ -8,8 +8,8 @@ use nu_protocol::Span;
 use crate::bus::{CompactionTx, UiEventTx, UiStateTx};
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::{UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome};
-use crate::protocol::event::PermissionDecisionSubmission;
 use agnt_kernel::bus::{CancelTx, SessionTx, TurnTx};
+use agnt_runtime::protocol::event::PermissionDecisionSubmission;
 
 /// Shared state passed to every stage on each poll iteration.
 pub(crate) struct OrchestrationContext<'a> {

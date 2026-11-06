@@ -8,14 +8,14 @@ use nu_protocol::{LabeledError, Span, Value};
 use crate::hook::agent_hook::DoomLoopState;
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::SessionInfo;
-use crate::tools::closure::EngineInterfaceLike;
-use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use agnt_kernel::bus::{OneshotTx, SessionEvent};
+use agnt_runtime::tools::closure::EngineInterfaceLike;
+use agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 use super::managers::{
     MultiAgentManager, PersonaManager, ProviderManager, SessionManager, ToolManager,
 };
-use crate::protocol::event::PermissionDecision as ProtocolPermissionDecision;
+use agnt_runtime::protocol::event::PermissionDecision as ProtocolPermissionDecision;
 
 /// Shared pending-permission map for TUI mode: maps request IDs to oneshot senders
 /// that unblock the `InteractivePermissionResolver` awaiting a user decision.
@@ -1059,7 +1059,9 @@ where
         self.mcp_state.mcp_caller_cwd()
     }
 
-    pub fn mcp_lifecycle_projection(&self) -> &[crate::tools::mcp::runtime::McpServerLifecycle] {
+    pub fn mcp_lifecycle_projection(
+        &self,
+    ) -> &[agnt_runtime::tools::mcp::runtime::McpServerLifecycle] {
         self.mcp_state.mcp_lifecycle_projection()
     }
 
@@ -1181,12 +1183,12 @@ where
     }
 
     /// The permission policy in force.
-    pub fn permissions(&self) -> &crate::tools::authz::PermissionsConfig {
+    pub fn permissions(&self) -> &agnt_runtime::tools::authz::PermissionsConfig {
         self.permission_state.permissions()
     }
 
     /// The session's grant cache, shared with the policy in force.
-    pub fn session_grants(&self) -> Arc<Mutex<crate::tools::authz::SessionGrantCache>> {
+    pub fn session_grants(&self) -> Arc<Mutex<agnt_runtime::tools::authz::SessionGrantCache>> {
         self.permission_state.session_grants_arc()
     }
 
@@ -1403,7 +1405,7 @@ impl AgentConversationRuntime {
                 config.base_permissions,
                 config.effective_permissions,
                 config.cli_permissions_overlay,
-                crate::tools::authz::SessionGrantCache::default(),
+                agnt_runtime::tools::authz::SessionGrantCache::default(),
                 config.permissions_startup_summary,
             ),
             session,
@@ -1486,7 +1488,7 @@ impl crate::protocol::contracts::RuntimeAccess for AgentConversationRuntime {
         Self::mcp_caller_cwd(self)
     }
 
-    fn mcp_lifecycle_projection(&self) -> &[crate::tools::mcp::runtime::McpServerLifecycle] {
+    fn mcp_lifecycle_projection(&self) -> &[agnt_runtime::tools::mcp::runtime::McpServerLifecycle] {
         Self::mcp_lifecycle_projection(self)
     }
 

@@ -5,9 +5,9 @@ use rig::tool::{ToolExecutionError, ToolResult};
 
 use super::*;
 use crate::bus::create_bus;
-use crate::tools::handler::McpToolRegistry;
-use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
-use crate::tools::mcp::client::McpToolDefinition;
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker;
+use agnt_runtime::tools::mcp::client::McpToolDefinition;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

@@ -2,8 +2,8 @@
 
 use super::*;
 
-use crate::tools::audit::AuditLogger;
-use crate::tools::closure::{ClosureParameter, EngineInterfaceLike};
+use agnt_runtime::tools::audit::AuditLogger;
+use agnt_runtime::tools::closure::{ClosureParameter, EngineInterfaceLike};
 use nu_protocol::engine::Closure;
 use nu_protocol::{BlockId, Span, Spanned};
 use std::sync::Mutex;

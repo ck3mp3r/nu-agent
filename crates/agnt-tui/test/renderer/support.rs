@@ -229,7 +229,7 @@ pub(crate) fn tool_entry(
         kind: ToolKind::from_name(&ToolName(name.to_string())),
         call: ToolCall::new(
             ToolName(name.to_string()),
-            agnt_core::tools::handler::ToolSource::Unknown,
+            agnt_runtime::tools::handler::ToolSource::Unknown,
             arguments,
         ),
         preview,

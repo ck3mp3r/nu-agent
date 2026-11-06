@@ -36,8 +36,8 @@ use super::slash::{
     filter_inline_slash_suggestions, parse_slash_command,
 };
 
-use crate::protocol::event::{PermissionDecision, PermissionRequestContext};
 use crate::protocol::events::{RequestId, SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage};
 use agnt_kernel::ToolName;
+use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

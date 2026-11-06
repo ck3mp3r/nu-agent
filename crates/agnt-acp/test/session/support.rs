@@ -25,14 +25,14 @@ pub(super) use agnt_core::conversation::state::{
     MemoryState, MultiAgentState, PersonaState, ProviderState, ToolState,
 };
 pub(super) use agnt_core::protocol::contracts::DecisionSource;
-pub(super) use agnt_core::protocol::event::PermissionDecision;
 pub(super) use agnt_core::protocol::events::SystemEvent;
 pub(super) use agnt_core::session::{RigStoreConfig, StoreType};
-pub(super) use agnt_core::tools::authz::PermissionsConfig;
-pub(super) use agnt_core::tools::closure::ClosureRegistry;
-pub(super) use agnt_core::tools::handler::McpToolRegistry;
 pub(super) use agnt_core::types::{Message, MockCompletionModel};
 pub(super) use agnt_runtime::config::{AgentsConfig, Config, ModelsCache};
+pub(super) use agnt_runtime::protocol::event::PermissionDecision;
+pub(super) use agnt_runtime::tools::authz::PermissionsConfig;
+pub(super) use agnt_runtime::tools::closure::ClosureRegistry;
+pub(super) use agnt_runtime::tools::handler::McpToolRegistry;
 pub(super) use rig::test_utils::MockStreamEvent;
 
 use super::super::*;
@@ -163,7 +163,7 @@ impl RuntimeBuilder for MockRuntimeBuilder {
         };
         let provider =
             ProviderState::with_client(config.clone(), CachedProviderClient::Mock(model));
-        let engine: Arc<dyn agnt_core::tools::closure::EngineInterfaceLike> =
+        let engine: Arc<dyn agnt_runtime::tools::closure::EngineInterfaceLike> =
             Arc::new(crate::AcpEngineStub::new(cwd.to_string_lossy().to_string()));
         // The composed runtime derives the compaction threshold from the active
         // config, so the builder states its token count as the fraction of that

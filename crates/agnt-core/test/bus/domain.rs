@@ -3,9 +3,9 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use crate::bus::{RequestCancel, RequestPermission, UiEventTx, create_bus};
-use crate::protocol::event::PermissionRequestContext;
 use crate::protocol::events::SystemEvent;
 use agnt_kernel::bus::{CancelEvent, CancelTx, ChannelError};
+use agnt_runtime::protocol::event::PermissionRequestContext;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

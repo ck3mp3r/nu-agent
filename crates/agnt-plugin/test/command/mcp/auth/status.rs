@@ -1,7 +1,7 @@
 use oauth2::{AccessToken, basic::BasicTokenType};
 use rmcp::transport::auth::{OAuthTokenResponse, StoredCredentials, VendorExtraTokenFields};
 
-use agnt_core::tools::mcp::config::McpAuthConfig;
+use agnt_runtime::tools::mcp::config::McpAuthConfig;
 
 use super::status::determine_status;
 

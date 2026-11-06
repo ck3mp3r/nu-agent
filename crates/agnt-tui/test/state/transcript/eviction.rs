@@ -14,7 +14,7 @@ fn started(name: &str, arguments: &str) -> SystemEvent {
     SystemEvent::ToolStarted {
         call: ToolCall::new(
             ToolName(name.to_string()),
-            agnt_core::tools::handler::ToolSource::Mcp,
+            agnt_runtime::tools::handler::ToolSource::Mcp,
             arguments,
         ),
     }
@@ -25,7 +25,7 @@ fn completed(name: &str, arguments: &str) -> SystemEvent {
     SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName(name.to_string()),
-            agnt_core::tools::handler::ToolSource::Closure,
+            agnt_runtime::tools::handler::ToolSource::Closure,
             arguments,
         ),
         outcome: ToolOutcome {

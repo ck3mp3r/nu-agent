@@ -5,11 +5,11 @@ use nu_protocol::{LabeledError, Span};
 
 use crate::bus::Bus;
 use crate::protocol::persona::PersonaSummary;
-use crate::tools::audit::AuditLogger;
-use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
-use crate::tools::executor::ToolExecutor;
 use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
 use agnt_runtime::config::CompactionConfig;
+use agnt_runtime::tools::audit::AuditLogger;
+use agnt_runtime::tools::closure::{ClosureRegistry, EngineInterfaceLike};
+use agnt_runtime::tools::executor::ToolExecutor;
 use rig::tool::server::ToolServerHandle;
 use serde_json::json;
 
@@ -440,7 +440,7 @@ pub struct ToolAssembly {
 pub fn assemble_tool_definitions(
     closure_registry: &ClosureRegistry,
     agents_config: &agnt_runtime::config::AgentsConfig,
-    discovered_mcp_tools: &[crate::tools::mcp::client::McpToolDefinition],
+    discovered_mcp_tools: &[agnt_runtime::tools::mcp::client::McpToolDefinition],
     cwd: &std::path::Path,
     agents_dir: &std::path::Path,
     a2a_enabled: bool,
@@ -449,7 +449,7 @@ pub fn assemble_tool_definitions(
         .names()
         .filter_map(|name| {
             let resolved = closure_registry.get(name)?;
-            Some(crate::tools::closure::closure_to_tool_definition(
+            Some(agnt_runtime::tools::closure::closure_to_tool_definition(
                 name.clone(),
                 &resolved.params,
                 None,
@@ -627,11 +627,11 @@ impl<'a> AgentRuntimeBuilder<'a> {
         })?;
 
         for def in builtin_defs {
-            crate::tools::handler::builtin_tool::register_builtin(
+            agnt_runtime::tools::handler::builtin_tool::register_builtin(
                 def,
                 cwd.clone(),
                 max_tool_result_bytes,
-                bus.clone(),
+                bus.cancel(),
                 tool_server_handle,
             )
             .await;

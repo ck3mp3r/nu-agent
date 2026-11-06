@@ -68,7 +68,7 @@ pub(super) fn rendered_row_count(markdown: &str, width: usize) -> usize {
 pub(super) fn simple_tool_entry() -> TranscriptEntry {
     let call = ToolCall::new(
         ToolName("read".to_string()),
-        agnt_core::tools::handler::ToolSource::Unknown,
+        agnt_runtime::tools::handler::ToolSource::Unknown,
         "",
     );
     TranscriptEntry::Tool(ToolEntry {

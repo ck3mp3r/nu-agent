@@ -24,7 +24,7 @@ fn tool_display_renders_diff_with_stats() {
     renderer.emit(&SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            agnt_core::tools::handler::ToolSource::Unknown,
+            agnt_runtime::tools::handler::ToolSource::Unknown,
             r#"{"path":"test.rs"}"#,
         ),
         outcome: ToolOutcome {

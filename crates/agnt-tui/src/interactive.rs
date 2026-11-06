@@ -79,7 +79,7 @@ impl TuiInteractiveUi {
 
     pub fn set_mcp_lifecycle_projection(
         &mut self,
-        projection: Vec<agnt_core::tools::mcp::runtime::McpServerLifecycle>,
+        projection: Vec<agnt_runtime::tools::mcp::runtime::McpServerLifecycle>,
     ) {
         self.renderer.set_mcp_lifecycle_projection(projection);
     }

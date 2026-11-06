@@ -18,8 +18,8 @@ use super::*;
 use crate::hook::doom_loop::DOOM_LOOP_STOP_PREFIX;
 use crate::hook::output_repetition::{OUTPUT_REPETITION_BACKOFF_MESSAGE, RepetitionState};
 use crate::protocol::events::{SystemEvent, SystemKind};
-use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::closure::ClosureRegistry;
+use agnt_runtime::tools::handler::McpToolRegistry;
 use agnt_runtime::utils::value_ext::extract_response_text_from_value;
 
 // region:    --- Modules

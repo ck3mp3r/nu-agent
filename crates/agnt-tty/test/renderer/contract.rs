@@ -78,7 +78,7 @@ impl UiRenderer for FakeRenderer {
 fn tool_call(name: &str) -> ToolCall {
     ToolCall::new(
         ToolName(name.to_string()),
-        agnt_core::tools::handler::ToolSource::Closure,
+        agnt_runtime::tools::handler::ToolSource::Closure,
         "{}",
     )
 }

@@ -44,7 +44,7 @@ pub const ARCH_12: &str = "ARCH-12";
 /// not come from.
 ///
 /// ARCH-4's row holds every `pub enum` whose name another `pub enum` also
-/// carries: six distinctions, fourteen declarations. Merging any pair is a
+/// carries: six distinctions, thirteen declarations. Merging any pair is a
 /// later slice's claim (`7e4f330c` drains `ToolErrorKind`), and its baseline
 /// entry is removed with it.
 ///
@@ -54,15 +54,14 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
     (
         ARCH_4,
         &[
-            "ARCH-4 agnt-kernel/src/records.rs:356: `NoticeKind` is declared 2 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:367: `NoticeKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-render/src/transcript/ir.rs:41: `NoticeKind` is declared 2 times in the workspace",
-            "ARCH-4 agnt-kernel/src/records.rs:333: `PermissionDecision` is declared 3 times in the workspace",
-            "ARCH-4 agnt-core/src/protocol/event.rs:2: `PermissionDecision` is declared 3 times in the workspace",
-            "ARCH-4 agnt-core/src/hook/permission_resolver.rs:58: `PermissionDecision` is declared 3 times in the workspace",
+            "ARCH-4 agnt-kernel/src/records.rs:333: `PermissionDecision` is declared 2 times in the workspace",
+            "ARCH-4 agnt-core/src/hook/permission_resolver.rs:58: `PermissionDecision` is declared 2 times in the workspace",
             "ARCH-4 agnt-tui/src/state/app_state.rs:59: `ToolCallStatus` is declared 2 times in the workspace",
             "ARCH-4 agnt-storage/src/services/tool_calls.rs:20: `ToolCallStatus` is declared 2 times in the workspace",
             "ARCH-4 agnt-kernel/src/records.rs:221: `ToolErrorKind` is declared 2 times in the workspace",
-            "ARCH-4 agnt-core/src/tools/handler/types.rs:17: `ToolErrorKind` is declared 2 times in the workspace",
+            "ARCH-4 agnt-runtime/src/tools/handler/types.rs:17: `ToolErrorKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-kernel/src/builtin.rs:44: `ToolKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-render/src/transcript/entry.rs:18: `ToolKind` is declared 2 times in the workspace",
             "ARCH-4 agnt-core/src/orchestrator/turn_outcome.rs:21: `TurnOutcome` is declared 3 times in the workspace",
@@ -92,9 +91,9 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
             "ARCH-9.b agnt-a2a/src/tools/get_card.rs:19: reqwest::Client::builder",
             "ARCH-9.b agnt-core/src/conversation/providers.rs:30: ensure_crypto_provider",
             "ARCH-9.b agnt-core/src/conversation/providers.rs:32: reqwest::Client::builder",
-            "ARCH-9.b agnt-core/src/tools/handler/http.rs:62: reqwest::Client::builder",
-            "ARCH-9.b agnt-core/src/tools/mcp/runtime.rs:263: ensure_crypto_provider",
-            "ARCH-9.b agnt-core/src/tools/mcp/runtime.rs:264: reqwest::Client::builder",
+            "ARCH-9.b agnt-runtime/src/tools/handler/http.rs:62: reqwest::Client::builder",
+            "ARCH-9.b agnt-runtime/src/tools/mcp/runtime.rs:263: ensure_crypto_provider",
+            "ARCH-9.b agnt-runtime/src/tools/mcp/runtime.rs:264: reqwest::Client::builder",
             "ARCH-9.b agnt-runtime/src/config/models_cache.rs:105: reqwest::blocking::Client::new",
         ],
     ),

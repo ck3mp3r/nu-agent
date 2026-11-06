@@ -44,7 +44,7 @@ async fn test_alignment_transcript_gutters_pin_rail_cog_and_right_margin() -> Re
             SystemEvent::ToolStarted {
                 call: agnt_core::protocol::events::ToolCall::new(
                     agnt_render::transcript::ir::ToolName("tool".to_string()),
-                    agnt_core::tools::handler::ToolSource::Mcp,
+                    agnt_runtime::tools::handler::ToolSource::Mcp,
                     "{}",
                 ),
             },

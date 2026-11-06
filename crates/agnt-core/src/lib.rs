@@ -6,7 +6,6 @@ pub mod orchestrator;
 pub mod protocol;
 pub mod renderer;
 pub mod session;
-pub mod tools;
 pub mod types;
 
 /// The rig-memory crate this workspace's session persistence is built on.

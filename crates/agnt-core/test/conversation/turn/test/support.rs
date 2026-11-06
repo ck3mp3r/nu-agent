@@ -7,10 +7,10 @@ use crate::conversation::state::memory::MemoryOf;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::output_repetition::RepetitionState;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
-use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::McpToolRegistry;
-use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use agnt_runtime::config::Config;
+use agnt_runtime::tools::closure::ClosureRegistry;
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 pub(crate) fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreaker>> {
     Arc::new(std::sync::Mutex::new(McpCircuitBreaker::default()))

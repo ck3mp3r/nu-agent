@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agnt_core::tools::mcp::config::{McpAuthConfig, McpConfig, McpServerConfig};
-use agnt_core::tools::mcp::oauth_callback::{CallbackServer, DEFAULT_TIMEOUT_SECS};
 use agnt_runtime::config::vault::Vault;
+use agnt_runtime::tools::mcp::config::{McpAuthConfig, McpConfig, McpServerConfig};
+use agnt_runtime::tools::mcp::oauth_callback::{CallbackServer, DEFAULT_TIMEOUT_SECS};
 use oauth2::TokenResponse;
 use rmcp::transport::auth::StoredCredentials;
 
@@ -70,7 +70,7 @@ async fn run_mcp_login(args: &McpLoginArgs) -> Result<()> {
         }
     };
 
-    agnt_core::tools::mcp::safe_http_client::validate_url(server_url)
+    agnt_runtime::tools::mcp::safe_http_client::validate_url(server_url)
         .map_err(|e| Error::Custom(format!("Invalid MCP server URL for '{server_name}': {e}")))?;
 
     let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()

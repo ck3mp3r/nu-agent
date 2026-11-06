@@ -8,7 +8,7 @@ use super::*;
 
 use crate::bus::Bus;
 use crate::conversation::builder::{AgentRuntimeBuilder, BuildArtifacts, BuildInput};
-use crate::tools::closure::{ClosureParameter, ClosureRegistry, CwdEngine, ResolvedClosure};
+use agnt_runtime::tools::closure::{ClosureParameter, ClosureRegistry, CwdEngine, ResolvedClosure};
 use nu_protocol::engine::Closure;
 use nu_protocol::{BlockId, Span, Spanned};
 use std::time::Duration;

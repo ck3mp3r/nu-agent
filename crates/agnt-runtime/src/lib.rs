@@ -12,6 +12,7 @@ pub mod llm;
 pub mod logging;
 pub mod protocol;
 pub mod theme_pref;
+pub mod tools;
 pub mod types;
 pub mod utils;
 

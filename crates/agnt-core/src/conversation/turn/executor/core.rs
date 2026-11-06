@@ -36,11 +36,11 @@ use crate::hook::output_repetition::RepetitionState;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
 use crate::hook::turn_usage::TurnUsage;
 use crate::session::CachedMemory;
-use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::McpToolRegistry;
-use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::ToolDefinition;
 use agnt_runtime::config::Config;
+use agnt_runtime::tools::closure::ClosureRegistry;
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 /// Outcome of `TurnExecutor::execute` — either a completed turn whose results
 /// have been persisted and whose UI events have been emitted, or an early-exit

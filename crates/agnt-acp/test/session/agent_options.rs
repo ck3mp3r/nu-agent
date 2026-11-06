@@ -1,7 +1,7 @@
 use super::*;
 
 use super::config_options::{current_value, select_values};
-use agnt_core::tools::authz::PermissionAction;
+use agnt_runtime::tools::authz::PermissionAction;
 
 // ---------------------------------------------------------------------------
 // Agent config options

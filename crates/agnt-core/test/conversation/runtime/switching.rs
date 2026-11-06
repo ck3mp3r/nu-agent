@@ -6,9 +6,9 @@ use super::*;
 use crate::protocol::contracts::McpUsabilityState;
 use crate::protocol::mcp_management::McpManagement;
 use crate::protocol::model_switching::ModelSwitching;
-use crate::tools::authz::{PermissionAction, PermissionDecision, PermissionRuleMatch};
-use crate::tools::handler::McpToolRegistry;
-use crate::tools::mcp::client::McpToolDefinition;
+use agnt_runtime::tools::authz::{PermissionAction, PermissionDecision, PermissionRuleMatch};
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::mcp::client::McpToolDefinition;
 
 /// A persona file that exercises every front-matter field `switch_agent`
 /// applies to the runtime.

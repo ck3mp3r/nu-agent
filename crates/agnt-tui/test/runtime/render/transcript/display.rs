@@ -124,7 +124,7 @@ fn test_transcript_display_completion_remeasures_the_height_index() -> Result<()
 fn fixture_call() -> ToolCall {
     ToolCall::new(
         ToolName("edit".to_string()),
-        agnt_core::tools::handler::ToolSource::Mcp,
+        agnt_runtime::tools::handler::ToolSource::Mcp,
         r#"{"path":"a.rs"}"#,
     )
 }

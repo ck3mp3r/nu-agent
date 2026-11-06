@@ -27,10 +27,12 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
     let pending = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let resolver = InteractivePermissionResolver::new(
         Arc::clone(&pending),
-        Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(true)),
-        Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),
-        Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        Arc::new(agnt_runtime::tools::authz::PermissionsConfig::safe_defaults(true)),
+        Arc::new(Mutex::new(
+            agnt_runtime::tools::authz::SessionGrantCache::default(),
+        )),
+        Arc::new(agnt_runtime::tools::closure::ClosureRegistry::default()),
+        Arc::new(agnt_runtime::tools::handler::McpToolRegistry::empty()),
         temp_dir.path().to_path_buf(),
     );
     let resolver_clone = resolver.clone();
@@ -55,12 +57,12 @@ async fn on_dispatch_publishes_tool_started_before_permission_requested() -> Res
             cwd: std::path::PathBuf::from("/tmp"),
         },
         resolver,
-        Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        Arc::new(agnt_runtime::tools::closure::ClosureRegistry::default()),
+        Arc::new(agnt_runtime::tools::handler::McpToolRegistry::empty()),
         None,
         HookState {
             circuit_breaker: Arc::new(Mutex::new(
-                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
+                agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
             )),
             doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
             output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
@@ -170,17 +172,21 @@ async fn on_dispatch_publishes_the_call_that_derives_the_fallback_line() -> Resu
             cwd: std::path::PathBuf::from("/tmp"),
         },
         PolicyPermissionResolver {
-            permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
-            session_grants: Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),
-            closure_registry: Arc::new(crate::tools::closure::ClosureRegistry::default()),
-            mcp_registry: Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+            permissions: Arc::new(
+                agnt_runtime::tools::authz::PermissionsConfig::safe_defaults(false),
+            ),
+            session_grants: Arc::new(Mutex::new(
+                agnt_runtime::tools::authz::SessionGrantCache::default(),
+            )),
+            closure_registry: Arc::new(agnt_runtime::tools::closure::ClosureRegistry::default()),
+            mcp_registry: Arc::new(agnt_runtime::tools::handler::McpToolRegistry::empty()),
         },
-        Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        Arc::new(agnt_runtime::tools::closure::ClosureRegistry::default()),
+        Arc::new(agnt_runtime::tools::handler::McpToolRegistry::empty()),
         None,
         HookState {
             circuit_breaker: Arc::new(Mutex::new(
-                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
+                agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
             )),
             doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
             output_repetition: Arc::new(Mutex::new(RepetitionState::default())),
@@ -267,17 +273,21 @@ async fn on_dispatch_publishes_the_call_that_derives_its_line() -> Result<()> {
             cwd: std::path::PathBuf::from("/tmp"),
         },
         PolicyPermissionResolver {
-            permissions: Arc::new(crate::tools::authz::PermissionsConfig::safe_defaults(false)),
-            session_grants: Arc::new(Mutex::new(crate::tools::authz::SessionGrantCache::default())),
-            closure_registry: Arc::new(crate::tools::closure::ClosureRegistry::default()),
-            mcp_registry: Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+            permissions: Arc::new(
+                agnt_runtime::tools::authz::PermissionsConfig::safe_defaults(false),
+            ),
+            session_grants: Arc::new(Mutex::new(
+                agnt_runtime::tools::authz::SessionGrantCache::default(),
+            )),
+            closure_registry: Arc::new(agnt_runtime::tools::closure::ClosureRegistry::default()),
+            mcp_registry: Arc::new(agnt_runtime::tools::handler::McpToolRegistry::empty()),
         },
-        Arc::new(crate::tools::closure::ClosureRegistry::default()),
-        Arc::new(crate::tools::handler::McpToolRegistry::empty()),
+        Arc::new(agnt_runtime::tools::closure::ClosureRegistry::default()),
+        Arc::new(agnt_runtime::tools::handler::McpToolRegistry::empty()),
         None,
         HookState {
             circuit_breaker: Arc::new(Mutex::new(
-                crate::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
+                agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker::default(),
             )),
             doom_state: Arc::new(Mutex::new(DoomLoopState::default())),
             output_repetition: Arc::new(Mutex::new(RepetitionState::default())),

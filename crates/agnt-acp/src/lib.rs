@@ -38,8 +38,8 @@ use agent_client_protocol::{Agent, Error, Stdio, on_receive_notification, on_rec
 use agnt_core::bus::{AgentEvent, AgentTx};
 use agnt_core::hooks::HookAgentContext;
 use agnt_core::protocol::persona::{FsPersonaResolver, PersonaFileResolver};
-use agnt_core::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 use agnt_runtime::config::{AgentsConfig, ModelsCache, PluginConfig, toml_config};
+use agnt_runtime::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
 
 /// The session registry shared by every protocol handler.
 ///
@@ -69,7 +69,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
     )
     .map_err(|err| AcpError::Config(format!("failed to resolve application paths: {err}")))?;
     agnt_runtime::logging::retarget_process_sink(&paths.log_path);
-    agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
+    agnt_runtime::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
     let config_dir = paths.config_dir();
     let models_cache = match ModelsCache::load_from(&paths.models_cache_path) {
         Ok(cache) => Some(Arc::new(cache)),

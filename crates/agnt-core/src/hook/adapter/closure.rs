@@ -1,12 +1,12 @@
-use crate::tools::limits::truncate_tool_output;
 use crate::types::{EmptyToolName, ToolDefinition, ToolName};
+use agnt_runtime::tools::limits::truncate_tool_output;
 use nu_protocol::{Span, Value};
 use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use std::sync::Arc;
 
-use crate::tools::closure::{ClosureRegistry, ResolvedClosure};
-use crate::tools::executor::ToolExecutor;
-use crate::tools::handler::{execution_error_for_kind, json_to_nu_value, nu_value_to_json};
+use agnt_runtime::tools::closure::{ClosureRegistry, ResolvedClosure};
+use agnt_runtime::tools::executor::ToolExecutor;
+use agnt_runtime::tools::handler::{execution_error_for_kind, json_to_nu_value, nu_value_to_json};
 
 /// Adapts a Nushell closure to rig's DynamicTool interface.
 ///
@@ -42,7 +42,7 @@ impl ClosureToolAdapter {
         span: Span,
         max_tool_result_bytes: usize,
     ) -> Result<Self, EmptyToolName> {
-        let definition = crate::tools::closure::closure_to_tool_definition(
+        let definition = agnt_runtime::tools::closure::closure_to_tool_definition(
             name.clone(),
             &resolved.params,
             None,

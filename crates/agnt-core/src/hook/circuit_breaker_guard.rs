@@ -11,9 +11,9 @@ use rig::tool::{ToolExecutionError, ToolResult};
 
 use crate::bus::UiEventTx;
 use crate::protocol::events::{SystemEvent, SystemKind};
-use crate::tools::handler::McpToolRegistry;
-use crate::tools::mcp::auth_error::McpAuthError;
-use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::mcp::auth_error::McpAuthError;
+use agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 /// Guards MCP tool calls behind a circuit breaker.
 #[derive(Clone)]

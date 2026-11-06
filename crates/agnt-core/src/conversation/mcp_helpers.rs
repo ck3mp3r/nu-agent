@@ -1,12 +1,12 @@
-use crate::tools::handler::McpToolRegistry;
-use crate::tools::mcp::{
+use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
+use agnt_runtime::tools::handler::McpToolRegistry;
+use agnt_runtime::tools::mcp::{
     config::McpServerConfig,
     runtime::{McpRuntime, McpServerLifecycle},
 };
-use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
 
 fn mcp_tool_definition_from_discovered(
-    tool: &crate::tools::mcp::client::McpToolDefinition,
+    tool: &agnt_runtime::tools::mcp::client::McpToolDefinition,
 ) -> Result<ToolDefinition, EmptyToolName> {
     Ok(ToolDefinition {
         annotations: ToolAnnotations::default(),
@@ -33,7 +33,7 @@ fn mcp_tool_definition_from_discovered(
 pub(super) fn merge_new_mcp_tools_into_runtime(
     tool_definitions: &mut Vec<ToolDefinition>,
     mcp_registry: &mut McpToolRegistry,
-    discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
+    discovered_tools: &[agnt_runtime::tools::mcp::client::McpToolDefinition],
 ) -> Result<(), String> {
     log::debug!(
         "merge_new_mcp_tools: discovered={} existing={}",
@@ -66,7 +66,7 @@ pub(super) fn stage_enabled_mcp_runtime_state(
     current_tool_definitions: &[ToolDefinition],
     current_registry: &McpToolRegistry,
     server_name: &str,
-    discovered_tools: &[crate::tools::mcp::client::McpToolDefinition],
+    discovered_tools: &[agnt_runtime::tools::mcp::client::McpToolDefinition],
 ) -> Result<(Vec<ToolDefinition>, McpToolRegistry), String> {
     log::debug!(
         "stage_enabled_mcp_runtime_state: server={server_name} discovered={}",

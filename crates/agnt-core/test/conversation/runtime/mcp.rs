@@ -10,14 +10,14 @@ fn mcp_state_initial_tool_count_is_zero() {
     // With an empty mcp_registry and no mcp_lifecycle_projection, the
     // method filters active_tool_definitions by mcp_registry.is_registered
     // — an empty registry yields 0.
-    use crate::tools::{authz::PermissionsConfig, handler::McpToolRegistry};
+    use agnt_runtime::tools::{authz::PermissionsConfig, handler::McpToolRegistry};
 
     let tool_definitions: Vec<ToolDefinition> = vec![];
     let mcp_registry = McpToolRegistry::empty();
     let permissions = PermissionsConfig::safe_defaults(true);
 
     // Replicate the method body: filter active_tool_definitions by registry
-    let active = crate::tools::handler::llm_visible_tool_definitions(
+    let active = agnt_runtime::tools::handler::llm_visible_tool_definitions(
         &tool_definitions,
         &mcp_registry,
         &permissions,
@@ -34,13 +34,13 @@ fn mcp_state_initial_tool_count_is_zero() {
 fn mcp_state_tool_count_by_server_returns_zero_for_unknown() {
     // Characterise llm_visible_mcp_tool_count_for_server (runtime.rs:379-386).
     // Querying for "nonexistent-server" with an empty registry must return 0.
-    use crate::tools::{authz::PermissionsConfig, handler::McpToolRegistry};
+    use agnt_runtime::tools::{authz::PermissionsConfig, handler::McpToolRegistry};
 
     let tool_definitions: Vec<ToolDefinition> = vec![];
     let mcp_registry = McpToolRegistry::empty();
     let permissions = PermissionsConfig::safe_defaults(true);
 
-    let active = crate::tools::handler::llm_visible_tool_definitions(
+    let active = agnt_runtime::tools::handler::llm_visible_tool_definitions(
         &tool_definitions,
         &mcp_registry,
         &permissions,
@@ -73,7 +73,7 @@ fn mcp_state_caller_cwd_none_by_default() {
 
 #[test]
 fn mcp_state_lifecycle_projection_empty_by_default() {
-    use crate::tools::mcp::runtime::McpServerLifecycle;
+    use agnt_runtime::tools::mcp::runtime::McpServerLifecycle;
     let _type_check: fn(&AgentConversationRuntime) = |rt| {
         assert!(rt.mcp_state.mcp_lifecycle_projection().is_empty());
     };

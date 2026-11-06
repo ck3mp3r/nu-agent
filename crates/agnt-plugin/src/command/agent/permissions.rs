@@ -1,7 +1,7 @@
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{LabeledError, Value};
 
-use agnt_core::tools::authz::{PermissionsConfig, PermissionsOverlay};
+use agnt_runtime::tools::authz::{PermissionsConfig, PermissionsOverlay};
 
 pub(super) fn resolve_effective_permissions_config(
     call: &EvaluatedCall,
@@ -31,12 +31,13 @@ pub(super) fn resolve_effective_permissions_config(
 
     // Build permission chain: base → agent_overlay → CLI
     // CLI always wins (highest precedence)
-    let (base, effective, startup_message) = agnt_core::tools::authz::resolve_effective_permissions(
-        plugin_config,
-        agent_overlay,
-        cli_overlay.as_ref(),
-        interactive,
-    );
+    let (base, effective, startup_message) =
+        agnt_runtime::tools::authz::resolve_effective_permissions(
+            plugin_config,
+            agent_overlay,
+            cli_overlay.as_ref(),
+            interactive,
+        );
 
     Ok((base, effective, cli_overlay, startup_message))
 }

@@ -336,6 +336,17 @@ pub enum PermissionDecision {
     Deny,
 }
 
+impl PermissionDecision {
+    /// The wire name a surface prints and a hook envelope carries.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AllowOnce => "allow_once",
+            Self::AllowAlways => "allow_always",
+            Self::Deny => "deny",
+        }
+    }
+}
+
 /// The action a policy resolved a call to without prompting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoResolution {

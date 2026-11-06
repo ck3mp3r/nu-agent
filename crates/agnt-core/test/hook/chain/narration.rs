@@ -208,7 +208,7 @@ async fn test_narration_not_run_dispatch_narrates_the_pair() -> Result<()> {
         &cwd,
         crate::hook::chain::NotRunCall {
             tool_name: "add",
-            source: crate::tools::handler::ToolSource::Builtin,
+            source: agnt_runtime::tools::handler::ToolSource::Builtin,
             arguments,
             start: crate::hook::chain::NotRunStart::Publish,
         },
@@ -263,7 +263,7 @@ async fn test_narration_denied_dispatch_classifies_as_denied() -> Result<()> {
         &cwd,
         crate::hook::chain::NotRunCall {
             tool_name: "add",
-            source: crate::tools::handler::ToolSource::Builtin,
+            source: agnt_runtime::tools::handler::ToolSource::Builtin,
             arguments,
             start: crate::hook::chain::NotRunStart::AlreadyPublished,
         },

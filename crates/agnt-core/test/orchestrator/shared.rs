@@ -34,13 +34,13 @@ pub(crate) use crate::protocol::{
         CoreRuntime, McpToggleRequest, McpUsabilityState, SharedUiAction, UiMessageSnapshot,
         UiMessageUsageSnapshot, UserInputUi,
     },
-    event::PermissionDecision,
     events::SystemEvent,
     mcp_management::McpManagement,
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
     slash::{SlashParseResult, parse_slash_command},
 };
+pub(crate) use agnt_runtime::protocol::event::PermissionDecision;
 pub(crate) use tokio::sync::mpsc;
 
 // Convenience: empty impl blocks that use the trait's default methods.

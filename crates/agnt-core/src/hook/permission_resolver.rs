@@ -14,23 +14,23 @@ use agnt_kernel::bus::{CancelEvent, CancelTx, OneshotTx};
 
 use crate::bus::{RequestPermission, UiEventTx};
 
-use crate::protocol::event::{
-    PermissionDecision as ProtocolPermissionDecision, PermissionRequestContext,
-};
 use crate::protocol::events::{
     AutoResolutionAction, RequestId, SystemEvent, ToolCall as EventToolCall, ToolCallId,
 };
-use crate::tools::authz::{
+use crate::types::{CallId, ToolCall, ToolFunction, ToolName};
+use agnt_kernel::BuiltinKind;
+use agnt_runtime::protocol::event::{
+    PermissionDecision as ProtocolPermissionDecision, PermissionRequestContext,
+};
+use agnt_runtime::tools::authz::{
     AskApprovalHook, AskChoice, AskContext, PermissionsConfig, SessionGrantCache, apply_ask_choice,
     display_tool_name,
 };
-use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::{
+use agnt_runtime::tools::closure::ClosureRegistry;
+use agnt_runtime::tools::handler::{
     AuthorizationFlowContext, AuthzOutcome, McpToolRegistry, ToolSource,
     enforce_authorization_for_tool_call, pre_authorize_fs_tool,
 };
-use crate::types::{CallId, ToolCall, ToolFunction, ToolName};
-use agnt_kernel::BuiltinKind;
 
 pub(crate) fn resolve_tool_source(
     name: &str,
@@ -95,7 +95,7 @@ struct NoOpAskHook;
 impl AskApprovalHook for NoOpAskHook {
     async fn choose(
         &mut self,
-        _decision: &crate::tools::authz::PermissionDecision,
+        _decision: &agnt_runtime::tools::authz::PermissionDecision,
         _tool_name: &str,
         _source: &str,
         _args: &JsonValue,
@@ -281,7 +281,7 @@ struct AskContextCapture {
     /// The permission request context captured from the hook arguments.
     pub captured_context: Option<PermissionRequestContext>,
     /// The authz decision captured from the sentinel run (used to write the cache key).
-    pub captured_auth_decision: Option<crate::tools::authz::PermissionDecision>,
+    pub captured_auth_decision: Option<agnt_runtime::tools::authz::PermissionDecision>,
     /// Raw JSON arguments string of the tool call, as passed to `resolve()`.
     /// The hook only receives the parsed `JsonValue`, so the exact key the TUI
     /// uses for the pending call must be carried in from the caller.
@@ -291,7 +291,7 @@ struct AskContextCapture {
 impl AskApprovalHook for AskContextCapture {
     async fn choose(
         &mut self,
-        decision: &crate::tools::authz::PermissionDecision,
+        decision: &agnt_runtime::tools::authz::PermissionDecision,
         tool_name: &str,
         source: &str,
         args: &JsonValue,
@@ -639,7 +639,7 @@ impl AsyncPermissionResolver for InteractivePermissionResolver {
                         ask_choice,
                         &mut grants,
                         &tool_name,
-                        crate::tools::handler::tool_source_text(source),
+                        agnt_runtime::tools::handler::tool_source_text(source),
                         &tool_call.function.arguments,
                     );
                 }

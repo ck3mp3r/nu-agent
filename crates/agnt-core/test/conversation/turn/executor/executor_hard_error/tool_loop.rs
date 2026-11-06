@@ -112,8 +112,8 @@ async fn hard_error_mid_tool_loop_preserves_real_tool_results() -> Result<()> {
 
     let shared_model = super::test_utils::shared_model_handle(model);
 
-    let closure_registry = crate::tools::closure::ClosureRegistry::default();
-    let mcp_registry = crate::tools::handler::McpToolRegistry::empty();
+    let closure_registry = agnt_runtime::tools::closure::ClosureRegistry::default();
+    let mcp_registry = agnt_runtime::tools::handler::McpToolRegistry::empty();
     let tool_server_handle = rig::tool::server::ToolServer::new()
         .tool(SimpleEchoTool)
         .run();

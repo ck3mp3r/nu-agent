@@ -14,9 +14,9 @@ use crate::conversation::turn::test::{
     default_circuit_breaker, default_doom_state, default_last_total_tokens,
     default_output_repetition, default_repetition_guard,
 };
-use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::McpToolRegistry;
 use crate::types::Message;
+use agnt_runtime::tools::closure::ClosureRegistry;
+use agnt_runtime::tools::handler::McpToolRegistry;
 
 pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 

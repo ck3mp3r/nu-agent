@@ -45,7 +45,7 @@ impl CoreRuntime for PermissionGateRuntime {
         // Publish a permission request on the bus and register a oneshot in the
         // shared pending map, mirroring production `InteractivePermissionResolver`.
         let request_id = self.request_id.clone();
-        let context = crate::protocol::event::PermissionRequestContext {
+        let context = agnt_runtime::protocol::event::PermissionRequestContext {
             tool: "nu".to_string(),
             tool_key: "nu\n{\"command\":\"echo hi\"}".to_string(),
             source: "closure".to_string(),
@@ -85,7 +85,7 @@ impl CoreRuntime for PermissionGateRuntime {
                 .send(SystemEvent::ToolStarted {
                     call: ToolCall::new(
                         ToolName("nu".to_string()),
-                        crate::tools::handler::ToolSource::Closure,
+                        agnt_runtime::tools::handler::ToolSource::Closure,
                         r#"{"command":"echo hi"}"#,
                     ),
                 })

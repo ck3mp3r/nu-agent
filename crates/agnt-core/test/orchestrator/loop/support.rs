@@ -19,7 +19,7 @@ use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{
     OrchestratorEvent, SourceChannels, UiRequest, UiRequestResponse, UiStateEvent, WorkerCommand,
 };
-use crate::protocol::event::PermissionDecisionSubmission;
+use agnt_runtime::protocol::event::PermissionDecisionSubmission;
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

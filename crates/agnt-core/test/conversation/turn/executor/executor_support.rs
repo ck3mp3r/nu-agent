@@ -12,9 +12,9 @@ use crate::bus::Bus;
 use crate::conversation::managers::SessionManager;
 use crate::conversation::state::memory::MemoryState;
 use crate::session::{CachedMemory, RigStoreConfig};
-use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::McpToolRegistry;
 use agnt_runtime::config::Config;
+use agnt_runtime::tools::closure::ClosureRegistry;
+use agnt_runtime::tools::handler::McpToolRegistry;
 
 pub(super) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 

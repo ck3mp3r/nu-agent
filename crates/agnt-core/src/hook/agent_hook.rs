@@ -9,7 +9,7 @@ use agnt_kernel::{InferenceRecord, SessionRecord, StopCause};
 
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::state::memory::MemoryOf;
-use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
+use agnt_runtime::tools::mcp::circuit_breaker::McpCircuitBreaker;
 
 pub use crate::hook::chain::HookChain;
 pub use crate::hook::doom_loop::{DOOM_LOOP_THRESHOLD, DoomLoopState};

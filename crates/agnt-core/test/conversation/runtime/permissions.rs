@@ -6,7 +6,7 @@ use super::*;
 
 #[test]
 fn permissions_startup_summary_does_not_emit_warning() {
-    use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
+    use agnt_runtime::tools::authz::{PermissionsConfig, SessionGrantCache};
 
     let bus = crate::bus::create_bus();
     let mut ui_event_rx = bus.ui_event().subscribe();
@@ -42,7 +42,7 @@ fn permissions_startup_summary_does_not_emit_warning() {
 
 #[test]
 fn set_permissions_replaces_config_and_does_not_emit_warning() -> Result<()> {
-    use crate::tools::authz::{PermissionAction, PermissionsConfig, SessionGrantCache};
+    use agnt_runtime::tools::authz::{PermissionAction, PermissionsConfig, SessionGrantCache};
 
     let initial = PermissionsConfig::safe_defaults(true);
     let summary = format!(
@@ -63,7 +63,7 @@ fn set_permissions_replaces_config_and_does_not_emit_warning() -> Result<()> {
     assert_eq!(state.permissions().summary().global, PermissionAction::Ask);
 
     // Create a new config with different global action via overlay
-    use crate::tools::authz::PermissionsOverlay;
+    use agnt_runtime::tools::authz::PermissionsOverlay;
     let mut deny_mapping = noyalib::Mapping::new();
     deny_mapping.insert("*", noyalib::Value::String("deny".to_string()));
     let deny_overlay = PermissionsOverlay::parse_from_yaml(&deny_mapping)

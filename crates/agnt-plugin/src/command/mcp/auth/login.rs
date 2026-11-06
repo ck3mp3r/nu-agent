@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agnt_core::tools::mcp::config::{McpAuthConfig, McpConfig, McpServerConfig};
-use agnt_core::tools::mcp::oauth_callback::{CallbackServer, DEFAULT_TIMEOUT_SECS};
 use agnt_runtime::config::vault::Vault;
+use agnt_runtime::tools::mcp::config::{McpAuthConfig, McpConfig, McpServerConfig};
+use agnt_runtime::tools::mcp::oauth_callback::{CallbackServer, DEFAULT_TIMEOUT_SECS};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, SignalAction, Signature, SyntaxShape, Value};
 
@@ -145,7 +145,7 @@ async fn run_inner(
     };
 
     // Validate the server URL for SSRF protection
-    agnt_core::tools::mcp::safe_http_client::validate_url(server_url).map_err(|e| {
+    agnt_runtime::tools::mcp::safe_http_client::validate_url(server_url).map_err(|e| {
         LabeledError::new(format!("Invalid MCP server URL for '{server_name}': {e}"))
     })?;
 

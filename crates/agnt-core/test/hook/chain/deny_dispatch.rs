@@ -272,7 +272,7 @@ async fn on_dispatch_deny_arm_emits_preview_for_previewable_call() -> Result<()>
     let started_args = started_arguments(&events, "edit")
         .ok_or("the denied call must publish ToolStarted with its arguments")?;
     let args: serde_json::Value = serde_json::from_str(&started_args)?;
-    let expected = crate::tools::handler::pre_authorize_fs_tool(
+    let expected = agnt_runtime::tools::handler::pre_authorize_fs_tool(
         Some(agnt_kernel::BuiltinKind::Edit),
         args.as_object()
             .ok_or("the fixture args must be a JSON object")?,

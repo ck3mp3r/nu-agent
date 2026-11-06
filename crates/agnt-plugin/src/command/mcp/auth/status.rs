@@ -5,8 +5,8 @@ use nu_protocol::{Category, Example, LabeledError, Signature, Value};
 use oauth2::TokenResponse;
 use rmcp::transport::auth::StoredCredentials;
 
-use agnt_core::tools::mcp::config::{McpAuthConfig, McpConfig};
 use agnt_runtime::config::vault::Vault;
+use agnt_runtime::tools::mcp::config::{McpAuthConfig, McpConfig};
 
 use crate::plugin::AgentPlugin;
 

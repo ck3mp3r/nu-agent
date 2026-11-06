@@ -62,12 +62,12 @@ use crate::hooks::{
     HookAgentContext, HookProcess, HookProcessError, HookSources, build_envelope,
     spawn_agent_hook_runner, spawn_hook_runner,
 };
-use crate::protocol::event::{PermissionDecision, PermissionRequestContext};
 use crate::protocol::events::{
     AutoResolutionAction, RequestId, SystemEvent, ToolCall, ToolOutcome,
 };
 use agnt_kernel::ToolName;
 use agnt_runtime::config::{HookEvent, ResolvedHook};
+use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

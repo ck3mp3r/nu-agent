@@ -131,7 +131,7 @@ fn live_entries(
     let call = || {
         agnt_core::protocol::events::ToolCall::new(
             agnt_render::transcript::ir::ToolName(tool.to_string()),
-            agnt_core::tools::handler::ToolSource::Builtin,
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             arguments,
         )
     };

@@ -22,7 +22,7 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
             .send(SystemEvent::ToolStarted {
                 call: ToolCall::new(
                     ToolName("edit".to_string()),
-                    crate::tools::handler::ToolSource::Closure,
+                    agnt_runtime::tools::handler::ToolSource::Closure,
                     "{}",
                 ),
             })
@@ -33,7 +33,7 @@ impl CoreRuntime for ToolDisplayOnlyRuntime {
             .send(SystemEvent::ToolCompleted {
                 call: ToolCall::new(
                     ToolName("edit".to_string()),
-                    crate::tools::handler::ToolSource::Closure,
+                    agnt_runtime::tools::handler::ToolSource::Closure,
                     "{}",
                 ),
                 outcome: ToolOutcome {

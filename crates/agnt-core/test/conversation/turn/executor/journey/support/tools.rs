@@ -70,7 +70,7 @@ fn build_truncating_tool(
             let max_bytes = max_tool_result_bytes;
             Box::pin(async move {
                 Ok(rig::tool::ToolOutput::text(
-                    crate::tools::limits::truncate_tool_output(output, max_bytes),
+                    agnt_runtime::tools::limits::truncate_tool_output(output, max_bytes),
                 ))
             })
         },

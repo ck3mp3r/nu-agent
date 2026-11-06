@@ -1,5 +1,5 @@
 use super::test_helpers::create_test_call;
-use agnt_core::tools::authz::PermissionAction;
+use agnt_runtime::tools::authz::PermissionAction;
 use nu_protocol::{Value, record};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

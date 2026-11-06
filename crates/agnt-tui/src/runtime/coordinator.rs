@@ -34,8 +34,8 @@ use agnt_core::protocol::contracts::UiMessageSnapshot;
 use agnt_core::protocol::events::Key;
 use agnt_core::protocol::events::SystemEvent;
 use agnt_core::protocol::skills::DiscoverableSkill as ProtocolDiscoverableSkill;
-use agnt_core::tools::mcp::runtime::McpServerLifecycle;
 use agnt_render::transcript::renderer::ItemStatus;
+use agnt_runtime::tools::mcp::runtime::McpServerLifecycle;
 
 /// The runtime coordinator that owns the TUI application state and the render
 /// bookkeeping for the interactive render loop.

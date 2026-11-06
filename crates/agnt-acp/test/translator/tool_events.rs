@@ -47,7 +47,7 @@ fn test_translator_tool_started_falls_back_to_name_when_summary_empty() -> Resul
     let event = SystemEvent::ToolStarted {
         call: ToolCall::new(
             ToolName("glob".to_string()),
-            agnt_core::tools::handler::ToolSource::Builtin,
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             "",
         ),
     };
@@ -147,7 +147,7 @@ fn test_translator_tool_completed_message_becomes_content_when_no_display() -> R
     let event = SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            agnt_core::tools::handler::ToolSource::Builtin,
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             "{}",
         ),
         outcome: ToolOutcome {
@@ -188,7 +188,7 @@ fn test_translator_tool_completed_diff_display_becomes_diff_content() -> Result<
     let event = SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            agnt_core::tools::handler::ToolSource::Builtin,
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             "{}",
         ),
         outcome: ToolOutcome {
@@ -230,7 +230,7 @@ fn test_translator_tool_completed_diff_without_old_side_has_no_old_text() -> Res
     let event = SystemEvent::ToolCompleted {
         call: ToolCall::new(
             ToolName("edit".to_string()),
-            agnt_core::tools::handler::ToolSource::Builtin,
+            agnt_runtime::tools::handler::ToolSource::Builtin,
             "{}",
         ),
         outcome: ToolOutcome {

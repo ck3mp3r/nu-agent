@@ -2,13 +2,13 @@
 
 use agnt_kernel::CompactionSource;
 
-use crate::protocol::event::{PermissionDecision, PermissionRequestContext};
 use crate::protocol::events::{
     AutoResolutionAction, Key, RequestId, SystemEvent, SystemKind, ToolCall, ToolCallId,
     ToolOutcome, Usage,
 };
 use crate::session::tool_status::ToolStatus;
 use agnt_kernel::ToolName;
+use agnt_runtime::protocol::event::{PermissionDecision, PermissionRequestContext};
 
 // region:    --- Tests
 
@@ -34,14 +34,17 @@ fn test_protocol_events_tool_call_new_derives_id_from_payload() -> Result<()> {
     // -- Exec
     let call = ToolCall::new(
         ToolName("edit".to_string()),
-        crate::tools::handler::ToolSource::Builtin,
+        agnt_runtime::tools::handler::ToolSource::Builtin,
         arguments,
     );
 
     // -- Check
     assert_eq!(call.id, ToolCallId::new("edit", arguments));
     assert_eq!(call.name, ToolName("edit".to_string()));
-    assert_eq!(call.source, crate::tools::handler::ToolSource::Builtin);
+    assert_eq!(
+        call.source,
+        agnt_runtime::tools::handler::ToolSource::Builtin
+    );
     assert_eq!(call.arguments, arguments);
     Ok(())
 }
@@ -242,7 +245,7 @@ fn test_protocol_events_payloads_carry_typed_identity() -> Result<()> {
 fn tool_call() -> ToolCall {
     ToolCall::new(
         ToolName("nu".to_string()),
-        crate::tools::handler::ToolSource::Builtin,
+        agnt_runtime::tools::handler::ToolSource::Builtin,
         "{\"command\":\"ls\"}",
     )
 }

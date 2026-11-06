@@ -1,6 +1,5 @@
 pub mod agents;
 pub mod contracts;
-pub mod event;
 pub mod events;
 pub mod mcp_management;
 pub mod model_switching;

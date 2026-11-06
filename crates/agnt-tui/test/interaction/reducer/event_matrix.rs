@@ -35,7 +35,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             SystemEvent::ToolStarted {
                 call: ToolCall::new(
                     ToolName("k8s__list_pods".to_string()),
-                    agnt_core::tools::handler::ToolSource::Mcp,
+                    agnt_runtime::tools::handler::ToolSource::Mcp,
                     r#"{"namespace":"prod"}"#,
                 ),
             },
@@ -69,7 +69,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             event: SystemEvent::ToolStarted {
                 call: ToolCall::new(
                     ToolName("k8s__list_pods".to_string()),
-                    agnt_core::tools::handler::ToolSource::Mcp,
+                    agnt_runtime::tools::handler::ToolSource::Mcp,
                     "{}",
                 ),
             },
@@ -80,7 +80,7 @@ fn table_driven_ui_event_matrix_covers_all_variants() {
             event: SystemEvent::ToolCompleted {
                 call: ToolCall::new(
                     ToolName("k8s__list_pods".to_string()),
-                    agnt_core::tools::handler::ToolSource::Mcp,
+                    agnt_runtime::tools::handler::ToolSource::Mcp,
                     r#"{"namespace":"prod"}"#,
                 ),
                 outcome: ToolOutcome {
@@ -256,7 +256,7 @@ fn permission_request_table() -> Result<()> {
         SystemEvent::ToolStarted {
             call: ToolCall::new(
                 ToolName("edit".to_string()),
-                agnt_core::tools::handler::ToolSource::Builtin,
+                agnt_runtime::tools::handler::ToolSource::Builtin,
                 r#"{"path":"test.rs"}"#,
             ),
         },

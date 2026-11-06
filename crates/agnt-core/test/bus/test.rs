@@ -10,7 +10,7 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 fn tool_call(name: &str) -> ToolCall {
     ToolCall::new(
         ToolName(name.to_string()),
-        crate::tools::handler::ToolSource::Unknown,
+        agnt_runtime::tools::handler::ToolSource::Unknown,
         "{}",
     )
 }

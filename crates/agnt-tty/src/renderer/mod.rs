@@ -190,7 +190,7 @@ impl<W: Write> StderrUiRenderer<W> {
                     Some(format_tool_start(
                         self.policy.verbosity,
                         &call.name.0,
-                        agnt_core::tools::handler::tool_source_text(call.source),
+                        agnt_runtime::tools::handler::tool_source_text(call.source),
                         &call_line_for(call),
                     ))
                 }
@@ -203,7 +203,7 @@ impl<W: Write> StderrUiRenderer<W> {
                         ToolEndView {
                             verbosity: self.policy.verbosity,
                             name: &call.name.0,
-                            source: agnt_core::tools::handler::tool_source_text(call.source),
+                            source: agnt_runtime::tools::handler::tool_source_text(call.source),
                             arguments: &call.arguments,
                             success: outcome.success,
                             result: &outcome.result,

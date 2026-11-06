@@ -1,8 +1,8 @@
 use super::super::managers::ToolManager;
-use crate::tools::authz::PermissionsConfig;
-use crate::tools::closure::ClosureRegistry;
-use crate::tools::handler::{self, McpToolRegistry};
 use crate::types::ToolDefinition;
+use agnt_runtime::tools::authz::PermissionsConfig;
+use agnt_runtime::tools::closure::ClosureRegistry;
+use agnt_runtime::tools::handler::{self, McpToolRegistry};
 
 pub struct ToolState {
     tool_definitions: Vec<ToolDefinition>,
@@ -73,3 +73,7 @@ impl ToolManager for ToolState {
         self.active_definitions(mcp_registry, permissions)
     }
 }
+
+#[cfg(test)]
+#[path = "../../../test/tools/mcp/namespaced.rs"]
+mod namespaced_mcp_test;
