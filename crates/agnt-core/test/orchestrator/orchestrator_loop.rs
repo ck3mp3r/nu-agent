@@ -11,6 +11,8 @@ mod a2a;
 mod a2a_completion;
 #[path = "loop/compaction.rs"]
 mod compaction;
+#[path = "loop/defaults.rs"]
+mod defaults;
 #[path = "loop/events.rs"]
 mod events;
 #[path = "loop/support.rs"]

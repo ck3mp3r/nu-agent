@@ -6,16 +6,13 @@ use tokio::sync::mpsc;
 
 use crate::bus::SessionEvent;
 use crate::orchestrator::config::LoopParts;
-use crate::orchestrator::loop_impl::{Stages, WORKER_CMD_CAPACITY, run_orchestrator_loop};
+use crate::orchestrator::loop_impl::{WORKER_CMD_CAPACITY, run_orchestrator_loop};
 use crate::orchestrator::router::{CommandRouter, DispatchSources};
-use crate::orchestrator::stages::{
-    OrchestrationContext, permission::PermissionStage, session::SessionStage, slash::SlashStage,
-    ui_request::UiRequestStage,
-};
+use crate::orchestrator::stages::OrchestrationContext;
 use crate::orchestrator::turn_outcome::TurnOutcome;
 use crate::orchestrator::{
-    AgentSwitchHook, LoopConfig, NoAgentSwitchHook, OrchestratorEvent, UiRequestResponse,
-    UiStateEvent, WorkerCommand,
+    AgentSwitchHook, LoopConfig, NoAgentSwitchHook, OrchestratorEvent, ProductionStages,
+    UiRequestResponse, UiStateEvent, WorkerCommand,
 };
 use crate::protocol::contracts::CoreRuntime;
 use crate::protocol::mcp_management::McpManagement;
@@ -258,10 +255,7 @@ where
         }
         let _event_tx = event_tx;
 
-        let mut slash = SlashStage;
-        let mut permission = PermissionStage;
-        let mut session = SessionStage;
-        let mut ui_request = UiRequestStage::new(self.ctx.initial_visible_count);
+        let mut production = ProductionStages::new(self.ctx.initial_visible_count);
 
         let mut ctx = OrchestrationContext {
             worker_tx,
@@ -294,14 +288,7 @@ where
             a2a_completion_rx: self.sources.a2a_completion_rx.take(),
         };
 
-        let stages = Stages {
-            slash: &mut slash,
-            permission: &mut permission,
-            ui_request: &mut ui_request,
-            session: &mut session,
-        };
-
-        run_orchestrator_loop(event_rx, sources, stages, &mut ctx).await
+        run_orchestrator_loop(event_rx, sources, production.stages(), &mut ctx).await
     }
 
     /// Phase 5: stop the worker, take the runtime back, and close the session.

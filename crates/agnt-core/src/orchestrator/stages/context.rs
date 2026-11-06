@@ -61,8 +61,10 @@ pub(crate) trait SlashHandler {
         &mut self,
         prompt: String,
         task_id: Option<String>,
-        ctx: &mut OrchestrationContext,
-    );
+        ctx: &mut OrchestrationContext<'_>,
+    ) {
+        let _ = (prompt, task_id, ctx);
+    }
 }
 
 /// Stage trait for permission decision handling.
@@ -70,29 +72,55 @@ pub(crate) trait PermissionHandler {
     async fn handle(
         &mut self,
         decision: PermissionDecisionSubmission,
-        ctx: &mut OrchestrationContext,
-    );
+        ctx: &mut OrchestrationContext<'_>,
+    ) {
+        let _ = (decision, ctx);
+    }
 }
 
 /// Stage trait for UI request handling.
 pub(crate) trait UiRequestHandler {
-    async fn handle_incoming(&mut self, request: UiRequest, ctx: &mut OrchestrationContext);
+    async fn handle_incoming(&mut self, request: UiRequest, ctx: &mut OrchestrationContext<'_>) {
+        let _ = (request, ctx);
+    }
     async fn handle_blocking_response(
         &mut self,
         response: UiRequestResponse,
-        ctx: &mut OrchestrationContext,
-    );
+        ctx: &mut OrchestrationContext<'_>,
+    ) {
+        let _ = (response, ctx);
+    }
     async fn handle_concurrent_response(
         &mut self,
         response: UiRequestResponse,
-        ctx: &mut OrchestrationContext,
-    );
-    async fn drain_queued(&mut self, ctx: &mut OrchestrationContext);
-    fn has_blocking_pending(&self) -> bool;
-    fn has_pending(&self) -> bool;
+        ctx: &mut OrchestrationContext<'_>,
+    ) {
+        let _ = (response, ctx);
+    }
+    async fn drain_queued(&mut self, ctx: &mut OrchestrationContext<'_>) {
+        let _ = ctx;
+    }
+    fn has_blocking_pending(&self) -> bool {
+        false
+    }
+    fn has_pending(&self) -> bool {
+        false
+    }
 }
 
 /// Stage trait for session outcome handling.
 pub(crate) trait SessionHandler {
-    async fn handle_outcome(&mut self, outcome: TurnOutcome, ctx: &mut OrchestrationContext);
+    async fn handle_outcome(&mut self, outcome: TurnOutcome, ctx: &mut OrchestrationContext<'_>) {
+        let _ = (outcome, ctx);
+    }
 }
+
+/// A stage that implements every capability as a no-op.
+///
+/// Every trait method has a no-op default, so this impl is empty: a test that
+/// exercises one capability fills the remaining `Stages` slots with `()` and
+/// implements only the trait it proves.
+impl SlashHandler for () {}
+impl PermissionHandler for () {}
+impl UiRequestHandler for () {}
+impl SessionHandler for () {}

@@ -5,8 +5,10 @@
 
 mod owner;
 mod sources;
+mod stages;
 
 pub use owner::{Loop, run};
 pub(crate) use sources::SourceChannels;
+pub(crate) use stages::ProductionStages;
 
 // endregion: --- Modules

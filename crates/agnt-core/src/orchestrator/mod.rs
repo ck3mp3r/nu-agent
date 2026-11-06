@@ -21,6 +21,7 @@ pub(crate) use handlers::{
     DeferredPrompt, dispatch_compaction, handle_external_cancel, handle_worker_result,
     recv_or_pending, reject_busy_task, reject_superseded_task, submit_deferred_prompt,
 };
+pub(crate) use r#loop::ProductionStages;
 pub(crate) use r#loop::SourceChannels;
 pub use r#loop::{Loop, run};
 pub use loop_impl::run_single_turn;
