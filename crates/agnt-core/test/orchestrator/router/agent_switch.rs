@@ -43,7 +43,6 @@ impl LongRunningAgentRuntime {
 impl CoreRuntime for LongRunningAgentRuntime {
     async fn execute_turn(
         &mut self,
-        bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         _span: Span,
@@ -58,7 +57,7 @@ impl CoreRuntime for LongRunningAgentRuntime {
             // Signal that the blocking turn has begun so tests can unblock it
             // without sleeping.
             let _ = self.turn_started_tx.send(true);
-            let mut cancel_rx = bus.cancel().subscribe();
+            let mut cancel_rx = self.bus.cancel().subscribe();
             loop {
                 tokio::select! {
                     Ok(crate::bus::CancelEvent::Requested) = cancel_rx.recv() => {

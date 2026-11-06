@@ -12,7 +12,6 @@ struct ToolDisplayOnlyRuntime {
 impl CoreRuntime for ToolDisplayOnlyRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
@@ -93,7 +92,6 @@ struct CancelFirstRuntime {
 impl CoreRuntime for CancelFirstRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         _span: Span,
@@ -151,7 +149,6 @@ struct ErrorFirstRuntime {
 impl CoreRuntime for ErrorFirstRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         _span: Span,

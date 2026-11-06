@@ -46,7 +46,7 @@ async fn execute_turn_completes_and_persists_the_session() -> Result<()> {
     // -- Exec
     let value = fixture
         .runtime
-        .execute_turn(&fixture.bus, "hi".to_string(), None, Span::test_data())
+        .execute_turn("hi".to_string(), None, Span::test_data())
         .await
         .map_err(|e| format!("execute_turn should succeed: {e}"))?;
 
@@ -73,7 +73,6 @@ async fn execute_turn_includes_context_in_the_preamble() -> Result<()> {
     let value = fixture
         .runtime
         .execute_turn(
-            &fixture.bus,
             "hi".to_string(),
             Some("extra context block".to_string()),
             Span::test_data(),
@@ -95,7 +94,7 @@ async fn execute_turn_without_a_session_returns_an_unstamped_response() -> Resul
     // -- Exec
     let value = fixture
         .runtime
-        .execute_turn(&fixture.bus, "hi".to_string(), None, Span::test_data())
+        .execute_turn("hi".to_string(), None, Span::test_data())
         .await
         .map_err(|e| format!("sessionless execute_turn should succeed: {e}"))?;
 
@@ -135,7 +134,7 @@ async fn execute_turn_surfaces_a_provider_failure() -> Result<()> {
     // -- Exec
     let error = fixture
         .runtime
-        .execute_turn(&fixture.bus, "hi".to_string(), None, Span::test_data())
+        .execute_turn("hi".to_string(), None, Span::test_data())
         .await
         .err()
         .ok_or("a provider failure must surface as an error")?;
@@ -164,7 +163,7 @@ async fn execute_turn_uses_the_interactive_resolver_when_pending_is_set() -> Res
     // -- Exec
     let value = fixture
         .runtime
-        .execute_turn(&fixture.bus, "hi".to_string(), None, Span::test_data())
+        .execute_turn("hi".to_string(), None, Span::test_data())
         .await
         .map_err(|e| format!("interactive execute_turn should succeed: {e}"))?;
 

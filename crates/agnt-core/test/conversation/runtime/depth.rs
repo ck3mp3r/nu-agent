@@ -65,7 +65,7 @@ async fn execute_turn_returns_early_when_the_repetition_ladder_stops_at_the_cap(
     for _ in 0..10 {
         let value = fixture
             .runtime
-            .execute_turn(&fixture.bus, "hello".to_string(), None, Span::test_data())
+            .execute_turn("hello".to_string(), None, Span::test_data())
             .await
             .map_err(|e| format!("execute_turn should succeed: {e}"))?;
         let text = extract_response_text_from_value(&value);

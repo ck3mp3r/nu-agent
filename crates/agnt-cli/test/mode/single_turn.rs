@@ -11,7 +11,6 @@ struct SingleTurnRuntime {
 impl agnt_core::protocol::contracts::CoreRuntime for SingleTurnRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &agnt_core::bus::Bus,
         prompt: String,
         _context: Option<String>,
         span: Span,

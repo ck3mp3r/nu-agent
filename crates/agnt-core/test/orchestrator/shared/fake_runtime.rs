@@ -18,7 +18,6 @@ pub(crate) struct FakeRuntime {
 impl CoreRuntime for FakeRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         _span: Span,
@@ -130,7 +129,6 @@ pub(crate) struct FakeValueRuntime {
 impl CoreRuntime for FakeValueRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         span: Span,

@@ -45,7 +45,6 @@ impl CancellableBlockingRuntime {
 impl CoreRuntime for CancellableBlockingRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         prompt: String,
         _context: Option<String>,
         _span: Span,

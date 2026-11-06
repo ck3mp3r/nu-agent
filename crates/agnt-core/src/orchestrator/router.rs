@@ -56,7 +56,7 @@ impl CommandRouter {
                         task_id,
                     })
                     .await;
-                let result = runtime.execute_turn(bus, prompt, None, span).await;
+                let result = runtime.execute_turn(prompt, None, span).await;
                 // Convert Result<Value, LabeledError> to TurnOutcome
                 // Detect cancellation by message content:
                 // - v2 path: "Turn cancelled: ..."

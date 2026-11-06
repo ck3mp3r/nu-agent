@@ -47,7 +47,7 @@ where
             task_id: None,
         })
         .await;
-    runtime.execute_turn(bus, prompt, context, span).await
+    runtime.execute_turn(prompt, context, span).await
 }
 
 /// The orchestrator event loop. Selects over the real source channels and

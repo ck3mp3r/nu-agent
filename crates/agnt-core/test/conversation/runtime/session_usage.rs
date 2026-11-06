@@ -38,7 +38,7 @@ async fn session_usage_accumulates_across_turns() -> Result<()> {
     for _ in 0..2 {
         fixture
             .runtime
-            .execute_turn(&fixture.bus, "hi".to_string(), None, Span::test_data())
+            .execute_turn("hi".to_string(), None, Span::test_data())
             .await
             .map_err(|e| format!("execute_turn should succeed: {e}"))?;
     }
@@ -67,7 +67,7 @@ async fn session_usage_resets_when_the_runtime_switches_sessions() -> Result<()>
     let mut fixture = make_runtime(usage_model(1, 10, 5))?;
     fixture
         .runtime
-        .execute_turn(&fixture.bus, "hi".to_string(), None, Span::test_data())
+        .execute_turn("hi".to_string(), None, Span::test_data())
         .await
         .map_err(|e| format!("execute_turn should succeed: {e}"))?;
     assert_eq!(
@@ -101,7 +101,7 @@ async fn session_usage_resets_when_a_session_is_loaded() -> Result<()> {
     let mut fixture = make_runtime(usage_model(1, 10, 5))?;
     fixture
         .runtime
-        .execute_turn(&fixture.bus, "hi".to_string(), None, Span::test_data())
+        .execute_turn("hi".to_string(), None, Span::test_data())
         .await
         .map_err(|e| format!("execute_turn should succeed: {e}"))?;
     let session_id = fixture
@@ -140,7 +140,7 @@ async fn session_usage_resets_on_a_new_session() -> Result<()> {
     let mut fixture = make_runtime(usage_model(1, 10, 5))?;
     fixture
         .runtime
-        .execute_turn(&fixture.bus, "hi".to_string(), None, Span::test_data())
+        .execute_turn("hi".to_string(), None, Span::test_data())
         .await
         .map_err(|e| format!("execute_turn should succeed: {e}"))?;
 
@@ -168,7 +168,7 @@ async fn session_usage_survives_a_compaction() -> Result<()> {
         .ok_or("fixture must carry a session id")?;
     fixture
         .runtime
-        .execute_turn(&fixture.bus, "hi".to_string(), None, Span::test_data())
+        .execute_turn("hi".to_string(), None, Span::test_data())
         .await
         .map_err(|e| format!("execute_turn should succeed: {e}"))?;
     let before = fixture.runtime.session_usage();

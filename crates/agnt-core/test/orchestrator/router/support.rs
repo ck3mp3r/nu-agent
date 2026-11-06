@@ -78,7 +78,6 @@ impl Default for AgentSwitchRuntime {
 impl CoreRuntime for AgentSwitchRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
@@ -277,17 +276,18 @@ impl UserInputUi for AgentSwitchUi {
 pub(super) struct SwitchSessionRuntime {
     pub(super) loaded_session_id: Arc<Mutex<Option<String>>>,
     pub(super) active_model: String,
+    pub(super) bus: crate::bus::Bus,
 }
 
 impl CoreRuntime for SwitchSessionRuntime {
     async fn execute_turn(
         &mut self,
-        bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
     ) -> Result<Value, LabeledError> {
-        let _ = bus
+        let _ = self
+            .bus
             .ui_event()
             .send(SystemEvent::TurnCompleted {
                 tool_calls: 0,

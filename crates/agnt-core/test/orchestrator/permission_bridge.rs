@@ -144,7 +144,6 @@ struct PermissionTimeoutIgnoredRuntime {
 impl CoreRuntime for PermissionTimeoutIgnoredRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,

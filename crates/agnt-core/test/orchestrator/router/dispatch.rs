@@ -159,6 +159,7 @@ async fn dispatch_ui_request_switch_session() -> core::result::Result<(), Box<dy
     let mut runtime = SwitchSessionRuntime {
         loaded_session_id: Arc::clone(&loaded_session_id),
         active_model: "openai/gpt-4o-mini".to_string(),
+        bus: crate::bus::Bus::default(),
     };
     let (response_tx, mut response_rx) = tokio::sync::mpsc::channel::<UiRequestResponse>(32);
 

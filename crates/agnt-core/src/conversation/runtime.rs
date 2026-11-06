@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use agnt_kernel::CompactionSource;
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::bus::{Bus, SessionEvent};
+use crate::bus::SessionEvent;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::protocol::contracts::UiMessageSnapshot;
 use crate::session::SessionInfo;
@@ -218,7 +218,6 @@ where
 {
     async fn execute_turn(
         &mut self,
-        _bus: &Bus,
         prompt: String,
         context: Option<String>,
         span: Span,

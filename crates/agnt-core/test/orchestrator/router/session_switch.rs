@@ -12,6 +12,7 @@ async fn switch_session_dispatches_async_load_without_panic()
     let mut runtime = SwitchSessionRuntime {
         loaded_session_id: Arc::clone(&loaded_session_id),
         active_model: "openai/gpt-4o-mini".to_string(),
+        bus: crate::bus::Bus::default(),
     };
 
     // result_tx is unused by SwitchSession but required by the dispatch signature

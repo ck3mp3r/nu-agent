@@ -21,7 +21,6 @@ impl Default for ContextWindowRuntime {
 impl CoreRuntime for ContextWindowRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
@@ -203,7 +202,6 @@ struct TokenSeedingRuntime {
 impl CoreRuntime for TokenSeedingRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,

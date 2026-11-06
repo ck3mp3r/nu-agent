@@ -36,7 +36,6 @@ impl PermissionGateRuntime {
 impl CoreRuntime for PermissionGateRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,

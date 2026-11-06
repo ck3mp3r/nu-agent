@@ -13,7 +13,6 @@ pub(super) struct McpToggleRuntime {
 impl CoreRuntime for McpToggleRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
@@ -89,7 +88,6 @@ pub(super) struct FailingMcpToggleRuntime {
 impl CoreRuntime for FailingMcpToggleRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,
@@ -169,7 +167,6 @@ pub(super) struct SequencedMcpToggleRuntime {
 impl CoreRuntime for SequencedMcpToggleRuntime {
     async fn execute_turn(
         &mut self,
-        _bus: &crate::bus::Bus,
         _prompt: String,
         _context: Option<String>,
         span: Span,

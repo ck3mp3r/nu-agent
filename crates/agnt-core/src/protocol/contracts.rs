@@ -1,6 +1,5 @@
 use nu_protocol::{LabeledError, Span, Value};
 
-use crate::bus::Bus;
 use crate::conversation::runtime::PendingPermissions;
 use crate::orchestrator::OrchestratorEvent;
 use crate::protocol::events::SystemEvent;
@@ -272,7 +271,6 @@ pub trait RuntimeAccess {
 pub trait CoreRuntime {
     fn execute_turn(
         &mut self,
-        bus: &Bus,
         prompt: String,
         context: Option<String>,
         span: Span,

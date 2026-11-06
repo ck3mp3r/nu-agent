@@ -475,7 +475,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
                     task_id: None,
                 })
                 .await;
-            let turn = runtime.execute_turn(&session.bus, prompt_text, None, Span::unknown());
+            let turn = runtime.execute_turn(prompt_text, None, Span::unknown());
             let (result, compaction_requested) = run_turn_with_notifications(
                 &mut rx,
                 &mut compaction_rx,
