@@ -414,7 +414,7 @@ async fn dispatch_path_c_stop_reason_surfaces_warning_and_completed() -> Result<
         return Err("a cancelled turn must early-return".into());
     };
     assert_eq!(
-        crate::utils::value_ext::extract_response_text_from_value(&value),
+        agnt_runtime::utils::value_ext::extract_response_text_from_value(&value),
         reason
     );
     let events = collector.drain();

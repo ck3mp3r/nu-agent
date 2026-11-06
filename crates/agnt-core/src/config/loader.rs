@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::protocol::preamble::{
     PreambleDefaults, UserPreambleInput, classify_model_family, resolve_preamble,
 };
-use crate::utils::env_map::{EnvMap, process_env};
+use agnt_runtime::utils::env_map::{EnvMap, process_env};
 
 use super::dotenv;
 use super::models_cache::{ModelsCache, ModelsCacheError};

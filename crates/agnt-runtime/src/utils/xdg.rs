@@ -41,7 +41,7 @@ impl std::error::Error for XdgError {}
 /// # Examples
 ///
 /// ```
-/// use agnt_core::utils::xdg;
+/// use agnt_runtime::utils::xdg;
 ///
 /// let data_dir = xdg::data_dir().unwrap();
 /// println!("Data directory: {:?}", data_dir);
@@ -66,7 +66,7 @@ pub fn data_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
 /// # Examples
 ///
 /// ```
-/// use agnt_core::utils::xdg;
+/// use agnt_runtime::utils::xdg;
 ///
 /// let cache_dir = xdg::cache_dir().unwrap();
 /// println!("Cache directory: {:?}", cache_dir);
@@ -91,7 +91,7 @@ pub fn cache_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
 /// # Examples
 ///
 /// ```
-/// use agnt_core::utils::xdg;
+/// use agnt_runtime::utils::xdg;
 ///
 /// let config_dir = xdg::config_dir().unwrap();
 /// println!("Config directory: {:?}", config_dir);
@@ -116,7 +116,7 @@ pub fn config_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
 /// # Examples
 ///
 /// ```
-/// use agnt_core::utils::xdg;
+/// use agnt_runtime::utils::xdg;
 ///
 /// let state_dir = xdg::state_dir().unwrap();
 /// println!("State directory: {:?}", state_dir);
@@ -132,27 +132,6 @@ pub fn state_dir_with(env: &EnvMap) -> Result<PathBuf, XdgError> {
     }
     let home = home(env)?;
     Ok(PathBuf::from(home).join(".local").join("state"))
-}
-
-/// Get the XDG runtime directory
-///
-/// Checks XDG_RUNTIME_DIR - NO FALLBACK per XDG spec
-///
-/// The XDG Base Directory spec requires that XDG_RUNTIME_DIR has no fallback.
-/// If it's not set, applications should fail rather than create insecure alternatives.
-///
-/// # Examples
-///
-/// ```
-/// use agnt_core::utils::xdg;
-///
-/// match xdg::runtime_dir() {
-///     Ok(dir) => println!("Runtime directory: {:?}", dir),
-///     Err(e) => eprintln!("Runtime directory not available: {}", e),
-/// }
-/// ```
-pub fn runtime_dir() -> Result<PathBuf, XdgError> {
-    runtime_dir_with(&process_env())
 }
 
 /// Get the XDG runtime directory from an explicit environment map.

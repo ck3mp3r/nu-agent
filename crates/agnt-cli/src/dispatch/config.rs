@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use agnt_core::config::{self, CompactionConfig, Config, PluginConfig};
 use agnt_core::session::StoreType;
-use agnt_core::utils::process_env;
+use agnt_runtime::utils::process_env;
 use agnt_tty::policy::{UiPolicy, Verbosity};
 use agnt_tui::rendering::theme::ThemeName;
 

@@ -29,9 +29,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::env_map::{EnvMap, process_env};
-use crate::utils::paths::APP_DIR_NAME;
-use crate::utils::xdg::{self, XdgError};
+use agnt_runtime::utils::env_map::{EnvMap, process_env};
+use agnt_runtime::utils::paths::APP_DIR_NAME;
+use agnt_runtime::utils::xdg::{self, XdgError};
 
 use super::copilot_tokens::copilot_dir_name;
 

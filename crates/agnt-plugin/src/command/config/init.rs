@@ -71,12 +71,12 @@ impl SimplePluginCommand for AgentConfigInit {
 const TEMPLATE: &str = include_str!("template.toml");
 
 fn generate_config_content() -> String {
-    generate_config_content_with(&agnt_core::utils::env_map::process_env())
+    generate_config_content_with(&agnt_runtime::utils::env_map::process_env())
 }
 
 /// Generate the starter config, reading `AGENT_PROVIDER` / `AGENT_MODEL` from
 /// `env` instead of the process environment.
-fn generate_config_content_with(env: &agnt_core::utils::env_map::EnvMap) -> String {
+fn generate_config_content_with(env: &agnt_runtime::utils::env_map::EnvMap) -> String {
     let env_provider = env.get("AGENT_PROVIDER").cloned().unwrap_or_default();
     let env_model = env.get("AGENT_MODEL").cloned().unwrap_or_default();
 

@@ -80,7 +80,7 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
     // `[paths].state_home` and `[paths].cache_home` only become known now: the
     // pre-load window logged to the derived default, and the grammar cache
     // keeps the OS default until this install.
-    agnt_core::logging::retarget_process_sink(&paths.log_path);
+    agnt_runtime::logging::retarget_process_sink(&paths.log_path);
     agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
     let theme_path = paths.theme_path.clone();
     let rig = agnt_core::session::RigStoreConfig::new(store_type)

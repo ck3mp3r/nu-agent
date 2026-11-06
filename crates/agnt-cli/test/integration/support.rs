@@ -13,7 +13,7 @@ use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
-use agnt_core::utils::paths::APP_DIR_NAME;
+use agnt_runtime::utils::paths::APP_DIR_NAME;
 use agnt_testkit::MockServer;
 use clap::Parser;
 

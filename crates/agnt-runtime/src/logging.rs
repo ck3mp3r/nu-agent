@@ -134,8 +134,8 @@ pub fn install_process_sink(sink: &FileLogSink) {
 /// Retarget the process log sink, when one is installed.
 ///
 /// The config-load site calls this with the fully resolved
-/// [`Paths::log_path`](crate::config::Paths::log_path); a process without an
-/// installed sink (a test, or a binary that logs elsewhere) ignores it.
+/// `Paths::log_path`; a process without an installed sink (a test, or a binary
+/// that logs elsewhere) ignores it.
 pub fn retarget_process_sink(path: &Path) {
     if let Some(sink) = PROCESS_SINK.get() {
         sink.retarget(path.to_path_buf());

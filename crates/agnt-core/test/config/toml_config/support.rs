@@ -1,7 +1,7 @@
 //! Shared fixtures for the `config.toml` loading tests.
 
 use crate::config::cmd_refs::{CmdRunError, CmdRunner};
-use crate::utils::env_map::EnvMap;
+use agnt_runtime::utils::env_map::EnvMap;
 use tempfile::TempDir;
 
 pub(crate) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

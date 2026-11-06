@@ -19,6 +19,7 @@ required-features = ["integration"]
 agnt-a2a = { workspace = true }
 agnt-acp = { workspace = true }
 agnt-core = { workspace = true }
+agnt-runtime = { workspace = true }
 agnt-tui = { workspace = true }
 agnt-tty = { workspace = true }
 chrono = { workspace = true }

@@ -57,7 +57,7 @@ fn run_config_init(args: &ConfigInitArgs, path: &std::path::Path) -> Result<()> 
 const TEMPLATE: &str = include_str!("../../../../agnt-plugin/src/command/config/template.toml");
 
 fn generate_config_content() -> String {
-    let env = agnt_core::utils::env_map::process_env();
+    let env = agnt_runtime::utils::env_map::process_env();
     let env_provider = env.get("AGENT_PROVIDER").cloned().unwrap_or_default();
     let env_model = env.get("AGENT_MODEL").cloned().unwrap_or_default();
 

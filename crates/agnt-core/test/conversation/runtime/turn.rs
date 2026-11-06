@@ -10,7 +10,7 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 use super::harness::*;
 use super::*;
 use crate::protocol::contracts::CoreRuntime;
-use crate::utils::value_ext::extract_response_text_from_value;
+use agnt_runtime::utils::value_ext::extract_response_text_from_value;
 
 /// Collect the conversation the rig-memory store holds for a session.
 async fn persisted_messages(

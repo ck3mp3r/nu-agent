@@ -3,7 +3,7 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use super::{load_env_file_into, load_env_files_into, parse_line};
-use crate::utils::env_map::EnvMap;
+use agnt_runtime::utils::env_map::EnvMap;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

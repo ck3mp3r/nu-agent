@@ -66,9 +66,9 @@ pub(super) fn run_command(
             let paths = agnt_core::config::Paths::resolve_for_process(None).map_err(|e| {
                 LabeledError::new(format!("Failed to resolve application paths: {e}"))
             })?;
-            let sink = agnt_core::logging::FileLogSink::open(paths.log_path)
+            let sink = agnt_runtime::logging::FileLogSink::open(paths.log_path)
                 .map_err(|e| LabeledError::new(format!("Failed to open the log file: {e}")))?;
-            agnt_core::logging::install_process_sink(&sink);
+            agnt_runtime::logging::install_process_sink(&sink);
 
             // Initialize env_logger with the file sink target
             let _ = env_logger::Builder::new()
@@ -109,7 +109,7 @@ pub(super) fn run_command(
     // `[paths].state_home` and `[paths].cache_home` only become known now: the
     // pre-load window logged to the derived default, and the grammar cache
     // keeps the OS default until this install.
-    agnt_core::logging::retarget_process_sink(&paths.log_path);
+    agnt_runtime::logging::retarget_process_sink(&paths.log_path);
     agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
     let rig = agnt_core::session::RigStoreConfig::new(store_type)
         .with_store_path(paths.store_path.clone());

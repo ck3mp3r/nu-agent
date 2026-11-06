@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::config::copilot_tokens::copilot_dir_name;
 use crate::config::paths::{Paths, PathsConfig};
 use crate::test_support::env_map;
-use crate::utils::paths::APP_DIR_NAME;
+use agnt_runtime::utils::paths::APP_DIR_NAME;
 
 use super::support::{EXPECTED_APP_DIR, Result, app_dir};
 

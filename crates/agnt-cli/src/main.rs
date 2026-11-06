@@ -420,10 +420,10 @@ fn log_target(paths: Option<&agnt_core::config::Paths>) -> env_logger::Target {
     let Some(paths) = paths else {
         return sink();
     };
-    let Ok(file_sink) = agnt_core::logging::FileLogSink::open(paths.log_path.clone()) else {
+    let Ok(file_sink) = agnt_runtime::logging::FileLogSink::open(paths.log_path.clone()) else {
         return sink();
     };
-    agnt_core::logging::install_process_sink(&file_sink);
+    agnt_runtime::logging::install_process_sink(&file_sink);
 
     env_logger::Target::Pipe(Box::new(file_sink))
 }

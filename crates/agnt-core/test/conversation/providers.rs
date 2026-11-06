@@ -9,7 +9,7 @@ use rig::test_utils::RecordingHttpClient;
 use rig::wire::{Mode, Wire};
 
 use crate::config::Config;
-use crate::utils::env_map::EnvMap;
+use agnt_runtime::utils::env_map::EnvMap;
 
 #[test]
 fn resolve_provider_type_uses_explicit_field() {

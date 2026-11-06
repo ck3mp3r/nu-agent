@@ -68,7 +68,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
             .and_then(|config| config.paths.as_ref()),
     )
     .map_err(|err| AcpError::Config(format!("failed to resolve application paths: {err}")))?;
-    agnt_core::logging::retarget_process_sink(&paths.log_path);
+    agnt_runtime::logging::retarget_process_sink(&paths.log_path);
     agnt_core::tools::handler::tree_sitter::install_grammar_cache_dir(&paths.grammar_cache_dir);
     let config_dir = paths.config_dir();
     let models_cache = match ModelsCache::load_from(&paths.models_cache_path) {
@@ -362,7 +362,7 @@ fn persona_slug(
 /// Returns an empty string when the role does not resolve: the server cannot
 /// serve a session then either, and a hook envelope must never fail a run.
 fn active_model_identity(plugin_config: &PluginConfig) -> String {
-    let env = agnt_core::utils::env_map::process_env();
+    let env = agnt_runtime::utils::env_map::process_env();
     match agnt_core::config::resolve_role_config(plugin_config, None, &env) {
         Ok(config) => agnt_core::protocol::picker::format_active_model_identity(
             &config.provider,

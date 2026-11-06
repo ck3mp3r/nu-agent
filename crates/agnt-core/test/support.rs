@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::config::Paths;
-use crate::utils::env_map::EnvMap;
+use agnt_runtime::utils::env_map::EnvMap;
 
 /// Build an [`EnvMap`] from `(key, value)` pairs.
 pub(crate) fn env_map(entries: &[(&str, &str)]) -> EnvMap {

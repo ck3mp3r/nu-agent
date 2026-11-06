@@ -17,7 +17,7 @@ async fn build_copilot_client_no_auth_returns_ok() -> Result<()> {
     // rig's `Authenticator`. A live cached session key is reused, so the build
     // succeeds without a network call.
     use crate::config::Config;
-    use crate::utils::env_map::EnvMap;
+    use agnt_runtime::utils::env_map::EnvMap;
 
     // Empty env map and a temp token dir keep the test off the real environment
     // and away from any cached OAuth tokens.
@@ -73,7 +73,7 @@ async fn build_copilot_client_oauth_path_succeeds_at_build_time() -> Result<()> 
     // rig's `Authenticator`. A live cached session key is reused, so the build
     // succeeds without a network call.
     use crate::config::Config;
-    use crate::utils::env_map::EnvMap;
+    use agnt_runtime::utils::env_map::EnvMap;
 
     let token_dir = tempfile::TempDir::new()?;
     seed_cached_session_key(token_dir.path())?;

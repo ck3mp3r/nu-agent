@@ -14,7 +14,7 @@ use crate::protocol::contracts::CoreRuntime;
 use crate::protocol::model_switching::ModelSwitching;
 use crate::protocol::session_management::SessionPersistence;
 use crate::types::Message;
-use crate::utils::value_ext::extract_response_text_from_value;
+use agnt_runtime::utils::value_ext::extract_response_text_from_value;
 
 /// A persona whose front matter carries an `additional_params` mapping.
 const PARAMS_PERSONA: &str = r#"---

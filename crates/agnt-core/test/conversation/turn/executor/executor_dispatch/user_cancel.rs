@@ -71,7 +71,7 @@ async fn dispatch_user_cancel_without_a_reason_sends_the_notice_before_completed
         return Err("a cancelled turn must early-return".into());
     };
     assert_eq!(
-        crate::utils::value_ext::extract_response_text_from_value(&value),
+        agnt_runtime::utils::value_ext::extract_response_text_from_value(&value),
         "",
         "a user cancel keeps the empty response text"
     );
@@ -121,7 +121,7 @@ async fn dispatch_user_cancel_with_the_hook_reason_sends_the_notice_before_compl
         return Err("a cancelled turn must early-return".into());
     };
     assert_eq!(
-        crate::utils::value_ext::extract_response_text_from_value(&value),
+        agnt_runtime::utils::value_ext::extract_response_text_from_value(&value),
         "",
         "a user cancel keeps the empty response text"
     );

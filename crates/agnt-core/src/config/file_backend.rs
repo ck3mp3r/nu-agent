@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
 
-use crate::utils::env_map::EnvMap;
+use agnt_runtime::utils::env_map::EnvMap;
 
 use super::vault::{BackendKind, VaultBackend, VaultError};
 
@@ -84,7 +84,8 @@ impl FileBackend {
     /// that holds the resolved [`Paths`](crate::config::Paths) passes
     /// [`Paths::secrets_path`](crate::config::Paths::secrets_path) instead.
     pub fn default_path_with(env: &EnvMap) -> Result<PathBuf, VaultError> {
-        let dir = crate::utils::paths::data_app_dir_with(env).map_err(|_| VaultError::NoDataDir)?;
+        let dir = agnt_runtime::utils::paths::data_app_dir_with(env)
+            .map_err(|_| VaultError::NoDataDir)?;
         Ok(dir.join(SECRETS_FILE))
     }
 

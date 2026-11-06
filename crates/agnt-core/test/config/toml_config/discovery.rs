@@ -8,7 +8,7 @@ fn config_path_returns_xdg_path() -> Result<()> {
     with_xdg_config_home(|dir| {
         let expected = dir
             .path()
-            .join(crate::utils::paths::APP_DIR_NAME)
+            .join(agnt_runtime::utils::paths::APP_DIR_NAME)
             .join("config.toml");
         let path = crate::config::Paths::bootstrap_config_path_with(&env_for(dir))
             .map_err(|e| format!("bootstrap_config_path should succeed: {e:?}"))?;
@@ -29,7 +29,7 @@ fn config_path_honors_nu_agent_config_home() -> Result<()> {
             config_home.to_string_lossy().to_string(),
         );
         let redirected = config_home
-            .join(crate::utils::paths::APP_DIR_NAME)
+            .join(agnt_runtime::utils::paths::APP_DIR_NAME)
             .join("config.toml");
 
         // -- Exec

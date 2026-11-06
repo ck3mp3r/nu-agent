@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::utils::env_map::{EnvMap, process_env};
+use agnt_runtime::utils::env_map::{EnvMap, process_env};
 
 use super::PluginConfig;
 use super::cmd_refs::{CMD_PREFIX, CmdRunner, DEFAULT_TIMEOUT, ProcessCmdRunner, resolve_cmd_refs};

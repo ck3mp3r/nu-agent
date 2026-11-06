@@ -88,7 +88,7 @@ fn test_seam_sqlite_uses_the_session_database() -> Result<()> {
     store.append_log("agent", 0, b"one")?;
 
     // -- Check
-    let path = crate::utils::paths::app_dir(temp.path()).join("sessions.db");
+    let path = agnt_runtime::utils::paths::app_dir(temp.path()).join("sessions.db");
     assert!(
         path.is_file(),
         "the database is in the app directory: {path:?}"

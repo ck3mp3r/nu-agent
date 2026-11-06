@@ -10,7 +10,7 @@ use crate::tools::mcp::{
     config::{McpAuthConfig, McpServerConfig, McpTransportType},
     namespaced::NamespacedClientHandler,
 };
-use crate::utils::crypto::ensure_crypto_provider;
+use agnt_runtime::utils::crypto::ensure_crypto_provider;
 
 pub struct McpRuntime {
     sessions: Vec<McpSessionHandle>,

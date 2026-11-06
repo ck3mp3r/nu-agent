@@ -8,7 +8,7 @@ use crate::config::file_backend::FileBackend;
 use crate::config::types::ProviderConfig;
 use crate::config::vault::{Vault, VaultBackendKind};
 use crate::test_support::env_map;
-use crate::utils::env_map::EnvMap;
+use agnt_runtime::utils::env_map::EnvMap;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

@@ -2,7 +2,7 @@
 
 use crate::config::file_backend::FileBackend;
 use crate::config::keychain_backend::KeychainBackend;
-use crate::utils::env_map::EnvMap;
+use agnt_runtime::utils::env_map::EnvMap;
 
 use super::{
     BackendChoice, BackendKind, EnvOnlyBackend, Vault, VaultBackend, VaultBackendKind,

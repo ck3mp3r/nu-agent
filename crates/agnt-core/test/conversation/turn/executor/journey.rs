@@ -44,4 +44,4 @@ use crate::hook::output_repetition::{
 };
 use crate::protocol::events::{SystemEvent, SystemKind};
 use crate::types::Message;
-use crate::utils::value_ext::extract_response_text_from_value;
+use agnt_runtime::utils::value_ext::extract_response_text_from_value;

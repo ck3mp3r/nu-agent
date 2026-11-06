@@ -101,6 +101,7 @@ dependencies = [
  "agent-client-protocol",
  "agnt-core",
  "agnt-render",
+ "agnt-runtime",
  "chrono",
  "log",
  "nu-protocol",
@@ -121,6 +122,7 @@ dependencies = [
  "agnt-a2a",
  "agnt-acp",
  "agnt-core",
+ "agnt-runtime",
  "agnt-testkit",
  "agnt-tty",
  "agnt-tui",
@@ -216,6 +218,7 @@ name = "agnt-plugin"
 version = "0.1.0"
 dependencies = [
  "agnt-core",
+ "agnt-runtime",
  "chrono",
  "env_logger",
  "log",
@@ -254,10 +257,13 @@ version = "0.1.0"
 dependencies = [
  "log",
  "noyalib",
+ "nu-protocol",
  "pulldown-cmark",
  "rig",
+ "rustls",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

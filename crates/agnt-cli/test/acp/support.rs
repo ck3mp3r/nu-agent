@@ -19,7 +19,7 @@ use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, ActiveSession, Agent, Builder, Client, HandleDispatchFrom, NullClose,
     NullRun, SessionMessage, on_receive_request,
 };
-use agnt_core::utils::paths::APP_DIR_NAME;
+use agnt_runtime::utils::paths::APP_DIR_NAME;
 use agnt_testkit::MockServer;
 
 pub type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

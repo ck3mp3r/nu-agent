@@ -1,5 +1,5 @@
 use super::*;
-use agnt_core::utils::env_map::EnvMap;
+use agnt_runtime::utils::env_map::EnvMap;
 
 #[test]
 fn generate_config_content_has_header() {

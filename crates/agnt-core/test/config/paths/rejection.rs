@@ -2,8 +2,8 @@
 
 use crate::config::paths::{Paths, PathsConfig, PathsError};
 use crate::test_support::env_map;
-use crate::utils::env_map::EnvMap;
-use crate::utils::xdg::XdgError;
+use agnt_runtime::utils::env_map::EnvMap;
+use agnt_runtime::utils::xdg::XdgError;
 
 use super::support::{Result, app_dir};
 

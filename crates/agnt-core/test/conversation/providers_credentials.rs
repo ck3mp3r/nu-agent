@@ -8,7 +8,7 @@ use super::*;
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 use crate::config::Config;
-use crate::utils::env_map::EnvMap;
+use agnt_runtime::utils::env_map::EnvMap;
 
 // ========================================================================
 // build_dyn_model: every cached variant erases to a DynModel<Completion>

@@ -1,6 +1,6 @@
 use super::Agent;
 use agnt_core::config::{Config, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
-use agnt_core::utils::env_map::{EnvMap, process_env};
+use agnt_runtime::utils::env_map::{EnvMap, process_env};
 use nu_parser::parse;
 use nu_plugin::EvaluatedCall;
 use nu_protocol::{

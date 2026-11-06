@@ -8,7 +8,13 @@
 // region:    --- Modules
 
 pub mod config;
+pub mod logging;
 pub mod protocol;
 pub mod types;
+pub mod utils;
+
+#[cfg(test)]
+#[path = "../test/support.rs"]
+pub(crate) mod test_support;
 
 // endregion: --- Modules

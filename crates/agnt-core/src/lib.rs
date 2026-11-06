@@ -4,7 +4,6 @@ pub mod conversation;
 pub mod hook;
 pub mod hooks;
 pub mod llm;
-pub mod logging;
 pub mod orchestrator;
 pub mod protocol;
 pub mod renderer;
@@ -12,7 +11,6 @@ pub mod session;
 pub mod theme_pref;
 pub mod tools;
 pub mod types;
-pub mod utils;
 
 /// The rig-memory crate this workspace's session persistence is built on.
 ///

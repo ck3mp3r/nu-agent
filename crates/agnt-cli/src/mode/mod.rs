@@ -29,7 +29,7 @@ use agnt_core::hooks::{
 };
 use agnt_core::protocol::contracts::UiMessageSnapshot;
 use agnt_core::protocol::session_management::SessionPersistence;
-use agnt_core::utils::value_ext::extract_response_text_from_value;
+use agnt_runtime::utils::value_ext::extract_response_text_from_value;
 use nu_protocol::Value;
 use tokio::task::JoinHandle;
 
