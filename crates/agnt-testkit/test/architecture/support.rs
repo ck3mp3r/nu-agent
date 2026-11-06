@@ -78,7 +78,6 @@ pub const BASELINES: [(&str, &[&str]); 8] = [
         &[
             "ARCH-8 agnt-cli/src/mode/mod.rs:101: `&Bus` is a parameter",
             "ARCH-8 agnt-cli/src/mode/mod.rs:184: `&Bus` is a parameter",
-            "ARCH-8 agnt-core/src/orchestrator/router.rs:35: `&Bus` is a parameter",
             "ARCH-8 agnt-core/src/orchestrator/stages/context.rs:44: `&Bus` is a struct field",
             "ARCH-8 agnt-tui/src/interactive.rs:288: `&Bus` is a parameter",
             "ARCH-8 agnt-acp/src/session.rs:107: `&Bus` is a return type",

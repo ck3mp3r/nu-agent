@@ -14,8 +14,8 @@ pub(super) use tokio::sync::mpsc;
 pub(super) use crate::bus::create_bus;
 pub(super) use crate::orchestrator::test_shared::drive_loop;
 pub(super) use crate::orchestrator::{
-    AgentSwitchHook, CommandRouter, LoopConfig, NoAgentSwitchHook, OrchestratorEvent, UiRequest,
-    UiRequestResponse, WorkerCommand,
+    AgentSwitchHook, CommandRouter, DispatchSources, LoopConfig, NoAgentSwitchHook,
+    OrchestratorEvent, UiRequest, UiRequestResponse, WorkerCommand,
 };
 pub(super) use crate::protocol::{
     contracts::{CoreRuntime, McpUsabilityState, UiMessageSnapshot, UserInputUi},
@@ -24,6 +24,21 @@ pub(super) use crate::protocol::{
     model_switching::ModelSwitching,
     session_management::{SessionPersistence, SessionState},
 };
+
+// ---------------------------------------------------------------------------
+// Dispatch sources
+// ---------------------------------------------------------------------------
+
+/// The channels a router test hands the dispatcher, cloned from the bus the
+/// test subscribes to.
+pub(super) fn dispatch_sources(bus: &crate::bus::Bus) -> DispatchSources {
+    DispatchSources {
+        turn: bus.turn().clone(),
+        compaction: bus.compaction().clone(),
+        session: bus.session().clone(),
+        ui_state: bus.ui_state().clone(),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Recording agent-switch hook

@@ -7,7 +7,7 @@ pub mod router;
 pub mod stages;
 pub mod turn_outcome;
 
-pub use router::CommandRouter;
+pub use router::{CommandRouter, DispatchSources};
 
 pub use config::{AgentSwitchHook, HydrationConfig, LoopConfig, NoAgentSwitchHook};
 pub use events::{

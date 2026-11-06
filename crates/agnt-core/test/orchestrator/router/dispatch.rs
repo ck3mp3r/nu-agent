@@ -10,6 +10,7 @@ async fn dispatch_execute_turn_publishes_exactly_one_started()
     // -- Setup & Fixtures
     let bus = create_bus();
     let mut turn_rx = bus.turn().subscribe();
+    let sources = dispatch_sources(&bus);
     let mut runtime = AgentSwitchRuntime::default();
     let (result_tx, mut result_rx) =
         mpsc::channel::<crate::orchestrator::turn_outcome::TurnOutcome>(32);
@@ -24,7 +25,7 @@ async fn dispatch_execute_turn_publishes_exactly_one_started()
         &mut runtime,
         &result_tx,
         None::<NoAgentSwitchHook>,
-        &bus,
+        &sources,
     )
     .await;
 

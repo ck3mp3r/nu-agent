@@ -1,3 +1,4 @@
+use crate::bus::{CompactionTx, SessionTx, TurnTx, UiStateTx};
 use crate::orchestrator::{
     AgentSwitchHook, UiRequest, UiRequestResponse, WorkerCommand, turn_outcome::TurnOutcome,
 };
@@ -10,6 +11,19 @@ use crate::protocol::{
 };
 
 use tokio::sync::mpsc;
+
+/// The bus channels a dispatched command publishes to.
+///
+/// Named fields, one per channel the dispatcher writes: the turn lifecycle, the
+/// compaction lifecycle, the session lifecycle, and the UI state the surfaces
+/// render. The worker builds one from the bus it was handed, so the dispatcher
+/// never sees the hub.
+pub struct DispatchSources {
+    pub turn: TurnTx,
+    pub compaction: CompactionTx,
+    pub session: SessionTx,
+    pub ui_state: UiStateTx,
+}
 
 /// Dispatches [`WorkerCommand`] variants to a runtime that implements all
 /// focused capability traits.
@@ -32,7 +46,7 @@ impl CommandRouter {
         runtime: &mut R,
         result_tx: &mpsc::Sender<TurnOutcome>,
         on_agent_switch: Option<H>,
-        bus: &crate::bus::Bus,
+        sources: &DispatchSources,
     ) -> bool
     where
         R: CoreRuntime + McpManagement + ModelSwitching + SessionState + SessionPersistence + Send,
@@ -45,12 +59,12 @@ impl CommandRouter {
                 task_id,
             } => {
                 log::debug!("Router: ExecuteTurn prompt_len={}", prompt.len());
-                // Control-plane turn-start event: stays on `bus.turn()`, not
-                // rendered. Published here, at the turn dispatch, so both turn
-                // paths fire it exactly once and the A2A attribution travels
-                // with the command.
-                let _ = bus
-                    .turn()
+                // Control-plane turn-start event: stays on the turn channel,
+                // not rendered. Published here, at the turn dispatch, so both
+                // turn paths fire it exactly once and the A2A attribution
+                // travels with the command.
+                let _ = sources
+                    .turn
                     .send(crate::bus::TurnEvent::Started {
                         prompt: prompt.clone(),
                         task_id,
@@ -74,8 +88,8 @@ impl CommandRouter {
                 let source_text = compaction_source_text(source);
                 log::trace!("Router: RunCompaction source={source_text}");
                 if let Err(e) = runtime.run_compaction(source).await {
-                    let _ = bus
-                        .compaction()
+                    let _ = sources
+                        .compaction
                         .send(SystemEvent::CompactionFailed {
                             source: source_text.to_string(),
                             message: e,
@@ -100,8 +114,8 @@ impl CommandRouter {
                 // session. Skip the clear/hydrate cycle so the incoming prompt
                 // does not wipe the visible history.
                 if runtime.current_session_id() == Some(key.as_str()) {
-                    let _ = bus
-                        .ui_state()
+                    let _ = sources
+                        .ui_state
                         .send(crate::orchestrator::UiStateEvent::EnqueueExternalPrompt {
                             text: prompt,
                         })
@@ -110,8 +124,8 @@ impl CommandRouter {
                 }
                 match runtime.attach_session(&key).await {
                     Ok(snapshots) => {
-                        let _ = bus
-                            .session()
+                        let _ = sources
+                            .session
                             .send(crate::bus::SessionEvent::Switched {
                                 from_session_id: None,
                                 to_session_id: key,
@@ -122,16 +136,16 @@ impl CommandRouter {
                         // messages and does not clear, so the clear must precede
                         // it, and the logo must precede the hydration so it is
                         // the first entry.
-                        let _ = bus
-                            .ui_state()
+                        let _ = sources
+                            .ui_state
                             .send(crate::orchestrator::UiStateEvent::ClearTranscript)
                             .await;
-                        let _ = bus
-                            .ui_state()
+                        let _ = sources
+                            .ui_state
                             .send(crate::orchestrator::UiStateEvent::PushStartupLogo)
                             .await;
-                        let _ = bus
-                            .ui_state()
+                        let _ = sources
+                            .ui_state
                             .send(crate::orchestrator::UiStateEvent::HydrateTranscript {
                                 messages: snapshots,
                                 last_total_tokens: None,
@@ -145,8 +159,8 @@ impl CommandRouter {
                 // Enqueue the incoming message only after the transcript has
                 // been replaced, so it never renders above the previous
                 // session's history.
-                let _ = bus
-                    .ui_state()
+                let _ = sources
+                    .ui_state
                     .send(crate::orchestrator::UiStateEvent::EnqueueExternalPrompt { text: prompt })
                     .await;
                 true

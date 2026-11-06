@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use crate::bus::SessionEvent;
 use crate::orchestrator::config::LoopParts;
 use crate::orchestrator::loop_impl::{Stages, WORKER_CMD_CAPACITY, run_orchestrator_loop};
-use crate::orchestrator::router::CommandRouter;
+use crate::orchestrator::router::{CommandRouter, DispatchSources};
 use crate::orchestrator::stages::{
     OrchestrationContext, permission::PermissionStage, session::SessionStage, slash::SlashStage,
     ui_request::UiRequestStage,
@@ -208,7 +208,12 @@ where
                     mpsc::channel::<WorkerCommand>(WORKER_CMD_CAPACITY);
                 let (result_tx, result_rx) = mpsc::channel::<TurnOutcome>(WORKER_RESULT_CAPACITY);
                 let on_agent_switch = self.config.on_agent_switch.clone();
-                let worker_bus = self.config.bus.clone();
+                let worker_sources = DispatchSources {
+                    turn: self.config.bus.turn().clone(),
+                    compaction: self.config.bus.compaction().clone(),
+                    session: self.config.bus.session().clone(),
+                    ui_state: self.config.bus.ui_state().clone(),
+                };
                 let handle = tokio::spawn(async move {
                     while let Some(cmd) = worker_rx.recv().await {
                         let should_continue = CommandRouter::dispatch(
@@ -216,7 +221,7 @@ where
                             &mut runtime,
                             &result_tx,
                             on_agent_switch.clone(),
-                            &worker_bus,
+                            &worker_sources,
                         )
                         .await;
                         if !should_continue {

@@ -31,12 +31,13 @@ async fn switch_session_dispatches_async_load_without_panic()
     // Dispatch from within an async context — this is the exact scenario
     // that was panicking with "Cannot start a runtime from within a runtime"
     // when load_session used Handle::current().block_on(...)
+    let sources = dispatch_sources(&create_bus());
     let should_continue = CommandRouter::dispatch(
         cmd,
         &mut runtime,
         &result_tx,
         None::<NoAgentSwitchHook>,
-        &create_bus(),
+        &sources,
     )
     .await;
 

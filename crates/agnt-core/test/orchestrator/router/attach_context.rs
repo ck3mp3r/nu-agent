@@ -79,6 +79,7 @@ async fn attach_a2a_context_derives_prefixed_session_key()
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
     let bus = create_bus();
     let mut session_rx = bus.session().subscribe();
+    let sources = dispatch_sources(&bus);
 
     // -- Exec
     let should_continue = CommandRouter::dispatch(
@@ -89,7 +90,7 @@ async fn attach_a2a_context_derives_prefixed_session_key()
         &mut runtime,
         &result_tx,
         None::<NoAgentSwitchHook>,
-        &bus,
+        &sources,
     )
     .await;
 
@@ -129,6 +130,7 @@ async fn attach_a2a_context_clears_transcript_when_snapshots_empty()
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
     let bus = create_bus();
     let mut ui_state_rx = bus.ui_state().subscribe();
+    let sources = dispatch_sources(&bus);
 
     // -- Exec
     let should_continue = CommandRouter::dispatch(
@@ -139,7 +141,7 @@ async fn attach_a2a_context_clears_transcript_when_snapshots_empty()
         &mut runtime,
         &result_tx,
         None::<NoAgentSwitchHook>,
-        &bus,
+        &sources,
     )
     .await;
 
@@ -204,6 +206,7 @@ async fn attach_a2a_context_hydrates_transcript_when_snapshots_present()
     let (result_tx, _result_rx) = tokio::sync::mpsc::channel(1);
     let bus = create_bus();
     let mut ui_state_rx = bus.ui_state().subscribe();
+    let sources = dispatch_sources(&bus);
 
     // -- Exec
     let should_continue = CommandRouter::dispatch(
@@ -214,7 +217,7 @@ async fn attach_a2a_context_hydrates_transcript_when_snapshots_present()
         &mut runtime,
         &result_tx,
         None::<NoAgentSwitchHook>,
-        &bus,
+        &sources,
     )
     .await;
 
@@ -279,6 +282,7 @@ async fn attach_a2a_context_same_session_skips_clear_and_hydrate()
     let bus = create_bus();
     let mut ui_state_rx = bus.ui_state().subscribe();
     let mut session_rx = bus.session().subscribe();
+    let sources = dispatch_sources(&bus);
 
     // -- Exec
     let should_continue = CommandRouter::dispatch(
@@ -289,7 +293,7 @@ async fn attach_a2a_context_same_session_skips_clear_and_hydrate()
         &mut runtime,
         &result_tx,
         None::<NoAgentSwitchHook>,
-        &bus,
+        &sources,
     )
     .await;
 
