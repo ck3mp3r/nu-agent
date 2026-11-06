@@ -105,7 +105,7 @@ fn build_hook<P: crate::hook::permission_resolver::AsyncPermissionResolver>(
                     test_model_spec(),
                 ),
                 threshold_tokens: None,
-                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+                threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
             },
             model: MockCompletionModel::default().erase(),
             last_total_tokens: Arc::new(Mutex::new(None)),

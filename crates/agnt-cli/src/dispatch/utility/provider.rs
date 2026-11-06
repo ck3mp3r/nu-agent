@@ -1,9 +1,9 @@
 //! `agent provider` subcommand dispatch.
 
-use agnt_core::config::copilot_tokens::{
+use agnt_runtime::config::copilot_tokens::{
     read_copilot_token_record, verify_copilot_login_persistence,
 };
-use agnt_core::config::vault::{CredentialType, Vault};
+use agnt_runtime::config::vault::{CredentialType, Vault};
 
 use crate::ProviderAuthCommand;
 use crate::ProviderCommand;
@@ -49,7 +49,7 @@ async fn run_provider_login(args: &ProviderLoginArgs) -> Result<()> {
         })?,
     };
 
-    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+    let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     let vault = Vault::auto_detect(&application_paths.secrets_path)
         .map_err(|e| Error::Custom(e.to_string()))?;
@@ -73,7 +73,7 @@ async fn run_copilot_login() -> Result<()> {
         );
     });
 
-    let paths = agnt_core::config::Paths::resolve_from_config_or_default()
+    let paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     let token_dir = copilot_device_login(handler, paths.copilot_token_dir)
         .await
@@ -90,7 +90,7 @@ async fn run_copilot_login() -> Result<()> {
 /// Clear stored credentials for an LLM provider.
 fn run_provider_logout(args: &ProviderLogoutArgs) -> Result<()> {
     let name = args.name.as_str();
-    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+    let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
 
     // github-copilot stores its tokens in files, not the vault.
@@ -120,7 +120,7 @@ fn run_provider_logout(args: &ProviderLogoutArgs) -> Result<()> {
 
 /// Show stored credentials for all LLM providers.
 fn run_provider_status() -> Result<()> {
-    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+    let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     let vault = Vault::auto_detect(&application_paths.secrets_path)
         .map_err(|e| Error::Custom(e.to_string()))?;

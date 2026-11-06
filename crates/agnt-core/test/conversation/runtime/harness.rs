@@ -11,7 +11,6 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::*;
 use crate::bus::Bus;
-use crate::config::{AgentsConfig, Config};
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::compaction::compactor::NuCompactor;
 use crate::conversation::providers::CachedProviderClient;
@@ -28,6 +27,7 @@ use crate::tools::authz::{PermissionsConfig, SessionGrantCache};
 use crate::tools::closure::{ClosureRegistry, CwdEngine};
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
+use agnt_runtime::config::{AgentsConfig, Config};
 
 /// A constructed runtime plus the tempdir backing its session store.
 pub(super) struct RuntimeFixture {
@@ -126,7 +126,7 @@ fn build_fixture(
             ),
         ),
         threshold_tokens: None,
-        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+        threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
     };
 
     let runtime = AgentConversationRuntime {

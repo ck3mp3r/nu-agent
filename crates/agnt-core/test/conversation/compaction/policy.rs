@@ -1,7 +1,7 @@
 //! `build_compaction_policy()`: the `[compaction]` block into a rig-memory policy.
 
-use crate::config::CompactionConfig;
 use crate::conversation::runtime_build::build_compaction_policy;
+use agnt_runtime::config::CompactionConfig;
 
 use rig_memory::{ClearToolOutputs, CompactionPolicy, SummaryPrompts, TrackArgument};
 

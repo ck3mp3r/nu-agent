@@ -32,10 +32,8 @@ use rig::wasm_compat::WasmCompatSend;
 use rig_memory::CompactReason;
 
 use crate::bus::{Bus, CompactionTx, UiEventTx};
-use crate::config::defaults;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::turn::token_estimate::estimate_token_count;
-use crate::llm::{PricedOutcome, PricingSkip, computed_cost};
 use crate::protocol::events::{
     SystemEvent, SystemKind, ToolCall, ToolOutcome, Usage, compaction_source_text,
 };
@@ -44,6 +42,8 @@ use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::types::ToolName;
 use agnt_kernel::bus::{CancelEvent, CancelRx, TryRecvError};
+use agnt_runtime::config::defaults;
+use agnt_runtime::llm::{PricedOutcome, PricingSkip, computed_cost};
 
 use super::agent_hook::{HookState, StopLedger};
 use super::circuit_breaker_guard::CircuitBreakerGuard;

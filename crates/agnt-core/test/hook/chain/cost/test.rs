@@ -119,7 +119,7 @@ fn turn_hook(
             compaction: CompactionConfig {
                 compactor,
                 threshold_tokens: None,
-                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+                threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
             },
             model: model.clone().erase(),
             last_total_tokens: last_total_tokens.clone(),

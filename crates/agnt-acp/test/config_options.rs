@@ -6,7 +6,7 @@
 use agent_client_protocol::schema::v1::{
     SessionConfigKind, SessionConfigOptionCategory, SessionConfigSelectOptions,
 };
-use agnt_core::config::ModelsCache;
+use agnt_runtime::config::ModelsCache;
 
 use super::*;
 

@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::v1::{
     SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
 };
-use agnt_core::config::{AgentsConfig, Config, ModelsCache, defaults, load_and_resolve_config};
 use agnt_core::conversation::builder::builtin_tool_definitions;
 use agnt_core::conversation::runtime::{AgentConversationRuntime, PendingPermissions};
 use agnt_core::conversation::runtime_build::RuntimeBuildParams;
@@ -32,6 +31,7 @@ use agnt_core::tools::mcp::runtime::connect_servers;
 use agnt_core::types::{
     Completion, DynModel, EmptyToolName, ToolAnnotations, ToolDefinition, ToolName,
 };
+use agnt_runtime::config::{AgentsConfig, Config, ModelsCache, defaults, load_and_resolve_config};
 
 use crate::engine_stub::AcpEngineStub;
 use crate::error::{AcpError, Result};
@@ -57,7 +57,7 @@ pub struct AcpRuntimeParams {
     ///
     /// Carries the config file and the persona directory, so the runtime and the
     /// agent selector read them instead of deriving them.
-    pub paths: agnt_core::config::Paths,
+    pub paths: agnt_runtime::config::Paths,
     /// Handle to the process tokio runtime.
     pub runtime_handle: tokio::runtime::Handle,
     /// The rig-memory store config the session's store is made from.
@@ -514,8 +514,8 @@ fn mcp_tool_definition(
 }
 
 /// Map a shared config-load error to an ACP error.
-fn map_config_load_error(err: agnt_core::config::ConfigLoadError) -> AcpError {
-    use agnt_core::config::ConfigLoadError;
+fn map_config_load_error(err: agnt_runtime::config::ConfigLoadError) -> AcpError {
+    use agnt_runtime::config::ConfigLoadError;
     match err {
         ConfigLoadError::NotFound(path) => {
             AcpError::Config(format!("config not found at {}", path.display()))

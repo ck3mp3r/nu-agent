@@ -16,7 +16,7 @@ macro_rules! args_map {
 
 #[test]
 fn resolve_effective_permissions_merges_cli_overlay_additively() -> Result<()> {
-    let plugin_config = agnt_core::config::PluginConfig {
+    let plugin_config = agnt_runtime::config::PluginConfig {
         permissions: Some(
             toml::from_str(
                 r#"

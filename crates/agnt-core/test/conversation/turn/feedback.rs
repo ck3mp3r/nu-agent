@@ -303,7 +303,7 @@ fn output_budget_remedy_defaults_to_empty_output_when_mode_unset() -> TestResult
     // The unset mode resolves through the default-mode constant, so the
     // constant is the single source of the default.
     assert_eq!(
-        crate::config::defaults::DEFAULT_OUTPUT_BUDGET_REMEDY_MODE,
+        agnt_runtime::config::defaults::DEFAULT_OUTPUT_BUDGET_REMEDY_MODE,
         "empty_output",
         "default remedy mode constant must be empty_output"
     );

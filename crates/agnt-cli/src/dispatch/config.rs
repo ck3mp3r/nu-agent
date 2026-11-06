@@ -3,8 +3,8 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agnt_core::config::{self, CompactionConfig, Config, PluginConfig};
 use agnt_core::session::StoreType;
+use agnt_runtime::config::{self, CompactionConfig, Config, PluginConfig};
 use agnt_runtime::utils::process_env;
 use agnt_tty::policy::{UiPolicy, Verbosity};
 use agnt_tui::rendering::theme::ThemeName;
@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 /// Resolve the runtime config and plugin config from config.toml and clap flags.
 ///
 /// `config_path` is the config file the entry point discovered from the resolved
-/// [`Paths`](agnt_core::config::Paths); this function never re-derives it.
+/// [`Paths`](agnt_runtime::config::Paths); this function never re-derives it.
 ///
 /// Resolution pipeline:
 /// 1. Load `PluginConfig` from config.toml and resolve the active model role.
@@ -138,7 +138,7 @@ pub fn resolve_theme_from_clap(
         log::warn!("Unknown theme in config.toml: '{raw}'; using default");
     }
 
-    if let Ok(pref) = agnt_core::theme_pref::ThemePreference::load_from(theme_path)
+    if let Ok(pref) = agnt_runtime::theme_pref::ThemePreference::load_from(theme_path)
         && let Some(raw) = pref.theme.as_deref()
         && let Some(name) = ThemeName::from_name(raw)
     {

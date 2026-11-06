@@ -62,10 +62,10 @@ pub(super) fn make_params(
 }
 
 /// The application paths of a runtime test rooted at `config_path`'s dir.
-pub(super) fn test_paths(config_path: &Path) -> agnt_core::config::Paths {
+pub(super) fn test_paths(config_path: &Path) -> agnt_runtime::config::Paths {
     let dir = config_path.parent().unwrap_or_else(|| Path::new("."));
     let logs = dir.join("logs");
-    agnt_core::config::Paths {
+    agnt_runtime::config::Paths {
         config_path: config_path.to_path_buf(),
         dotenv_path: dir.join(".env"),
         agents_dir: dir.join("agents"),

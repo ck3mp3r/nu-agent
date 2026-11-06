@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agnt_core::config::vault::Vault;
 use agnt_core::tools::mcp::config::{McpAuthConfig, McpConfig, McpServerConfig};
 use agnt_core::tools::mcp::oauth_callback::{CallbackServer, DEFAULT_TIMEOUT_SECS};
+use agnt_runtime::config::vault::Vault;
 use oauth2::TokenResponse;
 use rmcp::transport::auth::StoredCredentials;
 
@@ -38,7 +38,7 @@ async fn run_mcp_auth_command(command: &McpAuthCommand) -> Result<()> {
 async fn run_mcp_login(args: &McpLoginArgs) -> Result<()> {
     let server_name = args.server.as_str();
 
-    let plugin_config = agnt_core::config::toml_config::load()
+    let plugin_config = agnt_runtime::config::toml_config::load()
         .map_err(|e| Error::Custom(format!("Failed to load config.toml: {e}")))?;
     let mcp_config = McpConfig::from_toml_config(&plugin_config)
         .map_err(|msg| Error::Custom(format!("Failed to load MCP config: {msg}")))?;
@@ -73,7 +73,7 @@ async fn run_mcp_login(args: &McpLoginArgs) -> Result<()> {
     agnt_core::tools::mcp::safe_http_client::validate_url(server_url)
         .map_err(|e| Error::Custom(format!("Invalid MCP server URL for '{server_name}': {e}")))?;
 
-    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+    let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     let vault = Arc::new(
         Vault::auto_detect(&application_paths.secrets_path)
@@ -194,7 +194,7 @@ async fn run_mcp_login(args: &McpLoginArgs) -> Result<()> {
 
 /// Clear stored OAuth credentials for an MCP server.
 fn run_mcp_logout(args: &McpLogoutArgs) -> Result<()> {
-    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+    let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     let vault = Vault::auto_detect(&application_paths.secrets_path)
         .map_err(|e| Error::Custom(e.to_string()))?;
@@ -204,7 +204,7 @@ fn run_mcp_logout(args: &McpLogoutArgs) -> Result<()> {
 
 /// Show authentication status for all configured MCP servers.
 fn run_mcp_status() -> Result<()> {
-    let plugin_config = agnt_core::config::toml_config::load()
+    let plugin_config = agnt_runtime::config::toml_config::load()
         .map_err(|e| Error::Custom(format!("Failed to load config.toml: {e}")))?;
     let mcp_config = McpConfig::from_toml_config(&plugin_config)
         .map_err(|msg| Error::Custom(format!("Failed to load MCP config: {msg}")))?;
@@ -214,7 +214,7 @@ fn run_mcp_status() -> Result<()> {
         return Ok(());
     }
 
-    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+    let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     let vault = Vault::auto_detect(&application_paths.secrets_path)
         .map_err(|e| Error::Custom(e.to_string()))?;

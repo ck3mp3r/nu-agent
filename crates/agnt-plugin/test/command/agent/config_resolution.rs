@@ -3,7 +3,7 @@ use super::test_helpers::{
     test_plugin_config, test_provider,
 };
 
-use agnt_core::config::{
+use agnt_runtime::config::{
     Config, ModelConfig, ModelLimits, ModelRoleConfig, PluginConfig, ProviderConfig,
 };
 use nu_protocol::Value;

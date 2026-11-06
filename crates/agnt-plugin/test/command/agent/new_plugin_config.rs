@@ -3,7 +3,7 @@ use super::test_helpers::{
     test_provider,
 };
 
-use agnt_core::config::{ModelConfig, ModelLimits, ProviderConfig};
+use agnt_runtime::config::{ModelConfig, ModelLimits, ProviderConfig};
 use nu_plugin::SimplePluginCommand;
 use nu_protocol::Value;
 use std::collections::HashMap;

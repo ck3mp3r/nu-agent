@@ -60,7 +60,7 @@ pub(super) fn decide_fixture() -> Result<DecideFixture> {
     let compaction = CompactionConfig {
         compactor,
         threshold_tokens: Some(80_000),
-        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+        threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
     };
     let last_total_tokens = Arc::new(Mutex::new(None));
     Ok(DecideFixture {
@@ -122,7 +122,7 @@ pub(super) fn build_hook_with<P: crate::hook::permission_resolver::AsyncPermissi
                     test_model_spec(),
                 ),
                 threshold_tokens: None,
-                threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+                threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
             },
             model: MockCompletionModel::default().erase(),
             last_total_tokens: Arc::new(Mutex::new(None)),
@@ -180,7 +180,7 @@ impl RepetitionTurnFixture {
                         test_model_spec(),
                     ),
                     threshold_tokens: None,
-                    threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+                    threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
                 },
                 model: dyn_model.lock().expect("model mutex poisoned").clone(),
                 last_total_tokens: Arc::new(std::sync::Mutex::new(None)),

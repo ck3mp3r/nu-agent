@@ -13,9 +13,9 @@ async fn journey_tool_result_truncated_at_configured_limit() -> Result<()> {
     // Use a tiny limit to avoid large allocations in tests.
     let mut h = JourneyHarness::new_with_config(
         "journey-truncate",
-        crate::config::Config {
+        agnt_runtime::config::Config {
             max_tool_result_bytes: Some(100),
-            ..crate::config::Config::default()
+            ..agnt_runtime::config::Config::default()
         },
     );
     let (server, client) = h.start_mock_server().await?;
@@ -176,9 +176,9 @@ async fn journey_tool_result_limit_flows_from_config_to_adapter() -> Result<()> 
     let limit = 100usize;
     let mut h = JourneyHarness::new_with_config(
         "journey-builtin-adapter-truncate",
-        crate::config::Config {
+        agnt_runtime::config::Config {
             max_tool_result_bytes: Some(limit),
-            ..crate::config::Config::default()
+            ..agnt_runtime::config::Config::default()
         },
     );
     let (server, client) = h.start_mock_server().await?;

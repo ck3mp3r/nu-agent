@@ -1,5 +1,5 @@
 use super::core::TurnResponseData;
-use crate::config::Config;
+use agnt_runtime::config::Config;
 use nu_protocol::{Span, Value};
 
 // ---------------------------------------------------------------------------
@@ -29,9 +29,9 @@ pub fn build_response(
 
     let message_count = 0;
 
-    let llm_response = crate::llm::LlmResponse {
+    let llm_response = agnt_runtime::llm::LlmResponse {
         text: data.text,
-        usage: crate::llm::LlmUsage {
+        usage: agnt_runtime::llm::LlmUsage {
             input_tokens: data.usage.input_tokens.unwrap_or(0),
             output_tokens: data.usage.output_tokens.unwrap_or(0),
             total_tokens: data.usage.total_tokens.unwrap_or(0),
@@ -42,7 +42,8 @@ pub fn build_response(
         tool_call_metadata: Vec::new(), // TODO: track tool metadata in TurnResult
     };
 
-    let response_value = crate::llm::format_response(&llm_response, config, session_id, span);
+    let response_value =
+        agnt_runtime::llm::format_response(&llm_response, config, session_id, span);
 
     if data.has_session
         && let Ok(record) = response_value.as_record()

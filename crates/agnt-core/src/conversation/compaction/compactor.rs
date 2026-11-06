@@ -8,10 +8,10 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::bus::Bus;
-use crate::config::{Config, defaults};
 use crate::protocol::events::SystemEvent;
 use crate::session::MemoryError;
 use crate::types::Message;
+use agnt_runtime::config::{Config, defaults};
 
 use futures::StreamExt;
 use rig::DynModel;

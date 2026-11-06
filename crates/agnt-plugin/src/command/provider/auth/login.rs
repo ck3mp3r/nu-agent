@@ -1,7 +1,7 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Value};
 
-use agnt_core::config::vault::Vault;
+use agnt_runtime::config::vault::Vault;
 
 use crate::plugin::AgentPlugin;
 
@@ -82,9 +82,9 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
         // github-copilot uses the OAuth device-code flow.
         if name == "github-copilot" || name == "copilot" {
             crate::block_on!(plugin, async {
-                use agnt_core::config::copilot_tokens::verify_copilot_login_persistence;
                 use agnt_core::conversation::providers::copilot_device_login;
                 use agnt_core::types::DeviceCodeHandler;
+                use agnt_runtime::config::copilot_tokens::verify_copilot_login_persistence;
 
                 let handler = DeviceCodeHandler::new(|prompt| {
                     eprintln!(
@@ -94,7 +94,7 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
                 });
 
                 let paths =
-                    agnt_core::config::Paths::resolve_from_config_or_default().map_err(|e| {
+                    agnt_runtime::config::Paths::resolve_from_config_or_default().map_err(|e| {
                         LabeledError::new(format!("Failed to resolve application paths: {e}"))
                     })?;
                 let token_dir = copilot_device_login(handler, paths.copilot_token_dir).await?;
@@ -124,10 +124,10 @@ impl SimplePluginCommand for AgentProviderAuthLogin {
                 ));
             };
 
-            let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+            let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
                 .map_err(|e| {
-                    LabeledError::new(format!("Failed to resolve application paths: {e}"))
-                })?;
+                LabeledError::new(format!("Failed to resolve application paths: {e}"))
+            })?;
             let vault = Vault::auto_detect(&application_paths.secrets_path)
                 .map_err(|e| LabeledError::new(e.to_string()))?;
             vault

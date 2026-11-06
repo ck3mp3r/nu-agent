@@ -12,7 +12,6 @@ use super::{
 
 use crate::plugin::AgentPlugin;
 use agnt_core::{
-    config::defaults,
     conversation::{
         builder::BuildInput,
         runtime_build::{RuntimeBuildParams, build_runtime},
@@ -21,6 +20,7 @@ use agnt_core::{
     session::resolver::{DefaultSessionResolver, SessionResolutionInput, SessionResolver},
     tools::{closure::EngineInterfaceLike, handler::McpToolRegistry},
 };
+use agnt_runtime::config::defaults;
 
 /// Run the `agent` command in pipeline mode.
 ///
@@ -63,7 +63,7 @@ pub(super) fn run_command(
 
             // Resolve the log target from the state ladder at process start; a
             // `[paths].state_home` value retargets the sink after config load.
-            let paths = agnt_core::config::Paths::resolve_for_process(None).map_err(|e| {
+            let paths = agnt_runtime::config::Paths::resolve_for_process(None).map_err(|e| {
                 LabeledError::new(format!("Failed to resolve application paths: {e}"))
             })?;
             let sink = agnt_runtime::logging::FileLogSink::open(paths.log_path)
@@ -90,7 +90,7 @@ pub(super) fn run_command(
     // 1. Resolve default role config (--model flag handled here)
     // Discovery comes first: the file the ladder selects carries the `[paths]`
     // values the full resolution below applies.
-    let discovery = agnt_core::config::Paths::resolve_for_process(None).map_err(|e| {
+    let discovery = agnt_runtime::config::Paths::resolve_for_process(None).map_err(|e| {
         LabeledError::new(format!("Failed to resolve application paths: {e}"))
             .with_label(e.to_string(), call.head)
     })?;
@@ -101,7 +101,7 @@ pub(super) fn run_command(
 
     // The store path `[paths]` and `NU_AGENT_CACHE_HOME` resolve, passed on
     // verbatim: this site never joins the store file name.
-    let paths = agnt_core::config::Paths::resolve_for_process(plugin_config.paths.as_ref())
+    let paths = agnt_runtime::config::Paths::resolve_for_process(plugin_config.paths.as_ref())
         .map_err(|e| {
             LabeledError::new(format!("Failed to resolve application paths: {e}"))
                 .with_label(e.to_string(), call.head)
@@ -277,7 +277,7 @@ pub(super) fn run_command(
                         .max_tool_result_bytes
                         .unwrap_or(defaults::MAX_TOOL_RESULT_BYTES),
                     bus: bus.clone(),
-                    merged_compaction: agnt_core::config::CompactionConfig::default(),
+                    merged_compaction: agnt_runtime::config::CompactionConfig::default(),
                     audit_log_path: paths.audit_log_path.clone(),
                 },
             )

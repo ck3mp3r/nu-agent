@@ -5,7 +5,7 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 use super::executor_test_support::*;
 use super::test_utils::{MockResolver, test_config};
 use super::*;
-use crate::config::Config;
+use agnt_runtime::config::Config;
 
 /// Hard-error path (executor.rs:560): a `CompletionFailed` with an
 /// `Unknown` kind (non-retryable, not model-correctable) reaches

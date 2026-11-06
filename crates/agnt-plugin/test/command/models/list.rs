@@ -1,6 +1,6 @@
 use super::{AgentModelsList, model_record};
-use agnt_core::config::ModelSpec;
-use agnt_core::config::models_cache::{ModelCost, ModelLimit};
+use agnt_runtime::config::ModelSpec;
+use agnt_runtime::config::models_cache::{ModelCost, ModelLimit};
 use nu_plugin::SimplePluginCommand;
 use nu_protocol::{Span, SyntaxShape};
 

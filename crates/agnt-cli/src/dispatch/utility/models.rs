@@ -1,6 +1,6 @@
 //! `agent models` subcommand dispatch.
 
-use agnt_core::config::{ModelSpec, ModelsCache};
+use agnt_runtime::config::{ModelSpec, ModelsCache};
 
 use crate::ModelsCommand;
 use crate::ModelsListArgs;
@@ -20,7 +20,7 @@ pub fn run_models_command(command: &ModelsCommand) -> Result<()> {
 
 /// Fetch the latest model specs from models.dev and update the local cache.
 fn run_models_sync() -> Result<()> {
-    let paths = agnt_core::config::Paths::resolve_from_config_or_default()
+    let paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     let cache = ModelsCache::fetch_and_store(&paths.models_cache_path)
         .map_err(|e| Error::Custom(format!("Failed to sync models: {e}")))?;
@@ -32,7 +32,7 @@ fn run_models_sync() -> Result<()> {
 
 /// List available models from the local cache.
 fn run_models_list(args: &ModelsListArgs) -> Result<()> {
-    let paths = agnt_core::config::Paths::resolve_from_config_or_default()
+    let paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     let cache = ModelsCache::load_from(&paths.models_cache_path).map_err(|e| {
         Error::Custom(format!(

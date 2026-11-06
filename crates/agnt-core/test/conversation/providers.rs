@@ -8,7 +8,7 @@ use rig::completion::CompletionRequest;
 use rig::test_utils::RecordingHttpClient;
 use rig::wire::{Mode, Wire};
 
-use crate::config::Config;
+use agnt_runtime::config::Config;
 use agnt_runtime::utils::env_map::EnvMap;
 
 #[test]
@@ -69,7 +69,7 @@ fn resolve_provider_type_falls_back_to_key_when_field_none() {
 fn plugin_config_read_timeout_secs_propagates_to_resolved_config() -> Result<()> {
     use std::collections::HashMap;
 
-    use crate::config::{AgentsConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
+    use agnt_runtime::config::{AgentsConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
 
     let mut providers = HashMap::new();
     providers.insert(
@@ -133,7 +133,7 @@ fn plugin_config_read_timeout_secs_propagates_to_resolved_config() -> Result<()>
 fn plugin_config_without_read_timeout_secs_resolves_to_none() -> Result<()> {
     use std::collections::HashMap;
 
-    use crate::config::{AgentsConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
+    use agnt_runtime::config::{AgentsConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
 
     let mut providers = HashMap::new();
     providers.insert(

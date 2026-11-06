@@ -36,10 +36,10 @@ use agent_client_protocol::schema::v1::{
 };
 use agent_client_protocol::{Agent, Error, Stdio, on_receive_notification, on_receive_request};
 use agnt_core::bus::{AgentEvent, AgentTx};
-use agnt_core::config::{AgentsConfig, ModelsCache, PluginConfig, toml_config};
 use agnt_core::hooks::HookAgentContext;
 use agnt_core::protocol::persona::{FsPersonaResolver, PersonaFileResolver};
 use agnt_core::tools::mcp::config::{McpAuthConfig, McpServerConfig, McpTransportType};
+use agnt_runtime::config::{AgentsConfig, ModelsCache, PluginConfig, toml_config};
 
 /// The session registry shared by every protocol handler.
 ///
@@ -61,7 +61,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
     // every application path derived from it. The load below reads the file the
     // resolution names, so this entry point never re-derives a base.
     let loaded = toml_config::load();
-    let paths = agnt_core::config::Paths::resolve_for_process(
+    let paths = agnt_runtime::config::Paths::resolve_for_process(
         loaded
             .as_ref()
             .ok()
@@ -85,7 +85,7 @@ pub async fn serve(agent: Option<String>) -> Result<()> {
     // process-level agent hook envelopes carry.
     let (hooks, agent_hook_context) = match &loaded {
         Ok(config) => {
-            let hooks = match agnt_core::config::resolve_hooks(config, config_dir) {
+            let hooks = match agnt_runtime::config::resolve_hooks(config, config_dir) {
                 Ok(hooks) => hooks,
                 Err(err) => {
                     log::warn!("Failed to resolve hooks: {err}");
@@ -363,7 +363,7 @@ fn persona_slug(
 /// serve a session then either, and a hook envelope must never fail a run.
 fn active_model_identity(plugin_config: &PluginConfig) -> String {
     let env = agnt_runtime::utils::env_map::process_env();
-    match agnt_core::config::resolve_role_config(plugin_config, None, &env) {
+    match agnt_runtime::config::resolve_role_config(plugin_config, None, &env) {
         Ok(config) => agnt_core::protocol::picker::format_active_model_identity(
             &config.provider,
             &config.model,

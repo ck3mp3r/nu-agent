@@ -21,15 +21,15 @@ mod construction;
 use super::*;
 
 use crate::bus::create_bus;
-use crate::config::models_cache::{ModelCost, ModelLimit, ModelSpec, ProviderSpec};
-use crate::config::{
-    AgentsConfig, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig, defaults,
-};
 use crate::protocol::session_management::SessionPersistence;
 use crate::session::{RigStoreConfig, StoreType};
 use crate::tools::authz::PermissionsConfig;
 use crate::tools::closure::{ClosureRegistry, CwdEngine};
 use crate::tools::handler::McpToolRegistry;
+use agnt_runtime::config::models_cache::{ModelCost, ModelLimit, ModelSpec, ProviderSpec};
+use agnt_runtime::config::{
+    AgentsConfig, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig, defaults,
+};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -116,7 +116,7 @@ fn light_plugin_config() -> PluginConfig {
                 ..ModelRoleConfig::default()
             },
         )]),
-        models_cache: Some(crate::config::ModelsCache {
+        models_cache: Some(agnt_runtime::config::ModelsCache {
             providers: std::collections::HashMap::from([(
                 "ollama".to_string(),
                 ProviderSpec {
@@ -170,7 +170,7 @@ fn custom_named_light_plugin_config() -> PluginConfig {
                 ..ProviderConfig::default()
             },
         )]),
-        models_cache: Some(crate::config::ModelsCache {
+        models_cache: Some(agnt_runtime::config::ModelsCache {
             providers: std::collections::HashMap::from([(
                 "ollama-cloud".to_string(),
                 ProviderSpec {

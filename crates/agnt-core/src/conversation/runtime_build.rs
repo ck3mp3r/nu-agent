@@ -3,9 +3,6 @@ use std::sync::{Arc, Mutex};
 use nu_protocol::LabeledError;
 
 use crate::bus::Bus;
-use crate::config::{
-    AgentsConfig, CompactionConfig, Config, ModelRoleConfig, PluginConfig, vault::Vault,
-};
 use crate::conversation::runtime::AgentConversationRuntime;
 use crate::conversation::runtime_parts::RuntimeParts;
 use crate::hooks::HookAgentContext;
@@ -16,6 +13,9 @@ use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::config::McpServerConfig;
 use crate::tools::mcp::runtime::{McpRuntime, McpServerLifecycle};
 use crate::types::ToolDefinition;
+use agnt_runtime::config::{
+    AgentsConfig, CompactionConfig, Config, ModelRoleConfig, PluginConfig, vault::Vault,
+};
 use rig::DynModel;
 use rig::operation::Completion;
 use rig::tool::server::ToolServerHandle;
@@ -56,7 +56,7 @@ pub struct RuntimeBuildParams {
     ///
     /// Carried so the runtime's agent switch and the hook runners never re-derive
     /// a config or persona directory.
-    pub paths: crate::config::Paths,
+    pub paths: agnt_runtime::config::Paths,
     pub bus: Bus,
     /// The agent snapshot every hook envelope is stamped with.
     ///
@@ -234,7 +234,8 @@ pub fn apply_persona_model(
 
     // Re-resolve preamble for the new model.
     if let Some((provider_name, model_name)) = role_config.model.split_once('/') {
-        config.preamble = crate::config::resolve_preamble_for_model(pc, provider_name, model_name);
+        config.preamble =
+            agnt_runtime::config::resolve_preamble_for_model(pc, provider_name, model_name);
     }
 
     log::debug!(

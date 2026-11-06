@@ -7,8 +7,8 @@ use super::*;
 /// Build a `Config` for an OpenAI-compatible provider pointed at a mock
 /// server. `base_url` selects the `OpenAiCompletions` variant (targets
 /// `/chat/completions`), matching the mock setup.
-fn openai_wiremock_config(server_uri: &str, model: &str) -> crate::config::Config {
-    crate::config::Config {
+fn openai_wiremock_config(server_uri: &str, model: &str) -> agnt_runtime::config::Config {
+    agnt_runtime::config::Config {
         provider: "openai".to_string(),
         provider_impl: None,
         catalog: None,
@@ -44,11 +44,11 @@ fn openai_wiremock_config(server_uri: &str, model: &str) -> crate::config::Confi
 
 /// Build a `PluginConfig` whose `openai` provider block points at the mock
 /// server, so `switch_model("openai/<model>")` resolves to a config that uses it.
-fn openai_wiremock_plugin_config(server_uri: &str) -> crate::config::PluginConfig {
-    let mut plugin_config = crate::config::PluginConfig::default();
+fn openai_wiremock_plugin_config(server_uri: &str) -> agnt_runtime::config::PluginConfig {
+    let mut plugin_config = agnt_runtime::config::PluginConfig::default();
     plugin_config.providers.insert(
         "openai".to_string(),
-        crate::config::ProviderConfig {
+        agnt_runtime::config::ProviderConfig {
             api_key: Some("fake-key".to_string()),
             base_url: Some(server_uri.to_string()),
             ..Default::default()

@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use http::{HeaderName, HeaderValue};
 
-use crate::config::defaults;
-use crate::config::vault::Vault;
 use crate::tools::mcp::{
     MCP_TOOL_NAMESPACE_DELIMITER,
     client::McpToolDefinition,
     config::{McpAuthConfig, McpServerConfig, McpTransportType},
     namespaced::NamespacedClientHandler,
 };
+use agnt_runtime::config::defaults;
+use agnt_runtime::config::vault::Vault;
 use agnt_runtime::utils::crypto::ensure_crypto_provider;
 
 pub struct McpRuntime {

@@ -8,10 +8,10 @@ use super::*;
 /// second POST → success. Verifies the retry loop transparently recovers.
 #[tokio::test]
 async fn journey_retry_on_server_error_recovers() -> Result<()> {
-    let config = crate::config::Config {
+    let config = agnt_runtime::config::Config {
         max_retries: Some(3),
         retry_base_delay_ms: Some(1), // minimal delay for fast tests
-        ..crate::config::Config::default()
+        ..agnt_runtime::config::Config::default()
     };
     let mut h = JourneyHarness::new_with_config("journey-retry-recover", config);
     let (server, client) = h.start_mock_server().await?;

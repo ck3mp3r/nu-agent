@@ -18,7 +18,6 @@ pub(super) use agent_client_protocol::{Agent, Channel, Client, ConnectionTo};
 pub(super) use agnt_core::bus::{
     Bus, CancelEvent, OneshotTx, SessionEvent, TurnEvent, TurnRx, create_bus,
 };
-pub(super) use agnt_core::config::{AgentsConfig, Config, ModelsCache};
 pub(super) use agnt_core::conversation::providers::CachedProviderClient;
 pub(super) use agnt_core::conversation::runtime_build::RuntimeBuildParams;
 pub(super) use agnt_core::conversation::runtime_parts::RuntimeParts;
@@ -33,6 +32,7 @@ pub(super) use agnt_core::tools::authz::PermissionsConfig;
 pub(super) use agnt_core::tools::closure::ClosureRegistry;
 pub(super) use agnt_core::tools::handler::McpToolRegistry;
 pub(super) use agnt_core::types::{Message, MockCompletionModel};
+pub(super) use agnt_runtime::config::{AgentsConfig, Config, ModelsCache};
 pub(super) use rig::test_utils::MockStreamEvent;
 
 use super::super::*;
@@ -266,9 +266,9 @@ pub(super) fn rig_config(dir: &Path) -> RigStoreConfig {
 ///
 /// The config file and the persona dir sit under `dir`, so the manager never
 /// reads the user's real config or persona files.
-pub(super) fn test_paths(dir: &Path) -> agnt_core::config::Paths {
+pub(super) fn test_paths(dir: &Path) -> agnt_runtime::config::Paths {
     let logs = dir.join("logs");
-    agnt_core::config::Paths {
+    agnt_runtime::config::Paths {
         config_path: dir.join("config.toml"),
         dotenv_path: dir.join(".env"),
         agents_dir: dir.join("agents"),

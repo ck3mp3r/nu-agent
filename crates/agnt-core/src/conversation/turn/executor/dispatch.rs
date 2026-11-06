@@ -273,23 +273,25 @@ where
                     duration_ms,
                 })
                 .await;
-            return Ok(TurnOutcome::EarlyReturn(crate::llm::format_response(
-                &crate::llm::LlmResponse {
-                    text: response_text,
-                    usage: crate::llm::LlmUsage {
-                        input_tokens: 0,
-                        output_tokens: 0,
-                        total_tokens: 0,
-                        cached_input_tokens: 0,
-                        cache_creation_input_tokens: 0,
+            return Ok(TurnOutcome::EarlyReturn(
+                agnt_runtime::llm::format_response(
+                    &agnt_runtime::llm::LlmResponse {
+                        text: response_text,
+                        usage: agnt_runtime::llm::LlmUsage {
+                            input_tokens: 0,
+                            output_tokens: 0,
+                            total_tokens: 0,
+                            cached_input_tokens: 0,
+                            cache_creation_input_tokens: 0,
+                        },
+                        tool_calls: Vec::new(),
+                        tool_call_metadata: Vec::new(),
                     },
-                    tool_calls: Vec::new(),
-                    tool_call_metadata: Vec::new(),
-                },
-                self.config,
-                final_session_id,
-                span,
-            )));
+                    self.config,
+                    final_session_id,
+                    span,
+                ),
+            ));
         }
 
         // Completed turn: update last_total_tokens for compaction tracking.

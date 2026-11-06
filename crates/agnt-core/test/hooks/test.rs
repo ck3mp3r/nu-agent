@@ -58,7 +58,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::bus::{AgentEvent, AgentTx, Bus, SessionEvent, TurnEvent, create_bus};
-use crate::config::{HookEvent, ResolvedHook};
 use crate::hooks::{
     HookAgentContext, HookProcess, HookProcessError, HookSources, build_envelope,
     spawn_agent_hook_runner, spawn_hook_runner,
@@ -68,6 +67,7 @@ use crate::protocol::events::{
     AutoResolutionAction, RequestId, SystemEvent, ToolCall, ToolOutcome,
 };
 use agnt_kernel::ToolName;
+use agnt_runtime::config::{HookEvent, ResolvedHook};
 
 pub(super) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

@@ -10,12 +10,12 @@ use rig::providers::copilot::auth::{
 };
 use rig::providers::registry::ProviderId;
 
-use crate::config::copilot_tokens::copilot_token_dir;
-use crate::config::models_cache::{
+use agnt_runtime::config::copilot_tokens::copilot_token_dir;
+use agnt_runtime::config::models_cache::{
     Modalities as CacheModalities, ModelCost, ModelSpec as CacheModelSpec,
 };
-use crate::config::pricing::{PricingView, ResolvedPricing};
-use crate::config::{Config, defaults};
+use agnt_runtime::config::pricing::{PricingView, ResolvedPricing};
+use agnt_runtime::config::{Config, defaults};
 use agnt_runtime::utils::crypto::ensure_crypto_provider;
 use agnt_runtime::utils::env_map::{EnvMap, process_env};
 
@@ -58,7 +58,7 @@ pub(crate) fn build_http_client(
 /// built on the Copilot dialect.
 ///
 /// `token_dir` is the resolved credential directory
-/// ([`Paths::copilot_token_dir`](crate::config::Paths::copilot_token_dir));
+/// ([`Paths::copilot_token_dir`](agnt_runtime::config::Paths::copilot_token_dir));
 /// `None` uses the platform default credential directory.
 pub(super) async fn build_copilot_client(
     config: &Config,
@@ -189,7 +189,7 @@ where
 /// Run the GitHub Copilot OAuth device-code flow.
 ///
 /// Persists the credential record under `token_dir`
-/// ([`Paths::copilot_token_dir`](crate::config::Paths::copilot_token_dir)) and
+/// ([`Paths::copilot_token_dir`](agnt_runtime::config::Paths::copilot_token_dir)) and
 /// returns it. The device flow is allowed here — this is the interactive
 /// sign-in path, unlike the runtime client builder.
 pub async fn copilot_device_login(

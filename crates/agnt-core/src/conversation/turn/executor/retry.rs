@@ -16,13 +16,13 @@ use std::sync::Arc;
 
 use agnt_kernel::StopCause;
 
-use crate::config::{Config, defaults};
 use crate::conversation::turn::feedback::{
     FeedbackPhase, build_feedback_message, build_max_turns_feedback_message, is_model_correctable,
 };
 use crate::conversation::turn::{TurnContext, TurnConversation, TurnInput, error, execute_turn};
 use crate::hook::output_repetition::OUTPUT_REPETITION_BACKOFF_MESSAGE;
 use crate::hook::permission_resolver::AsyncPermissionResolver;
+use agnt_runtime::config::{Config, defaults};
 
 use super::TurnRecovery;
 use super::core::TurnExecutor;

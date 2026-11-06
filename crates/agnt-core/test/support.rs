@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::config::Paths;
+use agnt_runtime::config::Paths;
 use agnt_runtime::utils::env_map::EnvMap;
 
 /// Build an [`EnvMap`] from `(key, value)` pairs.

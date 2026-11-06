@@ -9,4 +9,4 @@
 pub use agnt_runtime::types::*;
 
 // Copilot token directory (config concern — not a shared rig type)
-pub use crate::config::copilot_tokens::copilot_token_dir;
+pub use agnt_runtime::config::copilot_tokens::copilot_token_dir;

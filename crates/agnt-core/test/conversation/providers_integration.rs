@@ -16,7 +16,7 @@ async fn build_copilot_client_no_auth_returns_ok() -> Result<()> {
     // With no credential in config or environment, the client resolves through
     // rig's `Authenticator`. A live cached session key is reused, so the build
     // succeeds without a network call.
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
     use agnt_runtime::utils::env_map::EnvMap;
 
     // Empty env map and a temp token dir keep the test off the real environment
@@ -72,7 +72,7 @@ async fn build_copilot_client_oauth_path_succeeds_at_build_time() -> Result<()> 
     // With no credential in config or environment, the client resolves through
     // rig's `Authenticator`. A live cached session key is reused, so the build
     // succeeds without a network call.
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
     use agnt_runtime::utils::env_map::EnvMap;
 
     let token_dir = tempfile::TempDir::new()?;
@@ -135,7 +135,7 @@ fn build_http_client_returns_configured_client()
 
 #[test]
 fn build_ollama_client_with_base_url_succeeds() {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         api_key: None,
@@ -148,7 +148,7 @@ fn build_ollama_client_with_base_url_succeeds() {
 
 #[test]
 fn build_ollama_client_with_api_key_succeeds() {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         api_key: Some("test-api-key".to_string()),
@@ -165,7 +165,7 @@ fn build_ollama_client_with_api_key_succeeds() {
 
 #[test]
 fn build_openai_client_sets_base_url_on_config() -> Result<()> {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     // -- Setup & Fixtures
     let config = Config {
@@ -184,7 +184,7 @@ fn build_openai_client_sets_base_url_on_config() -> Result<()> {
 
 #[test]
 fn build_openai_client_with_base_url_uses_chat_route() -> Result<()> {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
     use rig::providers::openai::Route;
 
     // -- Setup & Fixtures
@@ -204,7 +204,7 @@ fn build_openai_client_with_base_url_uses_chat_route() -> Result<()> {
 
 #[test]
 fn build_openai_client_without_base_url_uses_responses_route() -> Result<()> {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
     use rig::providers::openai::Route;
 
     // -- Setup & Fixtures
@@ -224,7 +224,7 @@ fn build_openai_client_without_base_url_uses_responses_route() -> Result<()> {
 
 #[test]
 fn build_anthropic_client_sets_base_url_on_config() -> Result<()> {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     // -- Setup & Fixtures
     let config = Config {
@@ -243,7 +243,7 @@ fn build_anthropic_client_sets_base_url_on_config() -> Result<()> {
 
 #[test]
 fn build_ollama_client_sets_base_url_on_config() -> Result<()> {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     // -- Setup & Fixtures
     let config = Config {
@@ -262,7 +262,7 @@ fn build_ollama_client_sets_base_url_on_config() -> Result<()> {
 
 #[test]
 fn build_ollama_client_without_api_key_leaves_secret_empty() -> Result<()> {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     // -- Setup & Fixtures
     let config = Config {
@@ -281,7 +281,7 @@ fn build_ollama_client_without_api_key_leaves_secret_empty() -> Result<()> {
 
 #[test]
 fn build_ollama_client_with_api_key_sets_secret() -> Result<()> {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     // -- Setup & Fixtures
     let config = Config {
@@ -300,7 +300,7 @@ fn build_ollama_client_with_api_key_sets_secret() -> Result<()> {
 
 #[tokio::test]
 async fn build_copilot_client_sets_base_url_on_config() -> Result<()> {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     // -- Setup & Fixtures
     let config = Config {
@@ -325,7 +325,7 @@ async fn build_copilot_client_sets_base_url_on_config() -> Result<()> {
 
 #[tokio::test]
 async fn cached_provider_client_copilot_variant_holds_client() -> Result<()> {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -344,7 +344,7 @@ async fn cached_provider_client_copilot_variant_holds_client() -> Result<()> {
 
 #[test]
 fn cached_provider_client_openai_variant_holds_client() -> Result<()> {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -361,7 +361,7 @@ fn cached_provider_client_openai_variant_holds_client() -> Result<()> {
 
 #[test]
 fn cached_provider_client_ollama_variant_holds_client() -> Result<()> {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -383,8 +383,8 @@ fn cached_provider_client_ollama_variant_holds_client() -> Result<()> {
 
 #[tokio::test]
 async fn openai_without_base_url_produces_openai_variant() -> Result<()> {
-    use crate::config::Config;
     use crate::conversation::state::provider::ProviderState;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -408,8 +408,8 @@ async fn openai_without_base_url_produces_openai_variant() -> Result<()> {
 
 #[tokio::test]
 async fn openai_with_base_url_produces_openai_completions_variant() -> Result<()> {
-    use crate::config::Config;
     use crate::conversation::state::provider::ProviderState;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,

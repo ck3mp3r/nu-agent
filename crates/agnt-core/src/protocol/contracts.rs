@@ -223,7 +223,7 @@ pub trait DecisionSource {
 /// stub seven capabilities it never calls (ARCH-7).
 pub trait RuntimeAccess {
     /// The resolved application paths.
-    fn paths(&self) -> &crate::config::Paths;
+    fn paths(&self) -> &agnt_runtime::config::Paths;
 
     /// The agent snapshot every hook envelope is stamped with.
     fn hook_context(&self) -> &crate::hooks::HookAgentContext;
@@ -253,7 +253,7 @@ pub trait RuntimeAccess {
     fn agent_icon(&self) -> Option<&str>;
 
     /// The plugin configuration this runtime started from.
-    fn startup_plugin_config(&self) -> Option<&crate::config::PluginConfig>;
+    fn startup_plugin_config(&self) -> Option<&agnt_runtime::config::PluginConfig>;
 
     /// Spawn a future on the runtime's tokio runtime.
     ///

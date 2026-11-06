@@ -7,12 +7,12 @@
 /// no `Box<dyn Trait>`, no `&dyn Trait`.
 use nu_protocol::LabeledError;
 
-use crate::config::{Config, PluginConfig};
 use crate::conversation::providers::CachedProviderClient;
 use crate::tools::authz::PermissionsConfig;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::types::ToolDefinition;
+use agnt_runtime::config::{Config, PluginConfig};
 
 // ── ProviderManager ──────────────────────────────────────────────────────────
 
@@ -157,7 +157,7 @@ pub trait PersonaManager {
         agent_name: &str,
         cwd: &std::path::Path,
         agents_dir: &std::path::Path,
-        agents_config: &crate::config::AgentsConfig,
+        agents_config: &agnt_runtime::config::AgentsConfig,
     ) -> Result<crate::conversation::state::persona::SwitchAgentResult, String>;
 }
 
@@ -169,5 +169,5 @@ pub trait MultiAgentManager {
     fn available_agent_summaries(&self) -> &[crate::protocol::persona::PersonaSummary];
 
     /// Return the agents configuration.
-    fn agents_config(&self) -> &crate::config::AgentsConfig;
+    fn agents_config(&self) -> &agnt_runtime::config::AgentsConfig;
 }

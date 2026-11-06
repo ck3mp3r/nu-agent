@@ -9,9 +9,9 @@ use std::collections::HashMap;
 
 use super::harness::*;
 use super::*;
-use crate::config::PluginConfig;
-use crate::config::models_cache::{ModelLimit, ModelSpec, ProviderSpec};
 use crate::conversation::state::provider::ProviderState;
+use agnt_runtime::config::PluginConfig;
+use agnt_runtime::config::models_cache::{ModelLimit, ModelSpec, ProviderSpec};
 
 /// One cache row for `model` with `context` as its context limit.
 pub(super) fn cache_row(model: &str, context: u32) -> (String, ModelSpec) {
@@ -33,8 +33,8 @@ pub(super) fn cache_row(model: &str, context: u32) -> (String, ModelSpec) {
 
 /// A cache listing two `ollama` rows with different context limits, so a
 /// switch between them changes the active model's context window.
-pub(super) fn two_limit_cache() -> crate::config::ModelsCache {
-    crate::config::ModelsCache {
+pub(super) fn two_limit_cache() -> agnt_runtime::config::ModelsCache {
+    agnt_runtime::config::ModelsCache {
         providers: HashMap::from([(
             "ollama".to_string(),
             ProviderSpec {

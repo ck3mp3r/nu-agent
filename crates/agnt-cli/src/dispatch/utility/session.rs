@@ -2,12 +2,12 @@
 
 use std::path::PathBuf;
 
-use agnt_core::config::CompactionConfig;
 use agnt_core::conversation::runtime_build::build_compaction_policy;
 use agnt_core::rig_memory::CompactionPolicy;
 use agnt_core::session::RigStoreConfig;
 use agnt_core::session::prefix::dir_prefix;
 use agnt_core::types::{AssistantContent, Message, UserContent};
+use agnt_runtime::config::CompactionConfig;
 
 use crate::AgentArgs;
 use crate::SessionCommand;
@@ -158,7 +158,7 @@ fn compaction_display(policy: &CompactionPolicy) -> Vec<String> {
 
 /// The `[compaction]` block of the user's config, empty when it cannot be read.
 fn load_compaction_config() -> CompactionConfig {
-    agnt_core::config::toml_config::load()
+    agnt_runtime::config::toml_config::load()
         .unwrap_or_default()
         .compaction
         .unwrap_or_default()
@@ -171,8 +171,8 @@ fn current_dir() -> Result<PathBuf> {
 
 fn open_rig(args: &AgentArgs) -> Result<RigStoreConfig> {
     let store_type = resolve_store_type_from_clap(args, resolve_session_store_type_from_config())?;
-    let config = agnt_core::config::toml_config::load().unwrap_or_default();
-    let paths = agnt_core::config::Paths::resolve_for_process(config.paths.as_ref())
+    let config = agnt_runtime::config::toml_config::load().unwrap_or_default();
+    let paths = agnt_runtime::config::Paths::resolve_for_process(config.paths.as_ref())
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     Ok(RigStoreConfig::new(store_type).with_store_path(paths.store_path))
 }

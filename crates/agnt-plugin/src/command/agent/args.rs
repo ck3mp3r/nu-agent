@@ -127,7 +127,7 @@ pub(crate) fn extract_agent_flags(call: &EvaluatedCall) -> (Option<String>, Opti
 /// Ok(CompactionConfig) with provided flag values.
 pub(crate) fn extract_compaction_flags(
     call: &EvaluatedCall,
-) -> Result<agnt_core::config::CompactionConfig, LabeledError> {
+) -> Result<agnt_runtime::config::CompactionConfig, LabeledError> {
     // Parse --proactive-threshold-pct
     let proactive_threshold_pct = call
         .get_flag::<Value>("proactive-threshold-pct")
@@ -135,7 +135,7 @@ pub(crate) fn extract_compaction_flags(
         .flatten()
         .and_then(|v| v.as_float().ok());
 
-    Ok(agnt_core::config::CompactionConfig {
+    Ok(agnt_runtime::config::CompactionConfig {
         proactive_threshold_pct,
         ..Default::default()
     })

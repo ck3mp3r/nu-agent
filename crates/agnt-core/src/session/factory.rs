@@ -1,40 +1,13 @@
-use std::str::FromStr;
 use std::sync::Arc;
 
 use agnt_storage::{RigAdapter, Storage};
 use rig_memory::Store;
-use serde::{Deserialize, Serialize};
 
 use super::SessionMeta;
 use super::blocking::{PoolError, on_pool};
 use super::rig_state::{self, SessionView};
-use crate::config::paths::STORE_FILE;
-
-/// The type of session store backend to use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum StoreType {
-    /// SQLite-backed session store: one database file holds every session.
-    #[default]
-    #[serde(rename = "sqlite")]
-    Sqlite,
-    /// In-memory session store (backed by SQLite `:memory:`).
-    #[serde(rename = "memory")]
-    Memory,
-}
-
-impl FromStr for StoreType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "sqlite" => Ok(StoreType::Sqlite),
-            "memory" => Ok(StoreType::Memory),
-            other => Err(format!(
-                "Unknown store type: '{other}'. Expected 'sqlite' or 'memory'."
-            )),
-        }
-    }
-}
+use agnt_runtime::config::StoreType;
+use agnt_runtime::config::paths::STORE_FILE;
 
 /// Errors that can occur when opening a rig-memory session store.
 #[derive(Debug, thiserror::Error)]

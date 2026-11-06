@@ -1,6 +1,6 @@
 use super::super::managers::PersonaManager;
-use crate::config::Config;
 use crate::tools::authz::PermissionsOverlay;
+use agnt_runtime::config::Config;
 
 pub struct PersonaState {
     agent_persona_body: Option<String>,
@@ -82,7 +82,7 @@ impl PersonaManager for PersonaState {
         agent_name: &str,
         cwd: &std::path::Path,
         agents_dir: &std::path::Path,
-        agents_config: &crate::config::AgentsConfig,
+        agents_config: &agnt_runtime::config::AgentsConfig,
     ) -> Result<SwitchAgentResult, String> {
         use crate::protocol::persona::{
             FrontMatterParser, FsPersonaResolver, PersonaFileResolver,

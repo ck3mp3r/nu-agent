@@ -1,5 +1,5 @@
 use super::Agent;
-use agnt_core::config::{Config, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
+use agnt_runtime::config::{Config, ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
 use agnt_runtime::utils::env_map::{EnvMap, process_env};
 use nu_parser::parse;
 use nu_plugin::EvaluatedCall;
@@ -131,7 +131,7 @@ pub(super) fn resolve_with_new_config_and_env(
         .flatten()
         .and_then(|v| v.as_str().map(str::to_string).ok());
     let mut config =
-        agnt_core::config::resolve_role_config(&plugin_config, model_override.as_deref(), env)
+        agnt_runtime::config::resolve_role_config(&plugin_config, model_override.as_deref(), env)
             .map_err(|e| LabeledError::new(format!("{e}")))?;
     super::runtime_build::apply_cli_flags(&mut config, call);
     config.validate().map_err(LabeledError::new)?;

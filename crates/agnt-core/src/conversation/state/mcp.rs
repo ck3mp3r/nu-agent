@@ -1,13 +1,13 @@
 use crate::protocol::contracts::McpUsabilityState;
 use std::sync::Arc;
 
-use crate::config::vault::Vault;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::{
     config::McpServerConfig,
     runtime::{McpRuntime, McpServerLifecycle},
 };
 use crate::types::ToolDefinition;
+use agnt_runtime::config::vault::Vault;
 
 use super::super::mcp_helpers::{
     rebuild_mcp_lifecycle_projection, stage_enabled_mcp_runtime_state,

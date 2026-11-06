@@ -8,9 +8,9 @@
 
 use super::harness::*;
 use super::*;
-use crate::config::PluginConfig;
 use crate::conversation::state::provider::ProviderState;
 use crate::protocol::model_switching::ModelSwitching;
+use agnt_runtime::config::PluginConfig;
 
 #[tokio::test]
 async fn switch_model_rebuilds_the_shared_model_from_the_resolved_provider() -> Result<()> {

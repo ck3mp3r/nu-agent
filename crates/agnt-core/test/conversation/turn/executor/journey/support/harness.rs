@@ -52,7 +52,7 @@ pub(crate) struct JourneyHarness {
     dyn_model: std::sync::Arc<std::sync::Mutex<rig::DynModel<rig::operation::Completion>>>,
     compaction_config: crate::conversation::compaction::CompactionConfig,
     pub(crate) session_id: &'static str,
-    config: crate::config::Config,
+    config: agnt_runtime::config::Config,
 }
 
 impl JourneyHarness {
@@ -61,7 +61,10 @@ impl JourneyHarness {
     }
 
     /// Create a harness with a custom config (e.g., to set max_tool_result_bytes).
-    pub(crate) fn new_with_config(session_id: &'static str, config: crate::config::Config) -> Self {
+    pub(crate) fn new_with_config(
+        session_id: &'static str,
+        config: agnt_runtime::config::Config,
+    ) -> Self {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let bus = crate::bus::create_bus();
         let compaction_config = crate::conversation::compaction::CompactionConfig {
@@ -77,7 +80,7 @@ impl JourneyHarness {
                 ),
             ),
             threshold_tokens: None,
-            threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+            threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
         };
         let memory_state = MemoryState::new(crate::session::RigStoreConfig::in_memory());
         Self {

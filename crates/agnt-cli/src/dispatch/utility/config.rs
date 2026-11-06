@@ -11,9 +11,9 @@ use crate::error::{Error, Result};
 /// The config file path is resolved once here, from the [`Paths`] the
 /// environment ladder selects, and handed to the subcommand.
 ///
-/// [`Paths`]: agnt_core::config::Paths
+/// [`Paths`]: agnt_runtime::config::Paths
 pub fn run_config_command(command: &ConfigCommand) -> Result<()> {
-    let paths = agnt_core::config::Paths::resolve_for_process(None)
+    let paths = agnt_runtime::config::Paths::resolve_for_process(None)
         .map_err(|e| Error::Custom(format!("Cannot determine config path: {e}")))?;
     match command {
         ConfigCommand::Init(args) => run_config_init(args, &paths.config_path),

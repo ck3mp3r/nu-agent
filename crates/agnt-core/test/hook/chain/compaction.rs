@@ -35,7 +35,7 @@ async fn decide_compaction_surfaces_store_error_as_failed() -> Result<()> {
             test_model_spec(),
         ),
         threshold_tokens: Some(100),
-        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+        threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
     };
     let last_total_tokens = Arc::new(Mutex::new(None));
 
@@ -409,7 +409,7 @@ async fn store_dead_latch_makes_one_clean_line_and_no_further_attempt() -> Resul
             test_model_spec(),
         ),
         threshold_tokens: Some(100),
-        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+        threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
     };
     let last_total_tokens = Arc::new(Mutex::new(None));
     let store_latch: crate::hook::StoreLatch = Default::default();
@@ -489,7 +489,7 @@ async fn successful_run_compaction_clears_the_latch() -> Result<()> {
             test_model_spec(),
         ),
         threshold_tokens: None,
-        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+        threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
     };
     let last_total_tokens = Arc::new(Mutex::new(None));
     let store_latch: crate::hook::StoreLatch = Default::default();

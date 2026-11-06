@@ -5,8 +5,8 @@ use nu_protocol::{Category, Example, LabeledError, Signature, Value};
 use oauth2::TokenResponse;
 use rmcp::transport::auth::StoredCredentials;
 
-use agnt_core::config::vault::Vault;
 use agnt_core::tools::mcp::config::{McpAuthConfig, McpConfig};
+use agnt_runtime::config::vault::Vault;
 
 use crate::plugin::AgentPlugin;
 
@@ -98,14 +98,14 @@ impl SimplePluginCommand for AgentAuthMcpStatus {
         _input: &Value,
     ) -> Result<Value, LabeledError> {
         // 1. Load MCP config
-        let plugin_config = agnt_core::config::toml_config::load()
+        let plugin_config = agnt_runtime::config::toml_config::load()
             .map_err(|e| LabeledError::new(format!("Failed to load config.toml: {e}")))?;
         let mcp_config = McpConfig::from_toml_config(&plugin_config).map_err(|msg| {
             LabeledError::new("Failed to load MCP config").with_label(msg, call.head)
         })?;
 
         // 2. Construct the vault
-        let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
             .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
         let vault = Vault::auto_detect(&application_paths.secrets_path)
             .map_err(|e| LabeledError::new(e.to_string()))?;

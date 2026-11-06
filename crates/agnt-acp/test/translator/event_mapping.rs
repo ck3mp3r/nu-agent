@@ -102,7 +102,7 @@ fn test_translator_llm_completed_default_context_size_is_builtin_default() -> Re
     assert_eq!(usage.used, 7);
     assert_eq!(
         usage.size,
-        agnt_core::config::defaults::MAX_CONTEXT_TOKENS as u64
+        agnt_runtime::config::defaults::MAX_CONTEXT_TOKENS as u64
     );
     Ok(())
 }

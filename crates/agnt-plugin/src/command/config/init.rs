@@ -36,7 +36,7 @@ impl SimplePluginCommand for AgentConfigInit {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let paths = agnt_core::config::Paths::resolve_for_process(None)
+        let paths = agnt_runtime::config::Paths::resolve_for_process(None)
             .map_err(|e| LabeledError::new(format!("Cannot determine config path: {e}")))?;
         let path = paths.config_path;
 

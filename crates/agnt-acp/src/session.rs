@@ -22,8 +22,6 @@ use agnt_core::bus::{
     Bus, CancelTx, ChannelError, CompactionTx, RequestCancel, SessionEvent, SessionTx, TurnEvent,
     TurnTx, UiEventTx,
 };
-use agnt_core::config::ModelsCache;
-use agnt_core::config::Paths;
 use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::protocol::contracts::CoreRuntime;
 use agnt_core::protocol::events::CompactionSource;
@@ -33,6 +31,8 @@ use agnt_core::session::resolver::generate_session_id;
 use agnt_core::session::{RigStoreConfig, SessionInfo};
 use agnt_core::tools::mcp::config::McpServerConfig;
 use agnt_core::types::{AssistantContent, Message, UserContent};
+use agnt_runtime::config::ModelsCache;
+use agnt_runtime::config::Paths;
 use chrono::{DateTime, Utc};
 use nu_protocol::{LabeledError, Span, Value};
 use rig_memory::Store as _;
@@ -193,7 +193,7 @@ pub struct AcpSessionManager<R: RuntimeBuilder> {
     models_cache: Option<Arc<ModelsCache>>,
     client_fs: Arc<StdMutex<Option<ClientFsState>>>,
     agent_name: Option<String>,
-    hooks: Vec<agnt_core::config::ResolvedHook>,
+    hooks: Vec<agnt_runtime::config::ResolvedHook>,
 }
 
 // endregion: --- Types
@@ -241,7 +241,7 @@ impl<R: RuntimeBuilder> AcpSessionManager<R> {
     ///
     /// The hooks are resolved once at serve time; each session spawns its own
     /// runner on its own bus, so a hook observes that session's events only.
-    pub fn with_hooks(mut self, hooks: Vec<agnt_core::config::ResolvedHook>) -> Self {
+    pub fn with_hooks(mut self, hooks: Vec<agnt_runtime::config::ResolvedHook>) -> Self {
         self.hooks = hooks;
         self
     }

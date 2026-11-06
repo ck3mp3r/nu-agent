@@ -24,7 +24,7 @@ static GRAMMAR_CACHE: OnceLock<HashMap<String, LoadedGrammar>> = OnceLock::new()
 static UNCOMPILED_DIRS: OnceLock<HashMap<String, PathBuf>> = OnceLock::new();
 
 /// The compiled-grammar cache directory injected at startup, from
-/// [`Paths::grammar_cache_dir`](crate::config::Paths::grammar_cache_dir).
+/// [`Paths::grammar_cache_dir`](agnt_runtime::config::Paths::grammar_cache_dir).
 ///
 /// `None` leaves the OS default, read from the process environment, in use.
 static GRAMMAR_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -119,7 +119,7 @@ fn os_cache_dir() -> Option<PathBuf> {
 /// Install the resolved grammar-cache directory for the process.
 ///
 /// The config-load site calls this with
-/// [`Paths::grammar_cache_dir`](crate::config::Paths::grammar_cache_dir) once
+/// [`Paths::grammar_cache_dir`](agnt_runtime::config::Paths::grammar_cache_dir) once
 /// config.toml is parsed: the cache ladder has a `[paths]` level that the
 /// process environment cannot see, so a pre-config install would pin the wrong
 /// directory. Until this runs, the grammar lookup reads the OS default.
@@ -142,7 +142,7 @@ fn grammar_cache_dir() -> Option<PathBuf> {
 /// subdirectory.
 ///
 /// `cache_dir` is the injected grammar cache
-/// ([`Paths::grammar_cache_dir`](crate::config::Paths::grammar_cache_dir)); the
+/// ([`Paths::grammar_cache_dir`](agnt_runtime::config::Paths::grammar_cache_dir)); the
 /// `None` case falls back to the OS default.
 fn find_compiled_library(
     grammar_dir: &Path,

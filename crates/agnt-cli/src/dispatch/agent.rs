@@ -3,7 +3,6 @@
 use std::io::IsTerminal;
 use std::sync::Arc;
 
-use agnt_core::config::defaults;
 use agnt_core::conversation::builder::{
     AgentRuntimeBuilder, BuildArtifacts, BuildInput, ToolAssembly, assemble_tool_definitions,
     merge_compaction_configs,
@@ -20,6 +19,7 @@ use agnt_core::tools::closure::{ClosureRegistry, CwdEngine};
 use agnt_core::tools::handler::McpToolRegistry;
 use agnt_core::tools::mcp::config::McpConfig;
 use agnt_core::types::ToolServer;
+use agnt_runtime::config::defaults;
 use nu_protocol::Span;
 
 use crate::AgentArgs;
@@ -70,12 +70,12 @@ pub async fn run_agent(args: &AgentArgs, prompt: Option<String>, ui: &UiArgs) ->
 
     // Discovery comes first: the file the ladder selects carries the `[paths]`
     // values the full resolution below applies.
-    let discovery = agnt_core::config::Paths::resolve_for_process(None)
+    let discovery = agnt_runtime::config::Paths::resolve_for_process(None)
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     let (mut config, plugin_config) = resolve_config_from_clap(args, &discovery.config_path)?;
 
     let store_type = resolve_store_type_from_clap(args, config.session_store_type)?;
-    let paths = agnt_core::config::Paths::resolve_for_process(plugin_config.paths.as_ref())
+    let paths = agnt_runtime::config::Paths::resolve_for_process(plugin_config.paths.as_ref())
         .map_err(|e| Error::Custom(format!("Failed to resolve application paths: {e}")))?;
     // `[paths].state_home` and `[paths].cache_home` only become known now: the
     // pre-load window logged to the derived default, and the grammar cache

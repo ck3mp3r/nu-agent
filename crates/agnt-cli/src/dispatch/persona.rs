@@ -1,11 +1,11 @@
 //! clap-based persona resolution for the CLI.
 
-use agnt_core::config::AgentsConfig;
 use agnt_core::protocol::persona::{
     FrontMatterParser, FsPersonaResolver, ParsedPersona, PersonaFileResolver,
     PulldownCmarkFrontMatterParser, interpret_front_matter,
 };
 use agnt_core::tools::authz::PermissionsOverlay;
+use agnt_runtime::config::AgentsConfig;
 use nu_protocol::{LabeledError, Span};
 
 use crate::error::{Error, Result};

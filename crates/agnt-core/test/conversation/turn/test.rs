@@ -43,10 +43,10 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 
 use super::proxy::FilteredToolProxy;
 use super::*;
-use crate::config::Config;
 use crate::hook::permission_resolver::PermissionDecision;
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::types::{ToolDefinition, ToolName};
+use agnt_runtime::config::Config;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

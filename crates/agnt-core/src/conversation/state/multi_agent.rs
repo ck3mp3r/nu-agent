@@ -1,6 +1,6 @@
 use super::super::managers::MultiAgentManager;
-use crate::config::AgentsConfig;
 use crate::protocol::persona::PersonaSummary;
+use agnt_runtime::config::AgentsConfig;
 
 pub struct MultiAgentState {
     available_agent_summaries: Vec<PersonaSummary>,

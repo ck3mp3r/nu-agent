@@ -1,7 +1,7 @@
 //! clap-based permissions resolution for the CLI.
 
-use agnt_core::config::PluginConfig;
 use agnt_core::tools::authz::{PermissionsConfig, PermissionsOverlay};
+use agnt_runtime::config::PluginConfig;
 
 // region:    --- Functions
 

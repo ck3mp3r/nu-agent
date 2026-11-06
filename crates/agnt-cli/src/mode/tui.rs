@@ -182,7 +182,7 @@ where
             else {
                 continue;
             };
-            let pref = agnt_core::theme_pref::ThemePreference { theme: Some(kebab) };
+            let pref = agnt_runtime::theme_pref::ThemePreference { theme: Some(kebab) };
             if let Err(e) = pref.save_to(&theme_path) {
                 log::warn!("Failed to persist theme preference: {e}");
             }

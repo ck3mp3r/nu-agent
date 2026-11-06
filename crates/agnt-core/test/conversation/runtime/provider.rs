@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn provider_dispatch_unsupported_provider_returns_error() {
     // RED: Verify that unsupported provider returns clear error
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -56,7 +56,7 @@ fn provider_dispatch_unsupported_provider_returns_error() {
 fn client_cache_key_contains_provider_and_model() {
     // Characterise client_cache_key (runtime.rs:708-714).
     // It returns (config.provider, config.api_key, config.base_url).
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -113,7 +113,7 @@ fn client_cache_key_contains_provider_and_model() {
 #[test]
 fn client_cache_key_includes_base_url_when_set() {
     // Same as above but with base_url set.
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -170,7 +170,7 @@ fn client_cache_key_includes_base_url_when_set() {
 fn active_model_identity_returns_provider_slash_model() {
     // Characterise active_model_identity (runtime.rs:484-486).
     // Returns format!("{}/{}", config.provider, config.model).
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -232,7 +232,7 @@ fn provider_state_switch_model_returns_err_when_no_startup_config() {
     // When startup_plugin_config is None, switch_model must return Err
     // containing "model switch unavailable".
 
-    let startup_plugin_config: Option<crate::config::PluginConfig> = None;
+    let startup_plugin_config: Option<agnt_runtime::config::PluginConfig> = None;
 
     // Replicate the switch_model error path with no startup config
     let result: std::result::Result<String, String> = startup_plugin_config
@@ -257,7 +257,7 @@ fn provider_state_client_cache_key_contains_provider_and_api_key() {
     // Characterise client_cache_key (runtime.rs:302-308).
     // With provider="copilot", api_key=Some("fake-key"), base_url=None,
     // client_cache_key returns (provider, api_key, base_url).
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,

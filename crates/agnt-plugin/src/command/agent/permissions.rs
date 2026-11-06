@@ -5,7 +5,7 @@ use agnt_core::tools::authz::{PermissionsConfig, PermissionsOverlay};
 
 pub(super) fn resolve_effective_permissions_config(
     call: &EvaluatedCall,
-    plugin_config: &agnt_core::config::PluginConfig,
+    plugin_config: &agnt_runtime::config::PluginConfig,
     agent_overlay: Option<&PermissionsOverlay>,
     interactive: bool,
 ) -> Result<

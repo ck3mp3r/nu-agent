@@ -14,7 +14,7 @@ use super::*;
 /// unit test; the config resolution and the facts binding are the real ones.
 #[test]
 fn test_providers_build_dyn_model_prices_the_ollama_cloud_repro() -> Result<()> {
-    use crate::config::{ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
+    use agnt_runtime::config::{ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
 
     // -- Setup & Fixtures: the config block is literally named `ollama-cloud`.
     let mut plugin_config = PluginConfig::default();
@@ -75,7 +75,7 @@ fn test_providers_build_dyn_model_prices_the_ollama_cloud_repro() -> Result<()> 
 /// `ollama-cloud` row.
 #[test]
 fn test_providers_build_dyn_model_prices_the_ollama_cloud_openai_wire_repro() -> Result<()> {
-    use crate::config::{ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
+    use agnt_runtime::config::{ModelConfig, ModelRoleConfig, PluginConfig, ProviderConfig};
 
     // -- Setup & Fixtures: the config block is literally named `ollama-cloud`
     // and serves through the openai wire.

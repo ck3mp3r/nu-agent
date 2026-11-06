@@ -82,7 +82,7 @@ async fn test_integration_hooks_zero_hooks_spawns_no_runner() -> Result<()> {
     // -- Setup & Fixtures
     let env = support::TestEnv::new().await?;
     env.write_default_config()?;
-    let config = agnt_core::config::toml_config::load_from(&env.config_path())?;
+    let config = agnt_runtime::config::toml_config::load_from(&env.config_path())?;
     let bus = agnt_core::bus::create_bus();
     let process = RecordingProcess::default();
 
@@ -123,7 +123,7 @@ async fn test_integration_hooks_configured_hooks_start_a_runner() -> Result<()> 
         "[models.default]\nmodel = \"ollama/llama3\"\n\n[providers.ollama]\nbase_url = \"{}\"\n\n[[hooks]]\nname = \"audit\"\nevents = [\"turn_started\"]\nscript = \"audit.nu\"\n",
         env.llm().uri()
     ))?;
-    let config = agnt_core::config::toml_config::load_from(&env.config_path())?;
+    let config = agnt_runtime::config::toml_config::load_from(&env.config_path())?;
     let bus = agnt_core::bus::create_bus();
     let process = RecordingProcess::default();
     let config_dir = env

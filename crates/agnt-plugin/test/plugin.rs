@@ -1,5 +1,5 @@
 use crate::plugin::{AgentPlugin, config_or_default};
-use agnt_core::config::{PluginConfig, TomlConfigError};
+use agnt_runtime::config::{PluginConfig, TomlConfigError};
 use nu_plugin::Plugin;
 
 use std::sync::{Mutex, Once};

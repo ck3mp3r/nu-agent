@@ -7,7 +7,7 @@ use super::*;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
-use crate::config::Config;
+use agnt_runtime::config::Config;
 use agnt_runtime::utils::env_map::EnvMap;
 
 // ========================================================================

@@ -102,10 +102,10 @@ async fn journey_hard_error_after_tool_results_session_remains_valid() -> Result
 /// of the session history exceeds the configured threshold before a turn.
 #[tokio::test]
 async fn journey_context_warning_emitted_near_limit() -> Result<()> {
-    let config = crate::config::Config {
+    let config = agnt_runtime::config::Config {
         model_context_tokens: Some(100),
         context_warning_threshold: Some(0.5), // warn at 50 tokens
-        ..crate::config::Config::default()
+        ..agnt_runtime::config::Config::default()
     };
     let mut h = JourneyHarness::new_with_config("journey-ctx-warn", config);
     let (server, client) = h.start_mock_server().await?;

@@ -59,7 +59,7 @@ fn default_enabled() -> bool {
 }
 
 impl McpConfig {
-    pub fn from_toml_config(config: &crate::config::PluginConfig) -> Result<Self, String> {
+    pub fn from_toml_config(config: &agnt_runtime::config::PluginConfig) -> Result<Self, String> {
         match &config.mcp {
             Some(value) => Self::from_toml(value),
             None => Ok(Self { mcp: Vec::new() }),

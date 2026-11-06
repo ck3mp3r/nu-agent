@@ -8,7 +8,7 @@ use rig::test_utils::{MockCompletionModel, MockStreamEvent};
 use super::executor_test_support::*;
 use super::test_utils::{MockResolver, test_config};
 use super::*;
-use crate::config::Config;
+use agnt_runtime::config::Config;
 
 // region:    --- Modules
 

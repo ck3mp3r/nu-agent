@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::config::models_cache::{ModelCost, ModelLimit};
+use agnt_runtime::config::models_cache::{ModelCost, ModelLimit};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

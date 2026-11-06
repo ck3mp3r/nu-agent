@@ -1,8 +1,8 @@
 use nu_plugin::EvaluatedCall;
 use nu_protocol::LabeledError;
 
-use agnt_core::config::{AgentsConfig, Config};
 use agnt_core::tools::authz::PermissionsOverlay;
+use agnt_runtime::config::{AgentsConfig, Config};
 
 pub(crate) struct PersonaResolution {
     pub(crate) persona: Option<agnt_core::protocol::persona::ParsedPersona>,

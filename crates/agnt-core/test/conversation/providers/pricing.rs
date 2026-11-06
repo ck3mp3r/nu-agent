@@ -4,8 +4,8 @@ use super::*;
 
 use std::collections::HashMap;
 
-use crate::config::pricing::PricingView;
-use crate::llm::{PricedOutcome, PricingSkip, computed_cost};
+use agnt_runtime::config::pricing::PricingView;
+use agnt_runtime::llm::{PricedOutcome, PricingSkip, computed_cost};
 
 // region:    --- Test Support
 
@@ -14,8 +14,8 @@ fn cache_row(
     model: &str,
     cost: Option<(f64, f64)>,
     modalities: Option<Vec<&str>>,
-) -> (String, crate::config::models_cache::ModelSpec) {
-    use crate::config::models_cache::{ModelCost, ModelLimit, ModelSpec};
+) -> (String, agnt_runtime::config::models_cache::ModelSpec) {
+    use agnt_runtime::config::models_cache::{ModelCost, ModelLimit, ModelSpec};
 
     (
         model.to_string(),
@@ -33,7 +33,7 @@ fn cache_row(
                 cache_read: None,
                 cache_write: None,
             }),
-            modalities: modalities.map(|input| crate::config::models_cache::Modalities {
+            modalities: modalities.map(|input| agnt_runtime::config::models_cache::Modalities {
                 input: input.into_iter().map(str::to_string).collect(),
                 output: vec!["text".to_string()],
             }),
@@ -43,11 +43,11 @@ fn cache_row(
 
 fn cache_provider(
     id: &str,
-    models: Vec<(String, crate::config::models_cache::ModelSpec)>,
-) -> (String, crate::config::models_cache::ProviderSpec) {
+    models: Vec<(String, agnt_runtime::config::models_cache::ModelSpec)>,
+) -> (String, agnt_runtime::config::models_cache::ProviderSpec) {
     (
         id.to_string(),
-        crate::config::models_cache::ProviderSpec {
+        agnt_runtime::config::models_cache::ProviderSpec {
             id: id.to_string(),
             name: id.to_string(),
             env: Vec::new(),
@@ -60,10 +60,10 @@ fn cache_provider(
 /// A cache whose copilot row for `gpt-4o` carries no cost while openai prices
 /// the same id, whose ollama row prices nothing anywhere, and which lists one
 /// model rig's built-in catalog does not know.
-fn ladder_cache() -> crate::config::ModelsCache {
+fn ladder_cache() -> agnt_runtime::config::ModelsCache {
     use std::collections::HashMap;
 
-    crate::config::ModelsCache {
+    agnt_runtime::config::ModelsCache {
         providers: HashMap::from([
             cache_provider("github-copilot", vec![cache_row("gpt-4o", None, None)]),
             cache_provider(
@@ -86,11 +86,12 @@ fn ladder_cache() -> crate::config::ModelsCache {
 type Row<'a> = (&'a str, &'a str, Option<(f64, f64)>);
 
 /// A cache holding one row per `(provider, model, cost)` entry.
-fn cache_of(rows: &[Row<'_>]) -> crate::config::ModelsCache {
-    let mut providers: HashMap<String, crate::config::models_cache::ProviderSpec> = HashMap::new();
+fn cache_of(rows: &[Row<'_>]) -> agnt_runtime::config::ModelsCache {
+    let mut providers: HashMap<String, agnt_runtime::config::models_cache::ProviderSpec> =
+        HashMap::new();
     for (provider, model, cost) in rows {
         let entry = providers.entry((*provider).to_string()).or_insert_with(|| {
-            crate::config::models_cache::ProviderSpec {
+            agnt_runtime::config::models_cache::ProviderSpec {
                 id: (*provider).to_string(),
                 name: (*provider).to_string(),
                 env: Vec::new(),
@@ -102,7 +103,7 @@ fn cache_of(rows: &[Row<'_>]) -> crate::config::ModelsCache {
             .models
             .insert((*model).to_string(), cache_row(model, *cost, None).1);
     }
-    crate::config::ModelsCache { providers }
+    agnt_runtime::config::ModelsCache { providers }
 }
 
 /// A Copilot client on a recording transport: no network, no TLS.
@@ -276,7 +277,7 @@ fn test_providers_build_dyn_model_without_a_ladder_keeps_the_builtin_catalog() -
 #[test]
 fn test_providers_build_dyn_model_binds_the_config_price_without_a_cache() -> Result<()> {
     // -- Setup & Fixtures: no models cache at all, only a configured price.
-    let config_pricing = crate::config::models_cache::ModelCost {
+    let config_pricing = agnt_runtime::config::models_cache::ModelCost {
         input: 0.5,
         output: 1.5,
         cache_read: None,
@@ -316,7 +317,7 @@ fn test_providers_build_dyn_model_config_price_beats_the_cache() -> Result<()> {
     // declared a different price. The user stated what they pay, so it wins.
     let cache = ladder_cache();
     let view = PricingView::new(&cache);
-    let config_pricing = crate::config::models_cache::ModelCost {
+    let config_pricing = agnt_runtime::config::models_cache::ModelCost {
         input: 99.0,
         output: 99.0,
         cache_read: None,

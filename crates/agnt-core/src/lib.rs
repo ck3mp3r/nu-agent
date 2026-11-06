@@ -1,14 +1,11 @@
 pub mod bus;
-pub mod config;
 pub mod conversation;
 pub mod hook;
 pub mod hooks;
-pub mod llm;
 pub mod orchestrator;
 pub mod protocol;
 pub mod renderer;
 pub mod session;
-pub mod theme_pref;
 pub mod tools;
 pub mod types;
 

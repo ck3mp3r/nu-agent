@@ -4,12 +4,12 @@ use std::sync::Arc;
 use nu_protocol::{LabeledError, Span};
 
 use crate::bus::Bus;
-use crate::config::CompactionConfig;
 use crate::protocol::persona::PersonaSummary;
 use crate::tools::audit::AuditLogger;
 use crate::tools::closure::{ClosureRegistry, EngineInterfaceLike};
 use crate::tools::executor::ToolExecutor;
 use crate::types::{EmptyToolName, ToolAnnotations, ToolDefinition, ToolName};
+use agnt_runtime::config::CompactionConfig;
 use rig::tool::server::ToolServerHandle;
 use serde_json::json;
 
@@ -439,7 +439,7 @@ pub struct ToolAssembly {
 /// Order: closures → builtins → messaging → orchestrator → MCP
 pub fn assemble_tool_definitions(
     closure_registry: &ClosureRegistry,
-    agents_config: &crate::config::AgentsConfig,
+    agents_config: &agnt_runtime::config::AgentsConfig,
     discovered_mcp_tools: &[crate::tools::mcp::client::McpToolDefinition],
     cwd: &std::path::Path,
     agents_dir: &std::path::Path,
@@ -547,7 +547,7 @@ pub struct BuildInput<'a> {
     /// Already-merged compaction config (defaults ← plugin config ← CLI flags).
     pub merged_compaction: CompactionConfig,
     /// The resolved tool audit log file
-    /// ([`Paths::audit_log_path`](crate::config::Paths::audit_log_path)).
+    /// ([`Paths::audit_log_path`](agnt_runtime::config::Paths::audit_log_path)).
     pub audit_log_path: PathBuf,
 }
 

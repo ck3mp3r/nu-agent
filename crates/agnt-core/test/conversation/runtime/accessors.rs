@@ -7,7 +7,7 @@ use crate::conversation::managers::PersonaManager;
 #[test]
 fn accessor_provider_returns_provider_string() {
     // Verifies that runtime.provider() delegates to provider_state.config().provider
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -50,7 +50,7 @@ fn accessor_provider_returns_provider_string() {
 #[test]
 fn accessor_model_returns_model_string() {
     // Verifies that runtime.model() delegates to provider_state.config().model
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -91,7 +91,7 @@ fn accessor_model_returns_model_string() {
 
 #[test]
 fn accessor_max_context_tokens_returns_none_when_unset() {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -135,7 +135,7 @@ fn accessor_max_context_tokens_returns_none_when_unset() {
 
 #[test]
 fn accessor_max_context_tokens_returns_value_when_set() {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -179,7 +179,7 @@ fn accessor_max_context_tokens_returns_value_when_set() {
 
 #[test]
 fn accessor_startup_plugin_config_returns_none_when_default() {
-    use crate::config::Config;
+    use agnt_runtime::config::Config;
 
     let config = Config {
         a2a_port: None,
@@ -256,8 +256,8 @@ fn accessor_mcp_lifecycle_projection_returns_empty_when_default() {
 
 #[test]
 fn accessor_available_agent_summaries_delegates_to_multi_agent_state() {
-    use crate::config::AgentsConfig;
     use crate::conversation::state::multi_agent::MultiAgentState;
+    use agnt_runtime::config::AgentsConfig;
 
     let state = MultiAgentState::new(vec![], AgentsConfig::default());
     assert!(state.available_agent_summaries().is_empty());

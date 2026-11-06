@@ -96,7 +96,7 @@ async fn feedback_cap_three_produces_three_messages_then_hard_error() -> Result<
     // carry both.
     let first_prompt = request_prompt(&requests[1]);
     assert!(
-        first_prompt.contains(crate::config::defaults::DEFAULT_OUTPUT_BUDGET_EMPTY_REMEDY),
+        first_prompt.contains(agnt_runtime::config::defaults::DEFAULT_OUTPUT_BUDGET_EMPTY_REMEDY),
         "retry 1 must carry the First remedy; got: {first_prompt}"
     );
     for (i, request) in requests.iter().enumerate().skip(2) {

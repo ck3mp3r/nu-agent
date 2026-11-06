@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agnt_core::config::vault::Vault;
 use agnt_core::tools::mcp::config::{McpAuthConfig, McpConfig, McpServerConfig};
 use agnt_core::tools::mcp::oauth_callback::{CallbackServer, DEFAULT_TIMEOUT_SECS};
+use agnt_runtime::config::vault::Vault;
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, SignalAction, Signature, SyntaxShape, Value};
 
@@ -103,7 +103,7 @@ async fn run_inner(
     server_name: &str,
 ) -> Result<Value, LabeledError> {
     // 1. Load MCP config from plugin config
-    let plugin_config = agnt_core::config::toml_config::load()
+    let plugin_config = agnt_runtime::config::toml_config::load()
         .map_err(|e| LabeledError::new(format!("Failed to load config.toml: {e}")))?;
     let mcp_config = McpConfig::from_toml_config(&plugin_config)
         .map_err(|msg| LabeledError::new("Failed to load MCP config").with_label(msg, call.head))?;
@@ -150,7 +150,7 @@ async fn run_inner(
     })?;
 
     // 5. Construct the vault
-    let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+    let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
         .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
     let vault = Arc::new(
         Vault::auto_detect(&application_paths.secrets_path)

@@ -26,7 +26,7 @@ pub(super) fn vault_with_bearer(
     name: &str,
     secret: &str,
 ) -> Result<Vault> {
-    use crate::config::vault::VaultBackend;
+    use agnt_runtime::config::vault::VaultBackend;
 
     let vault = empty_vault(dir)?;
     vault
@@ -38,10 +38,11 @@ pub(super) fn vault_with_bearer(
 
 /// A `FileBackend`-backed vault inside `dir`.
 pub(super) fn empty_vault(dir: &tempfile::TempDir) -> Result<Vault> {
-    let backend = crate::config::file_backend::FileBackend::new(dir.path().join("secrets.json"));
-    Ok(Vault::new(crate::config::vault::VaultBackendKind::File(
-        backend,
-    )))
+    let backend =
+        agnt_runtime::config::file_backend::FileBackend::new(dir.path().join("secrets.json"));
+    Ok(Vault::new(
+        agnt_runtime::config::vault::VaultBackendKind::File(backend),
+    ))
 }
 
 // endregion: --- Test Support

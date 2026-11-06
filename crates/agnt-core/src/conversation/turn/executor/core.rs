@@ -29,7 +29,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use nu_protocol::{LabeledError, Span, Value};
 
 use crate::bus::Bus;
-use crate::config::Config;
 use crate::conversation::compaction::CompactionConfig;
 use crate::conversation::managers::SessionManager;
 use crate::hook::agent_hook::DoomLoopState;
@@ -41,6 +40,7 @@ use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
 use crate::types::ToolDefinition;
+use agnt_runtime::config::Config;
 
 /// Outcome of `TurnExecutor::execute` — either a completed turn whose results
 /// have been persisted and whose UI events have been emitted, or an early-exit

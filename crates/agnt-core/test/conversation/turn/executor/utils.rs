@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::bus::{BroadcastRx, Bus, CompactionRx, UiEventRx};
-use crate::config::Config;
 use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecision};
 use crate::protocol::events::SystemEvent;
+use agnt_runtime::config::Config;
 use rig::DynModel;
 use rig::operation::Completion;
 use rig::test_utils::MockCompletionModel;
@@ -156,7 +156,7 @@ pub(super) fn test_compaction_config(
     crate::conversation::compaction::CompactionConfig {
         compactor: test_compactor(bus.clone()),
         threshold_tokens: None,
-        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+        threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
     }
 }
 

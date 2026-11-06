@@ -268,7 +268,10 @@ impl PermissionsConfig {
         let decision = self.evaluate(tool_name, &JsonMap::new());
         decision.action != PermissionAction::Deny
     }
-    pub fn from_plugin_config(config: &crate::config::PluginConfig, interactive: bool) -> Self {
+    pub fn from_plugin_config(
+        config: &agnt_runtime::config::PluginConfig,
+        interactive: bool,
+    ) -> Self {
         match &config.permissions {
             Some(value) => Self::from_toml(value, interactive),
             None => Self::safe_defaults(interactive),
@@ -828,7 +831,7 @@ fn path_segment(input: &str) -> String {
 /// The chain is `base → agent_overlay → cli_overlay`, with the CLI overlay winning.
 /// Returns `(base, effective, startup_summary)`.
 pub fn resolve_effective_permissions(
-    plugin_config: &crate::config::PluginConfig,
+    plugin_config: &agnt_runtime::config::PluginConfig,
     agent_overlay: Option<&PermissionsOverlay>,
     cli_overlay: Option<&PermissionsOverlay>,
     interactive: bool,

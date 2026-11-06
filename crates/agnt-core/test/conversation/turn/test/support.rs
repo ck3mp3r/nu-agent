@@ -3,7 +3,6 @@ use std::sync::Arc;
 use rig::test_utils::MockCompletionModel;
 
 use super::super::*;
-use crate::config::Config;
 use crate::conversation::state::memory::MemoryOf;
 use crate::hook::agent_hook::DoomLoopState;
 use crate::hook::output_repetition::RepetitionState;
@@ -11,6 +10,7 @@ use crate::hook::permission_resolver::{AsyncPermissionResolver, PermissionDecisi
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
 use crate::tools::mcp::circuit_breaker::McpCircuitBreaker;
+use agnt_runtime::config::Config;
 
 pub(crate) fn default_circuit_breaker() -> Arc<std::sync::Mutex<McpCircuitBreaker>> {
     Arc::new(std::sync::Mutex::new(McpCircuitBreaker::default()))
@@ -74,7 +74,7 @@ pub(super) fn test_compaction_config(
             ),
         ),
         threshold_tokens: None,
-        threshold_pct: crate::config::defaults::PROACTIVE_THRESHOLD_PCT,
+        threshold_pct: agnt_runtime::config::defaults::PROACTIVE_THRESHOLD_PCT,
     }
 }
 

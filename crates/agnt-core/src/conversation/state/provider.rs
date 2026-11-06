@@ -3,8 +3,8 @@ use super::super::providers::{
     CachedProviderClient, ClientCacheKey, build_anthropic_client, build_copilot_client,
     build_ollama_client, build_openai_client, resolve_provider_type,
 };
-use crate::config::pricing::PricingView;
-use crate::config::{Config, ModelRoleConfig, PluginConfig};
+use agnt_runtime::config::pricing::PricingView;
+use agnt_runtime::config::{Config, ModelRoleConfig, PluginConfig};
 use nu_protocol::LabeledError;
 
 pub struct ProviderState {
@@ -29,7 +29,7 @@ impl ProviderState {
     }
 
     /// Inject the resolved Copilot credential directory
-    /// ([`Paths::copilot_token_dir`](crate::config::Paths::copilot_token_dir)).
+    /// ([`Paths::copilot_token_dir`](agnt_runtime::config::Paths::copilot_token_dir)).
     pub fn with_copilot_token_dir(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
         self.copilot_token_dir = Some(dir.into());
         self

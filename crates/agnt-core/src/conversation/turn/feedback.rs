@@ -145,7 +145,7 @@ fn output_budget_remedy<'a>(
     output_budget_remedy_mode: Option<&str>,
 ) -> &'a str {
     let mode = output_budget_remedy_mode
-        .unwrap_or(crate::config::defaults::DEFAULT_OUTPUT_BUDGET_REMEDY_MODE);
+        .unwrap_or(agnt_runtime::config::defaults::DEFAULT_OUTPUT_BUDGET_REMEDY_MODE);
     match mode {
         "shorter_response" => match phase {
             FeedbackPhase::First => {
@@ -159,7 +159,7 @@ fn output_budget_remedy<'a>(
         // "empty_output" (default) or any unset/unknown value
         _ => match phase {
             FeedbackPhase::First => output_budget_empty_remedy
-                .unwrap_or(crate::config::defaults::DEFAULT_OUTPUT_BUDGET_EMPTY_REMEDY),
+                .unwrap_or(agnt_runtime::config::defaults::DEFAULT_OUTPUT_BUDGET_EMPTY_REMEDY),
             FeedbackPhase::Backoff => {
                 "the response is still hitting the output token limit; shorten the response \
                  or split the work across turns"

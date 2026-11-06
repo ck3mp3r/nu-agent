@@ -1,8 +1,8 @@
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, Value};
 
-use agnt_core::config::copilot_tokens::read_copilot_token_record;
-use agnt_core::config::vault::{CredentialType, Vault};
+use agnt_runtime::config::copilot_tokens::read_copilot_token_record;
+use agnt_runtime::config::vault::{CredentialType, Vault};
 
 use crate::plugin::AgentPlugin;
 
@@ -60,7 +60,7 @@ impl SimplePluginCommand for AgentProviderAuthStatus {
         call: &EvaluatedCall,
         _input: &Value,
     ) -> Result<Value, LabeledError> {
-        let application_paths = agnt_core::config::Paths::resolve_from_config_or_default()
+        let application_paths = agnt_runtime::config::Paths::resolve_from_config_or_default()
             .map_err(|e| LabeledError::new(format!("Failed to resolve application paths: {e}")))?;
         let vault = Vault::auto_detect(&application_paths.secrets_path)
             .map_err(|e| LabeledError::new(e.to_string()))?;

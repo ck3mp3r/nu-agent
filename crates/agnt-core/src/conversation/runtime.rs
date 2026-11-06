@@ -99,7 +99,7 @@ where
     /// Carried from [`RuntimeBuildParams`](crate::conversation::runtime_build::RuntimeBuildParams)
     /// so an agent switch and the hook runners read the persona and config
     /// directories instead of deriving them.
-    paths: crate::config::Paths,
+    paths: agnt_runtime::config::Paths,
     /// Shared pending-decision map for interactive (TUI) mode.
     ///
     /// When `Some`, `execute_turn` constructs an `InteractivePermissionResolver` instead
@@ -418,7 +418,7 @@ where
             config
                 .model_context_tokens
                 .or_else(|| config.max_context_tokens.map(|t| t as usize))
-                .unwrap_or(crate::config::defaults::MAX_CONTEXT_TOKENS as usize)
+                .unwrap_or(agnt_runtime::config::defaults::MAX_CONTEXT_TOKENS as usize)
         };
         self.compaction.threshold_tokens =
             Some((max_context_tokens as f64 * self.compaction.threshold_pct) as usize);
@@ -1035,7 +1035,7 @@ where
             .map(u64::from)
     }
 
-    pub fn startup_plugin_config(&self) -> Option<&crate::config::PluginConfig> {
+    pub fn startup_plugin_config(&self) -> Option<&agnt_runtime::config::PluginConfig> {
         self.provider.startup_plugin_config()
     }
 
@@ -1070,7 +1070,7 @@ where
     // ── Model identity and switching ────────────────────────────────
 
     /// The active model configuration.
-    pub fn provider_config(&self) -> &crate::config::Config {
+    pub fn provider_config(&self) -> &agnt_runtime::config::Config {
         self.provider.provider_config()
     }
 
@@ -1080,7 +1080,7 @@ where
     /// [`Self::rename_model`] changes the name through it, and a surface that
     /// simulates a provider it cannot reach (the session selector's failure
     /// path) rewrites the block here.
-    pub fn provider_config_mut(&mut self) -> &mut crate::config::Config {
+    pub fn provider_config_mut(&mut self) -> &mut agnt_runtime::config::Config {
         self.provider.provider_config_mut()
     }
 
@@ -1160,12 +1160,12 @@ where
     }
 
     /// The resolved application paths.
-    pub fn paths(&self) -> &crate::config::Paths {
+    pub fn paths(&self) -> &agnt_runtime::config::Paths {
         &self.paths
     }
 
     /// The agents config the persona resolver reads.
-    pub fn agents_config(&self) -> &crate::config::AgentsConfig {
+    pub fn agents_config(&self) -> &agnt_runtime::config::AgentsConfig {
         self.multi_agent.agents_config()
     }
 
@@ -1247,7 +1247,7 @@ impl AgentConversationRuntime {
         use super::state::mcp::McpState;
         use super::state::permission::PermissionState;
         use super::state::provider::ProviderState;
-        use crate::config::defaults;
+        use agnt_runtime::config::defaults;
         use rig::DynModel;
         use rig::operation::Completion;
 
@@ -1462,7 +1462,7 @@ impl crate::protocol::contracts::DecisionSource for AgentConversationRuntime {
 }
 
 impl crate::protocol::contracts::RuntimeAccess for AgentConversationRuntime {
-    fn paths(&self) -> &crate::config::Paths {
+    fn paths(&self) -> &agnt_runtime::config::Paths {
         Self::paths(self)
     }
 
@@ -1502,7 +1502,7 @@ impl crate::protocol::contracts::RuntimeAccess for AgentConversationRuntime {
         Self::agent_icon(self)
     }
 
-    fn startup_plugin_config(&self) -> Option<&crate::config::PluginConfig> {
+    fn startup_plugin_config(&self) -> Option<&agnt_runtime::config::PluginConfig> {
         Self::startup_plugin_config(self)
     }
 

@@ -9,12 +9,12 @@ use super::super::test::{
 use super::test_utils::{message_text, test_compaction_config};
 use super::*;
 use crate::bus::Bus;
-use crate::config::Config;
 use crate::conversation::managers::SessionManager;
 use crate::conversation::state::memory::MemoryState;
 use crate::session::{CachedMemory, RigStoreConfig};
 use crate::tools::closure::ClosureRegistry;
 use crate::tools::handler::McpToolRegistry;
+use agnt_runtime::config::Config;
 
 pub(super) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 

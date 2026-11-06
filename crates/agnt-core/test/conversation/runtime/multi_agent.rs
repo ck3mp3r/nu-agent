@@ -4,8 +4,8 @@
 
 #[test]
 fn multi_agent_state_available_summaries_empty_by_default() {
-    use crate::config::AgentsConfig;
     use crate::conversation::state::multi_agent::MultiAgentState;
+    use agnt_runtime::config::AgentsConfig;
 
     let state = MultiAgentState::new(vec![], AgentsConfig::default());
 

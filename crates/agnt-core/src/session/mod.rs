@@ -59,9 +59,10 @@ mod tool_status_test;
 #[path = "../../test/session/rig_blobs.rs"]
 mod rig_blobs_test;
 
+pub use agnt_runtime::config::StoreType;
 pub use factory::{
-    RigStoreConfig, RigStoreError, StoreType, create_rig_store, create_rig_store_at,
-    create_rig_store_in, list_rig_sessions, list_rig_sessions_at, list_rig_sessions_in,
+    RigStoreConfig, RigStoreError, create_rig_store, create_rig_store_at, create_rig_store_in,
+    list_rig_sessions, list_rig_sessions_at, list_rig_sessions_in,
 };
 pub use info::SessionInfo;
 pub use journal::CachedMemory;

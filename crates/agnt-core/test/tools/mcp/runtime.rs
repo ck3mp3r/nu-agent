@@ -26,11 +26,11 @@ use std::collections::HashMap;
 
 use http::HeaderName;
 
-use crate::config::vault::Vault;
 use crate::tools::mcp::{
     client::McpToolDefinition,
     config::{McpAuthConfig, McpServerConfig, McpTransportType},
 };
+use agnt_runtime::config::vault::Vault;
 
 use super::{
     McpRuntime, build_http_transport_config, compose_exposed_tool_name, merged_stdio_env_with_pwd,

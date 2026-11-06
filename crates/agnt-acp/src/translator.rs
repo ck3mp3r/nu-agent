@@ -21,11 +21,11 @@ use agent_client_protocol::schema::v1::{
 };
 use agent_client_protocol::{Client, ConnectionTo};
 use agnt_core::bus::{ChannelError, CompactionRx, TryRecvError, UiEventRx, UiEventTx};
-use agnt_core::config::defaults;
 use agnt_core::protocol::events::{SystemEvent, SystemKind};
 use agnt_render::tool_args::plain_call_text;
 use agnt_render::tool_view::ToolView;
 use agnt_render::transcript::ir::{ContentKind, Display, DisplaySection};
+use agnt_runtime::config::defaults;
 
 use crate::error::AcpError;
 use crate::permission::{AcpPermissionBridge, PermissionRequestSink};
