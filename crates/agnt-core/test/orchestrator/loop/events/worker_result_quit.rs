@@ -6,29 +6,34 @@ use super::*;
 
 #[tokio::test]
 async fn worker_result_drains_queued_and_checks_compaction() {
-    let mut h = Harness::new();
-    let HarnessParts {
-        event_tx: _,
+    let h = Harness::new();
+    let Harness {
         event_rx,
         worker_tx,
-        worker_rx: _,
         worker_result_tx,
-        worker_result_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
+        mut ctx_state,
+        ..
+    } = h;
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     let mut session = MockSession::new();
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     worker_result_tx
         .send(TurnOutcome::Success(Value::nothing(Span::test_data())))
@@ -36,14 +41,14 @@ async fn worker_result_drains_queued_and_checks_compaction() {
         .unwrap();
 
     let result = run_orchestrator_loop(
-        take_event_rx(event_rx),
+        event_rx,
         make_sources(
-            worker_result_rx,
-            blocking_response_rx,
-            concurrent_response_rx,
-            external_rx,
-            compaction_rx,
-            task_cancel_rx,
+            &mut worker_result_rx,
+            &mut blocking_response_rx,
+            &mut concurrent_response_rx,
+            &mut external_rx,
+            &mut compaction_rx,
+            &mut task_cancel_rx,
         ),
         Stages {
             slash: &mut slash,
@@ -69,46 +74,51 @@ async fn worker_result_drains_queued_and_checks_compaction() {
 
 #[tokio::test]
 async fn quit_blocked_when_worker_active() {
-    let mut h = Harness::new();
-    let HarnessParts {
+    let h = Harness::new();
+    let Harness {
         event_tx,
         event_rx,
         worker_tx,
-        worker_rx: _,
-        worker_result_tx: _,
-        worker_result_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
-    state.worker_active = true;
+        mut ctx_state,
+        ..
+    } = h;
+    ctx_state.worker_active = true;
     // Send Quit while worker is active — loop should continue, not break.
     event_tx.send(OrchestratorEvent::Quit).await.unwrap();
     // Send another Quit after worker becomes idle.
-    state.worker_active = false;
+    ctx_state.worker_active = false;
     event_tx.send(OrchestratorEvent::Quit).await.unwrap();
 
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     let mut session = MockSession::new();
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     let result = run_orchestrator_loop(
-        take_event_rx(event_rx),
+        event_rx,
         make_sources(
-            worker_result_rx,
-            blocking_response_rx,
-            concurrent_response_rx,
-            external_rx,
-            compaction_rx,
-            task_cancel_rx,
+            &mut worker_result_rx,
+            &mut blocking_response_rx,
+            &mut concurrent_response_rx,
+            &mut external_rx,
+            &mut compaction_rx,
+            &mut task_cancel_rx,
         ),
         Stages {
             slash: &mut slash,
@@ -125,41 +135,46 @@ async fn quit_blocked_when_worker_active() {
 
 #[tokio::test]
 async fn quit_allowed_when_idle_and_no_pending() {
-    let mut h = Harness::new();
-    let HarnessParts {
+    let h = Harness::new();
+    let Harness {
         event_tx,
         event_rx,
         worker_tx,
-        worker_rx: _,
-        worker_result_tx: _,
-        worker_result_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
+        mut ctx_state,
+        ..
+    } = h;
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     let mut session = MockSession::new();
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     event_tx.send(OrchestratorEvent::Quit).await.unwrap();
 
     let result = run_orchestrator_loop(
-        take_event_rx(event_rx),
+        event_rx,
         make_sources(
-            worker_result_rx,
-            blocking_response_rx,
-            concurrent_response_rx,
-            external_rx,
-            compaction_rx,
-            task_cancel_rx,
+            &mut worker_result_rx,
+            &mut blocking_response_rx,
+            &mut concurrent_response_rx,
+            &mut external_rx,
+            &mut compaction_rx,
+            &mut task_cancel_rx,
         ),
         Stages {
             slash: &mut slash,

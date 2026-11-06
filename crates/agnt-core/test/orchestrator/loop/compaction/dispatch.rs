@@ -9,29 +9,34 @@ use crate::protocol::events::SystemEvent;
 
 #[tokio::test]
 async fn run_compaction_dispatches_when_worker_idle() -> Result<()> {
-    let mut h = Harness::new();
-    let HarnessParts {
-        event_tx: _,
+    let h = Harness::new();
+    let Harness {
         event_rx,
         worker_tx,
-        worker_rx,
-        worker_result_tx: _,
-        worker_result_rx,
+        mut worker_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
+        mut ctx_state,
+        ..
+    } = h;
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     let mut session = MockSession::new();
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     bus.compaction()
         .send(SystemEvent::CompactionRequested {
@@ -41,14 +46,14 @@ async fn run_compaction_dispatches_when_worker_idle() -> Result<()> {
         .unwrap();
 
     let result = run_orchestrator_loop(
-        take_event_rx(event_rx),
+        event_rx,
         make_sources(
-            worker_result_rx,
-            blocking_response_rx,
-            concurrent_response_rx,
-            external_rx,
-            compaction_rx,
-            task_cancel_rx,
+            &mut worker_result_rx,
+            &mut blocking_response_rx,
+            &mut concurrent_response_rx,
+            &mut external_rx,
+            &mut compaction_rx,
+            &mut task_cancel_rx,
         ),
         Stages {
             slash: &mut slash,
@@ -61,7 +66,7 @@ async fn run_compaction_dispatches_when_worker_idle() -> Result<()> {
     .await;
 
     assert!(result.is_ok());
-    let cmd = recv_command(worker_rx).ok_or("RunCompaction should be dispatched")?;
+    let cmd = recv_command(&mut worker_rx).ok_or("RunCompaction should be dispatched")?;
     match cmd {
         WorkerCommand::RunCompaction { source } => {
             assert_eq!(source, CompactionSource::Auto);
@@ -69,7 +74,7 @@ async fn run_compaction_dispatches_when_worker_idle() -> Result<()> {
         _ => panic!("expected RunCompaction"),
     }
     assert!(
-        !state.worker_active,
+        !ctx_state.worker_active,
         "worker_active must NOT be set for a compaction command (the worker emits events on the bus)"
     );
     Ok(())
@@ -77,31 +82,37 @@ async fn run_compaction_dispatches_when_worker_idle() -> Result<()> {
 
 #[tokio::test]
 async fn run_compaction_queued_when_worker_busy_then_dispatched_on_idle() -> Result<()> {
-    let mut h = Harness::new();
-    let HarnessParts {
-        event_tx: _,
+    let h = Harness::new();
+    let Harness {
         event_rx,
         worker_tx,
-        worker_rx,
+        mut worker_rx,
         worker_result_tx,
-        worker_result_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
+        mut ctx_state,
+        ..
+    } = h;
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     let mut session = MockSession::new();
     // Worker is busy running a turn.
-    state.worker_active = true;
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    ctx_state.worker_active = true;
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     bus.compaction()
         .send(SystemEvent::CompactionRequested {
@@ -116,14 +127,14 @@ async fn run_compaction_queued_when_worker_busy_then_dispatched_on_idle() -> Res
         .unwrap();
 
     let result = run_orchestrator_loop(
-        take_event_rx(event_rx),
+        event_rx,
         make_sources(
-            worker_result_rx,
-            blocking_response_rx,
-            concurrent_response_rx,
-            external_rx,
-            compaction_rx,
-            task_cancel_rx,
+            &mut worker_result_rx,
+            &mut blocking_response_rx,
+            &mut concurrent_response_rx,
+            &mut external_rx,
+            &mut compaction_rx,
+            &mut task_cancel_rx,
         ),
         Stages {
             slash: &mut slash,
@@ -136,7 +147,7 @@ async fn run_compaction_queued_when_worker_busy_then_dispatched_on_idle() -> Res
     .await;
 
     assert!(result.is_ok());
-    let cmd = recv_command(worker_rx).ok_or("queued RunCompaction should be dispatched")?;
+    let cmd = recv_command(&mut worker_rx).ok_or("queued RunCompaction should be dispatched")?;
     match cmd {
         WorkerCommand::RunCompaction { source } => {
             assert_eq!(source, CompactionSource::Auto);
@@ -148,29 +159,34 @@ async fn run_compaction_queued_when_worker_busy_then_dispatched_on_idle() -> Res
 
 #[tokio::test]
 async fn run_compaction_queued_replaces_previous_when_busy() -> Result<()> {
-    let mut h = Harness::new();
-    let HarnessParts {
-        event_tx: _,
+    let h = Harness::new();
+    let Harness {
         event_rx,
         worker_tx,
-        worker_rx,
-        worker_result_tx: _,
-        worker_result_rx,
+        mut worker_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
+        mut ctx_state,
+        ..
+    } = h;
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     let mut session = MockSession::new();
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     // First request dispatches immediately and marks a compaction active.
     bus.compaction()
@@ -213,14 +229,14 @@ async fn run_compaction_queued_replaces_previous_when_busy() -> Result<()> {
         .unwrap();
 
     let result = run_orchestrator_loop(
-        take_event_rx(event_rx),
+        event_rx,
         make_sources(
-            worker_result_rx,
-            blocking_response_rx,
-            concurrent_response_rx,
-            external_rx,
-            compaction_rx,
-            task_cancel_rx,
+            &mut worker_result_rx,
+            &mut blocking_response_rx,
+            &mut concurrent_response_rx,
+            &mut external_rx,
+            &mut compaction_rx,
+            &mut task_cancel_rx,
         ),
         Stages {
             slash: &mut slash,
@@ -233,12 +249,12 @@ async fn run_compaction_queued_replaces_previous_when_busy() -> Result<()> {
     .await;
 
     assert!(result.is_ok());
-    let cmd = recv_command(worker_rx).ok_or("first RunCompaction should be dispatched")?;
+    let cmd = recv_command(&mut worker_rx).ok_or("first RunCompaction should be dispatched")?;
     match cmd {
         WorkerCommand::RunCompaction { source } => assert_eq!(source, CompactionSource::Auto),
         _ => panic!("expected RunCompaction"),
     }
-    let cmd = recv_command(worker_rx).ok_or("queued RunCompaction should be dispatched")?;
+    let cmd = recv_command(&mut worker_rx).ok_or("queued RunCompaction should be dispatched")?;
     match cmd {
         WorkerCommand::RunCompaction { source } => {
             assert_eq!(
@@ -254,29 +270,34 @@ async fn run_compaction_queued_replaces_previous_when_busy() -> Result<()> {
 
 #[tokio::test]
 async fn compaction_requested_while_active_is_queued() -> Result<()> {
-    let mut h = Harness::new();
-    let HarnessParts {
-        event_tx: _,
+    let h = Harness::new();
+    let Harness {
         event_rx,
         worker_tx,
-        worker_rx,
-        worker_result_tx: _,
-        worker_result_rx,
+        mut worker_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
+        mut ctx_state,
+        ..
+    } = h;
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     let mut session = MockSession::new();
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     // First request dispatches immediately (worker idle, no compaction active).
     bus.compaction()
@@ -313,14 +334,14 @@ async fn compaction_requested_while_active_is_queued() -> Result<()> {
         .unwrap();
 
     let result = run_orchestrator_loop(
-        take_event_rx(event_rx),
+        event_rx,
         make_sources(
-            worker_result_rx,
-            blocking_response_rx,
-            concurrent_response_rx,
-            external_rx,
-            compaction_rx,
-            task_cancel_rx,
+            &mut worker_result_rx,
+            &mut blocking_response_rx,
+            &mut concurrent_response_rx,
+            &mut external_rx,
+            &mut compaction_rx,
+            &mut task_cancel_rx,
         ),
         Stages {
             slash: &mut slash,
@@ -334,20 +355,20 @@ async fn compaction_requested_while_active_is_queued() -> Result<()> {
 
     assert!(result.is_ok());
     // First command: the initial request.
-    let cmd = recv_command(worker_rx).ok_or("first RunCompaction should be dispatched")?;
+    let cmd = recv_command(&mut worker_rx).ok_or("first RunCompaction should be dispatched")?;
     match cmd {
         WorkerCommand::RunCompaction { source } => assert_eq!(source, CompactionSource::Auto),
         _ => panic!("expected RunCompaction"),
     }
     // Second command: the queued request dispatched after completion.
-    let cmd = recv_command(worker_rx).ok_or("queued RunCompaction should be dispatched")?;
+    let cmd = recv_command(&mut worker_rx).ok_or("queued RunCompaction should be dispatched")?;
     match cmd {
         WorkerCommand::RunCompaction { source } => assert_eq!(source, CompactionSource::Manual),
         _ => panic!("expected RunCompaction"),
     }
     // No third command should be dispatched.
     assert!(
-        recv_command(worker_rx).is_none(),
+        recv_command(&mut worker_rx).is_none(),
         "no further RunCompaction should be dispatched"
     );
     Ok(())

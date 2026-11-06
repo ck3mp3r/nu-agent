@@ -10,30 +10,36 @@ use super::*;
 #[tokio::test]
 async fn a_replaced_deferred_prompt_leaves_a_later_prompt_unattributed() -> Result<()> {
     // -- Setup & Fixtures
-    let mut h = Harness::new();
-    let HarnessParts {
+    let h = Harness::new();
+    let Harness {
         event_tx,
         event_rx,
         worker_tx,
-        worker_rx,
-        worker_result_tx: _,
-        worker_result_rx,
+        mut worker_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
+        mut ctx_state,
+        ..
+    } = h;
     let mut slash = SlashStage;
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     ui_request.blocking_pending = true;
     let mut session = MockSession::new();
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     // -- Exec
     bus.external()
@@ -65,14 +71,14 @@ async fn a_replaced_deferred_prompt_leaves_a_later_prompt_unattributed() -> Resu
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         run_orchestrator_loop(
-            take_event_rx(event_rx),
+            event_rx,
             make_sources(
-                worker_result_rx,
-                blocking_response_rx,
-                concurrent_response_rx,
-                external_rx,
-                compaction_rx,
-                task_cancel_rx,
+                &mut worker_result_rx,
+                &mut blocking_response_rx,
+                &mut concurrent_response_rx,
+                &mut external_rx,
+                &mut compaction_rx,
+                &mut task_cancel_rx,
             ),
             Stages {
                 slash: &mut slash,
@@ -88,21 +94,21 @@ async fn a_replaced_deferred_prompt_leaves_a_later_prompt_unattributed() -> Resu
 
     // -- Check
     assert!(result.is_ok());
-    let task_id = recv_execute_turn_task_id(worker_rx, "the replacement prompt")?;
+    let task_id = recv_execute_turn_task_id(&mut worker_rx, "the replacement prompt")?;
     assert_eq!(
         task_id, None,
         "the replacement prompt must not be attributed to the replaced task"
     );
     assert_eq!(
-        state.active_external_prompt, None,
+        ctx_state.active_external_prompt, None,
         "the replacement prompt must not be recorded as an external prompt"
     );
     assert_eq!(
-        state.active_external_task_id, None,
+        ctx_state.active_external_task_id, None,
         "the replacement prompt must not be attributed to the replaced task"
     );
     assert_eq!(
-        state.pending_a2a_task_id, None,
+        ctx_state.pending_a2a_task_id, None,
         "the replaced task id must not linger in the pending slot"
     );
     Ok(())
@@ -113,30 +119,36 @@ async fn a_replaced_deferred_prompt_leaves_a_later_prompt_unattributed() -> Resu
 #[tokio::test]
 async fn a_deferred_external_prompt_keeps_its_task_attribution() -> Result<()> {
     // -- Setup & Fixtures
-    let mut h = Harness::new();
-    let HarnessParts {
+    let h = Harness::new();
+    let Harness {
         event_tx,
         event_rx,
         worker_tx,
-        worker_rx,
-        worker_result_tx: _,
-        worker_result_rx,
+        mut worker_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
+        mut ctx_state,
+        ..
+    } = h;
     let mut slash = SlashStage;
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     ui_request.blocking_pending = true;
     let mut session = MockSession::new();
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     // -- Exec
     bus.external()
@@ -165,14 +177,14 @@ async fn a_deferred_external_prompt_keeps_its_task_attribution() -> Result<()> {
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         run_orchestrator_loop(
-            take_event_rx(event_rx),
+            event_rx,
             make_sources(
-                worker_result_rx,
-                blocking_response_rx,
-                concurrent_response_rx,
-                external_rx,
-                compaction_rx,
-                task_cancel_rx,
+                &mut worker_result_rx,
+                &mut blocking_response_rx,
+                &mut concurrent_response_rx,
+                &mut external_rx,
+                &mut compaction_rx,
+                &mut task_cancel_rx,
             ),
             Stages {
                 slash: &mut slash,
@@ -188,14 +200,14 @@ async fn a_deferred_external_prompt_keeps_its_task_attribution() -> Result<()> {
 
     // -- Check
     assert!(result.is_ok());
-    let task_id = recv_execute_turn_task_id(worker_rx, "the deferred prompt")?;
+    let task_id = recv_execute_turn_task_id(&mut worker_rx, "the deferred prompt")?;
     assert_eq!(
         task_id.as_deref(),
         Some("task-1"),
         "the deferred external prompt must keep its task attribution"
     );
     assert_eq!(
-        state.active_external_task_id.as_deref(),
+        ctx_state.active_external_task_id.as_deref(),
         Some("task-1"),
         "the deferred external prompt must stay the active external task"
     );

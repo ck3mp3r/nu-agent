@@ -10,24 +10,23 @@ use super::*;
 #[tokio::test]
 async fn a_replaced_deferred_prompt_rejects_its_a2a_task() -> Result<()> {
     // -- Setup & Fixtures
-    let mut h = Harness::new();
-    let HarnessParts {
+    let h = Harness::new();
+    let Harness {
         event_tx,
         event_rx,
         worker_tx,
-        worker_rx: _,
-        worker_result_tx: _,
-        worker_result_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
+        mut ctx_state,
+        ..
+    } = h;
     // The server handler transitions an incoming task Submitted→Working before
     // the orchestrator sees it. Model that here so the rejection has a Working
     // task to transition.
@@ -37,7 +36,7 @@ async fn a_replaced_deferred_prompt_rejects_its_a2a_task() -> Result<()> {
         .update_status(&task1.id, TaskState::Working, None)
         .map_err(|e| format!("task-1 should reach Working: {e}"))?;
     let task1_id = task1.id.clone();
-    state.task_store = Some(std::sync::Arc::clone(&store));
+    ctx_state.task_store = Some(std::sync::Arc::clone(&store));
 
     let trace = Trace::default();
     let mut slash = MockSlash::with_trace(std::sync::Arc::clone(&trace));
@@ -45,7 +44,13 @@ async fn a_replaced_deferred_prompt_rejects_its_a2a_task() -> Result<()> {
     let mut ui_request = MockUiRequest::with_trace(std::sync::Arc::clone(&trace));
     ui_request.blocking_pending = true;
     let mut session = MockSession::new();
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     // -- Exec
     bus.external()
@@ -91,14 +96,14 @@ async fn a_replaced_deferred_prompt_rejects_its_a2a_task() -> Result<()> {
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         run_orchestrator_loop(
-            take_event_rx(event_rx),
+            event_rx,
             make_sources(
-                worker_result_rx,
-                blocking_response_rx,
-                concurrent_response_rx,
-                external_rx,
-                compaction_rx,
-                task_cancel_rx,
+                &mut worker_result_rx,
+                &mut blocking_response_rx,
+                &mut concurrent_response_rx,
+                &mut external_rx,
+                &mut compaction_rx,
+                &mut task_cancel_rx,
             ),
             Stages {
                 slash: &mut slash,
@@ -144,26 +149,25 @@ async fn a_replaced_deferred_prompt_rejects_its_a2a_task() -> Result<()> {
 #[tokio::test]
 async fn a_replaced_deferred_prompt_without_store_logs_and_continues() -> Result<()> {
     // -- Setup & Fixtures
-    let mut h = Harness::new();
-    let HarnessParts {
+    let h = Harness::new();
+    let Harness {
         event_tx,
         event_rx,
         worker_tx,
-        worker_rx: _,
-        worker_result_tx: _,
-        worker_result_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
+        mut ctx_state,
+        ..
+    } = h;
     // No task store: the supersession branch must log and continue.
-    state.task_store = None;
+    ctx_state.task_store = None;
 
     let trace = Trace::default();
     let mut slash = MockSlash::with_trace(std::sync::Arc::clone(&trace));
@@ -171,7 +175,13 @@ async fn a_replaced_deferred_prompt_without_store_logs_and_continues() -> Result
     let mut ui_request = MockUiRequest::with_trace(std::sync::Arc::clone(&trace));
     ui_request.blocking_pending = true;
     let mut session = MockSession::new();
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     // -- Exec
     bus.external()
@@ -214,14 +224,14 @@ async fn a_replaced_deferred_prompt_without_store_logs_and_continues() -> Result
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         run_orchestrator_loop(
-            take_event_rx(event_rx),
+            event_rx,
             make_sources(
-                worker_result_rx,
-                blocking_response_rx,
-                concurrent_response_rx,
-                external_rx,
-                compaction_rx,
-                task_cancel_rx,
+                &mut worker_result_rx,
+                &mut blocking_response_rx,
+                &mut concurrent_response_rx,
+                &mut external_rx,
+                &mut compaction_rx,
+                &mut task_cancel_rx,
             ),
             Stages {
                 slash: &mut slash,

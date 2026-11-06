@@ -6,29 +6,34 @@ use super::*;
 
 #[tokio::test]
 async fn prompt_submitted_routes_to_slash() {
-    let mut h = Harness::new();
-    let HarnessParts {
+    let h = Harness::new();
+    let Harness {
         event_tx,
         event_rx,
         worker_tx,
-        worker_rx: _,
-        worker_result_tx: _,
-        worker_result_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
+        mut ctx_state,
+        ..
+    } = h;
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     let mut session = MockSession::new();
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     event_tx
         .send(OrchestratorEvent::PromptSubmitted {
@@ -39,14 +44,14 @@ async fn prompt_submitted_routes_to_slash() {
     event_tx.send(OrchestratorEvent::Quit).await.unwrap();
 
     let result = run_orchestrator_loop(
-        take_event_rx(event_rx),
+        event_rx,
         make_sources(
-            worker_result_rx,
-            blocking_response_rx,
-            concurrent_response_rx,
-            external_rx,
-            compaction_rx,
-            task_cancel_rx,
+            &mut worker_result_rx,
+            &mut blocking_response_rx,
+            &mut concurrent_response_rx,
+            &mut external_rx,
+            &mut compaction_rx,
+            &mut task_cancel_rx,
         ),
         Stages {
             slash: &mut slash,
@@ -66,30 +71,35 @@ async fn prompt_submitted_routes_to_slash() {
 /// submitted and not discarded.
 #[tokio::test]
 async fn prompt_submitted_while_blocking_pending_is_deferred() {
-    let mut h = Harness::new();
-    let HarnessParts {
+    let h = Harness::new();
+    let Harness {
         event_tx,
         event_rx,
         worker_tx,
-        worker_rx: _,
-        worker_result_tx: _,
-        worker_result_rx,
+        mut worker_result_rx,
         blocking_tx,
-        blocking_response_rx,
+        mut blocking_response_rx,
         concurrent_tx,
-        concurrent_response_rx,
-        external_rx,
-        compaction_rx,
-        task_cancel_rx,
+        mut concurrent_response_rx,
+        mut external_rx,
+        mut compaction_rx,
+        mut task_cancel_rx,
         bus,
-        state,
-    } = h.parts();
+        mut ctx_state,
+        ..
+    } = h;
     let mut slash = MockSlash::new();
     let mut permission = MockPermission::new();
     let mut ui_request = MockUiRequest::new();
     ui_request.blocking_pending = true;
     let mut session = MockSession::new();
-    let mut ctx = make_ctx(worker_tx, blocking_tx, concurrent_tx, bus, state);
+    let mut ctx = make_ctx(
+        &worker_tx,
+        &blocking_tx,
+        &concurrent_tx,
+        &bus,
+        &mut ctx_state,
+    );
 
     event_tx
         .send(OrchestratorEvent::PromptSubmitted {
@@ -100,14 +110,14 @@ async fn prompt_submitted_while_blocking_pending_is_deferred() {
     event_tx.send(OrchestratorEvent::Quit).await.unwrap();
 
     let result = run_orchestrator_loop(
-        take_event_rx(event_rx),
+        event_rx,
         make_sources(
-            worker_result_rx,
-            blocking_response_rx,
-            concurrent_response_rx,
-            external_rx,
-            compaction_rx,
-            task_cancel_rx,
+            &mut worker_result_rx,
+            &mut blocking_response_rx,
+            &mut concurrent_response_rx,
+            &mut external_rx,
+            &mut compaction_rx,
+            &mut task_cancel_rx,
         ),
         Stages {
             slash: &mut slash,

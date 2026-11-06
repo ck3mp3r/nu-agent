@@ -1,6 +1,6 @@
 //! Shared fixtures for the orchestrator loop test modules.
 //!
-//! Provides the mock stage implementations, the `Harness` channel bundle, and
+//! Provides the mock stage implementations, the owned `Harness` fixture, and
 //! the A2A task helpers used by every orchestrator loop scenario file.
 
 use agnt_a2a::{
@@ -190,8 +190,9 @@ impl SessionHandler for MockSession {
 // ---------------------------------------------------------------------------
 
 /// Mutable per-test state that `run_orchestrator_loop` reads and writes
-/// through `OrchestrationContext`. Kept separate from the channels so `ctx()`
-/// can borrow it disjointly from the event channels, worker, and stage state.
+/// through `OrchestrationContext`. Kept separate from the channels so
+/// `make_ctx` can borrow it disjointly from the event channels, worker, and
+/// stage state.
 pub(crate) struct CtxState {
     pub(crate) worker_active: bool,
     pub(crate) pending: Option<PendingPermissions>,
@@ -200,24 +201,6 @@ pub(crate) struct CtxState {
     pub(crate) pending_external_cancel: Option<String>,
     pub(crate) pending_a2a_task_id: Option<String>,
     pub(crate) task_store: Option<std::sync::Arc<InMemoryTaskStore>>,
-}
-
-pub(crate) struct HarnessParts<'a> {
-    pub(crate) event_tx: &'a mpsc::Sender<OrchestratorEvent>,
-    pub(crate) event_rx: &'a mut mpsc::Receiver<OrchestratorEvent>,
-    pub(crate) worker_tx: &'a mpsc::Sender<WorkerCommand>,
-    pub(crate) worker_rx: &'a mut Option<mpsc::Receiver<WorkerCommand>>,
-    pub(crate) worker_result_tx: &'a mpsc::Sender<TurnOutcome>,
-    pub(crate) worker_result_rx: &'a mut mpsc::Receiver<TurnOutcome>,
-    pub(crate) blocking_tx: &'a mpsc::Sender<UiRequestResponse>,
-    pub(crate) blocking_response_rx: &'a mut mpsc::Receiver<UiRequestResponse>,
-    pub(crate) concurrent_tx: &'a mpsc::Sender<UiRequestResponse>,
-    pub(crate) concurrent_response_rx: &'a mut mpsc::Receiver<UiRequestResponse>,
-    pub(crate) external_rx: &'a mut ExternalRx,
-    pub(crate) compaction_rx: &'a mut CompactionRx,
-    pub(crate) task_cancel_rx: &'a mut Option<mpsc::UnboundedReceiver<String>>,
-    pub(crate) bus: &'a Bus,
-    pub(crate) state: &'a mut CtxState,
 }
 
 pub(crate) struct Harness {
@@ -275,26 +258,6 @@ impl Harness {
             },
         }
     }
-
-    pub(crate) fn parts(&mut self) -> HarnessParts<'_> {
-        HarnessParts {
-            event_tx: &self.event_tx,
-            event_rx: &mut self.event_rx,
-            worker_tx: &self.worker_tx,
-            worker_rx: &mut self.worker_rx,
-            worker_result_tx: &self.worker_result_tx,
-            worker_result_rx: &mut self.worker_result_rx,
-            blocking_tx: &self.blocking_tx,
-            blocking_response_rx: &mut self.blocking_response_rx,
-            concurrent_tx: &self.concurrent_tx,
-            concurrent_response_rx: &mut self.concurrent_response_rx,
-            external_rx: &mut self.external_rx,
-            compaction_rx: &mut self.compaction_rx,
-            task_cancel_rx: &mut self.task_cancel_rx,
-            bus: &self.bus,
-            state: &mut self.ctx_state,
-        }
-    }
 }
 
 pub(crate) fn make_ctx<'a>(
@@ -325,21 +288,15 @@ pub(crate) fn make_ctx<'a>(
     }
 }
 
-pub(super) fn take_event_rx(
-    event_rx: &mut mpsc::Receiver<OrchestratorEvent>,
-) -> mpsc::Receiver<OrchestratorEvent> {
-    let (_, placeholder) = mpsc::channel::<OrchestratorEvent>(256);
-    std::mem::replace(event_rx, placeholder)
-}
-
 pub(super) fn recv_command(
     worker_rx: &mut Option<mpsc::Receiver<WorkerCommand>>,
 ) -> Option<WorkerCommand> {
     worker_rx.as_mut()?.try_recv().ok()
 }
 
-/// Build the `SourceChannels` for `run_orchestrator_loop` from the harness
-/// parts. The view borrows every channel the harness also drives.
+/// Build the `SourceChannels` view `run_orchestrator_loop` consumes from the
+/// channels the test owns beside the loop. Each argument is one disjoint
+/// borrow, so the test keeps the senders it drives and the receivers it reads.
 pub(super) fn make_sources<'a>(
     worker_result_rx: &'a mut mpsc::Receiver<TurnOutcome>,
     blocking_response_rx: &'a mut mpsc::Receiver<UiRequestResponse>,
