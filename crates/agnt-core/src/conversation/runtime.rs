@@ -1492,6 +1492,22 @@ impl crate::protocol::contracts::RuntimeAccess for AgentConversationRuntime {
     fn mcp_lifecycle_projection(&self) -> &[crate::tools::mcp::runtime::McpServerLifecycle] {
         Self::mcp_lifecycle_projection(self)
     }
+
+    fn available_agent_summaries(&self) -> &[crate::protocol::persona::PersonaSummary] {
+        Self::available_agent_summaries(self)
+    }
+
+    fn agent_identity(&self) -> Option<&str> {
+        Self::agent_identity(self)
+    }
+
+    fn agent_icon(&self) -> Option<&str> {
+        Self::agent_icon(self)
+    }
+
+    fn startup_plugin_config(&self) -> Option<&crate::config::PluginConfig> {
+        Self::startup_plugin_config(self)
+    }
 }
 
 // endregion: --- Seams

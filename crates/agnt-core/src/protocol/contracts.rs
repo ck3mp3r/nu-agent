@@ -243,6 +243,18 @@ pub trait RuntimeAccess {
 
     /// The MCP servers' lifecycle projection.
     fn mcp_lifecycle_projection(&self) -> &[crate::tools::mcp::runtime::McpServerLifecycle];
+
+    /// The personas an agent switch can pick from.
+    fn available_agent_summaries(&self) -> &[crate::protocol::persona::PersonaSummary];
+
+    /// The active agent's identity line, when one is configured.
+    fn agent_identity(&self) -> Option<&str>;
+
+    /// The active agent's icon, when one is configured.
+    fn agent_icon(&self) -> Option<&str>;
+
+    /// The plugin configuration this runtime started from.
+    fn startup_plugin_config(&self) -> Option<&crate::config::PluginConfig>;
 }
 
 /// Minimal runtime required for a single turn. Used by run_single_turn.

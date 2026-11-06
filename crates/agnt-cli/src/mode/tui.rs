@@ -8,19 +8,19 @@ use agnt_a2a::{
     skill_from_persona,
 };
 use agnt_core::bus::OneshotTx;
-use agnt_core::conversation::runtime::AgentConversationRuntime;
 use agnt_core::orchestrator::{
     AgentSwitchHook, InteractiveLoopConfig, run_hydrated_interactive_loop_with_external_prompts,
     run_interactive_loop_with_external_prompts,
 };
-use agnt_core::protocol::contracts::DecisionSource;
+use agnt_core::protocol::contracts::{CoreRuntime, DecisionSource, RuntimeAccess};
 use agnt_core::protocol::event::PermissionDecision;
 use agnt_core::protocol::mcp_management::McpManagement;
+use agnt_core::protocol::model_switching::ModelSwitching;
 use agnt_core::protocol::picker::{
     build_agent_picker_catalog, format_active_model_identity,
     model_picker_catalog_from_cached_startup_plugin_config,
 };
-use agnt_core::protocol::session_management::SessionPersistence;
+use agnt_core::protocol::session_management::{SessionPersistence, SessionState};
 use agnt_tty::policy::UiPolicy;
 use agnt_tui::TuiInteractiveUi;
 use agnt_tui::platform::terminal::TerminalLifecycle;
@@ -91,14 +91,25 @@ impl AgentSwitchHook for TuiAgentSwitchHook {
 /// Run the interactive TUI.
 ///
 /// The interactive loop reads prompts from the TUI input pane.
-pub async fn run_tui_mode(
-    runtime_impl: AgentConversationRuntime,
+pub async fn run_tui_mode<T>(
+    runtime_impl: T,
     prompt: Option<String>,
     context: Option<String>,
     ui_policy: UiPolicy,
     hydration: TuiHydrationInput,
     options: TuiModeOptions,
-) -> Result<Value> {
+) -> Result<Value>
+where
+    T: CoreRuntime
+        + McpManagement
+        + ModelSwitching
+        + SessionPersistence
+        + SessionState
+        + DecisionSource
+        + RuntimeAccess
+        + Send
+        + 'static,
+{
     // Agent events are process-scoped: publish Started before the first turn
     // runs and spawn the agent-class hook runner once for this process.
     let agent_lifecycle = AgentLifecycle::start_configured(
@@ -119,14 +130,25 @@ pub async fn run_tui_mode(
 }
 
 /// The TUI body, without the process-wide agent lifecycle.
-async fn run_tui_mode_inner(
-    mut runtime_impl: AgentConversationRuntime,
+async fn run_tui_mode_inner<T>(
+    mut runtime_impl: T,
     _prompt: Option<String>,
     _context: Option<String>,
     _ui_policy: UiPolicy,
     hydration: TuiHydrationInput,
     options: TuiModeOptions,
-) -> Result<Value> {
+) -> Result<Value>
+where
+    T: CoreRuntime
+        + McpManagement
+        + ModelSwitching
+        + SessionPersistence
+        + SessionState
+        + DecisionSource
+        + RuntimeAccess
+        + Send
+        + 'static,
+{
     // Set up the interactive permission pending map for TUI mode.
     // This Arc is shared between the worker thread (via InteractivePermissionResolver)
     // and the main thread (via the orchestrator's permission poll loop).
@@ -207,7 +229,7 @@ async fn run_tui_mode_inner(
     if let Some(identity) = runtime_impl.agent_identity() {
         tui_ui.set_active_agent_identity(identity);
     }
-    tui_ui.set_active_persona_icon(runtime_impl.agent_icon().map(|s| s.to_string()));
+    tui_ui.set_active_persona_icon(RuntimeAccess::agent_icon(&runtime_impl).map(|s| s.to_string()));
     let caller_cwd = runtime_impl.mcp_caller_cwd().map(|p| p.to_path_buf());
     tui_ui.set_repo_branch_caller_cwd(caller_cwd.clone());
     match caller_cwd {
