@@ -300,7 +300,7 @@ async fn agent_switch_sends_command_and_updates_ui_identity()
     let ui = AgentSwitchUi::new(&["research-agent"]).with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -337,7 +337,7 @@ async fn agent_switch_failure_warns_and_keeps_previous_agent()
     let ui = AgentSwitchUi::new(&["nonexistent-agent"]).with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -382,7 +382,7 @@ async fn agent_switch_while_worker_active_is_queued_for_next_turn()
         unblock.store(true, Ordering::SeqCst);
     });
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -429,7 +429,7 @@ async fn queued_agent_switch_last_write_wins()
         unblock.store(true, Ordering::SeqCst);
     });
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),

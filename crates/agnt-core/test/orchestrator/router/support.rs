@@ -12,9 +12,10 @@ pub(super) use std::time::Duration;
 pub(super) use tokio::sync::mpsc;
 
 pub(super) use crate::bus::create_bus;
+pub(super) use crate::orchestrator::test_shared::drive_loop;
 pub(super) use crate::orchestrator::{
     AgentSwitchHook, CommandRouter, LoopConfig, NoAgentSwitchHook, OrchestratorEvent, UiRequest,
-    UiRequestResponse, WorkerCommand, run_interactive_loop_impl,
+    UiRequestResponse, WorkerCommand,
 };
 pub(super) use crate::protocol::{
     contracts::{CoreRuntime, McpUsabilityState, UiMessageSnapshot, UserInputUi},

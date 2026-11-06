@@ -10,7 +10,7 @@ async fn palette_models_does_not_bypass_shared_models_action_path() -> TResult {
     let ui = FakeInteractiveUi::with_prompts(&["/models"]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -43,7 +43,7 @@ async fn inline_model_picker_enter_switches_active_model_and_provider() -> TResu
         .push_back("openai/gpt-4o-mini".to_string());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -77,7 +77,7 @@ async fn model_switch_failure_keeps_previous_model_and_warns() -> TResult {
         .push_back("openai/gpt-4o-mini".to_string());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -118,7 +118,7 @@ async fn model_switch_uses_cached_startup_plugin_config() -> TResult {
         .push_back("openai/gpt-4o-mini".to_string());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -148,7 +148,7 @@ async fn model_switch_updates_footer_active_model_identity_immediately() -> TRes
         .push_back("openai/gpt-4o-mini".to_string());
 
     let spawner = ui.make_event_spawner();
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -178,7 +178,7 @@ async fn model_switch_result_artifact_is_rendered() -> TResult {
         .push_back("openai/gpt-4o-mini".to_string());
 
     let spawner = ui.make_event_spawner();
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -211,7 +211,7 @@ async fn next_turn_uses_newly_selected_model() -> TResult {
         .push_back("openai/gpt-4o-mini".to_string());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -257,7 +257,7 @@ async fn model_switch_while_worker_active_is_queued_for_next_turn() -> TResult {
         unblock.store(true, Ordering::SeqCst);
     });
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -310,7 +310,7 @@ async fn queued_model_switch_applies_after_current_turn_before_next_dispatch() -
         unblock.store(true, Ordering::SeqCst);
     });
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -359,7 +359,7 @@ async fn queued_model_switch_last_write_wins() -> TResult {
         unblock.store(true, Ordering::SeqCst);
     });
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -410,7 +410,7 @@ async fn queued_model_switch_failure_keeps_previous_model_and_warns() -> TResult
         unblock.store(true, Ordering::SeqCst);
     });
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),

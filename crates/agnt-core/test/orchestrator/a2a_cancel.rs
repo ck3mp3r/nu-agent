@@ -151,7 +151,7 @@ async fn matching_a2a_task_cancel_sets_cancel_requested() -> TResult {
     });
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default()
             .with_bus(bus)
@@ -209,7 +209,7 @@ async fn non_matching_a2a_task_cancel_does_not_set_cancel_requested() -> TResult
     });
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default()
             .with_bus(bus)
@@ -266,7 +266,7 @@ async fn matching_a2a_task_cancel_stops_running_turn() -> TResult {
     });
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default()
             .with_bus(bus)

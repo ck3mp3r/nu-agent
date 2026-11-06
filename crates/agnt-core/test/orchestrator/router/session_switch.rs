@@ -93,7 +93,7 @@ async fn on_agent_switch_callback_invoked_after_successful_switch()
         .with_event_sink(spawner);
 
     // -- Exec
-    let (_runtime, result) = run_interactive_loop_impl(runtime, config, Span::test_data()).await;
+    let (_runtime, result) = drive_loop(runtime, config, Span::test_data()).await;
 
     // -- Check
     let value = result.map_err(|e| format!("interactive loop: {e:?}"))?;

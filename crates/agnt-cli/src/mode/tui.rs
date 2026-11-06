@@ -8,10 +8,7 @@ use agnt_a2a::{
     skill_from_persona,
 };
 use agnt_core::bus::OneshotTx;
-use agnt_core::orchestrator::{
-    AgentSwitchHook, LoopConfig, run_hydrated_interactive_loop_with_external_prompts,
-    run_interactive_loop_with_external_prompts,
-};
+use agnt_core::orchestrator::{AgentSwitchHook, LoopConfig, run};
 use agnt_core::protocol::contracts::{CoreRuntime, DecisionSource, RuntimeAccess};
 use agnt_core::protocol::event::PermissionDecision;
 use agnt_core::protocol::mcp_management::McpManagement;
@@ -328,9 +325,7 @@ where
             .with_task_store(a2a_task_store.clone())
             .with_event_sink(tui_ui.make_render_loop_spawner(runtime_impl.bus_handle()))
             .with_on_agent_switch(on_agent_switch);
-        run_hydrated_interactive_loop_with_external_prompts(runtime_impl, config)
-            .await
-            .map_err(Error::from)
+        run(runtime_impl, config).await.map_err(Error::from)
     } else {
         let config = LoopConfig::default()
             .with_bus(runtime_impl.bus_handle())
@@ -341,9 +336,7 @@ where
             .with_task_store(a2a_task_store.clone())
             .with_event_sink(tui_ui.make_render_loop_spawner(runtime_impl.bus_handle()))
             .with_on_agent_switch(on_agent_switch);
-        run_interactive_loop_with_external_prompts(runtime_impl, config)
-            .await
-            .map_err(Error::from)
+        run(runtime_impl, config).await.map_err(Error::from)
     };
 
     let _ = terminal_lifecycle.restore();

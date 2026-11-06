@@ -5,6 +5,8 @@
 
 // region:    --- Modules
 
+#[path = "shared/drive_loop.rs"]
+mod drive_loop;
 #[path = "shared/fake_interactive_ui.rs"]
 mod fake_interactive_ui;
 #[path = "shared/fake_runtime.rs"]
@@ -25,8 +27,7 @@ pub(crate) use std::time::Duration;
 
 pub(crate) use crate::bus::{ExternalEvent, create_bus};
 pub(crate) use crate::orchestrator::{
-    LoopConfig, OrchestratorEvent, UiRequest, UiStateEvent, run_interactive_loop_impl,
-    run_single_turn,
+    Loop, LoopConfig, OrchestratorEvent, UiRequest, UiStateEvent, run_single_turn,
 };
 pub(crate) use crate::protocol::{
     contracts::{
@@ -64,6 +65,7 @@ pub(crate) type McpDetail = (String, McpUsabilityState, Option<String>, usize);
 // The monolith resolved `super::<helper>` against `crate::orchestrator`.
 // Sub-files now resolve `super::` against this module root, so the shared
 // fixtures are re-exported here.
+pub(crate) use drive_loop::*;
 pub(crate) use fake_interactive_ui::*;
 pub(crate) use fake_runtime::*;
 pub(crate) use long_running_runtime::*;

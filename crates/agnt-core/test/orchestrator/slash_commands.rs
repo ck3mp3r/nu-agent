@@ -13,7 +13,7 @@ async fn recognized_slash_commands_never_sent_to_llm() -> TResult {
     .with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -37,7 +37,7 @@ async fn new_slash_command_clears_transcript_and_pushes_startup_logo() -> TResul
     let ui = FakeInteractiveUi::with_prompts(&["/new"]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -62,7 +62,7 @@ async fn models_slash_command_not_sent_to_llm() -> TResult {
     let ui = FakeInteractiveUi::with_prompts(&["/models"]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -85,7 +85,7 @@ async fn models_slash_command_routes_to_shared_models_action() -> TResult {
     let ui = FakeInteractiveUi::with_prompts(&["/models"]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -114,7 +114,7 @@ async fn interactive_loop_routes_compact_slash_to_compaction_executor() -> TResu
         .with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -138,7 +138,7 @@ async fn typed_compact_submit_triggers_compaction_path() -> TResult {
     let ui = FakeInteractiveUi::with_prompts(&["/compact"]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -163,7 +163,7 @@ async fn interactive_loop_unknown_slash_emits_warning_and_continues() -> TResult
         FakeInteractiveUi::with_prompts(&["/compact now", "real prompt"]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -194,7 +194,7 @@ async fn recognized_slash_commands_not_persisted_as_session_turn_messages() -> T
         .with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -224,7 +224,7 @@ async fn manual_compaction_failure_is_not_surfaced_as_warning() -> TResult {
         .with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -266,7 +266,7 @@ async fn slash_commands_reuse_command_palette_action_handlers() -> TResult {
     .with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -302,7 +302,7 @@ async fn command_palette_models_action_opens_inline_model_picker() -> TResult {
         .with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -331,7 +331,7 @@ async fn manual_compaction_slash_works_with_turn_processing() -> TResult {
         .with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),

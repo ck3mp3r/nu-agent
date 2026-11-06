@@ -268,7 +268,7 @@ async fn context_window_max_tokens_set_on_ui_at_startup() -> TResult {
         .with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -294,7 +294,7 @@ async fn model_switch_updates_context_window_max_tokens_in_ui() -> TResult {
     let ui = ContextWindowUi::new(&["openai/gpt-4o-mini"]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -326,7 +326,7 @@ async fn model_switch_updates_context_window_max_tokens_none_when_unset() -> TRe
     let ui = ContextWindowUi::new(&["openai/gpt-4o-mini"]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -353,7 +353,7 @@ async fn session_resume_seeds_last_total_tokens() -> TResult {
     let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default()
             .with_hydration(vec![], Some(90_000))
@@ -382,7 +382,7 @@ async fn session_resume_seeds_last_total_tokens_none_when_no_prior_session() -> 
     let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default()
             .with_hydration(vec![], None)

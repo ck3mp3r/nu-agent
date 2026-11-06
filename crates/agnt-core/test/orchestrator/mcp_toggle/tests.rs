@@ -22,7 +22,7 @@ async fn interactive_loop_processes_mcp_toggle_requests_and_updates_ui_state() -
         });
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -65,7 +65,7 @@ async fn interactive_loop_marks_enable_failure_as_failed_state() -> TResult {
         });
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -108,7 +108,7 @@ async fn interactive_loop_marks_enable_success_as_enabled_state() -> TResult {
         });
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -150,7 +150,7 @@ async fn interactive_loop_propagates_failure_reason_and_visible_tool_count_on_to
         });
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -193,7 +193,7 @@ async fn interactive_toggle_enable_disable_cycle_refreshes_per_server_visible_co
     let ui = StagedToggleUi::new().with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),

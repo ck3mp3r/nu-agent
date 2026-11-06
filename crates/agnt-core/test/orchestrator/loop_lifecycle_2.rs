@@ -106,7 +106,7 @@ async fn interactive_loop_processes_input_while_first_turn_is_running() -> TResu
         unblock.store(true, Ordering::SeqCst);
     });
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -151,7 +151,7 @@ async fn interactive_loop_preserves_fifo_for_prompts_queued_while_active() -> TR
         unblock.store(true, Ordering::SeqCst);
     });
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -184,7 +184,7 @@ async fn interactive_loop_global_abort_cancels_active_and_does_not_run_queued_pr
         unblock.store(true, Ordering::SeqCst);
     });
 
-    let (rt, result) = run_interactive_loop_impl(
+    let (rt, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -218,7 +218,7 @@ async fn interactive_loop_startup_hydration_initializes_per_server_visible_count
     let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -330,7 +330,7 @@ async fn run_loop_session_events(
     let ui = FakeInteractiveUi::with_prompts(&[]).with_bus(bus.clone());
     let mut session_rx = bus.session().subscribe();
     let spawner = ui.make_event_spawner();
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -397,7 +397,7 @@ async fn hydrated_interactive_loop_started_carries_the_runtime_session_id() -> T
     let messages = vec![UiMessageSnapshot::new("user", "from history")];
 
     // -- Exec
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default()
             .with_hydration(messages, None)

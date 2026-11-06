@@ -272,7 +272,7 @@ async fn run_interactive_loop_uses_interactive_ui_trait_boundary() -> TResult {
     let ui = FakeInteractiveUi::with_prompts(&["a", "b"]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -295,7 +295,7 @@ async fn interactive_loop_does_not_return_per_turn_values_to_stdout() -> TResult
     let ui = FakeInteractiveUi::with_prompts(&["hello"]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -318,7 +318,7 @@ async fn interactive_loop_treats_llm_cancellation_as_non_fatal_and_continues() -
     let ui = FakeInteractiveUi::with_prompts(&["first", "second"]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -345,7 +345,7 @@ async fn interactive_loop_treats_errors_as_non_fatal_and_displays_inline() -> TR
     let ui = FakeInteractiveUi::with_prompts(&["first", "second"]).with_bus(bus.clone());
 
     let spawner = ui.make_event_spawner();
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -384,7 +384,7 @@ async fn run_hydrated_interactive_loop_hydrates_before_first_pump() -> TResult {
     ];
 
     let spawner = ui.make_event_spawner();
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default()
             .with_hydration(messages, None)
@@ -422,7 +422,7 @@ async fn run_hydrated_interactive_loop_hydrates_exactly_once() -> TResult {
         s
     }];
     let spawner = ui.make_event_spawner();
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default()
             .with_hydration(messages.clone(), None)

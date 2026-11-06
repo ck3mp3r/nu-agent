@@ -30,7 +30,7 @@ async fn interactive_loop_publishes_exactly_one_turn_started_per_turn() -> TResu
     let spawner = ui.make_event_spawner();
 
     // -- Exec
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),

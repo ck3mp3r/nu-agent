@@ -413,7 +413,7 @@ async fn permission_requested_emits_before_execution_and_waits_for_decision_befo
     .with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default()
             .with_bus(bus)
@@ -458,7 +458,7 @@ async fn deny_decision_resumes_deterministically_without_pre_decision_handler_si
         .with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default()
             .with_bus(bus)

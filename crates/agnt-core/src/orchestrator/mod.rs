@@ -1,6 +1,7 @@
 pub mod config;
 pub mod events;
 pub mod handlers;
+mod r#loop;
 pub mod loop_impl;
 pub mod router;
 pub mod stages;
@@ -20,14 +21,11 @@ pub(crate) use handlers::{
     DeferredPrompt, dispatch_compaction, handle_external_cancel, handle_worker_result,
     recv_or_pending, reject_busy_task, reject_superseded_task, submit_deferred_prompt,
 };
+pub(crate) use r#loop::SourceChannels;
+pub use r#loop::{Loop, run};
+pub use loop_impl::run_single_turn;
 #[cfg(test)]
-pub(crate) use loop_impl::{
-    SourceChannels, Stages, run_interactive_loop_impl, run_orchestrator_loop,
-};
-pub use loop_impl::{
-    run_hydrated_interactive_loop_with_external_prompts,
-    run_interactive_loop_with_external_prompts, run_single_turn,
-};
+pub(crate) use loop_impl::{Stages, run_orchestrator_loop};
 
 #[cfg(test)]
 #[path = "../../test/orchestrator/orchestrator_loop.rs"]

@@ -333,15 +333,8 @@ pub(super) fn recv_command(
     worker_rx.as_mut()?.try_recv().ok()
 }
 
-/// Take an owned mpsc receiver out of a `&mut` slot, leaving a placeholder.
-fn take_rx<T>(rx: &mut mpsc::Receiver<T>) -> mpsc::Receiver<T> {
-    let (_, placeholder) = mpsc::channel::<T>(256);
-    std::mem::replace(rx, placeholder)
-}
-
 /// Build the `SourceChannels` for `run_orchestrator_loop` from the harness
-/// parts. The owned mpsc receivers are taken out of the harness; the broadcast
-/// receivers are passed by mutable reference.
+/// parts. The view borrows every channel the harness also drives.
 pub(super) fn make_sources<'a>(
     worker_result_rx: &'a mut mpsc::Receiver<TurnOutcome>,
     blocking_response_rx: &'a mut mpsc::Receiver<UiRequestResponse>,
@@ -351,9 +344,9 @@ pub(super) fn make_sources<'a>(
     task_cancel_rx: &'a mut Option<mpsc::UnboundedReceiver<String>>,
 ) -> SourceChannels<'a> {
     SourceChannels {
-        worker_result_rx: take_rx(worker_result_rx),
-        blocking_response_rx: take_rx(blocking_response_rx),
-        concurrent_response_rx: take_rx(concurrent_response_rx),
+        worker_result_rx,
+        blocking_response_rx,
+        concurrent_response_rx,
         external_rx,
         compaction_rx,
         task_cancel_rx: task_cancel_rx.take(),

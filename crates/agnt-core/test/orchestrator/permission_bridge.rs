@@ -110,7 +110,7 @@ async fn permission_flow_reaches_bus_through_worker_bridge() -> TResult {
     let ui = PermissionBridgeUi::new(PermissionDecision::AllowOnce).with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    let (runtime, result) = run_interactive_loop_impl(
+    let (runtime, result) = drive_loop(
         runtime,
         LoopConfig::default()
             .with_bus(bus)
@@ -235,7 +235,7 @@ async fn permission_timeout_and_ignored_reach_bus_through_worker_bridge() -> TRe
     let ui = PermissionBridgeUi::new(PermissionDecision::AllowOnce).with_bus(bus.clone());
     let spawner = ui.make_event_spawner();
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -276,7 +276,7 @@ async fn models_launcher_opens_picker_while_worker_active() -> TResult {
         unblock.store(true, Ordering::SeqCst);
     });
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),
@@ -313,7 +313,7 @@ async fn models_slash_opens_picker_while_worker_active() -> TResult {
         unblock.store(true, Ordering::SeqCst);
     });
 
-    let (_runtime, result) = run_interactive_loop_impl(
+    let (_runtime, result) = drive_loop(
         runtime,
         LoopConfig::default().with_bus(bus).with_event_sink(spawner),
         Span::test_data(),

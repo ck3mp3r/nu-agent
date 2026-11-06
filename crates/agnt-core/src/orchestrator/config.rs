@@ -176,9 +176,6 @@ impl<F: FnOnce(mpsc::Sender<OrchestratorEvent>) + Send + 'static, H> LoopConfig<
 /// field pattern.
 pub(crate) struct LoopParts<F, H> {
     pub(crate) interactive_pending: Option<PendingPermissions>,
-    pub(crate) task_cancel_rx: Option<mpsc::UnboundedReceiver<String>>,
-    pub(crate) a2a_task_rx: Option<mpsc::Receiver<IncomingTask>>,
-    pub(crate) a2a_completion_rx: Option<mpsc::Receiver<A2aCompletionEvent>>,
     pub(crate) task_store: Option<Arc<InMemoryTaskStore>>,
     pub(crate) bus: Bus,
     pub(crate) hydration: Option<HydrationConfig>,
@@ -186,20 +183,35 @@ pub(crate) struct LoopParts<F, H> {
     pub(crate) event_sink: Option<F>,
 }
 
+/// The control intake a loop owns for one run.
+///
+/// These are the receivers the loop reads on its own select arms, so they leave
+/// the configuration at [`LoopConfig::into_parts`] and are never read from a
+/// config view again.
+pub(crate) struct LoopIntake {
+    pub(crate) task_cancel_rx: Option<mpsc::UnboundedReceiver<String>>,
+    pub(crate) a2a_task_rx: Option<mpsc::Receiver<IncomingTask>>,
+    pub(crate) a2a_completion_rx: Option<mpsc::Receiver<A2aCompletionEvent>>,
+}
+
 impl<F, H> LoopConfig<F, H> {
-    /// Consume the configuration into the seams the loop reads.
-    pub(crate) fn into_parts(self) -> LoopParts<F, H> {
-        LoopParts {
+    /// Consume the configuration into the seams the loop reads and the intake
+    /// it owns.
+    pub(crate) fn into_parts(self) -> (LoopParts<F, H>, LoopIntake) {
+        let parts = LoopParts {
             interactive_pending: self.interactive_pending,
-            task_cancel_rx: self.task_cancel_rx,
-            a2a_task_rx: self.a2a_task_rx,
-            a2a_completion_rx: self.a2a_completion_rx,
             task_store: self.task_store,
             bus: self.bus,
             hydration: self.hydration,
             on_agent_switch: self.on_agent_switch,
             event_sink: self.event_sink,
-        }
+        };
+        let intake = LoopIntake {
+            task_cancel_rx: self.task_cancel_rx,
+            a2a_task_rx: self.a2a_task_rx,
+            a2a_completion_rx: self.a2a_completion_rx,
+        };
+        (parts, intake)
     }
 }
 
