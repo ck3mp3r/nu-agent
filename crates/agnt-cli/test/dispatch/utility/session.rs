@@ -1,6 +1,6 @@
 use super::*;
 
-use agnt_core::types::{AssistantMessage, CallId, Opaque, Text, ToolName, ToolResultContent};
+use agnt_runtime::types::{AssistantMessage, CallId, Opaque, Text, ToolName, ToolResultContent};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 

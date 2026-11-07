@@ -8,10 +8,9 @@ name = "nu_plugin_agent"
 path = "src/main.rs"
 
 [features]
-integration = ["agnt-core/integration"]
+integration = ["agnt-runtime/integration"]
 
 [dependencies]
-agnt-core = { workspace = true }
 agnt-runtime = { workspace = true }
 nu-plugin = { workspace = true }
 nu-protocol = { workspace = true }

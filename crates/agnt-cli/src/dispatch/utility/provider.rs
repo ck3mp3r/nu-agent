@@ -63,8 +63,8 @@ async fn run_provider_login(args: &ProviderLoginArgs) -> Result<()> {
 
 /// Run the GitHub Copilot OAuth device-code flow.
 async fn run_copilot_login() -> Result<()> {
-    use agnt_core::types::DeviceCodeHandler;
     use agnt_runtime::conversation::providers::copilot_device_login;
+    use agnt_runtime::types::DeviceCodeHandler;
 
     let handler = DeviceCodeHandler::new(|prompt| {
         eprintln!(

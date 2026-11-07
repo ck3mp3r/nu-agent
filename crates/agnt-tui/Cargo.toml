@@ -4,10 +4,9 @@ edition.workspace = true
 version.workspace = true
 
 [features]
-integration = ["agnt-core/integration"]
+integration = ["agnt-runtime/integration"]
 
 [dependencies]
-agnt-core = { workspace = true }
 agnt-render = { workspace = true }
 agnt-runtime = { workspace = true }
 nu-protocol = { workspace = true }

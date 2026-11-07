@@ -18,7 +18,6 @@ use agent_client_protocol::schema::v1::{
     SessionConfigOption, SessionConfigSelectOptions, SessionUpdate, StopReason, TextContent,
 };
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::types::{AssistantContent, Message, UserContent};
 use agnt_runtime::bus::{
     Bus, CancelTx, ChannelError, CompactionTx, RequestCancel, SessionEvent, SessionTx, TurnEvent,
     TurnTx, UiEventTx,
@@ -33,6 +32,7 @@ use agnt_runtime::session::management::SessionPersistence;
 use agnt_runtime::session::resolver::generate_session_id;
 use agnt_runtime::session::{RigStoreConfig, SessionInfo};
 use agnt_runtime::tools::mcp::config::McpServerConfig;
+use agnt_runtime::types::{AssistantContent, Message, UserContent};
 use chrono::{DateTime, Utc};
 use nu_protocol::{LabeledError, Span, Value};
 use rig_memory::Store as _;

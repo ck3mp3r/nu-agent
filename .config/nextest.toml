@@ -13,7 +13,7 @@ final-status-level = "slow"
 # (staircase 11.3 → 57.1 s, tail past the 60 s wall); threads-required = 2
 # caps that contention, and 2 x 30 s bounds a true hang.
 [[profile.default.overrides]]
-filter = 'package(agnt-core) and test(grammar_tests)'
+filter = 'package(agnt-runtime) and test(grammar_tests)'
 slow-timeout = { period = "30s", terminate-after = 2, grace-period = "5s" }
 threads-required = 2
 

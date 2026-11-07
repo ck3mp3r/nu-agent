@@ -99,7 +99,6 @@ name = "agnt-acp"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
- "agnt-core",
  "agnt-render",
  "agnt-runtime",
  "chrono",
@@ -121,7 +120,6 @@ dependencies = [
  "agent-client-protocol",
  "agnt-a2a",
  "agnt-acp",
- "agnt-core",
  "agnt-runtime",
  "agnt-testkit",
  "agnt-tty",
@@ -145,65 +143,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agnt-core"
-version = "0.1.0"
-dependencies = [
- "agnt-a2a",
- "agnt-kernel",
- "agnt-runtime",
- "agnt-storage",
- "agnt-testkit",
- "async-trait",
- "bytes",
- "chrono",
- "fs2",
- "futures",
- "htmd",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "ignore",
- "keyring",
- "libc",
- "libloading 0.9.0",
- "log",
- "noyalib",
- "nu-plugin",
- "nu-protocol",
- "oauth2",
- "pulldown-cmark",
- "rand 0.10.3",
- "regex",
- "reqwest 0.13.5",
- "rig",
- "rig-memory",
- "rmcp",
- "rustls",
- "serde",
- "serde_json",
- "serial_test",
- "sha2 0.11.1",
- "shlex 1.3.0",
- "similar",
- "sqlx",
- "syntect",
- "tempfile",
- "textwrap",
- "thiserror 2.0.21",
- "tokio",
- "tokio-util",
- "toml",
- "tracing",
- "tree-sitter",
- "tree-sitter-config",
- "tree-sitter-language",
- "unicode-width 0.2.2",
- "unicodeit",
- "url",
-]
-
-[[package]]
 name = "agnt-kernel"
 version = "0.1.0"
 dependencies = [
@@ -217,7 +156,6 @@ dependencies = [
 name = "agnt-plugin"
 version = "0.1.0"
 dependencies = [
- "agnt-core",
  "agnt-runtime",
  "chrono",
  "env_logger",
@@ -329,7 +267,6 @@ dependencies = [
 name = "agnt-tty"
 version = "0.1.0"
 dependencies = [
- "agnt-core",
  "agnt-render",
  "agnt-runtime",
  "log",
@@ -341,7 +278,6 @@ dependencies = [
 name = "agnt-tui"
 version = "0.1.0"
 dependencies = [
- "agnt-core",
  "agnt-render",
  "agnt-runtime",
  "arboard",

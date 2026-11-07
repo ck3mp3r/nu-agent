@@ -5,9 +5,9 @@
 
 use super::*;
 
-use agnt_core::types::{Message, Text, UserContent};
 use agnt_runtime::session::prefix::dir_prefix;
 use agnt_runtime::session::{RigStoreConfig, StoreType};
+use agnt_runtime::types::{Message, Text, UserContent};
 use agnt_runtime::utils::paths::APP_DIR_NAME;
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;

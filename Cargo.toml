@@ -25,7 +25,6 @@ version = "0.1.0"
 agnt-a2a = { path = "crates/agnt-a2a" }
 agnt-acp = { path = "crates/agnt-acp" }
 agnt-cli = { path = "crates/agnt-cli" }
-agnt-core = { path = "crates/agnt-core" }
 agnt-kernel = { path = "crates/agnt-kernel" }
 agnt-plugin = { path = "crates/agnt-plugin" }
 agnt-render = { path = "crates/agnt-render" }

@@ -9,7 +9,6 @@ use std::io::IsTerminal;
 use std::sync::Arc;
 
 use agnt_a2a::{AgentBuilder, Skill};
-use agnt_core::types::ToolServer;
 use agnt_runtime::config::defaults;
 use agnt_runtime::conversation::builder::{
     AgentRuntimeBuilder, BuildArtifacts, BuildInput, ToolAssembly, assemble_tool_definitions,
@@ -26,6 +25,7 @@ use agnt_runtime::session::resolver::{
 use agnt_runtime::tools::closure::{ClosureRegistry, CwdEngine};
 use agnt_runtime::tools::handler::McpToolRegistry;
 use agnt_runtime::tools::mcp::config::McpConfig;
+use agnt_runtime::types::ToolServer;
 use nu_protocol::Span;
 
 use crate::A2aArgs;

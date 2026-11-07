@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 
 use agent_client_protocol::schema::v1::{ReadTextFileRequest, SessionId, WriteTextFileRequest};
 use agent_client_protocol::{Client, ConnectionTo};
-use agnt_core::types::{DynamicTool, ToolDefinition, ToolExecutionError, ToolOutput};
 use agnt_runtime::tools::fs::core::{
     EditMatchMode, EditOccurrence, EditOperation, EditPlan, plan_create_from_content,
     plan_search_replace_from_content, split_lines_preserving_terminators, version_token,
@@ -19,6 +18,7 @@ use agnt_runtime::tools::fs::diff::compute_edit_unified_diff;
 use agnt_runtime::tools::handler::edit::{EditToolMode, parse_edit_mode};
 use agnt_runtime::tools::handler::resolve_fs_path_for_cwd;
 use agnt_runtime::tools::limits::truncate_tool_output;
+use agnt_runtime::types::{DynamicTool, ToolDefinition, ToolExecutionError, ToolOutput};
 
 // endregion: --- Modules
 

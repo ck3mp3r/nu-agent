@@ -1,9 +1,9 @@
 use crate::plugin::AgentPlugin;
-use agnt_core::types::{AssistantContent, Message, UserContent};
 use agnt_runtime::config::CompactionConfig;
 use agnt_runtime::conversation::runtime_build::build_compaction_policy;
 use agnt_runtime::session::RigStoreConfig;
 use agnt_runtime::session::prefix::dir_prefix;
+use agnt_runtime::types::{AssistantContent, Message, UserContent};
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Record, Signature, SyntaxShape, Value};
 

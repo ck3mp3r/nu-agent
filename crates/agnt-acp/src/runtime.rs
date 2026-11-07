@@ -9,9 +9,6 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::v1::{
     SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
 };
-use agnt_core::types::{
-    Completion, DynModel, EmptyToolName, ToolAnnotations, ToolDefinition, ToolName,
-};
 use agnt_runtime::config::{AgentsConfig, Config, ModelsCache, defaults, load_and_resolve_config};
 use agnt_runtime::conversation::builder::builtin_tool_definitions;
 use agnt_runtime::conversation::contracts::DecisionSource;
@@ -31,6 +28,9 @@ use agnt_runtime::tools::handler::builtin_tool::register_builtin;
 use agnt_runtime::tools::mcp::client::McpToolDefinition;
 use agnt_runtime::tools::mcp::config::{McpConfig, McpServerConfig};
 use agnt_runtime::tools::mcp::runtime::connect_servers;
+use agnt_runtime::types::{
+    Completion, DynModel, EmptyToolName, ToolAnnotations, ToolDefinition, ToolName,
+};
 
 use crate::engine_stub::AcpEngineStub;
 use crate::error::{AcpError, Result};
@@ -222,7 +222,7 @@ pub async fn build_acp_runtime(params: AcpRuntimeParams) -> Result<AgentConversa
     let merged_mcp = merge_mcp_servers(config_mcp.mcp, mcp_servers);
 
     // -- Tool server: built-ins only, no closure tools
-    let tool_server_handle = agnt_core::types::ToolServer::new().run();
+    let tool_server_handle = agnt_runtime::types::ToolServer::new().run();
     let bus = agnt_runtime::bus::Bus::default();
 
     // -- Built-in tools. When the client advertises both filesystem

@@ -15,7 +15,6 @@ pub(super) use agent_client_protocol::schema::v1::{
     ToolCallUpdate,
 };
 pub(super) use agent_client_protocol::{Agent, Channel, Client, ConnectionTo};
-pub(super) use agnt_core::types::{Message, MockCompletionModel};
 pub(super) use agnt_runtime::bus::{Bus, CancelEvent, OneshotTx, SessionEvent, TurnEvent, TurnRx};
 pub(super) use agnt_runtime::config::{AgentsConfig, Config, ModelsCache};
 pub(super) use agnt_runtime::conversation::contracts::DecisionSource;
@@ -32,6 +31,7 @@ pub(super) use agnt_runtime::session::{RigStoreConfig, StoreType};
 pub(super) use agnt_runtime::tools::authz::PermissionsConfig;
 pub(super) use agnt_runtime::tools::closure::ClosureRegistry;
 pub(super) use agnt_runtime::tools::handler::McpToolRegistry;
+pub(super) use agnt_runtime::types::{Message, MockCompletionModel};
 pub(super) use rig::test_utils::MockStreamEvent;
 
 use super::super::*;
@@ -189,7 +189,7 @@ impl RuntimeBuilder for MockRuntimeBuilder {
                 baseline_tool_definitions: Vec::new(),
                 closure_registry: ClosureRegistry::default(),
                 mcp_runtime: None,
-                tool_server_handle: agnt_core::types::ToolServer::new().run(),
+                tool_server_handle: agnt_runtime::types::ToolServer::new().run(),
                 mcp_lifecycle_projection: Vec::new(),
                 mcp_server_configs: Vec::new(),
                 mcp_caller_cwd: Some(cwd.clone()),

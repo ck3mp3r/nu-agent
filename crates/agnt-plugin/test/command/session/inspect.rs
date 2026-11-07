@@ -1,8 +1,8 @@
 use super::inspect::{AgentSessionInspect, CwdInterface};
-use agnt_core::types::Message;
 use agnt_runtime::config::CompactionConfig;
 use agnt_runtime::session::prefix::dir_prefix;
 use agnt_runtime::session::{RigStoreConfig, StoreType};
+use agnt_runtime::types::Message;
 use nu_plugin::{EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{LabeledError, Span, Value};
 use tempfile::TempDir;

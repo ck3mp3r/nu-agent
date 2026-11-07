@@ -88,7 +88,7 @@ pub const REVIEW_CHECKS: &str = concat!(
     "        handles, TLS providers, subsystem tasks.\n",
     "        Measured (construction half, ARCH-9.b): `Client::builder`/`Client::new` and\n",
     "        `ensure_crypto_provider` calls are ratcheted by the recorded set of fourteen\n",
-    "        sites. Six `agnt-core` rows are the composition-root stream's to drain (the\n",
+    "        sites. Six `agnt-runtime` rows are the composition-root stream's to drain (the\n",
     "        shared-client factory); eight `agnt-a2a` rows wait on the a2a inversion\n",
     "        (list `6206f1c9`). The check reads parsed expressions: a definition and a\n",
     "        doc comment never fire. Blind spot: `syn`'s visit walks parsed tokens, not a\n",

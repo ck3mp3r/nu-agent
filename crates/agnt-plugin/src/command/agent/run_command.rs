@@ -195,7 +195,7 @@ pub(super) fn run_command(
     let handle = plugin.runtime()?.handle().clone();
     handle.clone().block_on(async move {
         // Create the tool server handle ONCE — both builtins and MCP servers register into it
-        let tool_server_handle = agnt_core::types::ToolServer::new().run();
+        let tool_server_handle = agnt_runtime::types::ToolServer::new().run();
 
         let mcp_runtime = if mcp_config.mcp.is_empty() {
             None
